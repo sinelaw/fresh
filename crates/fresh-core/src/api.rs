@@ -704,6 +704,12 @@ pub struct OverlayOptions {
     #[serde(default)]
     pub extend_to_line_end: bool,
 
+    /// Whether to render with reverse video (fg/bg swapped). Used for
+    /// block-style text carets in form controls, where a hardware
+    /// cursor isn't available (modal overlays).
+    #[serde(default)]
+    pub reversed: bool,
+
     /// When `true`, `fg` is applied only on cells whose existing fg
     /// matches this overlay's resolved bg — i.e. a same-colour fg/bg
     /// collision. Lets a row-wide overlay stay legible on tokens that
@@ -1443,6 +1449,10 @@ fn default_number_step() -> f64 {
     1.0
 }
 
+fn default_neg_one() -> i32 {
+    -1
+}
+
 fn default_dropdown_selected() -> i32 {
     0
 }
@@ -1571,6 +1581,23 @@ pub enum WidgetSpec {
         label: String,
         #[serde(default)]
         focused: bool,
+        /// Neither checked nor unchecked: renders a neutral `[-]` chip.
+        /// Used for values that are unset and inherit from a lower
+        /// config layer (issue #2345) — a definite `[ ]` would read as
+        /// "the user turned this off". Defaults to `false`.
+        #[serde(default)]
+        indeterminate: bool,
+        /// Form-style layout: render `label: [v]` (label first, chip
+        /// after) instead of the default `[v] label`. In this layout
+        /// the toggle's hit area covers only the chip, so clicks on
+        /// the label don't flip the value. Defaults to `false`.
+        #[serde(default)]
+        label_first: bool,
+        /// Pad the label to this display width in `label_first`
+        /// layout so a column of controls aligns their chips. `0` =
+        /// no padding. Defaults to `0`.
+        #[serde(default)]
+        label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -1613,7 +1640,7 @@ pub enum WidgetSpec {
         /// Defaults to `false`.
         #[serde(default)]
         percent: bool,
-        /// Optional label rendered before the stepper. Empty =
+        /// Optional label rendered before the value cell. Empty =
         /// omitted.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         label: String,
@@ -1621,6 +1648,25 @@ pub enum WidgetSpec {
         /// the host owns focus (same as `Toggle`).
         #[serde(default)]
         focused: bool,
+        /// Pad the label to this display width so a column of
+        /// controls aligns their value cells. `0` = no padding.
+        #[serde(default)]
+        label_width: u32,
+        /// In-place edit buffer. `Some` = the value is being edited:
+        /// the cell renders this text (with caret / selection) instead
+        /// of the formatted value. `None` = display mode.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        edit_text: Option<String>,
+        /// Byte offset of the edit caret within `edit_text`. `-1` =
+        /// no caret (ignored unless `edit_text` is `Some`).
+        #[serde(default = "default_neg_one")]
+        edit_cursor: i32,
+        /// Selection byte range within `edit_text` (`start`, `end`).
+        /// `-1` for either end = no selection.
+        #[serde(default = "default_neg_one")]
+        edit_sel_start: i32,
+        #[serde(default = "default_neg_one")]
+        edit_sel_end: i32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -1644,7 +1690,7 @@ pub enum WidgetSpec {
         /// Clamped to `[0, options.len())`.
         #[serde(default = "default_dropdown_selected")]
         selected_index: i32,
-        /// Optional label rendered before the cycler. Empty =
+        /// Optional label rendered before the value button. Empty =
         /// omitted.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         label: String,
@@ -1652,6 +1698,19 @@ pub enum WidgetSpec {
         /// the host owns focus.
         #[serde(default)]
         focused: bool,
+        /// Pad the label to this display width so a column of
+        /// controls aligns their value buttons. `0` = no padding.
+        #[serde(default)]
+        label_width: u32,
+        /// Whether the option list is expanded inline below the value
+        /// button (`▲` arrow + one row per visible option). Closed
+        /// (`▼`) by default.
+        #[serde(default)]
+        open: bool,
+        /// First visible option row when `open` and the list is
+        /// taller than its window. Defaults to `0`.
+        #[serde(default)]
+        scroll_offset: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2004,6 +2063,13 @@ pub enum WidgetSpec {
         /// more to scroll. `0` (default) falls back to `5`.
         #[serde(default)]
         completions_visible_rows: u32,
+        /// Paint the caret as a REVERSED block cell inside the row
+        /// (in addition to publishing the hardware-cursor position).
+        /// Modal form surfaces (e.g. Settings) use this — a hardware
+        /// cursor isn't shown over a modal, so the block cell is the
+        /// only visible caret. Defaults to `false`.
+        #[serde(default)]
+        block_caret: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

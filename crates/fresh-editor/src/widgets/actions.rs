@@ -300,6 +300,9 @@ mod tests {
 
     fn toggle_with_key(k: &str) -> WidgetSpec {
         WidgetSpec::Toggle {
+            indeterminate: false,
+            label_first: false,
+            label_width: 0,
             checked: false,
             label: "T".into(),
             focused: false,

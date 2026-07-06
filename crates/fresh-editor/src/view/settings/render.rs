@@ -1281,18 +1281,18 @@ fn render_setting_item_pure(
 /// Render a scalar setting control (Toggle/Number/Dropdown) through the
 /// plugin widget framework: map it to a `WidgetSpec`, render with
 /// `render_spec`, and paint the resulting entries into `area` via the
-/// shared `paint_text_property_entry`. Returns the widget hit areas so
-/// the caller can derive click geometry. Stateless: a fresh (empty)
-/// instance-state map each frame, so the spec's values render directly.
+/// shared `paint_text_property_entry`. Returns the reconciler output so
+/// the caller can derive click geometry from the real hit areas.
 fn render_scalar_via_widget(
     frame: &mut Frame,
     area: Rect,
     control: &SettingControl,
     name: &str,
     theme: &Theme,
+    label_width: Option<u16>,
     prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-) -> Vec<crate::widgets::HitArea> {
-    render_control_via_widget(frame, area, control, name, theme, 0, "", prev)
+) -> crate::widgets::RenderOutput {
+    render_control_via_widget(frame, area, control, name, theme, 0, "", label_width, prev)
 }
 
 /// Like [`render_scalar_via_widget`] but for multi-row controls: paints
@@ -1300,9 +1300,9 @@ fn render_scalar_via_widget(
 /// controls at the top when scrolled) into `area`.
 ///
 /// `focus_key` (usually the control's `name`) marks the widget focused so
-/// the renderer paints the focus highlight and publishes a caret cursor —
-/// pass it when the control is actively editing (Text/JSON); pass `""`
-/// otherwise (the settings chrome shows selection for the rest).
+/// the renderer paints the focus highlight and the block caret — pass it
+/// when the control is actively editing (Text/JSON); pass `""` otherwise
+/// (the settings chrome shows selection for the rest).
 #[allow(clippy::too_many_arguments)]
 fn render_control_via_widget(
     frame: &mut Frame,
@@ -1312,9 +1312,14 @@ fn render_control_via_widget(
     theme: &Theme,
     skip_rows: u16,
     focus_key: &str,
+    label_width: Option<u16>,
     prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-) -> Vec<crate::widgets::HitArea> {
-    let spec = crate::view::settings::widget_map::setting_control_to_widget(name, control);
+) -> crate::widgets::RenderOutput {
+    let spec = crate::view::settings::widget_map::setting_control_to_widget_aligned(
+        name,
+        control,
+        label_width,
+    );
     let out =
         crate::widgets::render_spec_no_autofocus(&spec, prev, focus_key, area.width.max(1) as u32);
     for (i, entry) in out.entries.iter().enumerate() {
@@ -1335,44 +1340,45 @@ fn render_control_via_widget(
             );
         }
     }
-    // Place the hardware cursor for a focused Text control (edit mode):
-    // convert the widget's byte-offset caret to a display column.
-    if let Some(fc) = out.focus_cursor {
-        if let Some(entry) = out.entries.get(fc.buffer_row as usize) {
-            let byte = (fc.byte_in_row as usize).min(entry.text.len());
-            let col = entry.text[..byte].chars().count() as u16;
-            let x = area
-                .x
-                .saturating_add(col)
-                .min(area.x + area.width.saturating_sub(1));
-            let y = area.y.saturating_add(fc.buffer_row as u16);
-            frame.set_cursor_position((x, y));
-        }
-    }
-    out.hits
+    out
 }
 
-/// Translate a Number widget's `number_step` hit byte-ranges into screen
-/// column rects for the ◂ / ▸ steppers, so mouse clicks still adjust the
-/// value. Falls back to empty rects when the hits aren't present.
-fn number_step_areas(hits: &[crate::widgets::HitArea], area: Rect) -> (Rect, Rect) {
-    let mut dec = Rect::default();
-    let mut inc = Rect::default();
-    for h in hits.iter().filter(|h| h.widget_kind == "number") {
-        // The rendered row is ASCII except the ◂/▸ glyphs (3 bytes, 1
-        // col each); a byte offset maps to a column by counting the
-        // display width of the text before it. The renderer places both
-        // glyphs, so byte_start is a safe proxy: clamp into the area.
-        let col = (h.byte_start as u16).min(area.width.saturating_sub(1));
-        let rect = Rect::new(area.x + col.min(area.width.saturating_sub(1)), area.y, 1, 1);
-        let delta = h.payload.get("delta").and_then(|v| v.as_i64()).unwrap_or(0);
-        if delta < 0 {
-            dec = rect;
-        } else {
-            inc = rect;
+/// Screen rect of the first hit with the given kind + event type,
+/// derived from the *real* rendered geometry: the hit's byte range is
+/// converted to display columns against its row's entry text. Returns
+/// `Rect::default()` (empty, unhittable) when absent or scrolled off.
+fn hit_rect(
+    out: &crate::widgets::RenderOutput,
+    widget_kind: &str,
+    event_type: &str,
+    area: Rect,
+    skip_rows: u16,
+) -> Rect {
+    use crate::primitives::display_width::str_width;
+    for h in &out.hits {
+        if h.widget_kind != widget_kind || h.event_type != event_type {
+            continue;
         }
+        let Some(dst) = (h.buffer_row as u16).checked_sub(skip_rows) else {
+            continue;
+        };
+        if dst >= area.height {
+            continue;
+        }
+        let Some(entry) = out.entries.get(h.buffer_row as usize) else {
+            continue;
+        };
+        let text = entry.text.trim_end_matches('\n');
+        let s = h.byte_start.min(text.len());
+        let e = h.byte_end.min(text.len());
+        let x = str_width(&text[..s]) as u16;
+        let w = str_width(&text[s..e]).max(1) as u16;
+        if x >= area.width {
+            continue;
+        }
+        return Rect::new(area.x + x, area.y + dst, w.min(area.width - x), 1);
     }
-    (dec, inc)
+    Rect::default()
 }
 
 /// Render the appropriate control for a setting
@@ -1404,22 +1410,22 @@ fn render_control(
     match control {
         // Single-row controls: only render if not skipped.
         //
-        // Toggle / Number / Dropdown render through the plugin widget
-        // framework (Settings↔widget unification): the control maps to a
-        // `WidgetSpec` and paints via `render_spec` +
-        // `paint_text_property_entry`, the same path plugin panels use.
-        // The control's State stays the model (input.rs still drives
-        // it); this swaps the *view* onto the shared framework. Text and
-        // the composite controls keep their existing renderers for now
-        // (Text needs the edit cursor the mapping doesn't yet carry).
+        // Every control renders through the plugin widget framework
+        // (Settings↔widget unification): the control maps to a
+        // `WidgetSpec` (with the page's label column width for
+        // alignment) and paints via `render_spec` +
+        // `paint_text_property_entry`, the same path plugin panels
+        // use. Click geometry comes from the reconciler's real hit
+        // areas (`hit_rect`), not approximations. The control's State
+        // stays the model (input.rs still drives it); the widget rows
+        // faithfully project that state each frame.
         SettingControl::Toggle(_) => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Toggle(Rect::default());
             }
-            render_scalar_via_widget(frame, area, control, name, theme, prev);
-            // Approximate hit geometry: the `[v]`/`[ ]` glyph is the
-            // first three columns of the rendered `[v] label`.
-            ControlLayoutInfo::Toggle(Rect::new(area.x, area.y, 3.min(area.width), 1))
+            let out =
+                render_scalar_via_widget(frame, area, control, name, theme, label_width, prev);
+            ControlLayoutInfo::Toggle(hit_rect(&out, "toggle", "toggle", area, 0))
         }
 
         SettingControl::Number(_) => {
@@ -1430,16 +1436,16 @@ fn render_control(
                     value: Rect::default(),
                 };
             }
-            let hits = render_scalar_via_widget(frame, area, control, name, theme, prev);
-            let (decrement, increment) = number_step_areas(&hits, area);
+            let out =
+                render_scalar_via_widget(frame, area, control, name, theme, label_width, prev);
             ControlLayoutInfo::Number {
-                decrement,
-                increment,
-                value: Rect::new(area.x, area.y, area.width, 1),
+                decrement: Rect::default(),
+                increment: Rect::default(),
+                value: hit_rect(&out, "number", "number_value", area, 0),
             }
         }
 
-        SettingControl::Dropdown(_) => {
+        SettingControl::Dropdown(state) => {
             if skip_rows > 0 {
                 return ControlLayoutInfo::Dropdown {
                     button_area: Rect::default(),
@@ -1447,11 +1453,36 @@ fn render_control(
                     scroll_offset: 0,
                 };
             }
-            render_scalar_via_widget(frame, area, control, name, theme, prev);
+            let out =
+                render_scalar_via_widget(frame, area, control, name, theme, label_width, prev);
+            let button_area = hit_rect(&out, "dropdown", "dropdown_toggle", area, 0);
+            // One rect per visible option row of the open list, in
+            // screen order (the caller pairs them with `scroll_offset`
+            // to recover absolute indices, as the old control did).
+            let mut option_areas = Vec::new();
+            if state.open {
+                for h in out
+                    .hits
+                    .iter()
+                    .filter(|h| h.event_type == "dropdown_select")
+                {
+                    let dst = h.buffer_row as u16;
+                    if dst < area.height {
+                        option_areas.push(Rect::new(area.x, area.y + dst, area.width, 1));
+                    }
+                }
+            }
+            let visible = state
+                .options
+                .len()
+                .min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+            let scroll_offset = state
+                .scroll_offset
+                .min(state.options.len().saturating_sub(visible));
             ControlLayoutInfo::Dropdown {
-                button_area: Rect::new(area.x, area.y, area.width, 1),
-                option_areas: Vec::new(),
-                scroll_offset: 0,
+                button_area,
+                option_areas,
+                scroll_offset,
             }
         }
 
@@ -1485,29 +1516,65 @@ fn render_control(
                 // Editable text (and nullable-null) render through the
                 // widget framework. While editing, focus the widget (by
                 // its name key) so it paints the focus highlight and
-                // publishes the caret the mapping carries.
+                // the block caret the mapping carries.
                 let focus_key = if state.editing { name } else { "" };
-                render_control_via_widget(frame, area, control, name, theme, 0, focus_key, prev);
-                ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
+                let out = render_control_via_widget(
+                    frame,
+                    area,
+                    control,
+                    name,
+                    theme,
+                    0,
+                    focus_key,
+                    label_width,
+                    prev,
+                );
+                let rect = hit_rect(&out, "text", "focus", area, 0);
+                ControlLayoutInfo::Text(if rect.width > 0 {
+                    rect
+                } else {
+                    Rect::new(area.x, area.y, area.width, 1)
+                })
             }
         }
 
         // Multi-row controls: pass skip_rows to render partial view
         SettingControl::TextList(state) => {
-            // View migrated to the widget framework (Col of item rows +
-            // add row); editing still runs through the settings input
-            // path. Per-row hit rects are derived from the on-screen row
-            // positions so clicks still target the right item.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
+            // Bracketed item cells + [x] buttons + the add row, all
+            // projected from the control state by the widget mapping.
+            // Per-row hit rects are derived from the on-screen row
+            // positions so clicks still target the right item; the
+            // trailing entry (index None) is the add row.
+            render_control_via_widget(
+                frame,
+                area,
+                control,
+                name,
+                theme,
+                skip_rows,
+                "",
+                label_width,
+                prev,
+            );
             let mut rows = Vec::new();
-            // Row 0 is the label header; items start at row 1.
+            // Row 0 is the label header; items start at row 1, the add
+            // row follows them. The item cell spans `[...]` starting at
+            // the 2-column indent (matching the rendered row).
+            let cell_w = 30u16.min(area.width.saturating_sub(2));
             for (i, _) in state.items.iter().enumerate() {
                 let logical = 1 + i as u16;
                 if logical >= skip_rows {
                     let dst = logical - skip_rows;
                     if dst < area.height {
-                        rows.push((Some(i), Rect::new(area.x, area.y + dst, area.width, 1)));
+                        rows.push((Some(i), Rect::new(area.x + 2, area.y + dst, cell_w, 1)));
                     }
+                }
+            }
+            let add_logical = 1 + state.items.len() as u16;
+            if add_logical >= skip_rows {
+                let dst = add_logical - skip_rows;
+                if dst < area.height {
+                    rows.push((None, Rect::new(area.x + 2, area.y + dst, cell_w, 1)));
                 }
             }
             ControlLayoutInfo::TextList { rows }
@@ -1518,27 +1585,45 @@ fn render_control(
             // Available/Included picker); editing still runs through the
             // settings input path. Mouse hit geometry is approximate for
             // now (keyboard nav is the primary path).
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
+            render_control_via_widget(
+                frame,
+                area,
+                control,
+                name,
+                theme,
+                skip_rows,
+                "",
+                label_width,
+                prev,
+            );
             ControlLayoutInfo::DualList(Default::default())
         }
 
         SettingControl::Map(state) => {
-            // View migrated: Col of `key: value` rows + add row. Editing
-            // (add/remove/edit entries) still runs through the settings
-            // input path; expanded/nested entries render collapsed here.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
+            // Label + optional column header + List-rendered entries +
+            // add row, all projected from the control state.
+            render_control_via_widget(
+                frame,
+                area,
+                control,
+                name,
+                theme,
+                skip_rows,
+                "",
+                label_width,
+                prev,
+            );
             let row_rect = |logical: u16| -> Option<Rect> {
                 logical.checked_sub(skip_rows).and_then(|dst| {
                     (dst < area.height).then(|| Rect::new(area.x, area.y + dst, area.width, 1))
                 })
             };
             // Row 0 is the `label:` header. When the control has a
-            // `display_field`, `widget_map` inserts a `Name │ <title>` column
-            // header at row 1 (see the Map arm there), so entries start at
-            // row 2; without it they start at row 1. The hit geometry must
-            // track that offset or clicks land one row above every entry and
-            // the "add new" row — the mouse-driven add test then spins
-            // forever hunting a button it can never hit.
+            // `display_field`, the mapping inserts a `Name  <Title>`
+            // column header at row 1, so entries start at row 2; without
+            // it they start at row 1. The hit geometry must track that
+            // offset or clicks land one row above every entry and the
+            // "add new" row.
             let first_entry_row = if state.display_field.is_some() { 2 } else { 1 };
             let entry_rows = state
                 .entries
@@ -1558,7 +1643,17 @@ fn render_control(
         }
 
         SettingControl::ObjectArray(state) => {
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
+            render_control_via_widget(
+                frame,
+                area,
+                control,
+                name,
+                theme,
+                skip_rows,
+                "",
+                label_width,
+                prev,
+            );
             let entry_rows = state
                 .bindings
                 .iter()
@@ -1573,11 +1668,11 @@ fn render_control(
             ControlLayoutInfo::ObjectArray { entry_rows }
         }
 
-        // The multiline JSON editor renders through the widget framework
-        // too: the mapping produces a multi-line `Text` with the editor's
-        // current text. While focused it renders focused (caret + block).
-        // Editing (and JSON validation) still runs through the settings
-        // input path against the control's `TextEdit`.
+        // The multiline JSON editor renders through the widget
+        // framework too: label + bordered line box + block caret +
+        // selection + invalid-JSON warning, projected from the
+        // control's `TextEdit` by the mapping. Editing (and JSON
+        // validation) still runs through the settings input path.
         SettingControl::Json(state) => {
             let focus_key = if matches!(state.focus, crate::view::controls::FocusState::Focused) {
                 name
@@ -1585,7 +1680,15 @@ fn render_control(
                 ""
             };
             render_control_via_widget(
-                frame, area, control, name, theme, skip_rows, focus_key, prev,
+                frame,
+                area,
+                control,
+                name,
+                theme,
+                skip_rows,
+                focus_key,
+                label_width,
+                prev,
             );
             ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
         }
@@ -1596,7 +1699,17 @@ fn render_control(
             }
             // Uneditable placeholder, rendered through the widget
             // framework like the other controls.
-            render_control_via_widget(frame, area, control, name, theme, skip_rows, "", prev);
+            render_control_via_widget(
+                frame,
+                area,
+                control,
+                name,
+                theme,
+                skip_rows,
+                "",
+                label_width,
+                prev,
+            );
             ControlLayoutInfo::Complex
         }
     }

@@ -547,8 +547,20 @@ fn render_collected(
             checked,
             label,
             focused,
+            indeterminate,
+            label_first,
+            label_width,
             key,
-        } => collect_toggle(*checked, label, *focused, key.as_deref(), focus_key),
+        } => collect_toggle(
+            *checked,
+            label,
+            *focused,
+            *indeterminate,
+            *label_first,
+            *label_width,
+            key.as_deref(),
+            focus_key,
+        ),
         WidgetSpec::Number {
             value,
             min,
@@ -557,6 +569,11 @@ fn render_collected(
             percent,
             label,
             focused,
+            label_width,
+            edit_text,
+            edit_cursor,
+            edit_sel_start,
+            edit_sel_end,
             key,
             ..
         } => collect_number(
@@ -567,6 +584,13 @@ fn render_collected(
             *percent,
             label,
             *focused,
+            *label_width,
+            edit_text.as_deref().map(|t| NumberEdit {
+                text: t,
+                cursor: *edit_cursor,
+                sel_start: *edit_sel_start,
+                sel_end: *edit_sel_end,
+            }),
             key.as_deref(),
             prev,
             next_state,
@@ -577,12 +601,18 @@ fn render_collected(
             selected_index,
             label,
             focused,
+            label_width,
+            open,
+            scroll_offset,
             key,
         } => collect_dropdown(
             options,
             *selected_index,
             label,
             *focused,
+            *label_width,
+            *open,
+            *scroll_offset,
             key.as_deref(),
             prev,
             next_state,
@@ -677,6 +707,7 @@ fn render_collected(
             full_width,
             completions: _,
             completions_visible_rows,
+            block_caret,
             key,
         } => render_widget_text(
             value,
@@ -689,6 +720,7 @@ fn render_collected(
             *max_visible_chars,
             *full_width,
             *completions_visible_rows,
+            *block_caret,
             key.as_deref(),
             prev,
             next_state,
@@ -1125,10 +1157,14 @@ fn collect_hint_bar(entries: &[HintEntry]) -> CollectedOutput {
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_toggle(
     checked: bool,
     label: &str,
     focused: bool,
+    indeterminate: bool,
+    label_first: bool,
+    label_width: u32,
     key: Option<&str>,
     focus_key: &str,
 ) -> CollectedOutput {
@@ -1143,14 +1179,23 @@ fn collect_toggle(
         Some(k) if !k.is_empty() => k == focus_key,
         _ => focused,
     };
-    let mut entry = render_toggle(checked, label, is_focused);
-    let byte_end = entry.text.len();
+    // Form layout (`label: [v]`) restricts the hit to the chip so a
+    // click on the label doesn't flip the value (the settings dialog's
+    // long-standing contract); the default chip-first layout keeps the
+    // whole row clickable, which is what plugin panels expect.
+    let (mut entry, chip_range) = if label_first {
+        render_toggle_form(checked, indeterminate, label, is_focused, label_width)
+    } else {
+        let entry = render_toggle(checked, label, is_focused);
+        let end = entry.text.len();
+        (entry, (0, end))
+    };
     out.hits.push(HitArea {
         widget_key: key.unwrap_or("").to_string(),
         widget_kind: "toggle",
         buffer_row: 0,
-        byte_start: 0,
-        byte_end,
+        byte_start: chip_range.0,
+        byte_end: chip_range.1,
         payload: json!({ "checked": !checked }),
         event_type: "toggle",
     });
@@ -1160,6 +1205,7 @@ fn collect_toggle(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn collect_number(
     spec_value: f64,
     min: Option<f64>,
@@ -1168,6 +1214,8 @@ fn collect_number(
     percent: bool,
     label: &str,
     focused: bool,
+    label_width: u32,
+    edit: Option<NumberEdit<'_>>,
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -1195,32 +1243,21 @@ fn collect_number(
         }
     }
 
-    let rendered = render_number(cur, integer, percent, label, is_focused);
+    let rendered = render_number(cur, integer, percent, label, is_focused, label_width, edit);
     let RenderedNumber {
         mut entry,
-        dec_range,
-        inc_range,
+        value_range,
     } = rendered;
-    let widget_key = key.unwrap_or("").to_string();
-    // A click on the `◂` / `▸` glyph steps the value host-side (see
-    // `deliver_widget_hit`'s `number_step` special case).
+    // A click on the value cell begins in-place editing host-side
+    // (see `deliver_widget_hit`'s `number_value` special case).
     out.hits.push(HitArea {
-        widget_key: widget_key.clone(),
+        widget_key: key.unwrap_or("").to_string(),
         widget_kind: "number",
         buffer_row: 0,
-        byte_start: dec_range.0,
-        byte_end: dec_range.1,
-        payload: json!({ "delta": -1 }),
-        event_type: "number_step",
-    });
-    out.hits.push(HitArea {
-        widget_key,
-        widget_kind: "number",
-        buffer_row: 0,
-        byte_start: inc_range.0,
-        byte_end: inc_range.1,
-        payload: json!({ "delta": 1 }),
-        event_type: "number_step",
+        byte_start: value_range.0,
+        byte_end: value_range.1,
+        payload: json!({}),
+        event_type: "number_value",
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
@@ -1233,6 +1270,9 @@ fn collect_dropdown(
     spec_selected: i32,
     label: &str,
     focused: bool,
+    label_width: u32,
+    spec_open: bool,
+    spec_scroll: u32,
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -1244,16 +1284,20 @@ fn collect_dropdown(
         _ => focused,
     };
     // Instance state is authoritative after first render; clamp the
-    // selected index into the current option set and persist.
+    // selected index into the current option set and persist. A panel
+    // that renders statelessly (no prior instance state — e.g. the
+    // Settings dialog re-emitting its model each frame) falls back to
+    // the spec's `open`/`scroll_offset` so the host model drives the
+    // expansion directly.
     let (cur, open) = match key {
         Some(k) if !k.is_empty() => match prev.get(k) {
             Some(WidgetInstanceState::Dropdown {
                 selected_index,
                 open,
             }) => (*selected_index, *open),
-            _ => (spec_selected, false),
+            _ => (spec_selected, spec_open),
         },
-        _ => (spec_selected, false),
+        _ => (spec_selected, spec_open),
     };
     let cur = if options.is_empty() {
         0
@@ -1275,80 +1319,52 @@ fn collect_dropdown(
         }
     }
 
-    let RenderedNumber {
+    let RenderedDropdown {
         mut entry,
-        dec_range,
-        inc_range,
-    } = render_dropdown(options, cur, label, is_focused);
+        button_range,
+        option_rows,
+        scroll_offset,
+    } = render_dropdown(
+        options,
+        cur,
+        label,
+        is_focused,
+        label_width,
+        open,
+        spec_scroll,
+    );
     let widget_key = key.unwrap_or("").to_string();
+    // A click on the `[value ▼]` button toggles the option list open
+    // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
     out.hits.push(HitArea {
         widget_key: widget_key.clone(),
         widget_kind: "dropdown",
         buffer_row: 0,
-        byte_start: dec_range.0,
-        byte_end: dec_range.1,
-        payload: json!({ "delta": -1 }),
-        event_type: "dropdown_cycle",
+        byte_start: button_range.0,
+        byte_end: button_range.1,
+        payload: json!({}),
+        event_type: "dropdown_toggle",
     });
-    out.hits.push(HitArea {
-        widget_key,
-        widget_kind: "dropdown",
-        buffer_row: 0,
-        byte_start: inc_range.0,
-        byte_end: inc_range.1,
-        payload: json!({ "delta": 1 }),
-        event_type: "dropdown_cycle",
-    });
+    let _ = scroll_offset;
+    for (row_i, (idx, mut opt_entry)) in option_rows.into_iter().enumerate() {
+        // Each visible option row is a full-width click target that
+        // selects that option and closes the list.
+        let row_len = opt_entry.text.len();
+        out.hits.push(HitArea {
+            widget_key: widget_key.clone(),
+            widget_kind: "dropdown",
+            buffer_row: (1 + row_i) as u32,
+            byte_start: 0,
+            byte_end: row_len,
+            payload: json!({ "index": idx }),
+            event_type: "dropdown_select",
+        });
+        ensure_trailing_newline(&mut opt_entry);
+        out.entries.push(opt_entry);
+    }
     ensure_trailing_newline(&mut entry);
-    out.entries.push(entry);
-    // When open, paint the option list as OverlayRows below the
-    // inline cycler — reusing the same overlay-paint path as Text
-    // completions (buffer + floating panels both render `overlays`).
-    if open {
-        emit_dropdown_overlays(&mut out, options, cur as usize);
-    }
+    out.entries.insert(0, entry);
     out
-}
-
-/// Paint a `Dropdown`'s option list as `OverlayRow`s anchored just
-/// below the cycler row (anchor 1 = the row under the widget). The
-/// selected option gets the focused highlight; the rest get the
-/// popup background so the list reads as one box.
-fn emit_dropdown_overlays(out: &mut CollectedOutput, options: &[String], selected: usize) {
-    // Width the popup to the widest option (plus a little padding) so
-    // the highlight bar reads as a box.
-    let inner = options.iter().map(|o| o.chars().count()).max().unwrap_or(0);
-    let width = (inner + 2).max(4);
-    for (i, opt) in options.iter().enumerate() {
-        let is_sel = i == selected;
-        let text = format!(" {} ", cell(opt, inner));
-        let mut e = TextPropertyEntry::text(&text);
-        let style = if is_sel {
-            OverlayOptions {
-                fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
-                bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
-                bold: true,
-                ..Default::default()
-            }
-        } else {
-            OverlayOptions {
-                bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
-                ..Default::default()
-            }
-        };
-        e.inline_overlays.push(InlineOverlay {
-            start: 0,
-            end: text.len(),
-            style,
-            properties: Default::default(),
-            unit: OffsetUnit::Byte,
-        });
-        e.pad_to_chars = Some(width as u32);
-        out.overlays.push(OverlayRow {
-            buffer_row: (i + 1) as u32,
-            entry: e,
-        });
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2140,6 +2156,40 @@ fn emit_completion_overlays(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Push a one-cell REVERSED overlay at `byte` in `entry` — the block
+/// caret used by modal form surfaces (`block_caret` Text widgets and
+/// the Number edit cell), where a hardware cursor isn't visible.
+/// Clamps to the entry text; a caret at end-of-text reverses the last
+/// cell if there is one (renderers reserve a trailing pad cell).
+fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
+    let text = &entry.text;
+    let b = byte.min(text.len());
+    let (start, end) = if b < text.len() {
+        let ch_len = text[b..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        (b, b + ch_len)
+    } else if !text.is_empty() {
+        // End-of-text: reverse the final cell.
+        let last_start = text
+            .char_indices()
+            .last()
+            .map(|(i, _)| i)
+            .unwrap_or(text.len().saturating_sub(1));
+        (last_start, text.len())
+    } else {
+        return;
+    };
+    entry.inline_overlays.push(InlineOverlay {
+        start,
+        end,
+        style: OverlayOptions {
+            reversed: true,
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+}
+
 fn render_widget_text(
     value: &str,
     cursor_byte: i32,
@@ -2151,6 +2201,7 @@ fn render_widget_text(
     max_visible_chars: u32,
     full_width: bool,
     completions_visible_rows: u32,
+    block_caret: bool,
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -2283,6 +2334,15 @@ fn render_widget_text(
                     event_type: "focus",
                 });
             }
+            // Modal surfaces paint the caret as a REVERSED cell in the
+            // row itself (no hardware cursor over a modal).
+            if block_caret {
+                if let Some(fc) = out.focus_cursor {
+                    if fc.buffer_row as usize == row_idx {
+                        push_block_caret_overlay(&mut e, fc.byte_in_row as usize);
+                    }
+                }
+            }
             ensure_trailing_newline(&mut e);
             out.entries.push(e);
         }
@@ -2327,6 +2387,11 @@ fn render_widget_text(
                 buffer_row: 0,
                 byte_in_row: byte_in_row as u32,
             });
+            // Modal surfaces paint the caret as a REVERSED cell in the
+            // row itself (no hardware cursor over a modal).
+            if block_caret {
+                push_block_caret_overlay(&mut entry, byte_in_row);
+            }
         }
         // A click anywhere on the input line focuses the field so a mouse user
         // can type. Text widgets previously emitted no hit area, so clicks fell
@@ -3348,30 +3413,230 @@ pub fn format_number_value(value: f64, integer: bool, percent: bool) -> String {
 }
 
 /// Output of [`render_number`]: the rendered entry plus the byte
-/// ranges of the decrement / increment glyphs so the caller can
-/// emit click hit areas over them.
+/// range of the editable value cell (the text between the brackets)
+/// so the caller can emit a click hit area over it.
 pub struct RenderedNumber {
     pub entry: TextPropertyEntry,
-    /// Byte range of the `◂` decrement glyph within `entry.text`.
-    pub dec_range: (usize, usize),
-    /// Byte range of the `▸` increment glyph within `entry.text`.
-    pub inc_range: (usize, usize),
+    /// Byte range of the inner value cell within `entry.text`.
+    pub value_range: (usize, usize),
 }
 
-/// Render a `Number` stepper to a single `TextPropertyEntry`.
+/// In-place edit state for a `Number` cell: the buffer being typed
+/// plus caret / selection byte offsets within it (`-1` = absent).
+pub struct NumberEdit<'a> {
+    pub text: &'a str,
+    pub cursor: i32,
+    pub sel_start: i32,
+    pub sel_end: i32,
+}
+
+/// Minimum visible width of the digit area (right-aligned). The
+/// inner cell is one column wider — a trailing reserved cell holds
+/// the block caret at end-of-text so typing doesn't shove the digits
+/// leftward as the caret advances. Mirrors the Settings number cell.
+const NUMBER_CELL_MIN_WIDTH: usize = 3;
+
+/// Render a `Number` field to a single `TextPropertyEntry`.
 ///
-/// Layout: `{marker}{label }◂ {value} ▸`. The `◂`/`▸` glyphs get
-/// the accent fg; when focused, the whole entry flips to the
-/// focused fg/bg (matching `Toggle`).
+/// Layout: `{marker}{label}: [{cell}]` — a form-style value cell,
+/// not a stepper. Display mode right-aligns the formatted value to
+/// [`NUMBER_CELL_MIN_WIDTH`]; edit mode shows the edit buffer with
+/// a selection highlight and a REVERSED block caret. The value is
+/// changed by typing (click the cell / press Enter to edit), not by
+/// increment/decrement glyphs.
 pub fn render_number(
     value: f64,
     integer: bool,
     percent: bool,
     label: &str,
     focused: bool,
+    label_width: u32,
+    edit: Option<NumberEdit<'_>>,
 ) -> RenderedNumber {
-    let value_str = format_number_value(value, integer, percent);
-    render_stepper(&value_str, label, focused)
+    let marker = focus_gutter_prefix(focused);
+    let mut text = String::new();
+    text.push_str(marker);
+    if !label.is_empty() {
+        text.push_str(&pad_label(label, label_width as usize));
+        text.push_str(": ");
+    }
+    text.push('[');
+    let cell_start = text.len();
+
+    let mut overlays: Vec<InlineOverlay> = Vec::new();
+    match &edit {
+        None => {
+            let value_str = format_number_value(value, integer, percent);
+            // Right-align to the minimum cell width plus the trailing
+            // reserved caret column so display and edit modes line up.
+            text.push_str(&format!(
+                "{:>width$} ",
+                value_str,
+                width = NUMBER_CELL_MIN_WIDTH
+            ));
+        }
+        Some(e) => {
+            let buf = e.text;
+            let pad_cols = NUMBER_CELL_MIN_WIDTH.saturating_sub(buf.chars().count());
+            text.push_str(buf);
+            text.push_str(&" ".repeat(pad_cols + 1));
+            // Selection highlight over the selected byte range.
+            if e.sel_start >= 0 && e.sel_end > e.sel_start {
+                let s = cell_start + (e.sel_start as usize).min(buf.len());
+                let en = cell_start + (e.sel_end as usize).min(buf.len());
+                if en > s {
+                    overlays.push(InlineOverlay {
+                        start: s,
+                        end: en,
+                        style: OverlayOptions {
+                            bg: Some(OverlayColorSpec::theme_key(KEY_TEXT_INPUT_SELECTION_BG)),
+                            ..Default::default()
+                        },
+                        properties: Default::default(),
+                        unit: OffsetUnit::Byte,
+                    });
+                }
+            }
+            // Block caret: REVERSED cell at the caret byte (or the
+            // reserved trailing cell at end-of-text).
+            if e.cursor >= 0 {
+                let cur = (e.cursor as usize).min(buf.len());
+                let caret_start = cell_start + cur;
+                let caret_end = if cur < buf.len() {
+                    // Cover the char under the caret.
+                    let ch_len = buf[cur..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+                    caret_start + ch_len
+                } else {
+                    caret_start + 1 // trailing pad cell (ASCII space)
+                };
+                overlays.push(InlineOverlay {
+                    start: caret_start,
+                    end: caret_end,
+                    style: OverlayOptions {
+                        reversed: true,
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+    }
+    let cell_end = text.len();
+    text.push(']');
+
+    if focused {
+        overlays.insert(
+            0,
+            InlineOverlay {
+                start: 0,
+                end: text.len(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                    bold: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            },
+        );
+    }
+
+    let entry = TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    };
+    RenderedNumber {
+        entry,
+        value_range: (cell_start, cell_end),
+    }
+}
+
+/// Pad `label` with trailing spaces to `width` display columns
+/// (never truncates — a long label simply overflows its column).
+fn pad_label(label: &str, width: usize) -> String {
+    let w = crate::primitives::display_width::str_width(label);
+    if w >= width {
+        label.to_string()
+    } else {
+        let mut out = label.to_string();
+        out.extend(std::iter::repeat(' ').take(width - w));
+        out
+    }
+}
+
+/// Render a form-layout `Toggle`: `{marker}{label}: [v]` with the
+/// chip after the (optionally padded) label. Returns the entry plus
+/// the byte range of the `[v]` chip for the click hit area.
+/// `indeterminate` renders a neutral `[-]` chip — the value is unset
+/// and inherits from a lower layer (issue #2345).
+pub fn render_toggle_form(
+    checked: bool,
+    indeterminate: bool,
+    label: &str,
+    focused: bool,
+    label_width: u32,
+) -> (TextPropertyEntry, (usize, usize)) {
+    let glyph = if indeterminate {
+        "[-]"
+    } else if checked {
+        "[v]"
+    } else {
+        "[ ]"
+    };
+    let marker = focus_gutter_prefix(focused);
+    let mut text = String::new();
+    text.push_str(marker);
+    text.push_str(&pad_label(label, label_width as usize));
+    text.push_str(": ");
+    let chip_start = text.len();
+    text.push_str(glyph);
+    let chip_end = text.len();
+
+    let mut overlays = Vec::new();
+    if checked && !indeterminate {
+        overlays.push(InlineOverlay {
+            start: chip_start,
+            end: chip_end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_TOGGLE_ON_FG)),
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+    if focused {
+        overlays.push(InlineOverlay {
+            start: 0,
+            end: text.len(),
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+
+    let entry = TextPropertyEntry {
+        text,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    };
+    (entry, (chip_start, chip_end))
 }
 
 /// Clamp a `Number` value to its optional `[min, max]` bounds.
@@ -3400,65 +3665,72 @@ pub fn wrap_index(index: i32, delta: i32, len: usize) -> i32 {
     (((index + delta) % n) + n) % n
 }
 
-/// Render a `Dropdown` cycler to a single `TextPropertyEntry`.
+/// Output of [`render_dropdown`]: the value-button row plus (when
+/// open) one row per visible option, with the byte range of the
+/// `[value ▼]` button and each option row's index for hit areas.
+pub struct RenderedDropdown {
+    /// Row 0: `{label}: [value ▼]`.
+    pub entry: TextPropertyEntry,
+    /// Byte range of the `[value ▼]` button within `entry.text`.
+    pub button_range: (usize, usize),
+    /// When open: one entry per visible option row (in screen order)
+    /// paired with its absolute option index.
+    pub option_rows: Vec<(usize, TextPropertyEntry)>,
+    /// First visible option index (clamped scroll offset).
+    pub scroll_offset: usize,
+}
+
+/// How many option rows an open `Dropdown` shows at once. Matches
+/// the Settings control's historical window.
+pub const DROPDOWN_VISIBLE_OPTIONS: usize = 8;
+
+/// Render a `Dropdown` to a value button plus (when `open`) an
+/// inline option list.
 ///
-/// Layout: `{marker}{label }◂ {option} ▸` — the same stepper chrome
-/// as `Number`, but the middle shows the selected option text. The
-/// two glyph ranges come back for click hit areas.
+/// Layout: `{marker}{label}: [{option padded} ▼]`, `▲` while open;
+/// open mode appends one row per visible option below, aligned under
+/// the button, with the selected option highlighted.
 pub fn render_dropdown(
     options: &[String],
     selected_index: i32,
     label: &str,
     focused: bool,
-) -> RenderedNumber {
-    let option = if selected_index >= 0 && (selected_index as usize) < options.len() {
-        options[selected_index as usize].as_str()
+    label_width: u32,
+    open: bool,
+    scroll_offset: u32,
+) -> RenderedDropdown {
+    let selected = if selected_index >= 0 && (selected_index as usize) < options.len() {
+        selected_index as usize
     } else {
-        ""
+        0
     };
-    // The stepper chrome is identical to Number's; reuse it by
-    // formatting the option as the "value" string.
-    render_stepper(option, label, focused)
-}
+    let option = options.get(selected).map(|s| s.as_str()).unwrap_or("");
+    // Width the value cell to the widest option so the button doesn't
+    // resize as the selection changes (capped like the old control).
+    let max_option_len = options
+        .iter()
+        .map(|s| s.chars().count())
+        .max()
+        .unwrap_or(10);
+    let display_width = max_option_len.max(option.chars().count()).min(20);
 
-/// Shared stepper chrome: `{marker}{label }◂ {value_str} ▸` with the
-/// two glyph byte-ranges. Backs both `Number` and `Dropdown`.
-fn render_stepper(value_str: &str, label: &str, focused: bool) -> RenderedNumber {
-    const DEC: &str = "◂";
-    const INC: &str = "▸";
     let marker = focus_gutter_prefix(focused);
-
     let mut text = String::new();
     text.push_str(marker);
     if !label.is_empty() {
-        text.push_str(label);
-        text.push(' ');
+        text.push_str(&pad_label(label, label_width as usize));
+        text.push_str(": ");
     }
-    let dec_start = text.len();
-    text.push_str(DEC);
-    let dec_end = text.len();
+    let button_start = text.len();
+    text.push('[');
+    text.push_str(&cell(option, display_width));
     text.push(' ');
-    text.push_str(value_str);
-    text.push(' ');
-    let inc_start = text.len();
-    text.push_str(INC);
-    let inc_end = text.len();
+    text.push_str(if open { "▲" } else { "▼" });
+    text.push(']');
+    let button_end = text.len();
 
     let mut overlays = Vec::new();
-    if !focused {
-        for (s, e) in [(dec_start, dec_end), (inc_start, inc_end)] {
-            overlays.push(InlineOverlay {
-                start: s,
-                end: e,
-                style: OverlayOptions {
-                    fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
-                    ..Default::default()
-                },
-                properties: Default::default(),
-                unit: OffsetUnit::Byte,
-            });
-        }
-    } else {
+    if focused {
         overlays.push(InlineOverlay {
             start: 0,
             end: text.len(),
@@ -3466,6 +3738,19 @@ fn render_stepper(value_str: &str, label: &str, focused: bool) -> RenderedNumber
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
                 bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
                 bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    } else {
+        // Accent the arrow so the row reads as an openable control.
+        let arrow_len = "▼".len() + 1; // arrow + closing bracket
+        overlays.push(InlineOverlay {
+            start: button_end - arrow_len,
+            end: button_end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
                 ..Default::default()
             },
             properties: Default::default(),
@@ -3482,10 +3767,57 @@ fn render_stepper(value_str: &str, label: &str, focused: bool) -> RenderedNumber
         pad_to_chars: None,
         truncate_to_chars: None,
     };
-    RenderedNumber {
+
+    // Open: option rows aligned under the button, windowed to
+    // DROPDOWN_VISIBLE_OPTIONS with the scroll offset clamped so the
+    // window never runs past the end.
+    let mut option_rows = Vec::new();
+    let visible = options.len().min(DROPDOWN_VISIBLE_OPTIONS);
+    let max_scroll = options.len().saturating_sub(visible);
+    let scroll = (scroll_offset as usize).min(max_scroll);
+    if open {
+        let indent = marker.len()
+            + if label.is_empty() {
+                0
+            } else {
+                pad_label(label, label_width as usize).len() + 2
+            };
+        for (row_i, opt) in options.iter().skip(scroll).take(visible).enumerate() {
+            let idx = scroll + row_i;
+            let mut row_text = String::new();
+            row_text.push_str(&" ".repeat(indent));
+            row_text.push(' ');
+            row_text.push_str(&cell(opt, display_width + 2));
+            let mut e = TextPropertyEntry::text(&row_text);
+            let style = if idx == selected {
+                OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                    bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                    bold: true,
+                    ..Default::default()
+                }
+            } else {
+                OverlayOptions {
+                    bg: Some(OverlayColorSpec::theme_key(KEY_INPUT_BG)),
+                    ..Default::default()
+                }
+            };
+            e.inline_overlays.push(InlineOverlay {
+                start: indent,
+                end: row_text.len(),
+                style,
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+            option_rows.push((idx, e));
+        }
+    }
+
+    RenderedDropdown {
         entry,
-        dec_range: (dec_start, dec_end),
-        inc_range: (inc_start, inc_end),
+        button_range: (button_start, button_end),
+        option_rows,
+        scroll_offset: scroll,
     }
 }
 
@@ -5085,6 +5417,9 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "A".into(),
                     focused: false,
@@ -5126,6 +5461,9 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "A".into(),
                     focused: false,
@@ -5137,6 +5475,9 @@ mod tests {
                     key: None,
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "B".into(),
                     focused: false,
@@ -5156,6 +5497,9 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "A".into(),
                     focused: false,
@@ -5220,6 +5564,9 @@ mod tests {
     #[test]
     fn toggle_emits_hit_area_with_toggle_payload() {
         let spec = WidgetSpec::Toggle {
+            indeterminate: false,
+            label_first: false,
+            label_width: 0,
             checked: false,
             label: "Case".into(),
             focused: false,
@@ -5320,6 +5667,9 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: true,
                     label: "A".into(),
                     focused: false,
@@ -5331,6 +5681,9 @@ mod tests {
                     key: None,
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "B".into(),
                     focused: false,
@@ -5361,12 +5714,18 @@ mod tests {
         let spec = WidgetSpec::Col {
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "row0".into(),
                     focused: false,
                     key: Some("k0".into()),
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: true,
                     label: "row1".into(),
                     focused: false,
@@ -5397,6 +5756,9 @@ mod tests {
                     wrap: false,
                     children: vec![
                         WidgetSpec::Toggle {
+                            indeterminate: false,
+                            label_first: false,
+                            label_width: 0,
                             checked: false,
                             label: "T".into(),
                             focused: false,
@@ -5419,6 +5781,7 @@ mod tests {
                     key: None,
                 },
                 WidgetSpec::Text {
+                    block_caret: false,
                     value: "".into(),
                     cursor_byte: -1,
                     focused: false,
@@ -5433,6 +5796,9 @@ mod tests {
                     key: Some("ti".into()),
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "no key".into(),
                     focused: false,
@@ -5454,12 +5820,18 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "A".into(),
                     focused: false,
                     key: Some("a".into()),
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "B".into(),
                     focused: false,
@@ -5479,12 +5851,18 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "A".into(),
                     focused: false,
                     key: Some("a".into()),
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "B".into(),
                     focused: false,
@@ -5503,6 +5881,9 @@ mod tests {
         // have any widget with that key — fall back to the first
         // tabbable.
         let spec = WidgetSpec::Toggle {
+            indeterminate: false,
+            label_first: false,
+            label_width: 0,
             checked: false,
             label: "Only".into(),
             focused: false,
@@ -5518,12 +5899,18 @@ mod tests {
             wrap: false,
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "A".into(),
                     focused: false,
                     key: Some("a".into()),
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "B".into(),
                     focused: false,
@@ -6234,6 +6621,9 @@ mod tests {
                     key: None,
                 },
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "after raw".into(),
                     focused: false,
@@ -6806,6 +7196,9 @@ mod tests {
         let spec = WidgetSpec::Col {
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "T".into(),
                     focused: false,
@@ -6840,6 +7233,7 @@ mod tests {
         key: Option<&str>,
     ) -> WidgetSpec {
         WidgetSpec::Text {
+            block_caret: false,
             value: value.into(),
             cursor_byte,
             focused,
@@ -6926,6 +7320,7 @@ mod tests {
         // cursor on line 0 of the value lands on row 1 of the
         // buffer.
         let spec = WidgetSpec::Text {
+            block_caret: false,
             value: "hi".into(),
             cursor_byte: 1,
             focused: true,
@@ -7024,6 +7419,9 @@ mod tests {
         let spec = WidgetSpec::Col {
             children: vec![
                 WidgetSpec::Toggle {
+                    indeterminate: false,
+                    label_first: false,
+                    label_width: 0,
                     checked: false,
                     label: "T".into(),
                     focused: false,
@@ -7051,6 +7449,7 @@ mod tests {
         key: Option<&str>,
     ) -> WidgetSpec {
         WidgetSpec::Text {
+            block_caret: false,
             value: value.into(),
             cursor_byte,
             focused,
@@ -7227,6 +7626,11 @@ mod tests {
 
     fn make_number(value: f64, key: Option<&str>) -> WidgetSpec {
         WidgetSpec::Number {
+            label_width: 0,
+            edit_text: None,
+            edit_cursor: -1,
+            edit_sel_start: -1,
+            edit_sel_end: -1,
             value,
             min: None,
             max: None,
@@ -7256,27 +7660,56 @@ mod tests {
     }
 
     #[test]
-    fn number_renders_stepper_glyphs_and_value() {
-        let r = render_number(3.0, true, false, "Size", false);
-        assert_eq!(r.entry.text, "Size ◂ 3 ▸");
-        // Glyph byte ranges land on the arrows.
-        assert_eq!(&r.entry.text[r.dec_range.0..r.dec_range.1], "◂");
-        assert_eq!(&r.entry.text[r.inc_range.0..r.inc_range.1], "▸");
+    fn number_renders_form_cell_and_value() {
+        let r = render_number(3.0, true, false, "Size", false, 0, None);
+        assert_eq!(r.entry.text, "Size: [  3 ]");
+        // The value range covers the inner cell.
+        assert_eq!(&r.entry.text[r.value_range.0..r.value_range.1], "  3 ");
     }
 
     #[test]
-    fn number_emits_two_step_hit_areas() {
+    fn number_editing_shows_buffer_selection_and_caret() {
+        let r = render_number(
+            3.0,
+            true,
+            false,
+            "Size",
+            false,
+            0,
+            Some(NumberEdit {
+                text: "750",
+                cursor: 3,
+                sel_start: 0,
+                sel_end: 3,
+            }),
+        );
+        assert_eq!(r.entry.text, "Size: [750 ]");
+        // Selection bg over the digits + a REVERSED caret cell.
+        assert!(r
+            .entry
+            .inline_overlays
+            .iter()
+            .any(|o| o.style.bg.is_some() && !o.style.reversed));
+        assert!(r.entry.inline_overlays.iter().any(|o| o.style.reversed));
+    }
+
+    #[test]
+    fn number_emits_value_cell_hit_area() {
         let spec = make_number(2.0, Some("size"));
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let steps: Vec<_> = hits.iter().filter(|h| h.widget_kind == "number").collect();
-        assert_eq!(steps.len(), 2, "one dec + one inc hit");
-        assert_eq!(steps[0].payload["delta"], -1);
-        assert_eq!(steps[1].payload["delta"], 1);
+        let cells: Vec<_> = hits.iter().filter(|h| h.widget_kind == "number").collect();
+        assert_eq!(cells.len(), 1, "one value-cell hit");
+        assert_eq!(cells[0].event_type, "number_value");
     }
 
     #[test]
     fn number_seeds_and_clamps_instance_state() {
         let spec = WidgetSpec::Number {
+            label_width: 0,
+            edit_text: None,
+            edit_cursor: -1,
+            edit_sel_start: -1,
+            edit_sel_end: -1,
             value: 42.0,
             min: Some(0.0),
             max: Some(10.0),
@@ -7319,6 +7752,9 @@ mod tests {
 
     fn make_dropdown(options: &[&str], selected: i32, key: Option<&str>) -> WidgetSpec {
         WidgetSpec::Dropdown {
+            label_width: 0,
+            open: false,
+            scroll_offset: 0,
             options: options.iter().map(|s| s.to_string()).collect(),
             selected_index: selected,
             label: String::new(),
@@ -7336,27 +7772,61 @@ mod tests {
     }
 
     #[test]
-    fn dropdown_renders_selected_option() {
+    fn dropdown_renders_selected_option_with_arrow() {
         let r = render_dropdown(
             &["Red".into(), "Green".into(), "Blue".into()],
             1,
             "Color",
             false,
+            0,
+            false,
+            0,
         );
-        assert_eq!(r.entry.text, "Color ◂ Green ▸");
+        assert_eq!(r.entry.text, "Color: [Green ▼]");
+        assert!(r.option_rows.is_empty());
     }
 
     #[test]
-    fn dropdown_emits_two_cycle_hit_areas() {
-        let spec = make_dropdown(&["a", "b"], 0, Some("d"));
+    fn dropdown_open_renders_inline_option_rows() {
+        let r = render_dropdown(
+            &["Red".into(), "Green".into(), "Blue".into()],
+            1,
+            "Color",
+            true,
+            0,
+            true,
+            0,
+        );
+        assert!(r.entry.text.contains("▲"));
+        assert_eq!(r.option_rows.len(), 3);
+        assert!(r.option_rows[0].1.text.contains("Red"));
+        assert_eq!(r.option_rows[2].0, 2);
+    }
+
+    #[test]
+    fn dropdown_emits_button_and_option_hit_areas() {
+        let spec = WidgetSpec::Dropdown {
+            label_width: 0,
+            open: true,
+            scroll_offset: 0,
+            options: vec!["a".into(), "b".into()],
+            selected_index: 0,
+            label: String::new(),
+            focused: true,
+            key: None,
+        };
         let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let cyc: Vec<_> = hits
+        let toggles: Vec<_> = hits
             .iter()
-            .filter(|h| h.widget_kind == "dropdown")
+            .filter(|h| h.event_type == "dropdown_toggle")
             .collect();
-        assert_eq!(cyc.len(), 2);
-        assert_eq!(cyc[0].payload["delta"], -1);
-        assert_eq!(cyc[1].payload["delta"], 1);
+        let selects: Vec<_> = hits
+            .iter()
+            .filter(|h| h.event_type == "dropdown_select")
+            .collect();
+        assert_eq!(toggles.len(), 1);
+        assert_eq!(selects.len(), 2);
+        assert_eq!(selects[1].payload["index"], 1);
     }
 
     #[test]
@@ -7385,16 +7855,17 @@ mod tests {
         );
         let r = render_spec(&spec, &prev, "", u32::MAX);
         assert!(
-            r.entries[0].text.contains(" c "),
+            r.entries[0].text.contains("[c "),
             "instance selection should win: {:?}",
             r.entries[0].text
         );
     }
 
     #[test]
-    fn dropdown_open_emits_option_overlays() {
+    fn dropdown_open_emits_inline_option_rows() {
         let spec = make_dropdown(&["a", "b", "c"], 1, Some("d"));
-        // Focused + open in instance state → popup overlays painted.
+        // Focused + open in instance state → inline option rows below
+        // the value button.
         let mut prev = HashMap::new();
         prev.insert(
             "d".to_string(),
@@ -7404,10 +7875,15 @@ mod tests {
             },
         );
         let out = render_spec(&spec, &prev, "d", u32::MAX);
-        assert_eq!(out.overlays.len(), 3, "one overlay row per option");
-        // Overlay rows anchor below the cycler (rows 1,2,3).
-        assert_eq!(out.overlays[0].buffer_row, 1);
-        assert!(out.overlays[1].entry.text.contains('b'));
+        assert_eq!(out.entries.len(), 4, "button row + one row per option");
+        assert!(out.entries[2].text.contains('b'));
+        // Each option row is a full-width select hit.
+        let selects: Vec<_> = out
+            .hits
+            .iter()
+            .filter(|h| h.event_type == "dropdown_select")
+            .collect();
+        assert_eq!(selects.len(), 3);
     }
 
     #[test]

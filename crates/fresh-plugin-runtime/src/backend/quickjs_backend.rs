@@ -3468,6 +3468,7 @@ impl JsEditorApi {
         let italic: bool = options.get("italic").unwrap_or(false);
         let strikethrough: bool = options.get("strikethrough").unwrap_or(false);
         let extend_to_line_end: bool = options.get("extendToLineEnd").unwrap_or(false);
+        let reversed: bool = options.get("reversed").unwrap_or(false);
         let fg_on_collision_only: bool = options.get("fgOnCollisionOnly").unwrap_or(false);
         let url: Option<String> = options.get("url").ok();
 
@@ -3479,6 +3480,7 @@ impl JsEditorApi {
             italic,
             strikethrough,
             extend_to_line_end,
+            reversed,
             fg_on_collision_only,
             url,
         };

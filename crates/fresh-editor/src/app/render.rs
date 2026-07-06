@@ -4732,6 +4732,9 @@ impl Editor {
         if opts.strikethrough {
             m |= Modifier::CROSSED_OUT;
         }
+        if opts.reversed {
+            m |= Modifier::REVERSED;
+        }
         if !m.is_empty() {
             style = style.add_modifier(m);
         }

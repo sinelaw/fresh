@@ -133,30 +133,46 @@ export function styledRow(
 
 /** Boolean toggle, rendered as `[v] label` / `[ ] label`.
  * Pass `focused: true` to highlight (the host will own focus once
- * the keymap layer is wired). */
+ * the keymap layer is wired).
+ *
+ * `labelFirst: true` renders the form layout `label: [v]` instead
+ * (chip after the label, and only the chip is clickable);
+ * `labelWidth` pads the label so a column of controls aligns.
+ * `indeterminate: true` renders a neutral `[-]` chip for an
+ * unset/inherited value. */
 export function toggle(
   checked: boolean,
   label: string,
-  options?: { focused?: boolean; key?: string },
+  options?: {
+    focused?: boolean;
+    indeterminate?: boolean;
+    labelFirst?: boolean;
+    labelWidth?: number;
+    key?: string;
+  },
 ): WidgetSpec {
   return {
     kind: "toggle",
     checked,
     label,
     focused: options?.focused ?? false,
+    indeterminate: options?.indeterminate ?? false,
+    labelFirst: options?.labelFirst ?? false,
+    labelWidth: options?.labelWidth ?? 0,
     key: options?.key,
   };
 }
 
-/** Numeric stepper, rendered as `label ◂ value ▸`. Click a glyph or
- * press Left/Down (decrement) / Right/Up (increment) to step the value
- * by `step`, clamped to `[min, max]` when set. The value is host-owned
- * instance state after first render (the spec `value` is initial-only);
- * each adjustment fires `widget_event { event_type: "change", payload:
+/** Numeric field, rendered as `label: [ 42 ]`. Press Left/Down
+ * (decrement) / Right/Up (increment) to step the value by `step`,
+ * clamped to `[min, max]` when set. The value is host-owned instance
+ * state after first render (the spec `value` is initial-only); each
+ * adjustment fires `widget_event { event_type: "change", payload:
  * { value } }`. Push a new value with `WidgetPanel.setNumber(key, v)`.
  *
  * `integer: true` renders without a decimal point; `percent: true`
- * shows `value * 100` with a `%` suffix (store `0.25`, display `25%`). */
+ * shows `value * 100` with a `%` suffix (store `0.25`, display `25%`).
+ * `labelWidth` pads the label so a column of controls aligns. */
 export function number(
   value: number,
   options?: {
@@ -167,6 +183,7 @@ export function number(
     percent?: boolean;
     label?: string;
     focused?: boolean;
+    labelWidth?: number;
     key?: string;
   },
 ): WidgetSpec {
@@ -180,27 +197,28 @@ export function number(
     percent: options?.percent ?? false,
     label: options?.label ?? "",
     focused: options?.focused ?? false,
+    labelWidth: options?.labelWidth ?? 0,
     key: options?.key,
   };
 }
 
-/** Single-select dropdown, rendered inline as `label ◂ option ▸`.
- * The selected option cycles through `options` — click a glyph or
- * press Left/Up (previous) / Right/Down (next), wrapping. Space also
- * advances to the next option. The selected index is host-owned
+/** Single-select dropdown, rendered as `label: [option ▼]`.
+ * Enter/Space (or a click on the button) opens the option list
+ * inline below the button; Up/Down move the live selection,
+ * Enter/Space/Esc close it. The selected index is host-owned
  * instance state after first render (the spec `selectedIndex` is a
  * seed); each change fires `widget_event { event_type: "change",
  * payload: { index, value } }`. Push a new selection with
  * `WidgetPanel.setDropdown(key, index)`.
  *
- * v1 is an inline cycler with no popup list (the popup arrives with
- * the widget compositor). */
+ * `labelWidth` pads the label so a column of controls aligns. */
 export function dropdown(
   options: string[],
   options_?: {
     selectedIndex?: number;
     label?: string;
     focused?: boolean;
+    labelWidth?: number;
     key?: string;
   },
 ): WidgetSpec {
@@ -210,6 +228,7 @@ export function dropdown(
     selectedIndex: options_?.selectedIndex ?? 0,
     label: options_?.label ?? "",
     focused: options_?.focused ?? false,
+    labelWidth: options_?.labelWidth ?? 0,
     key: options_?.key,
   };
 }

@@ -222,28 +222,25 @@ impl Editor {
                 handled_specially = true;
             }
         }
-        // Number stepper click: the host owns the value, so a click on
-        // the `◂`/`▸` glyph steps it directly (and fires its own
-        // `change` event). The click's own focus move already ran above.
-        if hit.widget_kind == "number" && hit.event_type == "number_step" {
-            let steps = hit
-                .payload
-                .get("delta")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
-            self.handle_widget_number_adjust(panel_key, &hit.widget_key, steps);
+        // Number value-cell click: focus already moved above; the value
+        // is changed by typing (Left/Right on the focused widget also
+        // adjusts by `step`), so the click itself is just a focus move.
+        if hit.widget_kind == "number" && hit.event_type == "number_value" {
             handled_specially = true;
         }
-        // Dropdown cycle click: the host owns the selected index, so a
-        // click on the `◂`/`▸` glyph cycles it directly (and fires its
-        // own `change` event).
-        if hit.widget_kind == "dropdown" && hit.event_type == "dropdown_cycle" {
-            let delta = hit
-                .payload
-                .get("delta")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32;
-            self.handle_widget_dropdown_cycle(panel_key, &hit.widget_key, delta);
+        // Dropdown button click toggles the inline option list open;
+        // clicking an option row selects it (fires `change`) and closes
+        // the list. The host owns both the open flag and the index.
+        if hit.widget_kind == "dropdown" && hit.event_type == "dropdown_toggle" {
+            let now_open = !self.focused_dropdown_open(panel_key);
+            self.set_dropdown_open(panel_key, &hit.widget_key, now_open);
+            handled_specially = true;
+        }
+        if hit.widget_kind == "dropdown" && hit.event_type == "dropdown_select" {
+            if let Some(idx) = hit.payload.get("index").and_then(|v| v.as_i64()) {
+                self.handle_widget_dropdown_set(panel_key, &hit.widget_key, idx as i32);
+            }
+            self.set_dropdown_open(panel_key, &hit.widget_key, false);
             handled_specially = true;
         }
         // DualList cell click: focus the clicked column and move its
@@ -1339,6 +1336,64 @@ impl Editor {
                     selected_index: new_sel,
                     // Preserve the popup's open state across a cycle so
                     // Up/Down inside the open list keeps it open.
+                    open,
+                },
+            );
+        }
+        self.rerender_widget_panel(panel_key);
+        if changed {
+            let value = options.get(new_sel as usize).cloned().unwrap_or_default();
+            self.fire_widget_event(
+                panel_key,
+                widget_key.to_string(),
+                "change".into(),
+                serde_json::json!({ "index": new_sel, "value": value }),
+            );
+        }
+    }
+
+    /// Set a `Dropdown`'s selected index to an absolute value (a click
+    /// on an option row of the open list). Clamps into the option set,
+    /// fires `change` when the selection actually moved.
+    pub(super) fn handle_widget_dropdown_set(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        index: i32,
+    ) {
+        if widget_key.is_empty() {
+            return;
+        }
+        let panel = match self.widget_registry.get(panel_key) {
+            Some(p) => p,
+            None => return,
+        };
+        let (options, spec_sel) = match crate::widgets::find_widget_by_key(&panel.spec, widget_key)
+        {
+            Some(fresh_core::api::WidgetSpec::Dropdown {
+                options,
+                selected_index,
+                ..
+            }) => (options.clone(), *selected_index),
+            _ => return,
+        };
+        if options.is_empty() {
+            return;
+        }
+        let (cur, open) = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Dropdown {
+                selected_index,
+                open,
+            }) => (*selected_index, *open),
+            _ => (spec_sel, false),
+        };
+        let new_sel = index.clamp(0, options.len() as i32 - 1);
+        let changed = new_sel != cur.clamp(0, options.len() as i32 - 1);
+        if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
+            panel_mut.instance_states.insert(
+                widget_key.to_string(),
+                crate::widgets::WidgetInstanceState::Dropdown {
+                    selected_index: new_sel,
                     open,
                 },
             );

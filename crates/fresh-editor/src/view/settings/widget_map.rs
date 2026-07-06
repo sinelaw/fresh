@@ -52,12 +52,30 @@ const ACCENT_VALUE: &str = "ui.tab_active_fg";
 /// setting's stable identifier (its JSON-pointer path) so the widget
 /// runtime preserves instance state across re-renders.
 pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> WidgetSpec {
+    setting_control_to_widget_aligned(field_key, control, None)
+}
+
+/// Like [`setting_control_to_widget`], with an optional label column
+/// width so a page of scalar controls aligns their value cells (the
+/// Settings dialog computes the max label width per page).
+pub fn setting_control_to_widget_aligned(
+    field_key: &str,
+    control: &SettingControl,
+    label_width: Option<u16>,
+) -> WidgetSpec {
     let key = Some(field_key.to_string());
+    let lw = label_width.unwrap_or(0) as u32;
     match control {
+        // Form layout (`label: [v]`, chip-only hit) to match the
+        // Settings dialog's historical toggle; an inherited/unset value
+        // renders the neutral `[-]` chip (issue #2345).
         SettingControl::Toggle(s) => WidgetSpec::Toggle {
             checked: s.checked,
             label: s.label.clone(),
             focused: false,
+            indeterminate: s.inherited,
+            label_first: true,
+            label_width: lw,
             key,
         },
         SettingControl::Number(s) => {
@@ -66,6 +84,19 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             // JSON. The `Number` widget stores the raw value and
             // multiplies by 100 only for display, so undo the ×100 here.
             let scale = if s.is_percentage { 100.0 } else { 1.0 };
+            // In-place edit state: while the control's `editor` exists,
+            // the cell renders the typed buffer with caret + selection
+            // instead of the formatted value.
+            let (edit_text, edit_cursor, edit_sel) = match &s.editor {
+                Some(ed) => {
+                    let sel = ed
+                        .selection_flat_range()
+                        .map(|(a, b)| (a as i32, b as i32))
+                        .unwrap_or((-1, -1));
+                    (Some(ed.value()), ed.flat_cursor_byte() as i32, sel)
+                }
+                None => (None, -1, (-1, -1)),
+            };
             WidgetSpec::Number {
                 value: s.value as f64 / scale,
                 min: s.min.map(|m| m as f64 / scale),
@@ -75,6 +106,11 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
                 percent: s.is_percentage,
                 label: s.label.clone(),
                 focused: false,
+                label_width: lw,
+                edit_text,
+                edit_cursor,
+                edit_sel_start: edit_sel.0,
+                edit_sel_end: edit_sel.1,
                 key,
             }
         }
@@ -83,19 +119,19 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             selected_index: s.selected as i32,
             label: s.label.clone(),
             focused: false,
+            label_width: lw,
+            open: s.open,
+            scroll_offset: s.scroll_offset as u32,
             key,
         },
         SettingControl::Text(s) => WidgetSpec::Text {
             value: s.value.clone(),
-            // While editing, carry the caret (char index → byte) and
-            // mark the field focused so the widget renderer highlights
-            // it and the host can place the hardware cursor.
+            // While editing, carry the caret (`cursor` is a byte
+            // offset) and mark the field focused so the renderer
+            // paints the block caret (`block_caret`) where typing
+            // lands.
             cursor_byte: if s.editing {
-                s.value
-                    .char_indices()
-                    .nth(s.cursor)
-                    .map(|(b, _)| b as i32)
-                    .unwrap_or(s.value.len() as i32)
+                s.cursor.min(s.value.len()) as i32
             } else {
                 -1
             },
@@ -112,6 +148,7 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             full_width: true,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            block_caret: true,
             key,
         },
         SettingControl::DualList(s) => WidgetSpec::DualList {
@@ -130,30 +167,41 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             visible_rows: 6,
             key,
         },
-        // String-list editor: a label header, one row per item, and an
-        // "add new" row — matching `SettingControl::control_height`
-        // (label + items + add). Editing (add/remove/reorder) still runs
-        // through the settings input path; this migrates the *view*.
+        // String-list editor: label, one bracketed cell + `[x]` delete
+        // button per committed item, and a trailing add row that flips
+        // between `[+] Add new` and a live input box (placeholder +
+        // block caret + inline hints) — matching the historical
+        // Settings TextList renderer row for row. Editing (add /
+        // remove / reorder) still runs through the settings input
+        // path; the rows faithfully project its state.
         SettingControl::TextList(s) => {
+            let focused = s.focus == FocusState::Focused;
             let mut children = Vec::with_capacity(s.items.len() + 2);
             children.push(raw_row(format!("{}:", s.label)));
-            for it in &s.items {
-                children.push(raw_row(format!("  {it}")));
+            for (idx, it) in s.items.iter().enumerate() {
+                let row_focused = focused && s.focused_item == Some(idx);
+                let mut segs = vec![
+                    seg("  [", None),
+                    seg(&pad(it, TEXTLIST_CELL_WIDTH), None),
+                    seg("] ", None),
+                    seg("[x]", Some(ACCENT_VALUE)),
+                ];
+                if row_focused {
+                    segs.push(seg("  Del:remove  Enter:edit", Some(DIM_HINT)));
+                }
+                children.push(raw_entry_row(segments_row(segs)));
             }
-            children.push(raw_row("  [+] Add new".to_string()));
+            children.push(text_list_add_row(s, focused));
             WidgetSpec::Col { children, key }
         }
-        // Composite controls with nested values / their own editors keep
-        // a labelled placeholder for now (Map/ObjectArray carry
-        // `serde_json::Value` entries + expansion, Json a `TextEdit`);
-        // their faithful migration rides the entry-editor work.
-        // Key→value map (e.g. Languages, LSP servers). Rendered as a
-        // label + a `Name │ <display>` header + a generic `List` whose
-        // rows are formatted by the domain helper `get_display_value`,
-        // with selection seeded from the control's focused entry so the
-        // List paints the highlight + navigation. This is the robust
-        // shape: domain code formats rows, the generic List renders and
-        // navigates them (the same primitive plugins use).
+        // Key→value map (e.g. Languages, LSP servers). Label, a dimmed
+        // `Name  <Col>` header when the control names a display field,
+        // and a generic `List` whose rows are formatted by the domain
+        // helper `get_display_value` (padded key column + truncated
+        // preview), with selection seeded from the control's focused
+        // entry so the List paints the highlight, `[Enter to edit]`,
+        // and Up/Down navigation. Domain code formats rows; the
+        // generic List renders and navigates them.
         SettingControl::Map(s) => {
             let display_title = s.display_field.as_deref().map(column_title);
             let key_width = 20usize;
@@ -162,20 +210,16 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
                 .iter()
                 .enumerate()
                 .map(|(idx, (k, v))| {
-                    let arrow = if s.expanded.contains(&idx) {
-                        "▼ "
-                    } else {
-                        "> "
-                    };
                     let focused = s.focus == FocusState::Focused && s.focused_entry == Some(idx);
+                    let preview = truncate_chars(&s.get_display_value(v), 20);
                     let mut segs = vec![
-                        seg(arrow, None),
-                        seg(&pad(k, key_width), Some(ACCENT_KEY)),
                         seg("  ", None),
-                        seg(&s.get_display_value(v), Some(ACCENT_VALUE)),
+                        seg(&pad(k, key_width), Some(ACCENT_KEY)),
+                        seg(" ", None),
+                        seg(&preview, Some(ACCENT_VALUE)),
                     ];
                     if focused {
-                        segs.push(seg("  [Enter to edit]", Some(ACCENT_KEY)));
+                        segs.push(seg("  [Enter to edit]", Some(DIM_HINT)));
                     }
                     segments_row(segs)
                 })
@@ -183,20 +227,33 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             let selected = list_selection(s.focus, s.focused_entry);
             let mut children = vec![raw_row(format!("{}:", s.label))];
             if let Some(title) = display_title {
-                children.push(header_row(&pad("Name", key_width + 2), &title));
+                children.push(header_row(&pad("Name", key_width), &title));
             }
             children.push(list_of(field_key, rows, selected));
             if !s.no_add {
-                children.push(raw_row("  [+] Add new".to_string()));
+                let add_focused = s.focus == FocusState::Focused && s.focused_entry.is_none();
+                children.push(add_new_row(add_focused, "  [Enter to add]"));
             }
             WidgetSpec::Col { children, key }
         }
-        // Object array / keybinding list. Rows are formatted by the
-        // domain helper `format_key_combo` (`Alt+= → next_window`); the
-        // generic `List` renders + navigates them.
+        // Object array (keybindings, LSP server lists). Rows are
+        // formatted by the domain helpers: a `combo → action` pair for
+        // keybinding-shaped entries, collapsing to just the display
+        // value when the combo column is empty (LSP servers and other
+        // non-keybinding arrays). The `> ` indicator marks the focused
+        // row, mirroring the historical renderer; the generic `List`
+        // supplies the highlight + navigation.
         SettingControl::ObjectArray(s) => {
-            let field = s.display_field.as_deref().unwrap_or("action");
+            // `display_field` is a JSON pointer (`/command`); the
+            // lookup key is the bare field name.
+            let field = s
+                .display_field
+                .as_deref()
+                .and_then(|p| p.strip_prefix('/'))
+                .or(s.display_field.as_deref())
+                .unwrap_or("action");
             let combo_width = 20usize;
+            let focused_ctl = s.focus == FocusState::Focused;
             let rows: Vec<TextPropertyEntry> = s
                 .bindings
                 .iter()
@@ -207,48 +264,82 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
                         .get(field)
                         .and_then(|v| v.as_str())
                         .unwrap_or("(no action)");
-                    let focused = s.focus == FocusState::Focused && s.focused_index == Some(idx);
-                    let mut segs = vec![
-                        seg(&pad(&combo, combo_width), Some(ACCENT_KEY)),
-                        seg(" → ", None),
-                        seg(action, Some(ACCENT_VALUE)),
-                    ];
-                    if focused {
-                        segs.push(seg("  [Enter to edit]", Some(ACCENT_KEY)));
-                    }
+                    let row_focused = focused_ctl && s.focused_index == Some(idx);
+                    let indicator = if row_focused { "> " } else { "  " };
+                    let segs = if combo.trim().is_empty() {
+                        vec![seg(indicator, None), seg(action, Some(ACCENT_VALUE))]
+                    } else {
+                        vec![
+                            seg(indicator, None),
+                            seg(&pad(&combo, combo_width), Some(ACCENT_KEY)),
+                            seg(" → ", None),
+                            seg(action, Some(ACCENT_VALUE)),
+                        ]
+                    };
                     segments_row(segs)
                 })
                 .collect();
             let selected = list_selection(s.focus, s.focused_index);
+            let add_focused = focused_ctl && s.focused_index.is_none();
             WidgetSpec::Col {
                 children: vec![
                     raw_row(format!("{}:", s.label)),
                     list_of(field_key, rows, selected),
-                    raw_row("  [+] Add new".to_string()),
+                    add_new_row(add_focused, ""),
                 ],
                 key,
             }
         }
-        // Multiline JSON editor → a multi-line `Text` showing the
-        // editor's current text. Editing still runs through the settings
-        // input path against the control's `TextEdit`.
+        // Multiline JSON editor: label, a `│`-bordered line box showing
+        // the editor's text with selection highlight + block caret, an
+        // `⚠ Invalid JSON` row when the buffer doesn't parse, and a
+        // muted placeholder when the value is unset. Editing (and JSON
+        // validation) runs through the settings input path against the
+        // control's `TextEdit`; the rows faithfully project its state.
         SettingControl::Json(s) => {
-            let value = s.editor.value();
-            let rows = (value.lines().count().max(1)).min(20) as u32;
-            WidgetSpec::Text {
-                value,
-                cursor_byte: -1,
-                focused: false,
-                label: s.label.clone(),
-                placeholder: None,
-                rows,
-                field_width: 0,
-                max_visible_chars: 0,
-                full_width: true,
-                completions: Vec::new(),
-                completions_visible_rows: 0,
-                key,
+            let mut children = vec![raw_row(format!("{}:", s.label))];
+            if s.is_unset() {
+                children.push(raw_entry_row(segments_row(vec![
+                    seg("  ", None),
+                    seg("(not set — press Enter to add)", Some(DIM_HINT)),
+                ])));
+                return WidgetSpec::Col { children, key };
             }
+            let focused = s.focus == FocusState::Focused;
+            let border_key = if !s.is_valid() {
+                "diagnostic.error_fg"
+            } else if focused {
+                "ui.menu_highlight_fg"
+            } else {
+                "ui.split_separator_fg"
+            };
+            let lines = s.lines();
+            let inner_width = lines
+                .iter()
+                .map(|l| l.chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(20)
+                + 2;
+            let selection = if focused { s.selection_range() } else { None };
+            let (cursor_row, cursor_col) = s.cursor_pos();
+            for (line_idx, line) in lines.iter().enumerate() {
+                children.push(json_line_row(
+                    line,
+                    line_idx,
+                    inner_width,
+                    border_key,
+                    selection,
+                    focused.then_some((cursor_row, cursor_col)),
+                ));
+            }
+            if !s.is_valid() {
+                children.push(raw_entry_row(segments_row(vec![seg(
+                    "  ⚠ Invalid JSON",
+                    Some("diagnostic.warning_fg"),
+                )])));
+            }
+            WidgetSpec::Col { children, key }
         }
         SettingControl::Complex { type_name } => WidgetSpec::Raw {
             entries: vec![TextPropertyEntry::text(format!(
@@ -256,6 +347,204 @@ pub fn setting_control_to_widget(field_key: &str, control: &SettingControl) -> W
             ))],
             key: Some(field_key.to_string()),
         },
+    }
+}
+
+/// Inner width of a TextList item/input cell (between its brackets).
+/// Matches the historical `field_width = 30` minus the two brackets.
+const TEXTLIST_CELL_WIDTH: usize = 28;
+
+/// Dim hint / disabled-text color.
+const DIM_HINT: &str = "ui.menu_disabled_fg";
+
+/// The TextList's trailing add row, in its three historical states:
+/// a live input box (with placeholder, block caret and `Enter:add
+/// Esc:cancel` hints) once the user starts adding; a focused
+/// `[+] Add new` with a "press Enter" hint; or the plain label.
+fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) -> WidgetSpec {
+    let add_focused = focused && s.focused_item.is_none();
+    let show_input = add_focused && (s.pending_active || !s.new_item_text.is_empty());
+    if show_input {
+        let mut text = String::from("  [");
+        let cell_start = text.len();
+        let caret_byte = if s.new_item_text.is_empty() {
+            None
+        } else {
+            // `cursor` is a char index into the buffer; the caret
+            // overlay wants bytes.
+            Some(
+                cell_start
+                    + s.new_item_text
+                        .char_indices()
+                        .nth(s.cursor)
+                        .map(|(b, _)| b)
+                        .unwrap_or(s.new_item_text.len()),
+            )
+        };
+        let (cell_text, dim) = if s.new_item_text.is_empty() {
+            (pad("type new item", TEXTLIST_CELL_WIDTH), true)
+        } else {
+            (pad(&s.new_item_text, TEXTLIST_CELL_WIDTH), false)
+        };
+        text.push_str(&cell_text);
+        text.push_str("] ");
+        text.push_str("[+]");
+        text.push_str("  Enter:add  Esc:cancel");
+        let mut entry = TextPropertyEntry::text(&text);
+        if dim {
+            entry.inline_overlays.push(InlineOverlay {
+                start: cell_start,
+                end: cell_start + cell_text.len(),
+                style: OverlayOptions {
+                    fg: Some(OverlayColorSpec::theme_key(DIM_HINT)),
+                    italic: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+        if let Some(b) = caret_byte {
+            let ch_len = entry.text[b..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
+            entry.inline_overlays.push(InlineOverlay {
+                start: b,
+                end: b + ch_len,
+                style: OverlayOptions {
+                    reversed: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+        WidgetSpec::Raw {
+            entries: vec![entry],
+            key: None,
+        }
+    } else if add_focused {
+        add_new_row(true, "  press Enter (or type) to add a new item")
+    } else {
+        add_new_row(false, "")
+    }
+}
+
+/// An `  [+] Add new` row, with an optional dim hint when focused.
+fn add_new_row(focused: bool, hint: &str) -> WidgetSpec {
+    let mut segs = vec![seg("  ", None), seg("[+] Add new", Some(ACCENT_VALUE))];
+    if focused && !hint.is_empty() {
+        segs.push(seg(hint, Some(DIM_HINT)));
+    }
+    raw_entry_row(segments_row(segs))
+}
+
+/// One bordered JSON-editor line: `  │{padded line}│` with an optional
+/// selection highlight and block caret (both computed from the
+/// editor's (row, char-col) coordinates).
+fn json_line_row(
+    line: &str,
+    line_idx: usize,
+    inner_width: usize,
+    border_key: &str,
+    selection: Option<((usize, usize), (usize, usize))>,
+    cursor: Option<(usize, usize)>,
+) -> WidgetSpec {
+    let mut text = String::from("  ");
+    let border_a = text.len();
+    text.push_str("│");
+    let content_start = text.len();
+    let padded = pad(line, inner_width);
+    text.push_str(&padded);
+    let border_b = text.len();
+    text.push_str("│");
+    let mut entry = TextPropertyEntry::text(&text);
+    for (s, e) in [(border_a, content_start), (border_b, border_b + "│".len())] {
+        entry.inline_overlays.push(InlineOverlay {
+            start: s,
+            end: e,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(border_key)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+    // Char-col → byte-offset within the padded content.
+    let col_to_byte = |col: usize| -> usize {
+        padded
+            .char_indices()
+            .nth(col)
+            .map(|(b, _)| b)
+            .unwrap_or(padded.len())
+    };
+    if let Some(((sr, sc), (er, ec))) = selection {
+        // The selected span of THIS line: full line when strictly
+        // inside the range, partial on the boundary rows.
+        if line_idx >= sr && line_idx <= er {
+            let from = if line_idx == sr { sc } else { 0 };
+            let to = if line_idx == er {
+                ec
+            } else {
+                line.chars().count()
+            };
+            if to > from {
+                entry.inline_overlays.push(InlineOverlay {
+                    start: content_start + col_to_byte(from),
+                    end: content_start + col_to_byte(to),
+                    style: OverlayOptions {
+                        bg: Some(OverlayColorSpec::theme_key("ui.selection_bg")),
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+    }
+    if let Some((cr, cc)) = cursor {
+        if cr == line_idx {
+            let b = content_start + col_to_byte(cc.min(padded.chars().count().saturating_sub(1)));
+            let ch_len = text[b..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            entry.inline_overlays.push(InlineOverlay {
+                start: b,
+                end: b + ch_len,
+                style: OverlayOptions {
+                    reversed: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+    }
+    WidgetSpec::Raw {
+        entries: vec![entry],
+        key: None,
+    }
+}
+
+/// Truncate to `max` chars, appending `…` when shortened (settings map
+/// previews have always clipped at 20 columns).
+fn truncate_chars(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// A single-row `Raw` widget from a pre-built entry.
+fn raw_entry_row(entry: TextPropertyEntry) -> WidgetSpec {
+    WidgetSpec::Raw {
+        entries: vec![entry],
+        key: None,
     }
 }
 
@@ -648,12 +937,12 @@ mod tests {
         let tree = settings_items_to_widget(&items);
         let out = crate::widgets::render_spec(&tree, &HashMap::new(), "", u32::MAX);
         let screen: String = out.entries.iter().map(|e| e.text.clone()).collect();
-        // Section header, toggle, number stepper, and dropdown cycler
-        // all present in the rendered text.
+        // Section header, form-layout toggle, number value cell, and
+        // dropdown button all present in the rendered text.
         assert!(screen.contains("Editor"), "section header: {screen:?}");
-        assert!(screen.contains("[v] Word wrap"), "toggle: {screen:?}");
-        assert!(screen.contains("Tab size ◂ 4 ▸"), "number: {screen:?}");
-        assert!(screen.contains("Theme ◂ Dark ▸"), "dropdown: {screen:?}");
+        assert!(screen.contains("Word wrap: [v]"), "toggle: {screen:?}");
+        assert!(screen.contains("Tab size: [  4 ]"), "number: {screen:?}");
+        assert!(screen.contains("Theme: [Dark  ▼]"), "dropdown: {screen:?}");
     }
 
     #[test]
