@@ -214,6 +214,7 @@ pub mod settings_text_field_esc_cancels;
 pub mod settings_text_input_focus;
 pub mod settings_tree_view;
 pub mod settings_ui_usability;
+pub mod settings_widget_controls;
 pub mod shell_command;
 pub mod shift_backspace;
 pub mod slow_filesystem;

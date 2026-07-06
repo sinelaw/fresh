@@ -1203,4 +1203,65 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn object_array_add_new_row_highlights_when_focused() {
+        // The `[+] Add new` sentinel must read as selected (list-row
+        // selection bg, extended to line end) when it is the focused
+        // sub-row — otherwise the user can't tell it's selected.
+        // Regression: the add row rendered with no highlight at all.
+        use crate::view::controls::KeybindingListState;
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        let mut arr = KeybindingListState::new("Detectors");
+        arr.bindings = vec![json!({"name": ".venv"})];
+        arr.display_field = Some("/name".to_string());
+        arr.focus = FocusState::Focused;
+
+        // Focused on an entry: the add row carries no selection bg.
+        arr.focused_index = Some(0);
+        let spec =
+            setting_control_to_widget("/env/detectors", &SettingControl::ObjectArray(arr.clone()));
+        let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
+        let add_unfocused = out
+            .entries
+            .iter()
+            .find(|e| e.text.contains("[+] Add new"))
+            .expect("add-new row");
+        assert!(
+            add_unfocused
+                .style
+                .as_ref()
+                .and_then(|s| s.bg.as_ref())
+                .is_none(),
+            "add row must not highlight while an entry is focused: {add_unfocused:?}"
+        );
+
+        // Focused on the add-new sentinel: it gets the selection bg.
+        arr.focused_index = None;
+        let spec = setting_control_to_widget("/env/detectors", &SettingControl::ObjectArray(arr));
+        let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
+        let add_focused = out
+            .entries
+            .iter()
+            .find(|e| e.text.contains("[+] Add new"))
+            .expect("add-new row");
+        let bg = add_focused
+            .style
+            .as_ref()
+            .and_then(|s| s.bg.as_ref())
+            .expect("focused add row must carry a selection background");
+        assert!(
+            matches!(bg, OverlayColorSpec::ThemeKey(k) if k == "ui.popup_selection_bg"),
+            "add row highlight uses the list selection bg: {bg:?}"
+        );
+        assert!(
+            add_focused
+                .style
+                .as_ref()
+                .is_some_and(|s| s.extend_to_line_end),
+            "selection bg extends to the line end like a list row"
+        );
+    }
 }

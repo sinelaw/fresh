@@ -903,6 +903,11 @@ type OverlayOptions = {
 	*/
 	fgOnCollisionOnly: boolean;
 	/**
+	* Whether to render reverse-video (swap fg/bg). Modal surfaces use
+	* this for the block caret and selection cells.
+	*/
+	reversed: boolean;
+	/**
 	* Optional URL for OSC 8 terminal hyperlinks.
 	* When set, the overlay text becomes a clickable hyperlink in terminals
 	* that support OSC 8 escape sequences.
