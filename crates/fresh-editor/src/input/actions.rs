@@ -6,6 +6,7 @@ use crate::model::buffer::{Buffer, LineEnding};
 use crate::model::buffer_position::{byte_to_2d, pos_2d_to_byte};
 use crate::model::cursor::{Cursor, Cursors, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
+use crate::model::virtual_space::{cursor_virtual_columns, line_width_at_content_end};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::highlighter::HighlightCategory;
 use crate::primitives::indent_pattern::PatternIndentCalculator;
@@ -327,6 +328,34 @@ fn move_each_cursor(
             new_anchor,
             cursor.sticky_column,
         );
+    }
+}
+
+/// Like [`move_each_cursor`], but `new_pos_fn` also chooses the new sticky
+/// (goal) column. Used by horizontal movement into virtual space, where the
+/// byte position stays pinned at the line's content end and only the sticky
+/// column advances.
+fn move_each_cursor_with_sticky(
+    cursors: &Cursors,
+    events: &mut Vec<Event>,
+    mut new_pos_fn: impl FnMut(&Cursor) -> (usize, Option<usize>),
+) {
+    for (cursor_id, cursor) in cursors.iter() {
+        let (new_pos, new_sticky) = new_pos_fn(cursor);
+        let new_anchor = if cursor.deselect_on_move {
+            None
+        } else {
+            cursor.anchor
+        };
+        events.push(Event::MoveCursor {
+            cursor_id,
+            old_position: cursor.position,
+            new_position: new_pos,
+            old_anchor: cursor.anchor,
+            new_anchor,
+            old_sticky_column: cursor.sticky_column,
+            new_sticky_column: new_sticky,
+        });
     }
 }
 
@@ -2365,27 +2394,47 @@ pub fn action_to_events(
         // Uses grapheme cluster boundaries for proper handling of combining characters
         Action::MoveLeft => {
             // Collapse selection to LEFT edge when deselect_on_move (issue #1566).
-            move_each_cursor(cursors, &mut events, |c| {
+            let vs_mode = state.buffer_settings.virtual_space;
+            move_each_cursor_with_sticky(cursors, &mut events, |c| {
                 if c.deselect_on_move {
                     if let Some(range) = c.selection_range() {
-                        return range.start;
+                        return (range.start, None);
                     }
                 }
+                // In virtual space, step back one column before bytes move.
+                if cursor_virtual_columns(vs_mode, &state.buffer, c) > 0 {
+                    return (c.position, c.sticky_column.map(|s| s - 1));
+                }
                 let p = state.buffer.prev_grapheme_boundary(c.position);
-                adjust_position_for_crlf_left(&state.buffer, p)
+                (adjust_position_for_crlf_left(&state.buffer, p), None)
             });
         }
 
         Action::MoveRight => {
             // Collapse selection to RIGHT edge when deselect_on_move (issue #1566).
             let max_pos = max_cursor_position(&state.buffer);
-            move_each_cursor(cursors, &mut events, |c| {
+            let vs_mode = state.buffer_settings.virtual_space;
+            move_each_cursor_with_sticky(cursors, &mut events, |c| {
                 if c.deselect_on_move {
                     if let Some(range) = c.selection_range() {
-                        return range.end.min(max_pos);
+                        return (range.end.min(max_pos), None);
                     }
                 }
-                next_position_for_crlf(&state.buffer, c.position, max_pos)
+                // In virtual space, Right at a line's content end stays on
+                // the line and advances the goal column past the width.
+                if vs_mode.cursor_beyond_eol()
+                    && c.anchor.is_none()
+                    && c.selection_mode != SelectionMode::Block
+                {
+                    if let Some(width) = line_width_at_content_end(&state.buffer, c.position) {
+                        let vcols = c.sticky_column.map_or(0, |s| s.saturating_sub(width));
+                        return (c.position, Some(width + vcols + 1));
+                    }
+                }
+                (
+                    next_position_for_crlf(&state.buffer, c.position, max_pos),
+                    None,
+                )
             });
         }
 
@@ -3339,6 +3388,132 @@ mod tests {
         let (pos, sticky) = page_move(content, 26 + 4, Action::MovePageUp);
         assert_eq!(pos, 6, "goal column 3 lands after the first 好");
         assert_eq!(sticky, Some(3), "sticky column is the visual column");
+    }
+
+    /// Build a state with virtual space `mode`, `content`, and the cursor at
+    /// `position` with no sticky column.
+    fn virtual_space_state(
+        content: &str,
+        position: usize,
+        mode: crate::config::VirtualSpaceMode,
+    ) -> (EditorState, Cursors) {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        state.buffer_settings.virtual_space = mode;
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: content.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 0,
+                new_position: position,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: None,
+                new_sticky_column: None,
+            },
+        );
+        (state, cursors)
+    }
+
+    fn run_action(state: &mut EditorState, cursors: &mut Cursors, action: Action) {
+        let events =
+            action_to_events(state, cursors, action, 4, false, false, true, 80, 24).unwrap();
+        for event in &events {
+            state.apply(cursors, event);
+        }
+    }
+
+    /// With virtual space on, Right at a line's content end pins the byte
+    /// position and walks the goal column out past the width; Left walks it
+    /// back before any bytes move.
+    #[test]
+    fn test_move_right_left_traverse_virtual_space() {
+        use crate::config::VirtualSpaceMode;
+        use crate::model::virtual_space::cursor_virtual_columns;
+
+        let (mut state, mut cursors) = virtual_space_state("ab\nxyz", 2, VirtualSpaceMode::On);
+
+        run_action(&mut state, &mut cursors, Action::MoveRight);
+        assert_eq!(cursors.primary().position, 2, "byte position stays at EOL");
+        assert_eq!(cursors.primary().sticky_column, Some(3));
+        assert_eq!(
+            cursor_virtual_columns(VirtualSpaceMode::On, &state.buffer, cursors.primary()),
+            1
+        );
+
+        run_action(&mut state, &mut cursors, Action::MoveRight);
+        assert_eq!(cursors.primary().position, 2);
+        assert_eq!(cursors.primary().sticky_column, Some(4));
+
+        run_action(&mut state, &mut cursors, Action::MoveLeft);
+        assert_eq!(cursors.primary().position, 2);
+        assert_eq!(cursors.primary().sticky_column, Some(3));
+
+        run_action(&mut state, &mut cursors, Action::MoveLeft);
+        assert_eq!(cursors.primary().position, 2);
+        assert_eq!(cursors.primary().sticky_column, Some(2), "back at the edge");
+
+        // One more Left is a normal byte move.
+        run_action(&mut state, &mut cursors, Action::MoveLeft);
+        assert_eq!(cursors.primary().position, 1);
+        assert_eq!(cursors.primary().sticky_column, None);
+    }
+
+    /// With virtual space off, Right at a line's content end wraps to the
+    /// next line exactly as before.
+    #[test]
+    fn test_move_right_wraps_when_virtual_space_off() {
+        use crate::config::VirtualSpaceMode;
+
+        let (mut state, mut cursors) = virtual_space_state("ab\nxyz", 2, VirtualSpaceMode::Off);
+        run_action(&mut state, &mut cursors, Action::MoveRight);
+        assert_eq!(cursors.primary().position, 3, "moved to next line start");
+
+        // The block-only tier keeps regular cursor movement clamped too.
+        let (mut state, mut cursors) = virtual_space_state("ab\nxyz", 2, VirtualSpaceMode::Block);
+        run_action(&mut state, &mut cursors, Action::MoveRight);
+        assert_eq!(cursors.primary().position, 3);
+    }
+
+    /// Vertical movement onto a shorter line keeps the goal column; with
+    /// virtual space on, the cursor is virtually at that column.
+    #[test]
+    fn test_vertical_movement_holds_virtual_column() {
+        use crate::config::VirtualSpaceMode;
+        use crate::model::virtual_space::cursor_virtual_columns;
+
+        // Cursor at column 4 of the first line; the middle line is 2 wide.
+        let (mut state, mut cursors) =
+            virtual_space_state("abcdef\nab\nabcdef", 4, VirtualSpaceMode::On);
+
+        run_action(&mut state, &mut cursors, Action::MoveDown);
+        assert_eq!(cursors.primary().position, 9, "clipped to line content end");
+        assert_eq!(cursors.primary().sticky_column, Some(4));
+        assert_eq!(
+            cursor_virtual_columns(VirtualSpaceMode::On, &state.buffer, cursors.primary()),
+            2,
+            "cursor is 2 columns past the short line's end"
+        );
+
+        run_action(&mut state, &mut cursors, Action::MoveDown);
+        assert_eq!(
+            cursors.primary().position,
+            10 + 4,
+            "goal column restored on the longer line"
+        );
     }
 
     #[test]

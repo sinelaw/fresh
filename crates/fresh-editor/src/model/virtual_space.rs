@@ -45,20 +45,26 @@ pub fn cursor_virtual_columns(mode: VirtualSpaceMode, buffer: &Buffer, cursor: &
     let Some(sticky) = cursor.sticky_column else {
         return 0;
     };
-
-    let line = buffer.get_line_number(cursor.position);
-    let Some(line_start) = buffer.line_start_offset(line) else {
+    let Some(width) = line_width_at_content_end(buffer, cursor.position) else {
         return 0;
     };
+    sticky.saturating_sub(width)
+}
+
+/// If `position` sits exactly at its line's content end, the visual width
+/// of that line's content; `None` otherwise. This is the precondition for a
+/// cursor at `position` to be virtual, and the base the sticky column is
+/// measured against.
+pub fn line_width_at_content_end(buffer: &Buffer, position: usize) -> Option<usize> {
+    let line = buffer.get_line_number(position);
+    let line_start = buffer.line_start_offset(line)?;
     let content = buffer.get_line(line).unwrap_or_default();
     let text = String::from_utf8_lossy(&content);
     let content_len = text.trim_end_matches(['\r', '\n']).len();
-    if cursor.position != line_start + content_len {
-        return 0;
+    if position != line_start + content_len {
+        return None;
     }
-
-    let width = visual_column_at_byte(&text, content_len);
-    sticky.saturating_sub(width)
+    Some(visual_column_at_byte(&text, content_len))
 }
 
 /// The sticky column that places a cursor `virtual_columns` past the end of
