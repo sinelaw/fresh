@@ -515,6 +515,14 @@ export function text(
      * `WidgetSpec::Text.completions` (Rust) for the rendering
      * + keyboard semantics. */
     completions?: string[];
+    /** Paint the caret as a REVERSED block cell (modal surfaces
+     * without a hardware cursor). Default false. */
+    blockCaret?: boolean;
+    /** Seed selection byte range within `value` (shown with the
+     * selection bg while focused). `-1` = none. Seed-only, like
+     * `cursorByte`. */
+    selStart?: number;
+    selEnd?: number;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -530,6 +538,9 @@ export function text(
     maxVisibleChars: options.maxVisibleChars ?? 0,
     fullWidth: options.fullWidth ?? false,
     completions: options.completions ?? [],
+    blockCaret: options.blockCaret ?? false,
+    selStart: options.selStart ?? -1,
+    selEnd: options.selEnd ?? -1,
     key: options.key,
   };
 }
