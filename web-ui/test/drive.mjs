@@ -122,7 +122,10 @@ await page.waitForFunction(() => { const fe = window.fresh.scene.regions.fileExp
 const fx = await scene(page);
 check('file explorer is a native tree in the scene', !!(fx.regions.fileExplorer && fx.regions.fileExplorer.rows.length > 0), 'rows=' + ((fx.regions.fileExplorer && fx.regions.fileExplorer.rows.length) || 0));
 check('explorer rendered as native .fx-row', (await page.locator('.fileexplorer .fx-row').count()) >= 1);
-check('NO svg/cells inside the explorer', (await page.locator('.fileexplorer svg').count()) === 0);
+// The explorer chrome must not be drawn from buffer CELLS (svg.cells). Decorative
+// file-type/folder icons are legitimate inline-SVG chrome (class "ficon"), so this
+// targets the buffer-cell class specifically rather than all SVG.
+check('NO buffer cells (svg.cells) inside the explorer', (await page.locator('.fileexplorer svg.cells').count()) === 0);
 await page.screenshot({ path: `${SHOTS}/25-native-explorer.png` });
 
 console.log('\n[workspace-trust dialog = native modal, NOT cells]');
