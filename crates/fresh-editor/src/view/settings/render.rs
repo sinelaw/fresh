@@ -504,10 +504,14 @@ fn render_categories_horizontal(
 /// Get an icon for a settings category name.
 ///
 /// Two sets are available. The Nerd Font set uses private-use-area
-/// codepoints that require a patched "Nerd Font" in the terminal — on
-/// any other font they render as `?` or empty boxes (issue #2032). The
-/// default set sticks to plain ASCII so it renders everywhere; it's
-/// used unless `editor.nerd_font_icons` is enabled.
+/// codepoints that require a patched "Nerd Font" in the terminal — PUA
+/// glyphs have no system-font fallback, so on any other font they
+/// render as `?` or empty boxes (issue #2032). The default set uses
+/// standard BMP codepoints (default text presentation, width 1) from
+/// the same compatibility class as the `▶`/`✓`/`●` glyphs the UI
+/// already relies on, so terminal font fallback can always supply
+/// them. The Nerd Font set is used only when `editor.nerd_font_icons`
+/// is enabled.
 fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
     let name = name.to_lowercase();
     if nerd_fonts {
@@ -526,20 +530,20 @@ fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
         };
     }
     if name.starts_with("plugin: ") {
-        return "+ ";
+        return "\u{271a} "; // ✚ heavy plus (add-on)
     }
     match name.as_str() {
-        "general" => "* ",
-        "editor" => "~ ",
-        "clipboard" => "= ",
-        "file browser" => "/ ",
-        "file explorer" => "/ ",
-        "packages" => "@ ",
-        "plugins" => "+ ",
-        "terminal" => "$ ",
-        "warnings" => "! ",
-        "keybindings" => "^ ",
-        _ => "- ",
+        "general" => "\u{2699} ",       // ⚙ gear
+        "editor" => "\u{270e} ",        // ✎ pencil
+        "clipboard" => "\u{2702} ",     // ✂ scissors (cut/copy)
+        "file browser" => "\u{25a4} ",  // ▤ square with lines (document)
+        "file explorer" => "\u{25a6} ", // ▦ square with grid (tree)
+        "packages" => "\u{25c6} ",      // ◆ diamond
+        "plugins" => "\u{271a} ",       // ✚ heavy plus (add-on)
+        "terminal" => "\u{00bb} ",      // » prompt chevron
+        "warnings" => "\u{26a0} ",      // ⚠ warning sign
+        "keybindings" => "\u{2328} ",   // ⌨ keyboard
+        _ => "\u{2022} ",               // • bullet as fallback
     }
 }
 

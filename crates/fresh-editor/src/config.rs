@@ -1159,7 +1159,8 @@ pub struct EditorConfig {
     /// category icons). Nerd Font glyphs live in the Unicode private-use
     /// area and only render correctly when the terminal uses a patched
     /// "Nerd Font"; on any other font they show up as `?` or empty boxes.
-    /// When disabled, portable ASCII symbols are used instead.
+    /// When disabled, standard Unicode symbols (covered by normal
+    /// terminal font fallback) are used instead.
     /// Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]

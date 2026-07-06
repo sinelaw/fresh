@@ -548,7 +548,7 @@
           "x-section": "Display"
         },
         "nerd_font_icons": {
-          "description": "Use Nerd Font icons for decorative UI glyphs (e.g. the settings\ncategory icons). Nerd Font glyphs live in the Unicode private-use\narea and only render correctly when the terminal uses a patched\n\"Nerd Font\"; on any other font they show up as `?` or empty boxes.\nWhen disabled, portable ASCII symbols are used instead.\nDefault: false",
+          "description": "Use Nerd Font icons for decorative UI glyphs (e.g. the settings\ncategory icons). Nerd Font glyphs live in the Unicode private-use\narea and only render correctly when the terminal uses a patched\n\"Nerd Font\"; on any other font they show up as `?` or empty boxes.\nWhen disabled, standard Unicode symbols (covered by normal\nterminal font fallback) are used instead.\nDefault: false",
           "type": "boolean",
           "default": false,
           "x-section": "Display"
