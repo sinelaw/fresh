@@ -55,14 +55,23 @@
   control-state model (`SettingControl`); routing input through
   `handle_widget_key` and retiring the per-control `*State` structs is the
   remaining (behavior-preserving) step — see §5.3.1.
-- **Phase 2 (shared control core) — render leg DONE.** There is now exactly
-  one renderer per control: the `view/controls` ratatui render modules
-  (toggle / number_input / dropdown / text_input / dual_list / text_list /
-  map_input / keybinding_list / button `render.rs`) are **deleted** — the
-  widget framework is the only paint path. The `*State` structs and their
-  input methods remain as the model (the domain formatter `format_key_combo`
-  moved into `keybinding_list/mod.rs`); retiring them rides the input-routing
-  step (see §5.3.1).
+- **Phase 2 (shared control core) — render leg DONE; editing engines DONE.**
+  There is now exactly one renderer per control: the `view/controls` ratatui
+  render modules (toggle / number_input / dropdown / text_input / dual_list /
+  text_list / map_input / keybinding_list / button `render.rs`) are
+  **deleted** — the widget framework is the only paint path. And there is now
+  exactly one text-editing engine: `TextInputState` rides an embedded
+  [`TextEdit`] (its ~150 lines of hand-rolled byte-cursor mechanics and its
+  dead immediate-mode key/mouse handler are deleted), joining
+  `NumberInputState` and `JsonEditState`, which already did — the same engine
+  the widget runtime drives for its `Text` widgets, selection included. What
+  remains of `view/controls` is the *domain model*: `*State` structs as
+  config-value carriers with domain behavior (validation, add/remove
+  semantics, replace-on-type), plus two thin add-input line buffers
+  (`TextListState.new_item_text`, `MapState.new_key_text`) that are domain
+  fields rather than editing engines. Full `*State` retirement (runtime
+  instance-state as the model, `widget_event` → `pending_changes`) rides the
+  entry-dialog-panel milestone (§5.3.1 steps 6–7).
 - **Phase 5 (expose + docs + delete dead path) — largely DONE.** `plugins.md`
   §7.1 lists the new kinds; `widgets.ts` + `fresh.d.ts` carry the new options
   (labelFirst/labelWidth/indeterminate, number edit fields, dropdown
