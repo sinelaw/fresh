@@ -227,6 +227,47 @@ fn test_tab_pads_with_spaces() {
     harness.assert_buffer_content("ab       \nxyz");
 }
 
+/// Clicking past the end of a line places the cursor at the clicked column;
+/// typing there pads the gap.
+#[test]
+fn test_click_past_eol_places_virtual_cursor() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("ab\nxyz").unwrap();
+
+    let (x1, y1) = harness
+        .find_text_on_screen("xyz")
+        .expect("second line visible");
+    let (x0, y0) = (x1, y1 - 1);
+
+    // Click 3 columns past the end of "ab".
+    harness.mouse_click(x0 + 5, y0).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.screen_cursor_position(),
+        (x0 + 5, y0),
+        "cursor lands at the clicked column"
+    );
+
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("ab   X\nxyz");
+}
+
+/// With virtual space off, the same click snaps to the line end.
+#[test]
+fn test_click_past_eol_snaps_when_off() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Off);
+    harness.load_buffer_from_text("ab\nxyz").unwrap();
+
+    let (x1, y1) = harness
+        .find_text_on_screen("xyz")
+        .expect("second line visible");
+    let (x0, y0) = (x1, y1 - 1);
+
+    harness.mouse_click(x0 + 5, y0).unwrap();
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("abX\nxyz");
+}
+
 /// Vertical movement through a short line and back onto a long one restores
 /// the original column (the goal column survives the virtual segment).
 #[test]

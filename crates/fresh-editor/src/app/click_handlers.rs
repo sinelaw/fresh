@@ -311,7 +311,7 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Calculate clicked position in buffer
-        let (toggle_fold_byte, onclick_action, target_position, cursor_snapshot) =
+        let (toggle_fold_byte, onclick_action, target_position, click_overshoot, cursor_snapshot) =
             if let Some(state) = self
                 .windows
                 .get(&self.active_window)
@@ -321,16 +321,18 @@ impl Editor {
             {
                 let gutter_width = state.margins.left_total_width() as u16;
 
-                let Some(target_position) = super::click_geometry::screen_to_buffer_position(
-                    col,
-                    row,
-                    content_rect,
-                    gutter_width,
-                    &cached_mappings,
-                    fallback,
-                    true, // Allow gutter clicks - position cursor at start of line
-                    compose_width,
-                ) else {
+                let Some((target_position, click_overshoot)) =
+                    super::click_geometry::screen_to_buffer_position_with_overshoot(
+                        col,
+                        row,
+                        content_rect,
+                        gutter_width,
+                        &cached_mappings,
+                        fallback,
+                        true, // Allow gutter clicks - position cursor at start of line
+                        compose_width,
+                    )
+                else {
                     return Ok(());
                 };
 
@@ -395,6 +397,7 @@ impl Editor {
                     toggle_fold_byte,
                     onclick_action,
                     target_position,
+                    click_overshoot,
                     cursor_snapshot,
                 )
             } else {
@@ -438,7 +441,21 @@ impl Editor {
 
         // The goal column for later vertical movement is a *visual* column
         // (wide-char aware), not the byte column `offset_to_position` returns.
+        // With virtual space on, a click past the end of a line keeps the
+        // clicked column: the byte position clips to the content end and the
+        // sticky column carries the overshoot.
         let new_sticky_column = self.buffers().get(&buffer_id).and_then(|state| {
+            if click_overshoot > 0
+                && !extend_selection
+                && state.buffer_settings.virtual_space.cursor_beyond_eol()
+            {
+                if let Some(width) = crate::model::virtual_space::line_width_at_content_end(
+                    &state.buffer,
+                    target_position,
+                ) {
+                    return Some(width + click_overshoot);
+                }
+            }
             crate::primitives::display_width::visual_column_of(&state.buffer, target_position)
         });
 

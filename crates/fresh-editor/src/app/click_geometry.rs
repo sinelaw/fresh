@@ -61,6 +61,34 @@ pub(crate) fn screen_to_buffer_position(
     allow_gutter_click: bool,
     compose_width: Option<u16>,
 ) -> Option<usize> {
+    screen_to_buffer_position_with_overshoot(
+        col,
+        row,
+        content_rect,
+        gutter_width,
+        cached_mappings,
+        fallback_position,
+        allow_gutter_click,
+        compose_width,
+    )
+    .map(|(position, _)| position)
+}
+
+/// Like [`screen_to_buffer_position`], but also reports how many screen
+/// cells *past the end of the row's rendered content* the click landed
+/// (0 when it hit a real cell). Virtual-space mouse placement uses the
+/// overshoot to derive the clicked column beyond the line end.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn screen_to_buffer_position_with_overshoot(
+    col: u16,
+    row: u16,
+    content_rect: Rect,
+    gutter_width: u16,
+    cached_mappings: &Option<Vec<ViewLineMapping>>,
+    fallback_position: usize,
+    allow_gutter_click: bool,
+    compose_width: Option<u16>,
+) -> Option<(usize, usize)> {
     let orig_content_rect = content_rect;
     let mut content_rect = adjust_content_rect_for_compose(content_rect, compose_width);
 
@@ -105,34 +133,55 @@ pub(crate) fn screen_to_buffer_position(
     // Use cached view line mappings for accurate position lookup
     let visual_row = content_row as usize;
 
-    // Helper to get position from a line mapping at a given visual column
-    let position_from_mapping = |line_mapping: &ViewLineMapping, col: usize| -> usize {
-        if col < line_mapping.visual_to_char.len() {
+    // Helper to get position (and cells past the rendered content) from a
+    // line mapping at a given visual column.
+    let position_from_mapping = |line_mapping: &ViewLineMapping, col: usize| -> (usize, usize) {
+        // Column of the cell just past the last *content* cell: the last
+        // source-backed cell whose byte is before `line_end_byte` (the
+        // newline cell and trailing decoration-only cells don't count).
+        // A click at or beyond this column is a click past the line's
+        // content; the difference is the virtual-space overshoot.
+        let content_end_col = line_mapping
+            .visual_to_char
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &char_idx)| {
+                line_mapping
+                    .char_source_bytes
+                    .get(char_idx)
+                    .is_some_and(|b| b.is_some_and(|b| b < line_mapping.line_end_byte))
+            })
+            .map(|(visual_col, _)| visual_col + 1)
+            .unwrap_or(0);
+
+        if col < content_end_col {
             // Use O(1) lookup: visual column -> char index -> source byte
             if let Some(byte_pos) = line_mapping.source_byte_at_visual_col(col) {
-                return byte_pos;
+                return (byte_pos, 0);
             }
             // Column maps to virtual/injected content - find nearest real position
             for c in (0..col).rev() {
                 if let Some(byte_pos) = line_mapping.source_byte_at_visual_col(c) {
-                    return byte_pos;
+                    return (byte_pos, 0);
                 }
             }
-            line_mapping.line_end_byte
+            (line_mapping.line_end_byte, 0)
         } else {
             // Click is past end of visible content.
+            let overshoot = col - content_end_col;
             // For empty lines (only a newline), return the line start position
             // to keep cursor on this line rather than jumping to the next line.
             if line_mapping.visual_to_char.len() <= 1 {
                 if let Some(Some(first_byte)) = line_mapping.char_source_bytes.first() {
-                    return *first_byte;
+                    return (*first_byte, overshoot);
                 }
             }
-            line_mapping.line_end_byte
+            (line_mapping.line_end_byte, overshoot)
         }
     };
 
-    let position = cached_mappings
+    let (position, overshoot) = cached_mappings
         .as_ref()
         .and_then(|mappings| {
             if let Some(line_mapping) = mappings.get(visual_row) {
@@ -146,9 +195,9 @@ pub(crate) fn screen_to_buffer_position(
                 None
             }
         })
-        .unwrap_or(fallback_position);
+        .unwrap_or((fallback_position, 0));
 
-    Some(position)
+    Some((position, overshoot))
 }
 
 /// Check whether a gutter click at `target_position` should toggle a fold.
