@@ -34,7 +34,7 @@ pub use dual_list::{DualListColumn, DualListHit, DualListLayout, DualListState};
 pub use keybinding_list::{KeybindingListEvent, KeybindingListState};
 pub use map_input::{MapEvent, MapState};
 pub use number_input::{NumberInputEvent, NumberInputState};
-pub use text_input::{TextInputEvent, TextInputState};
+pub use text_input::TextInputState;
 pub use text_list::{TextListEvent, TextListState};
 pub use toggle::{ToggleEvent, ToggleState};
 

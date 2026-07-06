@@ -331,41 +331,41 @@ fn test_bug_466_unicode_deletion_in_settings() {
 
     // Insert a multi-byte character
     state.insert('ş'); // Turkish s-cedilla (2 bytes)
-    assert_eq!(state.value, "ş");
-    assert_eq!(state.cursor, 2); // Should be at byte position 2 (after the 2-byte char)
+    assert_eq!(state.value(), "ş");
+    assert_eq!(state.cursor_byte(), 2); // Should be at byte position 2 (after the 2-byte char)
 
     // Insert another character - this should NOT crash
     state.insert('a');
-    assert_eq!(state.value, "şa");
-    assert_eq!(state.cursor, 3); // 2 bytes for ş + 1 byte for a
+    assert_eq!(state.value(), "şa");
+    assert_eq!(state.cursor_byte(), 3); // 2 bytes for ş + 1 byte for a
 
     // Backspace should delete 'a'
     state.backspace();
-    assert_eq!(state.value, "ş");
-    assert_eq!(state.cursor, 2);
+    assert_eq!(state.value(), "ş");
+    assert_eq!(state.cursor_byte(), 2);
 
     // Backspace should delete 'ş' entirely (not just 1 byte)
     state.backspace();
-    assert_eq!(state.value, "");
-    assert_eq!(state.cursor, 0);
+    assert_eq!(state.value(), "");
+    assert_eq!(state.cursor_byte(), 0);
 
     // Test with CJK characters (3 bytes each)
     state.insert('日');
     state.insert('本');
-    assert_eq!(state.value, "日本");
-    assert_eq!(state.cursor, 6); // 3 + 3 bytes
+    assert_eq!(state.value(), "日本");
+    assert_eq!(state.cursor_byte(), 6); // 3 + 3 bytes
 
     // Move left should move to previous character boundary
     state.move_left();
-    assert_eq!(state.cursor, 3); // At start of 本
+    assert_eq!(state.cursor_byte(), 3); // At start of 本
 
     // Insert in the middle
     state.insert('X');
-    assert_eq!(state.value, "日X本");
+    assert_eq!(state.value(), "日X本");
 
     // Delete (forward) should delete 本
     state.delete();
-    assert_eq!(state.value, "日X");
+    assert_eq!(state.value(), "日X");
 }
 
 /// Test multi-byte character handling in settings number input

@@ -3170,8 +3170,7 @@ pub(crate) fn update_control_from_value(control: &mut SettingControl, value: &se
         }
         SettingControl::Text(state) => {
             if let Some(s) = value.as_str() {
-                state.value = s.to_string();
-                state.cursor = state.value.len();
+                state.set_value(s);
             }
         }
         SettingControl::TextList(state) => {

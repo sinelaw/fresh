@@ -1517,7 +1517,7 @@ pub fn control_to_value(control: &SettingControl) -> serde_json::Value {
             })
             .unwrap_or(serde_json::Value::Null),
 
-        SettingControl::Text(state) => serde_json::Value::String(state.value.clone()),
+        SettingControl::Text(state) => serde_json::Value::String(state.value()),
 
         SettingControl::TextList(state) => {
             let arr: Vec<serde_json::Value> = state
@@ -1728,7 +1728,7 @@ mod tests {
         assert!(!item.modified);
 
         if let SettingControl::Text(state) = &item.control {
-            assert_eq!(state.value, "monokai");
+            assert_eq!(state.value(), "monokai");
         } else {
             panic!("Expected text control");
         }

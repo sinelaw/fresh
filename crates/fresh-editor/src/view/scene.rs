@@ -1325,7 +1325,7 @@ fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> Set
             open: s.open,
         },
         C::Text(s) => SettingControlView::Text {
-            value: s.value.clone(),
+            value: s.value(),
             editing: s.editing,
             placeholder: s.placeholder.clone(),
         },

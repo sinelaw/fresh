@@ -1496,7 +1496,7 @@ fn render_control(
                 let label_style = Style::default().fg(theme.editor_fg);
                 let value_style = Style::default().fg(theme.line_number_fg);
                 let label = format!("{}: ", state.label);
-                let value = &state.value;
+                let value = state.value();
 
                 let label_area = Rect::new(area.x, area.y, label_w, 1);
                 let value_area = Rect::new(

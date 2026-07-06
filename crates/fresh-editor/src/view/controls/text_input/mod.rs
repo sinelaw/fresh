@@ -1,30 +1,25 @@
-//! Single-line text input control
+//! Single-line text input control — state only.
 //!
-//! Renders as: `Label: [text content     ]`
-//!
-//! This module provides a complete text input component with:
-//! - State management (`TextInputState`)
-//! - Rendering (`render_text_input`, `render_text_input_aligned`)
-//! - Input handling (`TextInputState::handle_mouse`, `handle_key`)
-//! - Layout/hit testing (`TextInputLayout`)
+//! The control renders through the plugin widget framework (the
+//! Settings mapping projects this state into a `WidgetSpec::Text`),
+//! and its editing mechanics are the same [`TextEdit`] engine the
+//! widget runtime drives — value, byte cursor, and selection live in
+//! one implementation shared by every text surface in the editor.
 
-mod input;
-
-use crate::primitives::grapheme;
+use crate::primitives::text_edit::TextEdit;
 use ratatui::layout::Rect;
 use ratatui::style::Color;
-
-pub use input::TextInputEvent;
 
 use super::FocusState;
 
 /// State for a text input control
 #[derive(Debug, Clone)]
 pub struct TextInputState {
-    /// Current text value
-    pub value: String,
-    /// Cursor position (character index)
-    pub cursor: usize,
+    /// Single-line editing engine. Owns the value, the byte-offset
+    /// cursor, and the selection — the exact same `TextEdit` the
+    /// widget runtime uses for its `Text` widgets, so text-editing
+    /// mechanics have one implementation.
+    pub editor: TextEdit,
     /// Label displayed before the input
     pub label: String,
     /// Placeholder text when empty
@@ -50,8 +45,7 @@ impl TextInputState {
     /// Create a new text input state
     pub fn new(label: impl Into<String>) -> Self {
         Self {
-            value: String::new(),
-            cursor: 0,
+            editor: TextEdit::single_line(),
             label: label.into(),
             placeholder: String::new(),
             focus: FocusState::Normal,
@@ -61,10 +55,20 @@ impl TextInputState {
         }
     }
 
+    /// The current text value.
+    pub fn value(&self) -> String {
+        self.editor.value()
+    }
+
+    /// The cursor position as a byte offset into the value.
+    pub fn cursor_byte(&self) -> usize {
+        self.editor.flat_cursor_byte()
+    }
+
     /// Arm the "next-keystroke-replaces-value" affordance. Call when
     /// the input first gains focus from a normal/hovered state.
     pub fn arm_replace_on_type(&mut self) {
-        self.pending_replace_on_type = !self.value.is_empty();
+        self.pending_replace_on_type = !self.editor.value().is_empty();
     }
 
     /// Set JSON validation mode
@@ -76,7 +80,7 @@ impl TextInputState {
     /// Check if the current value is valid (valid JSON if validate_json is set)
     pub fn is_valid(&self) -> bool {
         if self.validate_json {
-            serde_json::from_str::<serde_json::Value>(&self.value).is_ok()
+            serde_json::from_str::<serde_json::Value>(&self.value()).is_ok()
         } else {
             true
         }
@@ -84,8 +88,9 @@ impl TextInputState {
 
     /// Set the initial value
     pub fn with_value(mut self, value: impl Into<String>) -> Self {
-        self.value = value.into();
-        self.cursor = self.value.len();
+        let value = value.into();
+        self.editor = TextEdit::single_line_with_text(&value);
+        self.editor.move_end();
         self
     }
 
@@ -112,8 +117,7 @@ impl TextInputState {
             return;
         }
         self.consume_pending_replace();
-        self.value.insert(self.cursor, c);
-        self.cursor += c.len_utf8();
+        self.editor.insert_char(c);
     }
 
     /// Insert a string at the cursor position
@@ -122,35 +126,26 @@ impl TextInputState {
             return;
         }
         self.consume_pending_replace();
-        self.value.insert_str(self.cursor, s);
-        self.cursor += s.len();
+        self.editor.insert_str(s);
     }
 
     /// Delete the character before the cursor (backspace)
     pub fn backspace(&mut self) {
-        if !self.is_enabled() || self.cursor == 0 {
+        if !self.is_enabled() {
             return;
         }
         if self.consume_pending_replace() {
             // The "selected" value is cleared; nothing left to backspace.
             return;
         }
-        // Find the previous character boundary
-        let prev_boundary = self.value[..self.cursor]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        self.value.remove(prev_boundary);
-        self.cursor = prev_boundary;
+        self.editor.backspace();
     }
 
     /// If a pending replace-on-type is armed, clear the value and the
     /// flag. Returns whether the pending state was consumed.
     fn consume_pending_replace(&mut self) -> bool {
         if self.pending_replace_on_type {
-            self.value.clear();
-            self.cursor = 0;
+            self.editor.set_value("");
             self.pending_replace_on_type = false;
             true
         } else {
@@ -158,67 +153,53 @@ impl TextInputState {
         }
     }
 
-    /// Delete the grapheme cluster at the cursor (delete key)
-    ///
-    /// Deletes the entire grapheme cluster, handling combining characters properly.
+    /// Delete the character at the cursor (delete key)
     pub fn delete(&mut self) {
-        if !self.is_enabled() || self.cursor >= self.value.len() {
+        if !self.is_enabled() {
             return;
         }
         if self.consume_pending_replace() {
             return;
         }
-        let next_boundary = grapheme::next_grapheme_boundary(&self.value, self.cursor);
-        self.value.drain(self.cursor..next_boundary);
+        self.editor.delete();
     }
 
-    /// Move cursor left (to previous grapheme cluster boundary)
-    ///
-    /// Uses grapheme cluster boundaries for proper handling of combining characters
-    /// like Thai diacritics, emoji with modifiers, etc.
+    /// Move cursor left
     pub fn move_left(&mut self) {
         self.pending_replace_on_type = false;
-        if self.cursor > 0 {
-            self.cursor = grapheme::prev_grapheme_boundary(&self.value, self.cursor);
-        }
+        self.editor.move_left();
     }
 
-    /// Move cursor right (to next grapheme cluster boundary)
-    ///
-    /// Uses grapheme cluster boundaries for proper handling of combining characters
-    /// like Thai diacritics, emoji with modifiers, etc.
+    /// Move cursor right
     pub fn move_right(&mut self) {
         self.pending_replace_on_type = false;
-        if self.cursor < self.value.len() {
-            self.cursor = grapheme::next_grapheme_boundary(&self.value, self.cursor);
-        }
+        self.editor.move_right();
     }
 
     /// Move cursor to start
     pub fn move_home(&mut self) {
         self.pending_replace_on_type = false;
-        self.cursor = 0;
+        self.editor.move_home();
     }
 
     /// Move cursor to end
     pub fn move_end(&mut self) {
         self.pending_replace_on_type = false;
-        self.cursor = self.value.len();
+        self.editor.move_end();
     }
 
     /// Clear the input
     pub fn clear(&mut self) {
         if self.is_enabled() {
-            self.value.clear();
-            self.cursor = 0;
+            self.editor.set_value("");
         }
     }
 
-    /// Set the value directly
+    /// Set the value directly (cursor moves to the end)
     pub fn set_value(&mut self, value: impl Into<String>) {
         if self.is_enabled() {
-            self.value = value.into();
-            self.cursor = self.value.len();
+            self.editor = TextEdit::single_line_with_text(&value.into());
+            self.editor.move_end();
         }
     }
 }
@@ -340,10 +321,10 @@ mod tests {
         state.arm_replace_on_type();
         assert!(state.pending_replace_on_type);
         state.insert('2');
-        assert_eq!(state.value, "2");
+        assert_eq!(state.value(), "2");
         assert!(!state.pending_replace_on_type);
         state.insert('4');
-        assert_eq!(state.value, "24");
+        assert_eq!(state.value(), "24");
     }
 
     #[test]
@@ -353,7 +334,7 @@ mod tests {
         state.move_left();
         assert!(!state.pending_replace_on_type);
         state.insert('x');
-        assert_eq!(state.value, "30x%");
+        assert_eq!(state.value(), "30x%");
     }
 
     #[test]
@@ -368,7 +349,7 @@ mod tests {
         let mut state = TextInputState::new("Width").with_value("30%");
         state.arm_replace_on_type();
         state.backspace();
-        assert_eq!(state.value, "");
+        assert_eq!(state.value(), "");
         assert!(!state.pending_replace_on_type);
     }
 
@@ -378,34 +359,34 @@ mod tests {
         state.insert('a');
         state.insert('b');
         state.insert('c');
-        assert_eq!(state.value, "abc");
-        assert_eq!(state.cursor, 3);
+        assert_eq!(state.value(), "abc");
+        assert_eq!(state.cursor_byte(), 3);
     }
 
     #[test]
     fn test_text_input_backspace() {
         let mut state = TextInputState::new("Test").with_value("abc");
         state.backspace();
-        assert_eq!(state.value, "ab");
-        assert_eq!(state.cursor, 2);
+        assert_eq!(state.value(), "ab");
+        assert_eq!(state.cursor_byte(), 2);
     }
 
     #[test]
     fn test_text_input_cursor_movement() {
         let mut state = TextInputState::new("Test").with_value("hello");
-        assert_eq!(state.cursor, 5);
+        assert_eq!(state.cursor_byte(), 5);
 
         state.move_left();
-        assert_eq!(state.cursor, 4);
+        assert_eq!(state.cursor_byte(), 4);
 
         state.move_home();
-        assert_eq!(state.cursor, 0);
+        assert_eq!(state.cursor_byte(), 0);
 
         state.move_right();
-        assert_eq!(state.cursor, 1);
+        assert_eq!(state.cursor_byte(), 1);
 
         state.move_end();
-        assert_eq!(state.cursor, 5);
+        assert_eq!(state.cursor_byte(), 5);
     }
 
     #[test]
@@ -413,23 +394,23 @@ mod tests {
         let mut state = TextInputState::new("Test").with_value("abc");
         state.move_home();
         state.delete();
-        assert_eq!(state.value, "bc");
-        assert_eq!(state.cursor, 0);
+        assert_eq!(state.value(), "bc");
+        assert_eq!(state.cursor_byte(), 0);
     }
 
     #[test]
     fn test_text_input_disabled() {
         let mut state = TextInputState::new("Test").with_focus(FocusState::Disabled);
         state.insert('a');
-        assert_eq!(state.value, "");
+        assert_eq!(state.value(), "");
     }
 
     #[test]
     fn test_text_input_clear() {
         let mut state = TextInputState::new("Test").with_value("hello");
         state.clear();
-        assert_eq!(state.value, "");
-        assert_eq!(state.cursor, 0);
+        assert_eq!(state.value(), "");
+        assert_eq!(state.cursor_byte(), 0);
     }
 
     #[test]
@@ -438,50 +419,50 @@ mod tests {
         let mut state = TextInputState::new("Test");
         // © is 2 bytes in UTF-8
         state.insert('©');
-        assert_eq!(state.value, "©");
-        assert_eq!(state.cursor, 2); // byte position, not char position
+        assert_eq!(state.value(), "©");
+        assert_eq!(state.cursor_byte(), 2); // byte position, not char position
 
         // Backspace should delete the whole character, not cause a panic
         state.backspace();
-        assert_eq!(state.value, "");
-        assert_eq!(state.cursor, 0);
+        assert_eq!(state.value(), "");
+        assert_eq!(state.cursor_byte(), 0);
     }
 
     #[test]
     fn test_text_input_multibyte_cursor_movement() {
         let mut state = TextInputState::new("Test").with_value("日本語");
         // Each Japanese character is 3 bytes
-        assert_eq!(state.cursor, 9);
+        assert_eq!(state.cursor_byte(), 9);
 
         state.move_left();
-        assert_eq!(state.cursor, 6); // moved back by one character (3 bytes)
+        assert_eq!(state.cursor_byte(), 6); // moved back by one character (3 bytes)
 
         state.move_left();
-        assert_eq!(state.cursor, 3);
+        assert_eq!(state.cursor_byte(), 3);
 
         state.move_right();
-        assert_eq!(state.cursor, 6);
+        assert_eq!(state.cursor_byte(), 6);
 
         state.move_home();
-        assert_eq!(state.cursor, 0);
+        assert_eq!(state.cursor_byte(), 0);
 
         state.move_right();
-        assert_eq!(state.cursor, 3); // moved forward by one character (3 bytes)
+        assert_eq!(state.cursor_byte(), 3); // moved forward by one character (3 bytes)
     }
 
     #[test]
     fn test_text_input_multibyte_delete() {
         let mut state = TextInputState::new("Test").with_value("a日b");
         // 'a' is 1 byte, '日' is 3 bytes, 'b' is 1 byte = 5 bytes total
-        assert_eq!(state.cursor, 5);
+        assert_eq!(state.cursor_byte(), 5);
 
         state.move_home();
         state.move_right(); // cursor now at byte 1 (after 'a', before '日')
-        assert_eq!(state.cursor, 1);
+        assert_eq!(state.cursor_byte(), 1);
 
         state.delete(); // delete '日'
-        assert_eq!(state.value, "ab");
-        assert_eq!(state.cursor, 1);
+        assert_eq!(state.value(), "ab");
+        assert_eq!(state.cursor_byte(), 1);
     }
 
     #[test]
@@ -489,10 +470,10 @@ mod tests {
         let mut state = TextInputState::new("Test").with_value("日語");
         state.move_home();
         state.move_right(); // cursor after first character
-        assert_eq!(state.cursor, 3);
+        assert_eq!(state.cursor_byte(), 3);
 
         state.insert('本');
-        assert_eq!(state.value, "日本語");
-        assert_eq!(state.cursor, 6);
+        assert_eq!(state.value(), "日本語");
+        assert_eq!(state.cursor_byte(), 6);
     }
 }

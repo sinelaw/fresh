@@ -125,13 +125,13 @@ pub fn setting_control_to_widget_aligned(
             key,
         },
         SettingControl::Text(s) => WidgetSpec::Text {
-            value: s.value.clone(),
-            // While editing, carry the caret (`cursor` is a byte
+            value: s.value(),
+            // While editing, carry the caret (the editor's byte
             // offset) and mark the field focused so the renderer
             // paints the block caret (`block_caret`) where typing
             // lands.
             cursor_byte: if s.editing {
-                s.cursor.min(s.value.len()) as i32
+                s.cursor_byte() as i32
             } else {
                 -1
             },

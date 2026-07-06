@@ -372,7 +372,7 @@ impl EntryDialogState {
         for item in &self.items {
             if item.path == "__key__" {
                 if let SettingControl::Text(state) = &item.control {
-                    return state.value.clone();
+                    return state.value();
                 }
             }
         }
@@ -1270,7 +1270,7 @@ impl EntryDialogState {
             }
             match &mut item.control {
                 SettingControl::Text(state) => {
-                    state.cursor = state.value.len();
+                    state.editor.move_end();
                     state.editing = true;
                     self.editing_text = true;
                 }
@@ -2108,7 +2108,7 @@ mod tests {
         for item in dialog.items.iter_mut() {
             if item.path == "__key__" {
                 if let SettingControl::Text(state) = &mut item.control {
-                    state.value = "myserver".to_string();
+                    state.set_value("myserver");
                 }
             }
         }
