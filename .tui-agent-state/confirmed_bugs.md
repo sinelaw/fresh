@@ -344,6 +344,23 @@ Each bug entry:
 
 ---
 
+## BUG-022: Virtual space — status-bar Ln/Col indicator freezes at the line-end position while cursor is in virtual space
+- **ID:** BUG-022
+- **Title:** With `editor.virtual_space` on, the status-bar `Ln, Col` readout freezes at the last real-text position while the cursor moves through virtual space (horizontal past EOL → `Col` frozen; vertical below last line → both `Ln` and `Col` frozen). The cursor really moves; only the indicator is stale until the cursor returns to real text.
+- **Severity:** Low–Medium (display/usability; the position indicator is wrong for the whole time in the mode whose purpose is free positioning).
+- **Status:** Open — GitHub #2577 filed (Run #46).
+- **GitHub Issue:** [#2577](https://github.com/sinelaw/fresh/issues/2577)
+- **Reproduction:** fixture with a short line 2 (`short`), `fresh --no-restore vspace.txt`.
+  1. `Ctrl+P` → "Toggle Virtual Space (Current Buffer)" → `Virtual space: on (this buffer)`.
+  2. On `short`, press End → `Col 6`. Press Right ×3.
+  3. Status stays `Col 6` (frozen); real cursor is at col 9 (verified `tmux display-message -p '#{cursor_x}'` = screen col 14 = text col 9; and typing `X` there lands at col 9 with the gap space-filled).
+  - Vertical: ArrowDown below the last line parks the cursor on a virtual line but the readout stays `Ln 5, Col 10`; typing materializes the newlines + leading spaces, confirming the caret moved.
+- **Expected (Visual Studio — the feature's stated model):** the Ln/Col indicator reports the virtual position (e.g. `Col 9`).
+- **Distinct from #2301** (post-jump `Ln` staleness): different trigger (continuous per-keystroke virtual movement) and symptom (both Ln+Col frozen for the whole duration); possibly a shared status-bar-refresh path.
+- **First Seen:** 2026-07-06 (Run #46), fresh 0.4.3 @ 9f6135001.
+
+---
+
 ## PENDING (not filed) — vi mode missing standard commands (→ IMP-023)
 - `R` (Replace/overtype mode): unrecognized — stays `-- NORMAL --`, next key runs as a normal command (`R`+`A` fired append-at-EOL).
 - `gU`/`gu`/`g~` case OPERATORS: no-ops (`gUw` left text unchanged, `w` only moved cursor). NB single-char `~` DOES work.
