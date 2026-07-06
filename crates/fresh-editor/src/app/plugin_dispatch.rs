@@ -57,7 +57,7 @@ fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
 /// facet the dock renders (`None` for local sessions, and for plugin-managed
 /// backends whose facet the owning plugin supplies itself). The `kind`
 /// strings match the plugin API's `SessionBackend` values.
-fn remote_backend_info(
+pub(crate) fn remote_backend_info(
     spec: &crate::services::authority::SessionAuthoritySpec,
     connected: bool,
 ) -> Option<fresh_core::api::RemoteBackendInfo> {

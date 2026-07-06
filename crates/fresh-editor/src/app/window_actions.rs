@@ -1092,6 +1092,14 @@ impl crate::app::Editor {
         // session as its real (not-yet-connected) backend and a retry knows
         // what to reconnect to — never downgraded to local.
         window.authority_spec = descriptor.authority_spec.clone();
+        // The shell renders as a placeholder page (see
+        // `render_dormant_shell_page`), not as an editable buffer — nothing
+        // can be meaningfully edited before the backend connects. Seed the
+        // layout here (so the renderer has a populated `splits`) and lock
+        // its scratch buffer.
+        window.seed_initial_layout();
+        let seed_buffer = window.active_buffer();
+        window.mark_buffer_read_only(seed_buffer, true);
         self.windows.insert(id, window);
     }
 

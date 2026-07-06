@@ -105,8 +105,16 @@ fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
         "the tried workspace must be the active window after the failed connect"
     );
     // The shell is EMPTY: nothing of the persisted workspace can be restored
-    // without its backend, so its file must not appear.
+    // without its backend, so its file must not appear — and it renders as a
+    // placeholder page (no "[No Name]" tab) showing the disconnected state.
     h.assert_screen_not_contains("remote_notes.txt");
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("Disconnected —")
+            && scr.contains("This workspace is unavailable")
+            && !scr.contains("[No Name]")
+    })
+    .unwrap();
 
     // Quit-style save: the disconnected shell must not clobber the real
     // on-disk workspace with its empty layout.

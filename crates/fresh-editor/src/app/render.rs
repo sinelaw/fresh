@@ -490,7 +490,10 @@ impl Editor {
             || self.active_window().terminal_mode
             || self.dock.as_ref().is_some_and(|d| d.focused)
             || settings_visible
-            || self.keybinding_editor.is_some();
+            || self.keybinding_editor.is_some()
+            // A dormant remote session's shell renders as a placeholder
+            // page (no editable buffer), so no text cursor either.
+            || self.dormant_remote.contains_key(&self.active_window);
 
         // Convert HoverTarget to tab hover info for rendering
         let hovered_tab = match &self.active_window_mut().mouse_state.hover_target {
@@ -631,6 +634,16 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .active_split();
         self.maybe_start_cursor_jump_animation(pending_hardware_cursor, active_split);
+
+        // A dormant remote session's shell shows a placeholder page instead
+        // of an (empty, uneditable) buffer: nothing can be shown or edited
+        // until the backend connects, so painting a tab bar and a "[No
+        // Name]" scratch buffer misrepresents the state. Painted over the
+        // content area after the split renderer so it composes with the
+        // chrome (menu, dock, status bar) without forking the render flow.
+        if self.dormant_remote.contains_key(&self.active_window) {
+            self.render_dormant_shell_page(frame, editor_content_area);
+        }
 
         // Detect viewport changes and fire hooks
         // Compare against previous frame's viewport state (stored in self.active_window().previous_viewports)
@@ -1483,6 +1496,97 @@ impl Editor {
     /// into the given rect and makes no layout decisions. A no-op when the
     /// explorer isn't materialised (mid-sync the rect stays reserved but
     /// blank).
+    /// Placeholder page for a dormant remote session's shell: the workspace
+    /// cannot show (or edit) anything until its backend connects, so instead
+    /// of a tab bar + empty scratch buffer the content area is a blank page
+    /// with the session's backend identity and live connection state —
+    /// Connecting… while the dive's connect is in flight, the failure reason
+    /// once it failed. The dock stays the way to switch away or retry.
+    fn render_dormant_shell_page(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        use ratatui::style::{Modifier, Style};
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let active_id = self.active_window;
+        let window = self.windows.get(&active_id).expect("active window exists");
+        let label = window.label.clone();
+        let detail =
+            crate::app::plugin_dispatch::remote_backend_info(&window.authority_spec, false)
+                .map(|r| {
+                    let glyph = if r.kind == "kubernetes" { "⎈" } else { "⇅" };
+                    format!("{glyph} {label} — {}", r.detail)
+                })
+                .unwrap_or_else(|| format!("⇅ {label}"));
+        let connecting = self
+            .remote_attach_inflight
+            .contains(&(u64::MAX - active_id.0));
+        let state_line = if connecting {
+            "Connecting…".to_string()
+        } else if let Some(reason) = &window.remote_reconnect_error {
+            format!("Disconnected — {reason}")
+        } else {
+            "Not connected".to_string()
+        };
+        let hint = "This workspace is unavailable until its connection is established.";
+        let retry_hint = "Select it again in the dock (or use the status-bar indicator) to retry.";
+
+        let (bg, fg, dim) = {
+            let theme = self.theme.read().unwrap();
+            (theme.editor_bg, theme.editor_fg, theme.line_number_fg)
+        };
+        let buf = frame.buffer_mut();
+        // Blank the whole content area — over the tab bar and scratch buffer
+        // the split renderer just painted.
+        for y in area.top()..area.bottom() {
+            for x in area.left()..area.right() {
+                if let Some(cell) = buf.cell_mut(ratatui::layout::Position::new(x, y)) {
+                    cell.set_symbol(" ");
+                    cell.set_style(Style::default().bg(bg));
+                }
+            }
+        }
+        // Centered message block.
+        let lines: [(&str, Style); 5] = [
+            (
+                detail.as_str(),
+                Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            ),
+            ("", Style::default().bg(bg)),
+            (state_line.as_str(), Style::default().fg(fg).bg(bg)),
+            ("", Style::default().bg(bg)),
+            (hint, Style::default().fg(dim).bg(bg)),
+        ];
+        let block_height = lines.len() as u16 + 1;
+        let top = area.top() + area.height.saturating_sub(block_height) / 2;
+        let draw_centered =
+            |buf: &mut ratatui::buffer::Buffer, y: u16, text: &str, style: Style| {
+                if y >= area.bottom() || text.is_empty() {
+                    return;
+                }
+                // Truncate to the area (char-boundary safe) with an ellipsis.
+                let max = area.width.saturating_sub(2) as usize;
+                let truncated: String = if text.chars().count() > max {
+                    let mut t: String = text.chars().take(max.saturating_sub(1)).collect();
+                    t.push('…');
+                    t
+                } else {
+                    text.to_string()
+                };
+                let w = truncated.chars().count() as u16;
+                let x = area.left() + area.width.saturating_sub(w) / 2;
+                buf.set_string(x, y, &truncated, style);
+            };
+        for (i, (text, style)) in lines.iter().enumerate() {
+            draw_centered(buf, top + i as u16, text, *style);
+        }
+        draw_centered(
+            buf,
+            top + lines.len() as u16,
+            retry_hint,
+            Style::default().fg(dim).bg(bg),
+        );
+    }
+
     fn render_file_explorer(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
         // Get connection string before mutable borrow of file_explorer.
         let remote_connection = self.connection_display_string();

@@ -89,8 +89,24 @@ fn dive_commits_switch_while_connect_is_still_pending() {
     );
     h.wait_until(|h| h.screen_to_string().contains("Connecting"))
         .unwrap();
-    // The shell is EMPTY — nothing restored without the backend.
+    // The shell is EMPTY — nothing restored without the backend — and it
+    // renders as a placeholder page, not as an editable scratch buffer: no
+    // "[No Name]" tab, a message instead.
     h.assert_screen_not_contains("remote_notes.txt");
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("This workspace is unavailable") && !scr.contains("[No Name]")
+    })
+    .unwrap();
+    // Nothing is editable before the connection exists: typing must be
+    // swallowed by the read-only placeholder, not land in a hidden buffer.
+    h.type_text("XYZ").unwrap();
+    h.process_async_and_render().unwrap();
+    assert!(
+        !h.get_buffer_content().unwrap_or_default().contains("XYZ"),
+        "typing into the placeholder page must not edit anything"
+    );
+    h.assert_screen_not_contains("XYZ");
 
     // The user is not trapped in the pending shell: switching back to the
     // local workspace works while the connect is still in flight.
