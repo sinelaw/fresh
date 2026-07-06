@@ -275,8 +275,24 @@ control's interaction into the runtime at a time. The mapped seams:
   Settings can drive it without a plugin buffer.
 - **Hit-testing.** Derive click geometry from the reconciler's real `out.hits`
   (byte-range + `widget_kind` + payload) instead of the approximate/`Default`
-  rects the stateless swap emits — this is what fixes the toggle-chip mismatch
-  and the map "add new" **hang**.
+  rects the stateless swap emits — this is what fixes the toggle-chip click
+  mismatch. (A first correctness step landed: the Map hit rects now track the
+  `display_field` header-row offset, commit `5520038`.)
+- **Composite add-row visibility (the real cause of the map hang).** The map
+  "add new" mouse test hangs at `wait_until(contains "[+] Add new")` **before it
+  ever clicks** — the row simply never scrolls into view. `list_of` sets the
+  embedded `List`'s `visible_rows = rows.len()`, so the List emits *every* entry
+  and the `[+] Add new` `raw_row` sits at the bottom of a tall control; after a
+  search-jump (skip_rows = 0, top of the control) it is off-screen for any map
+  with more entries than the viewport, and `wait_until` never scrolls. The old
+  renderer kept the add-row reachable (fixed-height inner viewport / jump
+  scrolled to it). Fix direction: either give the settings-embedded composite an
+  inner viewport that always shows the add-row, or make the search-jump / focus
+  scroll the add-row into view. Affects `test_map_add_new_button_clickable_with_mouse`
+  and `test_languages_map_has_add_new_button` (both tall maps; the LSP map is
+  short, which is why it passes). **NOTE:** commit `5520038`'s message wrongly
+  credited the header-offset hit fix with resolving the hang — the hang is this
+  separate visibility issue; the hit fix is still a valid correctness step.
 - **Parity gap to close.** The widget `Number` needs an **edit mode** (Enter →
   type-to-replace via `TextEdit` → Enter commit / Esc revert) to match
   `NumberInputState`; the e2e suite asserts this directly
