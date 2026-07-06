@@ -71,13 +71,31 @@ pub(crate) fn screen_to_buffer_position(
         allow_gutter_click,
         compose_width,
     )
-    .map(|(position, _)| position)
+    .map(|target| target.position)
 }
 
-/// Like [`screen_to_buffer_position`], but also reports how many screen
-/// cells *past the end of the row's rendered content* the click landed
-/// (0 when it hit a real cell). Virtual-space mouse placement uses the
-/// overshoot to derive the clicked column beyond the line end.
+/// A click target resolved by [`screen_to_buffer_position_with_overshoot`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ClickTarget {
+    /// Buffer byte position the click resolves to (clipped to content).
+    pub position: usize,
+    /// Screen cells past the end of the clicked row's rendered content
+    /// (0 when the click hit a real cell).
+    pub col_overshoot: usize,
+    /// Visual rows below the last rendered row (0 when the click hit a
+    /// rendered row). Vertical virtual space uses this to place the cursor
+    /// on lines below the end of the buffer.
+    pub row_overshoot: usize,
+    /// The clicked column within the content area (viewport-relative,
+    /// after the gutter).
+    pub text_col: usize,
+}
+
+/// Like [`screen_to_buffer_position`], but also reports how far past the
+/// rendered content the click landed (columns past the row's content and
+/// rows below the last rendered row). Virtual-space mouse placement uses
+/// the overshoots to derive the clicked position beyond the line/buffer
+/// end.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn screen_to_buffer_position_with_overshoot(
     col: u16,
@@ -88,7 +106,7 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
     fallback_position: usize,
     allow_gutter_click: bool,
     compose_width: Option<u16>,
-) -> Option<(usize, usize)> {
+) -> Option<ClickTarget> {
     let orig_content_rect = content_rect;
     let mut content_rect = adjust_content_rect_for_compose(content_rect, compose_width);
 
@@ -181,23 +199,30 @@ pub(crate) fn screen_to_buffer_position_with_overshoot(
         }
     };
 
-    let (position, overshoot) = cached_mappings
+    let (position, col_overshoot, row_overshoot) = cached_mappings
         .as_ref()
         .and_then(|mappings| {
             if let Some(line_mapping) = mappings.get(visual_row) {
                 // Click is on a visible line
-                Some(position_from_mapping(line_mapping, text_col))
+                let (position, col_overshoot) = position_from_mapping(line_mapping, text_col);
+                Some((position, col_overshoot, 0))
             } else if !mappings.is_empty() {
                 // Click is below last visible line — use the last line at the clicked column
                 let last_mapping = mappings.last().unwrap();
-                Some(position_from_mapping(last_mapping, text_col))
+                let (position, col_overshoot) = position_from_mapping(last_mapping, text_col);
+                Some((position, col_overshoot, visual_row - (mappings.len() - 1)))
             } else {
                 None
             }
         })
-        .unwrap_or((fallback_position, 0));
+        .unwrap_or((fallback_position, 0, 0));
 
-    Some((position, overshoot))
+    Some(ClickTarget {
+        position,
+        col_overshoot,
+        row_overshoot,
+        text_col,
+    })
 }
 
 /// Check whether a gutter click at `target_position` should toggle a fold.

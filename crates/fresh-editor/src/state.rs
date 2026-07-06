@@ -556,6 +556,7 @@ impl EditorState {
             // vertical navigation must re-derive from the new position. A
             // stale goal would send the next Up/Down to the pre-edit column.
             cursor.sticky_column = None;
+            cursor.virtual_lines_below = 0;
         }
 
         // Update primary cursor line number if this was the primary cursor
@@ -634,6 +635,7 @@ impl EditorState {
             cursor.clear_selection();
             // See apply_insert: edits invalidate the vertical-navigation goal.
             cursor.sticky_column = None;
+            cursor.virtual_lines_below = 0;
         }
 
         // Update primary cursor line number if this was the primary cursor
@@ -877,6 +879,13 @@ impl EditorState {
         new_sticky_column: Option<usize>,
     ) {
         if let Some(cursor) = cursors.get_mut(cursor_id) {
+            // Vertical virtual space is only meaningful while the cursor
+            // stays parked at the buffer end; moving to a different byte
+            // position leaves it. Same-position moves (virtual column
+            // steps) keep it.
+            if cursor.position != new_position {
+                cursor.virtual_lines_below = 0;
+            }
             cursor.position = new_position;
             cursor.anchor = new_anchor;
             cursor.sticky_column = new_sticky_column;
@@ -913,7 +922,10 @@ impl EditorState {
         cursors.insert_with_id(cursor_id, cursor);
         let mode = self.buffer_settings.virtual_space;
         cursors.normalize_with_key(|c| {
-            crate::model::virtual_space::cursor_virtual_columns(mode, &self.buffer, c)
+            (
+                crate::model::virtual_space::cursor_virtual_columns(mode, &self.buffer, c),
+                crate::model::virtual_space::cursor_virtual_lines(mode, &self.buffer, c),
+            )
         });
     }
 

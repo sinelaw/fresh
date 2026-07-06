@@ -395,6 +395,77 @@ fn test_block_rectangle_renders_past_short_line() {
     );
 }
 
+/// Clicking below the last line parks the cursor on a virtual line at the
+/// clicked column; typing there materializes the missing newlines plus the
+/// column padding, as one undo step.
+#[test]
+fn test_click_below_last_line_places_virtual_cursor() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("ab").unwrap();
+
+    let (x0, y0) = harness.find_text_on_screen("ab").expect("line visible");
+
+    // Two rows below the (only) line, three columns in.
+    harness.mouse_click(x0 + 5, y0 + 2).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.screen_cursor_position(),
+        (x0 + 5, y0 + 2),
+        "cursor floats on the clicked virtual line"
+    );
+
+    // Left/Right move along the virtual line.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x0 + 4, y0 + 2));
+
+    // Backspace steps left without touching the buffer.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_buffer_content("ab");
+    harness.render().unwrap();
+    assert_eq!(harness.screen_cursor_position(), (x0 + 3, y0 + 2));
+
+    // Typing materializes two newlines + three columns of padding.
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("ab\n\n   X");
+
+    // One undo removes the whole materialization.
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_buffer_content("ab");
+}
+
+/// With a newline-terminated buffer, the implicit trailing line is the last
+/// display line; clicking below it creates lines after it.
+#[test]
+fn test_click_below_trailing_newline_extends() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("ab\n").unwrap();
+
+    let (x0, y0) = harness.find_text_on_screen("ab").expect("line visible");
+
+    // Rows: "ab" at y0, the implicit empty line at y0+1; click one below it.
+    harness.mouse_click(x0 + 3, y0 + 2).unwrap();
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("ab\n\n   X");
+}
+
+/// With virtual space off, clicking below the last line snaps to the end of
+/// the buffer as before.
+#[test]
+fn test_click_below_last_line_snaps_when_off() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Off);
+    harness.load_buffer_from_text("ab").unwrap();
+
+    let (x0, y0) = harness.find_text_on_screen("ab").expect("line visible");
+    harness.mouse_click(x0 + 5, y0 + 2).unwrap();
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("abX");
+}
+
 /// Run a command-palette entry by fuzzy-typing its full name and pressing
 /// Enter.
 fn run_command(harness: &mut EditorTestHarness, name: &str) {

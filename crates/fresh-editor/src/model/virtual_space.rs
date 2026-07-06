@@ -51,6 +51,46 @@ pub fn cursor_virtual_columns(mode: VirtualSpaceMode, buffer: &Buffer, cursor: &
     sticky.saturating_sub(width)
 }
 
+/// How many virtual lines below the end of the buffer the cursor sits on
+/// (vertical virtual space, set by clicking below the last line).
+///
+/// Returns 0 unless `mode` allows the cursor beyond EOL, the cursor is
+/// collapsed, and it sits exactly at the buffer end (the only position
+/// where `virtual_lines_below` is meaningful).
+pub fn cursor_virtual_lines(mode: VirtualSpaceMode, buffer: &Buffer, cursor: &Cursor) -> usize {
+    if !mode.cursor_beyond_eol()
+        || cursor.anchor.is_some()
+        || cursor.selection_mode == SelectionMode::Block
+        || cursor.position != buffer.len()
+    {
+        return 0;
+    }
+    cursor.virtual_lines_below
+}
+
+/// The text that materializes the cursor's virtual position when an edit
+/// lands there, to be inserted at the cursor's (clipped) byte position
+/// before the edited text: line endings down to the cursor's virtual line,
+/// then spaces out to its column — or just the column padding when the
+/// cursor is virtual only horizontally. Empty when the cursor isn't in
+/// virtual space.
+pub fn virtual_gap_text(
+    mode: VirtualSpaceMode,
+    buffer: &Buffer,
+    cursor: &Cursor,
+    line_ending: &str,
+) -> String {
+    let vlines = cursor_virtual_lines(mode, buffer, cursor);
+    if vlines > 0 {
+        // Virtual lines are empty, so the column padding is the full sticky
+        // column (one space per column from the line start).
+        let cols = cursor.sticky_column.unwrap_or(0);
+        format!("{}{}", line_ending.repeat(vlines), " ".repeat(cols))
+    } else {
+        " ".repeat(cursor_virtual_columns(mode, buffer, cursor))
+    }
+}
+
 /// If `position` sits exactly at its line's content end, the visual width
 /// of that line's content; `None` otherwise. This is the precondition for a
 /// cursor at `position` to be virtual, and the base the sticky column is
@@ -162,6 +202,53 @@ mod tests {
         // Content end of line 0 is byte 2 (before \r\n).
         let c = cursor_at(2, Some(6));
         assert_eq!(cursor_virtual_columns(VirtualSpaceMode::On, &buf, &c), 4);
+    }
+
+    #[test]
+    fn virtual_lines_only_at_buffer_end() {
+        let buf = buffer("ab\nxyz");
+        let mut c = cursor_at(6, Some(3));
+        c.virtual_lines_below = 2;
+        assert_eq!(cursor_virtual_lines(VirtualSpaceMode::On, &buf, &c), 2);
+        assert_eq!(cursor_virtual_lines(VirtualSpaceMode::Off, &buf, &c), 0);
+        assert_eq!(cursor_virtual_lines(VirtualSpaceMode::Block, &buf, &c), 0);
+
+        // Not at the buffer end → not on a virtual line.
+        c.position = 2;
+        assert_eq!(cursor_virtual_lines(VirtualSpaceMode::On, &buf, &c), 0);
+
+        // A selection disables it.
+        c.position = 6;
+        c.anchor = Some(0);
+        assert_eq!(cursor_virtual_lines(VirtualSpaceMode::On, &buf, &c), 0);
+    }
+
+    #[test]
+    fn gap_text_covers_lines_then_columns() {
+        let buf = buffer("ab");
+        // Cursor two virtual lines below the end, column 3.
+        let mut c = cursor_at(2, Some(3));
+        c.virtual_lines_below = 2;
+        assert_eq!(
+            virtual_gap_text(VirtualSpaceMode::On, &buf, &c, "\n"),
+            "\n\n   "
+        );
+        // CRLF buffers materialize CRLF line endings.
+        assert_eq!(
+            virtual_gap_text(VirtualSpaceMode::On, &buf, &c, "\r\n"),
+            "\r\n\r\n   "
+        );
+
+        // Horizontal-only virtual position: spaces past the line width.
+        let c = cursor_at(2, Some(5));
+        assert_eq!(
+            virtual_gap_text(VirtualSpaceMode::On, &buf, &c, "\n"),
+            "   "
+        );
+
+        // Not virtual → empty.
+        let c = cursor_at(1, None);
+        assert_eq!(virtual_gap_text(VirtualSpaceMode::On, &buf, &c, "\n"), "");
     }
 
     #[test]

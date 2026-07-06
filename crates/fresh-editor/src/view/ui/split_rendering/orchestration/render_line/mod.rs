@@ -1086,6 +1086,20 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
     // Pad the bottom of the viewport with `~` / after_eof_bg shading.
     fill_eof_rows(&mut lines, theme, render_area, show_tilde);
 
+    // Vertical virtual space: the passes above parked the cursor at the
+    // buffer end (last display row); shift it down onto its virtual line and
+    // out to its column. Clamped to the viewport below.
+    if selection.primary_virtual_lines > 0 && cursor.found {
+        cursor.y = cursor
+            .y
+            .saturating_add(selection.primary_virtual_lines as u16)
+            .min(render_area.height.saturating_sub(1));
+        cursor.x = gutter_width as u16
+            + selection
+                .primary_virtual_line_col
+                .saturating_sub(left_column) as u16;
+    }
+
     LineRenderOutput {
         lines,
         // Clamp to the render area so a far-right virtual-space cursor can't

@@ -311,98 +311,115 @@ impl Editor {
             .and_then(|vs| vs.compose_width);
 
         // Calculate clicked position in buffer
-        let (toggle_fold_byte, onclick_action, target_position, click_overshoot, cursor_snapshot) =
-            if let Some(state) = self
-                .windows
+        let (toggle_fold_byte, onclick_action, click_target, cursor_snapshot) = if let Some(state) =
+            self.windows
                 .get(&self.active_window)
                 .map(|w| &w.buffers)
                 .expect("active window present")
                 .get(&buffer_id)
-            {
-                let gutter_width = state.margins.left_total_width() as u16;
+        {
+            let gutter_width = state.margins.left_total_width() as u16;
 
-                let Some((target_position, click_overshoot)) =
-                    super::click_geometry::screen_to_buffer_position_with_overshoot(
-                        col,
-                        row,
-                        content_rect,
-                        gutter_width,
-                        &cached_mappings,
-                        fallback,
-                        true, // Allow gutter clicks - position cursor at start of line
-                        compose_width,
-                    )
-                else {
-                    return Ok(());
-                };
-
-                // Toggle fold on gutter click if this line is foldable/collapsed
-                let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(
+            let Some(click_target) =
+                super::click_geometry::screen_to_buffer_position_with_overshoot(
+                    col,
+                    row,
                     content_rect,
-                    compose_width,
-                );
-                let content_col = col.saturating_sub(adjusted_rect.x);
-                let collapsed_header_bytes = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&split_id)
-                    .map(|vs| {
-                        vs.folds
-                            .collapsed_header_bytes(&state.buffer, &state.marker_list)
-                    })
-                    .unwrap_or_default();
-                let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
-                    state,
-                    &collapsed_header_bytes,
-                    target_position,
-                    content_col,
                     gutter_width,
-                );
-
-                let cursor_snapshot = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&split_id)
-                    .map(|vs| {
-                        let cursor = vs.cursors.primary();
-                        (
-                            vs.cursors.primary_id(),
-                            cursor.position,
-                            cursor.anchor,
-                            cursor.sticky_column,
-                            cursor.deselect_on_move,
-                        )
-                    })
-                    .unwrap_or((CursorId(0), 0, None, None, true));
-
-                // Check for onClick text property at this position
-                // This enables clickable UI elements in virtual buffers
-                let onclick_action = state
-                    .text_properties
-                    .get_at(target_position)
-                    .iter()
-                    .find_map(|prop| {
-                        prop.get("onClick")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                    });
-
-                (
-                    toggle_fold_byte,
-                    onclick_action,
-                    target_position,
-                    click_overshoot,
-                    cursor_snapshot,
+                    &cached_mappings,
+                    fallback,
+                    true, // Allow gutter clicks - position cursor at start of line
+                    compose_width,
                 )
-            } else {
+            else {
                 return Ok(());
             };
+            let target_position = click_target.position;
+
+            // Toggle fold on gutter click if this line is foldable/collapsed
+            let adjusted_rect =
+                super::click_geometry::adjust_content_rect_for_compose(content_rect, compose_width);
+            let content_col = col.saturating_sub(adjusted_rect.x);
+            let collapsed_header_bytes = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| {
+                    vs.folds
+                        .collapsed_header_bytes(&state.buffer, &state.marker_list)
+                })
+                .unwrap_or_default();
+            let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
+                state,
+                &collapsed_header_bytes,
+                target_position,
+                content_col,
+                gutter_width,
+            );
+
+            let cursor_snapshot = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| {
+                    let cursor = vs.cursors.primary();
+                    (
+                        vs.cursors.primary_id(),
+                        cursor.position,
+                        cursor.anchor,
+                        cursor.sticky_column,
+                        cursor.deselect_on_move,
+                    )
+                })
+                .unwrap_or((CursorId(0), 0, None, None, true));
+
+            // Check for onClick text property at this position
+            // This enables clickable UI elements in virtual buffers
+            let onclick_action = state
+                .text_properties
+                .get_at(target_position)
+                .iter()
+                .find_map(|prop| {
+                    prop.get("onClick")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                });
+
+            (
+                toggle_fold_byte,
+                onclick_action,
+                click_target,
+                cursor_snapshot,
+            )
+        } else {
+            return Ok(());
+        };
+        let target_position = click_target.position;
+        let click_overshoot = click_target.col_overshoot;
+
+        // Vertical virtual space: a click on the rows below the last line
+        // (with the buffer's end on screen) parks the cursor on a virtual
+        // line at the clicked column. Only when virtual space is fully on
+        // and the click doesn't extend a selection.
+        let extend_click =
+            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
+        let virtual_lines_below = self
+            .buffers()
+            .get(&buffer_id)
+            .filter(|state| {
+                click_target.row_overshoot > 0
+                    && !extend_click
+                    && state.buffer_settings.virtual_space.cursor_beyond_eol()
+                    && target_position == state.buffer.len()
+            })
+            .map(|_| click_target.row_overshoot)
+            .unwrap_or(0);
 
         if toggle_fold_byte.is_some() {
             self.active_window_mut()
@@ -443,8 +460,22 @@ impl Editor {
         // (wide-char aware), not the byte column `offset_to_position` returns.
         // With virtual space on, a click past the end of a line keeps the
         // clicked column: the byte position clips to the content end and the
-        // sticky column carries the overshoot.
+        // sticky column carries the overshoot. On a virtual line below the
+        // buffer end the line is empty, so the clicked column is measured
+        // from the line start (viewport column + horizontal scroll).
+        let left_col = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&split_id)
+            .map(|vs| vs.viewport.left_column)
+            .unwrap_or(0);
         let new_sticky_column = self.buffers().get(&buffer_id).and_then(|state| {
+            if virtual_lines_below > 0 {
+                return Some(left_col + click_target.text_col);
+            }
             if click_overshoot > 0
                 && !extend_selection
                 && state.buffer_settings.virtual_space.cursor_beyond_eol()
@@ -472,6 +503,12 @@ impl Editor {
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
         self.track_cursor_movement(&event);
+
+        // Park the cursor on the clicked virtual line (transient state, not
+        // carried by the MoveCursor event — see Cursor::virtual_lines_below).
+        if virtual_lines_below > 0 {
+            self.active_cursors_mut().primary_mut().virtual_lines_below = virtual_lines_below;
+        }
 
         // Start text selection drag for potential mouse drag
         self.active_window_mut().mouse_state.dragging_text_selection = true;

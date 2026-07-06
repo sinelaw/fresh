@@ -11,10 +11,19 @@
 > through every `MoveCursor` event, undo, and session persistence; making it
 > trustworthy required fixing several producers that stored byte columns in
 > it and resetting it on edits (see the commit history of this branch).
+> Beyond the original scope, the implementation also supports **vertical**
+> virtual space: clicking below the last line parks the cursor on a virtual
+> line at the clicked column (transient `Cursor::virtual_lines_below` state,
+> meaningful only while the cursor sits at the buffer end); typing there
+> materializes the missing newlines plus column padding in one undo step.
+> A per-buffer "Toggle Virtual Space (Current Buffer)" command overrides the
+> global setting and persists in the workspace session.
 > Known limits, as scoped: linear selections stay byte-clamped (Shift+arrows
 > collapse a virtual cursor to the content end), soft-wrapped lines don't
-> get virtual columns past the wrap point, and block-selection geometry
-> remains byte-column based (exact for the spaces padding materializes).
+> get virtual columns past the wrap point, block-selection geometry
+> remains byte-column based (exact for the spaces padding materializes),
+> and vertical virtual space is click-driven only (ArrowDown stops at the
+> last line; Up from a virtual line returns to the last real line).
 
 Scoping analysis for adding **virtual space** (cursor movement and placement beyond the
 end of a line) to Fresh, prompted by VSCode's long-stalled implementation

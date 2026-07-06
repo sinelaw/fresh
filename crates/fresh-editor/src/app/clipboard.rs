@@ -1259,6 +1259,7 @@ impl Editor {
         let vs_mode = self.active_state().buffer_settings.virtual_space;
         let mut cursor_data: Vec<_> = {
             let state = self.active_state();
+            let line_ending = state.buffer.line_ending().as_str();
             self.active_cursors()
                 .iter()
                 .map(|(cursor_id, cursor)| {
@@ -1268,12 +1269,13 @@ impl Editor {
                         .map(|r| r.start)
                         .unwrap_or(cursor.position);
                     // Pasting at a virtual position first materializes the gap.
-                    let virtual_cols = crate::model::virtual_space::cursor_virtual_columns(
+                    let virtual_gap = crate::model::virtual_space::virtual_gap_text(
                         vs_mode,
                         &state.buffer,
                         cursor,
+                        line_ending,
                     );
-                    (cursor_id, selection, insert_position, virtual_cols)
+                    (cursor_id, selection, insert_position, virtual_gap)
                 })
                 .collect()
         };
@@ -1328,7 +1330,7 @@ impl Editor {
         // the back when iterating.
         let total = cursor_data_with_text.len();
         let mut events = Vec::new();
-        for (i, (cursor_id, selection, insert_position, deleted_text, virtual_cols)) in
+        for (i, (cursor_id, selection, insert_position, deleted_text, virtual_gap)) in
             cursor_data_with_text.into_iter().enumerate()
         {
             if let (Some(range), Some(text)) = (selection, deleted_text) {
@@ -1343,8 +1345,8 @@ impl Editor {
             } else {
                 paste_text_full.clone()
             };
-            if virtual_cols > 0 {
-                text = format!("{}{}", " ".repeat(virtual_cols), text);
+            if !virtual_gap.is_empty() {
+                text = format!("{}{}", virtual_gap, text);
             }
             events.push(Event::Insert {
                 position: insert_position,

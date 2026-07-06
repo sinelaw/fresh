@@ -6,7 +6,9 @@ use crate::model::buffer::{Buffer, LineEnding};
 use crate::model::buffer_position::{byte_to_2d, pos_2d_to_byte};
 use crate::model::cursor::{Cursor, Cursors, Position2D, SelectionMode};
 use crate::model::event::{CursorId, Event};
-use crate::model::virtual_space::{cursor_virtual_columns, line_width_at_content_end};
+use crate::model::virtual_space::{
+    cursor_virtual_columns, cursor_virtual_lines, line_width_at_content_end,
+};
 use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
 use crate::primitives::highlighter::HighlightCategory;
 use crate::primitives::indent_pattern::PatternIndentCalculator;
@@ -926,10 +928,11 @@ struct InsertCursorData {
     only_spaces: bool,
     char_after: Option<u8>,
     deleted_text: Option<String>,
-    /// Virtual-space columns of the cursor (0 unless the cursor sits past
-    /// its line's content end with virtual space enabled). Typing at a
-    /// virtual position first materializes this many spaces.
-    virtual_cols: usize,
+    /// Text that materializes the cursor's virtual-space position (line
+    /// endings for virtual lines below the buffer end, then column padding).
+    /// Empty unless the cursor is in virtual space. Typing inserts this
+    /// before the typed character.
+    virtual_gap: String,
 }
 
 /// Collect cursor data needed for character insertion.
@@ -943,6 +946,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 
     // Collect cursor IDs and positions
     let vs_mode = state.buffer_settings.virtual_space;
+    let line_ending = state.buffer.line_ending().as_str();
     let cursor_info: Vec<_> = cursor_vec
         .iter()
         .map(|(cursor_id, cursor)| {
@@ -951,8 +955,13 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
                 .as_ref()
                 .map(|r| r.start)
                 .unwrap_or(cursor.position);
-            let virtual_cols = cursor_virtual_columns(vs_mode, &state.buffer, cursor);
-            (*cursor_id, selection, insert_position, virtual_cols)
+            let virtual_gap = crate::model::virtual_space::virtual_gap_text(
+                vs_mode,
+                &state.buffer,
+                cursor,
+                line_ending,
+            );
+            (*cursor_id, selection, insert_position, virtual_gap)
         })
         .collect();
 
@@ -961,7 +970,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
     // Collect all cursor data with buffer access
     cursor_info
         .into_iter()
-        .map(|(cursor_id, selection, insert_position, virtual_cols)| {
+        .map(|(cursor_id, selection, insert_position, virtual_gap)| {
             // Calculate line start for auto-dedent
             let mut line_start = insert_position;
             while line_start > 0 {
@@ -998,7 +1007,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
                 only_spaces,
                 char_after,
                 deleted_text,
-                virtual_cols,
+                virtual_gap,
             }
         })
         .collect()
@@ -1022,22 +1031,27 @@ fn insert_char_events(
     let cursor_data = collect_insert_cursor_data(state, cursors);
 
     for data in cursor_data {
-        // Virtual space: materialize the gap between the line's content end
-        // and the cursor, then the typed character — as one Insert so a
+        // Virtual space: materialize the gap between the buffer/line content
+        // end and the cursor, then the typed character — as one Insert so a
         // single undo removes both. Auto-close/skip-over don't apply out in
         // virtual space; the cursor is past every existing delimiter. The
-        // pad may come from the cursor itself or from a block-selection
-        // rectangle whose left edge is past this line's end.
+        // gap may come from the cursor itself (columns past EOL and/or lines
+        // below the buffer end) or from a block-selection rectangle whose
+        // left edge is past this line's end.
         let block_pad = block_pads
             .iter()
             .find(|(id, _)| *id == data.cursor_id)
             .map(|(_, pad)| *pad)
             .unwrap_or(0);
-        let pad = data.virtual_cols.max(block_pad);
-        if pad > 0 && data.selection.is_none() {
+        let gap = if !data.virtual_gap.is_empty() {
+            data.virtual_gap.clone()
+        } else {
+            " ".repeat(block_pad)
+        };
+        if !gap.is_empty() && data.selection.is_none() {
             events.push(Event::Insert {
                 position: data.insert_position,
-                text: format!("{}{}", " ".repeat(pad), ch),
+                text: format!("{}{}", gap, ch),
                 cursor_id: data.cursor_id,
             });
             continue;
@@ -1595,12 +1609,18 @@ fn handle_insert_tab(
 
         // Insert tabs (materializing any virtual-space gap first)
         let vs_mode = state.buffer_settings.virtual_space;
+        let line_ending = state.buffer.line_ending().as_str();
         for (cursor_id, cursor) in cursor_vec {
-            let virtual_cols = cursor_virtual_columns(vs_mode, &state.buffer, cursor);
-            let text = if virtual_cols > 0 {
-                format!("{}{}", " ".repeat(virtual_cols), tab_str)
-            } else {
+            let gap = crate::model::virtual_space::virtual_gap_text(
+                vs_mode,
+                &state.buffer,
+                cursor,
+                line_ending,
+            );
+            let text = if gap.is_empty() {
                 tab_str.clone()
+            } else {
+                format!("{}{}", gap, tab_str)
             };
             events.push(Event::Insert {
                 position: cursor.position,
@@ -1859,6 +1879,23 @@ fn handle_delete_backward(
         .filter_map(|(cursor_id, cursor)| {
             // Backspace in virtual space steps the cursor one column left
             // without touching the buffer (there is nothing to delete yet).
+            // On a virtual line below the buffer end it stops at column 0
+            // rather than eating the last real line's characters.
+            if cursor_virtual_lines(vs_mode, &state.buffer, cursor) > 0 {
+                let col = cursor.sticky_column.unwrap_or(0);
+                if col > 0 {
+                    events.push(Event::MoveCursor {
+                        cursor_id: *cursor_id,
+                        old_position: cursor.position,
+                        new_position: cursor.position,
+                        old_anchor: cursor.anchor,
+                        new_anchor: None,
+                        old_sticky_column: cursor.sticky_column,
+                        new_sticky_column: Some(col - 1),
+                    });
+                }
+                return None;
+            }
             if cursor_virtual_columns(vs_mode, &state.buffer, cursor) > 0 {
                 events.push(Event::MoveCursor {
                     cursor_id: *cursor_id,
@@ -2510,6 +2547,13 @@ pub fn action_to_events(
                         return (range.start, None);
                     }
                 }
+                // On a virtual line below the buffer end, Left moves along
+                // that line's columns and stops at column 0 (leaving the
+                // virtual line vertically is a click/Up away).
+                if cursor_virtual_lines(vs_mode, &state.buffer, c) > 0 {
+                    let col = c.sticky_column.unwrap_or(0);
+                    return (c.position, Some(col.saturating_sub(1)));
+                }
                 // In virtual space, step back one column before bytes move.
                 if cursor_virtual_columns(vs_mode, &state.buffer, c) > 0 {
                     return (c.position, c.sticky_column.map(|s| s - 1));
@@ -2528,6 +2572,11 @@ pub fn action_to_events(
                     if let Some(range) = c.selection_range() {
                         return (range.end.min(max_pos), None);
                     }
+                }
+                // On a virtual line below the buffer end, Right advances the
+                // column (measured from the empty virtual line's start).
+                if cursor_virtual_lines(vs_mode, &state.buffer, c) > 0 {
+                    return (c.position, Some(c.sticky_column.unwrap_or(0) + 1));
                 }
                 // In virtual space, Right at a line's content end stays on
                 // the line and advances the goal column past the width.

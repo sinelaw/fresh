@@ -45,6 +45,14 @@ pub struct Cursor {
     /// Whether regular movement should clear the selection (default: true)
     /// When false (e.g., after set_mark in Emacs mode), movement preserves the anchor
     pub deselect_on_move: bool,
+
+    /// Virtual-space lines below the end of the buffer (vertical virtual
+    /// space). Only meaningful while `position == buffer.len()`; any move to
+    /// a different position clears it. Set by clicking below the last line
+    /// with `editor.virtual_space = "on"`; typing there materializes the
+    /// missing newlines. Not carried by MoveCursor events — transient view
+    /// state like `block_anchor`.
+    pub virtual_lines_below: usize,
 }
 
 impl Cursor {
@@ -57,6 +65,7 @@ impl Cursor {
             selection_mode: SelectionMode::Normal,
             block_anchor: None,
             deselect_on_move: true, // Default: movement clears selection
+            virtual_lines_below: 0,
         }
     }
 
@@ -69,6 +78,7 @@ impl Cursor {
             selection_mode: SelectionMode::Normal,
             block_anchor: None,
             deselect_on_move: true, // Default: movement clears selection
+            virtual_lines_below: 0,
         }
     }
 
@@ -343,9 +353,10 @@ impl Cursors {
     /// Like [`normalize`](Self::normalize), but two cursors at the same byte
     /// position only merge when `virtual_cols` also agrees. With virtual
     /// space enabled, several cursors can share a line's content-end byte
-    /// while sitting at different on-screen columns — they are distinct
-    /// cursors and must not be deduplicated.
-    pub fn normalize_with_key(&mut self, virtual_cols: impl Fn(&Cursor) -> usize) {
+    /// while sitting at different on-screen columns (or virtual lines below
+    /// the buffer end) — they are distinct cursors and must not be
+    /// deduplicated.
+    pub fn normalize_with_key<K: Ord>(&mut self, virtual_cols: impl Fn(&Cursor) -> K) {
         // Collect all cursors sorted by position
         let mut cursor_list: Vec<(CursorId, Cursor)> =
             self.cursors.iter().map(|(id, c)| (*id, *c)).collect();

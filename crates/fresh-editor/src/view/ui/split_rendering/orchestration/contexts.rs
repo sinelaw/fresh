@@ -22,6 +22,13 @@ pub(crate) struct SelectionContext {
     /// Visual columns the primary cursor sits past its line's content end
     /// (virtual space). 0 unless `editor.virtual_space` is "on".
     pub primary_virtual_cols: usize,
+    /// Virtual lines below the buffer end the primary cursor sits on
+    /// (vertical virtual space). 0 unless `editor.virtual_space` is "on".
+    pub primary_virtual_lines: usize,
+    /// The primary cursor's column on its virtual line (only meaningful
+    /// when `primary_virtual_lines > 0`; virtual lines are empty so this is
+    /// the full sticky column).
+    pub primary_virtual_line_col: usize,
     /// For every cursor in virtual space: its byte position (a line content
     /// end) → virtual columns. Used to pad software cursor indicators out
     /// to the cursor's on-screen column.

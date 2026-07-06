@@ -25,6 +25,8 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
             cursor_positions: Vec::new(),
             primary_cursor_position: cursors.primary().position,
             primary_virtual_cols: 0,
+            primary_virtual_lines: 0,
+            primary_virtual_line_col: 0,
             virtual_cols_at: HashMap::new(),
         };
     }
@@ -99,6 +101,16 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
         &state.buffer,
         cursors.primary(),
     );
+    let primary_virtual_lines = crate::model::virtual_space::cursor_virtual_lines(
+        vs_mode,
+        &state.buffer,
+        cursors.primary(),
+    );
+    let primary_virtual_line_col = if primary_virtual_lines > 0 {
+        cursors.primary().sticky_column.unwrap_or(0)
+    } else {
+        0
+    };
 
     SelectionContext {
         ranges,
@@ -106,6 +118,8 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
         cursor_positions,
         primary_cursor_position: cursors.primary().position,
         primary_virtual_cols,
+        primary_virtual_lines,
+        primary_virtual_line_col,
         virtual_cols_at,
     }
 }
