@@ -13,6 +13,13 @@
 //! Single test in this binary: the persistence isolation sets the
 //! process-global `XDG_DATA_HOME` (see
 //! `common::dormant_ssh::isolated_dir_context`).
+//!
+//! Plugins-gated: the dock is the orchestrator plugin's UI, and the dormant
+//! dive it drives only connects with the plugin runtime present. Linux-gated
+//! like `remote_restore_terminal_e2e.rs`, which shares the same scaffolding
+//! constraints: persistence isolation rides `XDG_DATA_HOME` (ignored by the
+//! macOS/Windows data dirs) and the fake `ssh` is a Unix shell script.
+#![cfg(all(target_os = "linux", feature = "plugins"))]
 
 mod common;
 
@@ -23,7 +30,6 @@ use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOp
 use crossterm::event::{KeyCode, KeyModifiers};
 
 #[test]
-#[cfg_attr(target_os = "windows", ignore)] // fake-ssh shim is a Unix shell script
 fn dock_lists_dormant_ssh_session_with_backend_badge_and_dive_commits() {
     common::tracing::init_tracing_from_env();
     ensure_fake_ssh_on_path();

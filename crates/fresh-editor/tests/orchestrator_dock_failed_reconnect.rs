@@ -15,6 +15,14 @@
 //! network (or real ssh binary) is involved. Single test in this binary: the
 //! persistence isolation sets the process-global `XDG_DATA_HOME` (see
 //! `common::dormant_ssh::isolated_dir_context`).
+//!
+//! Plugins-gated: the dormant-session dive (`bring_dormant_remote_online` →
+//! `start_remote_connect`) is a no-op without the plugin runtime, and the
+//! `handle_plugin_command` entry point only exists with it. Linux-gated like
+//! `remote_restore_terminal_e2e.rs`, which shares the same scaffolding
+//! constraints: persistence isolation rides `XDG_DATA_HOME` (ignored by the
+//! macOS/Windows data dirs) and the fake `ssh` is a Unix shell script.
+#![cfg(all(target_os = "linux", feature = "plugins"))]
 
 mod common;
 
@@ -30,7 +38,6 @@ use fresh_core::api::PluginCommand;
 /// shell must never overwrite the session's on-disk workspace, and a later
 /// dive must still work (retry, and switching back and forth).
 #[test]
-#[cfg_attr(target_os = "windows", ignore)] // fake-ssh shim is a Unix shell script
 fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
     common::tracing::init_tracing_from_env();
     ensure_fake_ssh_on_path();
