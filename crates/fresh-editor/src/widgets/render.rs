@@ -3480,10 +3480,13 @@ pub fn render_number(
             ));
         }
         Some(e) => {
+            // Edit mode: the buffer plus a single trailing reserved
+            // cell (holds the caret at end-of-text). No min-width pad —
+            // the cell hugs the typed digits, exactly like the
+            // historical editor (`[8 ]`, not `[8   ]`).
             let buf = e.text;
-            let pad_cols = NUMBER_CELL_MIN_WIDTH.saturating_sub(buf.chars().count());
             text.push_str(buf);
-            text.push_str(&" ".repeat(pad_cols + 1));
+            text.push(' ');
             // Selection highlight over the selected byte range.
             if e.sel_start >= 0 && e.sel_end > e.sel_start {
                 let s = cell_start + (e.sel_start as usize).min(buf.len());
