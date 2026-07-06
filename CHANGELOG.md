@@ -8,6 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
+* **Virtual space** - the cursor can move beyond the end of a line, like in Visual Studio and Vim's `virtualedit`. Set `editor.virtual_space` to `on` (arrow keys, clicks, and block selections go past line ends; typing there fills the gap with spaces) or `block` (only block selections extend past line ends, making rectangular copy/insert operate on true rectangles). Off by default.
 * **Slang shader support** - syntax highlighting and [slangd](https://github.com/shader-slang/slang) LSP integration, with **Go to Definition** into read-only builtin modules (#2536, #2539, requested by @batoripX in #2517).
 * **NetBSD builds** - Fresh now compiles on NetBSD (#2534, by @ci4ic4).
 

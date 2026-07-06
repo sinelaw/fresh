@@ -1,5 +1,21 @@
 # Virtual Space — Feature Scoping for Fresh
 
+> **Status: IMPLEMENTED.** The feature shipped behind the
+> `editor.virtual_space` setting (`off` | `block` | `on`, default `off`).
+> The implementation follows the design below with one notable deviation:
+> instead of a new `virtual_column` field on `Cursor`, the derivation reuses
+> `sticky_column` — a cursor is virtual iff it is collapsed, sits exactly at
+> its line's content end, and its sticky (goal) column exceeds the line's
+> visual width (`model::virtual_space::cursor_virtual_columns` is the single
+> source of truth). That works because the sticky column already flows
+> through every `MoveCursor` event, undo, and session persistence; making it
+> trustworthy required fixing several producers that stored byte columns in
+> it and resetting it on edits (see the commit history of this branch).
+> Known limits, as scoped: linear selections stay byte-clamped (Shift+arrows
+> collapse a virtual cursor to the content end), soft-wrapped lines don't
+> get virtual columns past the wrap point, and block-selection geometry
+> remains byte-column based (exact for the spaces padding materializes).
+
 Scoping analysis for adding **virtual space** (cursor movement and placement beyond the
 end of a line) to Fresh, prompted by VSCode's long-stalled implementation
 ([microsoft/vscode#228680](https://github.com/microsoft/vscode/pull/228680), for issue
