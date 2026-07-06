@@ -5985,6 +5985,7 @@ mod tests {
                 italic: false,
                 strikethrough: false,
                 extend_to_line_end: false,
+                reversed: false,
                 fg_on_collision_only: false,
                 url: None,
             },
