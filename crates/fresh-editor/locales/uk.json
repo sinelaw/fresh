@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Перемкнути перенесення рядків (поточний буфер)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Увімкнути або вимкнути перенесення рядків лише для поточного буфера",
   "cmd.toggle_virtual_space_current_buffer": "Перемкнути віртуальний простір (поточний буфер)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Циклічно перемикає віртуальний простір (off → block → on) лише для поточного буфера",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Вмикає або вимикає віртуальний простір лише для поточного буфера",
   "cmd.toggle_line_wrap": "Перемкнути перенос рядків",
   "cmd.toggle_line_wrap_desc": "Увімкнути або вимкнути перенос рядків у редакторі",
   "cmd.toggle_lsp_for_buffer": "Перемкнути LSP для поточного буфера",

@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "줄 바꿈 전환 (현재 버퍼)",
   "cmd.toggle_line_wrap_current_buffer_desc": "현재 버퍼에서만 줄 바꿈 사용/해제",
   "cmd.toggle_virtual_space_current_buffer": "가상 공간 전환 (현재 버퍼)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "현재 버퍼에만 가상 공간을 순환합니다 (off → block → on)",
+  "cmd.toggle_virtual_space_current_buffer_desc": "현재 버퍼에만 가상 공간을 켜거나 끕니다",
   "cmd.toggle_line_wrap": "줄 바꿈 전환",
   "cmd.toggle_line_wrap_desc": "편집기에서 줄 바꿈 활성화/비활성화",
   "cmd.toggle_lsp_for_buffer": "현재 버퍼의 LSP 전환",

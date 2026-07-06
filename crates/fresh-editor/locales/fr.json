@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Basculer le retour à la ligne (tampon actuel)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Activer ou désactiver le retour à la ligne pour le tampon actuel uniquement",
   "cmd.toggle_virtual_space_current_buffer": "Basculer l'Espace Virtuel (Tampon Actuel)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Fait défiler l'espace virtuel (off → block → on) pour le tampon actuel uniquement",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Active ou désactive l'espace virtuel pour le tampon actuel uniquement",
   "cmd.toggle_line_wrap": "Basculer le retour à la ligne",
   "cmd.toggle_line_wrap_desc": "Activer ou désactiver le retour à la ligne dans l'éditeur",
   "cmd.toggle_lsp_for_buffer": "Basculer LSP pour le tampon actuel",

@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "切换自动换行（当前缓冲区）",
   "cmd.toggle_line_wrap_current_buffer_desc": "仅为当前缓冲区启用或禁用自动换行",
   "cmd.toggle_virtual_space_current_buffer": "切换虚拟空格（当前缓冲区）",
-  "cmd.toggle_virtual_space_current_buffer_desc": "仅为当前缓冲区循环切换虚拟空格（off → block → on）",
+  "cmd.toggle_virtual_space_current_buffer_desc": "仅为当前缓冲区打开或关闭虚拟空格",
   "cmd.toggle_line_wrap": "切换自动换行",
   "cmd.toggle_line_wrap_desc": "在编辑器中启用或禁用自动换行",
   "cmd.toggle_lsp_for_buffer": "切换当前缓冲区的 LSP",

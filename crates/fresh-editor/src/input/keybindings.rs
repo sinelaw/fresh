@@ -732,7 +732,7 @@ pub enum Action {
     /// persists across restart, without touching the global default or other
     /// buffers).
     ToggleLineWrapCurrentBuffer,
-    /// Cycle virtual space (off → block → on) for the current buffer only
+    /// Toggle virtual space (off ↔ on) for the current buffer only
     ToggleVirtualSpaceCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,

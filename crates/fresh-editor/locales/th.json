@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "สลับการตัดบรรทัด (บัฟเฟอร์ปัจจุบัน)",
   "cmd.toggle_line_wrap_current_buffer_desc": "เปิดหรือปิดการตัดบรรทัดเฉพาะบัฟเฟอร์ปัจจุบัน",
   "cmd.toggle_virtual_space_current_buffer": "สลับพื้นที่เสมือน (บัฟเฟอร์ปัจจุบัน)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "วนสลับพื้นที่เสมือน (off → block → on) เฉพาะบัฟเฟอร์ปัจจุบันเท่านั้น",
+  "cmd.toggle_virtual_space_current_buffer_desc": "เปิดหรือปิดพื้นที่เสมือนเฉพาะบัฟเฟอร์ปัจจุบันเท่านั้น",
   "cmd.toggle_line_wrap": "สลับการตัดบรรทัด",
   "cmd.toggle_line_wrap_desc": "เปิดหรือปิดใช้งานการตัดบรรทัดในโปรแกรมแก้ไข",
   "cmd.toggle_lsp_for_buffer": "สลับ LSP สำหรับบัฟเฟอร์ปัจจุบัน",

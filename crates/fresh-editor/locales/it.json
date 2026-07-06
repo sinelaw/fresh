@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Attiva/disattiva a capo automatico (buffer corrente)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Abilita o disabilita l'a capo automatico solo per il buffer corrente",
   "cmd.toggle_virtual_space_current_buffer": "Attiva/Disattiva Spazio Virtuale (Buffer Corrente)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Cicla lo spazio virtuale (off → block → on) solo per il buffer corrente",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Attiva o disattiva lo spazio virtuale solo per il buffer corrente",
   "cmd.toggle_line_wrap": "Alterna a capo automatico",
   "cmd.toggle_line_wrap_desc": "Attiva o disattiva l'andata a capo automatica nell'editor",
   "cmd.toggle_lsp_for_buffer": "Attiva/Disattiva LSP per il buffer corrente",

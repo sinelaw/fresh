@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Přepnout zalamování řádků (aktuální buffer)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Povolit nebo zakázat zalamování řádků jen pro aktuální buffer",
   "cmd.toggle_virtual_space_current_buffer": "Přepnout virtuální prostor (aktuální buffer)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Cykluje virtuální prostor (off → block → on) pouze pro aktuální buffer",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Zapne nebo vypne virtuální prostor pouze pro aktuální buffer",
   "cmd.toggle_line_wrap": "Přepnout zalamování řádků",
   "cmd.toggle_line_wrap_desc": "Povolit nebo zakázat zalamování řádků v editoru",
   "cmd.toggle_lsp_for_buffer": "Přepnout LSP pro aktuální vyrovnávací paměť",

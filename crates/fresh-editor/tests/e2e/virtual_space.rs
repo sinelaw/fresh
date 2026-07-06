@@ -558,8 +558,7 @@ fn test_toggle_virtual_space_scopes_to_buffer() {
     harness.open_file(&dir.join("b.txt")).unwrap();
     harness.render().unwrap();
 
-    // Cycle b.txt (active): off → block → on.
-    run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
+    // Toggle b.txt (active): off → on.
     run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
 
     // Typing past EOL pads in b.txt...
@@ -594,7 +593,7 @@ fn test_toggle_virtual_space_persists_across_restart() {
     let file = project_dir.join("a.txt");
     std::fs::write(&file, "ab\nxyz").unwrap();
 
-    // Session 1: cycle the buffer to "on", then save the workspace.
+    // Session 1: toggle the buffer to "on", then save the workspace.
     {
         let mut harness = EditorTestHarness::with_config_and_working_dir(
             80,
@@ -605,7 +604,6 @@ fn test_toggle_virtual_space_persists_across_restart() {
         .unwrap();
         harness.open_file(&file).unwrap();
         harness.render().unwrap();
-        run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
         run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
         harness.editor_mut().save_workspace().unwrap();
     }

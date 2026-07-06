@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Bật/tắt ngắt dòng (bộ đệm hiện tại)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Bật hoặc tắt ngắt dòng chỉ cho bộ đệm hiện tại",
   "cmd.toggle_virtual_space_current_buffer": "Chuyển Đổi Không Gian Ảo (Bộ Đệm Hiện Tại)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Xoay vòng không gian ảo (off → block → on) chỉ cho bộ đệm hiện tại",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Bật hoặc tắt không gian ảo chỉ cho bộ đệm hiện tại",
   "cmd.toggle_line_wrap": "Bật/tắt ngắt dòng",
   "cmd.toggle_line_wrap_desc": "Bật hoặc tắt ngắt dòng trong trình soạn thảo",
   "cmd.toggle_lsp_for_buffer": "Bật/Tắt LSP cho bộ đệm hiện tại",

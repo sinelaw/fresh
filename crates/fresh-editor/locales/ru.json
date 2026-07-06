@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Переключить перенос строк (текущий буфер)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Включить или отключить перенос строк только для текущего буфера",
   "cmd.toggle_virtual_space_current_buffer": "Переключить виртуальное пространство (текущий буфер)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Циклически переключает виртуальное пространство (off → block → on) только для текущего буфера",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Включает или выключает виртуальное пространство только для текущего буфера",
   "cmd.toggle_line_wrap": "Переключить перенос строк",
   "cmd.toggle_line_wrap_desc": "Включить или отключить перенос строк в редакторе",
   "cmd.toggle_lsp_for_buffer": "Переключить LSP для текущего буфера",

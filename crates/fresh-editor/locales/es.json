@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Alternar ajuste de línea (búfer actual)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Activar o desactivar el ajuste de línea solo en el búfer actual",
   "cmd.toggle_virtual_space_current_buffer": "Alternar Espacio Virtual (Búfer Actual)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Cicla el espacio virtual (off → block → on) solo para el búfer actual",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Activa o desactiva el espacio virtual solo para el búfer actual",
   "cmd.toggle_line_wrap": "Alternar ajuste de línea",
   "cmd.toggle_line_wrap_desc": "Activar o desactivar el ajuste de línea en el editor",
   "cmd.toggle_lsp_for_buffer": "Alternar LSP para el buffer actual",

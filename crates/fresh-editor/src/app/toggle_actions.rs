@@ -152,12 +152,14 @@ impl Editor {
         self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
     }
 
-    /// Cycle virtual space (off → block → on) for the current buffer only.
+    /// Toggle virtual space (off ↔ on) for the current buffer only.
     ///
     /// Per-buffer counterpart of the global `editor.virtual_space` setting:
     /// it records an explicit override on the buffer's settings (persisted in
     /// the per-file workspace state) and does not affect other buffers or the
-    /// global config.
+    /// global config. A buffer on the `block` tier (from the global setting)
+    /// toggles up to `on` first, then off. The block-only tier is a
+    /// configuration choice, not part of the toggle cycle.
     pub fn toggle_virtual_space_current_buffer(&mut self) {
         use crate::config::VirtualSpaceMode;
 
@@ -173,9 +175,8 @@ impl Editor {
         };
 
         let new_mode = match state.buffer_settings.virtual_space {
-            VirtualSpaceMode::Off => VirtualSpaceMode::Block,
-            VirtualSpaceMode::Block => VirtualSpaceMode::On,
             VirtualSpaceMode::On => VirtualSpaceMode::Off,
+            VirtualSpaceMode::Off | VirtualSpaceMode::Block => VirtualSpaceMode::On,
         };
         state.buffer_settings.virtual_space = new_mode;
         state.buffer_settings.virtual_space_override = Some(new_mode);

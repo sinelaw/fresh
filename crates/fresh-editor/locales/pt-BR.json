@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Alternar quebra de linha (buffer atual)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Ativar ou desativar a quebra de linha apenas no buffer atual",
   "cmd.toggle_virtual_space_current_buffer": "Alternar Espaço Virtual (Buffer Atual)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Alterna o espaço virtual (off → block → on) apenas para o buffer atual",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Ativa ou desativa o espaço virtual apenas para o buffer atual",
   "cmd.toggle_line_wrap": "Alternar Quebra de Linha",
   "cmd.toggle_line_wrap_desc": "Ativar ou desativar quebra de linha no editor",
   "cmd.toggle_lsp_for_buffer": "Alternar LSP para o buffer atual",

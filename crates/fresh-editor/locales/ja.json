@@ -795,7 +795,7 @@
   "cmd.toggle_line_wrap_current_buffer": "行の折り返しを切り替え（現在のバッファー）",
   "cmd.toggle_line_wrap_current_buffer_desc": "現在のバッファーのみ行の折り返しを有効／無効",
   "cmd.toggle_virtual_space_current_buffer": "仮想スペースを切り替え（現在のバッファ）",
-  "cmd.toggle_virtual_space_current_buffer_desc": "現在のバッファのみ仮想スペースを切り替えます（off → block → on）",
+  "cmd.toggle_virtual_space_current_buffer_desc": "現在のバッファのみ仮想スペースをオン/オフします",
   "cmd.toggle_line_wrap": "行の折り返しを切り替え",
   "cmd.toggle_line_wrap_desc": "エディタで行の折り返しを有効または無効にします",
   "cmd.toggle_lsp_for_buffer": "現在のバッファのLSPを切り替え",

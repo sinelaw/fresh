@@ -822,7 +822,7 @@
   "cmd.toggle_line_wrap_current_buffer": "Toggle Line Wrap (Current Buffer)",
   "cmd.toggle_line_wrap_current_buffer_desc": "Enable or disable line wrapping for the current buffer only",
   "cmd.toggle_virtual_space_current_buffer": "Toggle Virtual Space (Current Buffer)",
-  "cmd.toggle_virtual_space_current_buffer_desc": "Cycle virtual space (off → block → on) for the current buffer only",
+  "cmd.toggle_virtual_space_current_buffer_desc": "Turn virtual space on or off for the current buffer only",
   "cmd.wave_animation": "Wave Animation",
   "cmd.wave_animation_desc": "Send a wave through the editor — bounce all content up, down, and sideways",
   "cmd.toggle_scroll_sync": "Toggle Scroll Sync",
