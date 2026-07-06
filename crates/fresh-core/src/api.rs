@@ -436,10 +436,35 @@ pub struct WindowInfo {
     #[ts(type = "boolean")]
     #[serde(skip_serializing_if = "is_false_field", default)]
     pub shared_worktree: bool,
+    /// Remote backend identity when this session's backend is not
+    /// host-local (SSH / Kubernetes). Carried for live remote windows
+    /// *and* for dormant (not-yet-connected / disconnected) sessions, so
+    /// the dock can badge a restored SSH session before any connection
+    /// exists. `None` for local sessions and plugin-managed backends
+    /// (devcontainer), whose facet the owning plugin supplies itself.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote: Option<RemoteBackendInfo>,
 }
 
 fn is_false_field(b: &bool) -> bool {
     !b
+}
+
+/// Backend identity of a non-local session, as surfaced to plugins on
+/// [`WindowInfo`]. Mirrors the persisted `SessionAuthoritySpec::RemoteAgent`
+/// transport, reduced to what the dock renders.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RemoteBackendInfo {
+    /// Backend kind: `"ssh"` or `"kubernetes"`.
+    pub kind: String,
+    /// Short human identity for the row (e.g. `deploy@build-01`,
+    /// `ns/pod`).
+    pub detail: String,
+    /// `true` when the backend connection is currently live; `false` for a
+    /// dormant session (restored from disk, not yet connected, or whose
+    /// last connect failed).
+    pub connected: bool,
 }
 
 /// Information about a buffer

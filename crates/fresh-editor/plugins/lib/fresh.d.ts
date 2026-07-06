@@ -497,6 +497,32 @@ type WindowInfo = {
 	* emitted when false.
 	*/
 	shared_worktree?: boolean;
+	/**
+	* Remote backend identity when this session's backend is not
+	* host-local (SSH / Kubernetes). Carried for live remote windows
+	* *and* for dormant (not-yet-connected / disconnected) sessions, so
+	* the dock can badge a restored SSH session before any connection
+	* exists. `None` for local sessions and plugin-managed backends
+	* (devcontainer), whose facet the owning plugin supplies itself.
+	*/
+	remote?: RemoteBackendInfo | null;
+};
+type RemoteBackendInfo = {
+	/**
+	* Backend kind: `"ssh"` or `"kubernetes"`.
+	*/
+	kind: string;
+	/**
+	* Short human identity for the row (e.g. `deploy@build-01`,
+	* `ns/pod`).
+	*/
+	detail: string;
+	/**
+	* `true` when the backend connection is currently live; `false` for a
+	* dormant session (restored from disk, not yet connected, or whose
+	* last connect failed).
+	*/
+	connected: boolean;
 };
 type JsDiagnostic = {
 	/**

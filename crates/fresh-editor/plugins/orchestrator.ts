@@ -677,6 +677,21 @@ const OPEN_MODE = "orchestrator-open";
 // Session-list reconciliation
 // =============================================================================
 
+// Remote facet derived from the host's `WindowInfo.remote` backend identity.
+// Present for SSH/Kubernetes sessions — including *dormant* ones restored
+// from disk that have never connected this run — so their dock rows carry
+// the backend glyph + detail and a disconnected ("stopped") state instead of
+// masquerading as local sessions. Plugin-managed backends (devcontainer)
+// carry no host facet; theirs still arrives via `pendingRemoteFacet`.
+function backendFacet(info: WindowInfo): AgentSession["remote"] | undefined {
+  if (!info.remote) return undefined;
+  return {
+    kind: info.remote.kind as SessionBackend,
+    detail: info.remote.detail,
+    state: info.remote.connected ? "running" : "stopped",
+  };
+}
+
 function reconcileSessions(): void {
   const editorSessions = editor.listWindows();
   const seen = new Set<number>();
@@ -707,13 +722,27 @@ function reconcileSessions(): void {
         state: "idle",
         lastOutputAt: null,
         createdAt: Date.now(),
-        remote,
+        remote: remote ?? backendFacet(s),
       });
     } else {
       existing.label = s.label;
       existing.root = s.root;
       existing.projectPath = s.project_path;
       if (s.shared_worktree != null) existing.sharedWorktree = s.shared_worktree;
+      // Keep the backend facet in step with the host's view: adopt it when
+      // missing (a dormant session that predates the facet, or one whose
+      // plugin-side record was created before the snapshot carried it), and
+      // track the connected/disconnected flip so a promoted or dropped
+      // backend re-badges the row. A plugin-owned lifecycle state
+      // ("starting") is left alone — it resolves through its own path.
+      const facet = backendFacet(s);
+      if (facet) {
+        if (!existing.remote) {
+          existing.remote = facet;
+        } else if (existing.remote.state !== "starting") {
+          existing.remote.state = facet.state;
+        }
+      }
     }
   }
   // Live windows live in the positive id space; their absence from

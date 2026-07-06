@@ -1251,11 +1251,19 @@ impl Editor {
                 // `tracing::warn!` above, which lights the warning indicator);
                 // the reason itself is surfaced in the remote-indicator popup.
                 w.remote_reconnect_error = Some(reason);
+            } else if self.dormant_remote.contains_key(&window_id) {
+                // A dive-triggered connect of a dormant session failed. The
+                // user asked for that workspace, so commit the switch: build
+                // an empty disconnected shell for it and activate it (dock
+                // selection and active window agree again — issue #2570).
+                // The session stays dormant behind the shell; diving again
+                // (or the indicator's Retry) reconnects, and a success
+                // replaces the shell with the fully-restored window.
+                self.set_status_message(format!("Connection failed: {reason}"));
+                self.activate_failed_dormant_placeholder(window_id, reason);
             } else {
-                // A dormant session's connect failed: it has no
-                // window (we never built one without the backend), so
-                // surface the reason on the status line. The session
-                // stays dormant in the dock; diving again retries.
+                // The session was closed while the connect was in flight —
+                // nothing to attach the failure to; just surface it.
                 self.set_status_message(format!("Connection failed: {reason}"));
             }
         }

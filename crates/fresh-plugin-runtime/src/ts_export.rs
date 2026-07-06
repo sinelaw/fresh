@@ -22,10 +22,10 @@ use fresh_core::api::{
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, ReplaceResult, ScreenSize,
-    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
-    VirtualBufferResult, WindowInfo,
+    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo,
+    ReplaceResult, ScreenSize, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
+    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -51,6 +51,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Core types
         "BufferInfo" => Some(BufferInfo::decl(&cfg)),
         "WindowInfo" => Some(WindowInfo::decl(&cfg)),
+        "RemoteBackendInfo" => Some(RemoteBackendInfo::decl(&cfg)),
         "CursorInfo" => Some(CursorInfo::decl(&cfg)),
         "ViewportInfo" => Some(ViewportInfo::decl(&cfg)),
         "ScreenSize" => Some(ScreenSize::decl(&cfg)),
@@ -317,6 +318,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "DirEntry",                        // Used by plugins for directory entries
     "BufferInfo",                      // Used by listBuffers, getBufferInfo
     "WindowInfo",                      // Used by listWindows
+    "RemoteBackendInfo",               // Used by WindowInfo.remote
     "JsDiagnostic",                    // Used by getAllDiagnostics
     "JsRange",                         // Used by JsDiagnostic
     "JsPosition",                      // Used by JsRange
@@ -861,6 +863,7 @@ mod tests {
         let expected_types = vec![
             "BufferInfo",
             "WindowInfo",
+            "RemoteBackendInfo",
             "CursorInfo",
             "ViewportInfo",
             "ScreenSize",

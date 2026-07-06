@@ -53,6 +53,37 @@ fn normalize_plugin_path(path: std::path::PathBuf) -> std::path::PathBuf {
     path
 }
 
+/// Reduce a session's persisted backend spec to the [`RemoteBackendInfo`]
+/// facet the dock renders (`None` for local sessions, and for plugin-managed
+/// backends whose facet the owning plugin supplies itself). The `kind`
+/// strings match the plugin API's `SessionBackend` values.
+fn remote_backend_info(
+    spec: &crate::services::authority::SessionAuthoritySpec,
+    connected: bool,
+) -> Option<fresh_core::api::RemoteBackendInfo> {
+    use crate::services::authority::{RemoteTransportSpec, SessionAuthoritySpec};
+    let SessionAuthoritySpec::RemoteAgent(agent) = spec else {
+        return None;
+    };
+    let (kind, detail) = match &agent.transport {
+        RemoteTransportSpec::Ssh { user, host, .. } => (
+            "ssh",
+            match user.as_deref().filter(|u| !u.is_empty()) {
+                Some(user) => format!("{user}@{host}"),
+                None => host.clone(),
+            },
+        ),
+        RemoteTransportSpec::KubectlExec { namespace, pod, .. } => {
+            ("kubernetes", format!("{namespace}/{pod}"))
+        }
+    };
+    Some(fresh_core::api::RemoteBackendInfo {
+        kind: kind.to_string(),
+        detail,
+        connected,
+    })
+}
+
 #[cfg(windows)]
 fn canonicalize_deepest_existing(path: &std::path::Path) -> std::path::PathBuf {
     if let Ok(c) = path.canonicalize() {
@@ -250,28 +281,37 @@ impl Editor {
         // deterministic order — `next_window_id` is monotonic
         // so this is "creation order".
         // Dormant remote sessions (SSH / kube discovered at boot, not yet
-        // connected) have no `Window` — they live in `dormant_remote` as
-        // authority-less descriptors. They must still appear in the dock, so
-        // fold them into the snapshot alongside the live windows. A dive
-        // promotes one to a real window (removing it from `dormant_remote`), so
-        // the two collections are disjoint and never double-list a session.
-        let dormant_infos = self.dormant_remote.values().map(|d| {
-            let slot = d.plugin_state.get("orchestrator");
-            let project_path = slot
-                .and_then(|m| m.get("project_path"))
-                .and_then(|v| v.as_str())
-                .filter(|p| !p.is_empty())
-                .map(std::path::PathBuf::from)
-                .or_else(|| d.project_path.clone())
-                .unwrap_or_else(|| d.root.clone());
-            fresh_core::api::WindowInfo {
-                id: fresh_core::WindowId(d.id),
-                label: d.label.clone(),
-                root: normalize_plugin_path(d.root.clone()),
-                project_path: normalize_plugin_path(project_path),
-                shared_worktree: d.shared_worktree,
-            }
-        });
+        // connected) usually have no `Window` — they live in `dormant_remote`
+        // as authority-less descriptors. They must still appear in the dock,
+        // so fold them into the snapshot alongside the live windows. A dive
+        // promotes one to a real window (removing it from `dormant_remote`);
+        // a *failed* dive leaves the descriptor AND a disconnected shell
+        // window at the same id, so descriptors shadowed by a window are
+        // skipped to keep the list one-row-per-session.
+        let dormant_infos = self
+            .dormant_remote
+            .iter()
+            .filter(|(id, _)| !self.windows.contains_key(id))
+            .map(|(_, d)| {
+                let slot = d.plugin_state.get("orchestrator");
+                let project_path = slot
+                    .and_then(|m| m.get("project_path"))
+                    .and_then(|v| v.as_str())
+                    .filter(|p| !p.is_empty())
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| d.project_path.clone())
+                    .unwrap_or_else(|| d.root.clone());
+                fresh_core::api::WindowInfo {
+                    id: fresh_core::WindowId(d.id),
+                    label: d.label.clone(),
+                    root: normalize_plugin_path(d.root.clone()),
+                    project_path: normalize_plugin_path(project_path),
+                    shared_worktree: d.shared_worktree,
+                    // Never connected (or its window would exist) — the dock
+                    // badges it as its real backend, disconnected.
+                    remote: remote_backend_info(&d.authority_spec, false),
+                }
+            });
         let mut session_infos: Vec<fresh_core::api::WindowInfo> = self
             .windows
             .values()
@@ -299,6 +339,12 @@ impl Editor {
                     root: normalize_plugin_path(s.root.clone()),
                     project_path: normalize_plugin_path(project_path),
                     shared_worktree,
+                    // A parked keepalive is what distinguishes a live remote
+                    // window from a dormant one's disconnected shell.
+                    remote: remote_backend_info(
+                        &s.authority_spec,
+                        self.session_keepalives.contains_key(&s.id),
+                    ),
                 }
             })
             .collect();
@@ -889,6 +935,13 @@ impl Editor {
                 // than activating a placeholder — see `bring_dormant_remote_online`.
                 if self.dormant_remote.contains_key(&id) {
                     self.bring_dormant_remote_online(id);
+                    // A previous failed connect left this session with a
+                    // disconnected shell window — land the dive in it (empty
+                    // editor, error indicator) while the retry connects,
+                    // instead of staying on the previous workspace.
+                    if self.windows.contains_key(&id) {
+                        self.set_active_window(id);
+                    }
                 } else {
                     self.set_active_window(id);
                 }
@@ -896,6 +949,11 @@ impl Editor {
             PluginCommand::SetActiveWindowAnimated { id, from_edge } => {
                 if self.dormant_remote.contains_key(&id) {
                     self.bring_dormant_remote_online(id);
+                    // See `SetActiveWindow`: a failed earlier connect left a
+                    // disconnected shell — the dive lands there.
+                    if self.windows.contains_key(&id) {
+                        self.set_active_window_animated(id, &from_edge);
+                    }
                 } else {
                     self.set_active_window_animated(id, &from_edge);
                 }
@@ -4044,6 +4102,14 @@ impl Editor {
         // to an already-connected window must not tear down and rebuild it. A
         // local session has nothing to reconnect.
         if self.session_keepalives.contains_key(&window_id) {
+            return;
+        }
+        // A session still descriptor-backed in `dormant_remote` (its window,
+        // when present, is the disconnected shell a failed connect built)
+        // connects through the dive gate (`bring_dormant_remote_online`) or
+        // the indicator's explicit Retry. Re-firing here would start a second
+        // connect on the very activation that surfaces a failure.
+        if self.dormant_remote.contains_key(&window_id) {
             return;
         }
         self.start_remote_reconnect(window_id);

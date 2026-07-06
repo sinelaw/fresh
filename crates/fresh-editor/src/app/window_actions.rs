@@ -806,10 +806,15 @@ impl crate::app::Editor {
     ///
     /// Returns `true` on success, `false` on rejection.
     pub fn close_window(&mut self, id: WindowId) -> bool {
-        // A dormant remote session has no `Window` and no live connection —
-        // closing it just drops its descriptor so it leaves the dock. (It can
-        // never be the active window, and isn't the "last window".)
-        if self.dormant_remote.remove(&id).is_some() {
+        // A dormant remote session usually has no `Window` and no live
+        // connection — closing it just drops its descriptor so it leaves the
+        // dock. (Without a window it can never be active, and isn't the
+        // "last window".) A dormant session that DOES have a window — the
+        // disconnected shell a failed reconnect leaves behind — falls through
+        // to the normal close path below (which honours the active/last-window
+        // guards) and drops its descriptor together with the window.
+        if self.dormant_remote.contains_key(&id) && !self.windows.contains_key(&id) {
+            self.dormant_remote.remove(&id);
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -831,6 +836,9 @@ impl crate::app::Editor {
             tracing::warn!("close_window: unknown session id {id}");
             return false;
         }
+        // Closing a dormant session's disconnected shell drops the whole
+        // session: the descriptor must leave the dock with the window.
+        self.dormant_remote.remove(&id);
         // Tear down a born-attached remote session's connection (carrier +
         // reconnect/heartbeat + runtime) when its window closes. No-op for
         // local windows, which never have an entry.
@@ -924,6 +932,12 @@ impl crate::app::Editor {
         if self.remote_attach_inflight.contains(&request_id) {
             return; // a connect for this session is already in flight
         }
+        // A prior failed connect may have left a disconnected shell window
+        // for this session — clear its recorded failure so the indicator
+        // shows "Connecting" (not a stale error) while this retry runs.
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.remote_reconnect_error = None;
+        }
         // `start_remote_connect` posts a "Connecting to …" status and, on
         // success, emits `RemoteAttachReady` in `Reconnect { window_id: id }`
         // mode — which `promote_dormant_remote` turns into the live window. The
@@ -1000,14 +1014,89 @@ impl crate::app::Editor {
         window.terminal_height = self.terminal_height;
         window.plugin_state = descriptor.plugin_state.clone();
         window.authority_spec = descriptor.authority_spec.clone();
+        // Captured before the insert below swaps the active window's
+        // authority out from under `self.authority()` — only meaningful for
+        // the already-active case, where it is the disconnected shell's
+        // placeholder label.
+        let previous_authority_label = self.authority().display_label.clone();
+        let already_active = self.active_window == id;
         self.windows.insert(id, window);
         self.session_keepalives.insert(id, keepalive);
 
-        // Activate through the normal switch path: nothing to materialize
-        // (already restored), no reconnect re-trigger (keepalive now parked),
-        // and it adopts the new authority into the editor caches, fires
-        // `active_window_changed`, and relayouts.
-        self.set_active_window(id);
+        if already_active {
+            // The restored window replaced this session's disconnected shell
+            // (a failed earlier connect committed the switch), which was
+            // already the active window — `set_active_window` would no-op.
+            // Run the switch tail it would have run: adopt the connected
+            // authority into the editor caches, refresh the plugin snapshot,
+            // re-sync terminal mode for the restored active buffer, and
+            // relayout.
+            self.adopt_active_window_authority(&previous_authority_label);
+            #[cfg(feature = "plugins")]
+            self.update_plugin_state_snapshot();
+            self.sync_terminal_mode_to_active_buffer();
+            self.relayout();
+        } else {
+            // Activate through the normal switch path: nothing to materialize
+            // (already restored), no reconnect re-trigger (keepalive now
+            // parked), and it adopts the new authority into the editor
+            // caches, fires `active_window_changed`, and relayouts.
+            self.set_active_window(id);
+        }
         self.set_status_message(format!("Connected: {}", descriptor.label));
+    }
+
+    /// A dormant remote session's dive-triggered connect **failed**: commit
+    /// the switch anyway, into an **empty disconnected shell** for that
+    /// workspace, instead of silently staying on the previous window (which
+    /// left the dock claiming a workspace the editor never entered —
+    /// issue #2570).
+    ///
+    /// The shell is a real `Window` on a local placeholder authority with
+    /// nothing restored into it: its persisted workspace can only be restored
+    /// through the connected backend, so it stays on disk, authoritative
+    /// (`save_workspace_for` skips descriptor-backed ids). The descriptor is
+    /// deliberately **kept** in `dormant_remote`, so a later dive retries the
+    /// connect and a success still lands in `promote_dormant_remote` — which
+    /// replaces this shell with the fully-restored window. The recorded
+    /// `reason` drives the status bar's disconnected indicator (and its
+    /// Retry popup) while the shell is active.
+    pub(crate) fn activate_failed_dormant_placeholder(&mut self, id: WindowId, reason: String) {
+        let Some(descriptor) = self.dormant_remote.get(&id) else {
+            return;
+        };
+        let root = descriptor.root.clone();
+        // Same per-session local scope a boot-discovered local shell gets:
+        // its own trust + env handles, never a clone of the previous
+        // window's.
+        let authority = crate::services::authority::Authority::local_scoped(
+            crate::services::authority::SessionScope::for_root(
+                &root,
+                &self.dir_context.project_state_dir(&root),
+            ),
+        );
+        let mut window = Window::new(
+            id,
+            descriptor.label.clone(),
+            root,
+            authority,
+            self.window_resources(),
+        );
+        window.terminal_width = self.terminal_width;
+        window.terminal_height = self.terminal_height;
+        window.plugin_state = descriptor.plugin_state.clone();
+        // Keep the backend identity so the status bar / dock present the
+        // session as its real (disconnected) backend and a retry knows what
+        // to reconnect to — never downgraded to local.
+        window.authority_spec = descriptor.authority_spec.clone();
+        window.remote_reconnect_error = Some(reason);
+        self.windows.insert(id, window);
+        // The normal switch path seeds the empty layout and fires
+        // `active_window_changed`, so the dock keeps this session selected
+        // as the (now genuinely) active one. Its reconnect re-trigger is a
+        // no-op here: `reconnect_dormant_session_if_needed` skips
+        // descriptor-backed sessions, whose connects are owned by the dive
+        // gate (`bring_dormant_remote_online`).
+        self.set_active_window(id);
     }
 }

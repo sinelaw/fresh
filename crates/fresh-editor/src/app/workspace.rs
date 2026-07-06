@@ -414,6 +414,14 @@ impl Editor {
     /// snapshots via `Window::capture_workspace`, and injects the
     /// editor-global `plugin_global_state`.
     pub fn save_workspace_for(&mut self, id: fresh_core::WindowId) -> Result<(), WorkspaceError> {
+        // A session still descriptor-backed in `dormant_remote` never had its
+        // workspace restored: its window, when present, is only the empty
+        // disconnected shell a failed reconnect built. The on-disk workspace —
+        // written by the last *connected* session — is authoritative; saving
+        // the shell would clobber the real layout (and its terminals).
+        if self.dormant_remote.contains_key(&id) {
+            return Ok(());
+        }
         let Some(win) = self.windows.get(&id) else {
             return Ok(());
         };
