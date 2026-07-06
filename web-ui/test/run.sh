@@ -12,6 +12,8 @@
 #   PORT      port for the bridge (default 8141)
 #   CHROMIUM  path to a Chromium binary; when set, no browser is downloaded
 #             and drive.mjs launches this binary instead
+#   PROFILE   cargo profile for the bridge: "debug" (default, cheap for CI)
+#             or "release" (what humans should serve; see web-ui/README.md)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,8 +23,15 @@ PORT="${PORT:-8141}"
 UI_URL="http://127.0.0.1:${PORT}"
 SAMPLE_FILE="$REPO_ROOT/crates/fresh-editor/src/view/scene.rs"
 
+PROFILE="${PROFILE:-debug}"
+case "$PROFILE" in
+  debug)   CARGO_PROFILE_FLAGS=() ;;
+  release) CARGO_PROFILE_FLAGS=(--release) ;;
+  *) echo "PROFILE must be 'debug' or 'release' (got '$PROFILE')" >&2; exit 2 ;;
+esac
+
 # 1) Build the bridge.
-(cd "$REPO_ROOT" && cargo build -p fresh-editor --example webui_server)
+(cd "$REPO_ROOT" && cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} -p fresh-editor --example webui_server)
 
 # 2) Install the JS deps if missing. With CHROMIUM provided, skip playwright's
 #    browser download entirely; otherwise fetch Chromium only when it isn't
@@ -46,7 +55,7 @@ if [ -z "${CHROMIUM:-}" ]; then
 fi
 
 # 3) Start the bridge and always tear it down on exit.
-(cd "$REPO_ROOT" && ./target/debug/examples/webui_server "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
+(cd "$REPO_ROOT" && "./target/${PROFILE}/examples/webui_server" "127.0.0.1:${PORT}" "$SAMPLE_FILE") &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
 

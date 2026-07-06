@@ -577,7 +577,52 @@
 // the scene changes (no client polling), and all input rides the same socket.
 // --------------------------------------------------------------------------
 let scene = null;
-const CW = 8.2, CH = 18;        // cell pixel size (terminal cells -> pixels)
+// ---- typography metrics: measured, not constant (docs §3.3) ----------------
+// The cell size is derived from a canvas measureText of the SAME monospace
+// stack the SVG renders with, at the current (zoomed) font size — not from a
+// hardcoded constant. CW = measured glyph advance × CELL_AIR, where CELL_AIR
+// is the shipped grid's cell/advance ratio (8.2px cells over the 7.83px
+// advance the original hardcoded CW was tuned against), so zoom 1.0 renders
+// pixel-identical to the old constants while a differently-resolved font (or
+// a future user font setting) still re-derives the whole grid from its own
+// measurement. CH keeps the shipped 18/13 line-height:font-size ratio. All
+// cell↔pixel mapping (place/px/cellAt/cellsSvg/caret/resize) reads these
+// lets, so one measureMetrics() + render() + resize() retunes the entire UI.
+// `zoom` (Ctrl+= / Ctrl+- / Ctrl+0, Ctrl+wheel — frontend-owned, see the
+// keydown handler) multiplies the base font size; it is a pure view
+// preference persisted in localStorage (same class as mShowMods), never
+// editor state — the editor only sees the resulting cols/rows re-fit.
+const FONT_STACK = "ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace";
+const BASE_FONT = 13;             // CSS px at zoom 1.0
+const CELL_AIR = 1.0477;          // cell width / glyph advance (see above)
+let zoom = 1;
+try{ const z=parseFloat(localStorage.getItem("fresh.zoom")); if(z>=0.5&&z<=3) zoom=z; }catch(_){}
+let FONT = BASE_FONT, CW = 8.2, CH = 18;   // refined by measureMetrics()
+const measureCtx = document.createElement("canvas").getContext("2d");
+function measureMetrics(){
+  FONT = Math.round(BASE_FONT*zoom*100)/100;
+  measureCtx.font = FONT+"px "+FONT_STACK;
+  const adv = measureCtx.measureText("M0".repeat(60)).width/120;  // per-cell advance
+  CW = adv>0 ? Math.round(adv*CELL_AIR*100)/100 : 8.2*zoom;       // canvas-less fallback
+  CH = Math.round(FONT*(18/13)*100)/100;
+}
+measureMetrics();
+function setZoom(z){
+  z = Math.round(Math.min(3,Math.max(0.5,z))*100)/100;
+  if(z===zoom) return;
+  zoom = z;
+  try{ localStorage.setItem("fresh.zoom",String(z)); }catch(_){}
+  measureMetrics();
+  if(scene) render();   // re-place everything at the new metrics now…
+  resize();             // …then the editor re-fits cols/rows to the new cell size
+}
+// Browser zoom or a monitor move changes devicePixelRatio without any event;
+// the matchMedia re-arm pattern fires once per change — re-measure (rounding
+// of the advance can shift with rasterization) and re-fit the grid.
+(function armDpr(){
+  matchMedia(`(resolution: ${devicePixelRatio}dppx)`)
+    .addEventListener("change",()=>{ measureMetrics(); if(scene) render(); resize(); armDpr(); },{once:true});
+})();
 
 const esc = s => String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const px = (cells, sz) => (cells*sz);
@@ -593,10 +638,10 @@ const rectCell = r => ({ col: r.x + Math.floor(r.w/2), row: r.y });
 const VRULE = "│┃";
 // Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
 function cellsSvg(cells, wCells){
-  let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="13">`;
+  let s=`<svg class="cells" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${px(wCells,CW)} ${px(cells.length,CH)}" preserveAspectRatio="xMinYMin slice" font-size="${FONT}">`;
   let rules="";   // vector vertical rules, drawn above the text layer
   for(let row=0; row<cells.length; row++){
-    const y=(row+1)*CH - 5;
+    const y=(row+1)*CH - CH*(5/18);   // baseline: 5px up at the base 18px cell, scaled with it
     let col=0;
     for(const r of cells[row]){
       const ebg=r.r?(r.fg||"#d4d4d4"):r.bg;
@@ -617,7 +662,7 @@ function cellsSvg(cells, wCells){
       if([...r.t].some(ch=>VRULE.includes(ch))){
         for(let i=0;i<r.t.length;i++){ if(VRULE.includes(r.t[i])){
           const cx=px(col+i,CW)+CW/2;
-          const hv=r.t[i]==="┃"?1.8:1.1;
+          const hv=(r.t[i]==="┃"?1.8:1.1)*zoom;
           rules+=`<rect x="${(cx-hv/2).toFixed(2)}" y="${(row*CH).toFixed(1)}" width="${hv}" height="${CH}" fill="${fill}"/>`;
         }}
         shown=[...r.t].map(ch=>VRULE.includes(ch)?" ":ch).join("");
@@ -663,99 +708,149 @@ function applyTheme(t){
   set("--on-accent", onColor(t.accent));
 }
 
-// Selectors for natively-scrolled chrome whose scrollTop must survive a full
-// DOM rebuild (otherwise any re-render would snap them back to the top).
+// Selectors for natively-scrolled chrome whose scrollTop must survive a
+// rebuild (otherwise a re-render would snap them back to the top). With
+// per-region patching the snapshot/restore is scoped to the one region
+// container actually being rebuilt — untouched regions keep their scroll
+// positions by simply not being touched.
 const SCROLL_KEEP = ".set-items,.set-cats,.w-list,.widget-surface";
-function render(){
+
+// ---- per-region DOM patching (docs §3.4, the frontend half) ----------------
+// Frames arrive as per-region diffs (see applyFrame), so the DOM is patched
+// per region too: #app holds one stable display:contents container per region
+// family, created once in EXACTLY the order the old monolithic rebuild
+// appended elements (display:contents boxes don't exist for layout/stacking,
+// so absolute positioning and paint order behave as if every element were
+// still a direct child of #app — this changes update granularity, not
+// geometry). Rebuilding a region = clearing and refilling only its container.
+// Panes get one sub-container per pane index: a typing frame
+// ("regions.panes.0") re-emits one pane's SVG and leaves every other DOM node
+// untouched — scroll positions, caret blink phase and IME focus survive by
+// construction instead of by snapshot/restore.
+const REGION_ORDER = ["fileExplorer","panes","separators","menu","statusbar",
+  "popups","palette","widgets","contextMenu","auxModal","keybindingEditor",
+  "settings","trustDialog","caret"];
+let containers=null;
+let renderedRegions=[];   // region names rebuilt by the last render (test surface)
+function contentsDiv(name){ const d=document.createElement("div"); d.style.display="contents"; d.dataset.region=name; return d; }
+function ensureContainers(){
   const app=document.getElementById("app");
-  if(!scene){ app.textContent="connecting to editor…"; return; }
-  applyTheme(scene.theme);
-  // Snapshot scroll positions before the rebuild, keyed by document-order
-  // ordinal (stable across a same-structure re-render).
-  const savedScroll=[];
-  document.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ savedScroll[i]=e.scrollTop; });
-  app.innerHTML="";
-  const reg=scene.regions;
+  if(containers && containers.caret.isConnected) return;
+  app.textContent="";
+  containers={};
+  for(const n of REGION_ORDER){ const c=contentsDiv(n); app.appendChild(c); containers[n]=c; }
+}
 
-  // file explorer (UI pane; content = its real cells)
-  if(reg.fileExplorer) app.appendChild(fileExplorerEl(reg.fileExplorer));
-
-  // panes: native tab bar + buffer interior (real cells) + scrollbar (UI).
-  // The line-number gutter is rendered as its own element, separate from the
-  // buffer-text flow, so a future native text selection covers only the code
-  // (not the gutter/line-number column). Both are still real pipeline cells.
-  for(const p of reg.panes){
-    if(p.tabBar) app.appendChild(tabBarEl(p));
-    const gw=p.gutterWidth||0;
-    if(gw>0 && p.gutter){
-      // Gutter (line numbers + separator) and buffer text are emitted as
-      // separate cell blocks by the bridge — render them as separate elements.
-      const g=div("region pane-gutter"); place(g,{x:p.content.x,y:p.content.y,w:gw,h:p.content.h});
-      g.innerHTML=cellsSvg(p.gutter, gw); app.appendChild(g);
-      const c=div("region pane-content"); place(c,{x:p.content.x+gw,y:p.content.y,w:p.content.w-gw,h:p.content.h});
-      c.innerHTML=cellsSvg(p.cells, p.content.w-gw); app.appendChild(c);
-    } else {
-      const c=div("region pane-content"); place(c,p.content); c.innerHTML=cellsSvg(p.cells, p.content.w); app.appendChild(c);
-    }
-    if(p.vscroll && p.vscroll.w>0){
-      const sb=div("region scrollbar"); place(sb,p.vscroll); app.appendChild(sb);
-      const th=document.createElement("div"); th.className="thumb";
-      th.style.top=px(p.thumbStart,CH)+"px"; th.style.height=Math.max(CH, px(Math.max(1,p.thumbEnd-p.thumbStart),CH))+"px";
-      sb.appendChild(th);
-    }
+// One pane: native tab bar + buffer interior (real cells) + scrollbar (UI).
+// The line-number gutter is rendered as its own element, separate from the
+// buffer-text flow, so a future native text selection covers only the code
+// (not the gutter/line-number column). Both are still real pipeline cells.
+function fillPane(c,p){
+  if(p.tabBar) c.appendChild(tabBarEl(p));
+  const gw=p.gutterWidth||0;
+  if(gw>0 && p.gutter){
+    // Gutter (line numbers + separator) and buffer text are emitted as
+    // separate cell blocks by the bridge — render them as separate elements.
+    const g=div("region pane-gutter"); place(g,{x:p.content.x,y:p.content.y,w:gw,h:p.content.h});
+    g.innerHTML=cellsSvg(p.gutter, gw); c.appendChild(g);
+    const b=div("region pane-content"); place(b,{x:p.content.x+gw,y:p.content.y,w:p.content.w-gw,h:p.content.h});
+    b.innerHTML=cellsSvg(p.cells, p.content.w-gw); c.appendChild(b);
+  } else {
+    const b=div("region pane-content"); place(b,p.content); b.innerHTML=cellsSvg(p.cells, p.content.w); c.appendChild(b);
   }
+  if(p.vscroll && p.vscroll.w>0){
+    const sb=div("region scrollbar"); place(sb,p.vscroll); c.appendChild(sb);
+    const th=document.createElement("div"); th.className="thumb";
+    th.style.top=px(p.thumbStart,CH)+"px"; th.style.height=Math.max(CH, px(Math.max(1,p.thumbEnd-p.thumbStart),CH))+"px";
+    sb.appendChild(th);
+  }
+}
+function renderPane(i){
+  const host=containers.panes;
+  if(!host.children[i]){ renderAllPanes(); return; }   // structure drifted → rebuild all
+  const c=host.children[i]; c.textContent="";
+  const p=scene.regions.panes[i]; if(p) fillPane(c,p);
+}
+function renderAllPanes(){
+  const host=containers.panes, n=scene.regions.panes.length;
+  while(host.children.length>n) host.lastChild.remove();
+  while(host.children.length<n) host.appendChild(contentsDiv("pane"));
+  for(let i=0;i<n;i++){ const c=host.children[i]; c.textContent="";
+    const p=scene.regions.panes[i]; if(p) fillPane(c,p); }
+}
 
+// Live caret from the pipeline's real cursor cell (if inside a pane). Patched
+// in place: when the caret cell didn't move, the existing element is KEPT so
+// its blink animation phase doesn't restart on unrelated frames (the old full
+// innerHTML rebuild restarted the blink on every frame).
+function renderCaret(c,reg){
+  let want=null;
+  if(reg.cursor){
+    const inPane=reg.panes.some(p=>p && reg.cursor.x>=p.content.x && reg.cursor.x<p.content.x+p.content.w && reg.cursor.y>=p.content.y && reg.cursor.y<p.content.y+p.content.h);
+    if(inPane) want={left:px(reg.cursor.x,CW)+"px", top:px(reg.cursor.y,CH)+"px",
+                     height:CH+"px", width:Math.max(1,Math.round(2*zoom))+"px"};
+  }
+  const old=c.firstChild;
+  if(!want){ if(old) c.textContent=""; return; }
+  if(old && old.style.left===want.left && old.style.top===want.top && old.style.height===want.height) return;
+  c.textContent="";
+  const el=div("caret"); Object.assign(el.style,want); c.appendChild(el);
+}
+
+// Region fillers: same element builders the old monolithic render() used,
+// now targeted at one container each.
+const REGION_FILL={
+  // file explorer (UI pane; content = its real rows)
+  fileExplorer(c,reg){ if(reg.fileExplorer) c.appendChild(fileExplorerEl(reg.fileExplorer)); },
+  panes(){ renderAllPanes(); },
   // split borders
-  for(const s of reg.separators){
+  separators(c,reg){ for(const s of reg.separators){
     const d=div("region separator");
     if(s.vertical) place(d,{x:s.x,y:s.y,w:1,h:s.len}); else place(d,{x:s.x,y:s.y,w:s.len,h:1});
-    app.appendChild(d);
-  }
-
-  // native menu bar + dropdown
-  if(reg.menubar) app.appendChild(menuBarEl(reg));
-  for(const d of menuDropdownEls(reg)) app.appendChild(d);
-
-  // native status bar
-  if(reg.statusbar) app.appendChild(statusBarEl(reg.statusbar));
-
+    c.appendChild(d); } },
+  // native menu bar + dropdown (one family: menuOpen/menuHighlight/submenuPath/
+  // dropdown/menus all redraw together)
+  menu(c,reg){ if(reg.menubar) c.appendChild(menuBarEl(reg));
+    for(const d of menuDropdownEls(reg)) c.appendChild(d); },
+  statusbar(c,reg){ if(reg.statusbar) c.appendChild(statusBarEl(reg.statusbar)); },
   // native popups (completion / hover / action / list / text) — semantic, not cells
-  for(const p of (reg.popups||[])) app.appendChild(popupEl(p));
-
+  popups(c,reg){ for(const p of (reg.popups||[])) c.appendChild(popupEl(p)); },
   // native command palette / picker (semantic; routes back to the real editor).
   // The live-grep / quick-open preview pane is rendered inside the card by
   // paletteEl (a results|preview body), matching the TUI's single box.
-  if(reg.palette) app.appendChild(paletteEl(reg.palette));
-
+  palette(c,reg){ if(reg.palette) c.appendChild(paletteEl(reg.palette)); },
   // native plugin widget panels (floating / dock)
-  if(reg.widgets) for(const s of reg.widgets) app.appendChild(widgetSurfaceEl(s));
+  widgets(c,reg){ if(reg.widgets) for(const s of reg.widgets) c.appendChild(widgetSurfaceEl(s)); },
+  contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
+  auxModal(c,reg){ if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) c.appendChild(el); },
+  keybindingEditor(c,reg){ if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) c.appendChild(el); },
+  settings(c,reg){ if(reg.settings) for(const el of settingsEls(reg.settings)) c.appendChild(el); },
+  trustDialog(c,reg){ if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) c.appendChild(el); },
+  caret(c,reg){ renderCaret(c,reg); },
+};
+function renderRegion(name){
+  const c=containers[name];
+  // Snapshot scroll positions inside this region before its rebuild, keyed by
+  // document-order ordinal (stable across a same-structure re-render).
+  const saved=[]; c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ saved[i]=e.scrollTop; });
+  if(name!=="caret") c.textContent="";     // the caret patches its own child in place
+  REGION_FILL[name](c, scene.regions);
+  c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(saved[i]) e.scrollTop=saved[i]; });
+}
 
-  // native right-click / new-tab context menu
-  if(reg.contextMenu) app.appendChild(contextMenuEl(reg.contextMenu));
-
-  // native auxiliary modals (event-debug / theme-info)
-  if(reg.auxModal) for(const el of auxModalEls(reg.auxModal)) app.appendChild(el);
-
-  // native keybinding editor (full modal)
-  if(reg.keybindingEditor) for(const el of keybindingEditorEls(reg.keybindingEditor)) app.appendChild(el);
-
-  // native Settings (full modal)
-  if(reg.settings) for(const el of settingsEls(reg.settings)) app.appendChild(el);
-
-  // native workspace-trust modal
-  if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) app.appendChild(el);
-
-  // live caret from the pipeline's real cursor cell (if inside a pane)
-  if(reg.cursor){
-    const inPane=reg.panes.some(p=>reg.cursor.x>=p.content.x && reg.cursor.x<p.content.x+p.content.w && reg.cursor.y>=p.content.y && reg.cursor.y<p.content.y+p.content.h);
-    if(inPane){ const c=div("caret"); c.style.left=px(reg.cursor.x,CW)+"px"; c.style.top=px(reg.cursor.y,CH)+"px"; c.style.height=CH+"px"; app.appendChild(c); }
-  }
-  // Restore the scroll positions snapshotted above.
-  document.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(savedScroll[i]) e.scrollTop=savedScroll[i]; });
-
+// Full rebuild of every region container: hello (connect/reconnect), the HTTP
+// refresh() resync, and w/h/theme changes (rare). Everything frame-driven goes
+// through applyFrame's per-region patch path instead.
+function render(){
+  const app=document.getElementById("app");
+  if(!scene){ containers=null; app.textContent="connecting to editor…"; return; }
+  applyTheme(scene.theme);
+  ensureContainers();
+  for(const n of REGION_ORDER) renderRegion(n);
+  renderedRegions=REGION_ORDER.slice();
   // Native touch shell on narrow/portrait viewports (desktop is untouched).
   document.body.classList.toggle("mobile", isMobile());
-  renderMobileChrome(reg);
+  renderMobileChrome(scene.regions);
 }
 
 // ---- native menu bar ----------------------------------------------------
@@ -1675,23 +1770,53 @@ function wsIsOpen(){ return !!ws && ws.readyState===1; }
 // queued: replaying stale input into a resynced editor is worse than losing a
 // keystroke — and the reconnect banner shows.
 function wsSend(o){ if(wsIsOpen()){ ws.send(JSON.stringify(o)); } else showErr("reconnecting…"); }
+// Which region container a "regions.<key>" path dirties. Keys sharing one
+// native surface (the menu bar + its dropdown) collapse into one region; null
+// means no DOM depends on it (the poll pacing hint); an UNKNOWN key falls back
+// to a full render rather than guessing.
+const PATH_REGION={ fileExplorer:"fileExplorer", separators:"separators",
+  menubar:"menu", menus:"menu", menuOpen:"menu", menuHighlight:"menu",
+  submenuPath:"menu", dropdown:"menu",
+  statusbar:"statusbar", popups:"popups", palette:"palette", widgets:"widgets",
+  contextMenu:"contextMenu", auxModal:"auxModal",
+  keybindingEditor:"keybindingEditor", settings:"settings",
+  trustDialog:"trustDialog", cursor:"caret", poll:null };
 // Apply a region-diff frame: each changed path replaces its value wholesale
 // (null is a legal value — regions are frequently null). Panes are diffed one
-// level deeper; "regions.panes.len" truncates/extends the array.
+// level deeper; "regions.panes.len" truncates/extends the array. Then rebuild
+// ONLY the region containers whose paths changed (w/h/theme → full rebuild;
+// they re-place every rect / re-seed the CSS vars, and they're rare).
 function applyFrame(changed){
-  let clipChanged=false;
+  let clipChanged=false, full=false; const dirty=new Set();
   for(const k of Object.keys(changed)){
     const v=changed[k];
-    if(k==="w") scene.w=v;
-    else if(k==="h") scene.h=v;
-    else if(k==="theme") scene.theme=v;
+    if(k==="w"){ scene.w=v; full=true; }
+    else if(k==="h"){ scene.h=v; full=true; }
+    else if(k==="theme"){ scene.theme=v; full=true; }   // applyTheme runs in render()
     else if(k==="clipboard"){ scene.clipboard=v; clipChanged=true; }
-    else if(k==="regions.panes.len") scene.regions.panes.length=v;
-    else if(k.startsWith("regions.panes.")) scene.regions.panes[+k.slice(14)]=v;
-    else if(k.startsWith("regions.")) scene.regions[k.slice(8)]=v;
+    else if(k==="regions.panes.len"){ scene.regions.panes.length=v; dirty.add("panes"); dirty.add("caret"); }
+    else if(k.startsWith("regions.panes.")){ scene.regions.panes[+k.slice(14)]=v;
+      dirty.add("panes."+k.slice(14));
+      dirty.add("caret"); }   // caret geometry gates on pane rects (renderCaret)
+    else if(k.startsWith("regions.")){ const key=k.slice(8); scene.regions[key]=v;
+      const r=PATH_REGION[key]; if(r) dirty.add(r); else if(r===undefined) full=true; }
+    else full=true;
   }
   if(clipChanged) syncClipboard(scene.clipboard);
-  render();                                   // once per frame message
+  if(full || !containers){ render(); return; }
+  if(dirty.has("panes")) for(const d of [...dirty]) if(d.startsWith("panes.")) dirty.delete(d);
+  renderedRegions=[];
+  for(const name of dirty){
+    if(name==="panes") renderAllPanes();
+    else if(name.startsWith("panes.")) renderPane(+name.slice(6));
+    else renderRegion(name);
+    renderedRegions.push(name);
+  }
+  // The mobile chrome mirrors tabs + status segments; rebuilding it is cheap,
+  // so any frame refreshes it (exactly what the old full rebuild always did;
+  // on desktop renderMobileChrome returns immediately).
+  document.body.classList.toggle("mobile", isMobile());
+  renderMobileChrome(scene.regions);
 }
 function connect(){
   ws=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
@@ -1739,6 +1864,17 @@ document.addEventListener("keydown",e=>{
   // compositionend. Forwarding here would double-deliver on browsers that
   // report the raw key during composition.
   if(e.isComposing) return;
+  // App zoom: Ctrl/Cmd + = / - / 0 are FRONTEND-OWNED and never reach the
+  // editor — like the browser's own zoom they change the view's typography
+  // only; the editor just sees the resulting cols/rows re-fit (resize).
+  // Anyone rebinding these in the editor must pick different chords on the
+  // web. (Ctrl+wheel zoom is intercepted the same way below.)
+  if((e.ctrlKey||e.metaKey) && !e.altKey &&
+     (e.key==="="||e.key==="+"||e.key==="-"||e.key==="_"||e.key==="0")){
+    e.preventDefault();
+    setZoom(e.key==="0" ? 1 : zoom + ((e.key==="-"||e.key==="_") ? -0.1 : 0.1));
+    return;
+  }
   // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
   // shortcuts reach the editor) and the named navigation/edit keys.
   const single=e.key.length===1;
@@ -1804,7 +1940,51 @@ document.addEventListener("click",e=>{ if(!onChrome(e)) focusSink(); });
 // trigger a re-render that resets scrollTop. Let the browser handle those; route
 // everything else to the editor at the pointer cell.
 const onScrollable = e => e.target.closest(".set-items,.set-cats,.w-list,.widget-surface");
-document.addEventListener("wheel",e=>{ if(onScrollable(e)) return; const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
+// Ctrl+wheel = app zoom (frontend-owned, like Ctrl+=/-/0 above). Must be a
+// non-passive listener so the browser's own page zoom can be preventDefault-ed.
+document.addEventListener("wheel",e=>{ if(!e.ctrlKey) return; e.preventDefault();
+  setZoom(zoom*(e.deltaY<0?1.1:1/1.1)); },{passive:false});
+document.addEventListener("wheel",e=>{ if(e.ctrlKey||onScrollable(e)) return; const c=cellAt(e); const n=Math.min(8,Math.max(1,Math.round(Math.abs(e.deltaY)/40))); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:c.col,row:c.row,n}); },{passive:true});
+
+// ---- touch pan/scroll (docs §4, mobile Phase A) ---------------------------
+// A one-finger pan over the buffer translates into the editor's existing
+// wheel path — scrollup/scrolldown (vertical) or scrollleft/scrollright
+// (horizontal, which the bridge already maps) at the touch-start cell, one
+// step per whole cell panned: plain 1:1 pan, no momentum. A TAP (movement
+// under the slop, whatever the duration) is left entirely alone so the
+// browser's synthetic mousedown/mouseup still drives the existing click path
+// (tap-to-position-cursor, click count included). preventDefault fires only
+// while actually panning, so natively-scrolled chrome panels (onChrome) keep
+// their own touch scrolling and the page never rubber-bands under a pan.
+let tpan=null;
+document.addEventListener("touchstart",e=>{
+  if(onChrome(e) || e.touches.length!==1){ tpan=null; return; }
+  const t=e.touches[0];
+  tpan={ id:t.identifier, x0:t.clientX, y0:t.clientY, lx:t.clientX, ly:t.clientY,
+         cell:cellAt({clientX:t.clientX,clientY:t.clientY}), axis:null, acc:0 };
+},{passive:true});
+document.addEventListener("touchmove",e=>{
+  if(!tpan) return;
+  const t=[...e.changedTouches].find(t=>t.identifier===tpan.id); if(!t) return;
+  if(!tpan.axis){                       // pan engages past an 8px slop…
+    const dx=t.clientX-tpan.x0, dy=t.clientY-tpan.y0;
+    if(Math.hypot(dx,dy)<8) return;
+    tpan.axis=Math.abs(dx)>Math.abs(dy)?"x":"y";   // …locked to the dominant axis
+  }
+  e.preventDefault();                   // we own this gesture: no page rubber-band
+  const d = tpan.axis==="y" ? t.clientY-tpan.ly : t.clientX-tpan.lx;
+  tpan.lx=t.clientX; tpan.ly=t.clientY; tpan.acc+=d;
+  const unit = tpan.axis==="y" ? CH : CW;
+  const cells=Math.trunc(tpan.acc/unit);
+  if(!cells) return;
+  tpan.acc-=cells*unit;
+  // finger up / left (negative delta) pulls later content into view
+  const kind = tpan.axis==="y" ? (cells<0?"scrolldown":"scrollup")
+                               : (cells<0?"scrollright":"scrollleft");
+  sendMouse({kind, col:tpan.cell.col, row:tpan.cell.row, n:Math.min(8,Math.abs(cells))});
+},{passive:false});
+document.addEventListener("touchend",()=>{ tpan=null; },{passive:true});
+document.addEventListener("touchcancel",()=>{ tpan=null; },{passive:true});
 
 let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(resize,150); });
 // Re-fit the grid when crossing the mobile/desktop breakpoint (e.g. rotation).
@@ -1812,10 +1992,14 @@ mqMobile.addEventListener("change", resize);
 
 // Test/debug surface. `refresh` is a full-scene resync over HTTP /state (the
 // WS hello/frames normally carry everything); `frames`/`seq`/`wsOpen`/
-// `lastFrameKeys` expose the push transport's state.
-window.fresh = { get scene(){return scene;}, refresh, sendKey, resize,
+// `lastFrameKeys` expose the push transport's state; `renderedRegions` names
+// the region containers the last render pass actually rebuilt (per-region
+// patching); `metrics` exposes the measured grid unit + zoom factor.
+window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   get frames(){return frameCount;}, get seq(){return lastSeq;},
-  get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;} };
+  get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;},
+  get renderedRegions(){return renderedRegions;},
+  get metrics(){return {cw:CW, ch:CH, font:FONT, zoom};} };
 focusSink();  // desktop: arm the hidden text sink (IME/dead-key path)
 connect();    // WS: hello replaces the scene, then resize() fits the grid
 </script>

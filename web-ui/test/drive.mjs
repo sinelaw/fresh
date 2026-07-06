@@ -12,7 +12,10 @@
 //     input rides the WebSocket transport (JSON messages on /ws), and
 //   - the WebSocket PUSH transport works: the server sends region-diff frames
 //     when (and only when) the scene changes, one client at a time, with the
-//     HTTP routes still live alongside for curl / the parity harness.
+//     HTTP routes still live alongside for curl / the parity harness, and
+//   - the frontend patches the DOM per region (a typing frame rebuilds only
+//     its pane), metrics are measured + zoomable (Ctrl+= / Ctrl+0, exact
+//     hit-testing while zoomed), and touch pan/tap works in a hasTouch context.
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 // CHROMIUM (optional) points at an existing Chromium binary; when unset,
@@ -245,7 +248,108 @@ await page.keyboard.type('Q');
 check('first socket still functional (input still round-trips)',
   await page.waitForFunction(s0 => window.fresh.seq > s0, seqR0, { timeout: 5000 }).then(() => true).catch(() => false));
 
+console.log('\n[per-region DOM patching: a typing frame rebuilds only its regions]');
+// Have the file explorer open as the heavyweight *unrelated* region.
+if (!(await scene(page)).regions.fileExplorer) {
+  await page.keyboard.press('Control+b');
+  await page.waitForFunction(() => !!window.fresh.scene.regions.fileExplorer, { timeout: 8000 }).catch(() => {});
+}
+// Stamp the live explorer DOM node from the test: any rebuild of its region
+// container would replace the element and lose the stamp.
+const stamped = await page.evaluate(() => {
+  const el = document.querySelector('[data-region="fileExplorer"] .fileexplorer');
+  if (!el) return false; el.dataset.stamp = 'untouched'; return true;
+});
+const mtr0 = await page.evaluate(() => window.fresh.metrics);
+const patchRect = (await scene(page)).regions.panes[0].content;
+await page.mouse.click((patchRect.x + Math.floor(patchRect.w / 2)) * mtr0.cw, (patchRect.y + Math.floor(patchRect.h / 2)) * mtr0.ch);
+await page.waitForTimeout(300);
+const seqP0 = await page.evaluate(() => window.fresh.seq);
+await page.keyboard.type('R');
+await page.waitForFunction(s0 => window.fresh.seq > s0, seqP0, { timeout: 5000 }).catch(() => {});
+const rr = await page.evaluate(() => window.fresh.renderedRegions);
+check('typing frame rebuilt the pane region (panes.N in renderedRegions)', rr.some(r => /^panes(\.|$)/.test(r)), JSON.stringify(rr));
+check('typing frame did NOT rebuild the file explorer region', !rr.includes('fileExplorer'), JSON.stringify(rr));
+check('explorer DOM node survived the typing frame (same element, stamp intact)',
+  stamped && await page.evaluate(() => document.querySelector('[data-region="fileExplorer"] .fileexplorer')?.dataset.stamp === 'untouched'));
+
+console.log('\n[measured metrics + app zoom (frontend-owned Ctrl+= / Ctrl+0)]');
+const m0 = await page.evaluate(() => window.fresh.metrics);
+const w0 = (await scene(page)).w;
+await page.keyboard.press('Control+=');
+await page.waitForFunction(w => window.fresh.scene.w < w, w0, { timeout: 5000 }).catch(() => {});
+const m1 = await page.evaluate(() => window.fresh.metrics);
+const w1 = (await scene(page)).w;
+check('Ctrl+= raises the app zoom (frontend-owned, never forwarded)', m0.zoom === 1 && m1.zoom > 1, JSON.stringify([m0, m1]));
+check('zoom re-measures the grid unit (CW/CH grew with the font)', m1.cw > m0.cw && m1.ch > m0.ch && m1.font > m0.font, JSON.stringify([m0, m1]));
+check('the editor re-fit the grid to the bigger cells (scene.w shrank)', w1 < w0, `w ${w0}->${w1}`);
+await page.screenshot({ path: `${SHOTS}/31-zoomed-in.png` });
+// Hit-testing under zoom: click a known cell using the CURRENT metrics and the
+// cursor must land there (cellAt divides by the live CW/CH).
+const zp = (await scene(page)).regions.panes[0];
+const zCol = zp.content.x + (zp.gutterWidth || 0) + 1, zRow = zp.content.y + 2;
+await page.mouse.click((zCol + 0.5) * m1.cw, (zRow + 0.5) * m1.ch);
+await page.waitForTimeout(400);
+const zc = (await scene(page)).regions.cursor;
+check('a buffer click still lands on the right cell while zoomed', !!zc && zc.y === zRow && Math.abs(zc.x - zCol) <= 2, JSON.stringify({ zc, zCol, zRow }));
+await page.keyboard.press('Control+0');
+await page.waitForFunction(() => window.fresh.metrics.zoom === 1, { timeout: 5000 }).catch(() => {});
+const m2 = await page.evaluate(() => window.fresh.metrics);
+check('Ctrl+0 resets zoom and restores the measured base metrics', m2.zoom === 1 && m2.cw === m0.cw && m2.ch === m0.ch, JSON.stringify(m2));
+await page.waitForTimeout(400);   // let the reset resize round-trip settle
+
 check('no JS page errors', errs.length === 0, errs.join(' | '));
+
+console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
+// The bridge is single-client: close the desktop page (frees /ws) before
+// opening a touch context against the same server.
+await page.close();
+const tctx = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 780 }, deviceScaleFactor: 2 });
+const tpage = await tctx.newPage();
+const terrs = []; tpage.on('pageerror', e => terrs.push(String(e)));
+await tpage.goto(URL, { waitUntil: 'networkidle' });
+await tpage.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
+await tpage.waitForTimeout(400);
+check('narrow viewport engages the mobile touch shell', await tpage.evaluate(() => document.body.classList.contains('mobile')));
+// The desktop sections left the file explorer open; on mobile it is a
+// full-width sheet OVER the buffer (chrome, by design) — close it so the
+// swipe/tap below exercise the buffer itself.
+if ((await scene(tpage)).regions.fileExplorer) {
+  await tpage.request.post(URL + '/action', { data: { action: 'toggle_file_explorer' } });
+  await tpage.waitForFunction(() => !window.fresh.scene.regions.fileExplorer, null, { timeout: 5000 }).catch(() => {});
+}
+const rowText = s => s.regions.panes[0].cells[0].map(x => x.t).join('');
+const t0 = await scene(tpage);
+// Swipe up on the buffer: the vertical pan must ride the wheel path (scrolldown
+// at the touch cell), moving the first visible line.
+await tpage.evaluate(() => {
+  const m = window.fresh.metrics, p = window.fresh.scene.regions.panes[0].content;
+  const x = (p.x + Math.floor(p.w / 2)) * m.cw, y0 = (p.y + Math.floor(p.h / 2)) * m.ch;
+  const mk = (type, cy) => {
+    const t = new Touch({ identifier: 7, target: document.body, clientX: x, clientY: cy });
+    document.body.dispatchEvent(new TouchEvent(type, { touches: type === 'touchend' ? [] : [t], changedTouches: [t], bubbles: true, cancelable: true }));
+  };
+  mk('touchstart', y0);
+  for (let i = 1; i <= 6; i++) mk('touchmove', y0 - i * m.ch * 1.5);
+  mk('touchend', y0 - 6 * m.ch * 1.5);
+});
+await tpage.waitForFunction(first => window.fresh.scene.regions.panes[0].cells[0].map(x => x.t).join('') !== first,
+  rowText(t0), { timeout: 5000 }).catch(() => {});
+const t1 = await scene(tpage);
+check('swipe-up pans the buffer (first visible row changed)', rowText(t1) !== rowText(t0), `first="${rowText(t1).slice(0, 30)}"`);
+await tpage.screenshot({ path: `${SHOTS}/32-mobile-touch.png` });
+// A tap must still run the existing click path (synthetic mouse events are
+// left alone by the pan handlers) → tap-to-position-cursor works.
+const tm = await tpage.evaluate(() => window.fresh.metrics);
+const tp2 = t1.regions.panes[0];
+const tRow = tp2.content.y + 3;
+await tpage.touchscreen.tap((tp2.content.x + (tp2.gutterWidth || 0) + 1.5) * tm.cw, (tRow + 0.5) * tm.ch);
+await tpage.waitForFunction(r => window.fresh.scene.regions.cursor && window.fresh.scene.regions.cursor.y === r, tRow, { timeout: 5000 }).catch(() => {});
+const tc = (await scene(tpage)).regions.cursor;
+check('tap still positions the cursor (click path intact)', !!tc && tc.y === tRow, JSON.stringify({ tc, tRow }));
+check('no JS page errors (touch page)', terrs.length === 0, terrs.join(' | '));
+await tctx.close();
+
 await browser.close();
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 process.exit(fail ? 1 : 0);

@@ -20,16 +20,24 @@ the core; each frontend only renders it.
   Settings modal.
 - **Buffer interior is SVG** — the pipeline's real, syntax-highlighted cells. The
   line-number gutter is emitted as its own block (kept out of the buffer-text
-  flow), and every glyph is pinned to its exact cell column.
+  flow), and every glyph is pinned to its exact cell column. The cell size is
+  **measured, not hardcoded** (canvas `measureText` of the same monospace stack,
+  at boot and on zoom / `devicePixelRatio` change), and **Ctrl+= / Ctrl+- /
+  Ctrl+0** (plus Ctrl+wheel) zoom the editor view — these chords are
+  frontend-owned and never reach the editor, which only sees the resulting
+  cols/rows re-fit; the zoom factor persists in localStorage as a pure view
+  preference.
 - **Input is real** — key/mouse/wheel ride the WebSocket as tagged JSON
   messages and run through the real `Editor::handle_key` / `handle_mouse`
   (and shared hit→action dispatch for settings/widgets/keybindings); the page
   re-renders from the editor's pushed state. IME/dead-key text lands in a
   hidden input and is forwarded on commit; mouse downs carry the browser's
-  click count for the editor's double/triple-click path. OS clipboard works
-  both ways: DOM `paste` → a `paste` message → the editor's bracketed-paste
-  path, and editor copies surface in the scene (`clipboard: {seq, text}`) for
-  `navigator.clipboard`.
+  click count for the editor's double/triple-click path. On touch devices a
+  one-finger pan scrolls the buffer through the same wheel forwarding
+  (vertical and horizontal), while taps keep the ordinary click path. OS
+  clipboard works both ways: DOM `paste` → a `paste` message → the editor's
+  bracketed-paste path, and editor copies surface in the scene
+  (`clipboard: {seq, text}`) for `navigator.clipboard`.
 
 ## Architecture (taps the real render pipeline)
 
@@ -57,7 +65,9 @@ connect the client gets a full-scene `hello`; afterwards the server's event
 loop ticks the editor (drains async LSP/plugin/file events, steps animations —
 ~40 ms while active, ~250 ms idle, exactly like the TUI loop, with or without
 a client) and pushes a `frame` of **region diffs** only when the scene
-changed — typing resends only the changed pane, an idle editor sends nothing.
+changed — typing resends only the changed pane, an idle editor sends nothing,
+and the frontend rebuilds only the DOM region containers whose paths changed
+(per-region patching, docs §3.4).
 One client at a time (a second `/ws` gets `409`; foreign `Origin` gets `403`);
 on disconnect the page retries with backoff and resyncs from the next hello.
 Every HTTP route (`GET /state`, `POST /key` `/mouse` `/action` `/widget`
@@ -67,11 +77,18 @@ HTTP-side mutation is pushed to the connected browser as a diff immediately.
 
 ## Run it
 
+For interactive use, serve a **release** build — the debug scene render dominates
+the key→frame round-trip (see docs/internal/web-ui.md §3.1 for the measured
+debug vs release numbers):
+
 ```sh
-cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8137 \
+cargo run --release -p fresh-editor --example webui_server -- 127.0.0.1:8137 \
   crates/fresh-editor/src/view/scene.rs   # or any file(s)
 # then open http://127.0.0.1:8137  and type — edits go through the real editor.
 ```
+
+For development iteration a debug build works too (same command without
+`--release`), just with visibly higher typing latency.
 
 > ⚠️ The bridge binds plain localhost HTTP and hosts a live editor with
 > filesystem access. It's a local-development prototype, **not** for exposure on
@@ -85,8 +102,10 @@ is native HTML (no cell-drawn chrome), that key / mouse / menu / palette /
 settings / widget interactions run through the real `Editor` (over the
 WebSocket input path), and that the push transport behaves: server-pushed
 frames without page input, region diffs on typing, idle silence, and the
-single-client 409. **57 assertions** across the chrome surfaces, plus
-screenshots.
+single-client 409 — plus per-region DOM patching (a typing frame rebuilds
+only its pane), measured metrics + app zoom (Ctrl+= / Ctrl+0, hit-testing
+while zoomed), and touch pan/tap in a `hasTouch` mobile context.
+**69 assertions** across the chrome surfaces, plus screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,
@@ -96,7 +115,10 @@ tear down:
 web-ui/test/run.sh
 ```
 
-Env knobs: `PORT` (default `8141`) picks the bridge port; `CHROMIUM=/path/to/chrome`
+Env knobs: `PORT` (default `8141`) picks the bridge port; `PROFILE` (default
+`debug`, keeps CI cheap) selects the cargo profile — `PROFILE=release
+web-ui/test/run.sh` builds with `--release` and runs the suite against
+`target/release/examples/webui_server`; `CHROMIUM=/path/to/chrome`
 uses an existing Chromium binary and skips playwright's browser download
 (otherwise `run.sh` fetches Chromium via `npx playwright install chromium
 --with-deps` on first use). `SHOTS` (default `/tmp/pw/shots`) is where
