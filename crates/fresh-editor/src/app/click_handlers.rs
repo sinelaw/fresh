@@ -436,11 +436,11 @@ impl Editor {
             old_anchor
         };
 
-        let new_sticky_column = self
-            .buffers()
-            .get(&buffer_id)
-            .and_then(|state| state.buffer.offset_to_position(target_position))
-            .map(|pos| pos.column);
+        // The goal column for later vertical movement is a *visual* column
+        // (wide-char aware), not the byte column `offset_to_position` returns.
+        let new_sticky_column = self.buffers().get(&buffer_id).and_then(|state| {
+            crate::primitives::display_width::visual_column_of(&state.buffer, target_position)
+        });
 
         let event = Event::MoveCursor {
             cursor_id: primary_cursor_id,

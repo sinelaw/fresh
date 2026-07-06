@@ -3116,10 +3116,9 @@ impl Editor {
                 } else {
                     (target_position, anchor_position)
                 };
-                let new_sticky_column = state
-                    .buffer
-                    .offset_to_position(new_position)
-                    .map(|pos| pos.column);
+                // Visual column, not byte column — see `visual_column_of`.
+                let new_sticky_column =
+                    crate::primitives::display_width::visual_column_of(&state.buffer, new_position);
                 Some((target_position, new_position, anchor_pos, new_sticky_column))
             })
         else {

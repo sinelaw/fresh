@@ -1249,7 +1249,10 @@ fn handle_insert_newline(
                     old_anchor: None, // No selection after bracket expansion
                     new_anchor: None,
                     old_sticky_column: cursor.sticky_column,
-                    new_sticky_column: Some(cursor_line_end),
+                    // No explicit goal column: `cursor_line_end` is a byte
+                    // *position*, not a column — using it as a sticky column
+                    // sent later vertical moves to a far-right column.
+                    new_sticky_column: None,
                 });
             }
         }
@@ -1606,19 +1609,18 @@ fn handle_page_up(
 ) {
     for (cursor_id, cursor) in cursors.iter() {
         let lines_to_move = viewport_height.saturating_sub(1) as usize;
+        let (current_visual_column, _) =
+            calculate_visual_column(&mut state.buffer, cursor.position, estimated_line_length);
+        let goal_column = cursor.sticky_column.unwrap_or(current_visual_column);
+
         let mut iter = state
             .buffer
             .line_iterator(cursor.position, estimated_line_length);
-        let current_line_start = iter.current_position();
-        let current_column = cursor.position - current_line_start;
-
-        let goal_column = cursor.sticky_column.unwrap_or(current_column);
-
         let mut new_pos = cursor.position;
         for _ in 0..lines_to_move {
             if let Some((line_start, line_content)) = iter.prev() {
-                let line_len = line_content.trim_end_matches('\n').len();
-                new_pos = line_start + goal_column.min(line_len);
+                let line_text = line_content.trim_end_matches('\n');
+                new_pos = line_start + byte_offset_at_visual_column(line_text, goal_column);
             } else {
                 new_pos = 0;
                 break;
@@ -1657,21 +1659,20 @@ fn handle_page_down(
 ) {
     for (cursor_id, cursor) in cursors.iter() {
         let lines_to_move = viewport_height.saturating_sub(1) as usize;
+        let (current_visual_column, _) =
+            calculate_visual_column(&mut state.buffer, cursor.position, estimated_line_length);
+        let goal_column = cursor.sticky_column.unwrap_or(current_visual_column);
+
         let mut iter = state
             .buffer
             .line_iterator(cursor.position, estimated_line_length);
-        let current_line_start = iter.current_position();
-        let current_column = cursor.position - current_line_start;
-
-        let goal_column = cursor.sticky_column.unwrap_or(current_column);
-
         iter.next_line(); // consume current line
 
         let mut new_pos = cursor.position;
         for _ in 0..lines_to_move {
             if let Some((line_start, line_content)) = iter.next_line() {
-                let line_len = line_content.trim_end_matches('\n').len();
-                new_pos = line_start + goal_column.min(line_len);
+                let line_text = line_content.trim_end_matches('\n');
+                new_pos = line_start + byte_offset_at_visual_column(line_text, goal_column);
             } else {
                 new_pos = max_cursor_position(&state.buffer);
                 break;

@@ -56,6 +56,22 @@ pub fn byte_offset_at_visual_column(s: &str, visual_col: usize) -> usize {
     s.len()
 }
 
+/// Visual column of a byte offset in its line, wide-char aware.
+///
+/// Returns `None` when the offset's line can't be resolved. The offset may
+/// sit anywhere in the line, including on the line ending (which yields the
+/// width of the full line content).
+pub fn visual_column_of(buffer: &crate::model::buffer::Buffer, offset: usize) -> Option<usize> {
+    let line = buffer.get_line_number(offset);
+    let line_start = buffer.line_start_offset(line)?;
+    let content = buffer.get_line(line)?;
+    let text = String::from_utf8_lossy(&content);
+    Some(visual_column_at_byte(
+        &text,
+        offset.saturating_sub(line_start),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
