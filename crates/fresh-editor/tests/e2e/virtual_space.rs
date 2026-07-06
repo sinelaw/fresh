@@ -438,6 +438,28 @@ fn test_click_below_last_line_places_virtual_cursor() {
     harness.assert_buffer_content("ab");
 }
 
+/// Clicking below the last line at a column *within* the last line's width
+/// must still land on the virtual line — not mid-way into the last line.
+#[test]
+fn test_click_below_last_line_within_line_width() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("abcdef").unwrap();
+
+    let (x0, y0) = harness.find_text_on_screen("abcdef").expect("line visible");
+
+    // Two rows below, column 3 — inside "abcdef"'s width.
+    harness.mouse_click(x0 + 3, y0 + 2).unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.screen_cursor_position(),
+        (x0 + 3, y0 + 2),
+        "cursor floats on the virtual line, not inside the last line"
+    );
+
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("abcdef\n\n   X");
+}
+
 /// With a newline-terminated buffer, the implicit trailing line is the last
 /// display line; clicking below it creates lines after it.
 #[test]

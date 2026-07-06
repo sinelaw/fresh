@@ -400,13 +400,14 @@ impl Editor {
         } else {
             return Ok(());
         };
-        let target_position = click_target.position;
+        let mut target_position = click_target.position;
         let click_overshoot = click_target.col_overshoot;
 
         // Vertical virtual space: a click on the rows below the last line
-        // (with the buffer's end on screen) parks the cursor on a virtual
-        // line at the clicked column. Only when virtual space is fully on
-        // and the click doesn't extend a selection.
+        // (with the buffer's end on screen — the last cached row must be the
+        // buffer's last display line) parks the cursor on a virtual line at
+        // the clicked column, regardless of the last line's width. Only when
+        // virtual space is fully on and the click doesn't extend a selection.
         let extend_click =
             modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
         let virtual_lines_below = self
@@ -416,10 +417,23 @@ impl Editor {
                 click_target.row_overshoot > 0
                     && !extend_click
                     && state.buffer_settings.virtual_space.cursor_beyond_eol()
-                    && target_position == state.buffer.len()
+                    && cached_mappings
+                        .as_ref()
+                        .and_then(|m| m.last())
+                        .is_some_and(|m| m.line_end_byte == state.buffer.len())
             })
             .map(|_| click_target.row_overshoot)
             .unwrap_or(0);
+        if virtual_lines_below > 0 {
+            // The virtual line hangs off the end of the buffer; the byte
+            // position resolved against the last real row (possibly
+            // mid-line) doesn't apply.
+            target_position = self
+                .buffers()
+                .get(&buffer_id)
+                .map(|state| state.buffer.len())
+                .unwrap_or(target_position);
+        }
 
         if toggle_fold_byte.is_some() {
             self.active_window_mut()

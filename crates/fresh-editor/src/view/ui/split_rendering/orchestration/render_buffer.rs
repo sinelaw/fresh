@@ -471,6 +471,7 @@ pub(crate) fn draw_buffer_in_split(
         .block(editor_block)
         .render(render_area, buf);
 
+    let cursor_from_line_pass = layout_output.render_output.cursor.is_some();
     let cursor = resolve_cursor_fallback(
         layout_output.render_output.cursor,
         layout_output.selection.primary_cursor_position,
@@ -480,6 +481,28 @@ pub(crate) fn draw_buffer_in_split(
         layout_output.render_output.content_lines_rendered,
         gutter_width,
     );
+    // Virtual space: both the per-line pass and the EOF fallback park the
+    // cursor at the buffer end's real position. Float it onto its virtual
+    // line (vertical) — or, when the fallback produced it (the per-line
+    // pass already applies horizontal shifts itself), out past the line
+    // end (horizontal). Clamped to the render area.
+    let cursor = cursor.map(|(cx, cy)| {
+        let selection = &layout_output.selection;
+        let max_x = render_area.width.saturating_sub(1);
+        let max_y = render_area.height.saturating_sub(1);
+        if selection.primary_virtual_lines > 0 {
+            let x = gutter_width as u16
+                + selection
+                    .primary_virtual_line_col
+                    .saturating_sub(layout_output.left_column) as u16;
+            let y = cy.saturating_add(selection.primary_virtual_lines as u16);
+            (x.min(max_x), y.min(max_y))
+        } else if !cursor_from_line_pass && selection.primary_virtual_cols > 0 {
+            ((cx + selection.primary_virtual_cols as u16).min(max_x), cy)
+        } else {
+            (cx, cy)
+        }
+    });
 
     let cursor_screen_pos = if is_active && state.show_cursors && !hide_cursor {
         cursor.map(|(cx, cy)| {
