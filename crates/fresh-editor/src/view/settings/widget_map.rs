@@ -43,10 +43,22 @@ use fresh_core::api::{DualListOption, OverlayColorSpec, OverlayOptions, WidgetSp
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
 
 /// Accent color for the "key" column (key combo / map key). Matches the
-/// widget framework's help-key accent.
+/// widget framework's help-key accent and the historical `MapColors::key`.
 const ACCENT_KEY: &str = "ui.help_key_fg";
-/// Color for the "value" column (action / display value).
-const ACCENT_VALUE: &str = "ui.tab_active_fg";
+/// Map value-preview column. The historical `MapColors::value_preview`
+/// was `line_number_fg` — a mid-gray readable on the popup surface in
+/// every bundled theme. (`ui.tab_active_fg` is NOT usable here: themes
+/// pair it with the active tab's bright background — high-contrast sets
+/// it to pure black — so on the dialog surface it disappears.)
+const VALUE_PREVIEW_FG: &str = "editor.line_number_fg";
+/// ObjectArray action/display column (historical
+/// `KeybindingListColors::action_fg` = `syntax_function`).
+const ACTION_FG: &str = "syntax.function";
+/// `[x]` remove button (historical `remove_button` =
+/// `diagnostic_error_fg`).
+const REMOVE_FG: &str = "diagnostic.error_fg";
+/// `[+] Add new` rows (historical `add_button` = `diagnostic_info_fg`).
+const ADD_FG: &str = "diagnostic.info_fg";
 
 /// Map one Settings control to a `WidgetSpec` node, keyed by the
 /// setting's stable identifier (its JSON-pointer path) so the widget
@@ -195,16 +207,7 @@ pub fn setting_control_to_widget_aligned(
             children.push(raw_row(format!("{}:", s.label)));
             for (idx, it) in s.items.iter().enumerate() {
                 let row_focused = focused && s.focused_item == Some(idx);
-                let mut segs = vec![
-                    seg("  [", None),
-                    seg(&pad(it, TEXTLIST_CELL_WIDTH), None),
-                    seg("] ", None),
-                    seg("[x]", Some(ACCENT_VALUE)),
-                ];
-                if row_focused {
-                    segs.push(seg("  Del:remove  Enter:edit", Some(DIM_HINT)));
-                }
-                children.push(raw_entry_row(segments_row(segs)));
+                children.push(text_list_item_row(it, row_focused, s.cursor));
             }
             children.push(text_list_add_row(s, focused));
             WidgetSpec::Col { children, key }
@@ -231,7 +234,7 @@ pub fn setting_control_to_widget_aligned(
                         seg("  ", None),
                         seg(&pad(k, key_width), Some(ACCENT_KEY)),
                         seg(" ", None),
-                        seg(&preview, Some(ACCENT_VALUE)),
+                        seg(&preview, Some(VALUE_PREVIEW_FG)),
                     ];
                     if focused {
                         segs.push(seg("  [Enter to edit]", Some(DIM_HINT)));
@@ -289,13 +292,13 @@ pub fn setting_control_to_widget_aligned(
                     let row_focused = focused_ctl && s.focused_index == Some(idx);
                     let indicator = if row_focused { "> " } else { "  " };
                     let segs = if combo.trim().is_empty() {
-                        vec![seg(indicator, None), seg(action, Some(ACCENT_VALUE))]
+                        vec![seg(indicator, None), seg(action, Some(ACTION_FG))]
                     } else {
                         vec![
                             seg(indicator, None),
                             seg(&pad(&combo, combo_width), Some(ACCENT_KEY)),
                             seg(" → ", None),
-                            seg(action, Some(ACCENT_VALUE)),
+                            seg(action, Some(ACTION_FG)),
                         ]
                     };
                     segments_row(segs)
@@ -454,9 +457,75 @@ fn text_list_add_row(s: &crate::view::controls::TextListState, focused: bool) ->
     }
 }
 
+/// One committed TextList item: `  [{padded item}] [x]`, with a
+/// `Del:remove  Enter:edit` hint and a block caret at the control's
+/// cursor when the row is focused. The caret is what makes in-place
+/// item editing usable — the historical renderer always drew it on the
+/// focused row (REVERSED cell at `state.cursor`), and without it typing
+/// lands with no visible insertion point.
+fn text_list_item_row(item: &str, row_focused: bool, cursor: usize) -> WidgetSpec {
+    let mut text = String::from("  [");
+    let cell_start = text.len();
+    text.push_str(&pad(item, TEXTLIST_CELL_WIDTH));
+    text.push_str("] ");
+    let remove_start = text.len();
+    text.push_str("[x]");
+    let remove_end = text.len();
+    if row_focused {
+        text.push_str("  Del:remove  Enter:edit");
+    }
+    let mut entry = TextPropertyEntry::text(&text);
+    entry.inline_overlays.push(InlineOverlay {
+        start: remove_start,
+        end: remove_end,
+        style: OverlayOptions {
+            fg: Some(OverlayColorSpec::theme_key(REMOVE_FG)),
+            ..Default::default()
+        },
+        properties: Default::default(),
+        unit: OffsetUnit::Byte,
+    });
+    if row_focused {
+        entry.inline_overlays.push(InlineOverlay {
+            start: remove_end + 2,
+            end: text.len(),
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(DIM_HINT)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+        // Block caret at the cursor's char position within the cell
+        // (clamped to just past the item, which lands on the padding).
+        let b = cell_start
+            + item
+                .char_indices()
+                .nth(cursor)
+                .map(|(b, _)| b)
+                .unwrap_or(item.len());
+        let ch_len = entry.text[b..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(1);
+        entry.inline_overlays.push(InlineOverlay {
+            start: b,
+            end: b + ch_len,
+            style: OverlayOptions {
+                reversed: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+    raw_entry_row(entry)
+}
+
 /// An `  [+] Add new` row, with an optional dim hint when focused.
 fn add_new_row(focused: bool, hint: &str) -> WidgetSpec {
-    let mut segs = vec![seg("  ", None), seg("[+] Add new", Some(ACCENT_VALUE))];
+    let mut segs = vec![seg("  ", None), seg("[+] Add new", Some(ADD_FG))];
     if focused && !hint.is_empty() {
         segs.push(seg(hint, Some(DIM_HINT)));
     }
@@ -977,6 +1046,104 @@ mod tests {
                 assert!(entries[0].text.contains("opaque"));
             }
             other => panic!("expected Raw placeholder, got {other:?}"),
+        }
+    }
+
+    /// Collect every foreground theme key referenced by the rendered
+    /// entries' inline overlays (row-level styles ride the entries'
+    /// `style`, segment styles become inline overlays at render time).
+    fn rendered_fg_keys(out: &crate::widgets::RenderOutput) -> Vec<String> {
+        let mut keys = Vec::new();
+        for e in &out.entries {
+            let styles = e
+                .inline_overlays
+                .iter()
+                .map(|o| &o.style)
+                .chain(e.style.as_ref());
+            for s in styles {
+                if let Some(OverlayColorSpec::ThemeKey(k)) = &s.fg {
+                    keys.push(k.clone());
+                }
+            }
+        }
+        keys
+    }
+
+    #[test]
+    fn text_list_focused_item_renders_block_caret() {
+        // Editing a committed TextList item must show the insertion
+        // point: the focused row carries a `reversed` one-cell overlay
+        // at the control's cursor. Regression: entry-dialog Extensions
+        // rows accepted typed input with no visible caret.
+        use crate::view::controls::TextListState;
+        use std::collections::HashMap;
+        let mut s = TextListState::new("Extensions")
+            .with_items(vec!["cpp".into(), "cc".into()])
+            .with_focus(FocusState::Focused);
+        s.focused_item = Some(1);
+        s.cursor = 1; // between 'c' and 'c'
+        let spec =
+            setting_control_to_widget("/languages/cpp/extensions", &SettingControl::TextList(s));
+        let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
+        let row = out
+            .entries
+            .iter()
+            .find(|e| e.text.contains("[cc"))
+            .expect("focused item row");
+        let cell_start = "  [".len();
+        let caret = row
+            .inline_overlays
+            .iter()
+            .find(|o| o.style.reversed)
+            .expect("focused item row must carry a reversed caret overlay");
+        assert_eq!(
+            (caret.start, caret.end),
+            (cell_start + 1, cell_start + 2),
+            "caret sits at cursor char 1 inside the cell: {row:?}"
+        );
+        // Unfocused sibling rows carry no caret.
+        let other = out
+            .entries
+            .iter()
+            .find(|e| e.text.contains("[cpp"))
+            .expect("unfocused item row");
+        assert!(
+            other.inline_overlays.iter().all(|o| !o.style.reversed),
+            "only the focused row shows a caret: {other:?}"
+        );
+    }
+
+    #[test]
+    fn composite_rows_use_surface_readable_theme_keys() {
+        // The value/action columns must use foregrounds that read on
+        // the dialog surface in every bundled theme. Regression:
+        // `ui.tab_active_fg` was used — themes pair it with the bright
+        // active-tab background (high-contrast sets it to pure black),
+        // so Languages previews and Env detector rows vanished.
+        use crate::view::controls::{KeybindingListState, MapState, TextListState};
+        use serde_json::json;
+        use std::collections::HashMap;
+
+        let mut map = MapState::new("Languages");
+        map.entries = vec![("cpp".to_string(), json!({"grammar": "C++"}))];
+        let mut arr = KeybindingListState::new("Detectors");
+        arr.bindings = vec![json!({"name": ".venv"})];
+        arr.display_field = Some("/name".to_string());
+        let list = TextListState::new("Extensions").with_items(vec!["cpp".into()]);
+
+        for control in [
+            SettingControl::Map(map),
+            SettingControl::ObjectArray(arr),
+            SettingControl::TextList(list),
+        ] {
+            let spec = setting_control_to_widget("/k", &control);
+            let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
+            let keys = rendered_fg_keys(&out);
+            assert!(
+                keys.iter().all(|k| k != "ui.tab_active_fg"),
+                "tab_active_fg is a tab-surface color, unreadable on the \
+                 dialog surface; got {keys:?}"
+            );
         }
     }
 }
