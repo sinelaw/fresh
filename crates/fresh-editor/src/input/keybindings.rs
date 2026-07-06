@@ -732,6 +732,8 @@ pub enum Action {
     /// persists across restart, without touching the global default or other
     /// buffers).
     ToggleLineWrapCurrentBuffer,
+    /// Cycle virtual space (off → block → on) for the current buffer only
+    ToggleVirtualSpaceCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -1205,6 +1207,7 @@ impl Action {
             "toggle_line_numbers" => ToggleLineNumbers,
             "toggle_line_numbers_current_buffer" => ToggleLineNumbersCurrentBuffer,
             "toggle_line_wrap_current_buffer" => ToggleLineWrapCurrentBuffer,
+            "toggle_virtual_space_current_buffer" => ToggleVirtualSpaceCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -2718,6 +2721,9 @@ impl KeybindingResolver {
                 t!("action.toggle_line_numbers_current_buffer")
             }
             Action::ToggleLineWrapCurrentBuffer => t!("action.toggle_line_wrap_current_buffer"),
+            Action::ToggleVirtualSpaceCurrentBuffer => {
+                t!("action.toggle_virtual_space_current_buffer")
+            }
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),
             Action::ToggleMouseCapture => t!("action.toggle_mouse_capture"),

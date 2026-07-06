@@ -112,8 +112,14 @@ pub struct BufferSettings {
     pub auto_surround: bool,
 
     /// Where the cursor may move beyond the end of a line (virtual space).
-    /// Set from the global config.
+    /// Resolved effective value: the per-buffer override when set, else the
+    /// global config.
     pub virtual_space: crate::config::VirtualSpaceMode,
+
+    /// Explicit per-buffer virtual-space override, set by "Toggle Virtual
+    /// Space (Current Buffer)". `None` = follow the global config. Persisted
+    /// in the per-file workspace state.
+    pub virtual_space_override: Option<crate::config::VirtualSpaceMode>,
 
     /// Extra characters (beyond alphanumeric + `_`) considered part of
     /// identifiers for this language. Used by completion providers.
@@ -129,6 +135,7 @@ impl Default for BufferSettings {
             auto_close: true,
             auto_surround: true,
             virtual_space: crate::config::VirtualSpaceMode::default(),
+            virtual_space_override: None,
             word_characters: String::new(),
         }
     }

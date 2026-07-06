@@ -630,6 +630,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_virtual_space_current_buffer",
+        desc_key: "cmd.toggle_virtual_space_current_buffer_desc",
+        action: || Action::ToggleVirtualSpaceCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.wave_animation",
         desc_key: "cmd.wave_animation_desc",
         action: || Action::TriggerWaveAnimation,

@@ -152,6 +152,42 @@ impl Editor {
         self.set_status_message(t!("view.line_wrap_state", state = state).to_string());
     }
 
+    /// Cycle virtual space (off → block → on) for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.virtual_space` setting:
+    /// it records an explicit override on the buffer's settings (persisted in
+    /// the per-file workspace state) and does not affect other buffers or the
+    /// global config.
+    pub fn toggle_virtual_space_current_buffer(&mut self) {
+        use crate::config::VirtualSpaceMode;
+
+        let buffer_id = self.active_buffer();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+
+        let new_mode = match state.buffer_settings.virtual_space {
+            VirtualSpaceMode::Off => VirtualSpaceMode::Block,
+            VirtualSpaceMode::Block => VirtualSpaceMode::On,
+            VirtualSpaceMode::On => VirtualSpaceMode::Off,
+        };
+        state.buffer_settings.virtual_space = new_mode;
+        state.buffer_settings.virtual_space_override = Some(new_mode);
+
+        let mode = match new_mode {
+            VirtualSpaceMode::Off => "off",
+            VirtualSpaceMode::Block => "block",
+            VirtualSpaceMode::On => "on",
+        };
+        self.set_status_message(t!("view.virtual_space_state", state = mode).to_string());
+    }
+
     /// Kick off the full-screen wave animation: a crest of wave glyphs
     /// rises from the bottom edge and bounces every painted cell — text,
     /// gutter, menu bar, status bar — up, down, and sideways before they

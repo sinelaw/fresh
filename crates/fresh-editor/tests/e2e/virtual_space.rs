@@ -395,6 +395,111 @@ fn test_block_rectangle_renders_past_short_line() {
     );
 }
 
+/// Run a command-palette entry by fuzzy-typing its full name and pressing
+/// Enter.
+fn run_command(harness: &mut EditorTestHarness, name: &str) {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(name).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+}
+
+/// "Toggle Virtual Space (Current Buffer)" cycles off → block → on for the
+/// active buffer only; other buffers keep following the global default.
+#[test]
+fn test_toggle_virtual_space_scopes_to_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), "ab\nxyz").unwrap();
+    std::fs::write(dir.join("b.txt"), "cd\nuvw").unwrap();
+
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.open_file(&dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Cycle b.txt (active): off → block → on.
+    run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
+    run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
+
+    // Typing past EOL pads in b.txt...
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("X").unwrap();
+    harness.assert_buffer_content("cd   X\nuvw");
+
+    // ...but a.txt still follows the global default (off): Right at EOL
+    // wraps to the next line, so typing lands at the start of line 2.
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("Y").unwrap();
+    harness.assert_buffer_content("ab\nYxyz");
+}
+
+/// The per-buffer virtual-space override survives a workspace save/restore.
+#[test]
+fn test_toggle_virtual_space_persists_across_restart() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.txt");
+    std::fs::write(&file, "ab\nxyz").unwrap();
+
+    // Session 1: cycle the buffer to "on", then save the workspace.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
+        run_command(&mut harness, "Toggle Virtual Space (Current Buffer)");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Session 2: restore — typing past EOL must still pad this buffer.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            80,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should restore");
+        harness.render().unwrap();
+        harness.open_file(&file).unwrap();
+
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        for _ in 0..3 {
+            harness
+                .send_key(KeyCode::Right, KeyModifiers::NONE)
+                .unwrap();
+        }
+        harness.type_text("X").unwrap();
+        harness.assert_buffer_content("ab   X\nxyz");
+    }
+}
+
 /// Vertical movement through a short line and back onto a long one restores
 /// the original column (the goal column survives the virtual segment).
 #[test]

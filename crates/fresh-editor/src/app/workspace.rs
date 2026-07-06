@@ -1357,6 +1357,12 @@ impl crate::app::window::Window {
                     }
                     buf_state.plugin_state = file_state.plugin_state.clone();
                     if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
+                        // Re-apply the explicit per-buffer virtual-space
+                        // override (buffer-wide, not per-view).
+                        if let Some(virtual_space) = file_state.virtual_space {
+                            state.buffer_settings.virtual_space = virtual_space;
+                            state.buffer_settings.virtual_space_override = Some(virtual_space);
+                        }
                         buf_state.folds.clear(&mut state.marker_list);
                         for fold in &file_state.folds {
                             // Resolve the stored line numbers against the current
@@ -1713,6 +1719,7 @@ impl crate::app::window::Window {
             // cross-project global per-file state.
             line_numbers: None,
             line_wrap: None,
+            virtual_space: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
@@ -2751,6 +2758,9 @@ fn serialize_split_view_state(
                 compose_width: buf_state.compose_width,
                 line_numbers: buf_state.line_numbers_override,
                 line_wrap: buf_state.line_wrap_override,
+                virtual_space: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.virtual_space_override),
                 plugin_state: buf_state.plugin_state.clone(),
                 folds,
             },

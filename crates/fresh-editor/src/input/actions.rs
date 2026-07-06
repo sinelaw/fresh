@@ -3151,6 +3151,7 @@ pub fn action_to_events(
         | Action::ToggleLineNumbers
         | Action::ToggleLineNumbersCurrentBuffer
         | Action::ToggleLineWrapCurrentBuffer
+        | Action::ToggleVirtualSpaceCurrentBuffer
         | Action::TriggerWaveAnimation
         | Action::ToggleScrollSync
         | Action::ToggleMouseCapture

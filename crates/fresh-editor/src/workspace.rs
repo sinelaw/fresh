@@ -254,6 +254,12 @@ pub struct SerializedFileState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_wrap: Option<bool>,
 
+    /// Explicit per-buffer virtual-space override (`None` = follow global
+    /// default). Persists the "Toggle Virtual Space (Current Buffer)" choice
+    /// across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub virtual_space: Option<crate::config::VirtualSpaceMode>,
+
     /// Plugin-managed state (arbitrary key-value pairs, persisted across sessions)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugin_state: HashMap<String, serde_json::Value>,
@@ -1188,6 +1194,7 @@ mod tests {
             compose_width: None,
             line_numbers: None,
             line_wrap: None,
+            virtual_space: None,
             plugin_state: HashMap::new(),
             folds: Vec::new(),
         };
