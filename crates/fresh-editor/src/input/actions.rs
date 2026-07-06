@@ -872,6 +872,10 @@ struct InsertCursorData {
     only_spaces: bool,
     char_after: Option<u8>,
     deleted_text: Option<String>,
+    /// Virtual-space columns of the cursor (0 unless the cursor sits past
+    /// its line's content end with virtual space enabled). Typing at a
+    /// virtual position first materializes this many spaces.
+    virtual_cols: usize,
 }
 
 /// Collect cursor data needed for character insertion.
@@ -884,6 +888,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
     });
 
     // Collect cursor IDs and positions
+    let vs_mode = state.buffer_settings.virtual_space;
     let cursor_info: Vec<_> = cursor_vec
         .iter()
         .map(|(cursor_id, cursor)| {
@@ -892,7 +897,8 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
                 .as_ref()
                 .map(|r| r.start)
                 .unwrap_or(cursor.position);
-            (*cursor_id, selection, insert_position)
+            let virtual_cols = cursor_virtual_columns(vs_mode, &state.buffer, cursor);
+            (*cursor_id, selection, insert_position, virtual_cols)
         })
         .collect();
 
@@ -901,7 +907,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
     // Collect all cursor data with buffer access
     cursor_info
         .into_iter()
-        .map(|(cursor_id, selection, insert_position)| {
+        .map(|(cursor_id, selection, insert_position, virtual_cols)| {
             // Calculate line start for auto-dedent
             let mut line_start = insert_position;
             while line_start > 0 {
@@ -938,6 +944,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
                 only_spaces,
                 char_after,
                 deleted_text,
+                virtual_cols,
             }
         })
         .collect()
@@ -960,6 +967,19 @@ fn insert_char_events(
     let cursor_data = collect_insert_cursor_data(state, cursors);
 
     for data in cursor_data {
+        // Virtual space: materialize the gap between the line's content end
+        // and the cursor, then the typed character — as one Insert so a
+        // single undo removes both. Auto-close/skip-over don't apply out in
+        // virtual space; the cursor is past every existing delimiter.
+        if data.virtual_cols > 0 && data.selection.is_none() {
+            events.push(Event::Insert {
+                position: data.insert_position,
+                text: format!("{}{}", " ".repeat(data.virtual_cols), ch),
+                cursor_id: data.cursor_id,
+            });
+            continue;
+        }
+
         // Surround selection: when text is selected and the typed character has a
         // matching close pair, wrap the selection instead of replacing it.
         if auto_surround {
@@ -1510,11 +1530,18 @@ fn handle_insert_tab(
         let mut cursor_vec: Vec<_> = cursors.iter().collect();
         cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
-        // Insert tabs
+        // Insert tabs (materializing any virtual-space gap first)
+        let vs_mode = state.buffer_settings.virtual_space;
         for (cursor_id, cursor) in cursor_vec {
+            let virtual_cols = cursor_virtual_columns(vs_mode, &state.buffer, cursor);
+            let text = if virtual_cols > 0 {
+                format!("{}{}", " ".repeat(virtual_cols), tab_str)
+            } else {
+                tab_str.clone()
+            };
             events.push(Event::Insert {
                 position: cursor.position,
-                text: tab_str.clone(),
+                text,
                 cursor_id,
             });
         }
@@ -1761,10 +1788,26 @@ fn handle_delete_backward(
     let mut cursor_vec: Vec<_> = cursors.iter().collect();
     cursor_vec.sort_by_key(|(_, c)| std::cmp::Reverse(c.position));
 
+    let vs_mode = state.buffer_settings.virtual_space;
+
     // Collect all deletions first, checking for smart dedent and auto-pair deletion
     let deletions: Vec<_> = cursor_vec
         .iter()
         .filter_map(|(cursor_id, cursor)| {
+            // Backspace in virtual space steps the cursor one column left
+            // without touching the buffer (there is nothing to delete yet).
+            if cursor_virtual_columns(vs_mode, &state.buffer, cursor) > 0 {
+                events.push(Event::MoveCursor {
+                    cursor_id: *cursor_id,
+                    old_position: cursor.position,
+                    new_position: cursor.position,
+                    old_anchor: cursor.anchor,
+                    new_anchor: None,
+                    old_sticky_column: cursor.sticky_column,
+                    new_sticky_column: cursor.sticky_column.map(|s| s - 1),
+                });
+                return None;
+            }
             if let Some(range) = cursor.selection_range() {
                 Some((*cursor_id, range))
             } else if cursor.position > 0 {

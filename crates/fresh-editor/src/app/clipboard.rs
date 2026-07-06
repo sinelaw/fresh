@@ -1233,19 +1233,28 @@ impl Editor {
         }
 
         // Collect cursor info sorted in reverse order by position
-        let mut cursor_data: Vec<_> = self
-            .active_cursors()
-            .iter()
-            .map(|(cursor_id, cursor)| {
-                let selection = cursor.selection_range();
-                let insert_position = selection
-                    .as_ref()
-                    .map(|r| r.start)
-                    .unwrap_or(cursor.position);
-                (cursor_id, selection, insert_position)
-            })
-            .collect();
-        cursor_data.sort_by_key(|(_, _, pos)| std::cmp::Reverse(*pos));
+        let vs_mode = self.active_state().buffer_settings.virtual_space;
+        let mut cursor_data: Vec<_> = {
+            let state = self.active_state();
+            self.active_cursors()
+                .iter()
+                .map(|(cursor_id, cursor)| {
+                    let selection = cursor.selection_range();
+                    let insert_position = selection
+                        .as_ref()
+                        .map(|r| r.start)
+                        .unwrap_or(cursor.position);
+                    // Pasting at a virtual position first materializes the gap.
+                    let virtual_cols = crate::model::virtual_space::cursor_virtual_columns(
+                        vs_mode,
+                        &state.buffer,
+                        cursor,
+                    );
+                    (cursor_id, selection, insert_position, virtual_cols)
+                })
+                .collect()
+        };
+        cursor_data.sort_by_key(|(_, _, pos, _)| std::cmp::Reverse(*pos));
 
         // Decide whether to distribute one clipboard line per cursor
         // (column-mode paste). We split on LF (after normalization above) and
@@ -1272,11 +1281,17 @@ impl Editor {
             let state = self.active_state_mut();
             cursor_data
                 .into_iter()
-                .map(|(cursor_id, selection, insert_position)| {
+                .map(|(cursor_id, selection, insert_position, virtual_cols)| {
                     let deleted_text = selection
                         .as_ref()
                         .map(|r| state.get_text_range(r.start, r.end));
-                    (cursor_id, selection, insert_position, deleted_text)
+                    (
+                        cursor_id,
+                        selection,
+                        insert_position,
+                        deleted_text,
+                        virtual_cols,
+                    )
                 })
                 .collect()
         };
@@ -1290,7 +1305,7 @@ impl Editor {
         // the back when iterating.
         let total = cursor_data_with_text.len();
         let mut events = Vec::new();
-        for (i, (cursor_id, selection, insert_position, deleted_text)) in
+        for (i, (cursor_id, selection, insert_position, deleted_text, virtual_cols)) in
             cursor_data_with_text.into_iter().enumerate()
         {
             if let (Some(range), Some(text)) = (selection, deleted_text) {
@@ -1300,11 +1315,14 @@ impl Editor {
                     cursor_id,
                 });
             }
-            let text = if use_column_paste {
+            let mut text = if use_column_paste {
                 lines_for_distribution[total - 1 - i].to_string()
             } else {
                 paste_text_full.clone()
             };
+            if virtual_cols > 0 {
+                text = format!("{}{}", " ".repeat(virtual_cols), text);
+            }
             events.push(Event::Insert {
                 position: insert_position,
                 text,
