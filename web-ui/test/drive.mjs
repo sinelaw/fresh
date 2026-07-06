@@ -15,7 +15,10 @@
 //     HTTP routes still live alongside for curl / the parity harness.
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
-const EXE = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+// CHROMIUM (optional) points at an existing Chromium binary; when unset,
+// playwright launches the browser its own `playwright install` provisioned
+// (which is what CI uses — never hardcode a machine-specific path here).
+const EXE = process.env.CHROMIUM;
 const URL = process.env.UI_URL || 'http://127.0.0.1:8141';
 const SHOTS = process.env.SHOTS || '/tmp/pw/shots';
 mkdirSync(SHOTS, { recursive: true });
@@ -24,7 +27,7 @@ const check = (n, c, x = '') => { c ? (pass++, console.log('  PASS ' + n)) : (fa
 const scene = p => p.evaluate(() => JSON.parse(JSON.stringify(window.fresh.scene)));
 const paneText = s => s.regions.panes[0].cells.map(r => r.map(x => x.t).join('')).join('\n');
 
-const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ ...(EXE ? { executablePath: EXE } : {}), headless: true, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', e => errs.push(String(e)));
 // The single-client test below deliberately opens a second /ws socket that the

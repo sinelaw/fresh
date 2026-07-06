@@ -299,8 +299,13 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
         loop {
             match listener.accept() {
                 Ok((stream, _)) => {
-                    let _ = stream.set_nonblocking(true);
-                    let _ = stream.set_nodelay(true);
+                    // The pump relies on nonblocking reads; a socket we can't
+                    // configure is dropped rather than risked stalling the
+                    // editor loop. nodelay is folded in — it never fails on a
+                    // live socket, and a dead one belongs on the floor anyway.
+                    if stream.set_nonblocking(true).is_err() || stream.set_nodelay(true).is_err() {
+                        continue;
+                    }
                     pending.push(PendingConn {
                         stream,
                         buf: Vec::new(),
@@ -1134,8 +1139,13 @@ impl WsSession {
                     }
                 }
                 0x8 => {
-                    // Close: echo it (best effort) and drop the client.
-                    let _ = write_all_nb(&mut self.stream, &ws_encode(0x8, &frame.payload));
+                    // Close: echo it (best effort — the peer may already be
+                    // gone, and we're dropping the client either way) and
+                    // report the disconnect.
+                    drop(write_all_nb(
+                        &mut self.stream,
+                        &ws_encode(0x8, &frame.payload),
+                    ));
                     return Err(std::io::Error::new(
                         ErrorKind::ConnectionAborted,
                         "client sent close",
