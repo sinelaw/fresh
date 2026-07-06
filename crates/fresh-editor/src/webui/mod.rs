@@ -75,7 +75,7 @@ pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
     // We render chrome (menu, dropdown, command palette) as native HTML from the
     // semantic model, so tell the pipeline to compute chrome *layout* but not draw
     // it into the cells — the cell buffer carries pane interiors only, with no
-    // chrome to hide. See docs/internal/UNIFIED_SCENE_DESIGN.md (Phase 1).
+    // chrome to hide. See docs/internal/web-ui.md.
     editor.suppress_chrome_cells = true;
     for f in files {
         if let Err(e) = editor.open_file(f) {

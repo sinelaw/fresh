@@ -914,7 +914,7 @@ pub struct Editor {
     /// that render chrome from the semantic model instead of cells (the web /
     /// Tauri frontends) set this so they get pane-only cells with no chrome to
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
-    /// See docs/internal/UNIFIED_SCENE_DESIGN.md (Phase 1).
+    /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
 
     /// Request the event loop to suspend the process (SIGTSTP on Unix).

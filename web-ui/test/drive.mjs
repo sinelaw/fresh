@@ -1,7 +1,7 @@
 // Headless end-to-end test: drives the web UI that taps the REAL render pipeline.
 //
 // Start the bridge, then run this:
-//   cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8141 crates/fresh-editor/src/view/chrome_snapshot.rs &
+//   cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8141 crates/fresh-editor/src/view/scene.rs &
 //   CHROMIUM=/path/to/chrome UI_URL=http://127.0.0.1:8141 node web-ui/test/drive.mjs
 //
 // Asserts that:

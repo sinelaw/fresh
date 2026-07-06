@@ -1,7 +1,7 @@
 //! Shared semantic UI projections — the single source of truth for *what* the
 //! chrome is, computed once in the core and consumed by every frontend.
 //!
-//! The guiding principle (see docs/internal/UNIFIED_SCENE_DESIGN.md): the TUI and
+//! The guiding principle (see docs/internal/web-ui.md): the TUI and
 //! the web/GUI must not re-implement the same logic. Everything semantic — which
 //! menus exist, which items are enabled/checked, their accelerators, which menu
 //! is open — is derived here, once. A frontend then only does the *rendering*

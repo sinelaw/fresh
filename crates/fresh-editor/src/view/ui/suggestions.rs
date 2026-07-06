@@ -50,7 +50,7 @@ impl SuggestionsRenderer {
         hover_target: Option<&crate::app::HoverTarget>,
         with_border: bool,
         // When false, compute + return layout but skip emitting cells (the host
-        // renders the palette from the semantic model). See UNIFIED_SCENE_DESIGN.md.
+        // renders the palette from the semantic model). See docs/internal/web-ui.md.
         draw: bool,
     ) -> Option<(Rect, usize, usize, usize)> {
         if prompt.suggestions.is_empty() {

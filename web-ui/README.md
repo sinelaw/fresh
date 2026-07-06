@@ -1,8 +1,9 @@
 # Fresh — web UI (wired to the real editor, no mocks)
 
 A non-terminal UI for Fresh, driven **end-to-end by the real Rust `Editor`** — no
-mock model. See `docs/internal/UNIFIED_SCENE_DESIGN.md` (design + phased plan) and
-`docs/internal/NON_TERMINAL_UI_RESEARCH.md` (original research).
+mock model. See `docs/internal/web-ui.md` (architecture, design gaps, and the
+roadmap to desktop-grade polish); the original design/research notes
+(`UNIFIED_SCENE_DESIGN.md`, `NON_TERMINAL_UI_RESEARCH.md`) live in git history.
 
 The guiding principle: **the TUI and the web must not re-implement the same
 logic.** Everything semantic — which menus/items exist, what's enabled/checked,

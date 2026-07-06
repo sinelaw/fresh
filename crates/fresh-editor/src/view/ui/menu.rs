@@ -520,7 +520,7 @@ impl MenuRenderer {
         mnemonics_enabled: bool,
         mut rec: Option<&mut CellThemeRecorder>,
         // When false, compute + record layout but skip emitting cells (the host
-        // renders the menu from the semantic model). See UNIFIED_SCENE_DESIGN.md.
+        // renders the menu from the semantic model). See docs/internal/web-ui.md.
         draw: bool,
     ) -> MenuLayout {
         let mut layout = MenuLayout::new(area);
