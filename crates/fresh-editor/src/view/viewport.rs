@@ -1869,6 +1869,21 @@ impl Viewport {
         cursor: &Cursor,
         hidden_ranges: &[(usize, usize)],
     ) {
+        self.ensure_visible_with_virtual(buffer, cursor, hidden_ranges, 0);
+    }
+
+    /// [`ensure_visible`](Self::ensure_visible) for a cursor sitting
+    /// `virtual_columns` past its line's content end (virtual space): the
+    /// horizontal scroll targets the cursor's on-screen column, not its
+    /// clipped byte column. The render path passes the real value; other
+    /// callers pass 0 and are corrected by the per-frame render sync.
+    pub(crate) fn ensure_visible_with_virtual(
+        &mut self,
+        buffer: &mut Buffer,
+        cursor: &Cursor,
+        hidden_ranges: &[(usize, usize)],
+        virtual_columns: usize,
+    ) {
         let _span = tracing::trace_span!(
             "ensure_visible",
             cursor_pos = cursor.position,
@@ -1982,13 +1997,16 @@ impl Viewport {
 
         // Horizontal scrolling (disabled when wrapping — all columns visible via wrap).
         if !self.line_wrap_enabled {
-            let cursor_column = cursor.position.saturating_sub(cursor_line_start);
+            let cursor_column = cursor.position.saturating_sub(cursor_line_start) + virtual_columns;
             let mut line_iter = buffer.line_iterator(cursor_line_start, 80);
             let line_length = if let Some((_, content)) = line_iter.next_line() {
                 content.trim_end_matches('\n').len()
             } else {
                 0
             };
+            // In virtual space the cursor column exceeds the line length;
+            // widen the scroll limit so the viewport can follow it.
+            let line_length = line_length.max(cursor_column);
             self.ensure_column_visible(cursor_column, line_length, buffer);
         } else {
             self.left_column = 0;

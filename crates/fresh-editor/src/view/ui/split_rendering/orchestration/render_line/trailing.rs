@@ -43,6 +43,9 @@ pub(super) struct PostRowContext<'a> {
     pub decorations: &'a DecorationContext,
     pub cursor_line_start_byte: usize,
     pub primary_cursor_position: usize,
+    /// Virtual-space columns of the primary cursor (0 when not in
+    /// virtual space or the mode is off).
+    pub primary_virtual_cols: usize,
     pub byte_offset_mode: bool,
     pub show_line_numbers: bool,
     pub highlight_current_line: bool,
@@ -143,9 +146,10 @@ fn render_implicit_line_into(
     // NOTE: We intentionally do NOT update last_line_end here; the
     // implicit empty line is a visual display aid, not actual content.
 
-    // Cursor at EOF (after the newline) lands on this implicit line.
+    // Cursor at EOF (after the newline) lands on this implicit line — at
+    // its virtual column when in virtual space.
     if ctx.primary_cursor_position == ctx.state.buffer.len() && !*acc.have_cursor {
-        *acc.cursor_screen_x = ctx.gutter_width as u16;
+        *acc.cursor_screen_x = ctx.gutter_width as u16 + ctx.primary_virtual_cols as u16;
         *acc.cursor_screen_y = implicit_y;
         *acc.have_cursor = true;
     }

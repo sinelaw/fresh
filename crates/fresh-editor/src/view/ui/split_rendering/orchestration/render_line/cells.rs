@@ -652,6 +652,21 @@ impl CellPass<'_, '_, '_> {
                 // Flush accumulated text before adding the cursor indicator
                 // so the indicator appears after the line content, not before
                 self.span_acc.flush(self.line_spans, self.line_view_map);
+                // A virtual-space cursor sits past the content end: pad the
+                // indicator out to its on-screen column.
+                let virtual_pad = byte_pos
+                    .and_then(|bp| self.input.selection.virtual_cols_at.get(&bp))
+                    .copied()
+                    .unwrap_or(0);
+                if virtual_pad > 0 {
+                    push_span_with_map(
+                        self.line_spans,
+                        self.line_view_map,
+                        " ".repeat(virtual_pad),
+                        Style::default(),
+                        None,
+                    );
+                }
                 push_span_with_map(
                     self.line_spans,
                     self.line_view_map,

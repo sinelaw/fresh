@@ -24,6 +24,8 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
             block_rects: Vec::new(),
             cursor_positions: Vec::new(),
             primary_cursor_position: cursors.primary().position,
+            primary_virtual_cols: 0,
+            virtual_cols_at: HashMap::new(),
         };
     }
 
@@ -71,11 +73,32 @@ pub(crate) fn selection_context(state: &EditorState, cursors: &Cursors) -> Selec
 
     let cursor_positions: Vec<usize> = cursors.iter().map(|(_, cursor)| cursor.position).collect();
 
+    // Virtual-space positions: cursors sitting past their line's content
+    // end. `cursor_virtual_columns` returns 0 whenever the mode is off, so
+    // this stays empty (and free) in the default configuration.
+    let vs_mode = state.buffer_settings.virtual_space;
+    let mut virtual_cols_at: HashMap<usize, usize> = HashMap::new();
+    for (_, cursor) in cursors.iter() {
+        let vcols =
+            crate::model::virtual_space::cursor_virtual_columns(vs_mode, &state.buffer, cursor);
+        if vcols > 0 {
+            let entry = virtual_cols_at.entry(cursor.position).or_insert(0);
+            *entry = (*entry).max(vcols);
+        }
+    }
+    let primary_virtual_cols = crate::model::virtual_space::cursor_virtual_columns(
+        vs_mode,
+        &state.buffer,
+        cursors.primary(),
+    );
+
     SelectionContext {
         ranges,
         block_rects,
         cursor_positions,
         primary_cursor_position: cursors.primary().position,
+        primary_virtual_cols,
+        virtual_cols_at,
     }
 }
 

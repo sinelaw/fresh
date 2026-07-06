@@ -19,6 +19,13 @@ pub(crate) struct SelectionContext {
     pub block_rects: Vec<(usize, usize, usize, usize)>,
     pub cursor_positions: Vec<usize>,
     pub primary_cursor_position: usize,
+    /// Visual columns the primary cursor sits past its line's content end
+    /// (virtual space). 0 unless `editor.virtual_space` is "on".
+    pub primary_virtual_cols: usize,
+    /// For every cursor in virtual space: its byte position (a line content
+    /// end) → virtual columns. Used to pad software cursor indicators out
+    /// to the cursor's on-screen column.
+    pub virtual_cols_at: HashMap<usize, usize>,
 }
 
 /// Per-viewport decorations (overlays, diagnostics, indicators, virtual text).

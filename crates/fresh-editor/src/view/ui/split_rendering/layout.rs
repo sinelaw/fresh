@@ -134,6 +134,7 @@ pub(super) fn sync_viewport_to_content(
     compose_width: Option<u16>,
     show_line_numbers: bool,
     pin_to_top: bool,
+    virtual_space: crate::config::VirtualSpaceMode,
 ) {
     let size_changed =
         viewport.width != content_rect.width || viewport.height != content_rect.height;
@@ -164,7 +165,9 @@ pub(super) fn sync_viewport_to_content(
     }
 
     let primary = *cursors.primary();
-    viewport.ensure_visible(buffer, &primary, hidden_ranges);
+    let virtual_columns =
+        crate::model::virtual_space::cursor_virtual_columns(virtual_space, buffer, &primary);
+    viewport.ensure_visible_with_virtual(buffer, &primary, hidden_ranges, virtual_columns);
 }
 
 /// Pull per-split view preferences from `SplitViewState`, falling back to

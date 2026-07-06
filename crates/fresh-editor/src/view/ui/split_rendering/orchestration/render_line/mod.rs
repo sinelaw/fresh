@@ -981,10 +981,13 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     // For empty lines (just newline), cursor should be at gutter width (after gutter);
                     // for lines with content, cursor on newline should be after the content
                     // (end_x already includes the gutter, via last_visible_x).
+                    // A virtual-space cursor sits `primary_virtual_cols`
+                    // further right of the content end.
+                    let vcols = selection.primary_virtual_cols as u16;
                     if line_len_chars == 1 {
-                        cursor.force(gutter_width as u16, current_row);
+                        cursor.force(gutter_width as u16 + vcols, current_row);
                     } else {
-                        cursor.force(end_x, current_row);
+                        cursor.force(end_x + vcols, current_row);
                     }
                 }
             }
@@ -1008,6 +1011,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             decorations,
             cursor_line_start_byte,
             primary_cursor_position,
+            primary_virtual_cols: selection.primary_virtual_cols,
             byte_offset_mode,
             show_line_numbers,
             highlight_current_line,
@@ -1031,7 +1035,11 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
     LineRenderOutput {
         lines,
-        cursor: cursor.found.then_some((cursor.x, cursor.y)),
+        // Clamp to the render area so a far-right virtual-space cursor can't
+        // place the hardware cursor into a neighboring split.
+        cursor: cursor
+            .found
+            .then_some((cursor.x.min(render_area.width.saturating_sub(1)), cursor.y)),
         last_line_end,
         content_lines_rendered: lines_rendered,
         view_line_mappings,
@@ -1132,6 +1140,7 @@ fn place_line_end_cursor(
         .copied()
         .flatten();
 
+    let expected_after_pos = last_char_buf_pos.map(|p| p + 1).unwrap_or(input.buffer_len);
     let cursor_at_end = cursor_positions.iter().any(|&pos| {
         // Cursor is "at end" only if it's AFTER the last character, not ON it.
         // A cursor ON the last character should render on that character (handled in cell pass).
@@ -1140,7 +1149,6 @@ fn place_line_end_cursor(
         // The fallback should match the position that would be "after" if there was a mapping.
         // For empty lines with no source mappings (e.g. trailing empty line after final '\n'),
         // the expected position is buffer.len() (EOF), not 0.
-        let expected_after_pos = last_char_buf_pos.map(|p| p + 1).unwrap_or(input.buffer_len);
         let matches_fallback = after_last_char_buf_pos.is_none() && pos == expected_after_pos;
 
         matches_after || matches_fallback
@@ -1152,6 +1160,17 @@ fn place_line_end_cursor(
     // Primary cursor is at end only if AFTER the last char, not ON it
     let is_primary_at_end = after_last_char_buf_pos.is_some_and(|bp| bp == primary_cursor_position)
         || (after_last_char_buf_pos.is_none() && primary_cursor_position >= input.buffer_len);
+
+    // Virtual space: columns past the content end that the end-of-line
+    // cursor(s) sit at. Shifts the hardware cursor and pads the software
+    // indicator out to the cursor's real on-screen column.
+    let end_byte = after_last_char_buf_pos.unwrap_or(expected_after_pos);
+    let virtual_pad = input
+        .selection
+        .virtual_cols_at
+        .get(&end_byte)
+        .copied()
+        .unwrap_or(0);
 
     // Track cursor position for primary cursor
     if let Some(seg_y) = input.seg_y {
@@ -1166,7 +1185,7 @@ fn place_line_end_cursor(
                 // Subtract left_col to get the screen position after horizontal scroll.
                 input.gutter_width as u16 + input.col_offset.saturating_sub(input.left_col) as u16
             };
-            cursor.force(x, seg_y);
+            cursor.force(x + input.selection.primary_virtual_cols as u16, seg_y);
         }
     }
 
@@ -1179,6 +1198,15 @@ fn place_line_end_cursor(
         true
     };
     if should_add_indicator {
+        if virtual_pad > 0 {
+            push_span_with_map(
+                line_spans,
+                line_view_map,
+                " ".repeat(virtual_pad),
+                Style::default(),
+                None,
+            );
+        }
         push_span_with_map(
             line_spans,
             line_view_map,

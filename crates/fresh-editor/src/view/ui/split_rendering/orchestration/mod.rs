@@ -415,6 +415,7 @@ pub(crate) fn render_content(
                     split_compose_width,
                     split_show_line_numbers,
                     is_non_scrollable,
+                    state.buffer_settings.virtual_space,
                 );
             }
             let view_prefs =
@@ -1123,6 +1124,7 @@ pub(crate) fn compute_content_layout(
             split_compose_width,
             split_show_line_numbers,
             pin_to_top,
+            state.buffer_settings.virtual_space,
         );
         let view_prefs = resolve_view_preferences(state, Some(&*split_view_states), split_id);
 
