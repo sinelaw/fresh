@@ -25,6 +25,7 @@ use crossterm::event::{KeyCode, KeyModifiers};
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // fake-ssh shim is a Unix shell script
 fn dock_lists_dormant_ssh_session_with_backend_badge_and_dive_commits() {
+    common::tracing::init_tracing_from_env();
     ensure_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 
@@ -63,6 +64,10 @@ fn dock_lists_dormant_ssh_session_with_backend_badge_and_dive_commits() {
             .any(|c| c.get_localized_name() == "Orchestrator: Toggle Dock")
     })
     .unwrap();
+    // A visible buffer in the local workspace — the thing that must LEAVE
+    // the screen when the dive commits. (Opened explicitly: the harness's
+    // `create` doesn't run the production foreground-workspace restore.)
+    h.open_file(&project.join("local_marker.txt")).unwrap();
     h.wait_for_screen_contains("local_marker.txt").unwrap();
 
     // Open the dock via the command palette.
@@ -75,10 +80,12 @@ fn dock_lists_dormant_ssh_session_with_backend_badge_and_dive_commits() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
     // The dormant SSH session is listed — WITHOUT flipping "show empty" —
-    // and badged as a (disconnected) SSH backend: glyph + `user@host` detail.
+    // and badged as a (disconnected) SSH backend: glyph + `user@host` detail
+    // (the detail may be ellipsis-truncated on a narrow card, so match its
+    // prefix).
     h.wait_until(|h| {
         let scr = h.screen_to_string();
-        scr.contains("ssh-dead") && scr.contains("⇅") && scr.contains("root@dead-host")
+        scr.contains("ssh-dead") && scr.contains("⇅") && scr.contains("root@")
     })
     .unwrap();
 

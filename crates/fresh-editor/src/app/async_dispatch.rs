@@ -1258,9 +1258,11 @@ impl Editor {
                 // selection and active window agree again — issue #2570).
                 // The session stays dormant behind the shell; diving again
                 // (or the indicator's Retry) reconnects, and a success
-                // replaces the shell with the fully-restored window.
+                // replaces the shell with the fully-restored window. The
+                // failure message is posted *after* the activation so the
+                // switch machinery can't clear it off the status line.
+                self.activate_failed_dormant_placeholder(window_id, reason.clone());
                 self.set_status_message(format!("Connection failed: {reason}"));
-                self.activate_failed_dormant_placeholder(window_id, reason);
             } else {
                 // The session was closed while the connect was in flight —
                 // nothing to attach the failure to; just surface it.

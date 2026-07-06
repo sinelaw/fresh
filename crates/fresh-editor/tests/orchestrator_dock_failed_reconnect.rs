@@ -32,6 +32,7 @@ use fresh_core::api::PluginCommand;
 #[test]
 #[cfg_attr(target_os = "windows", ignore)] // fake-ssh shim is a Unix shell script
 fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
+    common::tracing::init_tracing_from_env();
     ensure_fake_ssh_on_path();
     fresh::i18n::set_locale("en");
 
@@ -65,6 +66,10 @@ fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
             .with_empty_plugins_dir(),
     )
     .unwrap();
+    // A visible buffer in the local workspace — the thing that must LEAVE
+    // the screen when the dive commits. (Opened explicitly: the harness's
+    // `create` doesn't run the production foreground-workspace restore.)
+    h.open_file(&project.join("local_marker.txt")).unwrap();
     h.wait_for_screen_contains("local_marker.txt").unwrap();
     let local_id = h.editor().active_window_id();
 
