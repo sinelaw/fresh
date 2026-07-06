@@ -191,8 +191,11 @@ fresh-plugin-api-macros = { workspace = true, optional = true }
 
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
-# base64 for remote protocol encoding
+# base64 for remote protocol encoding (and the webui WebSocket handshake)
 base64 = { version = "0.22" }
+# sha1 for the webui WebSocket handshake (Sec-WebSocket-Accept); already in
+# Cargo.lock as a transitive dep, so this adds no new compilation.
+sha1 = { version = "0.11" }
 # thiserror for custom error types
 thiserror = { version = "2.0" }
 # dirs is always needed for path_utils home directory expansion

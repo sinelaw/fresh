@@ -14,18 +14,51 @@
 //!     file-explorer pane) is emitted as **semantic regions** (role + rect, with
 //!     thumb/orientation as needed) so the frontend draws real UI elements.
 //!
-//! Routes (single-threaded — the editor is not `Send`, one client):
+//! Transport (single-threaded — the editor is not `Send`, everything stays on
+//! this one thread):
+//!
+//! **WebSocket push (`GET /ws`)** is the browser's live channel
+//! (docs/internal/web-ui.md §3.1). Hand-rolled RFC 6455, matching the
+//! hand-rolled HTTP below. On connect the client receives
+//! `{"type":"hello","seq":0,"scene":<full scene>}`; afterwards the server
+//! pushes `{"type":"frame","seq":N,"changed":{<path>:<value>,...}}` frames
+//! ONLY when something changed, where each path replaces its value wholesale:
+//! `"w"`, `"h"`, `"theme"`, `"clipboard"`, `"regions.<key>"` — except panes,
+//! which diff one level deeper as `"regions.panes.<index>"` plus
+//! `"regions.panes.len"` when the pane count changes (panes carry the bulk of
+//! the bytes; typing resends only the changed pane). Client→server input is
+//! JSON text frames with the same field shapes as the HTTP POST bodies below,
+//! tagged `{"type":"key"|"mouse"|"action"|"widget"|"settings"|"kbedit"|
+//! "paste"|"resize"}`.
+//!
+//! Session model: exactly ONE WebSocket client at a time. A second upgrade
+//! attempt while one is connected is answered with a plain HTTP
+//! `409 Conflict` before any upgrade (the editor is one single-threaded
+//! session; interleaving two browsers' input would be an accident, not a
+//! feature — multi-session is §3.7, PLANNED). The `Origin` header, when
+//! present, must have the same host as the server's bind address or the
+//! upgrade is rejected with `403 Forbidden` — a malicious page on another
+//! origin can open WebSockets cross-origin, so this is the browser-facing
+//! guard; non-browser tools send no Origin and are accepted.
+//!
+//! **HTTP routes** all keep working exactly as before (full-scene responses;
+//! curl and the parity harness depend on them). A mutation made over HTTP
+//! reaches a connected WebSocket client as a pushed diff on the next tick:
 //!   - `GET /`        → serves `web-ui/index.html`
 //!   - `GET /favicon.ico` → 204
-//!   - `GET /state`   → `{ w, h, grid, regions }` from the real render
+//!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
 //!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
 //!   - `POST /resize` → `{cols, rows}` → `Editor::resize`, returns `/state`
+//!   - `POST /mouse` `/action` `/widget` `/settings` `/kbedit` → same pattern
+//!   - `POST /step` `/reset` → parity-harness routes (no clipboard attach)
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::collections::HashMap;
+use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -198,70 +231,329 @@ pub fn render_tui_cells(editor: &mut Editor, cols: u16, rows: u16) -> String {
     out
 }
 
+/// Tick cadence: rebuild/diff/push the scene at ~25 fps while the editor
+/// reports activity (animations / LSP progress / pending timers — the same
+/// hint the scene exposes as `regions.poll.active`), and at a relaxed idle
+/// cadence otherwise so async events still land within a quarter second with
+/// zero input — client or no client.
+const TICK_ACTIVE: Duration = Duration::from_millis(40);
+const TICK_IDLE: Duration = Duration::from_millis(250);
+/// Event-loop sleep. Small while a WS client is connected so its input is
+/// picked up within a few ms (input latency is the point of the push
+/// transport; the nonblocking accept/read per iteration are near-free, so
+/// idle CPU stays ~0% — measured, see docs/internal/web-ui.md §3.1). Longer
+/// when nothing is connected.
+const SLEEP_CONNECTED: Duration = Duration::from_millis(3);
+const SLEEP_IDLE: Duration = Duration::from_millis(25);
+/// How long a connection may take to finish sending its request head + body
+/// before we drop it (browsers open speculative sockets that never send).
+const HTTP_READ_DEADLINE: Duration = Duration::from_secs(10);
+/// Cap on a buffered HTTP request (head + body). Pastes are the biggest
+/// legitimate payload; anything larger is a runaway client.
+const HTTP_REQUEST_CAP: usize = 8 << 20;
+
 pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     let (mut cols, mut rows) = DEFAULT_SIZE;
     let mut editor = build_editor(cols, rows, files)?;
     let mut clip = ClipboardSync::new(&editor);
 
     let listener = TcpListener::bind(addr)?;
-    eprintln!("fresh web bridge on http://{addr}  (real render pipeline, no mocks)");
+    listener.set_nonblocking(true)?;
+    // Host part of the bind address, for the Origin check on WS upgrades.
+    let bind_host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
+    eprintln!(
+        "fresh web bridge on http://{addr}  (real render pipeline, no mocks; WS push on /ws)"
+    );
     let html_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web-ui/index.html");
 
-    for stream in listener.incoming() {
-        let mut stream = match stream {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        if let Err(e) = handle_conn(
-            &mut stream,
-            &mut editor,
-            html_path,
-            &mut cols,
-            &mut rows,
-            files,
-            &mut clip,
-        ) {
-            eprintln!("conn error: {e}");
+    // In-flight HTTP requests whose head/body hasn't fully arrived yet (reads
+    // are nonblocking so a slow client can never stall the editor loop).
+    let mut pending: Vec<PendingConn> = Vec::new();
+    // THE WebSocket client (single-client model — see module docs).
+    let mut ws: Option<WsSession> = None;
+    let mut next_tick = Instant::now();
+
+    loop {
+        // 1) Drain the WS input batch FIRST (this also detects a client that
+        //    closed, e.g. a browser reload, so its replacement upgrade in
+        //    step 2/3 isn't bounced with a 409). Read/parse errors drop the
+        //    client; the editor and the loop live on, a reconnect gets a
+        //    fresh hello.
+        let mut inputs: Vec<Value> = Vec::new();
+        if let Some(client) = ws.as_mut() {
+            match client.drain_messages() {
+                Ok(msgs) => {
+                    inputs = msgs
+                        .iter()
+                        .map(|m| serde_json::from_str(m).unwrap_or_else(|_| json!({})))
+                        .collect()
+                }
+                Err(e) => {
+                    eprintln!("[webui] ws client disconnected: {e}");
+                    ws = None;
+                }
+            }
         }
+
+        // 2) Accept new connections into the pending pool (nonblocking).
+        loop {
+            match listener.accept() {
+                Ok((stream, _)) => {
+                    let _ = stream.set_nonblocking(true);
+                    let _ = stream.set_nodelay(true);
+                    pending.push(PendingConn {
+                        stream,
+                        buf: Vec::new(),
+                        since: Instant::now(),
+                    });
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(e) => {
+                    eprintln!("accept error: {e}");
+                    break;
+                }
+            }
+        }
+
+        // 3) Pump pending connections; serve the complete ones. A `/ws`
+        //    upgrade becomes THE client (or gets 409/403); anything else runs
+        //    through the same HTTP routes as before, blocking only for its
+        //    short localhost response write. An HTTP route that mutated the
+        //    editor (input routes, /step, /reset) counts as input so the
+        //    connected WS client gets the resulting diff pushed this pass.
+        let mut http_mutated = false;
+        let mut i = 0;
+        while i < pending.len() {
+            match pump_pending(&mut pending[i]) {
+                Pump::NeedMore if pending[i].since.elapsed() <= HTTP_READ_DEADLINE => i += 1,
+                Pump::NeedMore | Pump::Closed => {
+                    pending.remove(i);
+                }
+                Pump::Ready(req) => {
+                    let conn = pending.remove(i);
+                    match serve_request(
+                        conn.stream,
+                        &req,
+                        &mut editor,
+                        html_path,
+                        &mut cols,
+                        &mut rows,
+                        files,
+                        &mut clip,
+                        ws.is_some(),
+                        bind_host,
+                    ) {
+                        Ok(Served::WsClient(session)) => ws = Some(session),
+                        Ok(Served::Http { mutated }) => http_mutated |= mutated,
+                        Err(e) => eprintln!("conn error: {e}"),
+                    }
+                }
+            }
+        }
+
+        // 4) Apply the whole input batch in order via the same dispatch the
+        //    HTTP routes use — but do NOT render per message.
+        let mut applied_input = false;
+        for v in &inputs {
+            let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            if apply_message(&mut editor, kind, v, &mut cols, &mut rows) {
+                applied_input = true;
+            } else {
+                eprintln!("[webui] ignoring unknown ws message type {kind:?}");
+            }
+        }
+
+        // 5) One tick per loop pass at most: immediately after input, else on
+        //    the tick deadline. The editor keeps ticking at the idle cadence
+        //    even with no client connected (async LSP/plugin/file events must
+        //    not stall); without a client we skip the scene build entirely —
+        //    the diff cache belongs to the connected session, and a reconnect
+        //    starts over with a fresh hello anyway.
+        let now = Instant::now();
+        let had_input = applied_input || http_mutated;
+        if had_input || now >= next_tick {
+            let needs_render = tick_only(&mut editor);
+            let active_hint = poll_active(&editor);
+            if let Some(client) = ws.as_mut() {
+                // Build + diff + push — but only when something can have
+                // changed: input was applied (over WS or an HTTP route), the
+                // tick reported needs-render (the TUI's own redraw signal),
+                // or time-driven UI is in flight (animations / LSP spinner —
+                // `poll_active`, refreshed on the fast cadence below). An
+                // unchanged scene would diff to nothing anyway; this just
+                // avoids paying the render to find that out, keeping a
+                // connected-but-idle session near zero CPU.
+                if had_input || needs_render || active_hint {
+                    let scene = build_scene(&mut editor, cols, rows, &mut clip);
+                    if let Err(e) = client.push_diff(&scene) {
+                        eprintln!("[webui] ws push failed, dropping client: {e}");
+                        ws = None;
+                    }
+                }
+            }
+            let interval = if active_hint { TICK_ACTIVE } else { TICK_IDLE };
+            next_tick = Instant::now() + interval;
+        }
+
+        // 6) Pace the loop without a busy spin. Stay snappy while a WS client
+        //    is connected (input latency) or an HTTP request is mid-assembly
+        //    (its bytes usually land one iteration after the accept); idle
+        //    slowly otherwise — CPU stays near zero either way.
+        std::thread::sleep(if ws.is_some() || !pending.is_empty() {
+            SLEEP_CONNECTED
+        } else {
+            SLEEP_IDLE
+        });
     }
-    Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// HTTP request assembly (nonblocking) + routing
+// ---------------------------------------------------------------------------
+
+/// A parsed HTTP request (head + full body). Header names are lowercased.
+struct HttpRequest {
+    method: String,
+    path: String,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+impl HttpRequest {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// A connection whose request bytes are still arriving.
+struct PendingConn {
+    stream: TcpStream,
+    buf: Vec<u8>,
+    since: Instant,
+}
+
+enum Pump {
+    NeedMore,
+    Closed,
+    Ready(HttpRequest),
+}
+
+/// Read whatever is available (nonblocking) and try to parse a complete
+/// request out of the buffer.
+fn pump_pending(conn: &mut PendingConn) -> Pump {
+    let mut tmp = [0u8; 16384];
+    loop {
+        match conn.stream.read(&mut tmp) {
+            Ok(0) => return Pump::Closed,
+            Ok(n) => {
+                conn.buf.extend_from_slice(&tmp[..n]);
+                if conn.buf.len() > HTTP_REQUEST_CAP {
+                    return Pump::Closed;
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            Err(_) => return Pump::Closed,
+        }
+    }
+    match try_parse_request(&conn.buf) {
+        Some(req) => Pump::Ready(req),
+        None => Pump::NeedMore,
+    }
+}
+
+/// Parse one HTTP request if `buf` holds the complete head and body.
+fn try_parse_request(buf: &[u8]) -> Option<HttpRequest> {
+    let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+    let head = std::str::from_utf8(&buf[..head_end]).ok()?;
+    let mut lines = head.split("\r\n");
+    let mut it = lines.next()?.split_whitespace();
+    let method = it.next()?.to_string();
+    let path = it.next().unwrap_or("/").to_string();
+    let mut headers = Vec::new();
+    let mut content_length = 0usize;
+    for line in lines {
+        if let Some((name, val)) = line.split_once(':') {
+            let name = name.trim().to_ascii_lowercase();
+            let val = val.trim().to_string();
+            if name == "content-length" {
+                content_length = val.parse().unwrap_or(0);
+            }
+            headers.push((name, val));
+        }
+    }
+    if buf.len() < head_end + content_length {
+        return None;
+    }
+    let body = buf[head_end..head_end + content_length].to_vec();
+    Some(HttpRequest {
+        method,
+        path,
+        headers,
+        body,
+    })
+}
+
+/// Outcome of serving one complete request.
+enum Served {
+    /// The request was a successful `/ws` upgrade — this is the new client.
+    WsClient(WsSession),
+    /// A plain HTTP exchange; `mutated` = the route may have changed editor
+    /// state (input routes, /step, /reset), so a connected WS client should
+    /// get a diff pushed without waiting for the tick deadline.
+    Http { mutated: bool },
+}
+
+/// Serve one complete request: WS upgrades become THE client; everything else
+/// goes through the (unchanged) HTTP routes with `Connection: close`.
 #[allow(clippy::too_many_arguments)]
-fn handle_conn(
-    stream: &mut TcpStream,
+fn serve_request(
+    mut stream: TcpStream,
+    req: &HttpRequest,
     editor: &mut Editor,
     html_path: &str,
     cols: &mut u16,
     rows: &mut u16,
     files: &[PathBuf],
     clip: &mut ClipboardSync,
-) -> Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
-    let mut request_line = String::new();
-    if reader.read_line(&mut request_line)? == 0 {
-        return Ok(());
+    ws_busy: bool,
+    bind_host: &str,
+) -> Result<Served> {
+    // The response write is short and local — do it blocking for simplicity.
+    stream.set_nonblocking(false)?;
+    let wants_ws = req.method == "GET"
+        && req.path == "/ws"
+        && req
+            .header("upgrade")
+            .is_some_and(|u| u.to_ascii_lowercase().contains("websocket"));
+    if wants_ws {
+        return match upgrade_ws(stream, req, editor, *cols, *rows, clip, ws_busy, bind_host)? {
+            Some(session) => Ok(Served::WsClient(session)),
+            None => Ok(Served::Http { mutated: false }),
+        };
     }
-    let mut it = request_line.split_whitespace();
-    let method = it.next().unwrap_or("");
-    let path = it.next().unwrap_or("/");
+    let mutated = handle_http(&mut stream, req, editor, html_path, cols, rows, files, clip)?;
+    Ok(Served::Http { mutated })
+}
 
-    let mut content_length = 0usize;
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 || line == "\r\n" || line == "\n" {
-            break;
-        }
-        if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-            content_length = v.trim().parse().unwrap_or(0);
-        }
-    }
-    let mut body = vec![0u8; content_length];
-    if content_length > 0 {
-        reader.read_exact(&mut body)?;
-    }
-
-    match (method, path) {
+/// The HTTP routes, exactly as they always behaved (full-scene responses).
+/// Returns whether the route may have mutated editor state.
+#[allow(clippy::too_many_arguments)]
+fn handle_http(
+    stream: &mut TcpStream,
+    req: &HttpRequest,
+    editor: &mut Editor,
+    html_path: &str,
+    cols: &mut u16,
+    rows: &mut u16,
+    files: &[PathBuf],
+    clip: &mut ClipboardSync,
+) -> Result<bool> {
+    let body_json = || serde_json::from_slice::<Value>(&req.body).unwrap_or_else(|_| json!({}));
+    match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") => {
             let html = std::fs::read_to_string(html_path)
                 .unwrap_or_else(|_| "<h1>web-ui/index.html not found</h1>".into());
@@ -270,174 +562,42 @@ fn handle_conn(
                 "200 OK",
                 "text/html; charset=utf-8",
                 html.as_bytes(),
-            )
+            )?;
+            Ok(false)
         }
-        ("GET", "/favicon.ico") => respond(stream, "204 No Content", "image/x-icon", b""),
+        ("GET", "/favicon.ico") => {
+            respond(stream, "204 No Content", "image/x-icon", b"")?;
+            Ok(false)
+        }
         ("GET", "/state") => {
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
+            respond(stream, "200 OK", "application/json", s.as_bytes())?;
+            Ok(false)
         }
-        ("POST", "/key") => {
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            apply_key(editor, &v);
+        // Input routes: the route name IS the message kind, and `apply_message`
+        // is the same dispatch the WebSocket transport uses — the two transports
+        // cannot drift. Each returns the full post-tick scene, exactly as
+        // before; a connected WS client gets the mutation pushed as a diff in
+        // the same loop pass (the `true` below counts as input).
+        (
+            "POST",
+            p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
+            | "/resize"),
+        ) => {
+            apply_message(editor, &p[1..], &body_json(), cols, rows);
             let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/paste") => {
-            // Inbound OS clipboard (docs/internal/web-ui.md §3.5/§4). The
-            // frontend's document `paste` listener posts the clipboard text
-            // here in ONE request — long pastes never loop through per-char
-            // /key posts. Delivery reuses the exact path a terminal bracketed
-            // paste takes (`Ev::Paste` in app/lifecycle.rs): a focused
-            // floating panel / dock text field first, then the buffer /
-            // prompt / terminal paste in `paste_text`.
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
-                if !editor.paste_bracketed_into_focused_panel(text) {
-                    editor.paste_text(text.to_string());
-                }
-            }
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/mouse") => {
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            apply_mouse(editor, &v);
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/action") => {
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            if let Some(name) = v.get("action").and_then(|a| a.as_str()) {
-                let args: std::collections::HashMap<String, Value> = v
-                    .get("args")
-                    .and_then(|a| a.as_object())
-                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                    .unwrap_or_default();
-                if let Some(act) = crate::input::keybindings::Action::from_str(name, &args) {
-                    if let Err(e) = editor.handle_action(act) {
-                        eprintln!("[webui] action error: {e}");
-                    }
-                }
-            }
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/widget") => {
-            // Native plugin-widget interaction. For the overlay prompt toolbar,
-            // a Toggle/Button click forwards the widget `key`; the editor flips
-            // the toggle in-spec and fires the plugin's `widget_event` — the
-            // exact path a TUI toolbar click takes.
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            match v.get("surface").and_then(|s| s.as_str()) {
-                Some("toolbar") => {
-                    if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
-                        editor.toggle_overlay_toolbar_widget(key);
-                    }
-                }
-                Some("panel") => {
-                    // Floating/dock widget: deliver the clicked hit by index,
-                    // running the same path as a TUI cell click.
-                    let plugin = v.get("plugin").and_then(|p| p.as_str()).unwrap_or("");
-                    let panel_id = v.get("panelId").and_then(|p| p.as_u64()).unwrap_or(0);
-                    if let Some(idx) = v.get("hitIndex").and_then(|i| i.as_u64()) {
-                        editor.deliver_widget_hit_by_index(plugin, panel_id, idx as usize);
-                    }
-                }
-                _ => {}
-            }
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/settings") => {
-            // Native Settings interaction: the frontend sends the `SettingsHit`
-            // it rendered (kind + indices); we run the SAME dispatch a TUI cell
-            // click would (`dispatch_settings_hit`).
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            let a = v.get("a").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-            let bb = v.get("b").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
-            let dbl = v.get("double").and_then(|x| x.as_bool()).unwrap_or(false);
-            use crate::view::settings::SettingsHit as H;
-            let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-            // Entry (add/edit) sub-dialog interactions take a separate semantic
-            // path — the dialog is its own stacked state, not a main-panel item.
-            if kind == "entryItem" {
-                editor.entry_dialog_select_item(a);
-                let s = tick_scene(editor, *cols, *rows, clip).to_string();
-                return respond(stream, "200 OK", "application/json", s.as_bytes());
-            }
-            if kind == "entryButton" {
-                let btn = v.get("button").and_then(|x| x.as_str()).unwrap_or("cancel");
-                editor.entry_dialog_activate_button(btn);
-                let s = tick_scene(editor, *cols, *rows, clip).to_string();
-                return respond(stream, "200 OK", "application/json", s.as_bytes());
-            }
-            let hit = match kind {
-                "category" => Some(H::Category(a)),
-                "categoryDisclosure" => Some(H::CategoryDisclosure(a)),
-                "categorySection" => Some(H::CategorySection(a, bb)),
-                "item" => Some(H::Item(a)),
-                "controlToggle" => Some(H::ControlToggle(a)),
-                "controlDropdown" => Some(H::ControlDropdown(a)),
-                "controlDropdownOption" => Some(H::ControlDropdownOption(a, bb)),
-                "controlDecrement" => Some(H::ControlDecrement(a)),
-                "controlIncrement" => Some(H::ControlIncrement(a)),
-                "controlText" => Some(H::ControlText(a)),
-                "controlMapRow" => Some(H::ControlMapRow(a, bb)),
-                "controlMapAddNew" => Some(H::ControlMapAddNew(a)),
-                "controlTextListRow" => Some(H::ControlTextListRow(a, bb)),
-                "controlDualListAvailable" => Some(H::ControlDualListAvailable(a, bb)),
-                "controlDualListIncluded" => Some(H::ControlDualListIncluded(a, bb)),
-                "controlDualListAdd" => Some(H::ControlDualListAdd(a)),
-                "controlDualListRemove" => Some(H::ControlDualListRemove(a)),
-                "controlDualListMoveUp" => Some(H::ControlDualListMoveUp(a)),
-                "controlDualListMoveDown" => Some(H::ControlDualListMoveDown(a)),
-                "controlInherit" => Some(H::ControlInherit(a)),
-                "searchResult" => Some(H::SearchResult(a)),
-                "save" => Some(H::SaveButton),
-                "cancel" => Some(H::CancelButton),
-                "reset" => Some(H::ResetButton),
-                "layer" => Some(H::LayerButton),
-                "edit" => Some(H::EditButton),
-                "clearCategory" => Some(H::ClearCategoryButton),
-                _ => None,
-            };
-            if let Some(hit) = hit {
-                editor.dispatch_settings_hit(hit, 0, dbl);
-            }
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/kbedit") => {
-            // Native keybinding-editor click: select the display row the frontend
-            // rendered (same as a TUI row click). Other interactions are keyboard.
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            if let Some(a) = v.get("a").and_then(|x| x.as_u64()) {
-                editor.kbedit_select_display_row(a as usize);
-            }
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
-        }
-        ("POST", "/resize") => {
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
-            if let Some(c) = v.get("cols").and_then(|x| x.as_u64()) {
-                *cols = (c as u16).clamp(20, 400);
-            }
-            if let Some(r) = v.get("rows").and_then(|x| x.as_u64()) {
-                *rows = (r as u16).clamp(8, 200);
-            }
-            editor.resize(*cols, *rows);
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
+            respond(stream, "200 OK", "application/json", s.as_bytes())?;
+            Ok(true)
         }
         // Parity-harness routes: apply one scenario step, and reset to a fresh
         // editor so each scenario runs in isolation (mirrors the Rust runner,
         // which builds a fresh editor per scenario).
         ("POST", "/step") => {
-            let v: Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+            let v = body_json();
             apply_step(editor, &v);
             let s = scene_json(editor, *cols, *rows).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
+            respond(stream, "200 OK", "application/json", s.as_bytes())?;
+            Ok(true)
         }
         ("POST", "/reset") => {
             (*cols, *rows) = DEFAULT_SIZE;
@@ -446,9 +606,547 @@ fn handle_conn(
                 Err(err) => eprintln!("reset failed: {err}"),
             }
             let s = scene_json(editor, *cols, *rows).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())
+            respond(stream, "200 OK", "application/json", s.as_bytes())?;
+            Ok(true)
         }
-        _ => respond(stream, "404 Not Found", "text/plain", b"not found"),
+        _ => {
+            respond(stream, "404 Not Found", "text/plain", b"not found")?;
+            Ok(false)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared input dispatch (HTTP routes + WebSocket messages)
+// ---------------------------------------------------------------------------
+
+/// Apply one input message by kind — the single dispatch behind both the HTTP
+/// POST routes (kind = route name) and the WS `{"type": kind, ...}` messages.
+/// Returns false for unknown kinds. Does NOT render: callers decide when a
+/// scene is built (per HTTP request, or once per WS input batch).
+fn apply_message(
+    editor: &mut Editor,
+    kind: &str,
+    v: &Value,
+    cols: &mut u16,
+    rows: &mut u16,
+) -> bool {
+    match kind {
+        "key" => apply_key(editor, v),
+        "mouse" => apply_mouse(editor, v),
+        "action" => apply_action(editor, v),
+        "paste" => apply_paste(editor, v),
+        "widget" => apply_widget(editor, v),
+        "settings" => apply_settings(editor, v),
+        "kbedit" => apply_kbedit(editor, v),
+        "resize" => apply_resize(editor, v, cols, rows),
+        _ => return false,
+    }
+    true
+}
+
+/// Run a named editor action (with optional args) through the real dispatch.
+fn apply_action(editor: &mut Editor, v: &Value) {
+    if let Some(name) = v.get("action").and_then(|a| a.as_str()) {
+        let args: HashMap<String, Value> = v
+            .get("args")
+            .and_then(|a| a.as_object())
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        if let Some(act) = crate::input::keybindings::Action::from_str(name, &args) {
+            if let Err(e) = editor.handle_action(act) {
+                eprintln!("[webui] action error: {e}");
+            }
+        }
+    }
+}
+
+/// Inbound OS clipboard (docs/internal/web-ui.md §3.5/§4). The frontend's
+/// document `paste` listener sends the clipboard text in ONE message — long
+/// pastes never loop through per-char key events. Delivery reuses the exact
+/// path a terminal bracketed paste takes (`Ev::Paste` in app/lifecycle.rs): a
+/// focused floating panel / dock text field first, then the buffer / prompt /
+/// terminal paste in `paste_text`.
+fn apply_paste(editor: &mut Editor, v: &Value) {
+    if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+        if !editor.paste_bracketed_into_focused_panel(text) {
+            editor.paste_text(text.to_string());
+        }
+    }
+}
+
+/// Native plugin-widget interaction. For the overlay prompt toolbar, a
+/// Toggle/Button click forwards the widget `key`; the editor flips the toggle
+/// in-spec and fires the plugin's `widget_event` — the exact path a TUI
+/// toolbar click takes. Floating/dock widgets deliver the clicked hit by
+/// index, running the same path as a TUI cell click.
+fn apply_widget(editor: &mut Editor, v: &Value) {
+    match v.get("surface").and_then(|s| s.as_str()) {
+        Some("toolbar") => {
+            if let Some(key) = v.get("key").and_then(|k| k.as_str()) {
+                editor.toggle_overlay_toolbar_widget(key);
+            }
+        }
+        Some("panel") => {
+            let plugin = v.get("plugin").and_then(|p| p.as_str()).unwrap_or("");
+            let panel_id = v.get("panelId").and_then(|p| p.as_u64()).unwrap_or(0);
+            if let Some(idx) = v.get("hitIndex").and_then(|i| i.as_u64()) {
+                editor.deliver_widget_hit_by_index(plugin, panel_id, idx as usize);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Native Settings interaction: the frontend sends the `SettingsHit` it
+/// rendered (kind + indices); we run the SAME dispatch a TUI cell click would
+/// (`dispatch_settings_hit`). Entry (add/edit) sub-dialog interactions take a
+/// separate semantic path — the dialog is its own stacked state, not a
+/// main-panel item.
+fn apply_settings(editor: &mut Editor, v: &Value) {
+    let a = v.get("a").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let bb = v.get("b").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let dbl = v.get("double").and_then(|x| x.as_bool()).unwrap_or(false);
+    use crate::view::settings::SettingsHit as H;
+    let kind = v.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+    if kind == "entryItem" {
+        editor.entry_dialog_select_item(a);
+        return;
+    }
+    if kind == "entryButton" {
+        let btn = v.get("button").and_then(|x| x.as_str()).unwrap_or("cancel");
+        editor.entry_dialog_activate_button(btn);
+        return;
+    }
+    let hit = match kind {
+        "category" => Some(H::Category(a)),
+        "categoryDisclosure" => Some(H::CategoryDisclosure(a)),
+        "categorySection" => Some(H::CategorySection(a, bb)),
+        "item" => Some(H::Item(a)),
+        "controlToggle" => Some(H::ControlToggle(a)),
+        "controlDropdown" => Some(H::ControlDropdown(a)),
+        "controlDropdownOption" => Some(H::ControlDropdownOption(a, bb)),
+        "controlDecrement" => Some(H::ControlDecrement(a)),
+        "controlIncrement" => Some(H::ControlIncrement(a)),
+        "controlText" => Some(H::ControlText(a)),
+        "controlMapRow" => Some(H::ControlMapRow(a, bb)),
+        "controlMapAddNew" => Some(H::ControlMapAddNew(a)),
+        "controlTextListRow" => Some(H::ControlTextListRow(a, bb)),
+        "controlDualListAvailable" => Some(H::ControlDualListAvailable(a, bb)),
+        "controlDualListIncluded" => Some(H::ControlDualListIncluded(a, bb)),
+        "controlDualListAdd" => Some(H::ControlDualListAdd(a)),
+        "controlDualListRemove" => Some(H::ControlDualListRemove(a)),
+        "controlDualListMoveUp" => Some(H::ControlDualListMoveUp(a)),
+        "controlDualListMoveDown" => Some(H::ControlDualListMoveDown(a)),
+        "controlInherit" => Some(H::ControlInherit(a)),
+        "searchResult" => Some(H::SearchResult(a)),
+        "save" => Some(H::SaveButton),
+        "cancel" => Some(H::CancelButton),
+        "reset" => Some(H::ResetButton),
+        "layer" => Some(H::LayerButton),
+        "edit" => Some(H::EditButton),
+        "clearCategory" => Some(H::ClearCategoryButton),
+        _ => None,
+    };
+    if let Some(hit) = hit {
+        editor.dispatch_settings_hit(hit, 0, dbl);
+    }
+}
+
+/// Native keybinding-editor click: select the display row the frontend
+/// rendered (same as a TUI row click). Other interactions are keyboard.
+fn apply_kbedit(editor: &mut Editor, v: &Value) {
+    if let Some(a) = v.get("a").and_then(|x| x.as_u64()) {
+        editor.kbedit_select_display_row(a as usize);
+    }
+}
+
+/// `{cols, rows}` → the real `Editor::resize`, updating the bridge's size.
+fn apply_resize(editor: &mut Editor, v: &Value, cols: &mut u16, rows: &mut u16) {
+    if let Some(c) = v.get("cols").and_then(|x| x.as_u64()) {
+        *cols = (c as u16).clamp(20, 400);
+    }
+    if let Some(r) = v.get("rows").and_then(|x| x.as_u64()) {
+        *rows = (r as u16).clamp(8, 200);
+    }
+    editor.resize(*cols, *rows);
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket: hand-rolled RFC 6455 (handshake, frame codec, session + diffs)
+// ---------------------------------------------------------------------------
+
+/// Sec-WebSocket-Accept = base64(SHA1(key + RFC 6455 GUID)).
+fn ws_accept_key(key: &str) -> String {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+    use sha1::{Digest, Sha1};
+    let mut h = Sha1::new();
+    h.update(key.as_bytes());
+    h.update(b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    BASE64.encode(h.finalize())
+}
+
+/// True when the Origin header's host equals the server's bind host (any
+/// port). Non-browser tools send no Origin and never reach this check.
+fn origin_host_matches(origin: &str, bind_host: &str) -> bool {
+    let rest = origin.split("://").nth(1).unwrap_or(origin);
+    let hostport = rest.split('/').next().unwrap_or(rest);
+    let host = if let Some(h) = hostport.strip_prefix('[') {
+        h.split(']').next().unwrap_or(h) // [::1]:8080 → ::1
+    } else {
+        hostport
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(hostport)
+    };
+    let bind = bind_host.trim_start_matches('[').trim_end_matches(']');
+    host.eq_ignore_ascii_case(bind)
+}
+
+/// Handle a `/ws` upgrade request: enforce the single-client model (409) and
+/// the Origin policy (403), then handshake (101), switch the socket to
+/// nonblocking, and send the full-scene hello.
+#[allow(clippy::too_many_arguments)]
+fn upgrade_ws(
+    mut stream: TcpStream,
+    req: &HttpRequest,
+    editor: &mut Editor,
+    cols: u16,
+    rows: u16,
+    clip: &mut ClipboardSync,
+    ws_busy: bool,
+    bind_host: &str,
+) -> Result<Option<WsSession>> {
+    if ws_busy {
+        respond(
+            &mut stream,
+            "409 Conflict",
+            "text/plain",
+            b"editor session busy: this bridge hosts ONE single-threaded editor session and one \
+              WebSocket client at a time; close the other client first",
+        )?;
+        return Ok(None);
+    }
+    if let Some(origin) = req.header("origin") {
+        if !origin_host_matches(origin, bind_host) {
+            respond(
+                &mut stream,
+                "403 Forbidden",
+                "text/plain",
+                b"origin not allowed",
+            )?;
+            return Ok(None);
+        }
+    }
+    let Some(key) = req.header("sec-websocket-key") else {
+        respond(
+            &mut stream,
+            "400 Bad Request",
+            "text/plain",
+            b"missing Sec-WebSocket-Key",
+        )?;
+        return Ok(None);
+    };
+    let resp = format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+        ws_accept_key(key)
+    );
+    stream.write_all(resp.as_bytes())?;
+    stream.flush()?;
+    stream.set_nonblocking(true)?;
+    let mut session = WsSession::new(stream);
+    let scene = tick_scene(editor, cols, rows, clip);
+    session.send_hello(&scene)?;
+    Ok(Some(session))
+}
+
+/// One parsed WebSocket frame.
+struct WsFrame {
+    fin: bool,
+    opcode: u8,
+    payload: Vec<u8>,
+}
+
+/// Cap on a single inbound frame / fragmented message (a paste is the biggest
+/// legitimate payload).
+const WS_PAYLOAD_CAP: usize = 16 << 20;
+
+/// Parse one frame from the front of `buf`, returning it and the bytes
+/// consumed. `None` = incomplete (wait for more bytes); `Err` = malformed.
+fn ws_parse_frame(buf: &[u8]) -> Result<Option<(WsFrame, usize)>> {
+    if buf.len() < 2 {
+        return Ok(None);
+    }
+    let fin = buf[0] & 0x80 != 0;
+    let opcode = buf[0] & 0x0F;
+    let masked = buf[1] & 0x80 != 0;
+    let (mut len, mut off) = ((buf[1] & 0x7F) as u64, 2usize);
+    if len == 126 {
+        if buf.len() < 4 {
+            return Ok(None);
+        }
+        len = u16::from_be_bytes([buf[2], buf[3]]) as u64;
+        off = 4;
+    } else if len == 127 {
+        if buf.len() < 10 {
+            return Ok(None);
+        }
+        len = u64::from_be_bytes(buf[2..10].try_into().unwrap());
+        off = 10;
+    }
+    if len > WS_PAYLOAD_CAP as u64 {
+        anyhow::bail!("ws frame too large ({len} bytes)");
+    }
+    let mask = if masked {
+        if buf.len() < off + 4 {
+            return Ok(None);
+        }
+        let k = [buf[off], buf[off + 1], buf[off + 2], buf[off + 3]];
+        off += 4;
+        Some(k)
+    } else {
+        None
+    };
+    let len = len as usize;
+    if buf.len() < off + len {
+        return Ok(None);
+    }
+    let mut payload = buf[off..off + len].to_vec();
+    if let Some(k) = mask {
+        // Client→server frames are always masked; unmask in place.
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b ^= k[i % 4];
+        }
+    }
+    Ok(Some((
+        WsFrame {
+            fin,
+            opcode,
+            payload,
+        },
+        off + len,
+    )))
+}
+
+/// Encode one server→client frame (unmasked, 7/16/64-bit lengths — scenes are
+/// ~41 KB, so 16-bit is the common case).
+fn ws_encode(opcode: u8, payload: &[u8]) -> Vec<u8> {
+    let mut f = Vec::with_capacity(payload.len() + 10);
+    f.push(0x80 | (opcode & 0x0F));
+    match payload.len() {
+        n if n < 126 => f.push(n as u8),
+        n if n <= 0xFFFF => {
+            f.push(126);
+            f.extend_from_slice(&(n as u16).to_be_bytes());
+        }
+        n => {
+            f.push(127);
+            f.extend_from_slice(&(n as u64).to_be_bytes());
+        }
+    }
+    f.extend_from_slice(payload);
+    f
+}
+
+/// `write_all` on a nonblocking socket: retry briefly on `WouldBlock` (the
+/// loopback send buffer holds megabytes, so this practically never waits).
+fn write_all_nb(stream: &mut TcpStream, mut buf: &[u8]) -> std::io::Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !buf.is_empty() {
+        match stream.write(buf) {
+            Ok(0) => return Err(std::io::Error::from(ErrorKind::WriteZero)),
+            Ok(n) => buf = &buf[n..],
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                if Instant::now() > deadline {
+                    return Err(std::io::Error::from(ErrorKind::TimedOut));
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+/// THE WebSocket client, plus the diff cache backing the region-diff protocol
+/// (see the module docs). The cache holds the serialized JSON of every unit
+/// last sent — top-level scalars, each `regions.<key>` except panes, and each
+/// pane by index; comparing serialized strings is the cheap,
+/// obviously-correct change test. It is written ONLY by this session's
+/// hello/push path — HTTP routes build their own full scenes independently
+/// and never touch it.
+struct WsSession {
+    stream: TcpStream,
+    /// Inbound bytes not yet parsed into complete frames.
+    inbuf: Vec<u8>,
+    /// Accumulated payload of an in-flight fragmented message.
+    frag: Vec<u8>,
+    frag_text: bool,
+    seq: u64,
+    top: HashMap<&'static str, String>,
+    regions: HashMap<String, String>,
+    panes: Vec<String>,
+}
+
+/// Top-level scene keys diffed as single units ("regions" is handled per key).
+const TOP_KEYS: [&str; 4] = ["w", "h", "theme", "clipboard"];
+
+impl WsSession {
+    fn new(stream: TcpStream) -> Self {
+        Self {
+            stream,
+            inbuf: Vec::new(),
+            frag: Vec::new(),
+            frag_text: false,
+            seq: 0,
+            top: HashMap::new(),
+            regions: HashMap::new(),
+            panes: Vec::new(),
+        }
+    }
+
+    /// `{"type":"hello","seq":0,"scene":<full scene>}` — sent once per
+    /// connection; seeds the diff cache and restarts `seq`.
+    fn send_hello(&mut self, scene: &Value) -> std::io::Result<()> {
+        self.seq = 0;
+        self.diff(scene); // seed the cache; the hello carries the full scene
+        let msg = json!({ "type": "hello", "seq": 0, "scene": scene }).to_string();
+        self.send_text(&msg)
+    }
+
+    /// Diff `scene` against the last-sent one and push a
+    /// `{"type":"frame","seq":N,"changed":{...}}` if anything changed.
+    fn push_diff(&mut self, scene: &Value) -> std::io::Result<()> {
+        let changed = self.diff(scene);
+        if changed.is_empty() {
+            return Ok(());
+        }
+        self.seq += 1;
+        let msg = json!({ "type": "frame", "seq": self.seq, "changed": Value::Object(changed) })
+            .to_string();
+        self.send_text(&msg)
+    }
+
+    /// Compute the changed-paths map and update the cache. A changed value
+    /// replaces the previous one wholesale (null is a legal value — regions
+    /// are frequently null).
+    fn diff(&mut self, scene: &Value) -> serde_json::Map<String, Value> {
+        let mut changed = serde_json::Map::new();
+        for k in TOP_KEYS {
+            let v = scene.get(k).cloned().unwrap_or(Value::Null);
+            let s = v.to_string();
+            if self.top.get(k) != Some(&s) {
+                self.top.insert(k, s);
+                changed.insert(k.to_string(), v);
+            }
+        }
+        let empty = serde_json::Map::new();
+        let regions = scene
+            .get("regions")
+            .and_then(|r| r.as_object())
+            .unwrap_or(&empty);
+        for (k, v) in regions {
+            if k == "panes" {
+                continue; // diffed one level deeper below
+            }
+            let s = v.to_string();
+            if self.regions.get(k) != Some(&s) {
+                self.regions.insert(k.clone(), s);
+                changed.insert(format!("regions.{k}"), v.clone());
+            }
+        }
+        // Panes carry the bulk of the bytes — diff per pane so typing resends
+        // only the changed one, plus a `len` entry when the count changes.
+        let panes: &[Value] = regions
+            .get("panes")
+            .and_then(|p| p.as_array())
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let new_strs: Vec<String> = panes.iter().map(|p| p.to_string()).collect();
+        for (i, (p, s)) in panes.iter().zip(&new_strs).enumerate() {
+            if self.panes.get(i) != Some(s) {
+                changed.insert(format!("regions.panes.{i}"), p.clone());
+            }
+        }
+        if new_strs.len() != self.panes.len() {
+            changed.insert("regions.panes.len".to_string(), json!(new_strs.len()));
+        }
+        self.panes = new_strs;
+        changed
+    }
+
+    fn send_text(&mut self, s: &str) -> std::io::Result<()> {
+        let frame = ws_encode(0x1, s.as_bytes());
+        write_all_nb(&mut self.stream, &frame)
+    }
+
+    /// Drain ALL pending inbound frames (nonblocking; `WouldBlock` ends the
+    /// drain) into complete text messages — the input batch. Control frames
+    /// are handled here (ping→pong, pong ignored, close→echo + `Err` so the
+    /// caller drops the client); continuation frames are accumulated
+    /// defensively.
+    fn drain_messages(&mut self) -> std::io::Result<Vec<String>> {
+        let mut tmp = [0u8; 16384];
+        loop {
+            match self.stream.read(&mut tmp) {
+                Ok(0) => return Err(std::io::Error::from(ErrorKind::ConnectionAborted)),
+                Ok(n) => {
+                    self.inbuf.extend_from_slice(&tmp[..n]);
+                    if self.inbuf.len() > WS_PAYLOAD_CAP * 2 {
+                        return Err(std::io::Error::from(ErrorKind::InvalidData));
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        let mut out = Vec::new();
+        loop {
+            let (frame, used) = match ws_parse_frame(&self.inbuf) {
+                Ok(Some(x)) => x,
+                Ok(None) => break,
+                Err(e) => return Err(std::io::Error::new(ErrorKind::InvalidData, e.to_string())),
+            };
+            self.inbuf.drain(..used);
+            match frame.opcode {
+                0x1 | 0x2 => {
+                    if frame.fin {
+                        if frame.opcode == 0x1 {
+                            out.push(String::from_utf8_lossy(&frame.payload).into_owned());
+                        } // binary frames are not part of the protocol; ignore
+                    } else {
+                        self.frag = frame.payload;
+                        self.frag_text = frame.opcode == 0x1;
+                    }
+                }
+                0x0 => {
+                    self.frag.extend_from_slice(&frame.payload);
+                    if self.frag.len() > WS_PAYLOAD_CAP {
+                        return Err(std::io::Error::from(ErrorKind::InvalidData));
+                    }
+                    if frame.fin {
+                        if self.frag_text {
+                            out.push(String::from_utf8_lossy(&self.frag).into_owned());
+                        }
+                        self.frag = Vec::new();
+                    }
+                }
+                0x8 => {
+                    // Close: echo it (best effort) and drop the client.
+                    let _ = write_all_nb(&mut self.stream, &ws_encode(0x8, &frame.payload));
+                    return Err(std::io::Error::new(
+                        ErrorKind::ConnectionAborted,
+                        "client sent close",
+                    ));
+                }
+                0x9 => write_all_nb(&mut self.stream, &ws_encode(0xA, &frame.payload))?,
+                0xA => {} // pong: ignore
+                _ => {}   // unknown opcode: ignore
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -535,22 +1233,48 @@ fn cells_json(buf: &Buffer, r: Rect) -> Value {
 }
 
 /// Advance the editor one "tick" (drain async LSP/plugin/file messages, fire
-/// timers, step animations) exactly as the TUI event loop does, then build the
-/// scene. This is what lets the browser frontend get fresh frames by polling
-/// rather than only in response to its own input.
-///
-/// Also attaches the outbound-clipboard mirror (`ClipboardSync`) — this is the
-/// browser-facing scene builder; the parity harness (`/step`, `/reset`,
-/// `scene_value`) uses `scene_json` directly and carries no clipboard.
-fn tick_scene(editor: &mut Editor, cols: u16, rows: u16, clip: &mut ClipboardSync) -> Value {
-    // Needs-render bool is moot (we render unconditionally below); don't swallow
-    // a real tick error.
-    if let Err(e) = crate::app::editor_tick(editor, || Ok(())) {
-        eprintln!("[webui] editor_tick error: {e}");
+/// timers, step animations) exactly as the TUI event loop does, without
+/// building a scene. Returns the tick's needs-render signal — the same bool
+/// the TUI uses to decide whether to redraw (true after an error too, so a
+/// failed tick can't wedge the display).
+fn tick_only(editor: &mut Editor) -> bool {
+    match crate::app::editor_tick(editor, || Ok(())) {
+        Ok(needs_render) => needs_render,
+        Err(e) => {
+            eprintln!("[webui] editor_tick error: {e}");
+            true
+        }
     }
+}
+
+/// The scene's `regions.poll.active` hint, computed straight from the editor:
+/// true while something is animating / an LSP spinner is live / a timer is
+/// pending. Drives the server's tick cadence (and is still exposed in the
+/// scene for the frontend/tests).
+fn poll_active(editor: &Editor) -> bool {
+    editor.active_window().animations.is_active()
+        || editor.active_window().has_active_lsp_progress()
+        || editor.next_periodic_redraw_deadline().is_some()
+}
+
+/// Build the browser-facing scene (no tick): `scene_json` plus the
+/// outbound-clipboard mirror (`ClipboardSync`). The parity harness (`/step`,
+/// `/reset`, `scene_value`) uses `scene_json` directly and carries no
+/// clipboard. The clipboard `seq` bumps on actual text changes (hash
+/// compare), so it cannot double-increment no matter which path — HTTP route
+/// or WS push — builds the scene.
+fn build_scene(editor: &mut Editor, cols: u16, rows: u16, clip: &mut ClipboardSync) -> Value {
     let mut scene = scene_json(editor, cols, rows);
     clip.attach(editor, &mut scene);
     scene
+}
+
+/// Tick, then build the browser-facing scene. Called per HTTP request (as
+/// always) and for the WS hello; the WS push loop ticks and builds separately
+/// so an idle tick doesn't pay for a render.
+fn tick_scene(editor: &mut Editor, cols: u16, rows: u16, clip: &mut ClipboardSync) -> Value {
+    tick_only(editor);
+    build_scene(editor, cols, rows, clip)
 }
 
 fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
@@ -719,14 +1443,11 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "keybindingEditor": keybinding_editor,
         "settings": settings,
         "cursor": cursor.map(|(x, y)| json!({ "x": x, "y": y })),
-        // Pacing hint for the frontend's poll loop: when something is animating /
-        // an LSP spinner is live / a timer is pending, poll fast; otherwise idle
-        // slowly (just to pick up async LSP/file events).
-        "poll": json!({
-            "active": editor.active_window().animations.is_active()
-                || editor.active_window().has_active_lsp_progress()
-                || editor.next_periodic_redraw_deadline().is_some(),
-        }),
+        // Pacing hint: when something is animating / an LSP spinner is live /
+        // a timer is pending, the server ticks fast (TICK_ACTIVE), otherwise
+        // idles (TICK_IDLE, just to pick up async LSP/file events). Kept in
+        // the scene so tests (and any polling client) can observe it.
+        "poll": json!({ "active": poll_active(editor) }),
     });
 
     json!({ "w": w, "h": h, "regions": regions, "theme": theme })

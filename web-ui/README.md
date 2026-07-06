@@ -21,24 +21,25 @@ the core; each frontend only renders it.
 - **Buffer interior is SVG** — the pipeline's real, syntax-highlighted cells. The
   line-number gutter is emitted as its own block (kept out of the buffer-text
   flow), and every glyph is pinned to its exact cell column.
-- **Input is real** — key/mouse/wheel are POSTed and run through the real
-  `Editor::handle_key` / `handle_mouse` (and shared hit→action dispatch for
-  settings/widgets/keybindings); the page re-renders from the editor's new state.
-  IME/dead-key text lands in a hidden input and is forwarded on commit; mouse
-  downs carry the browser's click count for the editor's double/triple-click
-  path. OS clipboard works both ways: DOM `paste` → `POST /paste` → the
-  editor's bracketed-paste path, and editor copies surface in the scene
-  (`clipboard: {seq, text}`) for `navigator.clipboard`.
+- **Input is real** — key/mouse/wheel ride the WebSocket as tagged JSON
+  messages and run through the real `Editor::handle_key` / `handle_mouse`
+  (and shared hit→action dispatch for settings/widgets/keybindings); the page
+  re-renders from the editor's pushed state. IME/dead-key text lands in a
+  hidden input and is forwarded on commit; mouse downs carry the browser's
+  click count for the editor's double/triple-click path. OS clipboard works
+  both ways: DOM `paste` → a `paste` message → the editor's bracketed-paste
+  path, and editor copies surface in the scene (`clipboard: {seq, text}`) for
+  `navigator.clipboard`.
 
 ## Architecture (taps the real render pipeline)
 
 ```
-browser (web-ui/index.html)  ──HTTP──►  fresh::webui bridge  ──►  real Editor
-  chrome  = native HTML from   GET /state    runs Editor::render   (piece tree,
-  scene.rs projections         POST /key     into a cell buffer,   highlighter,
-  buffer  = real highlighted   POST /mouse   reads the pipeline's   handle_key, …)
-  CELLS (SVG)                  POST /action  layout caches + cells
-  key/mouse ─► POST            POST /resize
+browser (web-ui/index.html)  ══WS /ws══►  fresh::webui bridge  ──►  real Editor
+  chrome  = native HTML from  ◄══ push:     runs Editor::render    (piece tree,
+  scene.rs projections          hello (full scene)  into a cell     highlighter,
+  buffer  = real highlighted    frame (region diffs) buffer, reads   handle_key, …)
+  CELLS (SVG)                 input ══► {type:key|mouse|action|…}
+                              ──HTTP──►  GET /state, POST /key … (curl + harness)
 ```
 
 The bridge (`crates/fresh-editor/src/webui/mod.rs`) runs the **actual**
@@ -51,8 +52,18 @@ scrollbars, split borders and item state all come from the core; only the final
 drawing is re-targeted. The TUI keeps `suppress_chrome_cells = false`, so its
 rendering is unchanged.
 
-Each poll runs `editor_tick` (drains async LSP/plugin/file events, steps
-animations), so frames advance without user input, exactly like the TUI loop.
+Transport: **one WebSocket, server push** (docs/internal/web-ui.md §3.1). On
+connect the client gets a full-scene `hello`; afterwards the server's event
+loop ticks the editor (drains async LSP/plugin/file events, steps animations —
+~40 ms while active, ~250 ms idle, exactly like the TUI loop, with or without
+a client) and pushes a `frame` of **region diffs** only when the scene
+changed — typing resends only the changed pane, an idle editor sends nothing.
+One client at a time (a second `/ws` gets `409`; foreign `Origin` gets `403`);
+on disconnect the page retries with backoff and resyncs from the next hello.
+Every HTTP route (`GET /state`, `POST /key` `/mouse` `/action` `/widget`
+`/settings` `/kbedit` `/paste` `/resize` `/step` `/reset`) still answers with
+the full scene as before — curl and the parity harness are untouched, and an
+HTTP-side mutation is pushed to the connected browser as a diff immediately.
 
 ## Run it
 
@@ -70,9 +81,12 @@ cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8137 \
 
 `test/drive.mjs` drives the **real** bridge in headless Chromium: it asserts the
 buffer interior is the pipeline's real syntax-highlighted cells while all chrome
-is native HTML (no cell-drawn chrome), and that key / mouse / menu / palette /
-settings / widget interactions run through the real `Editor`. **50 assertions**
-across the chrome surfaces, plus screenshots.
+is native HTML (no cell-drawn chrome), that key / mouse / menu / palette /
+settings / widget interactions run through the real `Editor` (over the
+WebSocket input path), and that the push transport behaves: server-pushed
+frames without page input, region diffs on typing, idle silence, and the
+single-client 409. **57 assertions** across the chrome surfaces, plus
+screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,

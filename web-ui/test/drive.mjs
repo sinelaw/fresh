@@ -7,8 +7,12 @@
 // Asserts that:
 //   - the buffer interior is the pipeline's real syntax-highlighted CELLS,
 //   - the chrome (menu bar, tabs, status bar, menu dropdown) is rendered as
-//     NATIVE HTML from the pipeline's semantic model (no chrome cells), and
-//   - keyboard / mouse / menu interactions run through the real Editor.
+//     NATIVE HTML from the pipeline's semantic model (no chrome cells),
+//   - keyboard / mouse / menu interactions run through the real Editor — all
+//     input rides the WebSocket transport (JSON messages on /ws), and
+//   - the WebSocket PUSH transport works: the server sends region-diff frames
+//     when (and only when) the scene changes, one client at a time, with the
+//     HTTP routes still live alongside for curl / the parity harness.
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 const EXE = process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -22,8 +26,11 @@ const paneText = s => s.regions.panes[0].cells.map(r => r.map(x => x.t).join('')
 
 const browser = await chromium.launch({ executablePath: EXE, headless: true, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
-const errs = []; page.on('pageerror', e => errs.push(String(e))); page.on('console', m => { if (m.type() === 'error') errs.push('console:' + m.text()); });
-let stateReqs = 0; page.on('request', r => { if (r.url().endsWith('/state')) stateReqs++; });
+const errs = []; page.on('pageerror', e => errs.push(String(e)));
+// The single-client test below deliberately opens a second /ws socket that the
+// server rejects (409) — Chromium logs that handshake failure as a console
+// error, so /ws connection noise is filtered out of the page-error assertion.
+page.on('console', m => { if (m.type() === 'error' && !/WebSocket connection to .*\/ws/.test(m.text())) errs.push('console:' + m.text()); });
 await page.goto(URL, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.scene && window.fresh.scene.regions.panes.length > 0);
 await page.keyboard.press('Escape'); await page.waitForTimeout(150); // close any menu left open in the live editor
@@ -87,7 +94,10 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 check('Escape closed the popup', ((await scene(page)).regions.popups || []).length === 0);
 
 console.log('\n[edit through the real pipeline]');
-await page.mouse.click(300, 300);
+// Click the center of pane 0's content rect (robust against a file explorer
+// left open by earlier runs on the same live server shifting the pane right).
+const editRect = (await scene(page)).regions.panes[0].content;
+await page.mouse.click((editRect.x + Math.floor(editRect.w / 2)) * 8.2, (editRect.y + Math.floor(editRect.h / 2)) * 18);
 await page.keyboard.type('QWZX');
 await page.waitForFunction(() => window.fresh.scene.regions.panes[0].cells.map(r => r.map(x => x.t).join('')).join('\n').includes('QWZX'), { timeout: 5000 }).catch(() => {});
 const s2 = await scene(page);
@@ -97,8 +107,8 @@ await page.screenshot({ path: `${SHOTS}/21-real-pipeline-typed.png` });
 console.log('\n[file explorer = native tree, NOT cells]');
 await page.locator('body').click();
 // Open the sidebar if it isn't already (Ctrl+B toggles; the live editor may
-// carry prior state), then wait for the async directory scan to arrive via the
-// frame pump (don't re-toggle while it's merely still loading).
+// carry prior state), then wait for the async directory scan to arrive as a
+// pushed frame (don't re-toggle while it's merely still loading).
 if (!(await scene(page)).regions.fileExplorer) {
   await page.keyboard.press('Control+b');
 }
@@ -181,12 +191,56 @@ check('Settings entry (add/edit) dialog renders natively', (await page.locator('
 await page.screenshot({ path: `${SHOTS}/30-native-settings.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(120); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
-console.log('\n[frame pump advances without user input, like the TUI loop]');
-const reqs0 = stateReqs;
+console.log('\n[WebSocket push transport (no polling)]');
+check('WebSocket transport is open (window.fresh.wsOpen)', await page.evaluate(() => window.fresh.wsOpen));
+// Genuine server PUSH: mutate the editor over the HTTP route (curl-equivalent,
+// no page input at all) and watch the change arrive as a pushed frame.
+const feBefore = !!(await scene(page)).regions.fileExplorer;
+const frames0 = await page.evaluate(() => window.fresh.frames);
+await page.request.post(URL + '/action', { data: { action: 'toggle_file_explorer' } });
+await page.waitForFunction(fe0 => (!!window.fresh.scene.regions.fileExplorer) !== fe0, feBefore, { timeout: 5000 }).catch(() => {});
+check('HTTP-route mutation arrives as a PUSHED frame (no page input)',
+  (!!(await scene(page)).regions.fileExplorer) !== feBefore && (await page.evaluate(() => window.fresh.frames)) > frames0,
+  `explorer ${feBefore}->${!!(await scene(page)).regions.fileExplorer} frames ${frames0}->${await page.evaluate(() => window.fresh.frames)}`);
+await page.request.post(URL + '/action', { data: { action: 'toggle_file_explorer' } });   // restore
+await page.waitForTimeout(500);
+// Idle discipline: nothing changes → (almost) no frames. The poll.active hint
+// may allow the odd stray frame, so bound it loosely.
+const framesIdle0 = await page.evaluate(() => window.fresh.frames);
 await page.waitForTimeout(1600);   // no input at all
-check('GET /state keeps ticking the editor with no input', stateReqs > reqs0 + 1, `reqs ${reqs0}->${stateReqs}`);
-check('idle poll is throttled, not a busy loop', (stateReqs - reqs0) < 12, `polls=${stateReqs - reqs0}`);
-check('scene carries a poll pacing hint', !!(await scene(page)).regions.poll);
+const framesIdle1 = await page.evaluate(() => window.fresh.frames);
+check('idle: no frames pushed while nothing changes', framesIdle1 - framesIdle0 <= 3, `frames ${framesIdle0}->${framesIdle1}`);
+check('scene still carries the poll pacing hint', !!(await scene(page)).regions.poll);
+
+console.log('\n[region diffs: typing resends only what changed]');
+// Focus the buffer itself (the explorer toggles above may have left keyboard
+// focus in the tree): click the center of pane 0's content rect.
+const paneRect = (await scene(page)).regions.panes[0].content;
+await page.mouse.click((paneRect.x + Math.floor(paneRect.w / 2)) * 8.2, (paneRect.y + Math.floor(paneRect.h / 2)) * 18);
+await page.waitForTimeout(300);
+const seqT0 = await page.evaluate(() => window.fresh.seq);
+await page.keyboard.type('J');
+await page.waitForFunction(s0 => window.fresh.seq > s0, seqT0, { timeout: 5000 }).catch(() => {});
+const diffKeys = await page.evaluate(() => window.fresh.lastFrameKeys);
+check('a typing frame is a region DIFF (changed paths, not a scene)', diffKeys.length > 0, JSON.stringify(diffKeys));
+check('typing frame touches the pane, per index', diffKeys.some(k => k.startsWith('regions.panes.')), JSON.stringify(diffKeys));
+check('typing frame does NOT resend heavyweight unrelated regions',
+  !diffKeys.includes('regions.settings') && !diffKeys.includes('regions.keybindingEditor') && !diffKeys.includes('regions.widgets'),
+  JSON.stringify(diffKeys));
+
+console.log('\n[single-client model: a second WebSocket is rejected]');
+const second = await page.evaluate(() => new Promise(res => {
+  const w = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
+  w.onopen = () => { w.close(); res('open'); };
+  w.onclose = () => res('closed');
+  setTimeout(() => res('timeout'), 3000);
+}));
+check('second WebSocket is rejected before upgrade (409)', second === 'closed', second);
+check('first socket unaffected by the rejected second one', await page.evaluate(() => window.fresh.wsOpen));
+const seqR0 = await page.evaluate(() => window.fresh.seq);
+await page.keyboard.type('Q');
+check('first socket still functional (input still round-trips)',
+  await page.waitForFunction(s0 => window.fresh.seq > s0, seqR0, { timeout: 5000 }).then(() => true).catch(() => false));
 
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 await browser.close();

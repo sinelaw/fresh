@@ -13,15 +13,15 @@ The architecture is described operationally in `web-ui/README.md` and, for the r
 - **One semantic model, two renderers.** Everything semantic — menu trees with enabled/checked state and accelerators, tabs, status segments, palette, popups, file explorer, trust dialog, plugin widget specs, context menus, the keybinding editor, the full Settings tree — is derived once in the core (`Scene` projections on `Editor`) and consumed by both the TUI cell renderer and the web bridge. A Rust parity test drives one editor through both and fails if they disagree on what the chrome *is*.
 - **Buffer interiors are the real pipeline's cells.** The bridge runs the actual `Editor::render` into an in-memory buffer with chrome-cell drawing suppressed (`suppress_chrome_cells`), slices pane interiors (line-number gutter as its own block), and the frontend draws them as SVG text with every glyph pinned to its exact cell column. Layout, wrapping, highlighting, folding, scrollbars and split geometry are all the pipeline's own.
 - **Input is real.** DOM key/mouse/wheel events are forwarded to the real `handle_key` / `handle_mouse` / shared hit-dispatch paths at cell coordinates; the browser re-renders from the editor's new state. The frontend holds **no** editor model.
-- **The frame pump.** Every request ticks the editor (drains async LSP/plugin/file events, steps animations), and the frontend polls fast (~40 ms) while the scene reports activity, slowly (500 ms) when idle.
+- **The frame pump is server push.** One WebSocket (`/ws`) carries everything: the server's event loop ticks the editor (drains async LSP/plugin/file events, steps animations) at ~40 ms while the scene reports activity and ~250 ms when idle, and **pushes** a region-diff frame only when the scene actually changed (§3.1). All input rides the same socket; the HTTP routes stay alive for curl and the parity harness.
 
-Verified working end-to-end (all 50 bundled Playwright assertions plus custom probes): every chrome surface renders as native HTML with zero cell/SVG leakage; splits, drag selection, wide CJK/emoji glyphs, theme switching (native chrome restyles from the live `Theme`, light and dark), and a genuinely capable mobile touch shell (sticky one-shot modifiers, soft-keyboard summoning, breakpoint re-fit).
+Verified working end-to-end (all 57 bundled Playwright assertions — now exercising the WebSocket input path and the push/diff/single-client behavior of §3.1 — plus custom probes): every chrome surface renders as native HTML with zero cell/SVG leakage; splits, drag selection, wide CJK/emoji glyphs, theme switching (native chrome restyles from the live `Theme`, light and dark), and a genuinely capable mobile touch shell (sticky one-shot modifiers, soft-keyboard summoning, breakpoint re-fit).
 
 Strengths to preserve through any of the work below:
 
 - The **parity discipline** — divergence between TUI and web is a test failure, not a bug class. Any new surface must land as a scene projection consumed by both renderers, never as web-only logic.
 - **Theme fidelity with taste** — chrome colors seed from the editor theme, but surfaces/hairlines are derived (`color-mix`), so even high-contrast terminal palettes read as a designed UI.
-- **DOM hygiene** — unchanged scenes short-circuit before touching the DOM; scroll positions of natively-scrolled panels survive rebuilds; wheel events over natively-scrolled chrome are deliberately not forwarded.
+- **DOM hygiene** — when nothing changed, no frame arrives at all (the server diffs before pushing, §3.1), so the DOM is never touched; scroll positions of natively-scrolled panels survive rebuilds; wheel events over natively-scrolled chrome are deliberately not forwarded.
 - The **gutter/text split** in the bridge output, which exists precisely so a future native selection/copy layer can cover code without line numbers.
 
 ## 2. The benchmark — what "VS Code-level polish" decomposes into
@@ -42,23 +42,28 @@ Two things VS Code has that are **editor-core feature gaps, not web-frontend gap
 
 These are the places where reaching the bar requires choosing an architecture, not just writing more of the current kind of code. Each lists the tension and a recommended direction.
 
-### 3.1 Transport and update model
+### 3.1 Transport and update model — IMPLEMENTED (WebSocket push with region diffs)
 
-Today: stateless HTTP request/response; every keystroke and every poll returns the **entire scene** (~41 KB at 140×44), every changed frame rebuilds the whole `#app` DOM, and each request is a fresh TCP connection (`Connection: close`). This was the right phase-1 choice — trivially debuggable, no session state, curl-able — and it is measurably fine at one local client (~31 ms/request, debug build).
+The recommended end state is now the shipped transport. The bridge (`crates/fresh-editor/src/webui/mod.rs`) runs one nonblocking event loop on the editor's thread (the editor is not `Send`; nothing moved off-thread):
 
-The gap: idle async events (LSP diagnostics, file watchers) appear up to 500 ms late; typing costs a full serialize→transfer→parse→rebuild cycle per key; multiple clients interleave on one editor by accident rather than by design.
+- **`GET /ws`** upgrades to a hand-rolled RFC 6455 WebSocket (matching the bridge's hand-rolled HTTP; `sha1` + `base64` for the handshake, 7/16/64-bit frame lengths, masked client frames, ping/pong, close echo, defensive continuation handling).
+- **On connect**: `{"type":"hello","seq":0,"scene":<full scene>}` — the same object `GET /state` returns, clipboard field included. A reconnect (or server restart) gets a fresh hello; `seq` restarts.
+- **On change**: `{"type":"frame","seq":N,"changed":{<path>:<value>,…}}` where paths are `"w"`, `"h"`, `"theme"`, `"clipboard"`, and `"regions.<key>"` — except **panes**, which diff one level deeper (`"regions.panes.<i>"` plus `"regions.panes.len"` when the count changes), since panes carry the bulk of the bytes: typing resends only the changed pane. A changed value replaces the old one wholesale (null is legal — regions are frequently null). Change detection compares each unit's serialized JSON against the last-sent copy, cached per session; the cache is written only by the WS push path, so HTTP `/state` calls can't confuse it.
+- **Input** (client→server) is JSON text frames with the exact field shapes of the old HTTP POST bodies, tagged `"type":"key"|"mouse"|"action"|"widget"|"settings"|"kbedit"|"paste"|"resize"`. Both transports run through one shared dispatch (`apply_message`), so they cannot drift. Inbound frames are drained as a batch and applied in order with **one** render per batch, not per message — the input batching §3.2 asked for fell out of the transport.
+- **Pacing**: the editor ticks at ~40 ms while the scene's `poll.active` hint is true, ~250 ms when idle, client or no client (async LSP/plugin/file events never stall). The scene build+diff is additionally gated on `editor_tick`'s own needs-render signal, so a connected-but-idle session measures ~1.6 % CPU (debug build; ~0.7 % with no client).
+- **Session model**: exactly one WebSocket client. A second upgrade gets a plain HTTP `409 Conflict` before any upgrade; an `Origin` whose host differs from the bind host gets `403 Forbidden` (non-browser tools send no Origin and pass). Multi-session and real auth remain §3.7.
+- **HTTP stays**: every route above still answers exactly as before (full-scene responses, `Connection: close`) — curl-ability and the parity harness (`/step`, `/reset`) are untouched. A mutation made over HTTP is pushed to the connected browser as a diff in the same loop pass.
+- **Frontend**: the poll loop is gone. The client applies hello/frames into its scene object, renders once per frame, and reconnects with backoff (500 ms doubling to 5 s, non-modal banner); input while disconnected is dropped, never queued — the hello resync is the recovery story.
 
-Decision to make: **push channel + incremental updates.** The natural landing point is a WebSocket carrying scene *regions* tagged with a frame sequence number, where the server sends only regions whose serialized form changed (the scene is already region-structured; the frontend already renders region-by-region). Options considered:
+Measured (debug build, 140×44, loopback): key→frame RTT over WS min 51.8 / avg ~60 / max 77.8 ms vs the same box's HTTP `/key` avg 64.1 / max 142 ms — the transport overhead over a bare scene build (`/state` ≈ 51–58 ms here) is now a few ms, and the tail is much tighter; the remaining latency is the debug-build render itself (release serving is still the §4 item). Idle: zero frames pushed when nothing changes.
 
-- Keep polling, add server-side "unchanged" short-circuit (hash the scene, return 304-equivalent): cheapest, keeps statelessness, fixes idle bandwidth but not latency or event push. Worth doing regardless as a stepping stone.
-- SSE for push + POST for input: no bidirectional framing needed, but two channels to keep coherent.
-- **WebSocket with region diffs (recommended end state)**: one ordered channel, natural place for input batching and server push; the bridge stays single-threaded per editor by design (the editor is not `Send`), so one socket per editor session is also the honest concurrency model.
+Still PLANNED from the original option list: gzip/deflate (less urgent now that idle traffic is zero and typing sends per-pane diffs), and the multi-client / auth posture of §3.7.
 
 ### 3.2 Perceived latency vs. the no-mocks principle
 
 The founding rule — the frontend re-implements nothing — means every echo of a keystroke waits on the server round-trip. VS Code (local) is in-process; VS Code remote solves the same problem with *speculative local echo* (type-ahead rendered locally, reconciled when the server catches up), which is a deliberate, bounded re-implementation.
 
-Decision to make: how far to push honest latency before considering speculation. Recommended order: (1) release-build serving, (2) WebSocket transport (removes per-request connection setup), (3) input batching (coalesce burst keystrokes into one editor pass, which the bridge's step loop already supports conceptually). Only if measured p95 echo still exceeds ~50 ms should speculative echo be designed — and then as a clearly-labeled, reconciled overlay (the cursor cell + inserted glyphs only), never as a second text model. Getting this wrong quietly forfeits the architecture's core guarantee.
+Decision to make: how far to push honest latency before considering speculation. Recommended order: (1) release-build serving, (2) ~~WebSocket transport~~ **IMPLEMENTED** (§3.1 — removes per-request connection setup), (3) ~~input batching~~ **IMPLEMENTED** (the WS loop drains all pending input as one batch → one editor pass → one render). Only if measured p95 echo still exceeds ~50 ms should speculative echo be designed — and then as a clearly-labeled, reconciled overlay (the cursor cell + inserted glyphs only), never as a second text model. Getting this wrong quietly forfeits the architecture's core guarantee.
 
 ### 3.3 Typography and metrics model
 
@@ -92,7 +97,7 @@ Still PLANNED — the **preedit story**: the uncommitted composition currently l
 
 Today: plain HTTP, localhost, no auth, single thread, one implicit client, README warns accordingly. That is the correct scope for a dev prototype and the code says so honestly.
 
-Decision to make *only if* the web UI graduates: session model first (one editor per client vs. shared editor with presence), then the boring hardening (token auth, TLS or bind-behind-reverse-proxy, origin checks on the future WebSocket, reconnect/resync semantics). The trap to avoid is accreting multi-client behavior onto the current shared-mutable-editor accident. Until that decision is made, the single-client stance should stay loud in the docs and the server should actively reject concurrent websockets rather than interleave them.
+Decision to make *only if* the web UI graduates: session model first (one editor per client vs. shared editor with presence), then the boring hardening (token auth, TLS or bind-behind-reverse-proxy, reconnect/resync semantics beyond the implemented full-scene hello). The trap to avoid is accreting multi-client behavior onto a shared-mutable-editor accident. The §3.1 transport already takes the two defensive steps this section asked for while the decision is pending: concurrent WebSockets are actively rejected (`409 Conflict` — never interleaved), and upgrades from a foreign `Origin` host get `403 Forbidden`. Everything else here stays PLANNED, and the single-client stance stays loud in the docs.
 
 ### 3.8 Accessibility architecture
 
@@ -119,12 +124,12 @@ Work that is well-defined inside the current architecture. Effort: S (hours), M 
 - Scrollbar affordances: hover highlight, drag at pixel granularity mapped back to cell scroll, click-to-page — currently the thumb is drawn but interactions are cell-granular editor hits. (M)
 - Hover/popup markdown: LSP hover renders as plain popup lines; the TUI renders markdown with highlighting — port that projection so code blocks in hovers are highlighted runs, and make OSC-8-style links clickable. (M; scene projection may already carry enough structure to start)
 
-**Performance (ordered stepping stones toward §3.1/§3.2)**
-- Serve/measure release builds; the published numbers (31 ms `/state`, 36 ms key RTT) are debug-build. (S)
-- Server-side scene hash → tiny "unchanged" response for idle polls (client already string-compares; stop shipping 41 KB to learn "nothing changed" twice a second). (S)
-- gzip/deflate on responses (scene JSON is highly compressible). (S)
-- Per-region DOM patching keyed by region identity, then per-row patching inside panes (§3.4). (M)
-- Input batching: coalesce same-tick keystrokes into one `/key` batch → one render. (M)
+**Performance (stepping stones toward §3.2; §3.1's transport is done)**
+- Serve/measure release builds; all published numbers (≈55 ms scene build, ≈60 ms WS key→frame RTT) are debug-build, and the build now dominates the RTT. (S)
+- ~~Server-side scene hash → tiny "unchanged" response for idle polls~~ **subsumed by §3.1:** the server diffs per region against the last-sent copy and pushes nothing when nothing changed — idle traffic is zero, typing sends only the changed pane.
+- gzip/deflate (now: WS `permessage-deflate`) — less urgent post-§3.1, still worthwhile for big frames like theme switches. (S)
+- Per-region DOM patching keyed by region identity, then per-row patching inside panes (§3.4): the frames already arrive as per-region diffs (`window.fresh.lastFrameKeys`), but `render()` still rebuilds the whole `#app` — the frontend half of this item is the remaining work. (M)
+- ~~Input batching: coalesce same-tick keystrokes into one `/key` batch → one render.~~ **subsumed by §3.1:** the WS loop drains all pending input per pass and renders once per batch.
 
 **Testing & tooling**
 - ~~`web-ui/test/package.json` declaring `playwright` (the documented test command currently fails from a clean checkout with `ERR_MODULE_NOT_FOUND`) plus a one-command runner that builds the bridge, starts it, runs `drive.mjs`, and tears down.~~ **Done:** `web-ui/test/package.json` pins `playwright`, and `web-ui/test/run.sh` builds the bridge, installs deps, starts/polls the server, runs the suite, and tears down (CI: `.github/workflows/web-ui.yml`).

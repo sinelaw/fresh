@@ -16,6 +16,8 @@
   forwarded back through the real Editor::handle_mouse at the cell coordinates
   the pipeline reported, so highlight / selection / open / close all match the
   TUI and GUI exactly.
+  Transport: a WebSocket (/ws) pushes scene region diffs from the server and
+  carries all input; the HTTP routes remain for curl / the parity harness.
   Served by the bridge that hosts a real Editor:
     cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
 -->
@@ -571,6 +573,8 @@
 // pipeline already computed. Buffer interiors are drawn as cells; chrome is
 // drawn as native HTML. Every chrome interaction is sent back to the real
 // Editor::handle_mouse at the cell coords the pipeline reported.
+// Transport: one WebSocket — the server pushes region-diff frames whenever
+// the scene changes (no client polling), and all input rides the same socket.
 // --------------------------------------------------------------------------
 let scene = null;
 const CW = 8.2, CH = 18;        // cell pixel size (terminal cells -> pixels)
@@ -1638,19 +1642,24 @@ function renderMobileChrome(reg){
   host.appendChild(bot);
 }
 
-// --- bridge to the real editor ---
-// Apply a scene from any endpoint, re-rendering only when it actually changed
-// so the idle poll loop doesn't churn the DOM (or restart the caret blink).
-let sceneStr=null;
-function applyScene(s){ const str=JSON.stringify(s); if(str===sceneStr) return; sceneStr=str; scene=s; syncClipboard(s.clipboard); render(); }
+// --- bridge to the real editor: WebSocket push transport --------------------
+// The server owns the frame loop now (docs/internal/web-ui.md §3.1): it ticks
+// the real editor (async LSP/plugin/file events, animations) and PUSHES a
+// frame only when the scene actually changed, as region diffs:
+//   hello  {type:"hello", seq:0, scene:{...}}          — full scene, resync
+//   frame  {type:"frame", seq:N, changed:{path:value}} — path replaces value
+// Paths are "w"/"h"/"theme"/"clipboard"/"regions.<key>", with panes diffed
+// per index ("regions.panes.<i>" + "regions.panes.len"). Input goes to the
+// same socket as JSON with a `type` tag — the exact field shapes the HTTP
+// POST bodies always had (those routes still exist for curl / the harness).
 // Outbound OS clipboard: the editor copies server-side (its internal
 // clipboard; the TUI's OSC 52/arboard push can't reach the browser), so the
 // bridge exposes {seq, text} that bumps whenever the copied text changed.
-// Writing happens inside the async response to the very Ctrl+C / menu click
-// that ran the copy — still within that gesture's transient-activation
-// window, which is what navigator.clipboard.writeText requires. Absence or
-// rejection (no permission) is silent: the editor-internal clipboard still
-// works. The text is never logged.
+// Writing happens while handling the pushed frame that answers the very
+// Ctrl+C / menu click that ran the copy — still within that gesture's
+// transient-activation window, which is what navigator.clipboard.writeText
+// requires. Absence or rejection (no permission) is silent: the
+// editor-internal clipboard still works. The text is never logged.
 let clipSeq=null;
 function syncClipboard(c){
   if(!c) return;
@@ -1660,29 +1669,68 @@ function syncClipboard(c){
   if(c.text && navigator.clipboard && navigator.clipboard.writeText)
     navigator.clipboard.writeText(c.text).catch(()=>{});
 }
-async function refresh(){ try{ applyScene(await (await fetch("/state")).json()); }catch(e){ showErr("load failed: "+e); } }
-async function sendKey(d){ try{ applyScene(await (await fetch("/key",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(d)})).json()); }catch(e){ showErr("key failed: "+e); } }
-async function sendPaste(text){ try{ applyScene(await (await fetch("/paste",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({text})})).json()); }catch(e){ showErr("paste failed: "+e); } }
-async function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW));
+let ws=null, frameCount=0, lastSeq=0, lastFrameKeys=[], wsBackoff=500;
+function wsIsOpen(){ return !!ws && ws.readyState===1; }
+// Send one input message. When the socket is down the input is DROPPED — never
+// queued: replaying stale input into a resynced editor is worse than losing a
+// keystroke — and the reconnect banner shows.
+function wsSend(o){ if(wsIsOpen()){ ws.send(JSON.stringify(o)); } else showErr("reconnecting…"); }
+// Apply a region-diff frame: each changed path replaces its value wholesale
+// (null is a legal value — regions are frequently null). Panes are diffed one
+// level deeper; "regions.panes.len" truncates/extends the array.
+function applyFrame(changed){
+  let clipChanged=false;
+  for(const k of Object.keys(changed)){
+    const v=changed[k];
+    if(k==="w") scene.w=v;
+    else if(k==="h") scene.h=v;
+    else if(k==="theme") scene.theme=v;
+    else if(k==="clipboard"){ scene.clipboard=v; clipChanged=true; }
+    else if(k==="regions.panes.len") scene.regions.panes.length=v;
+    else if(k.startsWith("regions.panes.")) scene.regions.panes[+k.slice(14)]=v;
+    else if(k.startsWith("regions.")) scene.regions[k.slice(8)]=v;
+  }
+  if(clipChanged) syncClipboard(scene.clipboard);
+  render();                                   // once per frame message
+}
+function connect(){
+  ws=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
+  ws.onmessage=ev=>{
+    let m; try{ m=JSON.parse(ev.data); }catch(_){ return; }
+    if(m.type==="hello"){
+      // Full resync: fresh connect, reconnect, or a restarted server all land
+      // here. Adopt the clipboard seq WITHOUT writing — replaying a copy from
+      // before the reconnect would be stale.
+      wsBackoff=500; hideErr();
+      scene=m.scene; lastSeq=m.seq;
+      if(scene.clipboard) clipSeq=scene.clipboard.seq;
+      render();
+      resize();     // fit the grid to this window; the server pushes the resized frame
+    } else if(m.type==="frame"){
+      frameCount++; lastSeq=m.seq; lastFrameKeys=Object.keys(m.changed||{});
+      applyFrame(m.changed||{});
+    }
+  };
+  // Close/error → non-modal banner + retry with backoff (500 ms doubling to
+  // 5 s max). The hello on reconnect fully resyncs (the server state
+  // survived; a server restart lands here too); input meanwhile is dropped.
+  ws.onclose=()=>{ showErr("reconnecting…"); const d=wsBackoff; wsBackoff=Math.min(5000,wsBackoff*2); setTimeout(connect,d); };
+}
+// Full-scene resync over the HTTP /state route (which stays curl-able for the
+// parity harness). Rarely needed — hello/frames carry all state — but kept
+// working for tests and manual recovery.
+async function refresh(){ try{ const s=await (await fetch("/state")).json(); scene=s; render(); }catch(e){ showErr("load failed: "+e); } }
+function sendKey(d){ wsSend({type:"key",...d}); }
+function sendPaste(text){ wsSend({type:"paste",text}); }
+function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW));
   // On mobile, leave room for the fixed bottom stack so no code hides behind it
   // (the header reuses the two hidden top chrome rows, so it needs no reserve).
   const availH=window.innerHeight - (isMobile()?mBottom():0);
   const rows=Math.max(8,Math.floor(availH/CH));
-  try{ applyScene(await (await fetch("/resize",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({cols,rows})})).json()); }catch(e){} }
-async function sendAction(name){ mSheetOpen=false;
-  try{ applyScene(await (await fetch("/action",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:name})})).json()); }catch(e){ showErr("action failed: "+e); } }
+  wsSend({type:"resize",cols,rows}); }
+function sendAction(name){ mSheetOpen=false; wsSend({type:"action",action:name}); }
 function showErr(m){ const e=document.getElementById("err"); e.textContent=m; e.style.display="block"; }
-
-// Poll loop: each GET /state ticks the real editor (drains async LSP/plugin/file
-// events, steps animations) just like the TUI's 60fps loop, so frames advance
-// without user input. Poll fast while something is animating / pending, slowly
-// when idle (just to pick up async events). setTimeout (not setInterval) so polls
-// never overlap.
-async function poll(){
-  await refresh();
-  const active = scene && scene.regions && scene.regions.poll && scene.regions.poll.active;
-  setTimeout(poll, active ? 40 : 500);
-}
+function hideErr(){ const e=document.getElementById("err"); e.style.display="none"; }
 
 const NAMED=new Set(["Enter","Backspace","Delete","Tab","Escape","ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","PageUp","PageDown"]);
 document.addEventListener("keydown",e=>{
@@ -1722,10 +1770,10 @@ document.addEventListener("paste",e=>{
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
-async function sendMouse(o){ try{ applyScene(await (await fetch("/mouse",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("mouse failed: "+err); } }
-async function sendWidget(o){ try{ applyScene(await (await fetch("/widget",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("widget failed: "+err); } }
-async function sendSettings(o){ try{ applyScene(await (await fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("settings failed: "+err); } }
-async function sendKbedit(o){ try{ applyScene(await (await fetch("/kbedit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(o)})).json()); }catch(err){ showErr("kbedit failed: "+err); } }
+function sendMouse(o){ wsSend({type:"mouse",...o}); }
+function sendWidget(o){ wsSend({type:"widget",...o}); }
+function sendSettings(o){ wsSend({type:"settings",...o}); }
+function sendKbedit(o){ wsSend({type:"kbedit",...o}); }
 // click handler that forwards a SettingsHit (kind + indices) to the editor
 function setHit(kind,a,b){ return e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind,a,b}); }; }
 // Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
@@ -1762,9 +1810,14 @@ let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(r
 // Re-fit the grid when crossing the mobile/desktop breakpoint (e.g. rotation).
 mqMobile.addEventListener("change", resize);
 
-window.fresh = { get scene(){return scene;}, refresh, sendKey, resize };
-focusSink();         // desktop: arm the hidden text sink (IME/dead-key path)
-resize().then(poll); // size to the window, render, then start the frame poll loop
+// Test/debug surface. `refresh` is a full-scene resync over HTTP /state (the
+// WS hello/frames normally carry everything); `frames`/`seq`/`wsOpen`/
+// `lastFrameKeys` expose the push transport's state.
+window.fresh = { get scene(){return scene;}, refresh, sendKey, resize,
+  get frames(){return frameCount;}, get seq(){return lastSeq;},
+  get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;} };
+focusSink();  // desktop: arm the hidden text sink (IME/dead-key path)
+connect();    // WS: hello replaces the scene, then resize() fits the grid
 </script>
 </body>
 </html>
