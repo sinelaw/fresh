@@ -664,18 +664,13 @@ impl crate::app::window::Window {
         for terminal in terminals {
             if let Some(buffer_id) = self.restore_terminal_from_workspace(terminal) {
                 terminal_buffer_map.insert(terminal.terminal_index, buffer_id);
-                // The terminal was live when the workspace was saved and the
-                // user never explicitly exited it, so focusing it should bring
-                // back a live terminal rather than the read-only scrollback
-                // view. Mark it Live so `set_active_buffer` re-enters terminal
-                // mode when the tab is focused (the editing-disabled completion
-                // in `Editor::set_active_buffer` finishes the read-only → live
-                // transition). An explicit Ctrl+Space exit later flips it back
-                // to Scrollback as usual.
-                self.set_terminal_interaction_mode(
-                    buffer_id,
-                    crate::app::window::TerminalInteractionMode::Live,
-                );
+                // A restored terminal is created with an empty scrollback set,
+                // so every split showing it is live by default — focusing it
+                // brings back a live terminal rather than read-only scrollback.
+                // The buffer loads editing-disabled (`install_terminal_buffer_state`)
+                // and `complete_terminal_mode_side_effects` finishes the
+                // read-only → live transition on focus. A later Ctrl+Space drops
+                // that split into scrollback as usual.
             }
         }
         terminal_buffer_map

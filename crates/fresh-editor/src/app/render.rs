@@ -487,7 +487,7 @@ impl Editor {
         let settings_visible = self.settings_state.as_ref().is_some_and(|s| s.visible);
         let hide_cursor = self.menu_state.active_menu.is_some()
             || self.active_window_mut().key_context == KeyContext::FileExplorer
-            || self.active_window().terminal_mode
+            || self.active_window().focused_terminal_live()
             || self.dock.as_ref().is_some_and(|d| d.focused)
             || settings_visible
             || self.keybinding_editor.is_some()
@@ -563,13 +563,30 @@ impl Editor {
         // tab renderer can style the "(preview)" tab without holding a borrow
         // of `__win` across the `with_all_mut` closure below.
         let __preview_buffer = __win.preview.map(|(_, b)| b);
+        // The splits currently showing a terminal in read-only scrollback.
+        // Per-split (not a window flag), so two splits on the same terminal can
+        // differ — one live, one scrollback (fresh#2595). Computed here, before
+        // the disjoint mutable sub-field borrows below take effect.
+        let __scrollback_view_splits: std::collections::HashSet<crate::model::event::LeafId> =
+            __win
+                .buffers
+                .splits()
+                .map(|(_, vs_map)| {
+                    vs_map
+                        .iter()
+                        .filter(|(leaf, svs)| {
+                            __win.split_terminal_scrollback(**leaf, svs.active_buffer)
+                        })
+                        .map(|(leaf, _)| *leaf)
+                        .collect()
+                })
+                .unwrap_or_default();
         let __event_logs_mut = &mut __win.event_logs;
         let __grouped_ref = &__win.grouped_subtrees;
         let __composite_buffers_mut = &mut __win.composite_buffers;
         let __composite_view_states_mut = &mut __win.composite_view_states;
         let __cell_theme_map_mut = &mut __win.chrome_layout.cell_theme_map;
         let __tab_bar_visible = __win.tab_bar_visible;
-        let __terminal_mode = __win.terminal_mode;
         let (
             split_areas,
             tab_layouts,
@@ -610,7 +627,7 @@ impl Editor {
                     is_maximized,
                     __tab_bar_visible,
                     self.session_mode || !self.software_cursor_only,
-                    __terminal_mode,
+                    &__scrollback_view_splits,
                     __cell_theme_map_mut,
                     size.width,
                     &mut pending_hardware_cursor,
@@ -1277,7 +1294,7 @@ impl Editor {
 
         // When keyboard capture mode is active, dim all UI elements outside the terminal
         // to visually indicate that focus is exclusively on the terminal
-        if self.active_window().keyboard_capture && self.active_window().terminal_mode {
+        if self.active_window().keyboard_capture && self.active_window().focused_terminal_live() {
             // Find the active split's content area
             let active_split = self
                 .windows
@@ -2613,6 +2630,23 @@ impl Editor {
         let Some(__win_for_preview) = self.windows.get_mut(&sid) else {
             return;
         };
+        // Terminal splits shown in read-only scrollback in the previewed
+        // window (computed before the mutable field borrows below). Mirrors the
+        // active-window path so the preview's scrollbar suppression matches.
+        let __preview_scrollback_splits: std::collections::HashSet<crate::model::event::LeafId> =
+            __win_for_preview
+                .buffers
+                .splits()
+                .map(|(_, vs_map)| {
+                    vs_map
+                        .iter()
+                        .filter(|(leaf, svs)| {
+                            __win_for_preview.split_terminal_scrollback(**leaf, svs.active_buffer)
+                        })
+                        .map(|(leaf, _)| *leaf)
+                        .collect()
+                })
+                .unwrap_or_default();
         let __preview_metadata = &__win_for_preview.buffer_metadata;
         let __preview_buffer_id = __win_for_preview.preview.map(|(_, b)| b);
         let __preview_event_logs = &mut __win_for_preview.event_logs;
@@ -2667,7 +2701,7 @@ impl Editor {
                     false, // not maximized
                     preview_tab_bar_visible,
                     self.session_mode || !self.software_cursor_only,
-                    false, // terminal_mode — scrollbars are off in the preview anyway
+                    &__preview_scrollback_splits,
                     &mut scratch_cell_theme_map,
                     inner.width,
                     &mut scratch_pending_cursor,

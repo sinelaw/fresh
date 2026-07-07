@@ -2330,39 +2330,27 @@ impl Editor {
                 self.close_terminal();
             }
             Action::FocusTerminal => {
-                // If viewing a terminal buffer, switch to terminal mode
+                // If viewing a terminal buffer, drop the focused split into live
+                // mode (clears its scrollback edge, re-enables PTY input,
+                // truncates the stale screen tail, resizes).
                 if self
                     .active_window()
                     .is_terminal_buffer(self.active_buffer())
                 {
-                    // Mode change to live: remember it for the next focus.
-                    let active = self.active_buffer();
-                    self.active_window_mut().set_terminal_interaction_mode(
-                        active,
-                        crate::app::window::TerminalInteractionMode::Live,
-                    );
-                    self.active_window_mut().terminal_mode = true;
-                    self.active_window_mut().key_context = KeyContext::Terminal;
+                    self.enter_terminal_mode();
                     self.set_status_message(t!("status.terminal_mode_enabled").to_string());
                 }
             }
             Action::TerminalEscape => {
-                // Exit terminal mode back to editor
-                if self.active_window().terminal_mode {
-                    // User dropped to read-only scrollback: remember that mode.
-                    let active = self.active_buffer();
-                    self.active_window_mut().set_terminal_interaction_mode(
-                        active,
-                        crate::app::window::TerminalInteractionMode::Scrollback,
-                    );
-                    self.active_window_mut().terminal_mode = false;
-                    self.active_window_mut().key_context = KeyContext::Normal;
+                // Drop the focused live terminal split into read-only scrollback.
+                if self.active_window().focused_terminal_live() {
+                    self.enter_terminal_scrollback();
                     self.set_status_message(t!("status.terminal_mode_disabled").to_string());
                 }
             }
             Action::ToggleKeyboardCapture => {
                 // Toggle keyboard capture mode in terminal
-                if self.active_window().terminal_mode {
+                if self.active_window().focused_terminal_live() {
                     self.active_window_mut().keyboard_capture =
                         !self.active_window_mut().keyboard_capture;
                     if self.active_window_mut().keyboard_capture {
@@ -2379,7 +2367,7 @@ impl Editor {
             }
             Action::TerminalPaste => {
                 // Paste clipboard contents into terminal as a single batch
-                if self.active_window().terminal_mode {
+                if self.active_window().focused_terminal_live() {
                     if let Some(text) = self.clipboard.paste() {
                         self.active_window_mut()
                             .send_terminal_input(text.as_bytes());
@@ -3100,9 +3088,8 @@ impl Editor {
             .set_active_split(new_leaf);
 
         // Mirror open_terminal's post-attach bookkeeping. The buffer was
-        // created via `create_terminal_buffer_detached`, so its remembered
-        // mode is already Live.
-        self.active_window_mut().terminal_mode = true;
+        // created via `create_terminal_buffer_detached` (empty scrollback set),
+        // so it is live in this split; focus the terminal pane.
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
         self.active_window_mut().resize_visible_terminals();
 

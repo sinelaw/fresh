@@ -198,14 +198,10 @@ fn ctrl_click_opens_path_in_scrollback_view() {
 
     open_terminal_with_output(&mut harness, b"build error at src/main.rs:2:6 here\n");
 
-    // Leave live terminal mode: sync the grid to the scrollback buffer and
-    // drop terminal_mode, exactly as a scroll/click-away does.
-    let buffer_id = harness.editor().active_buffer_id();
-    harness
-        .editor_mut()
-        .active_window_mut()
-        .sync_terminal_to_buffer(buffer_id);
-    harness.editor_mut().active_window_mut().terminal_mode = false;
+    // Leave live terminal mode: drop the focused split into read-only
+    // scrollback (syncs the grid into the buffer), exactly as a scroll/
+    // click-away does.
+    harness.editor_mut().enter_terminal_scrollback();
     harness.render().unwrap();
 
     // The path is shown by the normal buffer renderer now.

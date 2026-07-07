@@ -201,6 +201,11 @@ impl Editor {
                     .expect("active window must have a populated split layout")
                     .remove(&closing_split);
 
+                // Drop the closed split from every terminal's scrollback set so
+                // no terminal keeps a stale (split, scrollback) edge.
+                self.active_window_mut()
+                    .forget_split_terminal_modes(closing_split);
+
                 // Get the new active split after closing
                 let new_active_split = self
                     .windows

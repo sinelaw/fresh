@@ -320,14 +320,14 @@ fn auto_reconnect_reactivates_focused_terminal_in_input_mode() {
         .open_terminal_in_window()
         .expect("terminal should spawn");
     assert!(
-        harness.editor().active_window().terminal_mode,
+        harness.editor().is_terminal_mode(),
         "a freshly opened, focused terminal starts in input mode"
     );
 
-    // Carrier drop: the PTY dies and `handle_terminal_exited` clears the
-    // window's `terminal_mode` (dropping to Normal) while leaving the buffer's
-    // remembered `Live` interaction mode intact for the reconnect. Reproduce
-    // exactly that state.
+    // Carrier drop: the PTY dies and `handle_terminal_exited` drops the focused
+    // terminal out of the Terminal key context while leaving the focused split's
+    // per-split live state intact for the reconnect (it is NOT added to the
+    // scrollback set). Reproduce exactly that state.
     connected.store(false, Ordering::SeqCst);
     harness
         .editor_mut()
@@ -336,7 +336,6 @@ fn auto_reconnect_reactivates_focused_terminal_in_input_mode() {
         .close(old_id);
     {
         let w = harness.editor_mut().active_window_mut();
-        w.terminal_mode = false;
         w.key_context = KeyContext::Normal;
     }
 
@@ -348,7 +347,7 @@ fn auto_reconnect_reactivates_focused_terminal_in_input_mode() {
         .test_dispatch_remote_reconnected(CHANNEL_ID);
 
     assert!(
-        harness.editor().active_window().terminal_mode,
+        harness.editor().is_terminal_mode(),
         "reconnect must reactivate the focused terminal in input mode, not leave it in scrollback"
     );
     assert_eq!(

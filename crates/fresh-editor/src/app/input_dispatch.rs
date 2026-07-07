@@ -31,35 +31,14 @@ impl Editor {
             return None;
         }
 
-        // Handle terminal mode input
-        if self.active_window().terminal_mode {
-            // If the user navigated away from the terminal buffer (e.g. opened
-            // Review Diff via the command palette), the active buffer is no
-            // longer a terminal. Exit terminal mode so the new buffer's
-            // keybindings work.
-            if !self
-                .active_window()
-                .is_terminal_buffer(self.active_buffer())
-            {
-                self.active_window_mut().terminal_mode = false;
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-                return None; // fall through to normal input dispatch
-            }
-            // Keyboard focus has been explicitly handed to the file
-            // explorer (issue #2029, sub-issue 1). Skip the PTY route
-            // even though `terminal_mode` is still set, so arrow keys
-            // reach the explorer instead of being swallowed by the
-            // shell. The `terminal_mode` flag is cleared up front by
-            // `take_focus_for_file_explorer`; this is a belt-and-braces
-            // guard against any async path that re-enables
-            // `terminal_mode` while file-explorer focus is legitimate.
-            if matches!(
-                self.active_window().key_context,
-                crate::input::keybindings::KeyContext::FileExplorer
-            ) {
-                return None;
-            }
+        // Handle terminal mode input. `focused_terminal_live()` is the derived
+        // gate: it is true only when the editor pane owns focus (not the file
+        // explorer / a popup), the active buffer is a terminal, and the focused
+        // split is not in that terminal's scrollback set. So the two former
+        // belt-and-braces guards here — "active buffer is no longer a terminal"
+        // and "file explorer stole focus" — are subsumed: both make this false
+        // and fall through to normal dispatch.
+        if self.active_window().focused_terminal_live() {
             // Plugin commands flagged `terminalBypass: true` (via
             // `editor.registerCommand(..., { terminalBypass: true })`)
             // resolve to actions that must reach the editor even
@@ -556,35 +535,24 @@ impl Editor {
                     .send_terminal_mouse(col, row, kind, modifiers);
             }
             DeferredAction::ExitTerminalMode { explicit } => {
-                self.active_window_mut().terminal_mode = false;
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
                 if explicit {
-                    // User explicitly exited — remember scrollback so refocus
-                    // doesn't auto-resume into live mode.
-                    let buf = self.active_buffer();
-                    self.active_window_mut().set_terminal_interaction_mode(
-                        buf,
-                        crate::app::window::TerminalInteractionMode::Scrollback,
-                    );
-                    self.active_window_mut().sync_terminal_to_buffer(buf);
+                    // User explicitly exited (Ctrl+]/Escape): drop the focused
+                    // split into read-only scrollback (recorded per-split so
+                    // refocus keeps it there).
+                    self.enter_terminal_scrollback();
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                     );
                 }
+                // Non-explicit (split navigation): the split stays live — it is
+                // never added to the scrollback set — so returning to it resumes
+                // the live grid. The upcoming focus change re-derives the key
+                // context for the newly focused split; nothing to do here.
             }
             DeferredAction::EnterScrollbackMode => {
-                // Dropping to scrollback is a mode change: remember it so the
-                // terminal stays read-only the next time it is focused.
-                let __b = self.active_buffer();
-                self.active_window_mut().set_terminal_interaction_mode(
-                    __b,
-                    crate::app::window::TerminalInteractionMode::Scrollback,
-                );
-                self.active_window_mut().terminal_mode = false;
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-                self.active_window_mut().sync_terminal_to_buffer(__b);
+                // Shift+PageUp: drop the focused split into scrollback (recorded
+                // per-split) and page up through the synced read-only view.
+                self.enter_terminal_scrollback();
                 self.set_status_message(
                     "Scrollback mode - use PageUp/Down to scroll (Ctrl+Space to resume)"
                         .to_string(),

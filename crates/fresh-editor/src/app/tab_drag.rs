@@ -357,6 +357,9 @@ impl Editor {
                 .and_then(|w| w.split_view_states_mut())
                 .expect("active window must have a populated split layout")
                 .remove(&source_split_id);
+            // Drop the drained split from every terminal's scrollback set.
+            self.active_window_mut()
+                .forget_split_terminal_modes(source_split_id);
             if let Err(e) = self
                 .windows
                 .get_mut(&self.active_window)

@@ -641,7 +641,7 @@ impl Editor {
         // below assumes there's a real buffer view in front of us. If
         // we somehow landed here under one of those modes anyway,
         // hand off to the synchronous service-level paste.
-        if self.active_window().prompt.is_some() || self.active_window().terminal_mode {
+        if self.active_window().prompt.is_some() || self.active_window().focused_terminal_live() {
             if let Some(text) = self.clipboard.paste() {
                 self.paste_text(text);
             }
@@ -1248,8 +1248,8 @@ impl Editor {
             return;
         }
 
-        // If in terminal mode, send paste to the terminal PTY
-        if self.active_window().terminal_mode {
+        // If the focused split is a live terminal, send paste to its PTY
+        if self.active_window().focused_terminal_live() {
             self.active_window_mut()
                 .send_terminal_input(normalized.as_bytes());
             return;

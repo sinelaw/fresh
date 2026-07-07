@@ -2866,6 +2866,9 @@ impl Editor {
                     .and_then(|w| w.split_view_states_mut())
                     .expect("active window must have a populated split layout")
                     .remove(&leaf_id);
+                // Drop the closed split from every terminal's scrollback set.
+                self.active_window_mut()
+                    .forget_split_terminal_modes(leaf_id);
                 tracing::info!("Closed split {:?}", split_id);
             }
             Err(e) => {

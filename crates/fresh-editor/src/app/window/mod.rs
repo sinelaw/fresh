@@ -78,16 +78,6 @@ pub struct TerminalLinkHover {
     pub cols: std::ops::Range<usize>,
 }
 
-/// A terminal buffer's remembered interaction mode, restored whenever it
-/// regains focus (see `Window::sync_terminal_mode_flags`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TerminalInteractionMode {
-    /// Keystrokes forwarded to the PTY; the buffer mirrors the live screen.
-    Live,
-    /// Read-only scrollback. Entered via Ctrl+Space, scroll-up, or process exit.
-    Scrollback,
-}
-
 /// Per-terminal-buffer editor state, keyed by `BufferId` in
 /// [`Window::terminal_buffers`]. PTY I/O lives in the `TerminalManager`; the
 /// byte-stream backing files stay keyed by `TerminalId`.
@@ -95,26 +85,54 @@ pub enum TerminalInteractionMode {
 pub struct TerminalBuffer {
     /// The PTY session feeding this buffer, scoped to this window.
     pub terminal_id: crate::services::terminal::TerminalId,
-    pub mode: TerminalInteractionMode,
+
+    /// The splits currently viewing THIS terminal in read-only scrollback.
+    ///
+    /// This is the single source of truth for live-vs-scrollback, and it is
+    /// **per split**: a split showing this terminal is *live* iff its `LeafId`
+    /// is absent here, and *scrollback* iff present. Keeping it per-split is
+    /// what lets the same terminal stream the live PTY grid in one split while
+    /// another split reads frozen scrollback, independently, even when neither
+    /// is focused (fresh#2595).
+    ///
+    /// There is exactly one representation of "live" (absence), so no split can
+    /// be in a contradictory state, and — because this lives on `TerminalBuffer`
+    /// — only terminals can carry a mode at all. Membership is written solely
+    /// through [`Window::set_split_terminal_scrollback`] and pruned on split
+    /// close via [`Window::forget_split_terminal_modes`].
+    scrollback_splits: std::collections::HashSet<LeafId>,
 }
 
 impl TerminalBuffer {
-    /// A freshly opened/attached terminal buffer, which starts live.
+    /// A freshly opened/attached terminal buffer. Every split showing it starts
+    /// live (the scrollback set is empty).
     pub fn new_live(terminal_id: crate::services::terminal::TerminalId) -> Self {
         Self {
             terminal_id,
-            mode: TerminalInteractionMode::Live,
+            scrollback_splits: std::collections::HashSet::new(),
         }
     }
 
-    pub fn is_live(&self) -> bool {
-        matches!(self.mode, TerminalInteractionMode::Live)
+    /// Whether `split` is viewing this terminal in read-only scrollback.
+    pub fn is_scrollback_in(&self, split: LeafId) -> bool {
+        self.scrollback_splits.contains(&split)
     }
 
-    /// Route writes through [`Window::set_terminal_interaction_mode`] to keep
-    /// the mode single-sited.
-    pub fn set_mode(&mut self, mode: TerminalInteractionMode) {
-        self.mode = mode;
+    /// Record `split`'s live↔scrollback edge for this terminal: `true` adds it
+    /// to the scrollback set, `false` removes it (back to live). Sole mutator,
+    /// reached via [`Window::set_split_terminal_scrollback`].
+    fn set_scrollback_in(&mut self, split: LeafId, scrollback: bool) {
+        if scrollback {
+            self.scrollback_splits.insert(split);
+        } else {
+            self.scrollback_splits.remove(&split);
+        }
+    }
+
+    /// Drop `split` from this terminal's scrollback set (split closed / no
+    /// longer shows this terminal), reverting it to the live default.
+    fn forget_split(&mut self, split: LeafId) {
+        self.scrollback_splits.remove(&split);
     }
 }
 
@@ -457,11 +475,6 @@ pub struct Window {
     /// - Cleared when the buffer is closed or promoted. Promotion fires the
     ///   deferred `after_file_open` hook (see `promote_buffer_from_preview`).
     pub preview: Option<(LeafId, BufferId)>,
-
-    /// Whether terminal mode is active in this window (input goes to
-    /// the active terminal buffer). Per-window because each window
-    /// has its own terminal set + active buffer.
-    pub terminal_mode: bool,
 
     /// Path-link currently highlighted under a Ctrl+hover over the live
     /// terminal grid. `Some` means the renderer underlines the given grid row
@@ -1883,7 +1896,6 @@ impl Window {
             terminal_height: 24,
             dock_cols: 0,
             preview: None,
-            terminal_mode: false,
             terminal_link_hover: None,
             seen_byte_ranges: HashMap::new(),
             previous_viewports: HashMap::new(),
@@ -2305,17 +2317,52 @@ impl Window {
         self.terminal_buffer(buffer_id).map(|tb| tb.terminal_id)
     }
 
-    /// The only writer of a terminal's remembered mode — the real
-    /// live↔scrollback edges (open/resume, Ctrl+Space, scroll-up, exit) all
-    /// route here. No-op if `buffer_id` isn't a terminal buffer in this window.
-    pub fn set_terminal_interaction_mode(
+    /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.
+    /// `false` for a live terminal split, and for any non-terminal buffer.
+    /// The single read of the per-split live↔scrollback source of truth.
+    pub fn split_terminal_scrollback(&self, split: LeafId, buffer_id: BufferId) -> bool {
+        self.terminal_buffer(buffer_id)
+            .is_some_and(|tb| tb.is_scrollback_in(split))
+    }
+
+    /// The only writer of a terminal split's live↔scrollback edge — the real
+    /// transitions (Ctrl+Space, scroll-up, re-entry, process exit) all route
+    /// here. `scrollback = true` drops `split` into read-only scrollback for
+    /// this terminal; `false` returns it to the live PTY grid. No-op if
+    /// `buffer_id` isn't a terminal buffer in this window.
+    pub fn set_split_terminal_scrollback(
         &mut self,
+        split: LeafId,
         buffer_id: BufferId,
-        mode: TerminalInteractionMode,
+        scrollback: bool,
     ) {
         if let Some(tb) = self.terminal_buffer_mut(buffer_id) {
-            tb.set_mode(mode);
+            tb.set_scrollback_in(split, scrollback);
         }
+    }
+
+    /// Prune `split` from every terminal's scrollback set. Called when a split
+    /// closes so no terminal keeps a stale (split, scrollback) edge — the
+    /// per-split source of truth stays exactly the live layout.
+    pub fn forget_split_terminal_modes(&mut self, split: LeafId) {
+        for tb in self.terminal_buffers.values_mut() {
+            tb.forget_split(split);
+        }
+    }
+
+    /// Whether the focused split is a **live** terminal — i.e. keystrokes are
+    /// forwarded to a PTY (the old "terminal mode").
+    ///
+    /// This is the focused-split projection of the per-split scrollback source
+    /// of truth: [`Window::sync_terminal_mode_flags`] sets the `Terminal` key
+    /// context iff the editor pane owns focus, the active buffer is a terminal,
+    /// and the active split is not in that terminal's scrollback set — and drops
+    /// it to `Normal` otherwise. So `key_context == Terminal` is exactly "the
+    /// focused split is a live terminal." Rendering reads the per-split set
+    /// directly (see `render_terminal_splits`); this accessor is for input,
+    /// cursor, and status decisions that concern the focused split only.
+    pub fn focused_terminal_live(&self) -> bool {
+        self.key_context == crate::input::keybindings::KeyContext::Terminal
     }
 
     /// Clear the visual search overlays for the active buffer,

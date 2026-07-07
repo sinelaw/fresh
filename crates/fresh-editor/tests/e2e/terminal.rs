@@ -1681,6 +1681,91 @@ fn test_split_terminal_scrollback_does_not_freeze_other_split() {
     );
 }
 
+/// fresh#2595, part two: live-vs-scrollback is remembered PER SPLIT, so a split
+/// keeps its scrollback even after it loses focus, while another split on the
+/// same terminal streams live. Proves the mode is not a single focused-split
+/// flag but genuine per-split state.
+///
+/// Drives: split a terminal in two, drop the focused split into scrollback at
+/// the top of history, then move focus to the OTHER split (leaving the first
+/// unfocused) and emit new output. The now-unfocused split must still be parked
+/// at the top of history (retained scrollback) while the focused split follows
+/// the live output — both visible at once.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_unfocused_split_retains_scrollback_independently() {
+    let mut harness = harness_or_return!(120, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Early marker, then enough lines to push it into streamed scrollback.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo 'EARLY_HISTORY_MARKER'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("EARLY_HISTORY_MARKER"))
+        .unwrap();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"for i in $(seq 1 40); do echo \"PAD $i\"; done\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("PAD 40"))
+        .unwrap();
+
+    // Two splits on the same terminal. The new split is focused.
+    harness.editor_mut().split_pane_vertical();
+    harness.render().unwrap();
+
+    // Drop the focused split into scrollback and park it at the top of history.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("EARLY_HISTORY_MARKER"),
+        "the split just dropped into scrollback should show the top of history"
+    );
+
+    // Move focus to the OTHER split. In the old single-flag model this would
+    // also flip the first split back to live; per-split state must keep it in
+    // scrollback. The newly focused split is live.
+    harness.editor_mut().prev_split();
+    harness.render().unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "the newly focused split is a live terminal"
+    );
+
+    // New output: only the focused (live) split can show it.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo 'AFTER_REFOCUS_MARKER'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("AFTER_REFOCUS_MARKER"))
+        .unwrap();
+
+    // The now-UNFOCUSED split is still parked at the top of history (retained
+    // its scrollback across the focus change) while the focused split follows
+    // live output — both on screen simultaneously.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("EARLY_HISTORY_MARKER") && screen.contains("AFTER_REFOCUS_MARKER"),
+        "an unfocused split must retain scrollback while another follows live output. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that switching from terminal split to another split exits terminal mode
 /// and allows the new buffer to receive keystrokes.
 ///

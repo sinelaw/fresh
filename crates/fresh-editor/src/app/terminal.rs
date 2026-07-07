@@ -23,7 +23,7 @@
 //!   - Resumes live terminal rendering
 //!   - Performance: O(1) ≈ 1ms
 
-use super::window::{TerminalBuffer, TerminalInteractionMode, Window};
+use super::window::{TerminalBuffer, Window};
 use super::{BufferId, BufferMetadata, Editor};
 use crate::model::event::LeafId;
 use crate::services::authority::TerminalWrapper;
@@ -566,20 +566,15 @@ impl Window {
             self.terminal_explicit_titles.insert(buffer_id);
         }
 
-        // When the new terminal ended up as this window's active
-        // buffer, switch the window into terminal mode so the live
-        // grid renders immediately. Without this, the renderer
-        // skips the grid (see `render_terminal_splits` — it defers
-        // to the file-backed scrollback view whenever the active
-        // tab is a terminal buffer but the window is not in
-        // terminal mode) and the user sees a blank tab until the
-        // next event flips `terminal_mode` — typically the next
-        // printable keystroke via `should_enter_terminal_mode`.
-        // Mirrors `open_terminal_in_window`'s post-spawn flip. The buffer was
-        // inserted with `TerminalBuffer::new_live`, so its remembered mode is
-        // already Live; just flip the focus flags if it's the active buffer.
+        // When the new terminal ended up as this window's active buffer, focus
+        // it as a live terminal so the grid renders immediately. The buffer was
+        // inserted with `TerminalBuffer::new_live` (empty scrollback set), so
+        // every split showing it is already live; we only need to put the
+        // editor pane into the Terminal key context. Without this the renderer
+        // would defer to the file-backed scrollback view (see
+        // `render_terminal_splits`) until the next printable keystroke.
+        // Mirrors `open_terminal_in_window`'s post-spawn focus.
         if self.active_buffer() == buffer_id {
-            self.terminal_mode = true;
             self.key_context = crate::input::keybindings::KeyContext::Terminal;
         }
 
@@ -753,9 +748,7 @@ impl Window {
         // Window-side activation: per-window mutation only — the
         // editor-wide plugin hook fires in the Editor wrapper.
         self.set_active_buffer(buffer_id);
-        // The buffer was inserted with `TerminalBuffer::new_live`, so its
-        // remembered mode is already Live.
-        self.terminal_mode = true;
+        // Live by default (empty scrollback set); focus the terminal pane.
         self.key_context = crate::input::keybindings::KeyContext::Terminal;
         self.resize_visible_terminals();
         Some((terminal_id, buffer_id))
@@ -1092,10 +1085,9 @@ impl Editor {
             .set_active_split(new_leaf);
 
         // Mirror open_terminal's post-attach bookkeeping. The new terminal was
-        // inserted with `TerminalBuffer::new_live` so its remembered mode is
-        // already Live; the previously-active terminal keeps its own remembered
-        // mode, so closing this split later restores it correctly (#2485).
-        self.active_window_mut().terminal_mode = true;
+        // inserted with `TerminalBuffer::new_live` (empty scrollback set), so it
+        // is live in this new split; other splits keep their own per-split
+        // mode, so closing this split later restores them correctly (#2485).
         self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
         self.active_window_mut().resize_visible_terminals();
 
@@ -1176,8 +1168,8 @@ impl Editor {
                 }
             }
 
-            // Exit terminal mode
-            self.active_window_mut().terminal_mode = false;
+            // Leave the terminal key context; closing the buffer re-syncs the
+            // context from whatever becomes active next.
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
 
             // Close the buffer
@@ -1346,16 +1338,9 @@ impl Editor {
                 crossterm::event::KeyCode::Char(' ')
                 | crossterm::event::KeyCode::Char(']')
                 | crossterm::event::KeyCode::Char('`') => {
-                    // Exit terminal mode and sync buffer. The user dropped to
-                    // read-only scrollback: remember that mode so re-focusing
-                    // the terminal keeps it in scrollback.
-                    let __b = self.active_buffer();
-                    self.active_window_mut()
-                        .set_terminal_interaction_mode(__b, TerminalInteractionMode::Scrollback);
-                    self.active_window_mut().terminal_mode = false;
-                    self.active_window_mut().key_context =
-                        crate::input::keybindings::KeyContext::Normal;
-                    self.active_window_mut().sync_terminal_to_buffer(__b);
+                    // The user dropped the focused split into read-only
+                    // scrollback (recorded per-split so re-focusing keeps it).
+                    self.enter_terminal_scrollback();
                     self.set_status_message(
                         "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
                     );
@@ -1380,12 +1365,13 @@ impl Editor {
             .active_window()
             .is_terminal_buffer(self.active_buffer())
         {
-            // Resuming into live mode is a mode change: remember it so the
-            // terminal comes back live the next time it is focused.
+            // Resuming into live mode: clear the focused split's scrollback
+            // edge (so this split streams the live grid again) and focus the
+            // terminal pane. Other splits keep their own per-split mode.
             let __active = self.active_buffer();
+            let __leaf = self.active_window().effective_active_split();
             self.active_window_mut()
-                .set_terminal_interaction_mode(__active, TerminalInteractionMode::Live);
-            self.active_window_mut().terminal_mode = true;
+                .set_split_terminal_scrollback(__leaf, __active, false);
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Terminal;
 
             // Re-enable editing when in terminal mode (input goes to PTY)
@@ -1439,6 +1425,24 @@ impl Editor {
             self.active_window_mut().resize_visible_terminals();
 
             self.set_status_message(t!("status.terminal_mode_enabled").to_string());
+        }
+    }
+
+    /// Drop the focused split into read-only scrollback for its terminal —
+    /// the inverse of [`Editor::enter_terminal_mode`]. Records the edge
+    /// per-split (so other splits on the same terminal keep their own state)
+    /// and lets the single derivation project the key context and refresh the
+    /// read-only buffer view. No-op if the active buffer isn't a terminal.
+    pub fn enter_terminal_scrollback(&mut self) {
+        if self
+            .active_window()
+            .is_terminal_buffer(self.active_buffer())
+        {
+            let buf = self.active_buffer();
+            let leaf = self.active_window().effective_active_split();
+            self.active_window_mut()
+                .set_split_terminal_scrollback(leaf, buf, true);
+            self.active_window_mut().sync_terminal_mode_flags();
         }
     }
 
@@ -1635,15 +1639,14 @@ impl Window {
         };
         let visible_buffers = mgr.get_visible_buffers(editor_area);
 
-        let focused_split = self.effective_active_split();
         for (split_id, buffer_id, split_area) in visible_buffers {
             if self.terminal_buffers.contains_key(&buffer_id) {
                 // A split hides its scrollbar (grid reclaims the column)
                 // whenever it shows the live PTY grid: every terminal split
-                // except the focused one in read-only scrollback mode. Mirror
-                // the renderer's `terminal_showing_live_grid` gate so the PTY
-                // width matches the rendered `content_rect`.
-                let showing_live_grid = split_id != focused_split || self.terminal_mode;
+                // except one that is in read-only scrollback. Mirror the
+                // renderer's `terminal_showing_live_grid` gate so the PTY width
+                // matches the rendered `content_rect`.
+                let showing_live_grid = !self.split_terminal_scrollback(split_id, buffer_id);
                 let scrollbar_cols = if showing_live_grid { 0 } else { 1 };
                 // Tab bar takes 1 row; reserve 1 row for chrome and the
                 // scrollbar column (when shown) on the right.
@@ -1855,16 +1858,14 @@ impl Window {
             let Some(terminal_id) = self.get_terminal_id(*buffer_id) else {
                 continue;
             };
-            // Whether *this split* is the focused one. The live PTY grid
-            // overlays every split showing a terminal EXCEPT the focused
-            // split while it is in read-only scrollback mode — there we
-            // defer to normal text rendering so the user can scroll. Keying
-            // this on the split (not the buffer) is what lets the same
-            // terminal be scrolled back in the focused split while a second
-            // split keeps streaming the live grid (fresh#2595). Unfocused
-            // splits always show the live grid so they keep following output.
-            let is_focused_split = *split_id == focused_split;
-            if is_focused_split && !self.terminal_mode {
+            // The live PTY grid overlays every split showing a terminal EXCEPT
+            // one that is in read-only scrollback — there we defer to normal
+            // text rendering so the user can scroll. Keying this on the split
+            // (not the buffer, not the single window flag) is what lets the
+            // same terminal be scrolled back in one split while another keeps
+            // streaming the live grid, independently, even off-focus
+            // (fresh#2595).
+            if self.split_terminal_scrollback(*split_id, *buffer_id) {
                 continue;
             }
             let Some(handle) = self.terminal_manager.get(terminal_id) else {
@@ -1874,9 +1875,12 @@ impl Window {
                 continue;
             };
             let cursor_pos = state.cursor_position();
+            // The block cursor belongs to the focused split's live terminal
+            // only — other live splits mirror the same PTY but aren't the
+            // input target.
             let cursor_visible = state.cursor_visible()
-                && is_focused_split
-                && self.terminal_mode
+                && *split_id == focused_split
+                && self.focused_terminal_live()
                 && cursor_visible_if_active;
             let (_, rows) = state.size();
             let mut content = Vec::with_capacity(rows as usize);
@@ -1906,9 +1910,11 @@ impl Window {
 }
 
 impl Editor {
-    /// Check if terminal mode is active (for testing)
+    /// Whether the focused split is a live terminal (input goes to a PTY).
+    /// Derived from the per-split scrollback source of truth; primarily used by
+    /// tests and status rendering.
     pub fn is_terminal_mode(&self) -> bool {
-        self.active_window().terminal_mode
+        self.active_window().focused_terminal_live()
     }
 
     /// Check if keyboard capture is enabled in terminal mode (for testing)

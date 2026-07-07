@@ -103,11 +103,12 @@ pub(crate) fn render_content(
     is_maximized: bool,
     tab_bar_visible: bool,
     session_mode: bool,
-    // Whether the window is in terminal mode. When set, the active split's
-    // terminal buffer is showing its live PTY grid (not the read-only
-    // scrollback view), so its vertical scrollbar is suppressed and the grid
-    // reclaims that column. Exiting terminal mode brings the scrollbar back.
-    terminal_mode: bool,
+    // The splits whose active buffer is a terminal being shown in read-only
+    // scrollback. Any terminal split NOT listed here is showing its live PTY
+    // grid, so its vertical scrollbar is suppressed and the grid reclaims that
+    // column; a scrollback split keeps its scrollbar. Per-split (not a single
+    // window flag) so two splits on the same terminal can differ (fresh#2595).
+    scrollback_view_splits: &std::collections::HashSet<LeafId>,
     cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
     screen_width: u16,
     pending_hardware_cursor: &mut Option<(u16, u16)>,
@@ -225,13 +226,13 @@ pub(crate) fn render_content(
 
         // A terminal showing its live PTY grid suppresses the scrollbar so the
         // grid uses the full split width. The live grid is shown for every split
-        // whose active buffer is a terminal EXCEPT the focused split while it is
-        // in read-only scrollback mode (that one keeps its scrollbar to scroll
-        // the synced buffer view). Mirrors the split-keyed gate in
-        // `render_terminal_splits`, so a terminal held in two splits can stream
-        // the live grid in one while the focused split reads scrollback
-        // (fresh#2595).
-        let terminal_showing_live_grid = active_buf_is_terminal && (!is_active || terminal_mode);
+        // whose active buffer is a terminal EXCEPT one in read-only scrollback
+        // (that one keeps its scrollbar to scroll the synced buffer view).
+        // Mirrors the split-keyed gate in `render_terminal_splits`, so a
+        // terminal held in two splits can stream the live grid in one while the
+        // other reads scrollback (fresh#2595).
+        let terminal_showing_live_grid =
+            active_buf_is_terminal && !scrollback_view_splits.contains(&split_id);
         let panel_show_vscroll =
             show_vertical_scrollbar && !is_non_scrollable && !terminal_showing_live_grid;
 

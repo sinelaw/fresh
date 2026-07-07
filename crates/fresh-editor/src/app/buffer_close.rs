@@ -232,9 +232,9 @@ impl Editor {
         // The buffer's remembered mode was dropped when its `terminal_buffers`
         // entry was removed by the caller — nothing else to clean up here.
 
-        // Exit terminal mode if we were in it
-        if self.active_window().terminal_mode {
-            self.active_window_mut().terminal_mode = false;
+        // Leave the Terminal key context if we were in it (the terminal buffer
+        // and its per-split scrollback set are gone; nothing left to be live).
+        if self.active_window().key_context == crate::input::keybindings::KeyContext::Terminal {
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
         }
     }
@@ -528,10 +528,10 @@ impl Editor {
     /// All three paths should behave identically; keep new logic here.
     /// Returns true if the tab was closed without needing a prompt.
     pub fn close_tab_in_split(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
-        // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.active_window().terminal_mode && self.active_window().is_terminal_buffer(buffer_id)
+        // If closing the focused terminal buffer, leave the Terminal key context.
+        if self.active_window().key_context == crate::input::keybindings::KeyContext::Terminal
+            && self.active_window().is_terminal_buffer(buffer_id)
         {
-            self.active_window_mut().terminal_mode = false;
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
@@ -900,10 +900,10 @@ impl Editor {
     /// Used internally by batch close operations
     /// Returns true if the tab was closed, false if it was skipped (e.g., modified buffer)
     fn close_tab_in_split_silent(&mut self, buffer_id: BufferId, split_id: LeafId) -> bool {
-        // If closing a terminal buffer while in terminal mode, exit terminal mode
-        if self.active_window().terminal_mode && self.active_window().is_terminal_buffer(buffer_id)
+        // If closing the focused terminal buffer, leave the Terminal key context.
+        if self.active_window().key_context == crate::input::keybindings::KeyContext::Terminal
+            && self.active_window().is_terminal_buffer(buffer_id)
         {
-            self.active_window_mut().terminal_mode = false;
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
         }
 

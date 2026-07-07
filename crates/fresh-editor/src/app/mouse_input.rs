@@ -512,22 +512,10 @@ impl Editor {
         {
             // a mounted widget panel consumed the scroll
         } else {
-            if self.active_window().terminal_mode
-                && self
-                    .active_window()
-                    .is_terminal_buffer(self.active_buffer())
-            {
-                // Scrolling up drops the terminal to read-only scrollback:
-                // remember that mode so re-focusing keeps it in scrollback.
-                let __b = self.active_buffer();
-                self.active_window_mut().set_terminal_interaction_mode(
-                    __b,
-                    crate::app::window::TerminalInteractionMode::Scrollback,
-                );
-                self.active_window_mut().sync_terminal_to_buffer(__b);
-                self.active_window_mut().terminal_mode = false;
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
+            if self.active_window().focused_terminal_live() {
+                // Scrolling up drops the focused split into read-only scrollback
+                // (recorded per-split, so re-focusing keeps it there).
+                self.enter_terminal_scrollback();
             }
             self.dismiss_transient_popups();
             self.active_window_mut()
@@ -2545,6 +2533,9 @@ impl Editor {
                     t!("error.cannot_close_split", error = e.to_string()).to_string(),
                 );
             } else {
+                // Drop the closed split from every terminal's scrollback set.
+                self.active_window_mut()
+                    .forget_split_terminal_modes(split_id);
                 let new_active = self
                     .windows
                     .get(&self.active_window)

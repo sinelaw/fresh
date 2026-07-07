@@ -23,8 +23,8 @@ impl Window {
         row: u16,
         mouse_event: MouseEvent,
     ) -> Option<AnyhowResult<bool>> {
-        // Only forward if in terminal mode.
-        if !self.terminal_mode {
+        // Only forward if the focused split is a live terminal.
+        if !self.focused_terminal_live() {
             return None;
         }
 
@@ -60,7 +60,7 @@ impl Window {
         crate::services::terminal::path_link::DetectedLink,
         Option<std::path::PathBuf>,
     )> {
-        if !self.terminal_mode {
+        if !self.focused_terminal_live() {
             return None;
         }
         let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
@@ -104,9 +104,9 @@ impl Window {
         crate::services::terminal::path_link::DetectedLink,
         Option<std::path::PathBuf>,
     )> {
-        // Scrollback is rendered only for the active terminal buffer while not
-        // in live terminal mode (every other terminal view shows the grid).
-        if self.terminal_mode {
+        // Scrollback links exist only when the focused split's terminal is in
+        // read-only scrollback (a live terminal shows the grid instead).
+        if self.focused_terminal_live() {
             return None;
         }
         let active = self.active_buffer();

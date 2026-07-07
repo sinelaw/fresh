@@ -732,9 +732,11 @@ impl Editor {
         // Terminal output received - check if we should auto-jump back to terminal mode
         tracing::trace!("Terminal output received for {}", terminal);
 
-        // If viewing scrollback for this terminal and jump_to_end_on_output is enabled,
-        // automatically re-enter terminal mode
-        if self.config.terminal.jump_to_end_on_output && !self.active_window().terminal_mode {
+        // If the focused split is viewing this terminal in scrollback and
+        // jump_to_end_on_output is enabled, snap it back to the live grid.
+        if self.config.terminal.jump_to_end_on_output
+            && !self.active_window().focused_terminal_live()
+        {
             // Check if active buffer is this terminal
             if let Some(active_terminal_id) =
                 self.active_window().get_terminal_id(self.active_buffer())
@@ -745,8 +747,10 @@ impl Editor {
             }
         }
 
-        // When in terminal mode, ensure display stays at bottom (follows new output)
-        if self.active_window().terminal_mode {
+        // When the focused split's terminal is live, keep its grid pinned to the
+        // bottom so it follows new output. (Unfocused live splits follow on their
+        // own — their grid sits at display_offset 0.)
+        if self.active_window().focused_terminal_live() {
             if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
                 if let Ok(mut state) = handle.state.lock() {
                     state.scroll_to_bottom();
@@ -986,21 +990,37 @@ impl Editor {
             .iter()
             .find(|(_, tb)| tb.terminal_id == terminal_id)
         {
-            // A genuinely exited terminal becomes a read-only scrollback tab,
-            // so mark it Scrollback — a later focus shows scrollback instead of
-            // trying to drive a dead PTY. A terminal preserved for remote
-            // reconnect keeps its live mode so it comes back live when the
-            // carrier respawns it.
+            // A genuinely exited terminal has no PTY left to drive, so EVERY
+            // split showing it becomes read-only scrollback (not just the
+            // focused one) — otherwise an unfocused split would keep rendering a
+            // "live" grid of a dead terminal. A terminal preserved for remote
+            // reconnect keeps its per-split live state so it comes back live
+            // when the carrier respawns it.
             if !preserve_for_reconnect {
-                self.active_window_mut().set_terminal_interaction_mode(
-                    buffer_id,
-                    crate::app::window::TerminalInteractionMode::Scrollback,
-                );
+                let dead_splits: Vec<crate::model::event::LeafId> = self
+                    .active_window()
+                    .buffers
+                    .splits()
+                    .map(|(_, vs_map)| {
+                        vs_map
+                            .iter()
+                            .filter(|(_, svs)| svs.active_buffer == buffer_id)
+                            .map(|(leaf, _)| *leaf)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for leaf in dead_splits {
+                    self.active_window_mut()
+                        .set_split_terminal_scrollback(leaf, buffer_id, true);
+                }
             }
 
-            // Exit terminal mode if this is the active buffer
-            if self.active_buffer() == buffer_id && self.active_window().terminal_mode {
-                self.active_window_mut().terminal_mode = false;
+            // If the focused split was driving this now-dead terminal, leave the
+            // Terminal key context (its derived live state is already false).
+            if self.active_buffer() == buffer_id
+                && self.active_window().key_context
+                    == crate::input::keybindings::KeyContext::Terminal
+            {
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::Normal;
             }

@@ -96,10 +96,7 @@ impl Editor {
     /// can re-enable editing, truncate the stale screen tail, and resize the
     /// PTY. No-op otherwise.
     pub(super) fn complete_terminal_mode_side_effects(&mut self) {
-        if self.active_window().terminal_mode
-            && self
-                .active_window()
-                .is_terminal_buffer(self.active_buffer())
+        if self.active_window().focused_terminal_live()
             && self.active_window().is_editing_disabled()
         {
             self.enter_terminal_mode();
@@ -179,34 +176,33 @@ impl Window {
         true
     }
 
-    /// Derive `terminal_mode`/`key_context` from the active buffer's remembered
-    /// mode. The one place the flags follow focus — every focus path routes
-    /// through it, so none can leave a re-focused terminal in the wrong mode
-    /// (issue #2485). The Editor-level finish for entering live mode is
+    /// Project the `key_context` Terminal↔Normal edge from the per-split
+    /// live↔scrollback source of truth for the *focused* split. The one place
+    /// the key context follows focus — every focus path routes through it, so
+    /// none can leave a re-focused terminal in the wrong context (issue #2485).
+    /// The Editor-level finish for entering live mode is
     /// [`Editor::complete_terminal_mode_side_effects`].
     ///
     /// Owns only the Terminal↔Normal edge: while another surface holds focus
-    /// (file explorer, prompt, popup) it manages `terminal_mode` itself, so the
-    /// guard below leaves the flags untouched.
+    /// (file explorer, prompt, popup) `key_context` is one of their values, so
+    /// the guard below leaves it untouched.
     pub(super) fn sync_terminal_mode_flags(&mut self) {
         use crate::input::keybindings::KeyContext;
         if !matches!(self.key_context, KeyContext::Normal | KeyContext::Terminal) {
             return;
         }
         let active = self.active_buffer();
-        if let Some(terminal) = self.terminal_buffer(active) {
-            if terminal.is_live() {
-                self.terminal_mode = true;
-                self.key_context = KeyContext::Terminal;
-            } else {
-                // Refresh the file-backed scrollback view before keys stop
-                // routing to the PTY.
+        let leaf = self.effective_active_split();
+        if self.is_terminal_buffer(active) {
+            if self.split_terminal_scrollback(leaf, active) {
+                // Refresh the file-backed scrollback view (also marks the
+                // buffer read-only) before keys stop routing to the PTY.
                 self.sync_terminal_to_buffer(active);
-                self.terminal_mode = false;
                 self.key_context = KeyContext::Normal;
+            } else {
+                self.key_context = KeyContext::Terminal;
             }
-        } else if self.terminal_mode {
-            self.terminal_mode = false;
+        } else if self.key_context == KeyContext::Terminal {
             self.key_context = KeyContext::Normal;
         }
     }

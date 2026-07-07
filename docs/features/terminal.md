@@ -29,6 +29,8 @@ The terminal has two modes, indicated in the status bar:
 
 2.  **Scrollback Mode** (status bar shows "Terminal (read only)"): The terminal output becomes a read-only buffer that you can scroll through, search, and copy text from.
 
+**Per-split:** The mode is a property of each split, not the terminal as a whole. If you show the same terminal in two splits, one can sit in scrollback (frozen at some point in history) while the other keeps streaming the live output — and each split keeps its own mode even when it isn't focused. Disable **Automatic Scroll** (below) to hold a split in scrollback while output keeps arriving.
+
 ## Switching Between Modes
 
 *   **`Ctrl+Space`**: Toggle between terminal mode and scrollback mode
@@ -69,7 +71,7 @@ The override applies to host-shell terminals; wrappers that re-parent the shell 
 
 *   **Workspace Persistence:** Terminal scrollback is preserved across editor restarts, but running processes are terminated.
 *   **Daemon Mode:** Use `fresh -a` to start in daemon mode, then detach with `Ctrl+Shift+D` to keep terminal processes running in the background. Reattach with `fresh -a`. See [Daemon Mode](./session-persistence.md) for details.
-*   **Automatic Scroll:** When new output arrives while you're in scrollback mode, the terminal automatically returns to terminal mode to show the latest output. Disable this with the `terminal.jump_to_end_on_output` config option.
+*   **Automatic Scroll:** When new output arrives while the focused split is in scrollback mode, it automatically returns to terminal mode to show the latest output. Disable this with the `terminal.jump_to_end_on_output` config option — handy when you want to read scrollback in one split while another split (or the same one) keeps streaming.
 *   **Resizing:** The terminal automatically resizes when you resize the editor or split panes.
 *   **Suspend (Unix):** Run **Suspend Process** from the palette to send the foreground Fresh process to the background (like Ctrl+Z in a shell). In daemon mode the suspend is routed through the client so the daemon stays up.
 

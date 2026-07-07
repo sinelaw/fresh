@@ -60,27 +60,23 @@ fn explorer_row_for(harness: &EditorTestHarness, name: &str) -> u16 {
 /// explorer instead of being swallowed by `dispatch_terminal_input`
 /// and forwarded to the PTY child (issue #2029, sub-bug 1).
 ///
-/// Unit-style test: drives the production `toggle_file_explorer`
-/// path and asserts the two state invariants the fix establishes.
-/// Doesn't open a real PTY — sets `terminal_mode = true` directly
-/// on the window — so it's fast and deterministic regardless of
-/// CI load.
+/// Drives the production `open_terminal` + `toggle_file_explorer` path
+/// and asserts the two state invariants the fix establishes. Terminal
+/// mode is now *derived* (a live terminal buffer focused in the editor
+/// pane), so this opens a real terminal rather than poking a flag.
 #[test]
 fn toggle_file_explorer_clears_terminal_mode() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available in this environment");
+        return;
+    }
+
     let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
 
-    // Pre-condition: terminal mode is active (as it would be after
-    // `open_terminal()`). `is_terminal_buffer(active)` is false here
-    // because we didn't actually spawn a PTY child — that's fine,
-    // the relevant `take_focus_for_file_explorer` branch only gates
-    // the `terminal_mode_resume` insert on it; the `terminal_mode`
-    // reset and the `key_context = FileExplorer` write both run
-    // unconditionally when `terminal_mode` was true.
-    {
-        let win = harness.editor_mut().active_window_mut();
-        win.terminal_mode = true;
-        win.key_context = KeyContext::Terminal;
-    }
+    // Pre-condition: a live terminal is focused, so the window is in
+    // terminal mode (keys route to the PTY).
+    harness.editor_mut().open_terminal();
+    harness.wait_for_screen_contains("*Terminal 0*").unwrap();
     assert!(
         harness.editor().is_terminal_mode(),
         "precondition: window in terminal mode"
