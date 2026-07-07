@@ -4237,3 +4237,24 @@ fn test_terminal_mode_hides_scrollbar_and_reclaims_width() {
         "live PTY width should span the scrollbar column the scrollback view reserves"
     );
 }
+
+/// Terminal buffers must never line-wrap, even with global line wrap enabled.
+/// Wrapping a large terminal scrollback turns the scrollbar's visual-row index
+/// into an O(all-lines) scan on every frame, freezing the UI (fresh#2608).
+#[test]
+fn test_terminal_buffers_never_line_wrap() {
+    let mut harness = harness_or_return!(80, 24);
+    harness.editor_mut().open_terminal();
+    let term_id = harness.editor().active_buffer();
+
+    // Global line wrap on: a regular buffer would wrap; a terminal must not.
+    harness.editor_mut().config_mut().editor.line_wrap = true;
+
+    assert!(
+        !harness
+            .editor()
+            .active_window()
+            .resolve_line_wrap_for_buffer(term_id),
+        "terminal buffers must never resolve to line-wrap even when global line wrap is on"
+    );
+}

@@ -2303,6 +2303,29 @@ impl Window {
         self.terminal_buffer(buffer_id).is_some()
     }
 
+    /// Terminal buffers never line-wrap (see `resolve_line_wrap_for_buffer`):
+    /// their content is column-formatted, and wrapping a large scrollback turns
+    /// the scrollbar's visual-row index into an O(all-lines) scan every frame,
+    /// freezing the UI (fresh#2608). Heal any per-buffer viewport a global
+    /// line-wrap toggle (or restored state) left enabled — cheap enough to run
+    /// each frame, and a no-op when the window has no terminals.
+    pub(crate) fn enforce_terminal_no_wrap(&mut self) {
+        let terminals = &self.terminal_buffers;
+        if terminals.is_empty() {
+            return;
+        }
+        let Some(vs_map) = self.buffers.split_view_states_mut() else {
+            return;
+        };
+        for vs in vs_map.values_mut() {
+            for (buffer_id, buffer_state) in vs.keyed_states.iter_mut() {
+                if terminals.contains_key(buffer_id) {
+                    buffer_state.viewport.line_wrap_enabled = false;
+                }
+            }
+        }
+    }
+
     /// Whether auto-revert (reload on external file change) applies to
     /// `buffer_id`. Auto-revert is a per-buffer property: it honours the
     /// buffer's metadata flag, and is always forced off for terminal-backed

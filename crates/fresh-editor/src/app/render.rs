@@ -64,6 +64,7 @@ impl Editor {
 
         for window in self.windows.values_mut() {
             window.sync_terminal_titles();
+            window.enforce_terminal_no_wrap();
         }
 
         // Carve a full-height left column for a docked floating panel

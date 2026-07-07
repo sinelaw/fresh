@@ -21,7 +21,15 @@ use super::Editor;
 
 impl crate::app::window::Window {
     /// Resolve the effective line_wrap setting for a buffer, considering language overrides.
-    pub(crate) fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
+    pub fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
+        // Terminal buffers never wrap. Their content is column-formatted (ANSI,
+        // aligned output), so wrapping is wrong — and wrapping a large scrollback
+        // makes the scrollbar's visual-row index an O(all-lines) scan on every
+        // frame, freezing the UI (fresh#2608). Forced off here so no global
+        // toggle, language override, or per-buffer pin can turn it on.
+        if self.is_terminal_buffer(buffer_id) {
+            return false;
+        }
         match self.buffers.get(&buffer_id) {
             Some(state) => buffer_config_resolve::line_wrap(&state.language, self.config()),
             None => self.config().editor.line_wrap,
