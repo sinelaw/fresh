@@ -29,7 +29,7 @@ Each bug entry:
 - **ID:** BUG-018
 - **Title:** `di"`/`ci"` (and `a"`) only operate when the cursor is already INSIDE the quotes; from before the quote on the same line they are no-ops, unlike Vim which searches forward on the current line.
 - **Severity:** Medium (the common case — `ci"` from a line start — silently fails; in scope of the vi-compat motion work).
-- **Status:** Open — GitHub #2439 filed (Run #43).
+- **Status:** FIXED (Run #56) — closed by `11dccfad5`, CONFIRMED via UI (di"/ci"/da" forward-search from col 1 all work); commented. Remaining `a"` trailing-whitespace nuance → BUG-036 / #2604.
 - **GitHub Issue:** [#2439](https://github.com/sinelaw/fresh/issues/2439)
 - **Reproduction:** File with `the "quick" brown fox`. Enable vi mode. `gg` `j` `0` (col 1, before the quote). Send `d` `i` `"` separately (~0.4s apart). Capture the line.
 - **Expected (Vim):** `the "" brown fox` — `i"` searches forward on the line; `ci"` enters INSERT.
@@ -41,7 +41,7 @@ Each bug entry:
 - **ID:** BUG-016
 - **Title:** In vi mode, `cw` behaves like `dw`+insert (eats the trailing space) instead of like `ce` (change to end of word, keep the space) as Vim does on a non-blank.
 - **Severity:** Medium (behavioral Vim-compat deviation a Vim user hits constantly; directly in scope of the new "align vi compatibility motions with Vim" commit).
-- **Status:** Open — GitHub #2437 filed (Run #42).
+- **Status:** FIXED (Run #56) — closed by `463c435e3`, CONFIRMED via UI (`cw`+X → `X world foo bar` space kept, mid-word ✓, `dw` control ✓); commented.
 - **GitHub Issue:** [#2437](https://github.com/sinelaw/fresh/issues/2437)
 - **Reproduction:** File with line `hello world foo bar`. `Ctrl+P`→"Toggle Vi mode"→Enter. `gg` `0` (cursor on col 1 `h`). Send `c` then `w` (separate send-keys, ~0.4s apart), then `X`, then `Escape`. Capture line 3 via `capture-pane -p | sed 's/.*│ //'`.
 - **Expected (Vim):** `X world foo bar` — `cw`==`ce` on a non-blank; trailing space preserved (`:help cw`).
@@ -480,3 +480,45 @@ Each bug entry:
 - **Expected (VS Code):** focus and cursor remain in the invoking file at the renamed symbol.
 - **Actual:** active tab switches to the other edited file at a stale position. main.rs keeps its own cursor (verified on switching back). Also verified fine: F2 on whitespace → graceful "Cannot rename: ... No references found at position" without opening the prompt; undo reverts the rename's edits.
 - **First Seen:** Run #55, 2026-07-07 (v0.4.3, master @ 4e945b494; rust-analyzer 1.94.1).
+
+## BUG-033: Dismissing a hover popup removes error diagnostics elsewhere from gutter/status/F8 until next save
+- **ID:** BUG-033
+- **Title:** Dismissing a hover popup (Escape or cursor-move) whose position does not overlap an error diagnostic drops that error from the status severity counter, the gutter marker, and F8 navigation — while the Diagnostics panel still lists it and the code is still broken.
+- **Severity:** Medium (hover is constant-use; every hover away from an error silently hides it — user believes the error is gone).
+- **Status:** Open — GitHub #2601 filed (Run #56).
+- **GitHub Issue:** [#2601](https://github.com/sinelaw/fresh/issues/2601)
+- **Reproduction:** Crate with `let bad = p.zzz;` error + unused-var warnings; save so checkOnSave publishes (`E:1 W:2 I:1`, red ● on the error line). Alt+K at the warning line or any clean call site → popup → Escape (or move cursor). Status → `W:2 I:1`, ● gone, F8 cycles only warnings. 5/5 (Esc ×4, cursor-move ×1).
+- **Expected (VS Code):** closing a hover tooltip never changes the problem set.
+- **Actual:** error dropped from working set until re-save. Controls: hover ON the error position preserves (2/2); bare Esc preserves; panel open/close preserves; warnings/hints never drop.
+- **First Seen:** Run #56, 2026-07-07 (v0.4.3, master @ 11dccfad5; rust-analyzer 1.94.1 Full mode).
+
+## BUG-034: Diagnostics don't track buffer edits — markers/F8/panel point at stale lines until re-save
+- **ID:** BUG-034
+- **Title:** Diagnostic positions are frozen at publish time: inserting lines above an error (including via an editor-applied code action WorkspaceEdit like "Generate `new`") leaves the gutter ●, F8, and the panel pointing at the old line — now the middle of valid/generated code — while the real error line is unmarked.
+- **Severity:** Medium usability (F8 confidently jumps into freshly generated code; markers on wrong lines).
+- **Status:** Open — GitHub #2602 filed (Run #56).
+- **GitHub Issue:** [#2602](https://github.com/sinelaw/fresh/issues/2602)
+- **Reproduction:** Error at line 8 published (save). Alt+. on the struct name → accept "Generate `new`" (6 lines inserted above the error). ● stays on line 8 (inside generated `fn new`); F8 → 8:17 with the zzz message; real `p.zzz` (line 14) unmarked; panel `[E] 8:17`. Save corrects everything.
+- **Expected (VS Code):** diagnostic ranges shift with buffer edits, especially editor-applied ones with known deltas.
+- **Actual:** frozen until the next check-on-save re-publish. Same family as #2583 (S&R stepping), different subsystem. Note: inline-diagnostics advertises "version-aware staleness dimming", but gutter/F8/panel neither shift nor indicate staleness.
+- **First Seen:** Run #56, 2026-07-07 (v0.4.3, master @ 11dccfad5; rust-analyzer 1.94.1 Full mode).
+
+## BUG-035: Completions never include unimported symbols — documented auto-import-on-accept unreachable
+- **ID:** BUG-035
+- **Title:** LSP completions omit every candidate that would require an auto-import (rust-analyzer flyimport): bare `HashMa`/`HashMap` and import-needing trait methods (`p.type_i`) produce NO popup at all, so lsp.md's "Auto-imports are applied when you accept a completion" can never trigger.
+- **Severity:** Medium (documented feature unreachable; a core completion workflow vs VS Code).
+- **Status:** Open — GitHub #2603 filed (Run #56).
+- **GitHub Issue:** [#2603](https://github.com/sinelaw/fresh/issues/2603)
+- **Reproduction:** Crate with no `use` stmts, LSP ready. `let m = HashMa` + Ctrl+Space (and palette Show Completions) → nothing, ever; exact `HashMap` → nothing; `p.type_i` → nothing. Controls same session: `p.` members ✓; `Strin` → String/stringify! (prelude) ✓; `std::collections::HashMa` → HashMap (qualified) ✓.
+- **Expected (VS Code + same RA):** `HashMap (use std::collections::HashMap)` offered; accept inserts ident + use line.
+- **Actual:** no import-needing candidates exist in Fresh's results at all.
+- **First Seen:** Run #56, 2026-07-07 (v0.4.3, master @ 11dccfad5; rust-analyzer 1.94.1 Full mode).
+
+## BUG-036: vi `a"` text object excludes trailing whitespace (Vim includes it) — `da"` leaves a double space
+- **ID:** BUG-036
+- **Title:** `a"` selects only the quoted string incl. quotes but not the trailing whitespace, so `da"` on `the "quick" brown fox` yields `the  brown fox` (double space); Vim (`:help aquote`) includes trailing (else leading) whitespace → `the brown fox`.
+- **Severity:** Medium-low (leaves stray whitespace on every `da"`/`ca"`; forward-search itself fixed by 11dccfad5).
+- **Status:** Open — GitHub #2604 filed (Run #56).
+- **GitHub Issue:** [#2604](https://github.com/sinelaw/fresh/issues/2604)
+- **Reproduction:** vi mode on, line `the "quick" brown fox`, `0` then `d` `a` `"` → `the  brown fox` (cat -A: `the  brown fox$`). Same from inside the quotes (2/2). `di"` unaffected.
+- **First Seen:** Run #56, 2026-07-07 (v0.4.3, master @ 11dccfad5), during the #2439 fix verification.

@@ -1156,3 +1156,23 @@ Series `3a78ad5ec`…`0bfb54edf`. Two fixtures: **A)** root NOT a repo (`/tmp/mo
 - **LSP status panel ("Show LSP Status"):** rows = `● rust-analyzer (ready)` / `Restart rust-analyzer` / `Stop rust-analyzer`; my Down+Enter hit STOP (selection starts on Restart? unverified) — palette `>Start LSP` recovers. Panel claims "ready" even while requests return empty (reduced-mode warm-up) — don't trust it as a request-readiness signal.
 - **Palette fuzzy ranking:** query "Switch Rust" ranks "Switch to Previous Tab" ABOVE "Rust LSP: Configure Mode" — arrow down + ANSI-verify (`48;5;25m`) the highlighted row before Enter.
 - rustup component install from Run #54 confirmed again: `rustup component add rust-analyzer` from the CRATE dir (not the fresh repo), verify `rust-analyzer --version` before launching.
+
+## LSP diagnostics deep-dive + signature help + code actions + auto-import (Run #56) — v0.4.3 @ 11dccfad5, rust-analyzer 1.94.1 Full mode
+
+**Feature map (fixture: tiny crate, struct Point + describe(p: &Point, verbose: bool)):**
+- **Diagnostics channels:** RA-native (missing-fields) publishes LIVE while typing (~2-3s, no save). rustc/flycheck (unresolved field, unused-var W, hints H) publish on SAVE via checkOnSave. Same defect can appear TWICE at one position (per-server tracking): F8 visits each, status echoes each message.
+- **Severity presentation:** status segments `E:n W:n I:n` (hints count under I, panel tags [H]); hover fusion `✖ Error`=bold 203 / `⚠ Warning`=226 + `(rustc)` source tag; inline text (`diagnostics_inline_text`, Settings UI) severity-coloured 203/226, right-aligned, highest-severity per line. GUTTER ● is ALWAYS red 160 regardless (nit, IMP-029).
+- **Panel** (`Show/Toggle Diagnostics Panel`): read-only buffer in the dock; rows are cursor lines — Enter on a `[E] line:col` row jumps (exact col) + focuses editor + CLOSES panel; Enter on non-item row → "No item selected". `q`/Esc close. `a` toggles Current-File↔All-Files (header text does NOT update — verify by list content/status msg). Up/Down PREVIEW-scrolls the editor; previewing another file's row OPENS it as a real tab (left open after).
+- **F8/Shift+F8** cycle with wrap, no panel needed.
+- **Clears-on-fix:** live for RA-native (undo the bad line → E count drops in ~3s, no save).
+- **Signature help:** auto-triggers on typed `(`; unfocused popup; layout = signature / blank / ACTIVE-PARAM LINE / rule / markdown docs. Param line advances on `,`. NOT an inline-bold presentation — don't report "no active-param highlight" (Run #56 near-false-positive from a truncated capture).
+- **Code actions Alt+.:** number keys AND arrows+Enter both accept. rust-analyzer supplies BOTH diagnostic quickfixes (Fill struct fields) and assists (Generate impl/new etc.); WorkspaceEdits apply atomically with `Applied: <title> (N change(s))` status. clangd diagnostics-context gap #2212 is clangd-specific.
+- **Completions:** unimported symbols NEVER appear (no flyimport) → #2603; members/prelude/qualified paths fine. Don't conclude "completion broken" without those controls.
+
+**BUGS:** #2601 hover-dismiss (Esc or cursor-move) wipes non-overlapping ERROR diagnostics from gutter/status/F8 until next save (panel keeps them; hover-on-the-error preserves). #2602 positions frozen at publish — edits above (incl. editor-applied code actions) leave markers/F8 on stale lines until save. Retest hooks for both: save restores everything.
+
+**Harness (BIG):**
+- **tmux swallows a trailing unescaped `;`** in `send-keys` — bare `';'` arg AND `-l 'text;'` both lose it (tmux command separator). Use `tmux send-keys '\;'` (escaped at tmux parse level). Symptom: "the `;` key is dead" — it never reached the app.
+- Fixture reset: prefer palette **"Revert File"** (prompt `Buffer has unsaved changes. (r)evert, (C)ancel?` — needs `r` THEN Enter) over undo bursts: per-char undo happily rolls back code-action WorkspaceEdits and prior test edits (silently corrupted the fixture twice). BSpace bursts likewise overshoot across line joins — count exact chars or Revert.
+- Settings UI: `/`-search → Down to the result row → Enter jumps to the setting; Enter toggles a checkbox `[ ]`→`[v]`; Ctrl+S "Settings saved to User layer"; REMOVE `~/.config/fresh/config.json` at cleanup.
+- Palette-open race hit again — ALWAYS capture and confirm the bare `>` prompt line before typing the query.

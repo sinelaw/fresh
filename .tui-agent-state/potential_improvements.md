@@ -251,3 +251,13 @@ change would make it self-evident without requiring users to read docs.
 - **Observed (Run #55, v0.4.3 @ 4e945b494):** lsp.md §Rust LSP Mode Switching says `Use "Switch Rust Analyzer Mode" from the command palette`; searching the palette for that phrase finds nothing. The real command is **"Rust LSP: Configure Mode"** (source `rust-lsp`, desc "Switch rust-analyzer between full and reduced memory modes"). Extra papercut: fuzzy query "Switch Rust" ranks "Switch to Previous Tab" above it.
 - **Severity:** Low doc mismatch. Noted inside #2598's body (footer). Batch into the next docs/UX polish issue per R3; if #2598 gets fixed the doc line may get corrected with it — check before batching.
 - **Discovered:** Run #55, 2026-07-07
+
+## IMP-029: Diagnostics UI polish batch (Run #56, v0.4.3 @ 11dccfad5) — candidates for one "diagnostics polish" issue
+- Panel header stays "Diagnostics (Current File):" after `a` toggles to All Files (the toggle itself works — list gains other-file sections; status msg "Showing: All Files" is correct). Header never updates.
+- Panel item count ("Diagnostics: 5 items") counts the UNFILTERED set while the filtered view shows 4 rows.
+- Status-bar echoes (F8 stops) concatenate multiple messages at one position with NO separator ("…of `Point`missing `label` and `y`") and flatten multiline messages ("missing structure fields:- y- label").
+- Gutter ● is always red `38;5;160`, even for warning-only lines — hover fusion and inline text ARE severity-coloured (203/226); the gutter can't distinguish E from W (VS Code does).
+- Panel truncates rust-analyzer's multiline message to its first line ("missing structure fields:").
+- Diagnostic related-information renders as a bare top-level file section ("mod.rs:" — a rustc std internals path) instead of nesting under the parent diagnostic (VS Code nests).
+- Panel Up/Down preview on another file's row opens that file as a persistent tab (VS Code uses a transient preview); tab stays open after the panel closes.
+- Signature help does not visually emphasize the active parameter inside the signature line (it IS shown as a separate line below, which advances on comma — different-but-workable presentation; nit only).
