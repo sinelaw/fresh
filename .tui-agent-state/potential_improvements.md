@@ -229,3 +229,10 @@ change would make it self-evident without requiring users to read docs.
 - **Suggested improvement:** cycle through the buffer's configured mode (off → configured-mode → on → off), or add a "Set Virtual Space Mode (Current Buffer)" picker (off/on/block), or show the current mode in the status message so the loss is at least visible.
 - **Severity:** Low (edge; block mode itself works fine). Batch candidate for the periodic "docs/UX polish" issue (R3).
 - **Discovered:** Run #47, 2026-07-07
+
+### IMP-025 — no editor-area right-click context menu (and `menu.terminal.*` i18n items unreachable in any menu)
+- **Observed (Run #49, v0.4.3 @ 89d91e84d, via the SGR mouse harness):** right-clicking in the editor text area — with or without an active selection — produces literally NO screen change (verified by full-pane before/after diff). Right-clicking inside a terminal pane's grid likewise shows nothing. Context menus DO exist elsewhere: tab right-click (7 items, works great), File Explorer (`explorer.context.*`), orchestrator rows.
+- **Related:** the i18n bundle ships `menu.terminal.open` / `menu.terminal.close` / `menu.terminal.send_selection` / `menu.terminal.toggle_keyboard_capture` ("Terminal" menu strings), but no Terminal menu ever renders — the menu bar is static (File/Edit/View/Selection/Go/LSP/Help) with a terminal focused too, and File/Edit contain no terminal items. Run #31's assumption that `menu.terminal.send_selection` lives on a right-click menu appears wrong — the strings are currently unreachable in the UI (the *commands* exist in the palette and work).
+- **Suggested improvement:** an editor right-click menu (Cut/Copy/Paste/Send Selection to Terminal…) would match VS Code/Sublime muscle memory now that mouse support is otherwise rich (drag-select, double-click-drag, menus, popups); alternatively render the Terminal menu the i18n strings imply.
+- **Severity:** Low (no doc promises an editor context menu; all commands reachable via palette/menus). Not filed per R3; batch candidate.
+- **Discovered:** Run #49, 2026-07-07

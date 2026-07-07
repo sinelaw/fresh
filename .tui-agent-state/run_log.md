@@ -1691,3 +1691,28 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `qa48sr`/`qa48ig`; removed `/tmp/sr48`, `/tmp/ig48`; build worktree lives in session scratchpad (auto-reclaimed).
 
 **NEXT new-coverage (Run #49+, top-down):** (a) **mouse-driven coverage via the SGR harness** (Run #47 breakthrough, still untouched): terminal Ctrl+Click path-open, '+' new-tab popup, right-click context menus (editor/tab), drag-select, scroll wheel — note 0.4.2 changelog "tab bar's + popup and tab context menu grab the keyboard while open" as an assertable behavior; (b) Slang shader + Go-to-Def into read-only builtin modules (0.4.3 #2536/#2539 — needs slangd, may be absent); (c) OSC 7 cwd; (d) theme color-transition; (e) GDScript (#2238); (f) 0.4.2 "Open Terminal to the Right/Below" + File Open dotfile reveal + JSONC config tolerance (quick wins). Then #2197 pyright only if a fix lands. Watch for maintainer action on #2583/#2582/#2577.
+
+---
+
+## Run #49 — 2026-07-07 — Mouse-driven UI sweep via SGR harness: COMPREHENSIVE PASS (no new bug) — v0.4.3 @ 89d91e84d
+
+**Preflight:** Synced state branch (clean). Master FORCE-UPDATED past Run #48's `9f6135001` → **`89d91e84d`** (still v0.4.3; single new commit "fix" by Asuka Minato adding GLSL/HLSL/WGSL sublime-syntax grammars — new feature, no open agent issue touched) → per **R1** skipped fixed-bug rechecks (17 open agent issues, no fix landed). Playbook intact. GitHub MCP auth live (list_issues OK). Built release binary from scratchpad worktree @ 89d91e84d.
+
+**Objective (per R2, RUN #49 priority (a)):** first real exercise of the Run #47 SGR mouse breakthrough — '+' popup, tab context menu (incl. the 0.4.2 "grab the keyboard while open" claim), drag-select, double-click, scroll wheel, terminal Ctrl+Click, plus quick wins. **Everything documented PASSES; no bug filed.**
+
+- **'+' new-tab popup:** click opens New Terminal/New File popup. **0.4.2 keyboard-grab claim VERIFIED** — printable key with popup open does NOT leak into the buffer (buffer byte-identical, tab not dirtied); arrows move the `48;5;25` highlight; Enter: New File → `[No Name]` ("New buffer"), New Terminal → terminal tab w/ auto-title; Esc closes.
+- **Tab context menu (right-click tab):** 7 items (Close/Close Others/Close to the Right/Left/Close All/Copy Relative Path/Copy Full Path). **Keyboard-grab VERIFIED** ('q' consumed, no leak); Esc closes; **Copy Full Path** → "Copied path: /tmp/mouse49/words.txt", clipboard verified by pasting into a scratch buffer; **Close** closes the right-clicked (not active) tab ("Tab closed"). Identical menu on terminal tabs.
+- **Terminal clickable paths:** absolute path in output → Ctrl+hover underlines exactly the path (`[4m`), Ctrl+Click opens it ("Opened hello.py", Python filetype). **OSC 7 (priority (c) folded in):** plain bash emits no OSC 7 → relative path correctly NOT clickable; after a manual `printf` OSC 7 announcing cwd, the SAME relative path underlines + opens (`/tmp/mouse49/long.txt` via `mouse49/long.txt` from `/tmp`). Docs' resolution chain behaves as written; terminal tab auto-title follows the announced cwd.
+- **Editor mouse:** plain click = exact cursor placement (Ln 2 Col 9 from SGR col 15 row 4); **drag-select** char-precise (line1→line3 col9, cursor at drag end); **double-click** selects exactly the word; **double-click+hold+drag** extends word-by-word (docs editing.md table row verified — "bravo charlie delta" whole-word snap). **Scroll wheel:** 3 lines/notch, viewport-only (cursor stays), up/down symmetric.
+- **Menu bar via mouse:** top-level menu opens on click; menu item click activates (Select All → 5 lines highlighted).
+- **Ctrl+Right-Click theme popup (themes.md):** PASS — Theme Info popup (Region/Foreground/Background keys, RGB swatches, Open in Theme Editor).
+- **0.4.2 quick win (f):** "Open Terminal to the Right" → vertical split, own tab bar, "Terminal 1 opened"; "Open Terminal Below" → nested horizontal split, "Terminal 2 opened". PASS.
+- **Editor-area right-click = no-op** (full-screen before/after diff identical, selection retained) and the `menu.terminal.*` i18n strings (incl. `send_selection`) are unreachable in any rendered menu → **IMP-025** (R3, not filed).
+
+**HARNESS (learning_db):** verified SGR codes right=2/Ctrl+left=16/Ctrl+right=18/motion=32/hover=35/Ctrl+hover=51/wheel=64,65; focus-follows-Ctrl+Click-open gotcha (typed shell cmds into the opened buffer — undo is per-char); popup highlight capture lags one keypress (trust result over highlight); palette renders at BOTTOM when a terminal is focused; '+' column must be recomputed as tabs open.
+
+**State updates:** run_log (this entry), learning_db (+1 topic), potential_improvements (+IMP-025), github_issues (Last-updated bump only — no new issue), test_plan (Run #49 note + RUN #50 priority order).
+
+**Cleanup:** killed tmux `qa49`; removed `/tmp/mouse49`; build worktree in session scratchpad (auto-reclaimed).
+
+**NEXT new-coverage (Run #50+, top-down):** (a) **Slang shader + Go-to-Def into read-only builtin modules** (0.4.3 #2536/#2539 — needs slangd, may be absent) and/or smoke the brand-new GLSL/HLSL/WGSL grammars from `89d91e84d` (open a .glsl/.wgsl file, assert syntax coloring + filetype in status bar — no LSP needed); (b) theme color-transition animation; (c) GDScript (#2238); (d) remaining 0.4.2 quick wins: File Open reveals dotfiles when filter starts with `.`, JSONC config comments/trailing-commas tolerance, macro Save-to-init.ts / Promote-to-command; (e) File Explorer right-click context menu (explorer.context.* — now drivable with the mouse harness, never tested). Then #2197 pyright only if a fix lands. Watch for maintainer action on #2583/#2582/#2577 and re-opens of #2312.
