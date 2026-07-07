@@ -1852,3 +1852,39 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** removed `~/.config/fresh/init.ts`; killed tmux `fresh-anim52`; removed `/tmp/anim52`, `/tmp/dot52`; removed `/tmp/fresh-master` worktree + prune.
 
 **NEXT new-coverage (Run #53+, top-down):** remaining 0.4.2 quick wins — (a) **JSONC config comments/trailing-commas tolerance (#2497)** (`// comment` + trailing comma in `~/.config/fresh/config.json` loads without silent reset; a syntax slip surfaces an error instead of clobbering); (b) **macro Save-to-init.ts / Promote-to-command (#2487)**; (c) **per-buffer Toggle Line Numbers/Line Wrap** + persistence; (d) Slang Go-to-Def (#2536/#2539) ONLY if slangd appears. Then #2197 only if a fix lands. Watch for maintainer action on #2594/#2591/#2592/#2587/#2583/#2582/#2577 and a #2312 re-open.
+
+---
+
+## Run #54 — 2026-07-07 — Large-file 10MB threshold rework (#2540) core PASS + 2 BUGS #2596/#2597; inlay hints wrap/scroll (#2190) COMPREHENSIVE PASS — v0.4.3 @ 4e945b494
+
+**Preflight:** Synced state branch. Master UNCHANGED at **v0.4.3** (`4e945b494`) since Run #50 → per R1 skipped fixed-bug rechecks (20 open agent issues; no maintainer action on #2594/#2591/#2592/#2587/#2583/#2582/#2577; no #2312 re-open). Auth live. `slangd` still ABSENT → priority (d) skipped again. `rust-analyzer` present as a rustup shim → unblocked priority (f). Built fresh 0.4.3 release from `/tmp/fresh-master` worktree.
+
+**Objective (R2):** Run #54 priorities (e) large-file 10MB single-threshold rework (#2540, 0.4.2) and (f) inlay hints in line wrapping + horizontal scroll (#2190, 0.4.2).
+
+### (e) Large-file threshold #2540 — core rework PASS, 2 NEW BUGS in adjacent scan/goto machinery
+
+Fixtures: `/tmp/lf54/` files of exactly 40-byte numbered lines (`line NNNNNN xxx…`): 2MB(.py)/8MB/12MB/150MB → true last lines 50001/200001/300001/3750001 (trailing newline ⇒ final empty line).
+
+**PASS (the #2540 contract):**
+- 2MB Python (the regression case) + 8MB: normal mode — line-number gutter, `Ln 1, Col 1`, `:50000`/`:200000` land exactly on matching content.
+- 12MB + 150MB: large-file mode — byte-offset gutter (0/40/80…), status `Byte 0`.
+- `Ctrl+G` in large-file mode offers `Scan file for exact line numbers? (y/N)`; decline gracefully falls back to a `Go to byte offset:` prompt; accept → `Line index built successfully` → real line numbers; post-scan Go to Line 150000 lands on exact content. Palette also has direct "Scan Line Index". 150MB scan completes in seconds and its total is CORRECT (clamps to Ln 3750001).
+- Single setting drives the chain BOTH ways: `large_file_threshold_bytes:1000000` → 2MB file enters byte mode; `20000000` → 12MB file loads with line numbers.
+
+**BUG FILED → #2596 (med):** the FIRST line-index scan of the 12MB file undercounts the total. Scanned with viewport at top → max **299828** (3/3 at 1s/3s/15s post-launch — not a load race); scanned with cursor at EOF → max **298189** (2/2). Consequences: Go to Line clamps below the real last line (999999 AND 299500 both land on the wrong max — real lines above it unreachable by line jump); EOF gutter row labeled non-monotonically (`298189` directly under a correct `300000`); right after an at-EOF scan, status said `Ln 150001` while the gutter said `298189` for the SAME position (two different wrong numbers in one frame). Mappings BELOW the wrong max are exact (150000, 298188 verified by content). **Re-running "Scan Line Index" corrects to 300001 (2/2)** = workaround. 150MB first scan correct → size/state-dependent.
+
+**BUG FILED → #2597 (med):** palette `:N` line-jump mode in an UNSCANNED large file jumps to **end of file** (`Byte 12000000`) and reports **"Jumped to line 1"** — no scan offer, wrong destination, wrong message (2/2, targets `:150000` and `:1000`). Contrast: same `:N` works in small files; `Ctrl+G` in the same buffer offers the scan properly; post-scan `:N` works.
+
+### (f) Inlay hints participate in line wrapping + horizontal scroll (#2190) — COMPREHENSIVE PASS, no bug
+
+Setup: tiny cargo crate `/tmp/inlay54` (fn with 2 verbose params; `let` bindings incl. a 131-char line), workspace Trusted (T+Enter), `rustup component add rust-analyzer` for the STABLE toolchain (see harness note), palette "Start/Restart LSP Server" → `LSP (on)` → type hints (`: i32`, `: Vec<String>`, `: &String`) + parameter-name hints render in dim `38;5;244`.
+
+- **Wrap ON (60-col + 100-col windows):** hint widths participate in the wrap decision — the crisp proof: line 6's REAL text is 41 chars (fits at 60 cols) yet it wraps into 3 rows because rendered width incl. hints ≈ 90; each param hint flows to its continuation row with its argument. Character accounting across line 8's 4 wrapped rows reconstructs the source EXACTLY (no dropped text — the original #2190 symptom 1; `jjjj` splits `jj|jj` cleanly).
+- **Wrap OFF + horizontal scroll:** End on the hinted 131-char line scrolls the viewport so the true EOL (`42);`) AND cursor are visible; hints scroll WITH content at correct relative positions; scroll offset accounts for hint width (original #2190 symptom 2 fixed).
+- **Integrity:** `Ln/Col` readouts use REAL columns (End = Col 132 / Col 42 — hint widths never counted); buffer never dirtied; hints visually distinct from code.
+
+**State updates:** run_log (this entry), learning_db (+1 topic), confirmed_bugs (+BUG-029/#2596, +BUG-030/#2597), github_issues (+2 rows, header bump), test_plan (Run #54 note + RUN #55 priority order).
+
+**Cleanup:** killed tmux `qa54`; removed `/tmp/lf54` (172MB fixtures), `/tmp/inlay54`; removed `~/.config/fresh/config.json` test configs; `/tmp/fresh-master` worktree removed at end of run.
+
+**NEXT new-coverage (Run #55+, top-down):** (a) recheck #2596/#2597 only if a fix lands; (b) Slang Go-to-Def (#2536/#2539) ONLY if slangd appears on PATH; (c) with rust-analyzer now installable via rustup in-container: LSP request-based deep dive on Rust (hover/definition/references/rename/completions — pyright #2197 blocked path may be testable via Rust instead); (d) `textDocument/implementation` (0.4.1 `6df567f04`, never tested); (e) "Switch Rust Analyzer Mode" Full↔Reduced Memory palette command (docs/features/lsp.md:212). Then #2197 pyright only if a fix lands. Watch for maintainer action on #2596/#2597/#2594/#2591/#2592/#2587/#2583/#2582/#2577; re-opens of #2312.

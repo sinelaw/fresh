@@ -436,3 +436,25 @@ Each bug entry:
 - **Expected (Fresh docs `configuration/index.md` §Screensaver + 0.4.0 blog):** a brief interpolated color-transition between old and new theme palettes.
 - **Actual:** instant swap, zero interpolated frames. CONTROL: tab-switch slide (Ctrl+PgDn) DOES render transient offset frames (~16 cols, ~170ms) in the same session → framework + terminal are capable; the transition just never triggers.
 - **First Seen:** Run #52, 2026-07-07 (v0.4.3, master @ 4e945b494).
+
+## BUG-029: Large files — first line-index scan undercounts the total line count
+- **ID:** BUG-029
+- **Title:** The first on-demand line-index scan of a >10MB file computes a too-small total; Go to Line clamps below the real last line and EOF is labeled with a wrong line number.
+- **Severity:** Medium (last ~200–1800 lines of a 12MB fixture unreachable by line jump; non-monotonic gutter at EOF; status vs gutter disagree on the same position right after an at-EOF scan: `Ln 150001` vs `298189`).
+- **Status:** Open — GitHub #2596 filed (Run #54).
+- **GitHub Issue:** [#2596](https://github.com/sinelaw/fresh/issues/2596)
+- **Reproduction:** 12,000,000-byte file of 300,000 40-byte lines (true last line 300001). Open, `Ctrl+G` → `y`+Enter to scan → `Ctrl+G` `999999` Enter → lands "line 299828" (viewport-at-top scan, 3/3 at 1s/3s/15s post-launch) or "298189" (cursor-at-EOF scan, 2/2). `299500` also clamps. Below-max mappings exact (150000/298188 verified by content).
+- **Expected (docs/features/navigation.md "exact line numbers"; VS Code last line):** max = 300001; every line reachable.
+- **Actual:** wrong, position-dependent max; re-running "Scan Line Index" corrects to 300001 (2/2) = workaround. 150MB fixture scans correctly first time.
+- **First Seen:** Run #54, 2026-07-07 (v0.4.3, master @ 4e945b494).
+
+## BUG-030: Large files — palette `:N` line jump before a scan goes to EOF and claims "Jumped to line 1"
+- **ID:** BUG-030
+- **Title:** In an unscanned large-file buffer, the palette's `:line` mode jumps to the end of the file and reports "Jumped to line 1" instead of offering the line-index scan.
+- **Severity:** Medium (silent wrong navigation with a wrong message; the advertised `:line` palette mode is a trap in exactly the file class where line jumps need help).
+- **Status:** Open — GitHub #2597 filed (Run #54).
+- **GitHub Issue:** [#2597](https://github.com/sinelaw/fresh/issues/2597)
+- **Reproduction:** Open a >10MB file (byte-offset gutter). `Ctrl+P`, `C-u`, type `:1000`, Enter → cursor at `Byte 12000000` (file end), status "Jumped to line 1". 2/2 (also with `:150000`).
+- **Expected (Ctrl+G parity + VS Code goto):** offer "Scan file for exact line numbers?" or a clear "no line index" message with the cursor unmoved.
+- **Actual:** bogus jump to EOF + wrong message. Controls: `:N` exact in small files; `Ctrl+G` same buffer offers the scan; post-scan `:N` works.
+- **First Seen:** Run #54, 2026-07-07 (v0.4.3, master @ 4e945b494).
