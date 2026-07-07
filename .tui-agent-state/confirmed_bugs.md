@@ -361,6 +361,18 @@ Each bug entry:
 
 ---
 
+## BUG-023: Typing a dedent trigger does not re-indent the line (Python `else:`, custom `decrease_indent_pattern` tokens) — only `}` dedents live
+- **ID:** BUG-023
+- **Title:** Dedent rules apply ONLY at Enter-time (moved-down text). Typing a line matching a dedent trigger never re-indents it: built-in Python `else:` typed on an indent-4 line stays at 4 (VS Code/Sublime/Vim dedent live), and a custom `decrease_indent_pattern` token (`CLOSE`) behaves the same. Contrast: built-in `}` in C DOES live-dedent (electric bracket). The mis-indent then compounds (Enter after the wrong `else:` indents the next line to 8).
+- **Severity:** Medium (daily Python if/else workflow; also makes the doc's own `begin`/`end` example useless in practice — you type `end`, never Enter-split before it).
+- **Status:** Open — GitHub #2582 filed (Run #47).
+- **GitHub Issue:** [#2582](https://github.com/sinelaw/fresh/issues/2582)
+- **Reproduction (built-in Python, no config):** `fresh --no-restore test.py`; type `if a:` Enter `x = 1` Enter → line 3 inherits indent 4; type `else:` → stays `    else:` (expected: dedents to col 1). Custom variant: `.fresh/config.json` language w/ `"decrease_indent_pattern":"^\\s*CLOSE\\b"`, type `CLOSE` on an indented line → stays indented (this exact case was a row in #2314's expected table; #2314 was closed as completed).
+- **What works (do not re-report):** Enter-split (cursor before `CLOSE tail`, Enter → moved-down line dedents one level, per docs); `increase_indent_pattern`; `dedent_next_line_pattern` (verified Run #47: `RET x` line at 4 → next line 0); C `}` live dedent.
+- **First Seen:** 2026-07-07 (Run #47), fresh 0.4.3 @ 9f6135001.
+
+---
+
 ## PENDING (not filed) — vi mode missing standard commands (→ IMP-023)
 - `R` (Replace/overtype mode): unrecognized — stays `-- NORMAL --`, next key runs as a normal command (`R`+`A` fired append-at-EOL).
 - `gU`/`gu`/`g~` case OPERATORS: no-ops (`gUw` left text unchanged, `w` only moved cursor). NB single-char `~` DOES work.

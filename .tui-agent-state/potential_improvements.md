@@ -223,3 +223,9 @@ change would make it self-evident without requiring users to read docs.
 - **Suggested improvement:** implement these as part of the ongoing "Vim compatibility motions" work, or document the supported-motion subset so Vim users know what's available. Good candidate for ONE consolidated "vi mode: missing standard commands" issue once the full gap list is characterized (rather than one issue per command).
 - **Severity:** Low–Medium (missing features, not broken behavior; a Vim user reaching for `R`/`gU` just sees nothing happen — `R`'s fall-through to `A` is mildly surprising). Not individually filed per R3.
 - **Discovered:** Run #44, 2026-06-22
+
+### IMP-024 — virtual space: a buffer under `virtual_space:"block"` config can never return to block mode after using the per-buffer toggle
+- **Observed (Run #47, v0.4.3 @ 9f6135001):** with `editor.virtual_space:"block"` set in config, running "Toggle Virtual Space (Current Buffer)" moves the buffer to `on`, and from there the toggle only cycles `on` ↔ `off`. There is no palette command or per-buffer path back to `block` — the user must restart (or open a new buffer) to get their configured block-only behavior back. The toggle's description ("Turn virtual space on or off") matches the implementation, but a block-mode user who taps it once loses their mode silently.
+- **Suggested improvement:** cycle through the buffer's configured mode (off → configured-mode → on → off), or add a "Set Virtual Space Mode (Current Buffer)" picker (off/on/block), or show the current mode in the status message so the loss is at least visible.
+- **Severity:** Low (edge; block mode itself works fine). Batch candidate for the periodic "docs/UX polish" issue (R3).
+- **Discovered:** Run #47, 2026-07-07
