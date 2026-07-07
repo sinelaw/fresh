@@ -425,3 +425,14 @@ Each bug entry:
 - **Expected (VS Code + Fresh's own multi-repo behavior):** `inner.py` shows `M` from its own repo.
 - **Actual:** no decoration; only outer's perspective rendered.
 - **First Seen:** Run #51, 2026-07-07 (v0.4.3, master @ 4e945b494).
+
+## BUG-028: Theme color-transition animation never plays (documented but absent on every switch path)
+- **ID:** BUG-028
+- **Title:** The documented "brief color-transition animation" on theme switch never renders — every switch path swaps colors instantly, though the tab-switch slide from the same animations framework does animate.
+- **Severity:** Medium (documented, toggleable feature missing / doc mismatch; purely cosmetic — theme still changes correctly).
+- **Status:** Open — GitHub #2594 filed (Run #52).
+- **GitHub Issue:** [#2594](https://github.com/sinelaw/fresh/issues/2594)
+- **Reproduction:** `fresh --no-restore <colorful.py>`; confirm Settings → Editor → Display → Animations `[v]` (default). Frame-burst harness (`scratchpad/burst.py`: send key then loop `tmux capture-pane -e -p` ~4ms/frame ×200–300, diff color-code signature on a fixed line). Switch themes 5 ways: Select Theme picker preview (arrows) / apply (Enter) / cancel (Esc); Settings Theme dropdown + Ctrl+S; init.ts-registered `editor.applyTheme()`. All show only 2 signatures (before/after) 4ms apart, no intermediates over 1s+.
+- **Expected (Fresh docs `configuration/index.md` §Screensaver + 0.4.0 blog):** a brief interpolated color-transition between old and new theme palettes.
+- **Actual:** instant swap, zero interpolated frames. CONTROL: tab-switch slide (Ctrl+PgDn) DOES render transient offset frames (~16 cols, ~170ms) in the same session → framework + terminal are capable; the transition just never triggers.
+- **First Seen:** Run #52, 2026-07-07 (v0.4.3, master @ 4e945b494).

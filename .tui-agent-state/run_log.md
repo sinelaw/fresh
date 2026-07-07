@@ -1770,3 +1770,31 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `qa51`; removed `/tmp/mono51`, `/tmp/mono51b`; removed `/tmp/fresh-master` worktree.
 
 **NEXT new-coverage (Run #52+, top-down):** (a) theme color-transition animation; (b) GDScript (#2238); (c) remaining 0.4.2 quick wins: File Open reveals dotfiles when filter starts with `.`, JSONC config comments/trailing-commas tolerance, macro Save-to-init.ts / Promote-to-command; (d) Slang Go-to-Def (#2536/#2539) only if slangd appears. Then #2197 pyright only if a fix lands. Watch for maintainer action on #2591/#2592/#2587/#2583/#2582/#2577 and re-opens of #2312.
+
+---
+
+## Run #52 — 2026-07-07 — Theme color-transition animation → BUG #2594 (never plays); GDScript #2238 PASS; dotfiles reveal #2407 PASS — v0.4.3 @ 4e945b494
+
+**Preflight:** Synced state branch (up to date). Master UNCHANGED at **v0.4.3** (`4e945b494`) since Run #50 → per R1 skipped fixed-bug rechecks (18 open agent issues, no new fix landed; no maintainer action on watched issues). Lessons continuity OK (run_log refs Lesson 44–50; learning_db uses prose section headings not numbered lessons since ~Run #35 — consistent). Auth live (list_issues OK). Built `fresh` 0.4.3 from `/tmp/fresh-master` worktree @ `4e945b494` (release, exit 0).
+
+**Objective (R2):** Run #52 priority (a) **theme color-transition animation** — a long-standing untested backlog item. Docs promise it: `docs/configuration/index.md` §Screensaver "Switching themes plays a brief color-transition animation"; 0.4.0 blog "Animations framework — … a color-transition on theme switch (toggleable)".
+
+**Harness built:** `scratchpad/burst.py <session> <outdir> <key> [nframes] [line]` — fires ONE key then burst-captures `tmux capture-pane -e -p` at ~4ms/frame (measured 20 caps/74ms), timestamps each frame, prints frames where the color-code signature on `line` changes. If only 2 signatures over a 1s window → no animation.
+
+**Result — BUG FILED #2594 (med):** the color-transition NEVER plays. Fixture `/tmp/anim52/sample.py` (colorful Python). Tested ALL FIVE switch paths; every one swaps old→final palette in adjacent 4ms frames, ZERO interpolated frames over 200–300 frame (1s+) bursts:
+1. Select Theme picker **live-preview** (arrow) — instant single-step swap.
+2. Picker **apply** (Enter) — instant; status `Theme changed to '<name>'`.
+3. Picker **cancel/revert** (Escape after previewing) — instant.
+4. **Settings UI** General→Theme dropdown + `Ctrl+S` — instant; `Settings saved to User layer`. (Dropdown lists only 5 themes — curated subset of the 8 in the palette picker.)
+5. **Plugin API** `editor.applyTheme("high-contrast")` from an init.ts-registered command (`qa_apply_theme`) — instant.
+- **CONTROL (proves harness+terminal capable):** tab-switch slide via Next Buffer (`Ctrl+PgDn`) DOES render transient frames — buffer content offset ~16 cols for ~170ms (frames 155–318ms) before settling. Truecolor works (modal dim renders `38;2;R;G;B`). `editor.animations`=on (default), `editor.cursor_jump_animation`=on. So the transition specifically never fires — regressed/removed or docs stale.
+
+**Also advanced (b)+(c) same session:**
+- **GDScript #2238 — COMPREHENSIVE PASS** (fixture `/tmp/anim52/player.gd`). Status filetype `GDScript` with no config; real tree-sitter coloring (keywords `extends`/`const`/`var`/`func`/`signal`/`if`/`void` = `38;5;51`, comments `253`, numbers `69`, func names `226`, punctuation/brackets `6`, `@export` annotations, `→` tab glyphs); auto-indent after `:` (typed `func x():`+Enter+`pass` → indented); occurrence/reference highlight (dark theme: `health` + all refs get `48;5;16` box — same feature as #2312, invisible in high-contrast); Godot LSP registered but **disabled by default** → `LSP (off)` (matches the PR's "disabled-by-default Godot LSP bridge"). Not filed — clean pass.
+- **Dotfiles reveal in Open File #2407 — PASS** (fixture `/tmp/dot52/` w/ `.hidden_rc`/`.config_secret` + 2 visible). Baseline hides dotfiles. **Mechanism 1 (#2407):** filter starting `.` reveals them inline; narrow + Tab-complete + Enter opens `.hidden_rc`. **Mechanism 2:** header `☐ Show Hidden (Alt+.)` checkbox — `Alt+.` reveals them regardless of filter. Dialog Enter semantics characterized (NOT a bug): field-as-bare-dir-path → Enter opens the arrow-selected list row; field-as-partial-filename → Enter takes the field literally and CREATES that file (standard "type new filename to create"). So arrow+Enter only works with a dir-path field — else Tab-complete first.
+
+**State updates:** learning_db "Theme color-transition animation + tab-switch slide + dotfiles reveal + GDScript (Run #52)" (incl. `burst.py` harness notes); github_issues #2594 row + header; confirmed_bugs BUG-028; test_plan Run #52 note + RUN #53 priority order.
+
+**Cleanup:** removed `~/.config/fresh/init.ts`; killed tmux `fresh-anim52`; removed `/tmp/anim52`, `/tmp/dot52`; removed `/tmp/fresh-master` worktree + prune.
+
+**NEXT new-coverage (Run #53+, top-down):** remaining 0.4.2 quick wins — (a) **JSONC config comments/trailing-commas tolerance (#2497)** (`// comment` + trailing comma in `~/.config/fresh/config.json` loads without silent reset; a syntax slip surfaces an error instead of clobbering); (b) **macro Save-to-init.ts / Promote-to-command (#2487)**; (c) **per-buffer Toggle Line Numbers/Line Wrap** + persistence; (d) Slang Go-to-Def (#2536/#2539) ONLY if slangd appears. Then #2197 only if a fix lands. Watch for maintainer action on #2594/#2591/#2592/#2587/#2583/#2582/#2577 and a #2312 re-open.
