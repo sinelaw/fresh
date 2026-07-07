@@ -522,3 +522,13 @@ Each bug entry:
 - **GitHub Issue:** [#2604](https://github.com/sinelaw/fresh/issues/2604)
 - **Reproduction:** vi mode on, line `the "quick" brown fox`, `0` then `d` `a` `"` → `the  brown fox` (cat -A: `the  brown fox$`). Same from inside the quotes (2/2). `di"` unaffected.
 - **First Seen:** Run #56, 2026-07-07 (v0.4.3, master @ 11dccfad5), during the #2439 fix verification.
+
+## BUG-037: vi visual-block indent operators `>`/`<` are no-ops and don't exit VISUAL BLOCK mode
+- **ID:** BUG-037
+- **Title:** In VISUAL BLOCK mode (Ctrl+V), `>` and `<` do nothing — buffer unchanged, no status feedback, and the editor remains in `-- VISUAL BLOCK --` (Vim `:help v_b_>`: shift the highlighted lines by shiftwidth and return to NORMAL).
+- **Severity:** Medium (core Vim editing command silently dead in one mode; same symptom #2438 had before its fix).
+- **Status:** Open — GitHub #2606 filed (Run #58).
+- **GitHub Issue:** [#2606](https://github.com/sinelaw/fresh/issues/2606)
+- **Reproduction:** vi mode on, cursor col 1 line 2, Ctrl+V, `j`, `>` → nothing, mode stays VISUAL BLOCK (2/2; `<` on an indented line 1/1). Keys sent individually with ≥0.4s gaps, buffer verified between steps, re-polled at 1.2s+ (render-lag guard).
+- **Controls:** `V`+`>` indents 4sp + returns NORMAL (#2438 fix works for visual-line); `x` in VISUAL BLOCK deletes the selected rect + returns NORMAL (block mode + other operators fine).
+- **First Seen:** Run #58, 2026-07-07 (v0.4.3, master @ 6ab255709).

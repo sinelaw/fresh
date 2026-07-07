@@ -1193,3 +1193,27 @@ Series `3a78ad5ec`…`0bfb54edf`. Two fixtures: **A)** root NOT a repo (`/tmp/mo
 - Palette prefills `>` on open (again): file-mode paths need `C-u` first; palette file mode can NOT open absolute paths outside the workspace (`No selection`) — use **Ctrl+O**, `C-u`, type the absolute path (creates missing dirs on save via `(c)reate` prompt; `Directory 'src/bin' does not exist. (c)reate, (A)bort?` needs `c`+Enter).
 - Workspace Trust dialog appears on FIRST launch per cwd (radio `(*) Keep Restricted` default; `T` selects Trust, then Enter = OK). Trust persists across relaunches in the same cwd. LSP needs Trusted.
 - `rustup component add rust-analyzer` needed again after container reclaim (from the crate dir). Two.rs finding: new `src/bin/<name>.rs` created mid-session DID get full diagnostics (E:2 ~2s after save, ●, F8, clears-on-fix) — Run #56's no-diagnostics observation not reproducible; treat as transient RA workspace-reload race unless seen again (then capture the LSP log via status-popup → view log).
+
+## Code folding deep-dive + vi visual-block sweep (Run #58) — v0.4.3 @ 6ab255709
+
+**Folding feature map (docs: editing.md §Code Folding, lsp.md §Code Folding, 0.2.9 blog):**
+- Two modes, both live: LSP `foldingRange` when server ready; indent-based fallback otherwise AND in large-file mode. **Litmus between them:** the `use`-imports block gets ▾ ONLY with LSP on — indent fallback can't produce that range. Fold indicators appear pre-LSP too (fallback), so "indicators visible" alone does not prove LSP folding.
+- Gutter glyphs at SGR col 1: ▾ expanded / ▸ collapsed; collapsed row renders `▸N │ <header> { ...` and line numbering continues after the hidden range (LSP fn ranges end BEFORE the closing brace, so `}` stays visible).
+- "Toggle Fold" = palette builtin, no default key. On a blank/non-foldable line: silent no-op (no status message).
+- **Fold-from-within moves the cursor to the header** (VS Code-like) but the status bar keeps the OLD hidden `Ln` while `Col` refreshes → #2301 family (comment added, 3rd trigger). `tmux display -p '#{cursor_y}'` is the reliable read; typing before any cursor move edits the HEADER line while status claims the hidden line. Folding from the header itself doesn't desync.
+- Up/Down skip folded regions bidirectionally; from a hidden-cursor state Down → first visible line after the fold, Up → header. Works in large-file mode too (byte-gutter offsets skip whole blocks).
+- Gutter mouse click toggles: `send-keys -l $'\033[<0;1;ROWM\033[<0;1;ROWm'` (line N at row N+2 on 220x50). Both directions verified.
+- Edits above a fold: header + indicators track, content intact after unfold, undo clean (#1571 fix holds).
+- Per-split fold state independent (Split Horizontal = stacked panes; fold in one, other unaffected). Closing the folded split leaves the survivor unfolded.
+- Wrap: folded regions hide their wrapped continuation rows correctly. NIT (IMP-031): when the HEADER line itself wraps, the `...` is appended to the header's FIRST visual row and the continuation row still renders below it.
+- Session persistence: folds (incl. LSP-only ranges) survive quit + pure-restore relaunch; after an external edit while closed, folds relocate by header text (#1568 holds — sed-inserted 2 lines, fold followed `fn magnitude` 14→16). Unfolding a persisted LSP fold with LSP off removes the indicator (no indent range there).
+- Nested fold memory: inner fold state preserved across outer fold/unfold.
+- A diagnostic ● on a hidden line is not surfaced on the fold-header row while folded; status severity counts unaffected (minor, unfiled).
+
+**vi sweep results:** `d2fo` PASS (count+find under operator, inclusive). `cc`/`S` PASS = clear line + INSERT (Vim noai default). **Visual block:** Ctrl+V → `-- VISUAL BLOCK --`; block `x` deletes the rect and returns NORMAL; **`>`/`<` in block mode = NO-OP that also stays in the mode → #2606** (controls: `V`+`>` works post-#2438; block `x` works).
+
+**Harness lessons:**
+- **vi operator render lag can exceed 1s:** after `c`+`c` the first capture showed `OPERATOR (c)` + unchanged buffer; 1.2s later the line was cleared + INSERT. Re-poll at ~1.5s before declaring any vi operator dead (extends the Run #57 0.5–1s guidance).
+- Vi-mode quit: the `(s)ave/(d)iscard/(q)uit` prompt can swallow the first `d` right after leaving a vi visual mode — confirm the prompt is gone, else resend `d`+Enter.
+- Toggle Line Wrap from the palette can silently not apply on the first invocation (likely palette-open race) — verify a continuation row exists (blank-number gutter `    │`) before testing wrap-dependent behavior.
+- Go-to-line then Toggle Fold sequence is reliable for fold targeting; `Ctrl+G` prompt renders below the status bar as before.

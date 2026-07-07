@@ -268,3 +268,8 @@ change would make it self-evident without requiring users to read docs.
 - **Severity:** Low-med doc bug (R3 → batch). Related behavioral nit: one bad field discarding the entire layer is harsh, but Run #53 already characterized broken-config handling (no-clobber + warning) as acceptable.
 - **Also:** "Formatting not supported by LSP server" is the message when NO LSP is configured at all (Text buffer) — copy implies a server exists and lacks the capability.
 - **Discovered:** Run #57, 2026-07-07
+
+## IMP-031: Fold ellipsis renders mid-header when the fold-header line wraps (Run #58, v0.4.3 @ 6ab255709)
+- **Observed:** with line wrap ON and a fold whose header line itself wraps (45-col window, `fn describe(p: &Point, verbose: bool) -> String {`), collapsing the fold appends the `...` ellipsis to the END OF THE FIRST VISUAL ROW of the header, while the header's own continuation row (`bool) -> String {`) still renders below it. Reads as if the ellipsis marks the fold point mid-signature. VS Code renders the full (wrapped) header and puts the `…` after the header's logical end.
+- **Severity:** Low, cosmetic; the fold itself is correct (hidden range exact, unfold restores). Batch per R3.
+- **Discovered:** Run #58, 2026-07-07.

@@ -1981,3 +1981,36 @@ New `src/bin/two.rs` created mid-session (Ctrl+O absolute path, `(c)reate` dir p
 **State updates:** run_log (this), learning_db (+1 topic), github_issues (+#2605 row, #2441/#2438 → FIXED, header), potential_improvements (+IMP-030), test_plan (Run #57 DONE + RUN #58 order).
 
 **Cleanup:** killed tmux `fresh-run57`; removed `/tmp/vi57`, `/tmp/fmt57`; kept `/tmp/fresh-master` worktree + target for next run (container permitting).
+
+# Run #58 — 2026-07-07 (v0.4.3 @ 6ab255709) — LSP code folding COMPREHENSIVE PASS (+#2301 comment) + vi quick sweep → BUG #2606 (visual-block indent operators)
+
+**Preflight:** state synced; playbook + lessons intact (prose section headings since ~Run #35, consistent); auth live (`list_issues` OK, 25 open agent issues, none touched by maintainer since Run #57). Master **UNCHANGED @ 6ab255709** since Run #57 → per R1 no fixed-bug rechecks due. Container reclaimed again → recreated `/tmp/fresh-master` worktree, full release rebuild (exit 0, 7m09s), reinstalled rust-analyzer component from the crate dir.
+
+## (a) LSP code folding — first-ever systematic test — COMPREHENSIVE PASS (priority a)
+Fixture `/tmp/fold58` tiny crate (struct+impl+fns+if+for) + `notes.txt` indented outline + 12MB `big.txt`. ALL documented contracts verified:
+- **LSP vs indent-fallback modes both live:** pre-LSP the `use` block has NO ▾ (indent fallback can't see it); after `Start LSP` + ready, line 1 gains ▾ (foldingRange imports fold) — clean litmus between modes.
+- **Toggle Fold (palette):** collapse → `▸14 │ fn magnitude(&self) -> f64 { ...`, lines 15–17 hidden, closing brace 18 visible (LSP fn ranges end before `}`); re-toggle restores. Blank line → silent graceful no-op.
+- **Fold-from-within:** folding from line 16 folds the CONTAINING range; cursor physically moves to the header (VS Code-like) — but status keeps stale `Ln 16` while Col updates (see #2301 comment below).
+- **Up/Down skips folds** both directions (14→18→19, back to 14), also from a hidden-cursor state, also in large-file mode (byte 0 → byte 396).
+- **Gutter-click toggle** (SGR `\e[<0;1;ROW M/m` at col 1): collapse + expand both verified.
+- **Edits above a fold (#1571 regression area): HOLDS.** Insert line above → fold header tracks 14→15, indicators don't drift, content intact after unfold, undo clean.
+- **Per-split fold state:** fold in bottom split leaves top split expanded (Split Horizontal, both showing main.rs).
+- **Folds + wrap:** folded region hides its wrapped continuation rows; other wrapped lines unaffected. NIT → IMP-031: folding a region whose HEADER line itself wraps renders the `...` at the end of the header's FIRST visual row with the header's continuation row still rendered below it.
+- **Session persistence (#1568): HOLDS.** Folds (incl. the LSP-only imports fold) survive quit + pure-restore relaunch; after an EXTERNAL sed edit inserting 2 lines while closed, the fold relocated by header text (fn magnitude 14→16). Unfolding a persisted LSP fold with LSP off removes the indicator (no indent range there) — nuance, not a bug.
+- **Nested fold memory:** inner `section alpha` fold preserved across outer `chapter one` fold/unfold cycle.
+- **Indent fallback (.txt, no LSP):** ▾ on block headers; fold-from-any-line-within-block works (docs claim).
+- **Large-file mode (12MB, lazy byte gutter): docs claim VERIFIED** — indicators render next to byte offsets, Toggle Fold collapses a block, Down skips over it.
+- **#2301 comment added** (3rd trigger): Toggle Fold from within a range moves the cursor to the header (`#{cursor_y}`-verified line 14; typing inserts at 14 col 1) while status shows the old hidden line (`Ln 16`; Col refreshes to 1). Corrects on next move. 2/2, second instrumented. Worse than the jump-triggers: typing right after fold edits the header line while the status claims a hidden line.
+- Minor unfiled: a diagnostic ● on a hidden line isn't surfaced on the fold-header row while folded (status counts unaffected).
+
+## (c) vi adjacent gaps quick sweep — BUG FILED #2606
+- **`d2fo` (operator+count+find): PASS** — `hello world foo bar baz` → `rld foo bar baz` (deletes through 2nd `o`, inclusive).
+- **`cc` / `S`: PASS** — clear line + INSERT (no autoindent-keep = Vim noai default). MEASUREMENT TRAP: first capture after the second `c` still showed `OPERATOR (c)` + unchanged line; 1.2s later the change rendered. Re-poll before declaring an operator dead.
+- **Visual block exists:** Ctrl+V → `-- VISUAL BLOCK --`; `x` deletes the selected block and returns NORMAL (correct cols — anchor was at first non-blank).
+- **BUG #2606 (med, filed):** visual-block `>`/`<` are NO-OPS and do NOT exit VISUAL BLOCK (2/2 for `>`, 1/1 for `<`). Controls same session: `V`+`>` indents + returns NORMAL (#2438 fix works for visual-line); block `x` works → gap is specific to blockwise indent operators. References #2438 fix `cbe2b412c` + owner tracking #2447. Search: `visual block indent` / `"visual block"` / `vi Ctrl+V block indent operator` — no dupes.
+
+**Not reached (→ Run #59):** (b) multi-server only_features/except_features routing; slangd still absent; #2197 no fix landed.
+
+**State updates:** run_log (this), learning_db (+1 topic), github_issues (+#2606 row, header), confirmed_bugs (+BUG-037), potential_improvements (+IMP-031), test_plan (Run #58 DONE + RUN #59 order).
+
+**Cleanup:** killed tmux `fresh-run58`; removed `/tmp/fold58` (incl. 12MB fixture); kept `/tmp/fresh-master` worktree + target for next run (container permitting).
