@@ -261,3 +261,10 @@ change would make it self-evident without requiring users to read docs.
 - Diagnostic related-information renders as a bare top-level file section ("mod.rs:" — a rustc std internals path) instead of nesting under the parent diagnostic (VS Code nests).
 - Panel Up/Down preview on another file's row opens that file as a persistent tab (VS Code uses a transient preview); tab stays open after the panel closes.
 - Signature help does not visually emphasize the active parameter inside the signature line (it IS shown as a separate line below, which advances on comma — different-but-workable presentation; nit only).
+
+## IMP-030: docs/configuration/index.md formatter example uses an invalid string form that discards the whole config layer (Run #57, v0.4.3 @ 6ab255709)
+- **Observed:** `docs/configuration/index.md:203` shows `"formatter": "prettier --write"` (plain string) as the project-config example. Using exactly that shape → warnings log `Failed to load layered config: Parse error: <path>: invalid type: string "...", expected struct FormatterConfig, using defaults` + `[⚠ 1]` badge — and the ENTIRE layered config is dropped to defaults (not just the one field). The correct struct form `{"command": ..., "args": [...]}` is documented only in `docs/plugins/development/language-packs.md:88-118` (which also documents the auto-appended file path).
+- **Why it matters:** the main configuration guide is the first place a user looks; following it silently disables their whole project config (badge is easy to miss). Fix is a one-line doc change (or accept the string form by parsing it into command+args).
+- **Severity:** Low-med doc bug (R3 → batch). Related behavioral nit: one bad field discarding the entire layer is harsh, but Run #53 already characterized broken-config handling (no-clobber + warning) as acceptable.
+- **Also:** "Formatting not supported by LSP server" is the message when NO LSP is configured at all (Text buffer) — copy implies a server exists and lacks the capability.
+- **Discovered:** Run #57, 2026-07-07

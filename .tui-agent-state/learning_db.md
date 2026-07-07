@@ -1176,3 +1176,20 @@ Series `3a78ad5ec`…`0bfb54edf`. Two fixtures: **A)** root NOT a repo (`/tmp/mo
 - Fixture reset: prefer palette **"Revert File"** (prompt `Buffer has unsaved changes. (r)evert, (C)ancel?` — needs `r` THEN Enter) over undo bursts: per-char undo happily rolls back code-action WorkspaceEdits and prior test edits (silently corrupted the fixture twice). BSpace bursts likewise overshoot across line joins — count exact chars or Revert.
 - Settings UI: `/`-search → Down to the result row → Enter jumps to the setting; Enter toggles a checkbox `[ ]`→`[v]`; Ctrl+S "Settings saved to User layer"; REMOVE `~/.config/fresh/config.json` at cleanup.
 - Palette-open race hit again — ALWAYS capture and confirm the bare `>` prompt line before typing the query.
+
+## Format Buffer + formatter config (Run #57) — v0.4.3 @ 6ab255709, rust-analyzer 1.94.1
+
+**Feature map ("Format Buffer" palette cmd, builtin, "Format the current buffer with the configured formatter"):**
+- **Default path is the EXTERNAL formatter, not LSP:** rust (and per CHANGELOG js/ts/py/c/c++/go) ships a built-in default formatter. Status `Formatted with rustfmt` appears even with the LSP STOPPED. Do not attribute default-config formatting results to the LSP path.
+- **Formatting is applied as ONE undoable buffer edit; disk is untouched until save.** Proven with a marker script that rewrites `$1` in place: buffer got the marker, disk did NOT (Fresh formats a copy and diffs the result back in). Ctrl+Z fully reverts + clears dirty flag.
+- **Config shape:** `languages.<id>.formatter` = **struct** `{"command": "...", "args": [...]}`; the buffer's file path is auto-appended to args (language-packs.md). The `"formatter": "prettier --write"` STRING form shown in docs/configuration/index.md:203 is INVALID → `Parse error ... expected struct FormatterConfig, using defaults` — the ENTIRE layered config is discarded (⚠ badge + warnings log). IMP-030.
+- **`formatter: null` does NOT unset the built-in default** (field-level merge treats null as absent) → there is no reachable "none is set" state for rust; the docs' LSP-formatting fallback incl. RANGE formatting can never run (→ #2605). `""`/nonexistent command → graceful `Format failed: Formatter 'X' not found`, NO LSP fallback even with a ready server.
+- **Selection + Format Buffer = whole-file reformat** (selection silently ignored; cursor to end of former selection) → #2605.
+- **No formatter + no LSP** (Text buffer): graceful `Formatting not supported by LSP server` (copy slightly off — no server is even configured — nit).
+
+**Harness:**
+- Vi-recheck measurement traps (cost 2 confused rounds): (1) sending `d f w` in ONE send-keys call races undo/verify captures — for operator sequences send ONE key per call with ≥0.4s gaps and verify buffer text between steps; (2) status-bar Ln/Col + mode segment lag ~0.5–1s behind the buffer — poll twice before concluding a motion failed (a `;` "no-op" was really status lag; the buffer `x`-proof showed col 8 was reached).
+- Trailing `;` swallow struck again typing Rust via `-l 'let x=compute(3,4);'` — line arrived WITHOUT the semicolon (→ RA error + signature-help popup). Append it separately via `tmux send-keys '\;'`.
+- Palette prefills `>` on open (again): file-mode paths need `C-u` first; palette file mode can NOT open absolute paths outside the workspace (`No selection`) — use **Ctrl+O**, `C-u`, type the absolute path (creates missing dirs on save via `(c)reate` prompt; `Directory 'src/bin' does not exist. (c)reate, (A)bort?` needs `c`+Enter).
+- Workspace Trust dialog appears on FIRST launch per cwd (radio `(*) Keep Restricted` default; `T` selects Trust, then Enter = OK). Trust persists across relaunches in the same cwd. LSP needs Trusted.
+- `rustup component add rust-analyzer` needed again after container reclaim (from the crate dir). Two.rs finding: new `src/bin/<name>.rs` created mid-session DID get full diagnostics (E:2 ~2s after save, ●, F8, clears-on-fix) — Run #56's no-diagnostics observation not reproducible; treat as transient RA workspace-reload race unless seen again (then capture the LSP log via status-popup → view log).

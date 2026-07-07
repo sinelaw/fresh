@@ -1956,3 +1956,28 @@ Auto-triggers on `(` (no palette cmd needed). Popup `Signature Help [Alt+T to fo
 **Cleanup:** killed tmux `qa56`; removed `/tmp/lsp56`, `/tmp/vi56`, `~/.config/fresh/config.json` (test config); `/tmp/fresh-master` worktree removed end of run.
 
 **NEXT new-coverage (Run #57+, top-down):** (a) **Format Buffer** (never tested: palette cmd; external-formatter fallback to LSP formatting incl. range formatting — rustfmt via RA on the same crate); (b) **LSP code folding** (foldingRange gutter ▾ indicators seen in Run #56 fixture — fold/unfold, edits around folds, #1571 regression area); (c) characterize the two.rs new-bin-target no-diagnostics pending item; (d) multi-server only_features/except_features routing if config-driveable; (e) slangd only if appears; #2197 pyright only if a fix lands. Watch for maintainer action on #2601–#2604 and earlier filings; re-opens of #2312.
+
+---
+
+# Run #57 — 2026-07-07 (v0.4.3 @ 6ab255709)
+
+**Preflight:** state synced; playbook + lessons intact; GitHub auth live (get_me OK). Master FORCE-UPDATED 11dccfad5 → **6ab255709** (3 commits: `f242ec149` fix vi find-char motions w/ operators = open #2441; `cbe2b412c` vi `>>`/`<<` + visual indent = open #2438; `6ab255709` editor_init refactor). Container reclaimed → recreated `/tmp/fresh-master` worktree, full release rebuild (exit 0), reinstalled rust-analyzer component (from crate dir).
+
+## Fixed-bug rechecks (preflight step 4) — both CONFIRMED FIXED, commented
+- **#2441:** `dfr` → `ld foo bar baz` (inclusive, no operator-pending hang; NORMAL→OPERATOR(d)→FIND(f)→NORMAL); `dfw` → `orld foo bar baz` (motion-key target not dropped); `fo`+`;` → col 8 / `,` → col 5 (both x-proven in buffer text); `ctb`+X → `Xbar baz`+INSERT; `dFo` → `hello world foz`; `dTo` → `hello world fooz`. Marked resolved.
+- **#2438:** `>>` → 4sp indent + cursor first non-blank; `<<` → dedent to col 1; `V`(+`j`)+`>` indents both lines + returns NORMAL; `V`+`<` dedents + NORMAL. Marked resolved.
+- **Measurement-error near-miss:** an early `dfw` burst (`d f w` in one send-keys) + racing undo read as "still broken"; one-key-per-send with ≥0.4s gaps + state verification between steps showed correct behavior. Lesson recorded.
+
+## (a) Format Buffer — first-ever test (priority a) — external path COMPREHENSIVE PASS + BUG #2605
+Fixture `/tmp/fmt57` (misformatted-but-compiling crate). PASS: default config → `Formatted with rustfmt`, saved file rustfmt-clean byte-for-byte; single undoable buffer edit (Ctrl+Z reverts; disk untouched during format — marker script proved Fresh formats a copy: buffer got `// FAKEFMT RAN`, disk didn't); custom `formatter:{command,args}` works (status names the command; file path auto-appended); missing binary → `Format failed: Formatter '/nonexistent-fmt-57' not found`; Text buffer no-formatter/no-LSP → `Formatting not supported by LSP server`.
+- **BUG #2605 (med, filed):** selection (ANSI-verified lines 1–4) ignored — line 6 outside it reformatted too; docs' LSP fallback "(including range formatting) when none is set" unreachable for rust: default formatter runs with LSP STOPPED, `formatter:null` can't unset (field-merge), `""`/nonexistent error WITHOUT falling back. Search: `format buffer selection` / `range formatting` / `formatter` / `"Format Buffer" LSP fallback` — no dupes.
+- **IMP-030:** configuration/index.md:203 string `"formatter"` example → `expected struct FormatterConfig` parse error, WHOLE config layer discarded (+⚠ badge). Struct form only documented in language-packs.md.
+
+## (c) two.rs pending item (from Run #56) — NOT REPRODUCIBLE, resolved
+New `src/bin/two.rs` created mid-session (Ctrl+O absolute path, `(c)reate` dir prompt) with a type error → saved → **E:2 I:1 within ~2s**, gutter ●, F8 jumps col 20 w/ message, fix+save clears to W:1 I:1. Full pipeline works. Run #56 instance = likely transient RA workspace-reload race; re-characterize only if seen again (capture LSP log).
+
+**Not reached (→ Run #58):** LSP code folding (b), multi-server routing (d). slangd still absent.
+
+**State updates:** run_log (this), learning_db (+1 topic), github_issues (+#2605 row, #2441/#2438 → FIXED, header), potential_improvements (+IMP-030), test_plan (Run #57 DONE + RUN #58 order).
+
+**Cleanup:** killed tmux `fresh-run57`; removed `/tmp/vi57`, `/tmp/fmt57`; kept `/tmp/fresh-master` worktree + target for next run (container permitting).
