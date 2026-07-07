@@ -567,10 +567,6 @@ pub struct Window {
     /// when it's showing a buffer view.
     pub overlay_preview_state: Option<crate::app::types::OverlayPreviewState>,
 
-    /// Whether auto-revert (poll-based file-mtime watching) is enabled
-    /// for buffers in this window.
-    pub auto_revert_enabled: bool,
-
     /// Tracks rapid file-change events for debouncing the auto-revert
     /// reload trigger.
     pub file_rapid_change_counts: HashMap<PathBuf, (std::time::Instant, u32)>,
@@ -1922,7 +1918,6 @@ impl Window {
             pending_search_range: None,
             live_grep_last_state: None,
             overlay_preview_state: None,
-            auto_revert_enabled: true,
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
             pending_async_prompt_callback: None,
@@ -2306,6 +2301,21 @@ impl Window {
     /// Check if a buffer is a terminal buffer (in this window).
     pub fn is_terminal_buffer(&self, buffer_id: BufferId) -> bool {
         self.terminal_buffer(buffer_id).is_some()
+    }
+
+    /// Whether auto-revert (reload on external file change) applies to
+    /// `buffer_id`. Auto-revert is a per-buffer property: it honours the
+    /// buffer's metadata flag, and is always forced off for terminal-backed
+    /// buffers. A terminal's backing file is append-streamed by the PTY
+    /// reader every write; reverting it fights that stream and rebuilds the
+    /// whole scrollback's visual-row index on each change (fresh#2608).
+    pub fn buffer_auto_revert_enabled(&self, buffer_id: BufferId) -> bool {
+        if self.is_terminal_buffer(buffer_id) {
+            return false;
+        }
+        self.buffer_metadata
+            .get(&buffer_id)
+            .is_none_or(|meta| meta.auto_revert_enabled)
     }
 
     /// Get the terminal ID for a buffer (if it's a terminal buffer in

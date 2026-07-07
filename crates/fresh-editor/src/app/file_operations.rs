@@ -527,17 +527,32 @@ impl Editor {
         Ok(true)
     }
 
-    /// Toggle auto-revert mode
+    /// Toggle auto-revert for the active buffer. Auto-revert is a per-buffer
+    /// property, so this only affects the buffer in the focused split.
     pub fn toggle_auto_revert(&mut self) {
-        self.active_window_mut().auto_revert_enabled = !self.active_window().auto_revert_enabled;
+        let buffer_id = self.active_buffer();
 
-        if self.active_window().auto_revert_enabled {
-            self.active_window_mut().status_message =
-                Some(t!("status.auto_revert_enabled").to_string());
-        } else {
+        // Terminal-backed buffers never auto-revert (their backing file is
+        // PTY-streamed), so the toggle can't enable it for them.
+        if self.active_window().is_terminal_buffer(buffer_id) {
             self.active_window_mut().status_message =
                 Some(t!("status.auto_revert_disabled").to_string());
+            return;
         }
+
+        let enabled = match self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+            Some(meta) => {
+                meta.auto_revert_enabled = !meta.auto_revert_enabled;
+                meta.auto_revert_enabled
+            }
+            None => return,
+        };
+
+        self.active_window_mut().status_message = Some(if enabled {
+            t!("status.auto_revert_enabled").to_string()
+        } else {
+            t!("status.auto_revert_disabled").to_string()
+        });
     }
 
     /// Poll for file changes (called from main loop)
@@ -549,11 +564,6 @@ impl Editor {
     /// thread. This method launches a poll if the interval has elapsed and no
     /// poll is already in flight, then checks for results from a prior poll.
     pub fn poll_file_changes(&mut self) -> bool {
-        // Skip if auto-revert is disabled
-        if !self.active_window().auto_revert_enabled {
-            return false;
-        }
-
         // Check for results from a previous background poll
         let mut any_changed = false;
         if let Some(ref rx) = self.active_window_mut().pending_file_poll_rx {
@@ -588,8 +598,20 @@ impl Editor {
         }
         self.active_window_mut().last_auto_revert_poll = self.time_source.now();
 
-        // Collect paths of open files that need checking
-        let files_to_check: Vec<PathBuf> = self.buffers().paths();
+        // Collect paths of open files that need checking. Auto-revert is a
+        // per-buffer property, so only poll files whose buffer opts in — this
+        // keeps terminal backing files (append-streamed by the PTY reader)
+        // out of the poll set entirely, so their constant growth never fires
+        // a reload or redraw (fresh#2608).
+        let files_to_check: Vec<PathBuf> = {
+            let window = self.active_window();
+            window
+                .buffers
+                .iter()
+                .filter(|(id, _)| window.buffer_auto_revert_enabled(**id))
+                .filter_map(|(_, state)| state.buffer.file_path().map(PathBuf::from))
+                .collect()
+        };
 
         if files_to_check.is_empty() {
             return any_changed;
@@ -1180,26 +1202,13 @@ impl Editor {
         }
 
         for buffer_id in buffer_ids {
-            // Skip terminal buffers - they manage their own content via PTY streaming
-            // and should not be auto-reverted (which would reset editing_disabled and line_numbers)
-            if self
-                .active_window()
-                .terminal_buffers
-                .contains_key(&buffer_id)
-            {
+            // Auto-revert is a per-buffer property, forced off for terminal
+            // buffers and opt-out streaming buffers (`openFileStreaming`).
+            // Reverting a buffer whose owner is actively writing the file
+            // (PTY reader / `extend_streaming`) would wipe the piece tree
+            // mid-stream and snap the cursor back to byte 0.
+            if !self.active_window().buffer_auto_revert_enabled(buffer_id) {
                 continue;
-            }
-
-            // Skip buffers that have opted out of auto-revert. The
-            // typical caller is `openFileStreaming`, which manages
-            // appends itself via `extend_streaming`; an auto-revert
-            // here would race with those appends, wiping the piece
-            // tree mid-stream and snapping the cursor back to byte 0
-            // on every kernel write notification.
-            if let Some(meta) = self.active_window().buffer_metadata.get(&buffer_id) {
-                if !meta.auto_revert_enabled {
-                    continue;
-                }
             }
 
             let state = match self
@@ -1246,8 +1255,9 @@ impl Editor {
                 continue;
             }
 
-            // Auto-revert if enabled and buffer is not modified
-            if self.active_window().auto_revert_enabled {
+            // The buffer is unmodified and opted into auto-revert (gated at
+            // the top of the loop) — reload it to match disk.
+            {
                 // Optimistic concurrency: re-check mtime before reverting.
                 // A save may have completed between our first check and now,
                 // updating file_mod_times. If so, skip the revert.

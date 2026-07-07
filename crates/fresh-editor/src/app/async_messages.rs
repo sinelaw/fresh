@@ -1332,21 +1332,25 @@ impl Editor {
         const DEBOUNCE_WINDOW: Duration = Duration::from_secs(10);
         const RAPID_REVERT_THRESHOLD: u32 = 10; // Require 10 reverts in 10 seconds to disable
 
-        // Skip if auto-revert is disabled
-        if !self.active_window().auto_revert_enabled {
-            return false;
-        }
-
         let path_buf = PathBuf::from(&path);
 
-        // Only track events for files that are actually open in the editor
-        let is_file_open = self
-            .buffers()
-            .iter()
-            .any(|(_, state)| state.buffer.file_path() == Some(&path_buf));
+        // Only track events for files that have an open buffer opted into
+        // auto-revert. Auto-revert is a per-buffer property, so a change to a
+        // terminal backing file (or a streaming buffer's file) is ignored
+        // here rather than driving a reload/redraw.
+        let is_revertible_open = {
+            let window = self.active_window();
+            window.buffers.iter().any(|(id, state)| {
+                state.buffer.file_path() == Some(&path_buf)
+                    && window.buffer_auto_revert_enabled(*id)
+            })
+        };
 
-        if !is_file_open {
-            tracing::trace!("Ignoring file change event for non-open file: {}", path);
+        if !is_revertible_open {
+            tracing::trace!(
+                "Ignoring file change event for non-revertible file: {}",
+                path
+            );
             return false;
         }
 
@@ -1390,7 +1394,22 @@ impl Editor {
                 .insert(path_buf.clone(), (now, 1));
         }
         if should_disable {
-            self.active_window_mut().auto_revert_enabled = false;
+            // Disable auto-revert only for the offending file's buffer(s),
+            // not the whole window — auto-revert is a per-buffer property.
+            let ids: Vec<BufferId> = {
+                let window = self.active_window();
+                window
+                    .buffers
+                    .iter()
+                    .filter(|(_, state)| state.buffer.file_path() == Some(&path_buf))
+                    .map(|(id, _)| *id)
+                    .collect()
+            };
+            for id in ids {
+                if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&id) {
+                    meta.auto_revert_enabled = false;
+                }
+            }
             self.active_window_mut().status_message = Some(format!(
                 "Auto-revert disabled: {} is updating too frequently (use Ctrl+Shift+R to re-enable)",
                 path_buf.file_name().unwrap_or_default().to_string_lossy()

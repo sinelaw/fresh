@@ -466,3 +466,71 @@ fn test_auto_revert_with_temp_rename_save() {
         harness.assert_buffer_content(&new_content);
     }
 }
+
+/// Auto-revert is a per-buffer property: disabling it on one buffer must not
+/// disable it for the rest of the window. Regression test for fresh#2608,
+/// where auto-revert was a single window-wide flag.
+#[test]
+#[cfg_attr(target_os = "macos", ignore)] // mtime granularity / FSEvents timing
+fn test_auto_revert_disable_is_per_buffer() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    let file_a = project_dir.join("a.txt");
+    let file_b = project_dir.join("b.txt");
+    write_and_sync(&file_a, "a0");
+    write_and_sync(&file_b, "b0");
+
+    // Open b first, then a — so `a` is the active buffer that the toggle hits.
+    harness.open_file(&file_b).unwrap();
+    let id_b = harness.editor().active_buffer();
+    harness.open_file(&file_a).unwrap();
+    let id_a = harness.editor().active_buffer();
+    assert_ne!(id_a, id_b, "the two files should open as distinct buffers");
+
+    // Disable auto-revert for the active buffer (a) only.
+    harness.editor_mut().toggle_auto_revert();
+
+    // Change both files on disk.
+    harness.sleep(FILE_CHANGE_DELAY);
+    write_and_sync(&file_a, "a1");
+    write_and_sync(&file_b, "b1");
+
+    // The buffer that kept auto-revert enabled (b) must still reload. Without
+    // the per-buffer fix, the toggle was window-wide and this never fires.
+    harness
+        .wait_until(|h| h.editor().get_buffer_content(id_b).as_deref() == Some("b1"))
+        .expect("auto-revert must still fire for the buffer that kept it enabled");
+
+    // The buffer we disabled (a) must NOT have reverted — its opt-out is
+    // independent of buffer b.
+    assert_eq!(
+        harness.editor().get_buffer_content(id_a).as_deref(),
+        Some("a0"),
+        "disabling auto-revert on one buffer must not revert it (and must not \
+         have been a window-wide toggle)"
+    );
+}
+
+/// Terminal-backed buffers force auto-revert off: their backing file is
+/// append-streamed by the PTY reader, so reverting it on every write fights
+/// the stream and rebuilds the whole scrollback index (fresh#2608).
+#[test]
+fn test_auto_revert_forced_off_for_terminal_buffers() {
+    let mut harness = EditorTestHarness::with_temp_project(80, 24).unwrap();
+
+    harness.editor_mut().open_terminal();
+    let term_id = harness.editor().active_buffer();
+
+    assert!(
+        harness.editor().active_window().is_terminal_buffer(term_id),
+        "open_terminal should make a terminal buffer active"
+    );
+    assert!(
+        !harness
+            .editor()
+            .active_window()
+            .buffer_auto_revert_enabled(term_id),
+        "terminal-backed buffers must have auto-revert forced off"
+    );
+}
