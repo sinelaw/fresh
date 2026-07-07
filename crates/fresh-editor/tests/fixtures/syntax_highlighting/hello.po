@@ -1,0 +1,13 @@
+# French translations for Fresh.
+#: src/main.rs:12
+#, fuzzy, c-format
+msgctxt "menu"
+msgid "Open %s"
+msgid_plural "Open %d files"
+msgstr[0] "Ouvrir %s"
+msgstr[1] "Ouvrir %d fichiers"
+
+#. Translator note
+#| msgid "Save"
+#~ msgid "Old save"
+#~ msgstr "Ancien enregistrer"

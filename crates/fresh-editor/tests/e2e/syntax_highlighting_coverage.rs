@@ -237,6 +237,9 @@ test_highlighting_works!(test_highlight_editorconfig, "hello.editorconfig", 2);
 test_highlighting_works!(test_highlight_kdl, "hello.kdl", 2);
 test_highlighting_works!(test_highlight_nushell, "hello.nu", 2);
 test_highlighting_works!(test_highlight_smali, "hello.smali", 2);
+test_highlighting_works!(test_highlight_gettext_po, "hello.po", 2);
+test_highlighting_works!(test_highlight_m4, "hello.m4", 2);
+test_highlighting_works!(test_highlight_pbxproj, "project.pbxproj", 2);
 
 // --- Web framework languages ---
 test_highlighting_works!(test_highlight_vue, "hello.vue", 2);

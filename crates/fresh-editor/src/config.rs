@@ -4847,6 +4847,84 @@ impl Config {
             },
         );
 
+        languages.insert(
+            "po".to_string(),
+            LanguageConfig {
+                extensions: vec!["po".to_string(), "pot".to_string()],
+                filenames: vec![],
+                grammar: "Gettext PO".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: false,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "m4".to_string(),
+            LanguageConfig {
+                extensions: vec!["m4".to_string(), "ac".to_string()],
+                filenames: vec![],
+                grammar: "M4".to_string(),
+                comment_prefix: Some("#".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
+            "pbxproj".to_string(),
+            LanguageConfig {
+                extensions: vec!["pbxproj".to_string()],
+                filenames: vec!["project.pbxproj".to_string()],
+                grammar: "Xcode Project".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indent: None,
+            },
+        );
+
         // Git-related file types
         languages.insert(
             "git-rebase".to_string(),

@@ -1,0 +1,32 @@
+// !$*UTF8*$!
+{
+  archiveVersion = 1;
+  classes = {
+  };
+  objectVersion = 56;
+  objects = {
+
+/* Begin PBXFileReference section */
+    0123456789ABCDEF01234567 /* App.swift */ = {
+      isa = PBXFileReference;
+      lastKnownFileType = sourcecode.swift;
+      name = App.swift;
+      path = "Sources/App.swift";
+      sourceTree = "<group>";
+    };
+/* End PBXFileReference section */
+
+/* Begin PBXNativeTarget section */
+    FEDCBA9876543210FEDCBA98 /* Fresh */ = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = 111111111111111111111111 /* Build configuration list */;
+      buildPhases = (
+        222222222222222222222222 /* Sources */,
+      );
+      name = Fresh;
+      productName = Fresh;
+    };
+/* End PBXNativeTarget section */
+  };
+  rootObject = FEDCBA9876543210FEDCBA98 /* Project object */;
+}

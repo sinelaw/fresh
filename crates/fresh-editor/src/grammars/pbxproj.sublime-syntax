@@ -1,0 +1,58 @@
+%YAML 1.2
+---
+name: Xcode Project
+file_extensions: [pbxproj]
+scope: source.pbxproj
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: sections
+    - include: identifiers
+    - include: keys
+    - include: constants
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      push:
+        - meta_scope: comment.block.pbxproj
+        - match: '\*/'
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.pbxproj
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.pbxproj
+        - match: '\\.'
+          scope: constant.character.escape.pbxproj
+        - match: '"'
+          pop: true
+
+  sections:
+    - match: '\b(Begin|End)\s+(PBX[A-Za-z0-9_]+|XC[A-Za-z0-9_]+)\s+section\b'
+      scope: entity.name.section.pbxproj
+
+  identifiers:
+    - match: '\b[0-9A-F]{24}\b'
+      scope: constant.other.object-id.pbxproj
+
+  keys:
+    - match: '\b(isa|archiveVersion|classes|objectVersion|objects|rootObject|buildSettings|buildPhases|buildRules|dependencies|fileRef|files|inputPaths|knownRegions|mainGroup|name|outputPaths|path|productName|productReference|productType|projectDirPath|projectRoot|sourceTree|targets)\b(?=\s*=)'
+      scope: variable.other.key.pbxproj
+    - match: '\b(PBX[A-Za-z0-9_]+|XC[A-Za-z0-9_]+)\b'
+      scope: storage.type.pbxproj
+
+  constants:
+    - match: '\b(YES|NO)\b'
+      scope: constant.language.boolean.pbxproj
+    - match: '\b[0-9]+\b'
+      scope: constant.numeric.pbxproj
+
+  punctuation:
+    - match: '[{}()]'
+      scope: punctuation.section.braces.pbxproj
+    - match: '[=;,]'
+      scope: punctuation.separator.pbxproj

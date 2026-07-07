@@ -1,0 +1,58 @@
+%YAML 1.2
+---
+name: Gettext PO
+file_extensions: [po, pot]
+scope: source.po
+contexts:
+  main:
+    - include: obsolete_entries
+    - include: comments
+    - include: keywords
+    - include: strings
+
+  obsolete_entries:
+    - match: '^\s*(#~)\s*(msgctxt|msgid_plural|msgid|msgstr)(\[[0-9]+\])?'
+      captures:
+        1: punctuation.definition.comment.po
+        2: keyword.other.po
+        3: constant.numeric.po
+      push:
+        - meta_scope: comment.line.obsolete.po
+        - include: strings
+        - match: '$'
+          pop: true
+
+  comments:
+    - match: '^\s*(#\.)(.*)$'
+      captures:
+        1: punctuation.definition.comment.po
+        2: comment.line.extracted.po
+    - match: '^\s*(#:)(.*)$'
+      captures:
+        1: punctuation.definition.comment.po
+        2: comment.line.reference.po
+    - match: '^\s*(#,)\s*(.*)$'
+      captures:
+        1: punctuation.definition.comment.po
+        2: storage.modifier.flag.po
+    - match: '^\s*(#\|)(.*)$'
+      captures:
+        1: punctuation.definition.comment.po
+        2: comment.line.previous.po
+    - match: '^\s*#.*$'
+      scope: comment.line.number-sign.po
+
+  keywords:
+    - match: '^\s*(msgctxt|msgid_plural|msgid|msgstr)(\[[0-9]+\])?'
+      captures:
+        1: keyword.other.po
+        2: constant.numeric.po
+
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.po
+        - match: '\\(n|r|t|b|f|v|"|\\|[0-7]{1,3}|x[0-9a-fA-F]+|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})'
+          scope: constant.character.escape.po
+        - match: '"'
+          pop: true

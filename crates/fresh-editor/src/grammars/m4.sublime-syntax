@@ -1,0 +1,55 @@
+%YAML 1.2
+---
+name: M4
+file_extensions: [m4, ac]
+scope: source.m4
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: macros
+    - include: variables
+    - include: numbers
+
+  comments:
+    - match: '\bdnl\b.*$'
+      scope: comment.line.dnl.m4
+    - match: '#.*$'
+      scope: comment.line.number-sign.m4
+
+  strings:
+    - match: '`'
+      push:
+        - meta_scope: string.quoted.backtick.m4
+        - match: "'"
+          pop: true
+    - match: '\['
+      push:
+        - meta_scope: string.quoted.bracket.m4
+        - match: '\]'
+          pop: true
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.m4
+        - match: '\\.'
+          scope: constant.character.escape.m4
+        - match: '"'
+          pop: true
+
+  macros:
+    - match: '\b(define|defn|pushdef|popdef|undefine|ifdef|ifelse|include|sinclude|divert|undivert|divnum|dnl|changequote|changecom|incr|decr|eval|len|index|regexp|substr|translit|patsubst|format|esyscmd|syscmd|sysval|m4wrap|builtin|indir|errprint|dumpdef|traceon|traceoff|debugmode|debugfile|maketemp|mkstemp)\b'
+      scope: support.function.builtin.m4
+    - match: '\b(AC_[A-Z0-9_]+|AM_[A-Z0-9_]+|LT_[A-Z0-9_]+)\b'
+      scope: support.function.autoconf.m4
+    - match: '\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\()'
+      scope: entity.name.function.m4
+
+  variables:
+    - match: '\$[#@*0-9]|\$\{[A-Za-z_][A-Za-z0-9_]*\}'
+      scope: variable.other.positional.m4
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F]+\b'
+      scope: constant.numeric.hex.m4
+    - match: '\b[0-9]+\b'
+      scope: constant.numeric.m4
