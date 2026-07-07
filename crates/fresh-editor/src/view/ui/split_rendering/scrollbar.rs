@@ -12,11 +12,25 @@ use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
+/// Above either bound, the exact wrapped-row scrollbar is skipped in favour of
+/// the cheap logical-line approximation. The exact counts require word-wrapping
+/// every line (`ensure_built`, O(all-lines)) and the index is rebuilt whenever
+/// the buffer version changes — i.e. on every edit — so on a large wrapped
+/// buffer each keystroke re-walks the whole buffer and stalls the UI
+/// (fresh#2610). Both bounds are well under the 10 MB large-file threshold
+/// because the per-line word-wrap cost is much higher than a raw byte scan.
+/// Line count is the loop-iteration driver; the byte bound catches buffers with
+/// few but very long lines.
+const MAX_WRAP_SCROLLBAR_LINES: usize = 5_000;
+const MAX_WRAP_SCROLLBAR_BYTES: usize = 2 * 1024 * 1024;
+
 /// Compute scrollbar line counts: `(total_lines, top_line)`.
 ///
 /// For large files the counts are reported as `(0, 0)` — the caller uses a
-/// constant-size thumb in that case. When line wrapping is enabled, counts
-/// are in visual rows instead of logical lines.
+/// constant-size thumb in that case. When line wrapping is enabled, counts are
+/// in visual rows instead of logical lines — except on a large wrapped buffer,
+/// where the exact visual-row count is too expensive to recompute per edit and
+/// we fall back to the logical-line approximation (see the constants above).
 pub(super) fn scrollbar_line_counts(
     state: &mut EditorState,
     viewport: &Viewport,
@@ -27,15 +41,18 @@ pub(super) fn scrollbar_line_counts(
         return (0, 0);
     }
 
-    if viewport.line_wrap_enabled {
-        return scrollbar_visual_row_counts(state, viewport, buffer_len);
-    }
-
     let total_lines = if buffer_len > 0 {
         state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
     } else {
         1
     };
+
+    if viewport.line_wrap_enabled
+        && total_lines <= MAX_WRAP_SCROLLBAR_LINES
+        && buffer_len <= MAX_WRAP_SCROLLBAR_BYTES
+    {
+        return scrollbar_visual_row_counts(state, viewport, buffer_len);
+    }
 
     let top_line = if viewport.top_byte < buffer_len {
         state.buffer.get_line_number(viewport.top_byte)
@@ -346,4 +363,89 @@ pub(super) fn render_composite_scrollbar(
     }
 
     (thumb_start, thumb_end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn state_with_wrapping_lines(n: usize) -> EditorState {
+        let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            fs,
+        );
+        // Each line is long enough to wrap to several visual rows at width 40.
+        let line = "the quick brown fox jumps over the lazy dog and keeps going\n";
+        let mut text = String::with_capacity(n * line.len());
+        for _ in 0..n {
+            text.push_str(line);
+        }
+        state.buffer.insert(0, &text);
+        state
+    }
+
+    fn narrow_wrapped_viewport() -> Viewport {
+        let mut vp = Viewport::new(40, 24);
+        vp.line_wrap_enabled = true;
+        vp
+    }
+
+    /// Small wrapped buffers keep the exact visual-row scrollbar: total counts
+    /// wrapped rows (more than logical lines) and the index is built.
+    #[test]
+    fn small_wrapped_buffer_uses_exact_visual_rows() {
+        let mut state = state_with_wrapping_lines(100);
+        let vp = narrow_wrapped_viewport();
+        let buffer_len = state.buffer.len();
+        let (total, _) = scrollbar_line_counts(
+            &mut state,
+            &vp,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES,
+            buffer_len,
+        );
+        assert!(
+            total > 100,
+            "small wrapped buffer should report wrapped-row count (>100), got {total}"
+        );
+        assert!(
+            state.visual_row_index.line_count() > 0,
+            "small wrapped buffer should build the visual-row index"
+        );
+    }
+
+    /// Large wrapped buffers fall back to the logical-line approximation so the
+    /// O(all-lines) visual-row scan never runs (and so never re-runs per edit):
+    /// total equals the logical line count and the index is left unbuilt
+    /// (fresh#2610).
+    #[test]
+    fn large_wrapped_buffer_skips_visual_row_scan() {
+        let n = MAX_WRAP_SCROLLBAR_LINES + 1;
+        let mut state = state_with_wrapping_lines(n);
+        let vp = narrow_wrapped_viewport();
+        let buffer_len = state.buffer.len();
+        assert!(
+            buffer_len <= MAX_WRAP_SCROLLBAR_BYTES,
+            "test buffer should trip the line bound, not the byte bound"
+        );
+        let (total, _) = scrollbar_line_counts(
+            &mut state,
+            &vp,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES,
+            buffer_len,
+        );
+        assert_eq!(
+            total, n,
+            "large wrapped buffer should use the logical-line count, not wrapped rows"
+        );
+        assert_eq!(
+            state.visual_row_index.line_count(),
+            0,
+            "large wrapped buffer must not build the O(all-lines) visual-row index"
+        );
+    }
 }
