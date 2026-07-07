@@ -1739,3 +1739,34 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `qa50vi`/`qa50sh`/`qa50ex`; removed `/tmp/vi50`, `/tmp/shade50`, `/tmp/expl50`; build worktree in session scratchpad (auto-reclaimed).
 
 **NEXT new-coverage (Run #51+, top-down):** (a) **monorepo/multi-repo workspace support** (the big new `3a78ad5ec`…`0bfb54edf` series, untested: nested git sub-projects — git gutter/blame/Review Diff scoping in a workspace with a sub-repo, find-file showing RELATIVE paths, blame history fix); (b) theme color-transition animation; (c) GDScript (#2238); (d) remaining 0.4.2 quick wins: File Open reveals dotfiles when filter starts with `.`, JSONC config comments/trailing-commas tolerance, macro Save-to-init.ts / Promote-to-command; (e) Slang Go-to-Def (#2536/#2539) only if slangd becomes available. Then #2197 pyright only if a fix lands. Watch for maintainer action on #2587/#2583/#2582/#2577 and re-opens of #2312.
+
+---
+
+## Run #51 — 2026-07-07 — Monorepo/multi-repo workspace series tested: core PASS (blame history, relative find-file, Review Diff scoping) + 2 BUGS #2591/#2592 — v0.4.3 @ 4e945b494
+
+**Preflight:** Synced state branch (clean). Master **UNCHANGED** since Run #50 (`4e945b494`, v0.4.3) → per R1 skipped fixed-bug rechecks (no new fix landed). Playbook intact (all sections). GitHub MCP auth live (get_me OK). Built release binary from `/tmp/fresh-master` worktree @ 4e945b494 (background build, exit 0). Dup pre-search: zero existing monorepo/sub-repo issues.
+
+**RUN #51 priority (a) — monorepo/multi-repo workspace support (`3a78ad5ec`…`0bfb54edf`, first-ever test).** Two fixtures: **A)** `/tmp/mono51` root NOT a repo — sub-repos `app` (2-commit history + uncommitted add), sibling `app2` (shares the `app` path prefix — mis-grouping regression case), level-3 repo `svc/inner/deep3`, level-4 repo `lvl/a/b/deep4`; **B)** `/tmp/mono51b` root IS a repo + nested `vendored/` sub-repo, uncommitted change in each layer.
+
+**PASS (comprehensive, fixture A):**
+- Explorer decorations scoped per repo: `app`●/`app2`●/`svc`● (level-3 discovered), `lvl` bare (level-4 NOT discovered — matches the BFS levels-1..=3 contract; characterization, not a bug); `app/main.py` M while sibling files clean.
+- Live Diff gutter marks sub-repo working changes (green bars on the uncommitted lines) with a non-repo workspace root.
+- **Git Blame + `b` history (the `<rev>:./<name>` fix):** blame in `app` correct (4 blocks incl. uncommitted block); `b` on the VERSION line → depth 1 shows TRUE historical content (`VERSION-ONE`, no `def extra()` bleed-through) — the exact previously-broken path, VERIFIED FIXED.
+- **Git Find File (relative-path fix):** lists repo-RELATIVE paths (`main.py`, `helper.py`), opens correct absolute file (`Opened /tmp/mono51/app/helper.py:1`), scopes to the active buffer's repo (app2 buffer → only `mod2.py`), graceful `0 items available` from a non-repo buffer, and works with the root not a repo.
+- **Review Diff scoping:** app buffer → only `M main.py +2/-0`; app2 buffer → only `M mod2.py +1/-0`; hunk `s`/`u` stage/unstage git-verified in app2's index with app's repo untouched (sibling-prefix isolation ✓).
+- **Live Grep git-grep provider** resolves the buffer's sub-repo (found `main.py:2`, 1/1).
+- Fixture B: gutter + Git Blame + Review Diff all resolve the NESTED inner repo correctly (Review Diff from inner → `M inner.py +1/-0` only; from outer → outer's view).
+
+**BUG FILED → #2591 (med):** standalone **Git Grep** palette command still greps the WORKSPACE ROOT — root-not-a-repo: every query "No matches" + `[⚠]` badge, Show Warnings reveals `[git_grep] process exited with code 128: fatal: not a git repository` (3/3 across two sub-repo buffers); nested case: silently searches the OUTER repo (inner-only content unfindable; control from outer buffer works). Papercut folded in: normal no-match exit 1 also logged as ERROR. Contrast: all four sibling features updated by the series resolve the buffer's repo.
+
+**BUG FILED → #2592 (med):** explorer git decorations ignore a nested sub-repo when the workspace root is itself a repo — `vendored/inner.py` modified in its own repo gets NO decoration (`vendored` shows only outer's `U`) while gutter/blame/Review Diff on the same file resolve the inner repo; decorations work for sub-repos when the root is NOT a repo (fixture A, same build). Contradictory modified/clean state on one screen.
+
+**IMP-027 (not filed, R3):** Review Diff from an outer buffer renders the untracked nested-repo dir as `▾ vendored/ +0 -0` + a BLANK-named `? +0 -0` child row — #2315 artifact with a new trigger (git can't expand a nested repo); noted as related observation in #2592.
+
+**HARNESS (learning_db):** palette prefills `>` on EVERY open — typing `>Cmd` after `C-p` yields `>>Cmd` and matches nothing (two dead Enters this run); `C-u` first or type without `>`. `[⚠ N]` badge = plugin warnings; read via palette "Show Warnings" (`warnings-<pid>.log` RO buffer). Git Grep prompt sits below the status bar w/ live dropdown results.
+
+**State updates:** run_log (this entry), learning_db (+1 topic), confirmed_bugs (+BUG-026/#2591, +BUG-027/#2592), github_issues (+2 rows, Last-updated bump), potential_improvements (+IMP-027), test_plan (Run #51 note + RUN #52 priority order).
+
+**Cleanup:** killed tmux `qa51`; removed `/tmp/mono51`, `/tmp/mono51b`; removed `/tmp/fresh-master` worktree.
+
+**NEXT new-coverage (Run #52+, top-down):** (a) theme color-transition animation; (b) GDScript (#2238); (c) remaining 0.4.2 quick wins: File Open reveals dotfiles when filter starts with `.`, JSONC config comments/trailing-commas tolerance, macro Save-to-init.ts / Promote-to-command; (d) Slang Go-to-Def (#2536/#2539) only if slangd appears. Then #2197 pyright only if a fix lands. Watch for maintainer action on #2591/#2592/#2587/#2583/#2582/#2577 and re-opens of #2312.

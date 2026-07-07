@@ -403,3 +403,25 @@ Each bug entry:
 - `gU`/`gu`/`g~` case OPERATORS: no-ops (`gUw` left text unchanged, `w` only moved cursor). NB single-char `~` DOES work.
 - Candidate for one consolidated "vi missing standard commands" issue once more are characterized (count them with `;`/`,` from #2441). Logged here + potential_improvements; NOT individually filed (missing-feature, lower sev than the broken-behavior bugs above).
 - **Run #45 update:** swept the rest of the common command set — the gap list is SMALL. CONFIRMED WORKING (Vim-correct, do NOT re-test): `o`/`O` (open line), `s`/`S` (substitute char/line), `D`/`C`/`Y` (operate to EOL; `Y` is linewise like Vim), `3G`/count+`G`, `*`/`#` (search word under cursor), `n`/`N` (repeat search), `i`/`x` dot-repeat. So the ONLY still-missing commands are `R` and `gU`/`gu`/`g~` (above) — too few to warrant a consolidated issue right now; keep in IMP-023.
+
+## BUG-026: Git Grep always runs in the workspace root (broken in multi-repo workspaces, wrong repo from nested sub-repo buffers)
+- **ID:** BUG-026
+- **Title:** Standalone "Git Grep" palette command greps the workspace root instead of resolving the active buffer's repo.
+- **Severity:** Medium (feature totally unusable in a multi-repo workspace — every search reports "No matches" and raises a `[⚠]` plugin ERROR; in a nested monorepo it silently searches the wrong repo).
+- **Status:** Open — GitHub #2591 filed (Run #51).
+- **GitHub Issue:** [#2591](https://github.com/sinelaw/fresh/issues/2591)
+- **Reproduction:** Workspace root not a repo, sub-repo `app/` with committed `main.py`. Open `app/main.py`, palette → Git Grep, type any committed term. Status: "No matches", `[⚠]` increments; Show Warnings → `[git_grep] process exited with code 128: fatal: not a git repository`. Nested case: root repo + nested `vendored/` repo, from `vendored/inner.py` grep inner-only content → "No matches" (searched outer). Control: outer-content grep from outer buffer works.
+- **Expected:** resolve the buffer's repo like git_find_file / live_grep git-grep provider / git_blame / audit_mode (all verified doing so in the same build).
+- **Actual:** always workspace root; real error masked by "No matches"; exit 1 (normal no-match) also logged as ERROR.
+- **First Seen:** Run #51, 2026-07-07 (v0.4.3, master @ 4e945b494).
+
+## BUG-027: File Explorer git decorations ignore a nested sub-repo's status when the workspace root is itself a git repo
+- **ID:** BUG-027
+- **Title:** In a root-is-a-repo workspace, files inside a nested git sub-repo get no explorer decoration; the dir shows only the outer repo's `U`.
+- **Severity:** Medium (contradictory state on one screen: gutter/blame/Review Diff say modified, tree says clean; decorations DO work for sub-repos when the root is not a repo).
+- **Status:** Open — GitHub #2592 filed (Run #51).
+- **GitHub Issue:** [#2592](https://github.com/sinelaw/fresh/issues/2592)
+- **Reproduction:** Outer repo w/ committed+modified `outer.py`; nested `vendored/` repo w/ committed `inner.py` + uncommitted line. Launch at outer root, Ctrl+B, expand `vendored`. `inner.py` = no decoration (waited minutes); `outer.py` = `M`; `vendored` = `U`. Same file: gutter marks the added line, Git Blame shows inner commits, Review Diff scopes to inner (`M inner.py +1/-0`).
+- **Expected (VS Code + Fresh's own multi-repo behavior):** `inner.py` shows `M` from its own repo.
+- **Actual:** no decoration; only outer's perspective rendered.
+- **First Seen:** Run #51, 2026-07-07 (v0.4.3, master @ 4e945b494).
