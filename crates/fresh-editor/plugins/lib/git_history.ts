@@ -10,40 +10,9 @@
  * via `inlineOverlays` — no separate imperative overlay pass is required.
  */
 
-// =============================================================================
-// Sub-repo discovery (monorepo support)
-// =============================================================================
-
-/**
- * Recursively discover directories containing `.git` entries. Scans
- * `maxDepth` levels below `dir` (level 1 = direct children of `dir`).
- * Stops descending into a directory once `.git` is found (git repo
- * internals are managed by git itself). Skips hidden directories and
- * `node_modules`.
- *
- * NOTE: a parallel BFS lives on the Rust side in `app/git_index.rs`
- * (`resolve_git_indexes_blocking`). It scans the SAME levels — keep the
- * two in sync (both scan levels 1..=maxDepth below the working dir).
- */
-export function discoverSubRepos(
-  editor: EditorAPI,
-  dir: string,
-  maxDepth: number = 3,
-): string[] {
-  if (maxDepth <= 0) return [];
-  const repos: string[] = [];
-  const entries = editor.readDir(dir);
-  for (const entry of entries) {
-    if (entry.name.startsWith(".") || entry.name === "node_modules" || !entry.is_dir) continue;
-    const subDir = editor.pathJoin(dir, entry.name);
-    if (editor.fileExists(editor.pathJoin(subDir, ".git"))) {
-      repos.push(subDir);
-    } else {
-      repos.push(...discoverSubRepos(editor, subDir, maxDepth - 1));
-    }
-  }
-  return repos;
-}
+// Sub-repo discovery for monorepos lives in `./git_repo.ts` (the single git
+// gateway) alongside the rest of repo resolution — import `discoverSubRepos`
+// from there.
 
 // =============================================================================
 // Types

@@ -1,4 +1,11 @@
 /// <reference path="./lib/fresh.d.ts" />
+import {
+  type GitRepo,
+  git,
+  repoRelativePath,
+  resolveGitRepoForPath,
+} from "./lib/git_repo.ts";
+
 const editor = getEditor();
 
 
@@ -63,6 +70,7 @@ interface BlameInstance {
   splitId: number | null;          // Split the blame buffer lives in
   sourceBufferId: number | null;   // The buffer that was open before blame
   sourceFilePath: string | null;   // Path to the file being blamed
+  repo: GitRepo;                   // Repo the blamed file lives in (its sub-project in a monorepo)
   currentCommit: string | null;    // Current commit being viewed (null = HEAD)
   commitStack: string[];           // Stack of commits for `b`-navigation
   blocks: BlameBlock[];            // Blame blocks with byte offsets
@@ -118,7 +126,7 @@ editor.defineMode(
 /**
  * Parse git blame --porcelain output
  */
-async function fetchGitBlame(filePath: string, commit: string | null): Promise<BlameLine[]> {
+async function fetchGitBlame(repo: GitRepo, filePath: string, commit: string | null): Promise<BlameLine[]> {
   const args = ["blame", "--porcelain"];
 
   if (commit) {
@@ -127,10 +135,9 @@ async function fetchGitBlame(filePath: string, commit: string | null): Promise<B
 
   args.push("--", filePath);
 
-  // Use the file's directory as cwd so git blame works in monorepo
+  // Runs in the resolved repo root so git blame works in monorepo
   // sub-projects where the editor's cwd is not itself a git repo.
-  const cwd = editor.pathDirname(filePath);
-  const result = await editor.spawnProcess("git", args, cwd);
+  const result = await git(editor, repo, args);
 
   if (result.exit_code !== 0) {
     editor.setStatus(editor.t("status.git_error", { error: result.stderr }));
@@ -248,16 +255,15 @@ function formatRelativeDate(timestamp: number): string {
 /**
  * Fetch file content at a specific commit (or HEAD)
  */
-async function fetchFileContent(filePath: string, commit: string | null): Promise<string> {
+async function fetchFileContent(repo: GitRepo, filePath: string, commit: string | null): Promise<string> {
   if (commit) {
-    // Get historical file content. Run from the file's directory and refer to
-    // it as `<rev>:./<name>` — the `./` makes git resolve the path relative to
-    // cwd. `git show <rev>:<abs-path>` is a fatal error, which would otherwise
-    // silently fall through to the *current* working-tree content below. This
-    // also covers monorepo sub-projects where the editor cwd isn't a repo.
-    const cwd = editor.pathDirname(filePath);
-    const name = editor.pathBasename(filePath);
-    const result = await editor.spawnProcess("git", ["show", `${commit}:./${name}`], cwd);
+    // Historical file content via `git show <rev>:<repo-relative-path>`, run in
+    // the repo root. The repo-relative path (not an absolute one — `git show
+    // <rev>:<abs-path>` is a fatal error) is what makes this resolve; it also
+    // covers monorepo sub-projects where the editor cwd isn't a repo. A
+    // non-zero exit falls through to the current working-tree content below.
+    const rel = repoRelativePath(repo, filePath);
+    const result = await git(editor, repo, ["show", `${commit}:${rel}`]);
     if (result.exit_code === 0) {
       return result.stdout;
     }
@@ -492,10 +498,18 @@ async function show_git_blame() : Promise<void> {
   // most semantically meaningful anchor).
   const sourceCursorLine = editor.getCursorLine();
 
+  // Resolve the file's repo once (its own sub-project in a monorepo); every
+  // git call for this blame view runs there.
+  const repo = await resolveGitRepoForPath(editor, filePath);
+  if (!repo) {
+    editor.setStatus(editor.t("status.no_blame_info"));
+    return;
+  }
+
   // Fetch file content and blame data in parallel
   const [fileContent, blameLines] = await Promise.all([
-    fetchFileContent(filePath, null),
-    fetchGitBlame(filePath, null),
+    fetchFileContent(repo, filePath, null),
+    fetchGitBlame(repo, filePath, null),
   ]);
 
   if (blameLines.length === 0) {
@@ -542,6 +556,7 @@ async function show_git_blame() : Promise<void> {
     splitId,
     sourceBufferId: activeBufferId,
     sourceFilePath: filePath,
+    repo,
     currentCommit: null,
     commitStack: [],
     blocks,
@@ -652,8 +667,8 @@ async function git_blame_go_back() : Promise<void> {
 
   // Fetch file content and blame at parent commit
   const [fileContent, blameLines] = await Promise.all([
-    fetchFileContent(inst.sourceFilePath, parentCommit),
-    fetchGitBlame(inst.sourceFilePath, parentCommit),
+    fetchFileContent(inst.repo, inst.sourceFilePath, parentCommit),
+    fetchGitBlame(inst.repo, inst.sourceFilePath, parentCommit),
   ]);
 
   if (blameLines.length === 0) {

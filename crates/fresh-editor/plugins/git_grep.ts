@@ -8,12 +8,17 @@
  */
 
 import { Finder, parseGrepOutput } from "./lib/finder.ts";
+import { git, resolveGitRepo, toAbsInRepo } from "./lib/git_repo.ts";
 
 const editor = getEditor();
 
-// Result type from git grep
+// One git-grep hit. `file` is repo-relative (what git prints and what the
+// user sees); `abs` is the absolute path we actually open, because in a
+// monorepo the repo root differs from the workspace cwd, so a repo-relative
+// path wouldn't resolve.
 interface GrepMatch {
   file: string;
+  abs: string;
   line: number;
   column: number;
   content: string;
@@ -29,7 +34,7 @@ const finder = new Finder<GrepMatch>(editor, {
         ? match.content.substring(0, 57).trim() + "..."
         : match.content.trim(),
     location: {
-      file: match.file,
+      file: match.abs,
       line: match.line,
       column: match.column,
     },
@@ -38,17 +43,34 @@ const finder = new Finder<GrepMatch>(editor, {
   maxResults: 100,
 });
 
-// Search function using git grep
+// Search function using git grep. Resolves the repo from the active buffer
+// (so it works from a sub-project buffer even when the workspace root isn't a
+// repo) and runs git inside it via the shared gateway.
 async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
-  const cwd = editor.getCwd();
-  const result = await editor.spawnProcess(
-    "git",
-    ["grep", "-n", "--column", "-I", "--", query],
-    cwd
-  );
+  const repo = await resolveGitRepo(editor);
+  if (!repo) {
+    editor.setStatus(editor.t("status.not_in_git"));
+    return [];
+  }
+
+  const result = await git(editor, repo, [
+    "grep",
+    "-n",
+    "--column",
+    "-I",
+    "--",
+    query,
+  ]);
 
   if (result.exit_code === 0) {
-    return parseGrepOutput(result.stdout, 100, (msg) => editor.debug(msg)) as GrepMatch[];
+    const matches = parseGrepOutput(
+      result.stdout,
+      100,
+      (msg) => editor.debug(msg),
+    ) as GrepMatch[];
+    // `git grep` prints repo-relative paths; join each onto the repo root so
+    // selecting a result opens the right file regardless of the workspace cwd.
+    return matches.map((m) => ({ ...m, abs: toAbsInRepo(editor, repo, m.file) }));
   }
   editor.error(`[git_grep] process exited with code ${result.exit_code}: ${result.stderr}`);
   editor.setStatus(`git grep failed (exit ${result.exit_code})`);

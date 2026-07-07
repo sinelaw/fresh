@@ -1,5 +1,5 @@
 /// <reference path="./lib/fresh.d.ts" />
-import { discoverSubRepos } from "./lib/git_history.ts";
+import { discoverSubRepos } from "./lib/git_repo.ts";
 
 const editor = getEditor();
 

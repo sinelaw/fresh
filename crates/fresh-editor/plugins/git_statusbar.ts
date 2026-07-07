@@ -1,5 +1,7 @@
 /// <reference path="./lib/fresh.d.ts" />
 
+import { gitCwdCandidate } from "./lib/git_repo.ts";
+
 const editor = getEditor();
 
 const GIT_BRANCH = "branch";
@@ -17,22 +19,6 @@ let watchedCwd: string | null = null;
 let watchedHeadPath: string | null = null;
 let ensureWatchInFlight: Promise<void> | null = null;
 
-/**
- * Resolve the best cwd for git operations: use the active buffer's
- * directory when available (supports monorepo sub-projects), falling
- * back to editor.getCwd().
- */
-function getGitCwd(): string {
-  const bufferId = editor.getActiveBufferId();
-  if (bufferId) {
-    const bufPath = editor.getBufferPath(bufferId);
-    if (bufPath) {
-      const dir = editor.pathDirname(bufPath);
-      if (dir) return dir;
-    }
-  }
-  return editor.getCwd();
-}
 
 async function discoverHeadPath(cwd: string): Promise<string | null> {
   const result = await editor.spawnProcess(
@@ -49,7 +35,7 @@ async function discoverHeadPath(cwd: string): Promise<string | null> {
 }
 
 async function ensureHeadWatch(): Promise<void> {
-  const cwd = getGitCwd();
+  const cwd = gitCwdCandidate(editor);
   if (watchedCwd === cwd && headWatchHandle !== null) return;
   if (ensureWatchInFlight) return ensureWatchInFlight;
 
@@ -82,7 +68,7 @@ async function getCurrentGitBranch(): Promise<string> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const cwd = getGitCwd();
+      const cwd = gitCwdCandidate(editor);
       const result = await editor.spawnProcess(
         "git",
         ["rev-parse", "--abbrev-ref", "HEAD"],

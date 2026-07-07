@@ -1,4 +1,10 @@
 /// <reference path="./lib/fresh.d.ts" />
+import {
+  git,
+  repoRelativePath,
+  resolveGitRepoForPath,
+} from "./lib/git_repo.ts";
+
 const editor = getEditor();
 
 
@@ -323,51 +329,28 @@ async function fetchGitVersions(filePath: string): Promise<{
   theirs: string;
 } | null> {
   try {
-    // Get the directory of the file for running git commands
-    const fileDir = editor.pathDirname(filePath);
-
-    // Get the git repository root
-    const repoRootResult = await editor.spawnProcess("git", [
-      "rev-parse", "--show-toplevel"
-    ], fileDir);
-
-    if (repoRootResult.exit_code !== 0) {
+    // Resolve the file's repo (its own sub-project in a monorepo); all three
+    // `git show :N:<path>` reads run there, against the repo-relative path.
+    const repo = await resolveGitRepoForPath(editor, filePath);
+    if (!repo) {
       editor.debug(`fetchGitVersions: failed to get repo root`);
       return null;
     }
 
-    const repoRoot = repoRootResult.stdout.trim();
+    const relativePath = repoRelativePath(repo, filePath);
 
-    // Compute the relative path from repo root to the file
-    // filePath is absolute, repoRoot is absolute
-    let relativePath = filePath;
-    if (filePath.startsWith(repoRoot + "/")) {
-      relativePath = filePath.substring(repoRoot.length + 1);
-    } else if (filePath.startsWith(repoRoot)) {
-      relativePath = filePath.substring(repoRoot.length);
-      if (relativePath.startsWith("/")) {
-        relativePath = relativePath.substring(1);
-      }
-    }
-
-    editor.debug(`fetchGitVersions: repoRoot=${repoRoot}, relativePath=${relativePath}`);
+    editor.debug(`fetchGitVersions: repoRoot=${repo.root}, relativePath=${relativePath}`);
 
     // Get OURS version (--ours or :2:)
-    const oursResult = await editor.spawnProcess("git", [
-      "show", `:2:${relativePath}`
-    ], fileDir);
+    const oursResult = await git(editor, repo, ["show", `:2:${relativePath}`]);
     editor.debug(`fetchGitVersions: ours exit_code=${oursResult.exit_code}, stdout length=${oursResult.stdout.length}`);
 
     // Get THEIRS version (--theirs or :3:)
-    const theirsResult = await editor.spawnProcess("git", [
-      "show", `:3:${relativePath}`
-    ], fileDir);
+    const theirsResult = await git(editor, repo, ["show", `:3:${relativePath}`]);
     editor.debug(`fetchGitVersions: theirs exit_code=${theirsResult.exit_code}, stdout length=${theirsResult.stdout.length}`);
 
     // Get BASE version (common ancestor, :1:)
-    const baseResult = await editor.spawnProcess("git", [
-      "show", `:1:${relativePath}`
-    ], fileDir);
+    const baseResult = await git(editor, repo, ["show", `:1:${relativePath}`]);
     editor.debug(`fetchGitVersions: base exit_code=${baseResult.exit_code}, stdout length=${baseResult.stdout.length}`);
 
     return {
@@ -1235,21 +1218,17 @@ async function start_merge_conflict() : Promise<void> {
 
   editor.debug(`Merge: starting for ${info.path}`);
 
-  // Get the directory of the file for running git commands
-  const fileDir = editor.pathDirname(info.path);
-  editor.debug(`Merge: file directory is ${fileDir}`);
-
-  // Check if we're in a git repo (run from file's directory)
-  const gitCheck = await editor.spawnProcess("git", ["rev-parse", "--is-inside-work-tree"], fileDir);
-  editor.debug(`Merge: git rev-parse exit_code=${gitCheck.exit_code}, stdout=${gitCheck.stdout.trim()}`);
-
-  if (gitCheck.exit_code !== 0 || gitCheck.stdout.trim() !== "true") {
+  // Resolve the file's repo (its own sub-project in a monorepo); all git
+  // checks below run there.
+  const repo = await resolveGitRepoForPath(editor, info.path);
+  if (!repo) {
     editor.setStatus(editor.t("status.not_git_repo"));
     return;
   }
+  editor.debug(`Merge: repo root is ${repo.root}`);
 
-  // Check if file has unmerged entries using git (run from file's directory)
-  const lsFilesResult = await editor.spawnProcess("git", ["ls-files", "-u", info.path], fileDir);
+  // Check if file has unmerged entries using git
+  const lsFilesResult = await git(editor, repo, ["ls-files", "-u", info.path]);
   editor.debug(`Merge: git ls-files -u exit_code=${lsFilesResult.exit_code}, stdout length=${lsFilesResult.stdout.length}, stderr=${lsFilesResult.stderr}`);
 
   const hasUnmergedEntries = lsFilesResult.exit_code === 0 && lsFilesResult.stdout.trim().length > 0;
@@ -1260,7 +1239,7 @@ async function start_merge_conflict() : Promise<void> {
   }
 
   // Get file content from git's working tree (has conflict markers)
-  const catFileResult = await editor.spawnProcess("git", ["show", `:0:${info.path}`], fileDir);
+  const catFileResult = await git(editor, repo, ["show", `:0:${info.path}`]);
 
   // If :0: doesn't exist, read the working tree file directly
   let content: string;

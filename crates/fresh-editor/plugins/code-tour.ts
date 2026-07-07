@@ -1,5 +1,7 @@
 /// <reference path="./lib/fresh.d.ts" />
 
+import { git, resolveGitRepo } from "./lib/git_repo.ts";
+
 /**
  * Code Tour Plugin
  *
@@ -245,14 +247,15 @@ async function loadTour(manifestPath: string): Promise<void> {
       return;
     }
 
-    // Check commit hash if specified
+    // Check commit hash if specified. Resolve the repo from the active buffer
+    // so this works in a monorepo sub-project (the workspace root may not be a
+    // repo); skip the drift check when not inside one.
     if (manifest.commit_hash) {
-      const result = await editor.spawnProcess("git", [
-        "rev-parse",
-        "--short",
-        "HEAD",
-      ]);
-      if (result.exit_code === 0) {
+      const repo = await resolveGitRepo(editor);
+      const result = repo
+        ? await git(editor, repo, ["rev-parse", "--short", "HEAD"])
+        : null;
+      if (result && result.exit_code === 0) {
         const currentCommit = result.stdout.trim();
         if (!currentCommit.startsWith(manifest.commit_hash) &&
             !manifest.commit_hash.startsWith(currentCommit)) {

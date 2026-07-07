@@ -8,7 +8,7 @@
  */
 
 import { Finder } from "./lib/finder.ts";
-import { resolveGitRepo } from "./lib/git_repo.ts";
+import { resolveGitRepo, toAbsInRepo } from "./lib/git_repo.ts";
 
 const editor = getEditor();
 
@@ -55,7 +55,7 @@ async function loadGitFiles(): Promise<GitFile[]> {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "")
-    .map((rel) => ({ rel, abs: editor.pathJoin(repo.root, rel) }));
+    .map((rel) => ({ rel, abs: toAbsInRepo(editor, repo, rel) }));
 }
 
 // Global function to start file finder

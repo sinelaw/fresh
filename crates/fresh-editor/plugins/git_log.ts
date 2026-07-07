@@ -5,6 +5,12 @@ import {
   buildCommitLogEntries,
   fetchGitLog,
 } from "./lib/git_history.ts";
+import {
+  type GitRepo,
+  git,
+  resolveGitRepo,
+  resolveGitRepoForPath,
+} from "./lib/git_repo.ts";
 import { button, flexSpacer, list, row, WidgetPanel } from "./lib/index.ts";
 
 const editor = getEditor();
@@ -31,6 +37,15 @@ const editor = getEditor();
 
 interface GitLogState {
   isOpen: boolean;
+  /**
+   * The repository this log view is bound to, resolved once when the view
+   * opens (from the scoped file in current-file mode, else the active
+   * buffer). Every git invocation for this view — the log fetch, each
+   * `git show`, and opening a file at a commit — runs in `repo.root`, so
+   * the view works in a monorepo sub-project whose workspace root isn't a
+   * repo. `null` only before the first open.
+   */
+  repo: GitRepo | null;
   groupId: number | null;
   logBufferId: number | null;
   /**
@@ -86,6 +101,7 @@ interface GitLogState {
 
 const state: GitLogState = {
   isOpen: false,
+  repo: null,
   groupId: null,
   logBufferId: null,
   initialDetailBufferId: null,
@@ -603,7 +619,7 @@ async function refreshDetail(): Promise<void> {
   const idx = Math.max(0, Math.min(state.selectedIndex, state.commits.length - 1));
   const commit = state.commits[idx];
   if (!commit) return;
-  await showCommitInDetail(commit, editor.getCwd());
+  await showCommitInDetail(commit, logCwd());
 }
 
 // =============================================================================
@@ -626,6 +642,15 @@ function selectedCommit(): GitCommit | null {
  * repository history; a path scopes it to that file's commits. Shared by
  * the "Git Log" and "Git Log (Current File)" commands.
  */
+/**
+ * Root of the repository this log view is bound to. Falls back to the editor
+ * cwd only defensively — by the time the view is open `state.repo` is always
+ * set (a null resolve aborts the open).
+ */
+function logCwd(): string {
+  return state.repo?.root ?? editor.getCwd();
+}
+
 async function openGitLog(pathFilter: string | null): Promise<void> {
   if (state.isOpen) {
     // Already open. If the requested scope differs (e.g. switching from
@@ -644,7 +669,20 @@ async function openGitLog(pathFilter: string | null): Promise<void> {
   state.pathFilter = pathFilter;
   editor.setStatus(editor.t("status.loading"));
 
+  // Resolve the repo once, up front. In current-file mode resolve from the
+  // scoped file's own directory (so a monorepo sub-project resolves to its
+  // own repo); otherwise from the active buffer. Every later git call for
+  // this view runs in `state.repo.root`.
+  state.repo = pathFilter !== null
+    ? await resolveGitRepoForPath(editor, pathFilter)
+    : await resolveGitRepo(editor);
+  if (state.repo === null) {
+    editor.setStatus(editor.t("status.no_commits"));
+    return;
+  }
+
   state.commits = await fetchGitLog(editor, {
+    cwd: state.repo.root,
     pathFilter: pathFilter ?? undefined,
   });
   if (state.commits.length === 0) {
@@ -781,6 +819,7 @@ function git_log_cleanup(): void {
   state.commits = [];
   state.selectedIndex = 0;
   state.pathFilter = null;
+  state.repo = null;
 }
 
 function git_log_close(): void {
@@ -824,6 +863,7 @@ async function git_log_refresh(): Promise<void> {
   if (!state.isOpen) return;
   editor.setStatus(editor.t("status.refreshing"));
   state.commits = await fetchGitLog(editor, {
+    cwd: logCwd(),
     pathFilter: state.pathFilter ?? undefined,
   });
   // The on-disk cache files are keyed by SHA and commits are
@@ -1123,10 +1163,9 @@ async function git_log_detail_open_file(): Promise<void> {
   editor.setStatus(
     editor.t("status.file_loading", { file, hash: commit.shortHash })
   );
-  const result = await editor.spawnProcess("git", [
-    "show",
-    `${commit.hash}:${file}`,
-  ]);
+  const result = state.repo
+    ? await git(editor, state.repo, ["show", `${commit.hash}:${file}`])
+    : await editor.spawnProcess("git", ["show", `${commit.hash}:${file}`]);
   if (result.exit_code !== 0) {
     editor.setStatus(
       editor.t("status.file_not_found", { file, hash: commit.shortHash })
@@ -1251,7 +1290,7 @@ async function selectCommitLine(idx: number): Promise<void> {
   if (!state.isOpen) return;
   const current = state.commits[state.selectedIndex];
   if (!current) return;
-  await showCommitInDetail(current, editor.getCwd());
+  await showCommitInDetail(current, logCwd());
 }
 
 // =============================================================================
