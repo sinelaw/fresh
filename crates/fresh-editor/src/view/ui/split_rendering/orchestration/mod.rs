@@ -224,11 +224,14 @@ pub(crate) fn render_content(
         let is_non_scrollable = buffers.get(&buffer_id).is_some_and(|s| !s.scrollable);
 
         // A terminal showing its live PTY grid suppresses the scrollbar so the
-        // grid uses the full split width. The live grid is shown for the active
-        // split's terminal while in terminal mode (the read-only scrollback view
-        // shown after exiting terminal mode keeps its scrollbar). See
-        // `render_terminal_splits`, which overlays the grid into `content_rect`.
-        let terminal_showing_live_grid = active_buf_is_terminal && is_active && terminal_mode;
+        // grid uses the full split width. The live grid is shown for every split
+        // whose active buffer is a terminal EXCEPT the focused split while it is
+        // in read-only scrollback mode (that one keeps its scrollbar to scroll
+        // the synced buffer view). Mirrors the split-keyed gate in
+        // `render_terminal_splits`, so a terminal held in two splits can stream
+        // the live grid in one while the focused split reads scrollback
+        // (fresh#2595).
+        let terminal_showing_live_grid = active_buf_is_terminal && (!is_active || terminal_mode);
         let panel_show_vscroll =
             show_vertical_scrollbar && !is_non_scrollable && !terminal_showing_live_grid;
 

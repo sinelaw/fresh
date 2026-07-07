@@ -1586,6 +1586,101 @@ fn test_prompt_typing_works_in_terminal_mode() {
     harness.assert_screen_contains("quit");
 }
 
+/// Regression test for fresh#2595: when the same terminal is shown in two
+/// splits, dropping the focused split into read-only scrollback must NOT stop
+/// the other split from following live output. Live-vs-scrollback is a
+/// per-split property, not a shared window flag.
+///
+/// Drives: open a terminal, generate scrollback, split it vertically (both
+/// splits now show the same terminal), then in the focused split enter
+/// scrollback (`Ctrl+Space`) and scroll to the top of history (`Ctrl+Home`).
+/// New output emitted afterwards must still appear on screen — rendered by the
+/// *other* (unfocused) split's live grid — while the focused split stays parked
+/// at the top of history. Without the fix both splits freeze at the top and the
+/// new output is never rendered, so the `wait_until` below hangs (external
+/// timeout = failure).
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_split_terminal_scrollback_does_not_freeze_other_split() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Open a terminal in the sole split; it starts in terminal mode.
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Stay in scrollback even while the shell keeps producing output.
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Emit an early marker, then enough lines to push it off the live grid and
+    // into streamed scrollback history.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo 'TOP_HISTORY_MARKER'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("TOP_HISTORY_MARKER"))
+        .unwrap();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"for i in $(seq 1 40); do echo \"FILL $i\"; done\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FILL 40"))
+        .unwrap();
+
+    // Split vertically: both splits now show the same terminal buffer, both live.
+    harness.editor_mut().split_pane_vertical();
+    harness.render().unwrap();
+
+    // In the focused split, drop to read-only scrollback and jump to the very
+    // top of history. `send_key` routes through the real input dispatch.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "Ctrl+Space should drop the focused split into read-only scrollback"
+    );
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // The focused split is now parked at the top of history, showing the early
+    // marker.
+    assert!(
+        harness.screen_to_string().contains("TOP_HISTORY_MARKER"),
+        "Focused split should be scrolled to the top of history. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Emit fresh output AFTER the focused split parked at the top. The focused
+    // split must not follow it (jump_to_end is off, and it's in scrollback), so
+    // the only way this marker reaches the screen is the *other* split's live
+    // grid still following output.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo 'LIVE_TAIL_MARKER'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("LIVE_TAIL_MARKER"))
+        .unwrap();
+
+    // Independence proof: the top-of-history marker (focused split, frozen) and
+    // the newest output (unfocused split, live) are visible at the same time —
+    // impossible if the two splits shared one mode.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("TOP_HISTORY_MARKER") && screen.contains("LIVE_TAIL_MARKER"),
+        "One split should show top-of-history while the other follows live output. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that switching from terminal split to another split exits terminal mode
 /// and allows the new buffer to receive keystrokes.
 ///

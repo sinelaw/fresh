@@ -1635,16 +1635,15 @@ impl Window {
         };
         let visible_buffers = mgr.get_visible_buffers(editor_area);
 
-        let active_buffer = self.active_buffer();
-        for (_split_id, buffer_id, split_area) in visible_buffers {
+        let focused_split = self.effective_active_split();
+        for (split_id, buffer_id, split_area) in visible_buffers {
             if self.terminal_buffers.contains_key(&buffer_id) {
-                // The active split's terminal hides its scrollbar while in
-                // terminal mode (live PTY grid), so the grid reclaims that
-                // column; the read-only scrollback view shown after exiting
-                // keeps its scrollbar. Mirror the renderer's
-                // `terminal_showing_live_grid` test so the PTY width matches
-                // the rendered `content_rect`.
-                let showing_live_grid = buffer_id == active_buffer && self.terminal_mode;
+                // A split hides its scrollbar (grid reclaims the column)
+                // whenever it shows the live PTY grid: every terminal split
+                // except the focused one in read-only scrollback mode. Mirror
+                // the renderer's `terminal_showing_live_grid` gate so the PTY
+                // width matches the rendered `content_rect`.
+                let showing_live_grid = split_id != focused_split || self.terminal_mode;
                 let scrollbar_cols = if showing_live_grid { 0 } else { 1 };
                 // Tab bar takes 1 row; reserve 1 row for chrome and the
                 // scrollbar column (when shown) on the right.
@@ -1849,21 +1848,23 @@ impl Window {
         )],
         cursor_visible_if_active: bool,
     ) {
-        for (_split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
+        let focused_split = self.effective_active_split();
+        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
             split_areas
         {
             let Some(terminal_id) = self.get_terminal_id(*buffer_id) else {
                 continue;
             };
-            // When the user's current tab is a terminal but they're
-            // *not* in terminal mode, the buffer is showing the
-            // synced scrollback view — defer to the normal text
-            // rendering so the user can scroll. The live grid only
-            // overlays when terminal mode is active, or when the
-            // tab isn't the active one (so a split's hidden tab
-            // still gets live updates).
-            let is_active = *buffer_id == self.active_buffer();
-            if is_active && !self.terminal_mode {
+            // Whether *this split* is the focused one. The live PTY grid
+            // overlays every split showing a terminal EXCEPT the focused
+            // split while it is in read-only scrollback mode — there we
+            // defer to normal text rendering so the user can scroll. Keying
+            // this on the split (not the buffer) is what lets the same
+            // terminal be scrolled back in the focused split while a second
+            // split keeps streaming the live grid (fresh#2595). Unfocused
+            // splits always show the live grid so they keep following output.
+            let is_focused_split = *split_id == focused_split;
+            if is_focused_split && !self.terminal_mode {
                 continue;
             }
             let Some(handle) = self.terminal_manager.get(terminal_id) else {
@@ -1874,7 +1875,7 @@ impl Window {
             };
             let cursor_pos = state.cursor_position();
             let cursor_visible = state.cursor_visible()
-                && is_active
+                && is_focused_split
                 && self.terminal_mode
                 && cursor_visible_if_active;
             let (_, rows) = state.size();
