@@ -373,6 +373,18 @@ Each bug entry:
 
 ---
 
+## BUG-024: Search & Replace — match stepping (Ctrl+Alt+→/←) and Enter-open land on stale pre-edit positions after the buffer is edited
+- **ID:** BUG-024
+- **Title:** The S&R panel records match positions once at search time and never adjusts them for buffer edits. After a line is inserted/deleted above a match (or chars inserted before it on its line), every subsequent `Ctrl+Alt+→/←` step and Enter-open in that buffer moves the cursor to the OLD line/col, landing on unrelated text. The 0.4.2 stepping feature (#2434) exists explicitly to "review or edit" each match, so its core loop breaks on the first line-count-changing edit.
+- **Severity:** Medium (behavioral; hits the feature's primary workflow; per-buffer — matches in unedited files keep landing correctly).
+- **Status:** Open — GitHub #2583 filed (Run #48).
+- **GitHub Issue:** [#2583](https://github.com/sinelaw/fresh/issues/2583)
+- **Reproduction:** git project w/ `NEEDLE` matches; `Alt+A` → `NEEDLE`; `Ctrl+Alt+→` (Match 1 lands correctly); insert a line above (`Up`,`Home`, type, Enter); `Ctrl+Alt+→` → status `Match 2/5, Ln 4` and the REAL cursor cell (tmux `#{cursor_x}/#{cursor_y}`-verified) is on the pre-edit line 4 ("middle text") while the match is on line 5. Column variant: `Home`+`xx` on a match line, step away+back → lands col 1 on the `x` (match now col 3). Enter-open on a stale panel row: same. Panel previews also stay stale.
+- **What works (do not re-report):** everything else about stepping — forward/backward, wrap both directions, cross-file opening in the source split, focus lands in editor for immediate edit, panel highlight follows current match, palette "Next/Previous Search Match", graceful "No Search & Replace results — run a search first" when no search/panel. **Workaround:** re-run the search (`Alt+A` then Enter) — refreshed results land correctly.
+- **First Seen:** 2026-07-07 (Run #48), fresh 0.4.3 @ 9f6135001.
+
+---
+
 ## PENDING (not filed) — vi mode missing standard commands (→ IMP-023)
 - `R` (Replace/overtype mode): unrecognized — stays `-- NORMAL --`, next key runs as a normal command (`R`+`A` fired append-at-EOL).
 - `gU`/`gu`/`g~` case OPERATORS: no-ops (`gUw` left text unchanged, `w` only moved cursor). NB single-char `~` DOES work.

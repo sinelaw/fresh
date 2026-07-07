@@ -1664,3 +1664,30 @@ Per R1 master unchanged at v0.4.0 (`1b5d7f8c8`, same as Runs #31–33) → skipp
 **Cleanup:** killed tmux `qa47`; removed `/tmp/vs47`, `/tmp/vs47block`, `/tmp/indent47`; removed build worktree `/tmp/fresh-master`.
 
 **NEXT new-coverage (Run #48+, top-down):** (a) 0.4.2 "Step through S&R matches" `Ctrl+Alt+→/←`; (b) 0.4.2 indentation guides; (c) mouse-driven coverage now unblocked (terminal Ctrl+Click, '+' popup, right-click menus, drag/scroll); (d) Slang shader + slangd Go-to-Def; (e) OSC 7; (f) theme color-transition; (g) GDScript #2238. Then #2197 only if a fix lands.
+
+---
+
+## Run #48 — 2026-07-07 — S&R match stepping: stale-position BUG #2583 (feature otherwise PASS) + indentation guides COMPREHENSIVE PASS — v0.4.3 @ 9f6135001
+
+**Preflight:** Synced state branch (clean). Master UNCHANGED at **`9f6135001`** (v0.4.3) since Run #46/#47 → per **R1** skipped fixed-bug rechecks (no new fix landed for the 15 open agent issues). Playbook intact (all sections). Lessons continuity OK. GitHub MCP auth live (`list_issues` returned the open set). NOTE: owner filed+closed 3 indentation-guide bugs himself on 2026-07-06 (#2535 wrapped rows, #2564 guide column drift, #2565 fast-scroll drift) — all closures predate this master head, so recurrence would be a comment-not-refile.
+
+**Build:** release `fresh` 0.4.3 from scratchpad worktree @ `9f6135001` (background build, exit 0).
+
+**(a) 0.4.2 "Step through S&R matches" `Ctrl+Alt+→/←` (#2434) — PASS on all mechanics + 1 BUG FILED #2583 (med):**
+- Fixture `/tmp/sr48` git repo, 5 `NEEDLE` matches / 3 files. Panel via `Alt+A` lists them in natural path order (0.4.2 claim ✓).
+- PASS: `C-M-Right/Left` step fwd/back with wrap in BOTH directions; cross-file steps auto-open the file in the source split; focus lands in the EDITOR at each stop (typed `X` inserted at the match — the "edit without Down→Enter→Alt+] round-trip" claim verified); status `Match N/M` + correct `Ln/Col`; panel list highlight (`48;5;25`) follows the current match; palette cmds "Next/Previous Search Match" exist w/ keybinding shown and work; after closing the panel (or with no search): graceful `No Search & Replace results — run a search first`.
+- **BUG #2583:** match positions are search-time snapshots, never adjusted for edits. Insert a line above a match → next step lands the REAL cursor (`#{cursor_x}/#{cursor_y}`-verified, per Lesson "status lags") on the OLD line over unrelated text; same for column (insert `xx` before a match on its line → step lands on the `x` at the old col); Enter-open on a stale panel row identical; previews stale too. Unedited files unaffected. Workaround: re-run search (`Alt+A`+Enter → refreshed list, correct landings — verified). Reference: VS Code anchors results to the live document; and the feature's own changelog purpose is edit-at-each-stop. 4 dup-search variations logged in the issue, 0 hits. → confirmed_bugs BUG-024, github_issues row.
+
+**(b) 0.4.2 indentation guides (#2388) — COMPREHENSIVE PASS, no new bug:**
+- Discovery via Settings UI `/`-search "guide": `editor.indentation_guide` (`none` default ✓ | `all` | `active`) + `editor.indentation_guide_glyph` (default `▏` ✓). `Ctrl+S` persists to `~/.config/fresh/config.json` (verified keys) and applies live.
+- `all`: correct staircase at cols 1,5,9,13 on 4-level Python fixture; continues through blank lines inside a block. `active`: only the innermost guide of the cursor's block, spanning the block; follows cursor between blocks (col 9 → col 1 demo). Glyph swap to `┊` renders everywhere.
+- Visual-only contract: per-column cursor traversal (probed key-by-key), disk file pure spaces after save (`od -c`), buffer never dirtied by guides. ANSI: guide fg `38;5;59` vs text `38;5;231` (inherits whitespace-indicator color; theme key `indentation_guide_fg` not set → docs behavior).
+- Regression spot-checks (owner's 2026-07-06 fixes hold in this head): **#2535** guides DO render on wrapped continuation rows (wrap_indent-aligned); **#2564-shape** column preserved crossing a blank line inside an indented block; goal-column restores after blank-line clamp (End 25 → blank 1 → 21). No recurrence → no comments needed.
+
+**HARNESS notes (learning_db):** (1) S&R panel focus dance — `Alt+A` = Search field (Enter re-runs), `Alt+]` = match list (Enter opens row), Esc closes only when panel focused. (2) Settings dropdown does NOT open on the current value's row — read the rendered `[value ▼]` after selecting, an overshoot silently saved `none` when `active` was intended. (3) Wrap OFF + cursor at Col 309 h-scrolls the viewport → all short lines render EMPTY (looks like corruption; isn't). (4) `Home` toggles first-non-blank ↔ col 1; probe cursor between each keypress, batched sends race.
+
+**State updates:** run_log (this entry), learning_db (+2 topics), confirmed_bugs (+BUG-024/#2583), github_issues (+#2583 row + Last-updated bump), test_plan (Run #48 note + RUN #49 priority order).
+
+**Cleanup:** killed tmux `qa48sr`/`qa48ig`; removed `/tmp/sr48`, `/tmp/ig48`; build worktree lives in session scratchpad (auto-reclaimed).
+
+**NEXT new-coverage (Run #49+, top-down):** (a) **mouse-driven coverage via the SGR harness** (Run #47 breakthrough, still untouched): terminal Ctrl+Click path-open, '+' new-tab popup, right-click context menus (editor/tab), drag-select, scroll wheel — note 0.4.2 changelog "tab bar's + popup and tab context menu grab the keyboard while open" as an assertable behavior; (b) Slang shader + Go-to-Def into read-only builtin modules (0.4.3 #2536/#2539 — needs slangd, may be absent); (c) OSC 7 cwd; (d) theme color-transition; (e) GDScript (#2238); (f) 0.4.2 "Open Terminal to the Right/Below" + File Open dotfile reveal + JSONC config tolerance (quick wins). Then #2197 pyright only if a fix lands. Watch for maintainer action on #2583/#2582/#2577.
