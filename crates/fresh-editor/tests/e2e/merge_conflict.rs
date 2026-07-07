@@ -1,5 +1,5 @@
 use crate::common::fixtures::TestFixture;
-use crate::common::harness::{copy_plugin, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
 use std::path::Path;
@@ -29,6 +29,8 @@ fn setup_merge_conflict_test(project_root: &Path) {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "merge_conflict");
+    // merge_conflict imports the shared git-repo gateway from plugins/lib.
+    copy_plugin_lib(&plugins_dir);
 }
 
 /// Test file content with git conflict markers
@@ -896,6 +898,8 @@ fn test_diff3_conflict_with_base_section() {
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
     copy_plugin(&plugins_dir, "merge_conflict");
+    // merge_conflict imports the shared git-repo gateway from plugins/lib.
+    copy_plugin_lib(&plugins_dir);
     eprintln!("Copied plugin files");
 
     // Create a real diff3-style merge conflict
