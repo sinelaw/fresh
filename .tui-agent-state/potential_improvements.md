@@ -246,3 +246,8 @@ change would make it self-evident without requiring users to read docs.
 - **Observed (Run #51, v0.4.3 @ 4e945b494):** in an outer repo containing a nested git sub-repo (`vendored/`, untracked in the outer repo), Review Diff from an outer buffer shows `UNTRACKED ▾ vendored/ +0 -0` with a child row whose name is completely blank (`   ?   +0 -0`) and no content. This is the exact #2315 symptom (fixed for normal untracked dirs in 0.4.2) resurfacing for a directory git cannot expand — git never lists files inside a nested repository, so the expansion yields one empty placeholder. Expected: show `vendored/` as a single unexpandable row (VS Code shows one untracked entry), no blank child.
 - **Severity:** Low (cosmetic; the dir header row is present and nothing is blocked). Noted in #2592's body as a related observation; not filed separately per R3. If maintainer touches #2315 territory again, fold this in.
 - **Discovered:** Run #51, 2026-07-07
+
+### IMP-028 — docs/features/lsp.md names a nonexistent palette command "Switch Rust Analyzer Mode" (actual: "Rust LSP: Configure Mode")
+- **Observed (Run #55, v0.4.3 @ 4e945b494):** lsp.md §Rust LSP Mode Switching says `Use "Switch Rust Analyzer Mode" from the command palette`; searching the palette for that phrase finds nothing. The real command is **"Rust LSP: Configure Mode"** (source `rust-lsp`, desc "Switch rust-analyzer between full and reduced memory modes"). Extra papercut: fuzzy query "Switch Rust" ranks "Switch to Previous Tab" above it.
+- **Severity:** Low doc mismatch. Noted inside #2598's body (footer). Batch into the next docs/UX polish issue per R3; if #2598 gets fixed the doc line may get corrected with it — check before batching.
+- **Discovered:** Run #55, 2026-07-07

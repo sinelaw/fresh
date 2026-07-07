@@ -458,3 +458,25 @@ Each bug entry:
 - **Expected (Ctrl+G parity + VS Code goto):** offer "Scan file for exact line numbers?" or a clear "no line index" message with the cursor unmoved.
 - **Actual:** bogus jump to EOF + wrong message. Controls: `:N` exact in small files; `Ctrl+G` same buffer offers the scan; post-scan `:N` works.
 - **First Seen:** Run #54, 2026-07-07 (v0.4.3, master @ 4e945b494).
+
+## BUG-031: Rust LSP Reduced Memory mode — hover/Go-to-Def dead on macro names and inside macro invocations
+- **ID:** BUG-031
+- **Title:** After switching rust-analyzer to Reduced Memory mode ("Rust LSP: Configure Mode"), hover (Alt+K) and Go to Definition (F12) permanently fail on macro names (`println!`) and on any symbol inside macro invocation args (`println!`/`format!`); non-macro positions keep working.
+- **Severity:** Medium (core navigation silently broken in ubiquitous cursor positions; mode's own status message names only checkOnSave/procMacro/cachePriming — println! is a builtin macro, unexplained by any of them; no warning surfaced).
+- **Status:** Open — GitHub #2598 filed (Run #55).
+- **GitHub Issue:** [#2598](https://github.com/sinelaw/fresh/issues/2598)
+- **Reproduction:** Tiny trait crate (/tmp/ralsp: Shape trait, Circle/Square impls, describe()/area_sum() in main.rs). Start rust LSP (Full mode default): F12/hover on `describe` inside `println!("{}", describe(&c))` works. Palette → "Rust LSP: Configure Mode" → Reduced Memory → wait 60s+ → same position: F12 "No definition found" (retried to 5min, permanent), Alt+K "No hover information available"; hover on `println` itself dead; F12 on `name` in `format!` args dead. Controls seconds apart in same mode: bare `area_sum` call F12 ✓, `Circle` struct-literal F12 cross-file ✓, fn-def hover ✓, `self` F12 ✓. Switch back to Full → failing position recovers in seconds.
+- **Expected (VS Code + rust-analyzer with those three settings off):** navigation inside builtin-macro args keeps working; if a mode degrades features, its description says so.
+- **Actual:** silent per-position failure that looks random to the user. Secondary: every reduced-mode (re)start has a 30–60s window where ALL requests return empty while status shows "LSP (rust) ready" (Full mode answers within seconds).
+- **First Seen:** Run #55, 2026-07-07 (v0.4.3, master @ 4e945b494; rust-analyzer 1.94.1).
+
+## BUG-032: Rename Symbol (F2) — cross-file rename steals focus to the definition's file at a stale position
+- **ID:** BUG-032
+- **Title:** F2 rename invoked from a use site whose definition lives in another file applies correctly but switches the active tab to the definition's file, cursor at that buffer's stale previous position (not even the renamed symbol).
+- **Severity:** Medium-low usability (user loses their place after every cross-file rename; VS Code/IntelliJ keep focus in the invoking file).
+- **Status:** Open — GitHub #2599 filed (Run #55).
+- **GitHub Issue:** [#2599](https://github.com/sinelaw/fresh/issues/2599)
+- **Reproduction:** Same crate. In main.rs cursor on `radius` in `Circle { radius: 2.0 }` (use site; def in shapes.rs). F2 → C-u → `rad` → Enter → "Renamed successfully (4 changes)" but active tab is now shapes.rs at its old cursor line (7, while the def is line 11 in the `side` trial). 2/2 (radius, side). Controls: def-site invocation stays put; single-file rename (describe → render, 3 changes) stays put.
+- **Expected (VS Code):** focus and cursor remain in the invoking file at the renamed symbol.
+- **Actual:** active tab switches to the other edited file at a stale position. main.rs keeps its own cursor (verified on switching back). Also verified fine: F2 on whitespace → graceful "Cannot rename: ... No references found at position" without opening the prompt; undo reverts the rename's edits.
+- **First Seen:** Run #55, 2026-07-07 (v0.4.3, master @ 4e945b494; rust-analyzer 1.94.1).

@@ -1888,3 +1888,32 @@ Setup: tiny cargo crate `/tmp/inlay54` (fn with 2 verbose params; `let` bindings
 **Cleanup:** killed tmux `qa54`; removed `/tmp/lf54` (172MB fixtures), `/tmp/inlay54`; removed `~/.config/fresh/config.json` test configs; `/tmp/fresh-master` worktree removed at end of run.
 
 **NEXT new-coverage (Run #55+, top-down):** (a) recheck #2596/#2597 only if a fix lands; (b) Slang Go-to-Def (#2536/#2539) ONLY if slangd appears on PATH; (c) with rust-analyzer now installable via rustup in-container: LSP request-based deep dive on Rust (hover/definition/references/rename/completions — pyright #2197 blocked path may be testable via Rust instead); (d) `textDocument/implementation` (0.4.1 `6df567f04`, never tested); (e) "Switch Rust Analyzer Mode" Full↔Reduced Memory palette command (docs/features/lsp.md:212). Then #2197 pyright only if a fix lands. Watch for maintainer action on #2596/#2597/#2594/#2591/#2592/#2587/#2583/#2582/#2577; re-opens of #2312.
+
+---
+
+## Run #55 — 2026-07-07 (v0.4.3 @ 4e945b494, unchanged since Run #50)
+
+**Preflight:** state synced; playbook + Lessons intact; GitHub MCP auth live (get_me OK). Master fetch → still `4e945b494` ⇒ per R1 skipped fixed-bug rechecks; searched agent-issue list — 22 open, ZERO maintainer comments/actions on the Run #48–54 filings (#2577…#2597). slangd still absent (which check) → Slang priority (d) stays blocked. Built release binary from origin/master worktree `/tmp/fresh-master` (cold container, ~6.5min, exit 0, `fresh 0.4.3`).
+
+**Objective (R2):** Run #55 priorities (a) Rust LSP request-based deep dive, (b) `textDocument/implementation`, (c) "Switch Rust Analyzer Mode" — the #2197-blocked request family, unblocked by Run #54's rustup-component discovery.
+
+**Fixture:** `/tmp/ralsp` trait crate — `Shape` trait (`area`/`name`) + `Circle`/`Square` impls in shapes.rs; `describe()`/`area_sum()` + `println!` call sites in main.rs. `rustup component add rust-analyzer` from the crate dir (1.94.1); `cargo check` pre-warmed. tmux session `fresh-run55` 220x50; Trust T+Enter; palette Start LSP → `LSP (rust) ready` ~8s.
+
+### (a)+(b) Request family — Full mode ALL PASS
+- **Hover Alt+K** on `describe` call: popup `Hover [Alt+T to focus]`, crate + `fn describe(shape: &dyn Shape) -> String`. Inlay hints live alongside.
+- **F12** same-file (call→`fn describe` line 14, exact col) + cross-file (`Circle`→shapes.rs:6, new tab), status `Jumped to definition at <path>:<line>`, `Ln` immediate (no #2301 staleness here).
+- **Shift+F12** on trait method `area`: `References to 'area' (6)` = decl + both impls + call sites with TWO rows for the two same-line refs in `a.area() + b.area()`; Enter on a row cross-file opens at the exact ref column (`Opened <path>:19`, Col 7).
+- **Ctrl+F12** (first-ever test): trait NAME → `Implementations of 'Shape' (2)` (both impl blocks); method call through `&dyn` → `Implementations of 'area' (2)` (both impl fns); Enter jumps to shapes.rs:15 col 8.
+- **F2 rename:** prompt prefilled; cross-file `radius→rad` and back = `Renamed successfully (4 changes)` each way, both buffers dirty, all 4 sites verified in both files; single-file `describe→render` (3 changes); undo reverts rename edits cleanly; F2 on whitespace → `Cannot rename: LSP error … prepareRename … No references found at position (code -32602)`, no prompt, one ⚠ log entry — graceful. **BUG → #2599:** cross-file rename from a USE site steals focus (details below).
+- **Ctrl+Space completions:** `c.` → `radius f64 (Tab)` + `λ area/name (as Shape)` + `try_into`/`into`; Tab accepts, inlay `: f64` updates instantly. NO auto-popup on `.` after 3s — editing.md §Basic Completions says default is "explicit only" → NOT a bug (false positive avoided).
+
+### (c) "Rust LSP: Configure Mode" — mechanics PASS, mode itself buggy
+Docs name ("Switch Rust Analyzer Mode", lsp.md:212) doesn't exist in the palette → IMP-028 + noted in #2598. Dialog `Rust LSP Mode`: Full / Reduced Memory / Cancel; both switch directions restart the server with correct status lines (`Reduced Memory mode — checkOnSave, procMacro, cachePriming disabled` / `Full mode — all features enabled, no process limits`).
+
+**BUG FILED → #2598 (med).** Reduced Memory mode, warmed 60s→5min: hover/F12 on `println!` itself and on ANY symbol inside `println!`/`format!` args permanently fail (`No definition found` / `No hover information available`; describe@8 ×4 incl. 5-min retry, describe@9, println@9, name-in-format!@15). CONTROLS seconds apart, same mode: bare `area_sum` call F12 ✓, `Circle` struct literal F12 cross-file ✓, `fn describe` def hover ✓, `self` F12 ✓. Full mode: same macro positions work, and recover within ~6s of switching back. Secondary: EVERY reduced-mode (re)start (mode switch AND manual Stop+Start) has a ~30–60s window where ALL requests return empty while status + LSP panel say ready. Duplicate search: `reduced memory` / `rust analyzer mode` / `println definition macro` / `"no definition found"` — clean (#1797 = closed missing-binary loop).
+
+**BUG FILED → #2599 (med-low).** Cross-file F2 from main.rs use site → rename applies, but active tab switches to shapes.rs at that buffer's STALE cursor position (line 7 while `side`'s renamed def is line 11 — not even the symbol). 2/2 (radius, side). Controls: def-site invocation and single-file rename both stay put. main.rs's own cursor preserved (checked on switch-back). Duplicate search: `rename focus file` / `rename symbol cursor jumps` / `F2 rename tab switches` — clean.
+
+**Harness incidents (lessons appended to learning_db):** (1) blind-typed into a rename prompt that never opened (F2 on whitespace errors WITHOUT a prompt) → keystrokes hit the buffer; recovered via per-char `C-z` (undo also rolled back the prior rename = fixture conveniently restored). Rule: capture + confirm `Rename to:` before typing. (2) A phantom "format!-position works" data point was really F12-on-`self` in the OTHER file — a cross-file F12 had switched buffers and Right-at-EOL wraps lines; rule: re-verify focused buffer + `Ln, Col` before every request. (3) LSP status panel: Down+Enter hit STOP not Restart; panel says "ready" during the reduced warm-up — not a request-readiness signal.
+
+**Cleanup:** killed `fresh-run55`; /tmp fixtures left (ephemeral container). **R2 satisfied:** priorities (a)(b)(c) all advanced to done; 2 issues filed; registry/learning_db/test_plan updated; Run #56 priorities queued (diagnostics deep-dive, signature help, rust-analyzer code actions, auto-import).
