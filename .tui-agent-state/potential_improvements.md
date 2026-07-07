@@ -236,3 +236,8 @@ change would make it self-evident without requiring users to read docs.
 - **Suggested improvement:** an editor right-click menu (Cut/Copy/Paste/Send Selection to Terminal…) would match VS Code/Sublime muscle memory now that mouse support is otherwise rich (drag-select, double-click-drag, menus, popups); alternatively render the Terminal menu the i18n strings imply.
 - **Severity:** Low (no doc promises an editor context menu; all commands reachable via palette/menus). Not filed per R3; batch candidate.
 - **Discovered:** Run #49, 2026-07-07
+
+### IMP-026 — File Explorer context menu papercuts (empty-space menu, New File status leak)
+- **Observed (Run #50, v0.4.3 @ 4e945b494):** (1) right-clicking EMPTY explorer space shows the same full 10-item menu (Rename/Cut/Delete/Duplicate/Copy path… all acting on the *current selection*, possibly off-screen); VS Code shows a reduced New File/New Folder/Paste menu for empty space — target-dependent items on an untargeted click surprise. (2) "New File" creates `untitled_<unix-ts>.txt` then renames it, and the status message leaks the internal flow: `Renamed untitled_1783409193.txt to gamma50.txt` instead of "Created gamma50.txt". (3) New Directory's prefilled default is `New Folder <unix-ts>` — a timestamp default is odd next to VS Code's empty-input placeholder.
+- **Severity:** Low, cosmetic/convention; menu itself works (see learning_db Run #50). Not filed per R3; batch candidate. NB the real keyboard-grab defect is filed as #2587.
+- **Discovered:** Run #50, 2026-07-07

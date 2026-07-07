@@ -318,7 +318,7 @@ Each bug entry:
 - **ID:** BUG-020
 - **Title:** Vertical motion onto a shorter line lands the cursor one column past the last char (col len+1); `x` then deletes the newline and joins the next line.
 - **Severity:** Medium (silent corruption from ordinary navigate-then-delete; off-by-one vs correct horizontal clamp).
-- **Status:** Open — GitHub #2442 filed (Run #44).
+- **Status:** FIXED — confirmed Run #50 in v0.4.3 @ 4e945b494 (fix commit `4e945b494`). All 3 original paths pass via UI: `$`+`j` → Col 5 + `x` → `shor` (no join); col-10 `j` clamps AND goal column restores on the next long line (Col 10); `k` from below → Col 5 + `x` → `shor`. Commented on the issue.
 - **GitHub Issue:** [#2442](https://github.com/sinelaw/fresh/issues/2442)
 - **Reproduction:** vi mode, lines `hello world foo bar baz` / `short` / `a longer line with many words here`.
   1. Line 1 `$` (col 23, correct) → `j` onto `short` (5 chars) → status `Ln 2, Col 6` (past EOL).
@@ -382,6 +382,19 @@ Each bug entry:
 - **Reproduction:** git project w/ `NEEDLE` matches; `Alt+A` → `NEEDLE`; `Ctrl+Alt+→` (Match 1 lands correctly); insert a line above (`Up`,`Home`, type, Enter); `Ctrl+Alt+→` → status `Match 2/5, Ln 4` and the REAL cursor cell (tmux `#{cursor_x}/#{cursor_y}`-verified) is on the pre-edit line 4 ("middle text") while the match is on line 5. Column variant: `Home`+`xx` on a match line, step away+back → lands col 1 on the `x` (match now col 3). Enter-open on a stale panel row: same. Panel previews also stay stale.
 - **What works (do not re-report):** everything else about stepping — forward/backward, wrap both directions, cross-file opening in the source split, focus lands in editor for immediate edit, panel highlight follows current match, palette "Next/Previous Search Match", graceful "No Search & Replace results — run a search first" when no search/panel. **Workaround:** re-run the search (`Alt+A` then Enter) — refreshed results land correctly.
 - **First Seen:** 2026-07-07 (Run #48), fresh 0.4.3 @ 9f6135001.
+
+---
+
+## BUG-025: File Explorer context menu does not grab the keyboard — keys fall through to type-ahead and can retarget menu actions
+- **ID:** BUG-025
+- **Title:** With the explorer right-click context menu open, printable keys and Backspace are NOT consumed by the menu: they reach the explorer's type-ahead find underneath (sidebar header becomes `/x`), which moves the tree selection behind the open menu. Menu actions act on the live selection (by design, "honoring the active multi-selection" per 0.4.1 changelog), so a stray keypress silently changes the target of Cut/Copy/Delete/Duplicate/Rename/Copy-path. The leaked filter also persists after the menu closes.
+- **Severity:** Medium (silent retargeting of file operations; Delete partially mitigated by its confirm prompt naming the file).
+- **Status:** Open — GitHub #2587 filed (Run #50).
+- **GitHub Issue:** [#2587](https://github.com/sinelaw/fresh/issues/2587)
+- **Reproduction:** `fresh --no-restore alpha.txt` in a dir with `alpha.txt`/`beta.txt`/`subdir`; `Ctrl+B`; right-click `alpha.txt` (selection marker `48;5;17` lands on it); type `sub` (header → `/sub`, marker moves to `subdir` behind the menu); Down×9 to Copy Relative Path, Enter → status `Copied path: subdir` (expected `alpha.txt`). Leak reproduced 3/3 with `q`/`z`/`sub`; Backspace edits the leaked filter; arrows/Enter/Esc correctly go to the menu.
+- **Expected:** the app's own sibling menus grab the keyboard (0.4.2 changelog: "'+' popup and tab context menu grab the keyboard while open"; re-verified Run #49) and VS Code explorer context menus consume printable keys.
+- **What works (do not re-report):** the menu itself is complete and functional — all 10 items; Duplicate (`alpha copy.txt`, disk-verified); Delete = y+Enter prompt → "Moved to trash"; New Directory (prefilled timestamped default name, `C-u` clears); Rename (prefilled current name); Copy Full/Relative Path (clipboard-verified); New File; same menu on dirs and empty space (acts on current selection); keyboard-grab DOES hold for arrows/Enter/Esc.
+- **First Seen:** 2026-07-07 (Run #50), fresh 0.4.3 @ 4e945b494.
 
 ---
 
