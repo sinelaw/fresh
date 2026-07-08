@@ -471,6 +471,10 @@ pub struct Window {
     pub(crate) pending_inlay_hints_requests:
         std::collections::HashMap<u64, crate::app::InlayHintsRequest>,
 
+    /// Pending code-lens requests keyed by request id.
+    pub(crate) pending_code_lens_requests:
+        std::collections::HashMap<u64, crate::app::CodeLensRequest>,
+
     /// Pending folding-range requests + per-buffer in-flight tracking + debounce.
     pub(crate) pending_folding_range_requests:
         std::collections::HashMap<u64, crate::app::FoldingRangeRequest>,
@@ -2339,6 +2343,7 @@ impl Window {
             pending_code_actions_server_names: std::collections::HashMap::new(),
             pending_code_actions: None,
             pending_inlay_hints_requests: std::collections::HashMap::new(),
+            pending_code_lens_requests: std::collections::HashMap::new(),
             pending_folding_range_requests: std::collections::HashMap::new(),
             folding_ranges_in_flight: std::collections::HashMap::new(),
             folding_ranges_debounce: std::collections::HashMap::new(),

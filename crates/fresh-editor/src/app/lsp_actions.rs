@@ -258,6 +258,8 @@ impl Editor {
                     }
                 }
             }
+
+            self.request_code_lens_for_buffer(buffer_id);
         }
     }
 
@@ -1243,6 +1245,7 @@ impl Editor {
         let _ = handle;
         self.active_window_mut()
             .schedule_folding_ranges_refresh(buffer_id);
+        self.request_code_lens_for_buffer(buffer_id);
     }
 
     /// Set up a plugin development workspace for LSP support on a buffer.

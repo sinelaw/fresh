@@ -397,6 +397,18 @@ impl Editor {
         self.active_window_mut()
             .handle_lsp_inlay_hints(request_id, uri, hints);
     }
+
+    /// Handle LSP code lens response — thin shim over
+    /// [`Window::handle_lsp_code_lens`].
+    pub(super) fn handle_lsp_code_lens(
+        &mut self,
+        request_id: u64,
+        uri: String,
+        lenses: Vec<lsp_types::CodeLens>,
+    ) {
+        self.active_window_mut()
+            .handle_lsp_code_lens(request_id, uri, lenses);
+    }
 }
 
 impl crate::app::window::Window {
@@ -451,6 +463,48 @@ impl crate::app::window::Window {
                 hints.len(),
                 request.buffer_id
             );
+        }
+    }
+
+    /// Handle LSP code lens response. Pure window-state mutation.
+    pub fn handle_lsp_code_lens(
+        &mut self,
+        request_id: u64,
+        uri: String,
+        lenses: Vec<lsp_types::CodeLens>,
+    ) {
+        let Some(request) = self.pending_code_lens_requests.remove(&request_id) else {
+            tracing::debug!(
+                "Ignoring stale code lens response (request_id={})",
+                request_id
+            );
+            return;
+        };
+
+        let state_version = match self.buffers.get(&request.buffer_id) {
+            Some(s) => s.buffer.version(),
+            None => return,
+        };
+        if state_version != request.version {
+            tracing::debug!(
+                "Ignoring stale code lenses for {} (request_id={}, version={}, current={})",
+                uri,
+                request_id,
+                request.version,
+                state_version
+            );
+            return;
+        }
+
+        tracing::debug!(
+            "Received {} code lenses for {} (request_id={})",
+            lenses.len(),
+            uri,
+            request_id
+        );
+
+        if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
+            super::Editor::apply_code_lens_to_state(state, &lenses);
         }
     }
 }
@@ -891,6 +945,7 @@ impl Editor {
         if !self.config.editor.enable_inlay_hints {
             // Folding ranges may improve after project is fully loaded
             self.request_folding_ranges_for_language(&language);
+            self.request_code_lens_for_language(&language);
             return;
         }
 
@@ -959,6 +1014,7 @@ impl Editor {
 
         // Folding ranges may improve after project is fully loaded
         self.request_folding_ranges_for_language(&language);
+        self.request_code_lens_for_language(&language);
     }
 
     /// Handle workspace/diagnostic/refresh request from the LSP server.
@@ -977,6 +1033,14 @@ impl Editor {
             language
         );
         self.request_inlay_hints_for_language(&language);
+    }
+
+    pub(super) fn handle_lsp_code_lens_refresh(&mut self, language: String) {
+        tracing::info!(
+            "LSP ({}) code-lens refresh requested, re-pulling code lenses",
+            language
+        );
+        self.request_code_lens_for_language(&language);
     }
 
     pub(super) fn handle_lsp_semantic_tokens_refresh(&mut self, language: String) {
@@ -1025,6 +1089,7 @@ impl Editor {
             self.request_semantic_tokens_for_language(&language);
             self.request_folding_ranges_for_language(&language);
             self.request_inlay_hints_for_language(&language);
+            self.request_code_lens_for_language(&language);
             self.pull_diagnostics_for_language(&language);
         }
     }
@@ -1922,6 +1987,18 @@ impl Editor {
             .collect();
         for buffer_id in buffer_ids {
             self.request_inlay_hints_for_buffer(buffer_id);
+        }
+    }
+
+    /// Request code lenses for all open buffers matching a language.
+    pub(super) fn request_code_lens_for_language(&mut self, language: &str) {
+        let buffer_ids: Vec<_> = self
+            .buffers_for_language(language)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        for buffer_id in buffer_ids {
+            self.request_code_lens_for_buffer(buffer_id);
         }
     }
 }

@@ -1609,6 +1609,33 @@ impl crate::app::window::Window {
                     }
                 }
 
+                if let Some(sh) =
+                    lsp.handle_for_feature_mut(&language, crate::types::LspFeature::CodeLens)
+                {
+                    let request_id = {
+                        let id = *__next_id;
+                        *__next_id += 1;
+                        id
+                    };
+
+                    if let Err(e) = sh.handle.code_lens(request_id, uri.as_uri().clone()) {
+                        tracing::debug!("Failed to request code lenses: {}", e);
+                    } else {
+                        self.pending_code_lens_requests.insert(
+                            request_id,
+                            super::CodeLensRequest {
+                                buffer_id,
+                                version: buffer_version,
+                            },
+                        );
+                        tracing::info!(
+                            "Requested code lenses for {} (request_id={})",
+                            uri.as_str(),
+                            request_id
+                        );
+                    }
+                }
+
                 // Schedule folding range refresh
                 self.schedule_folding_ranges_refresh(buffer_id);
             }

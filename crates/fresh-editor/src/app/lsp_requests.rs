@@ -1428,11 +1428,13 @@ impl Editor {
         state: &mut crate::state::EditorState,
         hints: &[lsp_types::InlayHint],
     ) {
-        use crate::view::virtual_text::VirtualTextPosition;
+        use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
         use ratatui::style::{Color, Style};
 
-        // Clear existing inlay hints
-        state.virtual_texts.clear(&mut state.marker_list);
+        let namespace = VirtualTextNamespace::from_string("lsp-inlay-hints".to_string());
+        state
+            .virtual_texts
+            .clear_namespace(&mut state.marker_list, &namespace);
 
         if hints.is_empty() {
             return;
@@ -1516,7 +1518,7 @@ impl Editor {
                 VirtualTextPosition::BeforeChar => crate::view::virtual_text::MarkerGravity::Left,
                 _ => crate::view::virtual_text::MarkerGravity::Right,
             };
-            state.virtual_texts.add_with_theme_keys(
+            state.virtual_texts.add_with_theme_keys_in_namespace(
                 &mut state.marker_list,
                 byte_offset,
                 display_text,
@@ -1525,6 +1527,7 @@ impl Editor {
                 None,
                 position,
                 0, // Default priority
+                namespace.clone(),
                 gravity,
             );
         }
@@ -1579,6 +1582,65 @@ impl Editor {
             "LSP ({}): no answer — '{}' timed out after {}s",
             language, method, timeout_secs,
         ))
+    }
+
+    /// Apply code lenses as line-level virtual text above their target lines.
+    pub fn apply_code_lens_to_state(
+        state: &mut crate::state::EditorState,
+        lenses: &[lsp_types::CodeLens],
+    ) {
+        use crate::view::virtual_text::{VirtualTextNamespace, VirtualTextPosition};
+        use ratatui::style::{Color, Modifier, Style};
+        use std::collections::BTreeMap;
+
+        let namespace = VirtualTextNamespace::from_string("lsp-code-lens".to_string());
+        state
+            .virtual_texts
+            .clear_namespace(&mut state.marker_list, &namespace);
+
+        if lenses.is_empty() {
+            return;
+        }
+
+        let mut by_line: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+        for lens in lenses {
+            let Some(command) = &lens.command else {
+                continue;
+            };
+            if command.title.trim().is_empty() {
+                continue;
+            }
+            by_line
+                .entry(lens.range.start.line)
+                .or_default()
+                .push(command.title.clone());
+        }
+
+        let style = Style::default()
+            .fg(Color::Rgb(128, 128, 128))
+            .add_modifier(Modifier::ITALIC);
+        let fg_theme_key = Some("editor.line_number_fg".to_string());
+
+        for (line, titles) in by_line {
+            let text = format!("  {}", titles.join(" | "));
+            let byte_offset = state.buffer.lsp_position_to_byte(line as usize, 0);
+            state.virtual_texts.add_line_with_theme_keys(
+                &mut state.marker_list,
+                byte_offset,
+                text,
+                style,
+                fg_theme_key.clone(),
+                None,
+                VirtualTextPosition::LineAbove,
+                namespace.clone(),
+                -10,
+                None,
+                None,
+                Vec::new(),
+            );
+        }
+
+        tracing::debug!("Applied {} code lenses as virtual text", lenses.len());
     }
 
     /// Request LSP find references at current cursor position
@@ -3515,6 +3577,52 @@ impl Editor {
         self.request_inlay_hints_for_buffer(buffer_id);
     }
 
+    /// Request code lenses for a specific buffer if supported.
+    pub(crate) fn request_code_lens_for_buffer(&mut self, buffer_id: BufferId) {
+        let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
+            return;
+        };
+        if !metadata.lsp_enabled {
+            return;
+        }
+
+        let version = match self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        {
+            Some(state) => state.buffer.version(),
+            None => return,
+        };
+
+        let request_id = self.active_window_mut().next_lsp_request_id;
+
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, LspFeature::CodeLens, |handle, uri, _language| {
+                let result = handle.code_lens(request_id, uri.as_uri().clone());
+                if result.is_ok() {
+                    tracing::info!(
+                        "Requested code lenses for {} (request_id={})",
+                        uri.as_str(),
+                        request_id
+                    );
+                } else if let Err(e) = &result {
+                    tracing::debug!("Failed to request code lenses: {}", e);
+                }
+                result.is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.active_window_mut().next_lsp_request_id += 1;
+            self.active_window_mut()
+                .pending_code_lens_requests
+                .insert(request_id, super::CodeLensRequest { buffer_id, version });
+        }
+    }
+
     /// Issue a debounced folding range request if the timer has elapsed.
     pub(crate) fn maybe_request_folding_ranges_debounced(&mut self, buffer_id: BufferId) {
         let Some(ready_at) = self
@@ -4112,7 +4220,7 @@ mod tests {
     use crate::model::buffer::Buffer;
     use crate::state::EditorState;
     use crate::view::virtual_text::VirtualTextPosition;
-    use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, Position};
+    use lsp_types::{CodeLens, Command, InlayHint, InlayHintKind, InlayHintLabel, Position, Range};
 
     fn make_hint(line: u32, character: u32, label: &str, kind: Option<InlayHintKind>) -> InlayHint {
         InlayHint {
@@ -4123,6 +4231,21 @@ mod tests {
             tooltip: None,
             padding_left: None,
             padding_right: None,
+            data: None,
+        }
+    }
+
+    fn make_code_lens(line: u32, title: &str) -> CodeLens {
+        CodeLens {
+            range: Range {
+                start: Position { line, character: 0 },
+                end: Position { line, character: 0 },
+            },
+            command: Some(Command {
+                title: title.to_string(),
+                command: "fresh.test".to_string(),
+                arguments: None,
+            }),
             data: None,
         }
     }
@@ -4223,6 +4346,36 @@ mod tests {
             Some("editor.line_number_fg")
         );
         assert_eq!(vtexts[0].bg_theme_key, None);
+    }
+
+    #[test]
+    fn test_code_lens_renders_as_line_virtual_text() {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        state.buffer = Buffer::from_str_test("fn main() {}\n");
+
+        if !state.buffer.is_empty() {
+            state.marker_list.adjust_for_insert(0, state.buffer.len());
+        }
+
+        let lenses = vec![make_code_lens(0, "Run Test"), make_code_lens(0, "Debug")];
+        Editor::apply_code_lens_to_state(&mut state, &lenses);
+
+        let lines =
+            state
+                .virtual_texts
+                .query_lines_in_range(&state.marker_list, 0, state.buffer.len());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].1.position, VirtualTextPosition::LineAbove);
+        assert_eq!(lines[0].1.text, "  Run Test | Debug");
+        assert_eq!(
+            lines[0].1.fg_theme_key.as_deref(),
+            Some("editor.line_number_fg")
+        );
     }
 
     #[test]

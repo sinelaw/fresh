@@ -554,6 +554,8 @@ impl Editor {
                 }
             }
         }
+
+        self.request_code_lens_for_buffer(active_buffer);
     }
 
     /// Check if the topmost visible popup is the LSP confirmation

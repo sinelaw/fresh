@@ -349,6 +349,12 @@ pub(crate) struct InlayHintsRequest {
     pub(crate) version: u64,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CodeLensRequest {
+    pub(crate) buffer_id: BufferId,
+    pub(crate) version: u64,
+}
+
 /// State for the dabbrev cycling session (Alt+/ style).
 ///
 /// When the user presses Alt+/ repeatedly, we cycle through candidates
