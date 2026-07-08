@@ -1,0 +1,141 @@
+%YAML 1.2
+---
+name: CUDA
+file_extensions: [cu, cuh]
+scope: source.cuda
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: launch-config
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtins
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.cuda
+      push:
+        - meta_scope: comment.block.cuda
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.cuda
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.cuda
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.cuda
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.cuda
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.cuda
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|pragma|error|warning|line)\b'
+      scope: keyword.control.directive.cuda
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.cuda
+      push:
+        - meta_scope: string.quoted.double.cuda
+        - match: '\\.'
+          scope: constant.character.escape.cuda
+        - match: '"'
+          scope: punctuation.definition.string.end.cuda
+          pop: true
+
+  characters:
+    - match: "'"
+      scope: punctuation.definition.string.begin.cuda
+      push:
+        - meta_scope: string.quoted.single.cuda
+        - match: '\\.'
+          scope: constant.character.escape.cuda
+        - match: "'"
+          scope: punctuation.definition.string.end.cuda
+          pop: true
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+([uUlL]*)\b'
+      scope: constant.numeric.hex.cuda
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fFlL]?\b'
+      scope: constant.numeric.float.cuda
+    - match: '\b[0-9][0-9_]*([uUlL]*)\b'
+      scope: constant.numeric.integer.cuda
+
+  launch-config:
+    - match: '<<<'
+      scope: punctuation.section.launch.begin.cuda
+      push:
+        - meta_scope: meta.kernel-launch.cuda
+        - match: '>>>'
+          scope: punctuation.section.launch.end.cuda
+          pop: true
+        - include: numbers
+        - include: builtins
+        - include: operators
+        - include: punctuation
+
+  keywords:
+    - match: '\b(if|else|switch|case|default|while|do|for|break|continue|return|goto)\b'
+      scope: keyword.control.cuda
+    - match: '\b(class|struct|enum|namespace|using|typedef|template|typename|extern)\b'
+      scope: keyword.declaration.cuda
+    - match: '\b(__global__|__device__|__host__|__shared__|__constant__|__managed__|__restrict__|__launch_bounds__|__forceinline__|__noinline__|__grid_constant__|__align__)\b'
+      scope: storage.modifier.cuda
+    - match: '\b(const|constexpr|static|inline|volatile|mutable|register|thread_local)\b'
+      scope: storage.modifier.cuda
+
+  types:
+    - match: '\b(void|bool|char|signed|unsigned|short|int|long|float|double|size_t|ptrdiff_t|dim3|uint3|int3|uchar|ushort|uint|ulong)\b'
+      scope: storage.type.cuda
+    - match: '\b(float|double|int|uint|long|ulong|char|uchar|short|ushort)[1234]\b'
+      scope: storage.type.vector.cuda
+    - match: '\b(cuda(Stream|Event|Error|DeviceProp|Graph|GraphExec|TextureObject|SurfaceObject|Array|ChannelFormatDesc)_t|cudaError_t)\b'
+      scope: storage.type.cuda
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.cuda
+
+  constants:
+    - match: '\b(true|false|nullptr)\b'
+      scope: constant.language.cuda
+    - match: '\b(cudaSuccess|cudaMemcpy(HostToDevice|DeviceToHost|DeviceToDevice|HostToHost|Default))\b'
+      scope: constant.other.cuda
+
+  builtins:
+    - match: '\b(threadIdx|blockIdx|blockDim|gridDim|warpSize)\b'
+      scope: support.variable.builtin.cuda
+    - match: '\b(__syncthreads|__syncwarp|__threadfence|__threadfence_block|__threadfence_system|__shfl_sync|__shfl_down_sync|__shfl_up_sync|__shfl_xor_sync|atomic(Add|Sub|Exch|Min|Max|Inc|Dec|CAS|And|Or|Xor))\b'
+      scope: support.function.builtin.cuda
+    - match: '\b(cuda(Malloc|Free|Memcpy|Memset|GetLastError|DeviceSynchronize|StreamCreate|StreamDestroy|EventCreate|EventRecord|EventSynchronize|LaunchKernel|OccupancyMaxPotentialBlockSize))\b'
+      scope: support.function.runtime.cuda
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.cuda
+
+  operators:
+    - match: '(\+\+|--|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|==|!=|<=|>=|&&|\|\||<<|>>|->|::|[+\-*/%&|^~!?:=<>])'
+      scope: keyword.operator.cuda
+
+  punctuation:
+    - match: '(;|,|\.)'
+      scope: punctuation.separator.cuda
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.cuda

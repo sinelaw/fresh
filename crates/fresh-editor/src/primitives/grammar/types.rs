@@ -270,6 +270,12 @@ pub const GLSL_GRAMMAR: &str = include_str!("../../grammars/glsl.sublime-syntax"
 pub const HLSL_GRAMMAR: &str = include_str!("../../grammars/hlsl.sublime-syntax");
 /// Embedded WGSL shader grammar
 pub const WGSL_GRAMMAR: &str = include_str!("../../grammars/wgsl.sublime-syntax");
+/// Embedded Metal shader grammar
+pub const METAL_GRAMMAR: &str = include_str!("../../grammars/metal.sublime-syntax");
+/// Embedded CUDA grammar
+pub const CUDA_GRAMMAR: &str = include_str!("../../grammars/cuda.sublime-syntax");
+/// Embedded HIP grammar
+pub const HIP_GRAMMAR: &str = include_str!("../../grammars/hip.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -750,6 +756,9 @@ impl GrammarRegistry {
             (GLSL_GRAMMAR, "GLSL"),
             (HLSL_GRAMMAR, "HLSL"),
             (WGSL_GRAMMAR, "WGSL"),
+            (METAL_GRAMMAR, "Metal"),
+            (CUDA_GRAMMAR, "CUDA"),
+            (HIP_GRAMMAR, "HIP"),
         ];
 
         for (grammar_str, name) in additional_grammars {
@@ -844,6 +853,9 @@ impl GrammarRegistry {
             ("md", "Markdown"),
             ("yml", "YAML"),
             ("dockerfile", "Dockerfile"),
+            ("msl", "Metal"),
+            ("cu", "CUDA"),
+            ("cuh", "CUDA"),
         ]
     }
 
@@ -2254,6 +2266,30 @@ mod tests {
             (GETTEXT_GRAMMAR, "Gettext PO", "messages.po"),
             (M4_GRAMMAR, "M4", "configure.ac"),
             (PBXPROJ_GRAMMAR, "Xcode Project", "project.pbxproj"),
+        ] {
+            let syntax = SyntaxDefinition::load_from_str(grammar, true, Some(name))
+                .unwrap_or_else(|e| panic!("{name} grammar should parse: {e}"));
+            assert!(
+                !syntax.file_extensions.is_empty(),
+                "{name} grammar should declare file extensions"
+            );
+
+            let registry = GrammarRegistry::default();
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, name);
+            assert!(entry.engines.syntect.is_some());
+            assert!(entry.engines.tree_sitter.is_none());
+        }
+    }
+
+    #[test]
+    fn test_gpu_embedded_grammars_load_and_resolve() {
+        for (grammar, name, path) in [
+            (METAL_GRAMMAR, "Metal", "shader.metal"),
+            (CUDA_GRAMMAR, "CUDA", "kernel.cu"),
+            (HIP_GRAMMAR, "HIP", "kernel.hip"),
         ] {
             let syntax = SyntaxDefinition::load_from_str(grammar, true, Some(name))
                 .unwrap_or_else(|e| panic!("{name} grammar should parse: {e}"));

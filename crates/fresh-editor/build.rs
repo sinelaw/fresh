@@ -378,6 +378,9 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/glsl.sublime-syntax", "GLSL"),
         ("src/grammars/hlsl.sublime-syntax", "HLSL"),
         ("src/grammars/wgsl.sublime-syntax", "WGSL"),
+        ("src/grammars/metal.sublime-syntax", "Metal"),
+        ("src/grammars/cuda.sublime-syntax", "CUDA"),
+        ("src/grammars/hip.sublime-syntax", "HIP"),
     ];
 
     let mut loaded = 0;

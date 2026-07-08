@@ -1,0 +1,137 @@
+%YAML 1.2
+---
+name: Metal
+file_extensions: [metal]
+scope: source.metal
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: attributes
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtins
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.metal
+      push:
+        - meta_scope: comment.block.metal
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.metal
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.metal
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.metal
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.metal
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.metal
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|pragma|error|warning|line)\b'
+      scope: keyword.control.directive.metal
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.metal
+      push:
+        - meta_scope: string.quoted.double.metal
+        - match: '\\.'
+          scope: constant.character.escape.metal
+        - match: '"'
+          scope: punctuation.definition.string.end.metal
+          pop: true
+
+  characters:
+    - match: "'"
+      scope: punctuation.definition.string.begin.metal
+      push:
+        - meta_scope: string.quoted.single.metal
+        - match: '\\.'
+          scope: constant.character.escape.metal
+        - match: "'"
+          scope: punctuation.definition.string.end.metal
+          pop: true
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+([uUlL]*)\b'
+      scope: constant.numeric.hex.metal
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fFhH]?\b'
+      scope: constant.numeric.float.metal
+    - match: '\b[0-9][0-9_]*([uUlL]*)\b'
+      scope: constant.numeric.integer.metal
+
+  attributes:
+    - match: '\[\['
+      scope: punctuation.section.brackets.begin.metal
+      push:
+        - meta_scope: storage.modifier.attribute.metal
+        - match: '\]\]'
+          scope: punctuation.section.brackets.end.metal
+          pop: true
+        - include: numbers
+        - include: strings
+        - match: '\b(buffer|texture|sampler|thread_position_in_grid|thread_position_in_threadgroup|threadgroup_position_in_grid|threads_per_threadgroup|vertex_id|instance_id|position|stage_in|color|depth|raster_order_group)\b'
+          scope: support.constant.attribute.metal
+
+  keywords:
+    - match: '\b(if|else|switch|case|default|while|do|for|break|continue|return|discard)\b'
+      scope: keyword.control.metal
+    - match: '\b(kernel|vertex|fragment|visible|struct|class|enum|namespace|using|typedef|template|typename)\b'
+      scope: keyword.declaration.metal
+    - match: '\b(const|constexpr|static|inline|thread|threadgroup|device|constant|volatile|restrict|packed|alignas)\b'
+      scope: storage.modifier.metal
+
+  types:
+    - match: '\b(void|bool|char|uchar|short|ushort|int|uint|long|ulong|half|float|double|size_t|ptrdiff_t)\b'
+      scope: storage.type.metal
+    - match: '\b(bool|char|uchar|short|ushort|int|uint|long|ulong|half|float|double)[234](x[234])?\b'
+      scope: storage.type.vector.metal
+    - match: '\b(texture(1d|2d|3d|cube)(_array)?|depth(2d|cube)(_array)?|sampler|threadgroup_imageblock|array|atomic|raytracing::[A-Za-z_][A-Za-z0-9_]*)\b'
+      scope: storage.type.metal
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.metal
+
+  constants:
+    - match: '\b(true|false|nullptr)\b'
+      scope: constant.language.metal
+    - match: '\b(access::(read|write|read_write|sample)|coord::(normalized|pixel)|filter::(nearest|linear)|address::(clamp_to_edge|repeat|mirrored_repeat|clamp_to_zero))\b'
+      scope: constant.other.enum.metal
+
+  builtins:
+    - match: '\b(abs|acos|all|any|asin|atan|ceil|clamp|cos|cross|distance|dot|exp|floor|fma|fract|length|log|max|min|mix|normalize|pow|reflect|rsqrt|saturate|sign|sin|smoothstep|sqrt|step|tan|transpose)\b'
+      scope: support.function.builtin.metal
+    - match: '\b(simdgroup_barrier|threadgroup_barrier|quad_broadcast|quad_shuffle|simd_sum|simd_max|simd_min)\b'
+      scope: support.function.builtin.metal
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.metal
+
+  operators:
+    - match: '(\+\+|--|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|==|!=|<=|>=|&&|\|\||<<|>>|->|::|[+\-*/%&|^~!?:=<>])'
+      scope: keyword.operator.metal
+
+  punctuation:
+    - match: '(;|,|\.)'
+      scope: punctuation.separator.metal
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.metal

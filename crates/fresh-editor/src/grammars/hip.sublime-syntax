@@ -1,0 +1,141 @@
+%YAML 1.2
+---
+name: HIP
+file_extensions: [hip]
+scope: source.hip
+
+variables:
+  identifier: '[A-Za-z_][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: characters
+    - include: numbers
+    - include: launch-config
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: builtins
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.hip
+      push:
+        - meta_scope: comment.block.hip
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.hip
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.hip
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.hip
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.hip
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.hip
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|pragma|error|warning|line)\b'
+      scope: keyword.control.directive.hip
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.hip
+      push:
+        - meta_scope: string.quoted.double.hip
+        - match: '\\.'
+          scope: constant.character.escape.hip
+        - match: '"'
+          scope: punctuation.definition.string.end.hip
+          pop: true
+
+  characters:
+    - match: "'"
+      scope: punctuation.definition.string.begin.hip
+      push:
+        - meta_scope: string.quoted.single.hip
+        - match: '\\.'
+          scope: constant.character.escape.hip
+        - match: "'"
+          scope: punctuation.definition.string.end.hip
+          pop: true
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+([uUlL]*)\b'
+      scope: constant.numeric.hex.hip
+    - match: '\b[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9_]+)?[fFlL]?\b'
+      scope: constant.numeric.float.hip
+    - match: '\b[0-9][0-9_]*([uUlL]*)\b'
+      scope: constant.numeric.integer.hip
+
+  launch-config:
+    - match: '<<<'
+      scope: punctuation.section.launch.begin.hip
+      push:
+        - meta_scope: meta.kernel-launch.hip
+        - match: '>>>'
+          scope: punctuation.section.launch.end.hip
+          pop: true
+        - include: numbers
+        - include: builtins
+        - include: operators
+        - include: punctuation
+
+  keywords:
+    - match: '\b(if|else|switch|case|default|while|do|for|break|continue|return|goto)\b'
+      scope: keyword.control.hip
+    - match: '\b(class|struct|enum|namespace|using|typedef|template|typename|extern)\b'
+      scope: keyword.declaration.hip
+    - match: '\b(__global__|__device__|__host__|__shared__|__constant__|__managed__|__restrict__|__launch_bounds__|__forceinline__|__noinline__)\b'
+      scope: storage.modifier.hip
+    - match: '\b(const|constexpr|static|inline|volatile|mutable|register|thread_local)\b'
+      scope: storage.modifier.hip
+
+  types:
+    - match: '\b(void|bool|char|signed|unsigned|short|int|long|float|double|size_t|ptrdiff_t|dim3|uint3|int3|uchar|ushort|uint|ulong)\b'
+      scope: storage.type.hip
+    - match: '\b(float|double|int|uint|long|ulong|char|uchar|short|ushort)[1234]\b'
+      scope: storage.type.vector.hip
+    - match: '\b(hip(Stream|Event|Error|DeviceProp|Graph|GraphExec|TextureObject|Array|ChannelFormatDesc)_t|hipError_t)\b'
+      scope: storage.type.hip
+    - match: '\b[A-Z][A-Za-z0-9_]*\b'
+      scope: storage.type.user.hip
+
+  constants:
+    - match: '\b(true|false|nullptr)\b'
+      scope: constant.language.hip
+    - match: '\b(hipSuccess|hipMemcpy(HostToDevice|DeviceToHost|DeviceToDevice|HostToHost|Default))\b'
+      scope: constant.other.hip
+
+  builtins:
+    - match: '\b(threadIdx|blockIdx|blockDim|gridDim|warpSize|hipThreadIdx_[xyz]|hipBlockIdx_[xyz]|hipBlockDim_[xyz]|hipGridDim_[xyz])\b'
+      scope: support.variable.builtin.hip
+    - match: '\b(__syncthreads|__syncwarp|__threadfence|__threadfence_block|__threadfence_system|__shfl|__shfl_down|__shfl_up|__shfl_xor|atomic(Add|Sub|Exch|Min|Max|Inc|Dec|CAS|And|Or|Xor))\b'
+      scope: support.function.builtin.hip
+    - match: '\b(hipLaunchKernelGGL|hip(Malloc|Free|Memcpy|Memset|GetLastError|DeviceSynchronize|StreamCreate|StreamDestroy|EventCreate|EventRecord|EventSynchronize|OccupancyMaxPotentialBlockSize))\b'
+      scope: support.function.runtime.hip
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.hip
+
+  operators:
+    - match: '(\+\+|--|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|==|!=|<=|>=|&&|\|\||<<|>>|->|::|[+\-*/%&|^~!?:=<>])'
+      scope: keyword.operator.hip
+
+  punctuation:
+    - match: '(;|,|\.)'
+      scope: punctuation.separator.hip
+    - match: '(\(|\)|\{|\}|\[|\])'
+      scope: punctuation.section.hip
