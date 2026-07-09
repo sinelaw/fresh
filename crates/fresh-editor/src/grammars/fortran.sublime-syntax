@@ -1,0 +1,126 @@
+%YAML 1.2
+---
+name: Fortran
+file_extensions: [f, for, ftn, f77, f90, f95, f03, f08]
+scope: source.fortran
+
+variables:
+  identifier: '[A-Za-z][A-Za-z0-9_]*'
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: labels
+    - include: declarations
+    - include: keywords
+    - include: types
+    - include: constants
+    - include: intrinsics
+    - include: numbers
+    - include: functions
+    - include: operators
+    - include: punctuation
+
+  comments:
+    - match: '^[cC*](\s|$).*$'
+      scope: comment.line.fixed-form.fortran
+    - match: '!.*$'
+      scope: comment.line.exclamation.fortran
+
+  preprocessor:
+    - match: '^\s*#\s*(include)\b'
+      scope: keyword.control.directive.include.fortran
+      push:
+        - match: '<[^>]*>'
+          scope: string.quoted.other.lt-gt.include.fortran
+          pop: true
+        - match: '"[^"]*"'
+          scope: string.quoted.double.include.fortran
+          pop: true
+        - match: '$'
+          pop: true
+    - match: '^\s*#\s*(define|undef|if|ifdef|ifndef|else|elif|endif|error|warning|line)\b'
+      scope: keyword.control.directive.fortran
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.fortran
+      push:
+        - meta_scope: string.quoted.double.fortran
+        - match: '""'
+          scope: constant.character.escape.fortran
+        - match: '"'
+          scope: punctuation.definition.string.end.fortran
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.fortran
+      push:
+        - meta_scope: string.quoted.single.fortran
+        - match: "''"
+          scope: constant.character.escape.fortran
+        - match: "'"
+          scope: punctuation.definition.string.end.fortran
+          pop: true
+
+  labels:
+    - match: '^\s*([0-9]+)\b'
+      captures:
+        1: constant.numeric.label.fortran
+
+  declarations:
+    - match: '\b(?i:(program|subroutine|function))\s+({{identifier}})'
+      captures:
+        1: keyword.declaration.fortran
+        2: entity.name.function.fortran
+    - match: '\b(?i:(module))\s+({{identifier}})'
+      captures:
+        1: keyword.declaration.fortran
+        2: entity.name.module.fortran
+    - match: '\b(?i:(interface|abstract\s+interface|contains|use|only|implicit|none))\b'
+      scope: keyword.declaration.fortran
+
+  keywords:
+    - match: '\b(?i:(if|then|else|elseif|end\s*if|select\s+case|case|do|while|end\s*do|cycle|exit|where|elsewhere|forall|associate|block|critical|concurrent|return|call|continue|go\s*to|goto|stop|error\s+stop))\b'
+      scope: keyword.control.fortran
+    - match: '\b(?i:(allocate|deallocate|nullify|save|data|common|equivalence|namelist|format|read|write|print|open|close|rewind|backspace|inquire))\b'
+      scope: keyword.other.fortran
+    - match: '\b(?i:(public|private|protected|external|intrinsic|optional|target|allocatable|pointer|parameter|intent|in|out|inout|recursive|pure|elemental|module\s+procedure|procedure|operator|assignment))\b'
+      scope: storage.modifier.fortran
+
+  types:
+    - match: '\b(?i:(integer|real|complex|logical|character|double\s+precision|type|class|kind|len))\b'
+      scope: storage.type.fortran
+
+  constants:
+    - match: '\.(?i:(true|false))\.'
+      scope: constant.language.boolean.fortran
+    - match: '\b(?i:null)\s*(?=\()'
+      scope: constant.language.null.fortran
+
+  intrinsics:
+    - match: '\b(?i:(abs|acos|aimag|aint|allocated|anint|asin|atan|atan2|ceiling|cmplx|conjg|cos|cosh|count|dot_product|dble|epsilon|exp|floor|huge|int|kind|lbound|len|log|log10|max|maxval|min|minval|mod|nint|null|present|product|real|reshape|selected_int_kind|selected_real_kind|shape|sin|sinh|size|sqrt|sum|tan|tanh|tiny|transpose|ubound))\b'
+      scope: support.function.intrinsic.fortran
+
+  numbers:
+    - match: '\b[0-9]+(\.[0-9]*)?([eEdD][+-]?[0-9]+)?(_{{identifier}})?\b'
+      scope: constant.numeric.fortran
+    - match: '\b[BOZboz]"[0-9A-Fa-f]+"\b'
+      scope: constant.numeric.boz.fortran
+
+  functions:
+    - match: '\b({{identifier}})\s*(?=\()'
+      scope: variable.function.fortran
+
+  operators:
+    - match: '\.(?i:(and|or|not|eqv|neqv|eq|ne|lt|le|gt|ge))\.'
+      scope: keyword.operator.word.fortran
+    - match: '(::|=>|==|/=|<=|>=|\*\*|//|[+\-*/%=<>])'
+      scope: keyword.operator.fortran
+
+  punctuation:
+    - match: '(,|;)'
+      scope: punctuation.separator.fortran
+    - match: '(\(|\)|\[|\])'
+      scope: punctuation.section.fortran

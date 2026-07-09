@@ -276,6 +276,8 @@ pub const METAL_GRAMMAR: &str = include_str!("../../grammars/metal.sublime-synta
 pub const CUDA_GRAMMAR: &str = include_str!("../../grammars/cuda.sublime-syntax");
 /// Embedded HIP grammar
 pub const HIP_GRAMMAR: &str = include_str!("../../grammars/hip.sublime-syntax");
+/// Embedded Fortran grammar
+pub const FORTRAN_GRAMMAR: &str = include_str!("../../grammars/fortran.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -759,6 +761,7 @@ impl GrammarRegistry {
             (METAL_GRAMMAR, "Metal"),
             (CUDA_GRAMMAR, "CUDA"),
             (HIP_GRAMMAR, "HIP"),
+            (FORTRAN_GRAMMAR, "Fortran"),
         ];
 
         for (grammar_str, name) in additional_grammars {
@@ -856,6 +859,8 @@ impl GrammarRegistry {
             ("msl", "Metal"),
             ("cu", "CUDA"),
             ("cuh", "CUDA"),
+            ("f90", "Fortran"),
+            ("fortran", "Fortran"),
         ]
     }
 
@@ -2306,6 +2311,21 @@ mod tests {
             assert!(entry.engines.syntect.is_some());
             assert!(entry.engines.tree_sitter.is_none());
         }
+    }
+
+    #[test]
+    fn test_fortran_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(FORTRAN_GRAMMAR, true, Some("Fortran"))
+            .expect("Fortran grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "f90"));
+
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_path(Path::new("solver.f90"), None)
+            .expect("Fortran files should resolve");
+        assert_eq!(entry.display_name, "Fortran");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
     }
 
     /// Build a minimal LanguageConfig for tests.

@@ -152,6 +152,7 @@ test_highlighting_works!(test_highlight_wgsl, "hello.wgsl", 2);
 test_highlighting_works!(test_highlight_metal, "hello.metal", 2);
 test_highlighting_works!(test_highlight_cuda, "hello.cu", 2);
 test_highlighting_works!(test_highlight_hip, "hello.hip", 2);
+test_highlighting_works!(test_highlight_fortran, "hello.f90", 2);
 
 // --- Alternate filenames/extensions that should work ---
 test_highlighting_works!(test_highlight_bash_ext, "hello.bash", 2);
