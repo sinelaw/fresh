@@ -1080,10 +1080,7 @@ impl Editor {
                 self.init_folder_open_state();
             }
             Action::GotoLine => {
-                let has_line_index = self
-                    .buffers()
-                    .get(&self.active_buffer())
-                    .is_none_or(|s| s.buffer.line_count().is_some());
+                let has_line_index = self.active_buffer_has_line_index();
                 if has_line_index {
                     self.start_prompt(
                         t!("file.goto_line_prompt").to_string(),

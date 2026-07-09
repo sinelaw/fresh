@@ -837,6 +837,98 @@ fn test_byte_offset_gutter_and_scan() {
     );
 }
 
+/// Regression test for #2597: the command-palette `:N` line-jump path must
+/// behave like Ctrl+G in a large file that has no line index yet. Before the
+/// fix, `:N` clamped the target to line 1 (`line_count()` is `None`), teleported
+/// the cursor to the end of the file, and reported "Jumped to line 1". It must
+/// instead offer the same "Scan file for exact line numbers?" prompt.
+#[test]
+fn test_palette_line_jump_offers_scan_in_large_file() {
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("palette_jump.txt");
+
+    let lines = 100_000;
+    let mut content = String::new();
+    for i in 0..lines {
+        content.push_str(&format!("Line {:06} content\n", i));
+    }
+    fs::write(&file_path, &content).unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        80,
+        24,
+        force_large_file_config(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Precondition: large-file (byte-offset) mode, cursor at Byte 0.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Byte 0"),
+        "Precondition: buffer should be in byte-offset mode.\nScreen:\n{}",
+        screen
+    );
+
+    // Open Quick Open, clear the ">" prefix, type the palette line-jump target
+    // and confirm with Enter.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text(":1000").unwrap();
+
+    // While typing, the cursor must NOT have been teleported by a live preview
+    // (there is no line->offset mapping to preview against). The status bar is
+    // hidden behind the open palette, so assert on the cursor byte directly.
+    assert_eq!(
+        harness.cursor_position(),
+        0,
+        "Palette ':N' preview must not move the cursor in byte-offset mode."
+    );
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // Confirm must offer the scan prompt (same as Ctrl+G), not a bogus jump.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Scan file"),
+        "Palette ':N' in a large file should offer the line-index scan.\nScreen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("Jumped to line"),
+        "Palette ':N' must not report a jump before a scan.\nScreen:\n{}",
+        screen
+    );
+
+    // Answering "y" scans, then the Go To Line prompt opens; the jump then works.
+    let _ = harness.type_text("y");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    while harness.editor_mut().process_line_scan() {}
+    let _ = harness.type_text("1000");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 1000"),
+        "After scanning, palette-driven jump should land on line 1000.\nScreen:\n{}",
+        screen
+    );
+}
+
 /// Test that answering "y" to the scan confirmation shows "Scanning..." progress
 /// in the status bar and eventually opens the Go To Line prompt.
 #[test]

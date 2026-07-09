@@ -259,8 +259,16 @@ impl Editor {
         //
         // Relative input (`:+N`/`:-N`) is intentionally not previewed: the
         // target shifts on every digit typed, which is disorienting.
+        //
+        // A large file without a line index (byte-offset mode) has no
+        // line→offset mapping, so a preview jump would land on the wrong
+        // byte; skip previewing until the confirm path offers a scan (#2597).
         let input = input.trim();
-        let target = Self::parse_quick_open_goto_line_target(input);
+        let target = if self.active_buffer_has_line_index() {
+            Self::parse_quick_open_goto_line_target(input)
+        } else {
+            None
+        };
         self.apply_goto_line_preview(target);
     }
 

@@ -1690,6 +1690,18 @@ impl Editor {
                 PromptResult::Done
             }
             QuickOpenResult::GotoLine(target) => {
+                // Large file opened in byte-offset mode: there is no line
+                // index yet, so a `:N` target can't be resolved to a byte
+                // offset. Offer the same "scan for exact line numbers?" flow
+                // as Ctrl+G / Go to Line instead of silently clamping to
+                // line 1 and jumping to the wrong place (#2597).
+                if !self.active_buffer_has_line_index() {
+                    self.start_prompt(
+                        t!("goto.scan_confirm_prompt", yes = "y", no = "N").to_string(),
+                        PromptType::GotoLineScanConfirm,
+                    );
+                    return PromptResult::Done;
+                }
                 let buffer_id = self.active_buffer();
                 if let Some(state) = self
                     .windows

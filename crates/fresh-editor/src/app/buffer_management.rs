@@ -286,6 +286,18 @@ impl Editor {
         self.active_window().buffers.len()
     }
 
+    /// Whether the active buffer has a full line index available.
+    ///
+    /// Always true for normal files; false for large files opened in
+    /// byte-offset mode before a line-index scan has run — in that state
+    /// there is no line→offset mapping, so line-based navigation (`Ctrl+G`,
+    /// Quick Open `:N`) must first offer to scan the file.
+    pub(crate) fn active_buffer_has_line_index(&self) -> bool {
+        self.buffers()
+            .get(&self.active_buffer())
+            .is_none_or(|s| s.buffer.line_count().is_some())
+    }
+
     /// Navigate to a specific line and column in the active buffer.
     ///
     /// Line and column are 1-indexed (matching typical editor conventions).
