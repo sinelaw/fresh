@@ -1032,8 +1032,13 @@ impl StatusBarRenderer {
                     let line = ctx.state.primary_cursor_line_number.value();
                     let col = cursor_column(&mut ctx.state.buffer, cursor.position);
                     let mode = ctx.state.buffer_settings.virtual_space;
-                    let (line, col) =
-                        virtual_space_adjusted_position(mode, &ctx.state.buffer, &cursor, line, col);
+                    let (line, col) = virtual_space_adjusted_position(
+                        mode,
+                        &ctx.state.buffer,
+                        &cursor,
+                        line,
+                        col,
+                    );
                     format_cursor_position(line + 1, col + 1, lc)
                 } else {
                     format!("Byte {}", cursor.position)
@@ -1054,8 +1059,13 @@ impl StatusBarRenderer {
                     let line = ctx.state.primary_cursor_line_number.value();
                     let col = cursor_column(&mut ctx.state.buffer, cursor.position);
                     let mode = ctx.state.buffer_settings.virtual_space;
-                    let (line, col) =
-                        virtual_space_adjusted_position(mode, &ctx.state.buffer, &cursor, line, col);
+                    let (line, col) = virtual_space_adjusted_position(
+                        mode,
+                        &ctx.state.buffer,
+                        &cursor,
+                        line,
+                        col,
+                    );
                     format_cursor_position_compact(line + 1, col + 1, lc)
                 } else {
                     format!("{}", cursor.position)
