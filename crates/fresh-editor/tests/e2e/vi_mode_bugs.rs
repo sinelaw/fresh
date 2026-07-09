@@ -1312,6 +1312,72 @@ fn test_vi_visual_line_indent_stops_at_selection() {
 }
 
 // =============================================================================
+// Bug #2606: visual-block (Ctrl+V) indent operators >/< do nothing
+// =============================================================================
+//
+// `>`/`<` were bound in visual and visual-line mode (bug #2438) but never in
+// visual-block mode, so the keys were silently swallowed and the editor stayed
+// stuck in `-- VISUAL BLOCK --`. Like Vim, they now shift every line the block
+// touches by one shiftwidth and return to normal mode.
+
+/// Visual-block `>` indents every line the block spans and returns to normal.
+#[test]
+fn test_vi_visual_block_indent() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbeta\ngamma\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Ctrl+V enters visual block, j extends it down to the second line.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '>');
+
+    // Both spanned lines shift right by one 4-space level; gamma is untouched.
+    harness
+        .wait_for_buffer_content("    alpha\n    beta\ngamma\n")
+        .unwrap();
+    // Returns to normal mode after the operation (Vim behavior).
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+}
+
+/// Visual-block `<` dedents every line the block spans and returns to normal.
+#[test]
+fn test_vi_visual_block_dedent() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "    alpha\n    beta\ngamma\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual-block".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '<');
+
+    harness
+        .wait_for_buffer_content("alpha\nbeta\ngamma\n")
+        .unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+}
+
+// =============================================================================
 // Bug #2441: find-char motions (f/t/F/T) broken with operators and ; / , repeat
 // =============================================================================
 

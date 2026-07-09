@@ -2352,6 +2352,21 @@ function vi_vblock_toggle_line() : void {
 }
 registerHandler("vi_vblock_toggle_line", vi_vblock_toggle_line);
 
+// Visual block > / < — Vim shifts every line the block touches by one
+// shiftwidth (whole lines, not just the selected columns) and returns to
+// normal mode. The block selection is the same live per-line selection that
+// vi_vblock_delete/yank act on, so applyVisualIndent (which drives the
+// editor's selection-aware indent/dedent) does exactly the right thing here.
+async function vi_vblock_indent() : Promise<void> {
+  await applyVisualIndent(">");
+}
+registerHandler("vi_vblock_indent", vi_vblock_indent);
+
+async function vi_vblock_dedent() : Promise<void> {
+  await applyVisualIndent("<");
+}
+registerHandler("vi_vblock_dedent", vi_vblock_dedent);
+
 // Visual mode motions - these extend the selection
 function vi_vis_left() : void {
   clearComputedVisualRange();
@@ -3723,6 +3738,8 @@ editor.defineMode("vi-visual-block", [
   ["c", "vi_vblock_change"],
   ["s", "vi_vblock_change"],
   ["y", "vi_vblock_yank"],
+  [">", "vi_vblock_indent"],
+  ["<", "vi_vblock_dedent"],
 
   // Exit
   ["Escape", "vi_vblock_escape"],
