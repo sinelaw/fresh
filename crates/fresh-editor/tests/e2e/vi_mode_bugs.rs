@@ -1115,6 +1115,46 @@ fn test_vi_bug_ci_quote_searches_forward_on_line() {
         .unwrap();
 }
 
+/// Bug #2604: `da"` should also delete the trailing whitespace after the
+/// closing quote, like Vim (`:help aquote`): `the "quick" brown fox` →
+/// `the brown fox` (single space), not `the  brown fox` (double space).
+#[test]
+fn test_vi_bug_da_quote_includes_trailing_whitespace() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "the \"quick\" brown fox\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Cursor is at column 0 (before the opening quote).
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+
+    // da" deletes `"quick"` plus the trailing space.
+    send_operator_text_object(&mut harness, 'd', 'a', '"');
+
+    harness.wait_for_buffer_content("the brown fox\n").unwrap();
+}
+
+/// Bug #2604 (leading-whitespace fallback): when there is no trailing
+/// whitespace after the closing quote, `da"` includes the leading whitespace
+/// before the opening quote instead — `foo "bar"` → `foo`.
+#[test]
+fn test_vi_bug_da_quote_falls_back_to_leading_whitespace() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "foo \"bar\"\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    harness.wait_until(|h| h.cursor_position() == 0).unwrap();
+
+    // No trailing whitespace after the closing quote, so the leading space is
+    // consumed instead.
+    send_operator_text_object(&mut harness, 'd', 'a', '"');
+
+    harness.wait_for_buffer_content("foo\n").unwrap();
+}
+
 // =============================================================================
 // Bug #2438: vi mode indent operators >>/<< (and visual >/<) do nothing
 // =============================================================================

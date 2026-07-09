@@ -2758,8 +2758,22 @@ async function applyTextObject(objectType: string): Promise<void> {
           selectStart = startOffset + lineStart + quoteStart + 1;
           selectEnd = startOffset + lineStart + quoteEnd;
         } else {
-          selectStart = startOffset + lineStart + quoteStart;
-          selectEnd = startOffset + lineStart + quoteEnd + 1;
+          // `a"` includes the quotes plus surrounding whitespace, matching Vim
+          // (`:help aquote`): trailing whitespace after the closing quote is
+          // included; if there is none, leading whitespace before the opening
+          // quote is included instead.
+          let aStart = quoteStart;
+          let aEnd = quoteEnd + 1; // exclusive, just past the closing quote
+          const isBlank = (c: string) => c === " " || c === "\t";
+          let trailingEnd = aEnd;
+          while (trailingEnd < line.length && isBlank(line[trailingEnd])) trailingEnd++;
+          if (trailingEnd > aEnd) {
+            aEnd = trailingEnd;
+          } else {
+            while (aStart > 0 && isBlank(line[aStart - 1])) aStart--;
+          }
+          selectStart = startOffset + lineStart + aStart;
+          selectEnd = startOffset + lineStart + aEnd;
         }
       }
       break;
