@@ -27,6 +27,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Remote workspaces (SSH)** (#2525) - file explorer appears immediately when toggled (#2522), a boot hang is fixed with idle-based read timeouts, and per-keystroke lag on very long lines is gone (#2529).
 * **Indentation guides** continue through soft-wrapped rows (#2538), respect per-buffer overrides and buffer kind (#2523), and stay visible when opening a file at a commit from **Git Log**.
 * **Settings fields** - language-entry edits (incl. **Tab Size**) keep their committed value, with `Esc` to cancel and `Enter`/`Tab` to commit (#2537, #2515); the search filter gains full cursor editing and ignores `Ctrl`/`Alt` chords; the **Env** list labels rows by name instead of `(no action)`.
+* **Whitespace indicators** - the master toggle (**Toggle Whitespace Indicators**) now turns indicators back **on**, restoring your configured visibility (e.g. space indicators) instead of the built-in default; previously toggling off then on only brought back tab indicators, so a restart was needed to see configured space indicators again (#2579).
 
 ### Internals
 

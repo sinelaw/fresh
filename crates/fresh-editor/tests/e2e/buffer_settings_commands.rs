@@ -134,6 +134,61 @@ fn test_toggle_tab_indicators_command() {
     );
 }
 
+/// Regression test for #2579: the whitespace master toggle could turn indicators
+/// off but not visibly back on. Turning back on restored the hard-coded default
+/// (tabs on / spaces off) instead of the user's configured visibility, so a user
+/// who enabled space indicators saw nothing return on a space-indented file
+/// (a restart re-resolved from config, which is why it "worked again").
+#[test]
+fn test_toggle_whitespace_indicators_restores_configured_spaces() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Leading spaces so the space indicator (·) has something to mark.
+    std::fs::write(&file_path, "    hello\n").unwrap();
+
+    // User configures space indicators on, tab indicators off.
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_spaces_leading = true;
+    config.editor.whitespace_spaces_inner = false;
+    config.editor.whitespace_spaces_trailing = false;
+    config.editor.whitespace_tabs_leading = false;
+    config.editor.whitespace_tabs_inner = false;
+    config.editor.whitespace_tabs_trailing = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // Configured space indicators are visible on open.
+    let screen_initial = harness.screen_to_string();
+    assert!(
+        screen_initial.contains('·'),
+        "Space indicators should be visible on open. Screen:\n{}",
+        screen_initial
+    );
+
+    // Toggle off — indicators disappear.
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    let screen_off = harness.screen_to_string();
+    assert!(
+        !screen_off.contains('·'),
+        "After toggling off, space indicators should be hidden. Screen:\n{}",
+        screen_off
+    );
+
+    // Toggle back on — the *configured* space indicators must return, not the
+    // hard-coded default (which shows only tab indicators, invisible here).
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    let screen_on = harness.screen_to_string();
+    assert!(
+        screen_on.contains('·'),
+        "After toggling back on, configured space indicators should return. Screen:\n{}",
+        screen_on
+    );
+}
+
 /// Test that "Set Tab Size" command changes tab rendering width
 #[test]
 fn test_set_tab_size_command() {

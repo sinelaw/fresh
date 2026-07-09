@@ -375,6 +375,31 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
+    /// Resolve the whitespace-indicator visibility a buffer would get from the
+    /// current config: the flat editor config, refined by the buffer language's
+    /// `show_whitespace_tabs` override. This is the same resolution used when a
+    /// file is opened, so callers can restore a buffer to its "configured"
+    /// visibility (e.g. when the whitespace master toggle is switched back on).
+    pub fn configured_whitespace_visibility(
+        &self,
+        buffer_id: fresh_core::BufferId,
+    ) -> crate::config::WhitespaceVisibility {
+        use crate::config::WhitespaceVisibility;
+        let mut whitespace = WhitespaceVisibility::from_editor_config(&self.config.editor);
+        if let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .and_then(|buffers| buffers.get(&buffer_id))
+        {
+            if let Some(lang_config) = self.config.languages.get(&state.language) {
+                whitespace =
+                    whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
+            }
+        }
+        whitespace
+    }
+
     /// Reset buffer settings (tab_size, use_tabs, auto_close, whitespace visibility) to config defaults
     pub fn reset_buffer_settings(&mut self) {
         use crate::config::WhitespaceVisibility;

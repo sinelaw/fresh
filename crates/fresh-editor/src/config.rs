@@ -730,19 +730,31 @@ impl WhitespaceVisibility {
         self.any_spaces() || self.any_tabs()
     }
 
+    /// All indicators disabled — the "hidden" state of the master toggle.
+    pub fn hidden() -> Self {
+        Self {
+            spaces_leading: false,
+            spaces_inner: false,
+            spaces_trailing: false,
+            tabs_leading: false,
+            tabs_inner: false,
+            tabs_trailing: false,
+        }
+    }
+
     /// Toggle all whitespace indicators on/off (master switch).
-    /// When turning off, all positions are disabled.
-    /// When turning on, restores to default visibility (tabs all on, spaces all off).
-    pub fn toggle_all(&mut self) {
+    ///
+    /// When turning off, all positions are disabled. When turning back on,
+    /// visibility is restored to `restore` — the user's configured, per-buffer
+    /// resolved visibility — so indicators the user actually enabled (e.g. space
+    /// indicators) reappear, not just the hard-coded default. If `restore` has
+    /// nothing visible (config hides whitespace entirely), fall back to the
+    /// built-in default so the master toggle always shows *something*.
+    pub fn toggle_all(&mut self, restore: WhitespaceVisibility) {
         if self.any_visible() {
-            *self = Self {
-                spaces_leading: false,
-                spaces_inner: false,
-                spaces_trailing: false,
-                tabs_leading: false,
-                tabs_inner: false,
-                tabs_trailing: false,
-            };
+            *self = Self::hidden();
+        } else if restore.any_visible() {
+            *self = restore;
         } else {
             *self = Self::default();
         }
