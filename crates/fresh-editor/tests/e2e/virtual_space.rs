@@ -633,6 +633,77 @@ fn test_toggle_virtual_space_persists_across_restart() {
     }
 }
 
+/// The status-bar `Ln, Col` readout tracks the cursor into horizontal
+/// virtual space instead of freezing at the line's real content end (#2577).
+#[test]
+fn test_status_bar_reports_virtual_column() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("ab\nxyz").unwrap();
+
+    // End of line 1 ("ab") — the real content end, Col 3.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.get_status_bar().contains("Ln 1, Col 3"),
+        "baseline: cursor at real content end reads Col 3, got: {}",
+        harness.get_status_bar()
+    );
+
+    // Three Rights into virtual space — the caret really sits at Col 6.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Ln 1, Col 6"),
+        "status bar tracks the virtual column, got: {status}"
+    );
+}
+
+/// The status-bar readout tracks the cursor onto virtual lines below the end
+/// of the buffer — both `Ln` and `Col` advance (#2577).
+#[test]
+fn test_status_bar_reports_virtual_line_below_eof() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::On);
+    harness.load_buffer_from_text("ab").unwrap();
+
+    // End of the only line ("ab"), then float two virtual lines below it.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Two lines below line 1, keeping the goal column (Col 3).
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Ln 3, Col 3"),
+        "status bar tracks the virtual line and column, got: {status}"
+    );
+}
+
+/// With virtual space off, the readout still clamps to the line end (no
+/// regression for the default configuration).
+#[test]
+fn test_status_bar_clamps_when_off() {
+    let mut harness = harness_with_mode(VirtualSpaceMode::Off);
+    harness.load_buffer_from_text("ab\nxyz").unwrap();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    // Right at EOL wraps to the next line instead of entering virtual space.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let status = harness.get_status_bar();
+    assert!(
+        status.contains("Ln 2, Col 1"),
+        "off: Right at EOL wraps to line 2, got: {status}"
+    );
+}
+
 /// Vertical movement through a short line and back onto a long one restores
 /// the original column (the goal column survives the virtual segment).
 #[test]

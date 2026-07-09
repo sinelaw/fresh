@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::app::types::CellThemeRecorder;
 use crate::app::WarningLevel;
-use crate::config::{StatusBarConfig, StatusBarElement};
+use crate::config::{StatusBarConfig, StatusBarElement, VirtualSpaceMode};
 use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::prompt::Prompt;
@@ -680,6 +680,36 @@ fn cursor_column(buffer: &mut crate::model::buffer::TextBuffer, cursor_position:
     }
 }
 
+/// Adjust the primary cursor's `(line_index, column_index)` for virtual
+/// space so the status-bar readout tracks the caret where it visibly sits,
+/// instead of freezing at the line's real content end (#2577).
+///
+/// Cursor byte positions always clamp to real text (virtual space is a
+/// view-only concept), so the raw `line` / `col_base` derived from the byte
+/// position stall the moment the caret floats past EOL or onto a virtual line
+/// below the buffer end. This adds the derived virtual offset:
+/// - On a virtual line below the buffer end, the whole line is empty, so the
+///   column is purely the sticky (goal) column and the line advances by the
+///   number of virtual lines.
+/// - Otherwise (horizontal virtual space past a line's content end), the
+///   column advances by the virtual column count; every virtual column is a
+///   would-be space, so it reads the same in graphemes as on screen.
+fn virtual_space_adjusted_position(
+    mode: VirtualSpaceMode,
+    buffer: &crate::model::buffer::Buffer,
+    cursor: &crate::model::cursor::Cursor,
+    line: usize,
+    col_base: usize,
+) -> (usize, usize) {
+    let vlines = crate::model::virtual_space::cursor_virtual_lines(mode, buffer, cursor);
+    if vlines > 0 {
+        (line + vlines, cursor.sticky_column.unwrap_or(col_base))
+    } else {
+        let vcols = crate::model::virtual_space::cursor_virtual_columns(mode, buffer, cursor);
+        (line, col_base + vcols)
+    }
+}
+
 /// Format the cursor's `Ln X, Col Y` indicator so its rendered width is
 /// stable as the cursor moves. The numbers themselves are emitted with
 /// their natural width — preserving the format existing tests and screen-
@@ -1001,6 +1031,9 @@ impl StatusBarRenderer {
                 let text = if let Some(lc) = line_count {
                     let line = ctx.state.primary_cursor_line_number.value();
                     let col = cursor_column(&mut ctx.state.buffer, cursor.position);
+                    let mode = ctx.state.buffer_settings.virtual_space;
+                    let (line, col) =
+                        virtual_space_adjusted_position(mode, &ctx.state.buffer, &cursor, line, col);
                     format_cursor_position(line + 1, col + 1, lc)
                 } else {
                     format!("Byte {}", cursor.position)
@@ -1020,6 +1053,9 @@ impl StatusBarRenderer {
                 let text = if let Some(lc) = line_count {
                     let line = ctx.state.primary_cursor_line_number.value();
                     let col = cursor_column(&mut ctx.state.buffer, cursor.position);
+                    let mode = ctx.state.buffer_settings.virtual_space;
+                    let (line, col) =
+                        virtual_space_adjusted_position(mode, &ctx.state.buffer, &cursor, line, col);
                     format_cursor_position_compact(line + 1, col + 1, lc)
                 } else {
                     format!("{}", cursor.position)
