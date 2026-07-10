@@ -1,0 +1,117 @@
+%YAML 1.2
+---
+name: MLIR
+file_extensions: [mlir]
+scope: source.mlir
+
+variables:
+  bare_id: '[A-Za-z_][A-Za-z0-9_.$-]*'
+  integer: '(?<![A-Za-z0-9_.$+-])[+-]?(?:0[xX][0-9A-Fa-f]+|[0-9]+)'
+
+contexts:
+  main:
+    - include: comments
+    - include: quoted-operations
+    - include: strings
+    - include: locations
+    - include: affine
+    - include: aliases
+    - include: values
+    - include: operations
+    - include: types
+    - include: attributes
+    - include: numbers
+    - include: punctuation
+
+  quoted-operations:
+    - match: '"[A-Za-z_][A-Za-z0-9_.$-]*\.[A-Za-z_][A-Za-z0-9_.$-]*"(?=\s*\()'
+      scope: support.function.operation.quoted.mlir
+
+  comments:
+    - match: '//.*$'
+      scope: comment.line.double-slash.mlir
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.mlir
+      push:
+        - meta_scope: string.quoted.double.mlir
+        - match: '\\(?:["\\nrt]|[0-9A-Fa-f]{2})'
+          scope: constant.character.escape.mlir
+        - match: '"'
+          scope: punctuation.definition.string.end.mlir
+          pop: true
+
+  locations:
+    - match: '\b(loc|callsite|fused|name|unknown)(?=\s*\()'
+      scope: support.function.location.mlir
+
+  affine:
+    - match: '\b(affine_map|affine_set)(?=\s*<)'
+      scope: storage.type.affine.mlir
+    - match: '\b(d[0-9]+|s[0-9]+)\b'
+      scope: variable.parameter.affine.mlir
+    - match: '\b(ceildiv|floordiv|mod)\b'
+      scope: keyword.operator.word.mlir
+
+  aliases:
+    - match: '#{{bare_id}}'
+      scope: constant.other.attribute-alias.mlir
+    - match: '!{{bare_id}}'
+      scope: storage.type.alias.mlir
+
+  values:
+    - match: '%{{bare_id}}(?:#[0-9]+)?'
+      scope: variable.other.ssa.mlir
+    - match: '%[0-9]+(?:#[0-9]+)?'
+      scope: variable.other.ssa.mlir
+    - match: '\^{{bare_id}}'
+      scope: entity.name.label.block.mlir
+    - match: '@(?:{{bare_id}}|"(?:\\.|[^"\\])+")'
+      scope: entity.name.function.symbol.mlir
+
+  operations:
+    - match: '\b[A-Za-z_][A-Za-z0-9_$-]*(?:\.[A-Za-z_][A-Za-z0-9_$-]*)+\b'
+      scope: support.function.operation.mlir
+    - match: '\b(module|return|yield|condition|br|cond_br|switch|unreachable)\b'
+      scope: keyword.control.mlir
+    - match: '\b(to|from|into|ins|outs)\b'
+      scope: keyword.other.mlir
+
+  types:
+    - match: '\b(index|none)\b'
+      scope: storage.type.primitive.mlir
+    - match: '\b[su]?i[1-9][0-9]*\b'
+      scope: storage.type.integer.mlir
+    - match: '\b(?:bf16|f16|f32|f64|f80|f128)\b'
+      scope: storage.type.float.mlir
+    - match: '\b(?:tensor|memref|vector|tuple|complex|function)\b(?=\s*<)'
+      scope: storage.type.composite.mlir
+    - match: '\b(?:x|strided|offset)\b'
+      scope: keyword.other.type.mlir
+
+  attributes:
+    - match: '\b(?:unit|true|false)\b'
+      scope: constant.language.mlir
+    - match: '\b(?:dense|sparse|opaque|array|distinct)(?=\s*<)'
+      scope: storage.type.attribute.mlir
+    - match: '\b(?:sym_name|function_type|operandSegmentSizes|value|callee|visibility)\b(?=\s*=)'
+      scope: variable.other.attribute.mlir
+    - match: '\b(public|private|nested)\b'
+      scope: storage.modifier.mlir
+
+  numbers:
+    - match: '(?<![A-Za-z0-9_.$+-])(?:0[xX][0-9A-Fa-f]+|[+-]?(?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[+-]?[0-9]+[eE][+-]?[0-9]+)\b'
+      scope: constant.numeric.float.mlir
+    - match: '{{integer}}\b'
+      scope: constant.numeric.integer.mlir
+
+  punctuation:
+    - match: '(->|:)'
+      scope: punctuation.separator.type.mlir
+    - match: '(,|;)'
+      scope: punctuation.separator.sequence.mlir
+    - match: '(\(|\)|\[|\]|\{|\}|<|>)'
+      scope: punctuation.section.mlir
+    - match: '(=|\+|-|\*|/|\?)'
+      scope: keyword.operator.mlir

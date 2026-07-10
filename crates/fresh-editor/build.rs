@@ -382,6 +382,8 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/cuda.sublime-syntax", "CUDA"),
         ("src/grammars/hip.sublime-syntax", "HIP"),
         ("src/grammars/fortran.sublime-syntax", "Fortran"),
+        ("src/grammars/mlir.sublime-syntax", "MLIR"),
+        ("src/grammars/llvm-ir.sublime-syntax", "LLVM IR"),
     ];
 
     let mut loaded = 0;

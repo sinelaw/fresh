@@ -278,6 +278,10 @@ pub const CUDA_GRAMMAR: &str = include_str!("../../grammars/cuda.sublime-syntax"
 pub const HIP_GRAMMAR: &str = include_str!("../../grammars/hip.sublime-syntax");
 /// Embedded Fortran grammar
 pub const FORTRAN_GRAMMAR: &str = include_str!("../../grammars/fortran.sublime-syntax");
+/// Embedded MLIR grammar
+pub const MLIR_GRAMMAR: &str = include_str!("../../grammars/mlir.sublime-syntax");
+/// Embedded LLVM IR grammar
+pub const LLVM_IR_GRAMMAR: &str = include_str!("../../grammars/llvm-ir.sublime-syntax");
 
 /// Registry of all available TextMate grammars.
 ///
@@ -762,6 +766,8 @@ impl GrammarRegistry {
             (CUDA_GRAMMAR, "CUDA"),
             (HIP_GRAMMAR, "HIP"),
             (FORTRAN_GRAMMAR, "Fortran"),
+            (MLIR_GRAMMAR, "MLIR"),
+            (LLVM_IR_GRAMMAR, "LLVM IR"),
         ];
 
         for (grammar_str, name) in additional_grammars {
@@ -861,6 +867,9 @@ impl GrammarRegistry {
             ("cuh", "CUDA"),
             ("f90", "Fortran"),
             ("fortran", "Fortran"),
+            ("mlir", "MLIR"),
+            ("ll", "LLVM IR"),
+            ("llvm", "LLVM IR"),
         ]
     }
 
@@ -2324,6 +2333,36 @@ mod tests {
             .find_by_path(Path::new("solver.f90"), None)
             .expect("Fortran files should resolve");
         assert_eq!(entry.display_name, "Fortran");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
+    }
+
+    #[test]
+    fn test_mlir_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(MLIR_GRAMMAR, true, Some("MLIR"))
+            .expect("MLIR grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "mlir"));
+
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_path(Path::new("model.mlir"), None)
+            .expect("MLIR files should resolve");
+        assert_eq!(entry.display_name, "MLIR");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
+    }
+
+    #[test]
+    fn test_llvm_ir_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(LLVM_IR_GRAMMAR, true, Some("LLVM IR"))
+            .expect("LLVM IR grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "ll"));
+
+        let registry = GrammarRegistry::default();
+        let entry = registry
+            .find_by_path(Path::new("module.ll"), None)
+            .expect("LLVM IR files should resolve");
+        assert_eq!(entry.display_name, "LLVM IR");
         assert!(entry.engines.syntect.is_some());
         assert!(entry.engines.tree_sitter.is_none());
     }

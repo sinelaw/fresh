@@ -1,0 +1,125 @@
+%YAML 1.2
+---
+name: LLVM IR
+file_extensions: [ll]
+scope: source.llvm-ir
+
+variables:
+  id: '[-A-Za-z$._][-A-Za-z0-9$._]*'
+  quoted_id: '"(?:\\.|[^"\\])+"'
+
+contexts:
+  main:
+    - include: comments
+    - include: labels
+    - include: identifiers
+    - include: strings
+    - include: declarations
+    - include: instructions
+    - include: modifiers
+    - include: types
+    - include: constants
+    - include: metadata
+    - include: numbers
+    - include: punctuation
+
+  comments:
+    - match: ';.*$'
+      scope: comment.line.semicolon.llvm-ir
+
+  labels:
+    - match: '^\s*({{id}}|[0-9]+)(:)'
+      captures:
+        1: entity.name.label.llvm-ir
+        2: punctuation.separator.label.llvm-ir
+
+  identifiers:
+    - match: '@(?:{{id}}|[0-9]+|{{quoted_id}})'
+      scope: entity.name.function.global.llvm-ir
+    - match: '%(?:{{id}}|[0-9]+|{{quoted_id}})'
+      scope: variable.other.local.llvm-ir
+    - match: '\$(?:{{id}}|{{quoted_id}})'
+      scope: entity.name.section.comdat.llvm-ir
+    - match: '#[0-9]+'
+      scope: variable.other.attribute-group.llvm-ir
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.llvm-ir
+      push:
+        - meta_scope: string.quoted.double.llvm-ir
+        - match: '\\(?:["\\nrt]|[0-9A-Fa-f]{2})'
+          scope: constant.character.escape.llvm-ir
+        - match: '"'
+          scope: punctuation.definition.string.end.llvm-ir
+          pop: true
+
+  declarations:
+    - match: '\b(source_filename|target|datalayout|triple|module|asm|declare|define|global|constant|alias|ifunc|comdat|attributes|uselistorder|uselistorder_bb)\b'
+      scope: keyword.declaration.llvm-ir
+
+  instructions:
+    - match: '\b(ret|br|switch|indirectbr|invoke|callbr|resume|catchswitch|catchret|cleanupret|unreachable)\b'
+      scope: keyword.control.terminator.llvm-ir
+    - match: '\b(fneg|add|fadd|sub|fsub|mul|fmul|udiv|sdiv|fdiv|urem|srem|frem|shl|lshr|ashr|and|or|xor)\b'
+      scope: keyword.operator.arithmetic.llvm-ir
+    - match: '\b(extractelement|insertelement|shufflevector|extractvalue|insertvalue)\b'
+      scope: support.function.aggregate.llvm-ir
+    - match: '\b(alloca|load|store|fence|cmpxchg|atomicrmw|getelementptr)\b'
+      scope: support.function.memory.llvm-ir
+    - match: '\b(trunc|zext|sext|fptrunc|fpext|fptoui|fptosi|uitofp|sitofp|ptrtoint|inttoptr|bitcast|addrspacecast)\b'
+      scope: support.function.conversion.llvm-ir
+    - match: '\b(icmp|fcmp|phi|select|freeze|call|va_arg|landingpad|catchpad|cleanuppad)\b'
+      scope: support.function.instruction.llvm-ir
+
+  modifiers:
+    - match: '\b(private|internal|available_externally|linkonce|weak|common|appending|extern_weak|linkonce_odr|weak_odr|external|dso_preemptable|dso_local|default|hidden|protected|dllimport|dllexport|unnamed_addr|local_unnamed_addr|thread_local|externally_initialized)\b'
+      scope: storage.modifier.linkage.llvm-ir
+    - match: '\b(ccc|fastcc|coldcc|cfguard_checkcc|anyregcc|preserve_mostcc|preserve_allcc|preserve_nonecc|cxx_fast_tlscc|tailcc|swiftcc|swifttailcc|ghccc|webkit_jscc|x86_stdcallcc|x86_fastcallcc|arm_apcscc|arm_aapcscc|spir_funccc|spir_kernelcc|win64cc)\b'
+      scope: storage.modifier.calling-convention.llvm-ir
+    - match: '\b(tail|musttail|notail|nuw|nsw|nusw|exact|disjoint|inbounds|inrange|volatile|atomic|syncscope|weak|strong|acquire|release|acq_rel|seq_cst|unordered|monotonic|singlethread)\b'
+      scope: storage.modifier.llvm-ir
+    - match: '\b(fast|nnan|ninf|nsz|arcp|contract|afn|reassoc)\b'
+      scope: storage.modifier.fast-math.llvm-ir
+    - match: '\b(eq|ne|ugt|uge|ult|ule|sgt|sge|slt|sle|oeq|ogt|oge|olt|ole|one|ord|ueq|une|uno)\b'
+      scope: keyword.operator.comparison.llvm-ir
+    - match: '\b(to|within|from|caller|personality|section|partition|addrspace|align|dereferenceable)\b'
+      scope: keyword.other.llvm-ir
+
+  types:
+    - match: '\bi[1-9][0-9]*\b'
+      scope: storage.type.integer.llvm-ir
+    - match: '\b(void|half|bfloat|float|double|fp128|x86_fp80|ppc_fp128|label|metadata|x86_mmx|x86_amx|token|ptr|opaque)\b'
+      scope: storage.type.llvm-ir
+    - match: '\btype\b'
+      scope: keyword.declaration.type.llvm-ir
+
+  constants:
+    - match: '\b(true|false|null|none|undef|poison|zeroinitializer)\b'
+      scope: constant.language.llvm-ir
+    - match: '\b(c|blockaddress|dso_local_equivalent|no_cfi)\b(?=\s*["(])'
+      scope: support.function.constant.llvm-ir
+
+  metadata:
+    - match: '![A-Za-z$._][-A-Za-z0-9$._]*'
+      scope: entity.name.tag.metadata.llvm-ir
+    - match: '![0-9]+'
+      scope: variable.other.metadata.llvm-ir
+    - match: '!\{'
+      scope: punctuation.section.metadata.begin.llvm-ir
+
+  numbers:
+    - match: '\b0x[0-9A-Fa-f]+\b'
+      scope: constant.numeric.hex.llvm-ir
+    - match: '(?<![-A-Za-z0-9$._])[+-]?(?:[0-9]+\.[0-9]*|[0-9]*\.[0-9]+)(?:[eE][+-]?[0-9]+)?\b'
+      scope: constant.numeric.float.llvm-ir
+    - match: '(?<![-A-Za-z0-9$._])[+-]?[0-9]+\b'
+      scope: constant.numeric.integer.llvm-ir
+
+  punctuation:
+    - match: '(=|\*)'
+      scope: keyword.operator.llvm-ir
+    - match: '(,|:)'
+      scope: punctuation.separator.llvm-ir
+    - match: '(\(|\)|\[|\]|\{|\}|<|>)'
+      scope: punctuation.section.llvm-ir
