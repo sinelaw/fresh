@@ -1224,36 +1224,69 @@ pub struct SyntaxColors {
     /// Language keywords (if, for, fn, etc.)
     #[serde(default = "default_syntax_keyword")]
     pub keyword: ColorDef,
+    /// Text attributes applied to language keywords.
+    #[serde(default)]
+    pub keyword_modifier: Option<ModifierDef>,
     /// String literals
     #[serde(default = "default_syntax_string")]
     pub string: ColorDef,
+    /// Text attributes applied to string literals.
+    #[serde(default)]
+    pub string_modifier: Option<ModifierDef>,
     /// Code comments
     #[serde(default = "default_syntax_comment")]
     pub comment: ColorDef,
+    /// Text attributes applied to comments.
+    #[serde(default)]
+    pub comment_modifier: Option<ModifierDef>,
     /// Function names
     #[serde(default = "default_syntax_function")]
     pub function: ColorDef,
+    /// Text attributes applied to function names.
+    #[serde(default)]
+    pub function_modifier: Option<ModifierDef>,
     /// Type names
     #[serde(rename = "type", default = "default_syntax_type")]
     pub type_: ColorDef,
+    /// Text attributes applied to type names.
+    #[serde(default)]
+    pub type_modifier: Option<ModifierDef>,
     /// Variable names
     #[serde(default = "default_syntax_variable")]
     pub variable: ColorDef,
+    /// Text attributes applied to variable and property names.
+    #[serde(default)]
+    pub variable_modifier: Option<ModifierDef>,
     /// Built-in language variables (self, this, super, etc.)
     #[serde(default = "default_syntax_variable_builtin")]
     pub variable_builtin: ColorDef,
+    /// Text attributes applied to built-in language variables.
+    #[serde(default)]
+    pub variable_builtin_modifier: Option<ModifierDef>,
     /// Constants and literals
     #[serde(default = "default_syntax_constant")]
     pub constant: ColorDef,
+    /// Text attributes applied to constants, numbers, and attributes.
+    #[serde(default)]
+    pub constant_modifier: Option<ModifierDef>,
     /// Operators (+, -, =, etc.)
     #[serde(default = "default_syntax_operator")]
     pub operator: ColorDef,
+    /// Text attributes applied to operators.
+    #[serde(default)]
+    pub operator_modifier: Option<ModifierDef>,
     /// Punctuation brackets ({, }, (, ), [, ])
     #[serde(default = "default_syntax_punctuation_bracket")]
     pub punctuation_bracket: ColorDef,
+    /// Text attributes applied to punctuation brackets.
+    #[serde(default)]
+    pub punctuation_bracket_modifier: Option<ModifierDef>,
     /// Punctuation delimiters (;, ,, .)
     #[serde(default = "default_syntax_punctuation_delimiter")]
     pub punctuation_delimiter: ColorDef,
+    /// Text attributes applied to punctuation delimiters.
+    #[serde(default)]
+    pub punctuation_delimiter_modifier: Option<ModifierDef>,
 }
 
 // Default syntax colors (VSCode Dark+ inspired)
@@ -1486,16 +1519,27 @@ pub struct Theme {
 
     // Syntax highlighting colors
     pub syntax_keyword: Color,
+    pub syntax_keyword_modifier: Modifier,
     pub syntax_string: Color,
+    pub syntax_string_modifier: Modifier,
     pub syntax_comment: Color,
+    pub syntax_comment_modifier: Modifier,
     pub syntax_function: Color,
+    pub syntax_function_modifier: Modifier,
     pub syntax_type: Color,
+    pub syntax_type_modifier: Modifier,
     pub syntax_variable: Color,
+    pub syntax_variable_modifier: Modifier,
     pub syntax_variable_builtin: Color,
+    pub syntax_variable_builtin_modifier: Modifier,
     pub syntax_constant: Color,
+    pub syntax_constant_modifier: Modifier,
     pub syntax_operator: Color,
+    pub syntax_operator_modifier: Modifier,
     pub syntax_punctuation_bracket: Color,
+    pub syntax_punctuation_bracket_modifier: Modifier,
     pub syntax_punctuation_delimiter: Color,
+    pub syntax_punctuation_delimiter_modifier: Modifier,
 }
 
 impl From<ThemeFile> for Theme {
@@ -1731,16 +1775,82 @@ impl From<ThemeFile> for Theme {
             diagnostic_hint_fg: file.diagnostic.hint_fg.into(),
             diagnostic_hint_bg: file.diagnostic.hint_bg.into(),
             syntax_keyword: file.syntax.keyword.into(),
+            syntax_keyword_modifier: file
+                .syntax
+                .keyword_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_string: file.syntax.string.into(),
+            syntax_string_modifier: file
+                .syntax
+                .string_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_comment: file.syntax.comment.into(),
+            syntax_comment_modifier: file
+                .syntax
+                .comment_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_function: file.syntax.function.into(),
+            syntax_function_modifier: file
+                .syntax
+                .function_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_type: file.syntax.type_.into(),
+            syntax_type_modifier: file
+                .syntax
+                .type_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_variable: file.syntax.variable.into(),
+            syntax_variable_modifier: file
+                .syntax
+                .variable_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_variable_builtin: file.syntax.variable_builtin.into(),
+            syntax_variable_builtin_modifier: file
+                .syntax
+                .variable_builtin_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_constant: file.syntax.constant.into(),
+            syntax_constant_modifier: file
+                .syntax
+                .constant_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_operator: file.syntax.operator.into(),
+            syntax_operator_modifier: file
+                .syntax
+                .operator_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_punctuation_bracket: file.syntax.punctuation_bracket.into(),
+            syntax_punctuation_bracket_modifier: file
+                .syntax
+                .punctuation_bracket_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
             syntax_punctuation_delimiter: file.syntax.punctuation_delimiter.into(),
+            syntax_punctuation_delimiter_modifier: file
+                .syntax
+                .punctuation_delimiter_modifier
+                .as_ref()
+                .map(Modifier::from)
+                .unwrap_or_default(),
         }
     }
 }
@@ -1890,16 +2000,42 @@ impl From<Theme> for ThemeFile {
             },
             syntax: SyntaxColors {
                 keyword: theme.syntax_keyword.into(),
+                keyword_modifier: (!theme.syntax_keyword_modifier.is_empty())
+                    .then(|| theme.syntax_keyword_modifier.into()),
                 string: theme.syntax_string.into(),
+                string_modifier: (!theme.syntax_string_modifier.is_empty())
+                    .then(|| theme.syntax_string_modifier.into()),
                 comment: theme.syntax_comment.into(),
+                comment_modifier: (!theme.syntax_comment_modifier.is_empty())
+                    .then(|| theme.syntax_comment_modifier.into()),
                 function: theme.syntax_function.into(),
+                function_modifier: (!theme.syntax_function_modifier.is_empty())
+                    .then(|| theme.syntax_function_modifier.into()),
                 type_: theme.syntax_type.into(),
+                type_modifier: (!theme.syntax_type_modifier.is_empty())
+                    .then(|| theme.syntax_type_modifier.into()),
                 variable: theme.syntax_variable.into(),
+                variable_modifier: (!theme.syntax_variable_modifier.is_empty())
+                    .then(|| theme.syntax_variable_modifier.into()),
                 variable_builtin: theme.syntax_variable_builtin.into(),
+                variable_builtin_modifier: (!theme.syntax_variable_builtin_modifier.is_empty())
+                    .then(|| theme.syntax_variable_builtin_modifier.into()),
                 constant: theme.syntax_constant.into(),
+                constant_modifier: (!theme.syntax_constant_modifier.is_empty())
+                    .then(|| theme.syntax_constant_modifier.into()),
                 operator: theme.syntax_operator.into(),
+                operator_modifier: (!theme.syntax_operator_modifier.is_empty())
+                    .then(|| theme.syntax_operator_modifier.into()),
                 punctuation_bracket: theme.syntax_punctuation_bracket.into(),
+                punctuation_bracket_modifier: (!theme
+                    .syntax_punctuation_bracket_modifier
+                    .is_empty())
+                .then(|| theme.syntax_punctuation_bracket_modifier.into()),
                 punctuation_delimiter: theme.syntax_punctuation_delimiter.into(),
+                punctuation_delimiter_modifier: (!theme
+                    .syntax_punctuation_delimiter_modifier
+                    .is_empty())
+                .then(|| theme.syntax_punctuation_delimiter_modifier.into()),
             },
         }
     }
@@ -1985,6 +2121,71 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
         }
     }
 
+    // Modifiers are not colors and therefore do not go through the color-key
+    // resolver above. Only replace a base theme's modifier when the user
+    // explicitly supplied the corresponding field.
+    if let Some(syntax) = raw.get("syntax").and_then(|v| v.as_object()) {
+        macro_rules! override_modifier {
+            ($json_key:literal, $file_field:ident, $theme_field:ident) => {
+                if syntax.contains_key($json_key) {
+                    theme.$theme_field = theme_file
+                        .syntax
+                        .$file_field
+                        .as_ref()
+                        .map(Modifier::from)
+                        .unwrap_or_default();
+                }
+            };
+        }
+        override_modifier!(
+            "keyword_modifier",
+            keyword_modifier,
+            syntax_keyword_modifier
+        );
+        override_modifier!("string_modifier", string_modifier, syntax_string_modifier);
+        override_modifier!(
+            "comment_modifier",
+            comment_modifier,
+            syntax_comment_modifier
+        );
+        override_modifier!(
+            "function_modifier",
+            function_modifier,
+            syntax_function_modifier
+        );
+        override_modifier!("type_modifier", type_modifier, syntax_type_modifier);
+        override_modifier!(
+            "variable_modifier",
+            variable_modifier,
+            syntax_variable_modifier
+        );
+        override_modifier!(
+            "variable_builtin_modifier",
+            variable_builtin_modifier,
+            syntax_variable_builtin_modifier
+        );
+        override_modifier!(
+            "constant_modifier",
+            constant_modifier,
+            syntax_constant_modifier
+        );
+        override_modifier!(
+            "operator_modifier",
+            operator_modifier,
+            syntax_operator_modifier
+        );
+        override_modifier!(
+            "punctuation_bracket_modifier",
+            punctuation_bracket_modifier,
+            syntax_punctuation_bracket_modifier
+        );
+        override_modifier!(
+            "punctuation_delimiter_modifier",
+            punctuation_delimiter_modifier,
+            syntax_punctuation_delimiter_modifier
+        );
+    }
+
     if raw
         .get("editor")
         .and_then(|v| v.as_object())
@@ -2054,6 +2255,24 @@ impl Theme {
         match key {
             "editor.selection_bg" => self.selection_modifier,
             "ui.semantic_highlight_bg" => self.semantic_highlight_modifier,
+            _ => Modifier::empty(),
+        }
+    }
+
+    /// Text attributes associated with a syntax theme key.
+    pub fn modifier_for_syntax_key(&self, key: &str) -> Modifier {
+        match key {
+            "syntax.keyword" => self.syntax_keyword_modifier,
+            "syntax.string" => self.syntax_string_modifier,
+            "syntax.comment" => self.syntax_comment_modifier,
+            "syntax.function" => self.syntax_function_modifier,
+            "syntax.type" => self.syntax_type_modifier,
+            "syntax.variable" => self.syntax_variable_modifier,
+            "syntax.variable_builtin" => self.syntax_variable_builtin_modifier,
+            "syntax.constant" => self.syntax_constant_modifier,
+            "syntax.operator" => self.syntax_operator_modifier,
+            "syntax.punctuation_bracket" => self.syntax_punctuation_bracket_modifier,
+            "syntax.punctuation_delimiter" => self.syntax_punctuation_delimiter_modifier,
             _ => Modifier::empty(),
         }
     }
@@ -2400,6 +2619,44 @@ mod tests {
     }
 
     #[test]
+    fn syntax_modifiers_parse_and_map_to_theme_keys() {
+        let theme = Theme::from_json(
+            r#"{
+                "name": "syntax-attributes",
+                "syntax": {
+                    "keyword_modifier": ["bold", "underlined"],
+                    "comment_modifier": ["italic", "dim"]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            theme.modifier_for_syntax_key("syntax.keyword"),
+            Modifier::BOLD | Modifier::UNDERLINED
+        );
+        assert_eq!(
+            theme.modifier_for_syntax_key("syntax.comment"),
+            Modifier::ITALIC | Modifier::DIM
+        );
+        assert!(theme.modifier_for_syntax_key("syntax.string").is_empty());
+    }
+
+    #[test]
+    fn syntax_modifiers_survive_theme_round_trip() {
+        let mut theme = Theme::load_builtin(THEME_DARK).unwrap();
+        theme.syntax_function_modifier = Modifier::BOLD | Modifier::ITALIC;
+
+        let file: ThemeFile = theme.into();
+        let round_tripped: Theme = file.into();
+
+        assert_eq!(
+            round_tripped.syntax_function_modifier,
+            Modifier::BOLD | Modifier::ITALIC
+        );
+    }
+
+    #[test]
     fn test_themes_without_modifier_default_to_empty() {
         // Existing themes (no `*_modifier` keys in their JSON) must
         // resolve to Modifier::empty() — i.e. the new fields are
@@ -2408,6 +2665,8 @@ mod tests {
         let dark = Theme::load_builtin(THEME_DARK).expect("Dark theme must exist");
         assert!(dark.selection_modifier.is_empty());
         assert!(dark.semantic_highlight_modifier.is_empty());
+        assert!(dark.syntax_keyword_modifier.is_empty());
+        assert!(dark.syntax_comment_modifier.is_empty());
     }
 
     #[test]

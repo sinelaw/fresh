@@ -134,6 +134,15 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
         }
     }
 
+    // Syntax categories may opt into font attributes independently of their
+    // foreground color. Keep injected plugin tokens authoritative, but retain
+    // the syntax modifier when an LSP semantic token later refines the color.
+    if ctx.token_style.is_none() && highlight_color.is_some() {
+        if let Some(key) = ctx.highlight_theme_key {
+            style = style.add_modifier(ctx.theme.modifier_for_syntax_key(key));
+        }
+    }
+
     // Syntax-driven background: diff categories (markup.inserted /
     // markup.deleted / meta.diff.range) carry a bg the renderer
     // applies as a row wash. Slots BELOW overlays (so an
@@ -337,6 +346,34 @@ mod tests {
             "editor.diff_add_bg",
             true,
         )
+    }
+
+    #[test]
+    fn syntax_modifier_is_applied_with_highlight_color() {
+        let mut theme = Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        theme.syntax_keyword_modifier = Modifier::BOLD | Modifier::ITALIC;
+        let out = compute_char_style(&CharStyleContext {
+            byte_pos: Some(0),
+            token_style: None,
+            ansi_style: Style::default(),
+            is_cursor: false,
+            is_selected: false,
+            theme: &theme,
+            highlight_color: Some(theme.syntax_keyword),
+            highlight_theme_key: Some("syntax.keyword"),
+            highlight_bg: None,
+            highlight_bg_theme_key: None,
+            semantic_token_color: None,
+            active_overlays: &[],
+            primary_cursor_position: 0,
+            is_active: true,
+            skip_primary_cursor_reverse: true,
+            is_cursor_line_highlighted: false,
+            current_line_bg: theme.current_line_bg,
+        });
+
+        assert!(out.style.add_modifier.contains(Modifier::BOLD));
+        assert!(out.style.add_modifier.contains(Modifier::ITALIC));
     }
 
     #[test]

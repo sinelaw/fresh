@@ -432,56 +432,67 @@
           156,
           214
         ],
+        "keyword_modifier": null,
         "string": [
           206,
           145,
           120
         ],
+        "string_modifier": null,
         "comment": [
           106,
           153,
           85
         ],
+        "comment_modifier": null,
         "function": [
           220,
           220,
           170
         ],
+        "function_modifier": null,
         "type": [
           78,
           201,
           176
         ],
+        "type_modifier": null,
         "variable": [
           156,
           220,
           254
         ],
+        "variable_modifier": null,
         "variable_builtin": [
           86,
           156,
           214
         ],
+        "variable_builtin_modifier": null,
         "constant": [
           79,
           193,
           255
         ],
+        "constant_modifier": null,
         "operator": [
           212,
           212,
           212
         ],
+        "operator_modifier": null,
         "punctuation_bracket": [
           212,
           212,
           212
         ],
+        "punctuation_bracket_modifier": null,
         "punctuation_delimiter": [
           212,
           212,
           212
-        ]
+        ],
+        "punctuation_delimiter_modifier": null
       }
     }
   },
@@ -1600,6 +1611,18 @@
             214
           ]
         },
+        "keyword_modifier": {
+          "description": "Text attributes applied to language keywords.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "string": {
           "description": "String literals",
           "$ref": "#/$defs/ColorDef",
@@ -1608,6 +1631,18 @@
             145,
             120
           ]
+        },
+        "string_modifier": {
+          "description": "Text attributes applied to string literals.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "comment": {
           "description": "Code comments",
@@ -1618,6 +1653,18 @@
             85
           ]
         },
+        "comment_modifier": {
+          "description": "Text attributes applied to comments.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "function": {
           "description": "Function names",
           "$ref": "#/$defs/ColorDef",
@@ -1626,6 +1673,18 @@
             220,
             170
           ]
+        },
+        "function_modifier": {
+          "description": "Text attributes applied to function names.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "type": {
           "description": "Type names",
@@ -1636,6 +1695,18 @@
             176
           ]
         },
+        "type_modifier": {
+          "description": "Text attributes applied to type names.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "variable": {
           "description": "Variable names",
           "$ref": "#/$defs/ColorDef",
@@ -1644,6 +1715,18 @@
             220,
             254
           ]
+        },
+        "variable_modifier": {
+          "description": "Text attributes applied to variable and property names.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "variable_builtin": {
           "description": "Built-in language variables (self, this, super, etc.)",
@@ -1654,6 +1737,18 @@
             214
           ]
         },
+        "variable_builtin_modifier": {
+          "description": "Text attributes applied to built-in language variables.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "constant": {
           "description": "Constants and literals",
           "$ref": "#/$defs/ColorDef",
@@ -1662,6 +1757,18 @@
             193,
             255
           ]
+        },
+        "constant_modifier": {
+          "description": "Text attributes applied to constants, numbers, and attributes.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "operator": {
           "description": "Operators (+, -, =, etc.)",
@@ -1672,6 +1779,18 @@
             212
           ]
         },
+        "operator_modifier": {
+          "description": "Text attributes applied to operators.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "punctuation_bracket": {
           "description": "Punctuation brackets ({, }, (, ), [, ])",
           "$ref": "#/$defs/ColorDef",
@@ -1681,6 +1800,18 @@
             212
           ]
         },
+        "punctuation_bracket_modifier": {
+          "description": "Text attributes applied to punctuation brackets.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "punctuation_delimiter": {
           "description": "Punctuation delimiters (;, ,, .)",
           "$ref": "#/$defs/ColorDef",
@@ -1689,6 +1820,18 @@
             212,
             212
           ]
+        },
+        "punctuation_delimiter_modifier": {
+          "description": "Text attributes applied to punctuation delimiters.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModifierDef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
     }

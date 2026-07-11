@@ -57,6 +57,8 @@ const ALL_COLOR_NAMES = [...NAMED_COLOR_LIST, ...SPECIAL_COLORS];
  * Color value - either RGB array or named color string
  */
 type ColorValue = RGB | string;
+type ModifierValue = string[];
+type ThemeFieldValue = ColorValue | ModifierValue;
 
 // =============================================================================
 // Layout Constants & Panel Types
@@ -201,6 +203,7 @@ interface ThemeFieldDef {
   displayName: string;
   description: string;
   section: string;
+  kind: "color" | "modifier";
 }
 
 /**
@@ -208,7 +211,7 @@ interface ThemeFieldDef {
  */
 interface ThemeField {
   def: ThemeFieldDef;
-  value: ColorValue;
+  value: ThemeFieldValue;
   path: string;
   depth: number;
   isSection: boolean;
@@ -247,6 +250,20 @@ function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
     }
   }
   return false;
+}
+
+/** Whether a schema property is a ModifierDef, directly or inside Option. */
+function fieldRefersToModifierDef(fieldObj: Record<string, unknown>): boolean {
+  const refs: unknown[] = [fieldObj["$ref"]];
+  const anyOf = fieldObj["anyOf"];
+  if (Array.isArray(anyOf)) {
+    for (const variant of anyOf) {
+      if (variant && typeof variant === "object") {
+        refs.push((variant as Record<string, unknown>)["$ref"]);
+      }
+    }
+  }
+  return refs.some(ref => typeof ref === "string" && ref.endsWith("/ModifierDef"));
 }
 
 /**
@@ -305,13 +322,12 @@ function loadThemeSections(): ThemeSection[] {
       const fieldObj = fieldSchema as Record<string, unknown>;
       const fieldDesc = (fieldObj.description as string) || "";
 
-      // Skip non-color fields (e.g. `selection_modifier`, which is a
-      // string array of SGR text-attribute names). The theme editor only
-      // knows how to format and edit `ColorDef` values; if it tried to
-      // hand a modifier-array to `formatColorValue` it would treat the
-      // array as an RGB tuple and crash inside `rgbToHex` when the second
-      // element turns out to be undefined.
-      if (!fieldRefersToColorDef(fieldObj)) continue;
+      const kind = fieldRefersToColorDef(fieldObj)
+        ? "color"
+        : sectionName === "syntax" && fieldRefersToModifierDef(fieldObj)
+          ? "modifier"
+          : null;
+      if (!kind) continue;
 
       // Generate i18n keys from field names
       const i18nName = `field.${fieldName}`;
@@ -322,6 +338,7 @@ function loadThemeSections(): ThemeSection[] {
         displayName: editor.t(i18nName) || fieldDesc || fieldName,
         description: editor.t(i18nDesc) || fieldDesc,
         section: sectionName,
+        kind,
       });
     }
 
@@ -692,6 +709,10 @@ function formatColorValue(value: ColorValue): string {
   return String(value);
 }
 
+function formatModifierValue(value: ModifierValue): string {
+  return value.length === 0 ? "normal" : value.join(",");
+}
+
 /**
  * Check if a color is a named color (including special colors like Default/Reset)
  */
@@ -800,6 +821,7 @@ function buildVisibleFields(): ThemeField[] {
         displayName: section.displayName,
         description: section.description,
         section: section.name,
+        kind: "color",
       },
       value: [0, 0, 0], // Placeholder
       path: section.name,
@@ -819,7 +841,8 @@ function buildVisibleFields(): ThemeField[] {
         }
 
         const path = `${section.name}.${fieldDef.key}`;
-        const value = getNestedValue(state.themeData, path) as ColorValue || [128, 128, 128];
+        const storedValue = getNestedValue(state.themeData, path);
+        const value = (storedValue ?? (fieldDef.kind === "modifier" ? [] : [128, 128, 128])) as ThemeFieldValue;
 
         fields.push({
           def: fieldDef,
@@ -850,6 +873,7 @@ interface TreeLine {
   path?: string;
   selected?: boolean;
   colorValue?: ColorValue;
+  fieldKind?: "color" | "modifier";
 }
 
 function buildTreeLines(): TreeLine[] {
@@ -903,15 +927,19 @@ function buildTreeLines(): TreeLine[] {
       const nameW = Math.max(8, LEFT_WIDTH - 18);
       const valueW = Math.max(5, LEFT_WIDTH - nameW - 9);
       const name = field.def.key.length > nameW ? field.def.key.slice(0, nameW - 1) + "…" : field.def.key;
-      const colorStr = formatColorValue(field.value);
-      const valueStr = colorStr.length > valueW ? colorStr.slice(0, valueW - 1) + "…" : colorStr;
+      const valueText = field.def.kind === "modifier"
+        ? formatModifierValue(field.value as ModifierValue)
+        : formatColorValue(field.value as ColorValue);
+      const valueStr = valueText.length > valueW ? valueText.slice(0, valueW - 1) + "…" : valueText;
+      const marker = field.def.kind === "modifier" ? "Aa" : "██";
       lines.push({
-        text: `  ${sel} ${name.padEnd(nameW)} ██ ${valueStr}`,
+        text: `  ${sel} ${name.padEnd(nameW)} ${marker} ${valueStr}`,
         type: "tree-field",
         index: i,
         path: field.path,
         selected: isSelected,
-        colorValue: field.value,
+        colorValue: field.def.kind === "color" ? field.value as ColorValue : undefined,
+        fieldKind: field.def.kind,
       });
     }
   }
@@ -953,13 +981,30 @@ function buildPickerLines(): PickerLine[] {
   lines.push({ text: `"${field.def.description}"`, type: "picker-desc" });
   lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
 
+  if (field.def.kind === "modifier") {
+    const modifiers = field.value as ModifierValue;
+    lines.push({ text: `Attributes: ${formatModifierValue(modifiers)}`, type: "picker-hex" });
+    lines.push({ text: "", type: "picker-blank" });
+    lines.push({ text: "Available: bold, italic, underlined, dim, reversed", type: "picker-label" });
+    lines.push({ text: "Press Enter or Space to edit the comma-separated list.", type: "picker-desc" });
+    lines.push({ text: "Use an empty value or 'normal' to clear attributes.", type: "picker-desc" });
+    lines.push({ text: "─".repeat(RIGHT_WIDTH() - 2), type: "picker-separator" });
+    lines.push({ text: "Preview:", type: "picker-label" });
+    for (let i = 0; i < PREVIEW_LINES.length; i++) {
+      let lineText = " ";
+      for (const token of PREVIEW_LINES[i]) lineText += token.text;
+      lines.push({ text: lineText, type: "picker-preview-line", previewLineIdx: i });
+    }
+    return lines;
+  }
+
   // Color value display
   const isNamed = typeof field.value === "string" && NAMED_COLORS[field.value] !== undefined;
   if (isNamed) {
     lines.push({ text: `Color: ${field.value} (terminal native)`, type: "picker-hex" });
   } else {
-    const colorStr = formatColorValue(field.value);
-    const rgb = parseColorToRgb(field.value);
+    const colorStr = formatColorValue(field.value as ColorValue);
+    const rgb = parseColorToRgb(field.value as ColorValue);
     let valueLine = `Hex: ${colorStr}`;
     if (rgb) {
       valueLine += `     RGB: ${rgb[0]}, ${rgb[1]}, ${rgb[2]}`;
@@ -1139,8 +1184,18 @@ function styleForRightEntry(item: PickerLine | undefined): { style?: Partial<Ove
         const syntaxPath = `syntax.${token.syntaxType}`;
         const syntaxColor = getNestedValue(state.themeData, syntaxPath) as ColorValue;
         const fgSpec = colorValueToOverlaySpec(syntaxColor);
-        if (fgSpec) {
-          inlines.push({ start: bytePos, end: bytePos + tokenLen, style: { fg: fgSpec } });
+        const modifiers = (getNestedValue(state.themeData, `${syntaxPath}_modifier`) || []) as ModifierValue;
+        if (fgSpec || modifiers.length > 0) {
+          inlines.push({
+            start: bytePos,
+            end: bytePos + tokenLen,
+            style: {
+              ...(fgSpec ? { fg: fgSpec } : {}),
+              bold: modifiers.includes("bold"),
+              italic: modifiers.includes("italic"),
+              underline: modifiers.includes("underlined") || modifiers.includes("underline"),
+            },
+          });
         }
       } else {
         const fgColor = getNestedValue(state.themeData, "editor.fg") as ColorValue;
@@ -1540,7 +1595,7 @@ function getFieldByPath(path: string): ThemeField | null {
  * Build color suggestions for a field
  */
 function buildColorSuggestions(field: ThemeField): PromptSuggestion[] {
-  const currentValue = formatColorValue(field.value);
+  const currentValue = formatColorValue(field.value as ColorValue);
   const suggestions: PromptSuggestion[] = [
     { text: currentValue, description: editor.t("suggestion.current"), value: currentValue },
   ];
@@ -1562,13 +1617,46 @@ function buildColorSuggestions(field: ThemeField): PromptSuggestion[] {
  * Start color editing prompt
  */
 function editColorField(field: ThemeField): void {
-  const currentValue = formatColorValue(field.value);
+  if (field.def.kind === "modifier") {
+    editModifierField(field);
+    return;
+  }
+  const currentValue = formatColorValue(field.value as ColorValue);
   editor.startPromptWithInitial(
     editor.t("prompt.color_input", { field: field.def.displayName }),
     `theme-color-${field.path}`,
     currentValue
   );
   editor.setPromptSuggestions(buildColorSuggestions(field));
+}
+
+const VALID_MODIFIERS = ["bold", "italic", "underlined", "dim", "reversed"] as const;
+
+function editModifierField(field: ThemeField): void {
+  const currentValue = (field.value as ModifierValue).join(", ");
+  editor.startPromptWithInitial(
+    `Text attributes for ${field.def.displayName} (comma-separated):`,
+    `theme-modifier-${field.path}`,
+    currentValue
+  );
+  editor.setPromptSuggestions(VALID_MODIFIERS.map(value => ({
+    text: value,
+    description: "Toggleable text attribute",
+    value,
+  })));
+}
+
+function parseModifierInput(input: string): { value?: ModifierValue; error?: string } {
+  const normalized = input.trim().toLowerCase();
+  if (!normalized || normalized === "normal" || normalized === "none") return { value: [] };
+  const values = normalized.split(/[\s,]+/).filter(Boolean).map(value => {
+    if (value === "underline") return "underlined";
+    if (value === "reverse") return "reversed";
+    return value;
+  });
+  const invalid = values.find(value => !(VALID_MODIFIERS as readonly string[]).includes(value));
+  if (invalid) return { error: invalid };
+  return { value: [...new Set(values)] };
 }
 
 interface ParseColorResult {
@@ -1683,6 +1771,25 @@ function findMatchingColor(input: string): string | null {
 
 
 // Register prompt handlers
+editor.on("prompt_confirmed", (args) => {
+  if (!args.prompt_type.startsWith("theme-modifier-")) return true;
+
+  const path = args.prompt_type.replace("theme-modifier-", "");
+  const result = parseModifierInput(args.input);
+  if (result.value !== undefined) {
+    setNestedValue(state.themeData, path, result.value);
+    state.hasChanges = !deepEqual(state.themeData, state.originalThemeData);
+    updateDisplay();
+    moveCursorToField(path);
+    editor.setStatus(editor.t("status.updated", { path }));
+  } else {
+    const field = getFieldByPath(path);
+    editor.setStatus(`Unknown text attribute '${result.error}'`);
+    if (field) editModifierField(field);
+  }
+  return true;
+});
+
 editor.on("prompt_confirmed", async (args) => {
   editor.debug(`[theme_editor] onThemeSelectInitialPromptConfirmed called with: ${JSON.stringify(args)}`);
   if (args.prompt_type !== "theme-select-initial") {
@@ -2561,6 +2668,10 @@ function navigatePickerHorizontal(dir: number): void {
 function applyPickerColor(): void {
   const field = getFieldAtCursor();
   if (!field || field.isSection) return;
+  if (field.def.kind === "modifier") {
+    editModifierField(field);
+    return;
+  }
 
   const pf = state.pickerFocus;
   let newColor: ColorValue | null = null;
