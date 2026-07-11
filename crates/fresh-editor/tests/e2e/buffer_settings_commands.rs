@@ -189,6 +189,41 @@ fn test_toggle_whitespace_indicators_restores_configured_spaces() {
     );
 }
 
+/// Regression test for #2580: whitespace indicators did not show in a brand-new
+/// (unsaved) buffer. `new_buffer` left `buffer_settings.whitespace` at its
+/// hard-coded default (tabs on / spaces off) instead of resolving it from the
+/// user's editor config the way the file-open path does, so a user who enabled
+/// space indicators saw nothing on a fresh buffer even though opened files
+/// showed them.
+#[test]
+fn test_new_buffer_shows_configured_whitespace_indicators() {
+    // User configures space indicators on, tab indicators off.
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_spaces_leading = true;
+    config.editor.whitespace_spaces_inner = false;
+    config.editor.whitespace_spaces_trailing = false;
+    config.editor.whitespace_tabs_leading = false;
+    config.editor.whitespace_tabs_inner = false;
+    config.editor.whitespace_tabs_trailing = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+
+    // Create a brand-new, never-saved buffer (File > New).
+    harness.new_buffer().unwrap();
+
+    // Type some leading spaces so the space indicator (·) has something to mark.
+    harness.type_text("    hello").unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('·'),
+        "Configured space indicators should be visible in a new buffer. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that "Set Tab Size" command changes tab rendering width
 #[test]
 fn test_set_tab_size_command() {
