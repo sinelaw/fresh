@@ -2116,6 +2116,55 @@ impl TextBuffer {
             deletions.push((orig_cursor, file_size - orig_cursor));
         }
 
+        // If there are no edits, the scanned tree already tiles the original
+        // file exactly, and its leaf order matches `scan_updates` (both come
+        // from the same `prepare_line_scan` split). Apply the counts to it
+        // first so every leaf carries its correct line-feed count, then rebuild
+        // a clean single-buffer pristine tree split at the SAME boundaries.
+        //
+        // Do NOT rebuild a *uniform* `LOAD_CHUNK_SIZE` pristine tree and index
+        // it with `scan_updates`: when a viewport chunk was loaded before the
+        // scan, that load carved the chunk on a `CHUNK_ALIGNMENT` (64 KB)
+        // boundary, so a uniform re-split has different leaf boundaries. The
+        // index-keyed updates would then land on the wrong leaves, dropping the
+        // line-feed counts of the leaves past the first misaligned boundary and
+        // undercounting the total (#2596).
+        if deletions.is_empty() && insertions.is_empty() {
+            self.piece_tree.update_leaf_line_feeds(scan_updates);
+
+            let pristine = if file_size > 0 {
+                let mut doc_offset = 0usize;
+                let pristine_leaves: Vec<crate::model::piece_tree::LeafData> = self
+                    .piece_tree
+                    .get_leaves()
+                    .iter()
+                    .map(|leaf| {
+                        // Map every scanned leaf onto the whole-file Stored(0)
+                        // buffer at its document offset (== original-file offset
+                        // when there are no edits), preserving its line-feed
+                        // count. This drops any loaded viewport chunk so the
+                        // pristine tree stays a single lazy buffer.
+                        let mapped = crate::model::piece_tree::LeafData::new(
+                            BufferLocation::Stored(0),
+                            doc_offset,
+                            leaf.bytes,
+                            leaf.line_feed_cnt,
+                        );
+                        doc_offset += leaf.bytes;
+                        mapped
+                    })
+                    .collect();
+                PieceTree::from_leaves(&pristine_leaves)
+            } else {
+                PieceTree::empty()
+            };
+
+            self.persistence.set_saved_root(pristine.root());
+            self.piece_tree = pristine;
+            self.file_kind.mark_line_feed_scan_complete();
+            return;
+        }
+
         // --- Build pristine tree (full original file, pre-split, with lf counts) ---
         let mut pristine = if file_size > 0 {
             PieceTree::new(BufferLocation::Stored(0), 0, file_size, None)
@@ -2127,13 +2176,6 @@ impl TextBuffer {
 
         // Snapshot the pristine tree as saved_root.
         self.persistence.set_saved_root(pristine.root());
-
-        // If no edits, the pristine tree IS the current tree.
-        if deletions.is_empty() && insertions.is_empty() {
-            self.piece_tree = pristine;
-            self.file_kind.mark_line_feed_scan_complete();
-            return;
-        }
 
         // --- Replay edits onto a clone of the pristine tree ---
         let mut tree = pristine;

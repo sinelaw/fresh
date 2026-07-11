@@ -1953,6 +1953,53 @@ mod rebuild_pristine_saved_root_tests {
         assert!(buf.file_kind.has_line_feed_scan());
     }
 
+    /// Regression test for #2596: when a viewport chunk is loaded (via
+    /// `get_text_range_mut`) BEFORE the line-index scan, that load carves the
+    /// chunk on a `CHUNK_ALIGNMENT` (64 KB) boundary, restructuring the tree.
+    /// `prepare_line_scan` then splits the surviving Stored regions on the
+    /// `LOAD_CHUNK_SIZE` (1 MB) grid, so the scanned leaf boundaries no longer
+    /// match a freshly re-split *uniform* pristine tree. Applying the
+    /// index-keyed scan updates to that pristine tree landed line-feed counts
+    /// on the wrong leaves, dropping the counts of the leaves past the first
+    /// misaligned boundary — the buffer reported fewer lines than it has, so
+    /// Go to Line clamped below the real last line.
+    #[test]
+    fn test_line_count_correct_when_chunk_loaded_before_scan() {
+        let content = make_content(2 * 1024 * 1024); // 2 MB → 2 pristine chunks
+        let expected_lf = content.iter().filter(|&&b| b == b'\n').count();
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), &content).unwrap();
+        let mut buf = large_file_buffer_unloaded(tmp.path(), content.len());
+
+        // Simulate the viewport rendering a region past the first 1 MB before
+        // the scan runs. The load starts at a 64 KB-aligned offset that is not
+        // a 1 MB multiple, so it splits the tree off the uniform grid.
+        let _ = buf.get_text_range_mut(1_500_000, 4096).unwrap();
+        assert!(
+            buf.piece_tree.get_leaves().len() > 1,
+            "viewport load should have restructured the tree"
+        );
+
+        let updates = scan_line_feeds(&mut buf);
+        buf.rebuild_with_pristine_saved_root(&updates);
+
+        assert_eq!(
+            buf.line_count(),
+            Some(expected_lf + 1),
+            "line_count must be exact even when a chunk was loaded before the scan"
+        );
+        assert!(buf.file_kind.has_line_feed_scan());
+        // Diff must see no edits (scanning is not an edit).
+        assert!(buf.diff_since_saved().equal);
+        // Content must round-trip unchanged (read lazily — the file stays
+        // unloaded after a scan).
+        let total = buf.total_bytes();
+        assert_eq!(buf.get_text_range_mut(0, total).unwrap(), content);
+        // ...and the line count is still exact once fully loaded.
+        assert_eq!(buf.line_count(), Some(expected_lf + 1));
+    }
+
     /// After rebuild, diff_since_saved should visit a small number of nodes
     /// proportional to edit regions, NOT the full tree. This catches
     /// regressions where Arc pointers are accidentally destroyed (e.g. by
