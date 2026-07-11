@@ -939,11 +939,13 @@ pub fn build_ssh_agent_terminal_args(
 }
 
 /// Shared body of the SSH integrated-terminal argv: the `ssh` flags + target,
-/// then a remote command that lands in the workspace and runs `exec_tail`. The
-/// bare terminal passes [`SSH_EXEC_LOGIN_SHELL`]; the agent terminal passes
-/// [`agent_login_exec_tail`]. Kept as one function so the cwd-landing logic
-/// (and the `-t` / StrictHostKeyChecking / `-p` / `-i` / extra-args assembly)
-/// stays identical between the two.
+/// then a remote command that lands in the workspace and runs `exec_tail`,
+/// wrapped in `exec sh -c '…'` so the remote *login* shell (possibly fish, which
+/// is not POSIX) only has to parse the wrapper, not the POSIX script inside it
+/// (issue #2584). The bare terminal passes [`SSH_EXEC_LOGIN_SHELL`]; the agent
+/// terminal passes [`agent_login_exec_tail`]. Kept as one function so the
+/// cwd-landing logic (and the `-t` / StrictHostKeyChecking / `-p` / `-i` /
+/// extra-args assembly) stays identical between the two.
 fn build_ssh_remote_args(
     params: &crate::services::remote::ConnectionParams,
     remote_dir: Option<&str>,
@@ -971,15 +973,28 @@ fn build_ssh_remote_args(
     // failed `cd` as non-fatal so the command always starts. `exec` replaces
     // the ssh-side shell so closing the terminal tears the session down
     // cleanly.
-    let mut remote_cmd = String::new();
+    let mut script = String::new();
     if let Some(dir) = remote_dir.filter(|d| !d.is_empty()) {
         let quoted = shell_quote(dir);
-        remote_cmd.push_str(&format!(
+        script.push_str(&format!(
             "d={quoted}; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; "
         ));
     }
-    remote_cmd.push_str(exec_tail);
-    a.push(remote_cmd);
+    script.push_str(exec_tail);
+
+    // `ssh host <cmd>` hands `<cmd>` to the remote account's *login* shell,
+    // which is not guaranteed to be POSIX: fish rejects both `d=…` assignment
+    // syntax and `${SHELL:-…}` parameter expansion (issue #2584). Route the
+    // POSIX `script` through `sh -c` so the login shell only ever has to parse
+    // `exec sh -c '<single-quoted literal>'` — which fish, bash, zsh, csh and
+    // tcsh all handle identically — mirroring the K8s path's `sh -lc` wrapper.
+    // The final `exec ${SHELL:-…}` inside `script` still drops the user into
+    // *their* login shell; only the one-shot landing logic runs under `sh`.
+    // `exec sh` keeps the process chain flat so closing the terminal still
+    // tears the session down. NB: `apply_remote_terminal_env` splices the
+    // env-activation launcher into this single-quoted literal, so its single
+    // quotes must be re-quoted as `'\''` there.
+    a.push(format!("exec sh -c {}", shell_quote(&script)));
     a
 }
 
@@ -1006,7 +1021,9 @@ fn agent_login_exec_tail(argv: &[String]) -> String {
 /// The tail of the SSH terminal's remote command: hand control to the user's
 /// login shell. Factored into a constant so the activated-env path can find and
 /// rewrite exactly this segment into a launcher (see
-/// [`ssh_remote_env_launcher`]) without re-deriving the whole command.
+/// [`ssh_remote_env_launcher`]) without re-deriving the whole command. This tail
+/// runs under the `sh -c` wrapper that [`build_ssh_remote_args`] adds, so it
+/// only needs POSIX `sh`, not the (possibly non-POSIX) login shell.
 pub const SSH_EXEC_LOGIN_SHELL: &str = "exec ${SHELL:-/bin/sh} -l";
 
 /// Build the replacement for [`SSH_EXEC_LOGIN_SHELL`] that applies the activated
@@ -1564,7 +1581,11 @@ mod tests {
             "-i",
             "/k",
             "u@h",
-            "d='/proj dir'; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; exec ${SHELL:-/bin/sh} -l",
+            // The POSIX landing script is wrapped in `exec sh -c '…'` so a
+            // non-POSIX remote login shell (fish) only parses the wrapper
+            // (issue #2584). `shell_quote` re-quotes the dir's own single
+            // quotes as `'\''`.
+            "exec sh -c 'd='\\''/proj dir'\\''; [ -d \"$d\" ] || d=$(dirname \"$d\"); cd \"$d\" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'",
         ]
         .into_iter()
         .map(String::from)
@@ -1572,8 +1593,11 @@ mod tests {
         assert_eq!(a, expected);
         // No BatchMode — interactive auth must be able to prompt in the PTY.
         assert!(!a.iter().any(|s| s == "BatchMode=yes"));
-        // The exec tail is exactly the shared constant the env path rewrites.
-        assert!(a.last().unwrap().ends_with(SSH_EXEC_LOGIN_SHELL));
+        // The exec tail is still the shared constant the env path rewrites,
+        // now living inside the `sh -c` literal.
+        assert!(a.last().unwrap().contains(SSH_EXEC_LOGIN_SHELL));
+        // The whole remote command is the `sh -c` wrapper.
+        assert!(a.last().unwrap().starts_with("exec sh -c '"));
     }
 
     #[test]
@@ -1625,6 +1649,67 @@ mod tests {
         );
     }
 
+    /// Regression for #2584: the SSH integrated terminal broke when the remote
+    /// account's login shell was fish, because `ssh host <cmd>` hands `<cmd>` to
+    /// that login shell and the POSIX landing script (`d=…`, `${SHELL:-…}`) is
+    /// not valid fish (`Unsupported use of '='`). The command is now wrapped in
+    /// `exec sh -c '<literal>'`, which every shell parses. Runs the *real*
+    /// generated command through `fish --no-execute` (parse-only). Skips when
+    /// fish isn't installed, mirroring the sshd-based integration test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn ssh_terminal_command_parses_under_a_fish_login_shell() {
+        let Ok(fish) = which::which("fish") else {
+            eprintln!("skipping: fish not installed");
+            return;
+        };
+        // `fish --no-execute` is a parse-only syntax check: it exits non-zero
+        // on a parse error like the reported `Unsupported use of '='`.
+        let parses = |cmd: &str| {
+            std::process::Command::new(&fish)
+                .args(["--no-execute", "-c", cmd])
+                .output()
+                .expect("run fish")
+                .status
+                .success()
+        };
+
+        // Control: the bare POSIX landing script (the pre-fix shape) is exactly
+        // what fish rejects — this is the bug being fixed.
+        assert!(
+            !parses("d='/proj'; cd \"$d\"; exec ${SHELL:-/bin/sh} -l"),
+            "control: a bare POSIX command must be rejected by fish"
+        );
+
+        let params = crate::services::remote::ConnectionParams {
+            user: Some("u".into()),
+            host: "h".into(),
+            port: None,
+            identity_file: None,
+            extra_args: Vec::new(),
+        };
+        // The real generated command — with a space in the path, exercising the
+        // nested single-quoting — parses cleanly under fish.
+        let remote_cmd = build_ssh_terminal_args(&params, Some("/proj dir"))
+            .pop()
+            .unwrap();
+        assert!(
+            parses(&remote_cmd),
+            "generated SSH terminal command must parse under fish: {remote_cmd}"
+        );
+
+        // The env-activation variant also parses: the launcher (which itself
+        // contains single quotes) is spliced into the `sh -c` literal exactly
+        // as `apply_remote_terminal_env` does, re-quoting `'` as `'\''`.
+        let launcher =
+            ssh_remote_env_launcher("eval \"$(direnv export bash)\"").replace('\'', "'\\''");
+        let with_env = remote_cmd.replace(SSH_EXEC_LOGIN_SHELL, &launcher);
+        assert!(
+            parses(&with_env),
+            "env-activation SSH terminal command must parse under fish: {with_env}"
+        );
+    }
+
     #[test]
     fn build_ssh_terminal_args_without_dir_skips_cd() {
         let params = crate::services::remote::ConnectionParams {
@@ -1642,7 +1727,9 @@ mod tests {
                 "-o",
                 "StrictHostKeyChecking=accept-new",
                 "u@h",
-                "exec ${SHELL:-/bin/sh} -l",
+                // No cd hop, but still `sh -c`-wrapped so a non-POSIX login
+                // shell can parse it (issue #2584).
+                "exec sh -c 'exec ${SHELL:-/bin/sh} -l'",
             ]
         );
         // Empty dir is treated the same as no dir.

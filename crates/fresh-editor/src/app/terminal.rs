@@ -153,7 +153,13 @@ impl Window {
             let recipe = self.authority().env_provider.snippet();
             if let Some(last) = wrapper.args.last_mut() {
                 if last.contains(SSH_EXEC_LOGIN_SHELL) {
-                    *last = last.replace(SSH_EXEC_LOGIN_SHELL, &ssh_remote_env_launcher(&recipe));
+                    // The SSH terminal command is `exec sh -c '<script>'`
+                    // (see `build_ssh_remote_args`); the exec tail we're
+                    // replacing lives *inside* that single-quoted literal, so
+                    // the launcher's own single quotes must be re-quoted as
+                    // `'\''` to stay within the literal instead of closing it.
+                    let launcher = ssh_remote_env_launcher(&recipe).replace('\'', "'\\''");
+                    *last = last.replace(SSH_EXEC_LOGIN_SHELL, &launcher);
                 }
             }
         }
