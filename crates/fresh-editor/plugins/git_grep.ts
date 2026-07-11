@@ -62,7 +62,14 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
     query,
   ]);
 
-  if (result.exit_code === 0) {
+  // git grep's exit codes: 0 = matches found, 1 = no matches (a normal,
+  // successful search — NOT a failure), >=2 = a real error (bad pattern,
+  // broken repo, …). Treating exit 1 as an error made every fruitless search
+  // log an ERROR and raise the status-bar warning badge, so an ordinary
+  // "nothing matched" looked like a plugin crash (issue #2591). Mirror
+  // live_grep's git-grep provider: accept 0 and 1, error only on a real
+  // failure.
+  if (result.exit_code === 0 || result.exit_code === 1) {
     const matches = parseGrepOutput(
       result.stdout,
       100,
@@ -72,8 +79,12 @@ async function searchWithGitGrep(query: string): Promise<GrepMatch[]> {
     // selecting a result opens the right file regardless of the workspace cwd.
     return matches.map((m) => ({ ...m, abs: toAbsInRepo(editor, repo, m.file) }));
   }
-  editor.error(`[git_grep] process exited with code ${result.exit_code}: ${result.stderr}`);
-  editor.setStatus(`git grep failed (exit ${result.exit_code})`);
+  // A negative exit code means the search was superseded/killed as the user
+  // kept typing (the Finder cancels the in-flight git) — stay quiet for that.
+  if (result.exit_code > 1) {
+    editor.error(`[git_grep] process exited with code ${result.exit_code}: ${result.stderr}`);
+    editor.setStatus(`git grep failed (exit ${result.exit_code})`);
+  }
   return [];
 }
 

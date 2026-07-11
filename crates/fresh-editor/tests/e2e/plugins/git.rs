@@ -309,6 +309,58 @@ fn test_git_grep_cancel() {
     harness.assert_screen_not_contains("Git grep: ");
 }
 
+/// Regression test for issue #2591 (papercut): a query with no matches must be
+/// handled as an ordinary empty result ("No matches"), NOT as a plugin error.
+/// `git grep` exits 1 when nothing matches; the plugin used to log that as an
+/// ERROR and raise the status-bar warning badge, so every fruitless search
+/// looked like a crash. Here we search for a token that appears nowhere in the
+/// fixture and assert the editor reports "No matches" and never surfaces a
+/// git-grep failure.
+#[test]
+fn test_git_grep_no_matches_is_graceful() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_plugins();
+
+    // Change to repo directory so git commands work correctly
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    // Trigger git grep
+    trigger_git_grep(&mut harness);
+
+    // Search for a token that is guaranteed absent from the fixture.
+    harness
+        .type_text("zzz_definitely_absent_token_qypq")
+        .unwrap();
+
+    // The finder reports the empty result set as "No matches".
+    harness
+        .wait_until(|h| h.screen_to_string().contains("No matches"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Git grep no-match screen:\n{screen}");
+
+    // The prompt stays open and usable — a fruitless search is not fatal.
+    assert!(
+        screen.contains("Git grep:"),
+        "grep prompt should stay open after a no-match query"
+    );
+    // Crucially, the "no matches" case must NOT be presented as a failure:
+    // no plugin error status and no in-overlay search-error render.
+    harness.assert_screen_not_contains("git grep failed");
+    harness.assert_screen_not_contains("Search error");
+}
+
 /// Test git find file basic functionality
 #[test]
 fn test_git_find_file_shows_results() {
