@@ -243,6 +243,51 @@ impl IndentRules {
         Some(indent.saturating_sub(unit))
     }
 
+    /// Indent for a line whose leading content — after typing `typed` at
+    /// `cursor` — matches the `decrease` rule (a dedent keyword such as
+    /// Python `else:`, Ruby/Lua `end`, Bash `fi`/`done`). This is the
+    /// keyword counterpart of [`calculate_dedent_for_delimiter`]: the closing
+    /// *bracket* path handles `}`/`]`/`)`, this handles alphabetic dedent
+    /// triggers that a user types rather than Enter-splits onto their own line.
+    ///
+    /// `cursor` is the byte offset of the character about to be inserted (end
+    /// of the current line's leading content); `line_start` is the start of
+    /// that line. The candidate leading text is the code view of
+    /// `[line_start, cursor)` with `typed` appended.
+    ///
+    /// Returns `None` when the language has no `decrease` rule, when the
+    /// resulting leading text does not match it, or when there is no reference
+    /// line above to align to — so the caller leaves indentation untouched.
+    pub fn calculate_dedent_for_typed_char<F: Fn(usize) -> bool>(
+        &self,
+        buffer: &Buffer,
+        line_start: usize,
+        cursor: usize,
+        typed: char,
+        tab_size: usize,
+        is_code: F,
+    ) -> Option<usize> {
+        // The line's leading content as it will read once `typed` lands.
+        // (`matches` is false when the language has no `decrease` rule, so an
+        // explicit rule-presence check would be redundant.)
+        let mut leading = code_view(buffer, line_start, cursor, &is_code);
+        leading.push(typed);
+        if !matches(&self.decrease, &leading) {
+            return None;
+        }
+        let unit = tab_size.max(1);
+        let reference = prev_nonblank_line(buffer, line_start)?;
+        let base = visual_indent(buffer, reference.start, reference.end, tab_size);
+        let ref_code = code_view(buffer, reference.start, reference.end, &is_code);
+
+        let mut indent = base;
+        if self.increases(&ref_code) {
+            indent += unit;
+        }
+        // The keyword dedents one level back toward its opener.
+        Some(indent.saturating_sub(unit))
+    }
+
     /// `increase` matches and the line does not also self-close.
     fn increases(&self, code: &str) -> bool {
         matches(&self.increase, code) && !matches(&self.self_close, code)
@@ -359,6 +404,13 @@ static FAMILY_RULES: Lazy<HashMap<Family, Arc<IndentRules>>> = Lazy::new(|| {
 /// [`clear_user_rules`] + [`set_user_rule`] whenever config is (re)loaded.
 static USER_RULES: Lazy<RwLock<HashMap<String, Arc<IndentRules>>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Serializes tests that mutate the global [`USER_RULES`] table so they can't
+/// race each other (or observe a concurrent [`clear_user_rules`]). Any test
+/// that calls [`set_user_rule`] / [`clear_user_rules`] — in this module or in
+/// callers like the editor's typing tests — must hold this first.
+#[cfg(test)]
+pub(crate) static USER_RULES_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Drop all user overrides. Call before re-applying config so removed blocks
 /// stop taking effect.
@@ -684,6 +736,112 @@ mod tests {
         assert_eq!(dedent, Some(0));
     }
 
+    /// Dedent target for typing `typed` at the end of `content` (cursor at
+    /// end of buffer), no scope masking. Mirrors the editor calling
+    /// `calculate_dedent_for_typed_char` on each keystroke.
+    fn typed_dedent(id: &str, content: &str, typed: char, tab: usize) -> Option<usize> {
+        let b = buf(content);
+        let line_start = content.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        rules_for_id(id).unwrap().calculate_dedent_for_typed_char(
+            &b,
+            line_start,
+            content.len(),
+            typed,
+            tab,
+            |_| true,
+        )
+    }
+
+    #[test]
+    fn python_else_dedents_when_typed() {
+        // The user has typed "els" on an over-indented line; typing the final
+        // "e" completes `else` and should pull the line back one level.
+        assert_eq!(
+            typed_dedent("python", "if a:\n    x = 1\n    els", 'e', 4),
+            Some(0)
+        );
+        // Nested: `else` aligns with the inner `if`, not column 0.
+        assert_eq!(
+            typed_dedent(
+                "python",
+                "if a:\n    if b:\n        x = 1\n        els",
+                'e',
+                4
+            ),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn python_except_finally_case_dedent_when_typed() {
+        assert_eq!(
+            typed_dedent("python", "try:\n    x = 1\n    excep", 't', 4),
+            Some(0)
+        );
+        assert_eq!(
+            typed_dedent("python", "try:\n    x = 1\n    finall", 'y', 4),
+            Some(0)
+        );
+        assert_eq!(
+            typed_dedent(
+                "python",
+                "match v:\n    case 1:\n        y\n        cas",
+                'e',
+                4
+            ),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn ruby_end_dedents_when_typed() {
+        // `def foo` opens a block (indent 2); typing `end` on the body line
+        // dedents back to the def's column.
+        assert_eq!(
+            typed_dedent("ruby", "def foo\n  x = 1\n  en", 'd', 2),
+            Some(0)
+        );
+        // Midblock `else` in Ruby.
+        assert_eq!(typed_dedent("ruby", "if x\n  a\n  els", 'e', 2), Some(0));
+    }
+
+    #[test]
+    fn lua_and_bash_keyword_dedent_when_typed() {
+        assert_eq!(
+            typed_dedent("lua", "function f()\n    x = 1\n    en", 'd', 4),
+            Some(0)
+        );
+        assert_eq!(
+            typed_dedent("bash", "if true; then\n    x=1\n    f", 'i', 4),
+            Some(0)
+        );
+        assert_eq!(
+            typed_dedent("bash", "for x in a; do\n    y\n    don", 'e', 4),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn non_dedent_word_leaves_indent_untouched() {
+        // A plain identifier that merely starts with a dedent keyword's letters
+        // must not trigger: `elsewhere` isn't `else\b`.
+        assert_eq!(
+            typed_dedent("python", "if a:\n    x = 1\n    elsewher", 'e', 4),
+            None
+        );
+        // An ordinary statement doesn't match the decrease rule at all.
+        assert_eq!(typed_dedent("python", "if a:\n    retur", 'n', 4), None);
+        // Curly-brace languages have a bracket-only decrease rule, so typing a
+        // keyword never triggers this path (their `}` is handled elsewhere).
+        assert_eq!(typed_dedent("rust", "fn f() {\n    els", 'e', 4), None);
+    }
+
+    #[test]
+    fn typed_dedent_needs_reference_line() {
+        // First line of the buffer: nothing above to align to → leave it.
+        assert_eq!(typed_dedent("python", "els", 'e', 4), None);
+    }
+
     // ---- Anti-glitch corpus (the headline cases) --------------------------
 
     #[test]
@@ -919,6 +1077,9 @@ mod tests {
     // other (read-only) tests under the parallel runner.
     #[test]
     fn user_overrides_register_and_merge() {
+        let _guard = USER_RULES_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         clear_user_rules();
 
         // Full override for a language with no built-in family: config can add
