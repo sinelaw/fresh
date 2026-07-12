@@ -198,6 +198,7 @@ impl Editor {
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         hit: &crate::widgets::HitArea,
+        clicked_byte: Option<usize>,
     ) {
         // Click-to-focus: if the clicked widget has a stable, tabbable key, move
         // focus there before firing the event so the next render reflects it.
@@ -211,6 +212,20 @@ impl Editor {
                 self.set_panel_focus_and_notify(panel_key, hit.widget_key.clone());
             }
             self.rerender_widget_panel(panel_key);
+        }
+        // Click-to-position-cursor for buffer-mounted text fields: move
+        // the caret to the clicked column when the hit resolver knew it
+        // (#2573). Mirrors the floating-panel path in `mouse_input`.
+        if hit.widget_kind == "text" && hit.event_type == "focus" {
+            if let Some(byte) = clicked_byte {
+                self.reposition_widget_text_cursor_from_click(
+                    panel_key,
+                    &hit.widget_key,
+                    byte,
+                    hit.byte_start,
+                    &hit.payload,
+                );
+            }
         }
         // Tree disclosure click: the host owns expansion state, so toggle it
         // (the toggle handler fires its own `expand` event with the post-toggle
@@ -313,7 +328,9 @@ impl Editor {
             .get(&panel_key)
             .and_then(|p| p.hits.get(hit_index).cloned());
         if let Some(hit) = hit {
-            self.deliver_widget_hit(&panel_key, &hit);
+            // Native frontends deliver by index, without a per-cell click
+            // column, so there's no click-to-position payload to honour here.
+            self.deliver_widget_hit(&panel_key, &hit, None);
         }
     }
 
@@ -377,7 +394,7 @@ impl Editor {
                 .or_else(|| Self::synthesize_list_hit(panel, event_type, payload))
         };
         if let Some(hit) = hit {
-            self.deliver_widget_hit(&panel_key, &hit);
+            self.deliver_widget_hit(&panel_key, &hit, None);
         }
     }
 
@@ -2712,6 +2729,80 @@ impl Editor {
             serde_json::json!({ "value": after_value, "cursorByte": after_cursor as i64, }),
         );
         true
+    }
+
+    /// Reposition a just-focused Text widget's cursor to the byte under
+    /// a mouse click (#2573). `entry_byte` is the click's byte offset
+    /// within the rendered row (as resolved by `hit_test`); `payload` is
+    /// the `focus` HitArea payload, which carries the value-layout
+    /// breadcrumbs the renderer stamped on it (`valueInnerStart` and the
+    /// truncation fields). Maps the row byte back to a value byte, moves
+    /// the cursor, and fires `change` so a plugin mirroring the cursor
+    /// position (e.g. Search & Replace) stays in sync.
+    ///
+    /// A no-op for hits without the layout payload (older render paths,
+    /// non-text widgets) or when the clicked widget isn't the focused
+    /// one — the caller is expected to focus it first.
+    pub(super) fn reposition_widget_text_cursor_from_click(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget_key: &str,
+        entry_byte: usize,
+        hit_byte_start: usize,
+        payload: &serde_json::Value,
+    ) {
+        // `valueInnerStart` is relative to the *field's own* rendered
+        // text (gutter + label + `[`). Fields can be composed
+        // horizontally into a shared row (Search + Replace live on one
+        // line), so `hit_byte_start` — the field's offset within that
+        // composed row — rebases both the click and the value origin
+        // into the same coordinate space.
+        let inner_start = match payload.get("valueInnerStart").and_then(|v| v.as_u64()) {
+            Some(v) => v as usize,
+            None => return,
+        };
+        let offset_in_field = entry_byte.saturating_sub(hit_byte_start);
+        // The cursor op below targets the panel's *focused* widget; guard
+        // that focus already landed on the clicked field so a stray call
+        // can't move an unrelated field's cursor.
+        let is_focused = self
+            .widget_registry
+            .get(panel_key)
+            .map(|p| p.focus_key == widget_key)
+            .unwrap_or(false);
+        if !is_focused {
+            return;
+        }
+        let value_len = payload
+            .get("valueLen")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let dropped = payload
+            .get("valueDropped")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+        let ellipsis = payload
+            .get("ellipsisBytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize;
+
+        // Translate the click's field byte → value byte. A click left of
+        // the value (label / `[` / gutter) clamps to the start; a click
+        // on the `…` ellipsis maps to the first visible byte; a click
+        // past the last character clamps to end-of-value.
+        let rel = offset_in_field.saturating_sub(inner_start);
+        let value_byte = if ellipsis > 0 {
+            if rel < ellipsis {
+                dropped
+            } else {
+                dropped + (rel - ellipsis)
+            }
+        } else {
+            rel
+        }
+        .min(value_len);
+
+        self.with_focused_text_editor(panel_key, |editor| editor.set_cursor_from_flat(value_byte));
     }
 
     /// Apply a non-printable editing key to the focused text widget

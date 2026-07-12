@@ -222,7 +222,7 @@ impl Editor {
         // and the duplicate dispatch becomes a no-op.
         if let (Some(brow), Some(bcol)) = (mc_buffer_row, mc_buffer_col) {
             if let Some((panel_key, hit)) = self.widget_registry.hit_test(buffer_id, brow, bcol) {
-                self.deliver_widget_hit(&panel_key, &hit);
+                self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
             }
         }
 

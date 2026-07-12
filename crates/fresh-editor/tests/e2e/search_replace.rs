@@ -2397,3 +2397,90 @@ fn test_search_replace_nav_highlights_selection() {
         after
     );
 }
+
+/// Clicking inside a Search & Replace text field moves the caret to
+/// the clicked column, exactly like every GUI text input — the next
+/// typed character lands where you clicked, not at the end of the
+/// value (#2573: "the cursor doesn't attach to the nearest text
+/// position in the search and replace panel").
+///
+/// Driven on the Replace field because typing into Search kicks off
+/// the debounced async search worker; the Replace field exercises the
+/// identical widget kind + click path with no async tail, so the test
+/// is deterministic. The `test_search_replace_click_positions_cursor_in_search_field`
+/// case below covers the literally-reported Search field.
+#[test]
+fn test_widget_text_click_positions_cursor() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+    let (mut harness, _) = open_panel_with_focus_on_replace(&project_root);
+
+    // Type a value whose characters are all distinct so the click
+    // target is unambiguous. Cursor is now at the end (after "Z").
+    harness.type_text("abcXYZ").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replace: [abcXYZ"))
+        .unwrap();
+
+    // Locate the value on screen and click on the "X" cell (index 3),
+    // so the caret should land *before* the "X".
+    let (vcol, vrow) = harness
+        .find_text_on_screen("abcXYZ")
+        .expect("the typed value should be visible in the field");
+    harness.mouse_click(vcol + 3, vrow).unwrap();
+
+    // Type a sentinel; with the caret repositioned it splits the value.
+    harness.type_text("!").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            // Fixed: caret moved to the click → "abc!XYZ".
+            // Bug: caret stayed at end → "abcXYZ!".
+            s.contains("Replace: [abc!XYZ") && !s.contains("Replace: [abcXYZ!")
+        })
+        .unwrap();
+}
+
+/// The literally-reported case (#2573): clicking in the **Search**
+/// field repositions the caret there. Same mechanism as the Replace
+/// test above; kept separate so the reported field is covered directly.
+#[test]
+fn test_search_replace_click_positions_cursor_in_search_field() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    // A pattern that matches nothing in the fixtures, so the value
+    // appears only in the Search field (not in any results row).
+    harness.type_text("abcXYZ").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search: [abcXYZ"))
+        .unwrap();
+
+    let (vcol, vrow) = harness
+        .find_text_on_screen("abcXYZ")
+        .expect("the typed pattern should be visible in the Search field");
+    // Click on the "X" cell (index 3) → caret before "X".
+    harness.mouse_click(vcol + 3, vrow).unwrap();
+
+    harness.type_text("!").unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Search: [abc!XYZ") && !s.contains("Search: [abcXYZ!")
+        })
+        .unwrap();
+}

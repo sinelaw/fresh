@@ -4280,26 +4280,26 @@ impl Editor {
             Some(entry) => screen_col_to_byte(&entry.text, local_screen_col),
             None => return,
         };
-        let (mut hit_payload, hit_event, hit_key, hit_kind) =
-            match self
-                .widget_registry
-                .hit_test(slot.buffer_id(), brow, bcol as u32)
-            {
-                Some((_, hit)) => (
-                    hit.payload.clone(),
-                    hit.event_type.to_string(),
-                    hit.widget_key.clone(),
-                    hit.widget_kind,
-                ),
-                None => {
-                    tracing::debug!(
-                        target: "fresh::dock",
-                        ?slot, col, row, brow, bcol,
-                        "handle_floating_widget_click: hit_test found no widget"
-                    );
-                    return;
-                }
-            };
+        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match self
+            .widget_registry
+            .hit_test(slot.buffer_id(), brow, bcol as u32)
+        {
+            Some((_, hit)) => (
+                hit.payload.clone(),
+                hit.event_type.to_string(),
+                hit.widget_key.clone(),
+                hit.widget_kind,
+                hit.byte_start,
+            ),
+            None => {
+                tracing::debug!(
+                    target: "fresh::dock",
+                    ?slot, col, row, brow, bcol,
+                    "handle_floating_widget_click: hit_test found no widget"
+                );
+                return;
+            }
+        };
         if !hit_key.is_empty() {
             let tabbable = self
                 .widget_registry
@@ -4324,6 +4324,20 @@ impl Editor {
                 hit_kind,
                 hit_event = %hit_event,
                 "handle_floating_widget_click: hit with empty key (not focusable)"
+            );
+        }
+        // Click-to-position-cursor: a click inside a text field moves the
+        // caret to the clicked column, matching every GUI text input
+        // (#2573). Focus was set just above, so the field is now the
+        // panel's focused widget; the helper maps `bcol` → value byte and
+        // fires `change` so the plugin's cursor mirror follows.
+        if hit_kind == "text" && hit_event == "focus" {
+            self.reposition_widget_text_cursor_from_click(
+                &panel_key,
+                &hit_key,
+                bcol,
+                hit_byte_start,
+                &hit_payload,
             );
         }
         let handled_specially = if hit_kind == "tree" && hit_event == "expand" {

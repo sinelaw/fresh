@@ -2458,14 +2458,27 @@ fn render_widget_text(
         // through and the field stayed unfocused (#2234 item 1). Focusing is
         // driven by the tabbable path in `handle_floating_widget_click`; the
         // `focus` event keeps the plugin's focus mirror in step.
+        //
+        // The payload carries the value-layout breadcrumbs the click
+        // handler needs to reposition the cursor to the clicked column
+        // (#2573): `valueInnerStart` is where the value's `<inner>`
+        // region begins in this row's text (after the gutter that was
+        // just prepended), and the truncation fields translate a click
+        // over a `…`-prefixed tail view back to a value byte.
         if let Some(k) = key.filter(|k| !k.is_empty()) {
+            let inner_start = marker_bytes + rendered.inner_byte_start;
             out.hits.push(HitArea {
                 widget_key: k.to_string(),
                 widget_kind: "text",
                 buffer_row: 0,
                 byte_start: 0,
                 byte_end: entry.text.len(),
-                payload: json!({}),
+                payload: json!({
+                    "valueInnerStart": inner_start,
+                    "valueDropped": rendered.value_dropped_bytes,
+                    "ellipsisBytes": rendered.ellipsis_bytes,
+                    "valueLen": rendered.value_len,
+                }),
                 event_type: "focus",
             });
         }
@@ -4467,6 +4480,22 @@ pub struct RenderedTextInput {
     /// Byte offset within `entry.text` where the cursor lands.
     /// When the input is unfocused or has no cursor, `None`.
     pub cursor_byte_in_entry: Option<usize>,
+    /// Byte offset within `entry.text` where the value's rendered
+    /// `<inner>` region begins (just after the label + `[`). Used to
+    /// map a mouse click column back to a value byte for
+    /// click-to-position-cursor.
+    pub inner_byte_start: usize,
+    /// Number of value bytes hidden off the left edge by
+    /// head-truncation (the `…`-prefixed tail view). `0` when the
+    /// whole value is visible.
+    pub value_dropped_bytes: usize,
+    /// Byte length of the leading `…` glyph within `<inner>` when the
+    /// value is head-truncated; `0` otherwise. A click landing on the
+    /// ellipsis maps to the first visible value byte.
+    pub ellipsis_bytes: usize,
+    /// Total byte length of the (untruncated) value. A click past the
+    /// last visible character clamps the cursor here (end-of-value).
+    pub value_len: usize,
 }
 
 /// Render a `TextInput`.
@@ -4521,6 +4550,12 @@ pub fn render_text_input(
     } else {
         (cursor_byte as usize).min(value.len())
     };
+
+    // Breadcrumbs for mapping a mouse click column back to a value
+    // byte (click-to-position-cursor). Set by the head-truncation
+    // branch; stay 0 when the whole value is visible.
+    let mut value_dropped_bytes = 0usize;
+    let mut ellipsis_bytes = 0usize;
 
     // Build `<inner>` plus the byte offset of the cursor *within*
     // `<inner>` (not yet including `[`/label offsets). This is the
@@ -4603,6 +4638,8 @@ pub fn render_text_input(
             } else {
                 "…".len() + (raw_cursor_byte - dropped_bytes)
             };
+            value_dropped_bytes = dropped_bytes;
+            ellipsis_bytes = "…".len();
             (s, Some(cursor_in_inner))
         }
     } else if max_visible_chars > 0 && value.chars().count() > max_visible_chars as usize {
@@ -4720,6 +4757,10 @@ pub fn render_text_input(
             truncate_to_chars: None,
         },
         cursor_byte_in_entry,
+        inner_byte_start,
+        value_dropped_bytes,
+        ellipsis_bytes,
+        value_len: value.len(),
     }
 }
 
