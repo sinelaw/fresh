@@ -12,6 +12,7 @@ use crate::model::event::BufferId;
 use crate::services::async_bridge::{
     LspMessageType, LspProgressValue, LspSemanticTokensResponse, LspServerStatus,
 };
+use crate::services::lsp::diagnostics::AnchoredDiagnostic;
 use crate::state::{SemanticTokenSpan, SemanticTokenStore};
 use crate::view::file_tree::{FileTreeView, NodeId};
 use lsp_types::{
@@ -114,26 +115,29 @@ impl Editor {
 // =============================================================================
 
 impl Editor {
-    /// Merge push + pull diagnostics for a URI and apply the combined set
-    fn merge_and_apply_diagnostics(&mut self, uri: &str) {
-        // Merge diagnostics from all servers (push model) and pull model
-        let mut merged = Vec::new();
-        if let Some(server_map) = self.active_window_mut().stored_push_diagnostics.get(uri) {
-            for diagnostics in server_map.values() {
-                merged.extend(diagnostics.iter().cloned());
-            }
-        }
-        if let Some(pull) = self.active_window_mut().stored_pull_diagnostics.get(uri) {
-            merged.extend(pull.iter().cloned());
-        }
+    /// Anchor freshly received diagnostics to the open buffer for `uri` (if
+    /// any), stamping each with the buffer's current version so `CoordMap` can
+    /// carry it forward across later edits (#2602).
+    fn anchor_diagnostics(
+        &self,
+        uri: &str,
+        diagnostics: Vec<Diagnostic>,
+    ) -> Vec<AnchoredDiagnostic> {
+        let state = self.find_buffer_by_uri(uri).and_then(|id| {
+            self.windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.get(&id))
+        });
+        diagnostics
+            .into_iter()
+            .map(|d| AnchoredDiagnostic::capture(d, state))
+            .collect()
+    }
 
-        // Update the merged view
-        if merged.is_empty() {
-            self.stored_diagnostics_mut().remove(uri);
-        } else {
-            self.stored_diagnostics_mut()
-                .insert(uri.to_string(), merged.clone());
-        }
+    /// Materialise the merged push + pull view (positions mapped to the buffer's
+    /// current version) and rebuild the overlays from it.
+    fn merge_and_apply_diagnostics(&mut self, uri: &str) {
+        let merged = self.active_window_mut().recompute_merged_diagnostics(uri);
 
         if let Some((buffer_id, updated)) = self.apply_diagnostics_to_buffer(uri, &merged) {
             if updated {
@@ -192,12 +196,13 @@ impl Editor {
             uri
         );
 
+        let anchored = self.anchor_diagnostics(&uri, diagnostics);
         let server_map = self
             .active_window_mut()
             .stored_push_diagnostics
             .entry(uri.clone())
             .or_default();
-        if diagnostics.is_empty() {
+        if anchored.is_empty() {
             server_map.remove(&server_name);
             // Clean up empty outer entry
             if server_map.is_empty() {
@@ -206,7 +211,7 @@ impl Editor {
                     .remove(&uri);
             }
         } else {
-            server_map.insert(server_name, diagnostics);
+            server_map.insert(server_name, anchored);
         }
 
         self.merge_and_apply_diagnostics(&uri);
@@ -243,14 +248,15 @@ impl Editor {
                 .insert(uri.clone(), result_id);
         }
 
-        if diagnostics.is_empty() {
+        let anchored = self.anchor_diagnostics(&uri, diagnostics);
+        if anchored.is_empty() {
             self.active_window_mut()
                 .stored_pull_diagnostics
                 .remove(&uri);
         } else {
             self.active_window_mut()
                 .stored_pull_diagnostics
-                .insert(uri.clone(), diagnostics);
+                .insert(uri.clone(), anchored);
         }
 
         self.merge_and_apply_diagnostics(&uri);

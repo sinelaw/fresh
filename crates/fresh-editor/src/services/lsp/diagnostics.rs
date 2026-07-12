@@ -5,7 +5,7 @@
 use crate::model::buffer::Buffer;
 use crate::state::EditorState;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayNamespace};
-use lsp_types::{Diagnostic, DiagnosticSeverity, Position, TextDocumentContentChangeEvent};
+use lsp_types::{Diagnostic, DiagnosticSeverity, Position};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -252,93 +252,67 @@ pub fn apply_diagnostics_to_state(
     }
 }
 
-/// Compute the end position of an edit that inserts `text` starting at
-/// `start`. LSP character offsets are UTF-16 code units, so lengths are
-/// measured in UTF-16, and line breaks are counted by `\n`.
-fn edit_new_end(start: Position, text: &str) -> Position {
-    let newlines = text.matches('\n').count();
-    if newlines == 0 {
-        Position::new(
-            start.line,
-            start.character + text.encode_utf16().count() as u32,
-        )
-    } else {
-        // Characters on the last inserted line, after the final `\n`.
-        let last_line_len = text
-            .rsplit('\n')
-            .next()
-            .unwrap_or("")
-            .encode_utf16()
-            .count() as u32;
-        Position::new(start.line + newlines as u32, last_line_len)
-    }
-}
-
-/// Shift a single position to account for one text edit that replaced the
-/// range `[start, old_end)` with text spanning `[start, new_end)`.
-///
-/// Mirrors how an LSP client remaps positions between server publishes: a
-/// position before the edit is untouched, a position inside the replaced
-/// region collapses to the edit start (its text no longer exists), and a
-/// position after the edit shifts by the edit's line delta — plus the
-/// character delta when it sat on the edit's trailing line.
-fn shift_position(
-    pos: Position,
-    start: Position,
-    old_end: Position,
-    new_end: Position,
-) -> Position {
-    // At or before the edit start: unaffected.
-    if pos.line < start.line || (pos.line == start.line && pos.character <= start.character) {
-        return pos;
-    }
-    // Inside the replaced region: collapse to the edit start. There is no
-    // faithful mapping for deleted text; the next check-on-save republishes.
-    if pos.line < old_end.line || (pos.line == old_end.line && pos.character <= old_end.character) {
-        return start;
-    }
-    // After the edit: shift by the line delta, and by the character delta only
-    // when the position was on the edit's trailing (old_end) line.
-    let line_delta = new_end.line as i64 - old_end.line as i64;
-    let new_line = (pos.line as i64 + line_delta).max(0) as u32;
-    let new_character = if pos.line == old_end.line {
-        (pos.character as i64 + (new_end.character as i64 - old_end.character as i64)).max(0) as u32
-    } else {
-        pos.character
-    };
-    Position::new(new_line, new_character)
-}
-
-/// Shift the ranges of `diagnostics` in place to track a sequence of
-/// incremental buffer edits.
+/// A diagnostic paired with a byte-range anchor into the buffer it was
+/// published against.
 ///
 /// LSP servers publish diagnostics at fixed positions and only re-publish
 /// after a re-check (for rust-analyzer's cargo `checkOnSave`, that means on
-/// save). Between publishes the buffer can change — most commonly lines get
-/// inserted above an existing error. Without remapping, the next
-/// `merge_and_apply` rebuilds overlays from stale line/character positions,
-/// snapping the gutter marker, `F8` target, inline text, and diagnostics
-/// panel back to where the error was when it was last published (#2602).
-/// Applying the same content changes here keeps them aligned with the text,
-/// matching what the LSP client does in VS Code.
+/// save). Between publishes the buffer keeps changing, so the published
+/// positions go stale. Rather than hand-shift them, we anchor each diagnostic
+/// to a byte range and let the editor's [`CoordMap`](crate::model::coord_map)
+/// carry it forward — the exact shift the marker tree applies to the
+/// diagnostic overlays, fed at the same edit chokepoint, so it covers every
+/// edit kind (insert/delete/bulk/undo) and can never disagree with the
+/// overlays (#2602).
 ///
-/// Full-document replacements (`range: None`) carry no positional delta and
-/// are skipped; the next publish overwrites those positions anyway.
-pub fn shift_diagnostics_for_changes(
-    diagnostics: &mut [Diagnostic],
-    changes: &[TextDocumentContentChangeEvent],
-) {
-    for change in changes {
-        let Some(change_range) = change.range else {
-            continue;
-        };
-        let start = change_range.start;
-        let old_end = change_range.end;
-        let new_end = edit_new_end(start, &change.text);
-        for diag in diagnostics.iter_mut() {
-            diag.range.start = shift_position(diag.range.start, start, old_end, new_end);
-            diag.range.end = shift_position(diag.range.end, start, old_end, new_end);
+/// `anchor` is `Some((start_byte, end_byte, epoch))` when the file was open on
+/// receipt — `epoch` is the buffer version the bytes are valid at — and `None`
+/// for a diagnostic received while its file was closed. A closed file isn't
+/// being edited, so its published LSP range is used verbatim; it re-anchors on
+/// the next publish once open.
+#[derive(Clone, Debug)]
+pub struct AnchoredDiagnostic {
+    pub diagnostic: Diagnostic,
+    pub anchor: Option<(usize, usize, u64)>,
+}
+
+impl AnchoredDiagnostic {
+    /// Wrap a freshly received `diagnostic`, anchoring it to `state` (the open
+    /// buffer for its file, if any) at the buffer's current version. LSP
+    /// character offsets are UTF-16 code units, matching `lsp_position_to_byte`.
+    pub fn capture(diagnostic: Diagnostic, state: Option<&EditorState>) -> Self {
+        let anchor = state.map(|s| {
+            let start = s.buffer.lsp_position_to_byte(
+                diagnostic.range.start.line as usize,
+                diagnostic.range.start.character as usize,
+            );
+            let end = s.buffer.lsp_position_to_byte(
+                diagnostic.range.end.line as usize,
+                diagnostic.range.end.character as usize,
+            );
+            (start, end, s.buffer.version())
+        });
+        Self { diagnostic, anchor }
+    }
+
+    /// The diagnostic with its range mapped forward to `state`'s current
+    /// version via `CoordMap`. Falls back to the published range when there is
+    /// no anchor (closed file) or the anchor's epoch is too old to map (the
+    /// ring was evicted/barriered — a re-pull refreshes it).
+    pub fn at_current_version(&self, state: Option<&EditorState>) -> Diagnostic {
+        let mut diagnostic = self.diagnostic.clone();
+        if let (Some((start, end, epoch)), Some(state)) = (self.anchor, state) {
+            if let (Some(cur_start), Some(cur_end)) = (
+                state.coord_map.map(start, epoch),
+                state.coord_map.map(end, epoch),
+            ) {
+                let (sl, sc) = state.buffer.position_to_lsp_position(cur_start);
+                let (el, ec) = state.buffer.position_to_lsp_position(cur_end);
+                diagnostic.range.start = Position::new(sl as u32, sc as u32);
+                diagnostic.range.end = Position::new(el as u32, ec as u32);
+            }
         }
+        diagnostic
     }
 }
 
@@ -493,13 +467,38 @@ mod tests {
         assert_eq!(range.end, 8);
     }
 
-    // --- shift_diagnostics_for_changes -------------------------------------
+    // --- AnchoredDiagnostic (CoordMap-based position tracking, #2602) -------
 
-    fn diag_at(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> Diagnostic {
+    use crate::config::LARGE_FILE_THRESHOLD_BYTES;
+    use crate::model::cursor::Cursors;
+    use crate::model::event::{CursorId, Event};
+    use crate::model::filesystem::StdFileSystem;
+
+    fn state_with(text: &str) -> (EditorState, Cursors, CursorId) {
+        let mut state = EditorState::new(
+            80,
+            24,
+            LARGE_FILE_THRESHOLD_BYTES as usize,
+            std::sync::Arc::new(StdFileSystem),
+        );
+        let mut cursors = Cursors::new();
+        let cursor_id = cursors.primary_id();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id,
+            },
+        );
+        (state, cursors, cursor_id)
+    }
+
+    fn err_at(sl: u32, sc: u32, el: u32, ec: u32) -> Diagnostic {
         Diagnostic {
             range: Range {
-                start: Position::new(start_line, start_char),
-                end: Position::new(end_line, end_char),
+                start: Position::new(sl, sc),
+                end: Position::new(el, ec),
             },
             severity: Some(DiagnosticSeverity::ERROR),
             code: None,
@@ -512,98 +511,88 @@ mod tests {
         }
     }
 
-    /// An insertion is a zero-width range at the insertion point, exactly as
-    /// `collect_lsp_changes` builds it for an `Insert` event.
-    fn insert_change(line: u32, character: u32, text: &str) -> TextDocumentContentChangeEvent {
-        let pos = Position::new(line, character);
-        TextDocumentContentChangeEvent {
-            range: Some(Range::new(pos, pos)),
-            range_length: None,
-            text: text.to_string(),
-        }
-    }
+    #[test]
+    fn anchored_diagnostic_rides_an_insert_above() {
+        // Error on line 2 ("ccc"); insert a line at the top. The anchor is
+        // mapped forward through CoordMap so the diagnostic reports line 3.
+        let (mut state, mut cursors, cursor_id) = state_with("aaa\nbbb\nccc");
+        let anchored = AnchoredDiagnostic::capture(err_at(2, 0, 2, 3), Some(&state));
+        assert_eq!(anchored.anchor.map(|(s, e, _)| (s, e)), Some((8, 11)));
 
-    fn delete_change(
-        start_line: u32,
-        start_char: u32,
-        end_line: u32,
-        end_char: u32,
-    ) -> TextDocumentContentChangeEvent {
-        TextDocumentContentChangeEvent {
-            range: Some(Range::new(
-                Position::new(start_line, start_char),
-                Position::new(end_line, end_char),
-            )),
-            range_length: None,
-            text: String::new(),
-        }
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "xxx\n".to_string(),
+                cursor_id,
+            },
+        );
+
+        let now = anchored.at_current_version(Some(&state));
+        assert_eq!(now.range.start, Position::new(3, 0));
+        assert_eq!(now.range.end, Position::new(3, 3));
     }
 
     #[test]
-    fn shift_inserting_lines_above_moves_diagnostic_down() {
-        // Issue #2602: error on line 8, insert a 6-line block above it.
-        // The diagnostic should ride down to line 14, not stay on line 8.
-        let mut diags = vec![diag_at(8, 4, 8, 12)];
-        let changes = vec![insert_change(1, 0, "aaa\nbbb\nccc\nddd\neee\nfff\n")];
-        shift_diagnostics_for_changes(&mut diags, &changes);
-        assert_eq!(diags[0].range.start, Position::new(14, 4));
-        assert_eq!(diags[0].range.end, Position::new(14, 12));
+    fn anchored_diagnostic_rides_a_delete_above() {
+        let (mut state, mut cursors, cursor_id) = state_with("aaa\nbbb\nccc");
+        let anchored = AnchoredDiagnostic::capture(err_at(2, 0, 2, 3), Some(&state));
+
+        // Delete the first line ("aaa\n", bytes 0..4).
+        state.apply(
+            &mut cursors,
+            &Event::Delete {
+                range: 0..4,
+                deleted_text: "aaa\n".to_string(),
+                cursor_id,
+            },
+        );
+
+        let now = anchored.at_current_version(Some(&state));
+        assert_eq!(now.range.start, Position::new(1, 0));
+        assert_eq!(now.range.end, Position::new(1, 3));
     }
 
     #[test]
-    fn shift_leaves_diagnostics_above_the_edit_untouched() {
-        let mut diags = vec![diag_at(2, 0, 2, 5)];
-        let changes = vec![insert_change(5, 0, "new line\n")];
-        shift_diagnostics_for_changes(&mut diags, &changes);
-        assert_eq!(diags[0].range.start, Position::new(2, 0));
-        assert_eq!(diags[0].range.end, Position::new(2, 5));
+    fn anchored_diagnostic_untouched_when_edit_is_below() {
+        let (mut state, mut cursors, cursor_id) = state_with("aaa\nbbb\nccc");
+        let anchored = AnchoredDiagnostic::capture(err_at(0, 0, 0, 3), Some(&state));
+
+        // Insert at the very end — below the diagnostic on line 0.
+        let end = state.buffer.len();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: end,
+                text: "\nddd".to_string(),
+                cursor_id,
+            },
+        );
+
+        let now = anchored.at_current_version(Some(&state));
+        assert_eq!(now.range.start, Position::new(0, 0));
+        assert_eq!(now.range.end, Position::new(0, 3));
     }
 
     #[test]
-    fn shift_same_line_insert_before_moves_characters() {
-        // Insert text earlier on the same line as the diagnostic.
-        let mut diags = vec![diag_at(3, 10, 3, 15)];
-        let changes = vec![insert_change(3, 2, "abcd")];
-        shift_diagnostics_for_changes(&mut diags, &changes);
-        assert_eq!(diags[0].range.start, Position::new(3, 14));
-        assert_eq!(diags[0].range.end, Position::new(3, 19));
-    }
+    fn unanchored_diagnostic_keeps_published_range() {
+        // Received while the file was closed (no state): the published range is
+        // used verbatim, and later mapping is a no-op.
+        let (mut state, mut cursors, cursor_id) = state_with("aaa\nbbb\nccc");
+        let anchored = AnchoredDiagnostic::capture(err_at(2, 0, 2, 3), None);
+        assert!(anchored.anchor.is_none());
 
-    #[test]
-    fn shift_deleting_lines_above_moves_diagnostic_up() {
-        // Delete lines 2..5 (three full lines); a diagnostic on line 8 rises to 5.
-        let mut diags = vec![diag_at(8, 4, 8, 12)];
-        let changes = vec![delete_change(2, 0, 5, 0)];
-        shift_diagnostics_for_changes(&mut diags, &changes);
-        assert_eq!(diags[0].range.start, Position::new(5, 4));
-        assert_eq!(diags[0].range.end, Position::new(5, 12));
-    }
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "xxx\n".to_string(),
+                cursor_id,
+            },
+        );
 
-    #[test]
-    fn shift_ignores_full_document_replacement() {
-        let mut diags = vec![diag_at(8, 4, 8, 12)];
-        let changes = vec![TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
-            text: "whole new file".to_string(),
-        }];
-        shift_diagnostics_for_changes(&mut diags, &changes);
-        // Unchanged: no positional delta is available for a full replacement.
-        assert_eq!(diags[0].range.start, Position::new(8, 4));
-        assert_eq!(diags[0].range.end, Position::new(8, 12));
-    }
-
-    #[test]
-    fn shift_applies_a_batch_of_changes_in_order() {
-        // Two inserts above the error; deltas accumulate.
-        let mut diags = vec![diag_at(8, 0, 8, 3)];
-        let changes = vec![
-            insert_change(1, 0, "one\n"),
-            insert_change(2, 0, "two\nthree\n"),
-        ];
-        shift_diagnostics_for_changes(&mut diags, &changes);
-        // +1 line then +2 lines => line 11.
-        assert_eq!(diags[0].range.start, Position::new(11, 0));
-        assert_eq!(diags[0].range.end, Position::new(11, 3));
+        let now = anchored.at_current_version(Some(&state));
+        assert_eq!(now.range.start, Position::new(2, 0));
+        assert_eq!(now.range.end, Position::new(2, 3));
     }
 }

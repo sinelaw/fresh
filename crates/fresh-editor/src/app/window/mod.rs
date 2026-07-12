@@ -48,6 +48,7 @@ pub use process_group::{LocalSignaller, ProcessGroupEntry, ProcessGroups, Signal
 use crate::app::types::{ChromeLayout, WindowLayoutCache};
 use crate::app::window_resources::WindowResources;
 use crate::model::event::{Event, LeafId};
+use crate::services::lsp::diagnostics::AnchoredDiagnostic;
 use crate::services::lsp::manager::LspManager;
 use crate::types::LspFeature;
 use crate::view::file_tree::FileTreeView;
@@ -673,17 +674,21 @@ pub struct Window {
     /// Push-model diagnostics keyed by URI, then by server name. Each
     /// `publishDiagnostics` from a server replaces that server's slice
     /// for the URI; the merged view is materialised in
-    /// `stored_diagnostics`.
-    pub stored_push_diagnostics: HashMap<String, HashMap<String, Vec<lsp_types::Diagnostic>>>,
+    /// `stored_diagnostics`. Each entry carries a byte anchor so its
+    /// position tracks edits between re-publishes via `CoordMap` (#2602).
+    pub stored_push_diagnostics: HashMap<String, HashMap<String, Vec<AnchoredDiagnostic>>>,
 
     /// Pull-model diagnostics (rust-analyzer-style native pull)
     /// keyed by URI. Independent of `stored_push_diagnostics`; the
     /// two are merged into `stored_diagnostics` for plugin / overlay
     /// consumption.
-    pub stored_pull_diagnostics: HashMap<String, Vec<lsp_types::Diagnostic>>,
+    pub stored_pull_diagnostics: HashMap<String, Vec<AnchoredDiagnostic>>,
 
-    /// Merged view of push + pull diagnostics, exposed to plugins.
-    /// `Arc` wrapper so plugin snapshots can hold a refcount-bumped
+    /// Merged view of push + pull diagnostics with every position mapped
+    /// forward to the buffer's current version, exposed to plugins and read
+    /// by hover / the diagnostics panel. Derived — never a source of truth;
+    /// `recompute_merged_diagnostics` rebuilds it from the anchored push/pull
+    /// stores. `Arc` wrapper so plugin snapshots can hold a refcount-bumped
     /// reference; mutation goes through `Arc::make_mut` (CoW).
     pub stored_diagnostics: Arc<HashMap<String, Vec<lsp_types::Diagnostic>>>,
 
@@ -3342,13 +3347,15 @@ impl Window {
             }
         }
 
-        // Keep stored diagnostics aligned with the buffer between server
-        // re-publishes. A server (e.g. rust-analyzer's cargo checkOnSave) only
-        // re-publishes on save, so after inserting/deleting lines above an
-        // error its stored positions go stale; the next `merge_and_apply`
-        // would rebuild overlays there, snapping the gutter marker, F8 target,
-        // inline text, and diagnostics panel back to the pre-edit line (#2602).
-        self.shift_stored_diagnostics_for_changes(uri.as_str(), &changes);
+        // Re-derive the merged diagnostics at the buffer's current version so
+        // hover, the diagnostics panel, and plugin snapshots track the text
+        // between server re-publishes. A server (e.g. rust-analyzer's cargo
+        // checkOnSave) only re-publishes on save; the diagnostic overlays ride
+        // their markers in the meantime, and this keeps the raw readers aligned
+        // with them by mapping the anchors forward through `CoordMap` — no
+        // dependency on the LSP change payload, so it covers every edit kind
+        // including bulk edits and undo/redo (#2602).
+        self.recompute_merged_diagnostics(uri.as_str());
 
         if any_sent {
             tracing::trace!("Successfully sent batched didChange to LSP");
@@ -3376,39 +3383,46 @@ impl Window {
         }
     }
 
-    /// Shift stored diagnostics (push, pull, and the merged view) for `uri`
-    /// so their positions track incremental buffer edits between server
-    /// re-publishes (#2602).
+    /// The open buffer showing `uri`, if any. Diagnostics are keyed by URI but
+    /// only an open buffer has a `CoordMap`/marker tree to map positions with.
+    fn buffer_id_for_uri(&self, uri: &str) -> Option<BufferId> {
+        self.buffer_metadata
+            .iter()
+            .find_map(|(id, meta)| meta.file_uri().filter(|u| u.as_str() == uri).map(|_| *id))
+    }
+
+    /// Rebuild `stored_diagnostics[uri]` from the anchored push/pull stores,
+    /// mapping every diagnostic forward to the buffer's current version via
+    /// `CoordMap` (the same shift the overlays' markers apply). This is the
+    /// single materialisation point for the merged view: it runs on every
+    /// publish/pull and on every edit, so the raw readers (hover, panel, plugin
+    /// snapshots) never observe a stale position. Overlays are left to ride
+    /// their markers and are only rebuilt on a real publish (#2602).
     ///
-    /// The three maps hold independent `Diagnostic` copies, so each is shifted
-    /// directly — keeping them consistent without a full re-merge. On the next
-    /// publish/pull the authoritative positions replace these. Full-document
-    /// replacements carry no positional delta and are ignored.
-    pub(crate) fn shift_stored_diagnostics_for_changes(
-        &mut self,
-        uri: &str,
-        changes: &[lsp_types::TextDocumentContentChangeEvent],
-    ) {
-        use crate::services::lsp::diagnostics::shift_diagnostics_for_changes;
+    /// Returns the merged diagnostics (current positions) for the caller to
+    /// apply as overlays; empty when the URI has none.
+    pub(crate) fn recompute_merged_diagnostics(&mut self, uri: &str) -> Vec<lsp_types::Diagnostic> {
+        let state = self
+            .buffer_id_for_uri(uri)
+            .and_then(|id| self.buffers.get(&id));
 
-        if changes.iter().all(|c| c.range.is_none()) {
-            return;
-        }
-
-        if let Some(server_map) = self.stored_push_diagnostics.get_mut(uri) {
-            for diags in server_map.values_mut() {
-                shift_diagnostics_for_changes(diags, changes);
+        let mut merged = Vec::new();
+        if let Some(server_map) = self.stored_push_diagnostics.get(uri) {
+            for entries in server_map.values() {
+                merged.extend(entries.iter().map(|e| e.at_current_version(state)));
             }
         }
-        if let Some(diags) = self.stored_pull_diagnostics.get_mut(uri) {
-            shift_diagnostics_for_changes(diags, changes);
+        if let Some(pull) = self.stored_pull_diagnostics.get(uri) {
+            merged.extend(pull.iter().map(|e| e.at_current_version(state)));
         }
-        if self.stored_diagnostics.contains_key(uri) {
-            if let Some(diags) = std::sync::Arc::make_mut(&mut self.stored_diagnostics).get_mut(uri)
-            {
-                shift_diagnostics_for_changes(diags, changes);
-            }
+
+        let store = Arc::make_mut(&mut self.stored_diagnostics);
+        if merged.is_empty() {
+            store.remove(uri);
+        } else {
+            store.insert(uri.to_string(), merged.clone());
         }
+        merged
     }
 
     /// Invalidate cached layouts and view transforms for every split
