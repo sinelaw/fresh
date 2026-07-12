@@ -2484,3 +2484,231 @@ fn test_search_replace_click_positions_cursor_in_search_field() {
         })
         .unwrap();
 }
+
+/// True when the active buffer's cursor sits exactly on `needle`. Match
+/// positions are resolved from live interval markers and opened via an
+/// async read (`getBufferText`), so tests wait on the *landing* rather than
+/// asserting immediately after the "Match n/m" status appears.
+fn cursor_sits_on(h: &EditorTestHarness, needle: &str) -> bool {
+    match h.get_buffer_content() {
+        Some(content) => content
+            .get(h.cursor_position()..)
+            .map_or(false, |tail| tail.starts_with(needle)),
+        None => false,
+    }
+}
+
+/// Issue #2583: match positions must track buffer edits.
+///
+/// The "step through matches and edit each" workflow (#2434) means the user
+/// edits the buffer between steps. Inserting a line above a later match used
+/// to leave every subsequent `Ctrl+Alt+→` / Enter-open landing on the stale
+/// pre-edit line. With interval-marker anchoring the cursor lands on the
+/// match's current position.
+#[test]
+fn test_search_replace_positions_track_edits() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    // A distinctive needle keeps the copied plugin sources out of the
+    // result set, so the two matches below are the whole set (1 → 2).
+    fs::write(
+        project_root.join("alpha.txt"),
+        "first line plain\nZZNEEDLE one here\nmiddle text\nanother ZZNEEDLE two\ntail line\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("ZZNEEDLE").unwrap();
+    // The match *rows* ("alpha.txt:2 …") only render once the search has run,
+    // unlike "alpha.txt" (the tab) / "ZZNEEDLE" (the field), which are on
+    // screen the instant the panel opens.
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:2") && s.contains("alpha.txt:4")
+        })
+        .unwrap();
+
+    // Step to the first match; wait for the async open to focus the source
+    // split and land the cursor on it.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE one here"))
+        .unwrap();
+
+    // Insert a brand-new line *above* the second match. "another ZZNEEDLE
+    // two" moves from line 4 down to line 5 (keeping its column).
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness.type_text("inserted row").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Step to the second match — it must land on the shifted "ZZNEEDLE two",
+    // not the stale line 4 ("middle text").
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE two"))
+        .unwrap();
+}
+
+/// Issue #2583, column variant: inserting characters *before* a match on its
+/// own line shifts the match's column, so stepping back to it lands on the
+/// match text rather than the freshly typed prefix.
+#[test]
+fn test_search_replace_positions_track_column_edits() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(
+        project_root.join("alpha.txt"),
+        "ZZNEEDLE alpha\nZZNEEDLE beta\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("ZZNEEDLE").unwrap();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:1") && s.contains("alpha.txt:2")
+        })
+        .unwrap();
+
+    // Step to the first match (line 1, col 1) and wait for the landing.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE alpha"))
+        .unwrap();
+
+    // Type "xx" before the match on its own line: it now starts at col 3.
+    harness.type_text("xx").unwrap();
+    harness.render().unwrap();
+
+    // Step away to the second match and back to the first. The return step
+    // must honour the shifted column and land on "ZZNEEDLE", after the "xx".
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE beta"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let pos = h.cursor_position();
+            cursor_sits_on(h, "ZZNEEDLE alpha")
+                && pos >= 2
+                && h.get_buffer_content()
+                    .and_then(|c| c.get(pos - 2..pos).map(|s| s == "xx"))
+                    .unwrap_or(false)
+        })
+        .unwrap();
+}
+
+/// Issue #2583, the case the event-hook approach could not cover: **bulk**
+/// edits — multi-cursor typing, paste-over, type-over-selection,
+/// query-replace, LSP code-action rewrites — apply as a single `BulkEdit`
+/// that never fires after_insert / after_delete. The editor still shifts
+/// interval markers on that path, so an anchored match tracks it.
+///
+/// Here two cursors press Enter at once (definitively the bulk path),
+/// inserting two lines above the matches. The old byte-math approach was
+/// blind to this edit; marker anchoring is not.
+#[test]
+fn test_search_replace_positions_track_bulk_edits() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+
+    fs::write(
+        project_root.join("alpha.txt"),
+        "aaaa\nbbbb\nZZNEEDLE one\nZZNEEDLE two\n",
+    )
+    .unwrap();
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("ZZNEEDLE").unwrap();
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:3") && s.contains("alpha.txt:4")
+        })
+        .unwrap();
+
+    // Step to the first match and wait for the landing (focus in source).
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE one"))
+        .unwrap();
+
+    // Put a cursor at the start of line 1 and a second at the start of line 2,
+    // then press Enter at both at once — a multi-cursor bulk edit that adds two
+    // lines above the matches. "ZZNEEDLE two" moves from line 4 down to line 6.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.editor_mut().add_cursor_below();
+    harness.render().unwrap();
+    assert_eq!(
+        harness.editor().active_cursors().iter().count(),
+        2,
+        "test setup: expected two cursors for the bulk edit"
+    );
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Step to the second match: marker anchoring lands it on the shifted
+    // "ZZNEEDLE two". (With the after_insert/after_delete approach the bulk
+    // edit is invisible, so this stayed on the stale line 4.)
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| cursor_sits_on(h, "ZZNEEDLE two"))
+        .unwrap();
+}

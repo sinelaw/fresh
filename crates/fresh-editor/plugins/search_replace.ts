@@ -39,6 +39,16 @@ const editor = getEditor();
 interface SearchResult {
   match: GrepMatch;
   selected: boolean;
+  // Interval-marker anchor (issue #2583). For a match whose file is open we
+  // register a marker at its byte range; the editor keeps it shifted across
+  // every edit kind — including bulk paste / multi-cursor / type-over-
+  // selection / query-replace / LSP code-action rewrites that apply as a
+  // single BulkEdit and bypass the after_insert/after_delete hooks. These
+  // hold the key + buffer so we can read the live position back and delete
+  // the marker later. Absent for matches in files that aren't open (those
+  // can't be edited, so the grep position stays valid as a fallback).
+  markerKey?: string;
+  markerBufferId?: number;
 }
 
 interface FileGroup {
@@ -1114,7 +1124,9 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
   lastUiFlush = 0;
   // Reset accumulating state so a re-search (debounce from typing,
   // toggle flip, scope change) starts from empty rather than
-  // appending to the previous run's results.
+  // appending to the previous run's results. Drop the previous run's
+  // anchor markers first so they don't leak on the source buffers.
+  clearMatchMarkers();
   panel.searchResults = [];
   panel.fileGroups = [];
 
@@ -1197,6 +1209,10 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
           if (!sameFile && !sameBuffer) continue;
         }
         const result: SearchResult = { match: m, selected: true };
+        // Anchor the match to its buffer if the file is already open, so
+        // edits made while stepping keep it in sync (#2583). Files opened
+        // later are handled by the after_file_open hook.
+        ensureMatchMarker(result);
         allResults.push(result);
         let fileIdx = streamingFileIndexByPath?.get(m.file);
         if (fileIdx === undefined) {
@@ -1827,6 +1843,7 @@ async function doReplaceAllInner(): Promise<void> {
   // file and must never be re-used (see bug #4 — a second Alt+Enter would
   // otherwise corrupt files by writing into moved offsets).  We also drop
   // `busy` so rerunSearchQuiet doesn't bail out on its own guard.
+  clearMatchMarkers();
   panel.searchResults = [];
   panel.fileGroups = [];
   panel.busy = false;
@@ -1888,6 +1905,7 @@ async function doReplaceScopedInner(): Promise<void> {
   const statusMsg = await executeReplacements(toReplace);
   editor.setStatus(statusMsg);
   // See doReplaceAll — clear stale offsets and drop busy before re-searching.
+  clearMatchMarkers();
   panel.searchResults = [];
   panel.fileGroups = [];
   panel.busy = false;
@@ -1937,12 +1955,120 @@ function adjacentMatchIndex(flat: FlatItem[], from: number, dir: 1 | -1): number
   return -1;
 }
 
+// =============================================================================
+// Anchor match positions to buffer edits with interval markers (issue #2583)
+//
+// A match's line/column/byteOffset are captured once, at grep time. The
+// "step through matches and edit each" workflow (#2434) edits the buffer
+// between steps, so without anchoring the cursor lands on stale pre-edit
+// positions. Rather than re-deriving edit deltas in the plugin — which
+// can't even see bulk edits: paste, multi-cursor, type-over-selection,
+// query-replace and LSP code-action rewrites apply as a single BulkEdit
+// that bypasses the after_insert/after_delete hooks — we register an
+// interval marker at each match's byte range in its open buffer. The editor
+// keeps the marker shifted across *every* edit kind (the CoordMap mechanism
+// that markdown_compose and #2602's diagnostics also ride). At jump time we
+// read the marker's live start byte and convert it back to (line, column).
+//
+// Matches in files that aren't open have no buffer to anchor to, but they
+// also can't be edited, so their grep positions stay valid as a fallback.
+// =============================================================================
+
+let nextMatchMarkerId = 0;
+
+/** Register an interval marker for `result` when its file is open and it has
+ *  no marker yet. The marker spans the match's byte range; the editor keeps
+ *  it shifted. No-op for closed files (no buffer to anchor to). */
+function ensureMatchMarker(result: SearchResult): void {
+  if (result.markerKey) return;
+  const bid = result.match.bufferId || editor.findBufferByPath(result.match.file);
+  if (!bid || bid <= 0) return;
+  const start = result.match.byteOffset;
+  const key = `sr:${nextMatchMarkerId++}`;
+  if (editor.createMarker(bid, key, start, start + result.match.length, null)) {
+    result.markerKey = key;
+    result.markerBufferId = bid;
+  }
+}
+
+/** Register markers for every match in a file's buffer — used when a file is
+ *  opened after the search captured it, so later edits to it still track. */
+function ensureMarkersForPath(path: string): void {
+  if (!panel || !path) return;
+  for (const r of panel.searchResults) {
+    if (r.match.file === path) ensureMatchMarker(r);
+  }
+}
+
+/** Delete every marker we created and forget the keys. Called whenever the
+ *  result set is torn down (re-search, panel close) so markers never leak.
+ *  (The editor also drops a buffer's markers when it closes.) */
+function clearMatchMarkers(): void {
+  if (!panel) return;
+  for (const r of panel.searchResults) {
+    if (r.markerKey && r.markerBufferId) {
+      editor.deleteMarker(r.markerBufferId, r.markerKey);
+    }
+    r.markerKey = undefined;
+    r.markerBufferId = undefined;
+  }
+}
+
+/** Convert a byte offset in `bufferId` to a 1-indexed (line, column), where
+ *  column is a 1-indexed *byte* column — matching how grep produces positions
+ *  (`column = byteOffset - lineStart + 1`), so it round-trips through
+ *  `openFileInSplit` unchanged, including for multibyte content. */
+async function byteOffsetToLineColumn(
+  bufferId: number,
+  offset: number,
+): Promise<{ line: number; column: number }> {
+  const prefix = await editor.getBufferText(bufferId, 0, offset);
+  let line = 1;
+  let lastNewline = -1;
+  for (let i = 0; i < prefix.length; i++) {
+    if (prefix.charCodeAt(i) === 10) {
+      line++;
+      lastNewline = i;
+    }
+  }
+  const column = byteLen(prefix.slice(lastNewline + 1)) + 1;
+  return { line, column };
+}
+
+/** Resolve a match to its *current* (line, column): the live marker position
+ *  when the buffer is open, else the grep position. Writes the resolved value
+ *  back onto the match so panel rows show the shifted line number on the next
+ *  render too. */
+async function resolveMatchTarget(
+  result: SearchResult,
+): Promise<{ line: number; column: number }> {
+  if (result.markerKey && result.markerBufferId) {
+    const marker = editor.getMarker(result.markerBufferId, result.markerKey) as
+      | { start: number }
+      | null;
+    if (marker && typeof marker.start === "number") {
+      const pos = await byteOffsetToLineColumn(result.markerBufferId, marker.start);
+      result.match.line = pos.line;
+      result.match.column = pos.column;
+      return pos;
+    }
+  }
+  return { line: result.match.line, column: result.match.column };
+}
+
+/** Open a match in the source split at its current (edit-tracked) position. */
+async function openResultLocation(result: SearchResult): Promise<void> {
+  if (!panel) return;
+  const { line, column } = await resolveMatchTarget(result);
+  editor.openFileInSplit(panel.sourceSplitId, result.match.file, line, column);
+}
+
 /** Open the match at flat index `flatIdx` in the source split and sync
  *  the panel's selection/expansion so the row is highlighted and
  *  scrolled into view. `openFileInSplit` focuses the source split, so
  *  the user can edit the match immediately and press the nav key again
  *  to move on — no detour back through the panel. */
-function jumpToMatch(flat: FlatItem[], flatIdx: number): void {
+async function jumpToMatch(flat: FlatItem[], flatIdx: number): Promise<void> {
   if (!panel) return;
   const item = flat[flatIdx];
   if (!item || item.type !== "match") return;
@@ -1962,12 +2088,7 @@ function jumpToMatch(flat: FlatItem[], flatIdx: number): void {
   if (historyIndex < 0) historyPush(panel.searchPattern);
   const group = panel.fileGroups[item.fileIndex];
   const result = group.matches[item.matchIndex!];
-  editor.openFileInSplit(
-    panel.sourceSplitId,
-    result.match.file,
-    result.match.line,
-    result.match.column,
-  );
+  await openResultLocation(result);
 }
 
 function navigateMatch(dir: 1 | -1): void {
@@ -1983,7 +2104,10 @@ function navigateMatch(dir: 1 | -1): void {
     editor.setStatus(editor.t("status.no_active_search"));
     return;
   }
-  jumpToMatch(flat, idx);
+  // The panel selection updates synchronously (inside jumpToMatch, before its
+  // first await); the source-split cursor lands a tick later once the marker
+  // position is resolved. Status reflects the target immediately either way.
+  jumpToMatch(flat, idx).catch((e) => editor.error(`search-replace: ${e}`));
   editor.setStatus(editor.t("status.match_position", {
     n: String(matchOrdinal(flat, idx)),
     total: String(panel.searchResults.length),
@@ -2004,7 +2128,7 @@ registerHandler("search_replace_prev_match", search_replace_prev_match);
 // split, or toggle a file header's expansion. Shared by Enter/activate
 // on the tree and a mouse click on a row (issue #2434 follow-up: a
 // click on a result should jump to it, just like Enter).
-function activateTreeItem(idx: number): void {
+async function activateTreeItem(idx: number): Promise<void> {
   if (!panel) return;
   const flat = buildFlatItems();
   const item = flat[idx];
@@ -2024,12 +2148,7 @@ function activateTreeItem(idx: number): void {
     if (historyIndex < 0) historyPush(panel.searchPattern);
     const group = panel.fileGroups[item.fileIndex];
     const result = group.matches[item.matchIndex!];
-    editor.openFileInSplit(
-      panel.sourceSplitId,
-      result.match.file,
-      result.match.line,
-      result.match.column,
-    );
+    await openResultLocation(result);
   }
 }
 
@@ -2047,6 +2166,9 @@ function search_replace_close(): void {
   ) {
     historyPush(panel.searchPattern);
   }
+  // Drop the anchor markers we registered on the source buffers so they
+  // don't linger after the panel is gone.
+  clearMatchMarkers();
   const sourceSplitId = panel.sourceSplitId;
   panel.widgetPanel?.unmount();
   editor.closeBuffer(panel.resultsBufferId);
@@ -2114,9 +2236,20 @@ editor.on("prompt_cancelled", (args) => {
 
 editor.on("buffer_closed", (args) => {
   if (panel && args.buffer_id === panel.resultsBufferId) {
+    // The results buffer went away → tear down. Drop our anchor markers on
+    // the (still-open) source buffers first so they don't leak.
+    clearMatchMarkers();
     panel.widgetPanel?.unmount();
     panel = null;
   }
+});
+
+// When a file is opened after the search captured it (e.g. the user steps
+// into a result whose file wasn't open), register anchor markers for that
+// file's matches so subsequent edits to it keep them in sync (#2583).
+editor.on("after_file_open", (args) => {
+  if (panel) ensureMarkersForPath(args.path);
+  return true;
 });
 
 // Click → semantic event. The host hit-tests mouse clicks against the
@@ -2200,7 +2333,9 @@ editor.on("widget_event", (args) => {
     const idx = payload?.index;
     if (typeof idx === "number") {
       panel.matchIndex = idx;
-      if (payload?.via === "click") activateTreeItem(idx);
+      if (payload?.via === "click") {
+        activateTreeItem(idx).catch((e) => editor.error(`search-replace: ${e}`));
+      }
     }
     return;
   }
@@ -2233,7 +2368,7 @@ editor.on("widget_event", (args) => {
     if (args.widget_key === "matchTree") {
       const idx = (args.payload as { index?: number } | undefined)?.index;
       if (typeof idx !== "number") return;
-      activateTreeItem(idx);
+      activateTreeItem(idx).catch((e) => editor.error(`search-replace: ${e}`));
       return;
     }
   }
