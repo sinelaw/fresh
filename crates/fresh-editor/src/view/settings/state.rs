@@ -2446,6 +2446,17 @@ impl SettingsState {
             .unwrap_or(false)
     }
 
+    /// Move the current single-line `Text` control's caret to a flat byte
+    /// offset in its value — used for click-to-position (#2573). No-op for
+    /// other control kinds. The byte is grapheme-snapped by `TextEdit`.
+    pub fn position_text_cursor(&mut self, byte: usize) {
+        if let Some(item) = self.current_item_mut() {
+            if let SettingControl::Text(state) = &mut item.control {
+                state.set_cursor_from_flat(byte);
+            }
+        }
+    }
+
     /// Insert a character into the current editable control
     pub fn text_insert(&mut self, c: char) {
         if let Some(item) = self.current_item_mut() {

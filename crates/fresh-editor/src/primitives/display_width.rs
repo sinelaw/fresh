@@ -56,6 +56,38 @@ pub fn byte_offset_at_visual_column(s: &str, visual_col: usize) -> usize {
     s.len()
 }
 
+/// Convert a visual column to a byte offset, resolving to the grapheme
+/// cluster whose cell **contains** the column (click semantics).
+///
+/// Differs from [`byte_offset_at_visual_column`] in two ways, both of
+/// which matter when mapping a mouse click to a caret position:
+///
+/// * It advances one **grapheme cluster** at a time (measuring each with
+///   [`str_width`], the same measure the renderer uses), so the returned
+///   offset is always on a cluster boundary — a click never lands between
+///   the codepoints of an emoji ZWJ sequence, a flag, or a Thai
+///   combining cluster.
+/// * It returns the cluster *containing* `visual_col` rather than the
+///   first cluster starting at or after it, so clicking the right half of
+///   a double-width glyph selects that glyph, not the next one.
+///
+/// Past the end of the string, returns the string's length.
+#[inline]
+pub fn grapheme_byte_at_visual_column(s: &str, visual_col: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut byte = 0;
+    let mut col = 0usize;
+    for cluster in s.graphemes(true) {
+        let w = str_width(cluster);
+        if col + w > visual_col {
+            return byte;
+        }
+        col += w;
+        byte += cluster.len();
+    }
+    byte
+}
+
 /// Visual column of a byte offset in its line, wide-char aware.
 ///
 /// Returns `None` when the offset's line can't be resolved. The offset may
@@ -130,6 +162,27 @@ mod tests {
 
         // Zero-width space
         assert_eq!(char_width('\u{200B}'), 0);
+    }
+
+    #[test]
+    fn test_grapheme_byte_at_visual_column() {
+        // ASCII: column maps to byte one-to-one; past end clamps to len.
+        assert_eq!(grapheme_byte_at_visual_column("abcdef", 0), 0);
+        assert_eq!(grapheme_byte_at_visual_column("abcdef", 3), 3);
+        assert_eq!(grapheme_byte_at_visual_column("abcdef", 99), 6);
+
+        // Wide CJK: each ideograph is 3 bytes, 2 columns. Clicking either
+        // half of 中 resolves to its start (contains-semantics).
+        let s = "中文x"; // 中(0..3) 文(3..6) x(6)
+        assert_eq!(grapheme_byte_at_visual_column(s, 0), 0);
+        assert_eq!(grapheme_byte_at_visual_column(s, 1), 0); // right half of 中
+        assert_eq!(grapheme_byte_at_visual_column(s, 2), 3); // start of 文
+        assert_eq!(grapheme_byte_at_visual_column(s, 4), 6); // the 'x'
+
+        // Multi-codepoint clusters never split: decomposed "é" (e + U+0301,
+        // 3 bytes, 1 column) and a 9-byte Thai cluster.
+        assert_eq!(grapheme_byte_at_visual_column("e\u{301}z", 1), 3);
+        assert_eq!(grapheme_byte_at_visual_column("ที่z", 1), 9);
     }
 
     #[test]

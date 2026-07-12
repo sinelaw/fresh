@@ -160,9 +160,8 @@ impl TextEdit {
         for (i, line) in self.lines.iter().enumerate() {
             if remaining <= line.len() {
                 self.cursor_row = i;
-                self.cursor_col = crate::primitives::grapheme::snap_to_grapheme_boundary(
-                    line, remaining,
-                );
+                self.cursor_col =
+                    crate::primitives::grapheme::snap_to_grapheme_boundary(line, remaining);
                 return;
             }
             remaining -= line.len() + 1; // step past the line and its trailing '\n'

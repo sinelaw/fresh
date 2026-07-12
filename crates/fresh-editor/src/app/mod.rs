@@ -47,7 +47,7 @@ mod macro_codegen;
 mod macros;
 mod menu_actions;
 mod menu_context;
-pub(crate) mod mouse_input;
+mod mouse_input;
 mod navigation;
 mod on_save_actions;
 mod orchestrator_persistence;

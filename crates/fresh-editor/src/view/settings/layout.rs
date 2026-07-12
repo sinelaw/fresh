@@ -279,7 +279,7 @@ impl SettingsLayout {
                             return Some(SettingsHit::ControlDropdown(item.index));
                         }
                     }
-                    ControlLayoutInfo::Text(area) => {
+                    ControlLayoutInfo::Text { area, .. } => {
                         if point_in_rect(*area, x, y) {
                             return Some(SettingsHit::ControlText(item.index));
                         }

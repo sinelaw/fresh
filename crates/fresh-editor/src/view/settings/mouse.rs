@@ -8,6 +8,7 @@ use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 use super::items::SettingControl;
+use super::render::ControlLayoutInfo;
 use super::{FocusPanel, SettingsHit, SettingsLayout};
 use crate::view::controls::DualListColumn;
 
@@ -234,7 +235,35 @@ impl Editor {
             return Ok(false);
         };
 
+        // A click on a main-panel text field enters editing (via dispatch)
+        // AND positions the caret where the click landed (#2573). The
+        // geometry was stamped into the layout at render time; read it
+        // here, where the screen `col` is still available (the web-shared
+        // `dispatch_settings_hit` carries no column). Grab it before
+        // dispatch, since dispatch re-borrows the layout.
+        let text_click_geometry = match hit {
+            SettingsHit::ControlText(idx) => self
+                .active_chrome()
+                .settings_layout
+                .as_ref()
+                .and_then(|l| l.items.iter().find(|it| it.index == idx))
+                .and_then(|it| match &it.control {
+                    ControlLayoutInfo::Text { geometry, .. } => geometry.clone(),
+                    _ => None,
+                }),
+            _ => None,
+        };
+
         self.dispatch_settings_hit(hit, row, is_double_click);
+
+        // Position the caret after dispatch, which ran `start_editing` and
+        // seeded the caret at end-of-value; the click position wins.
+        if let Some(geometry) = text_click_geometry {
+            let byte = geometry.value_byte_at(col);
+            if let Some(state) = self.settings_state.as_mut() {
+                state.position_text_cursor(byte);
+            }
+        }
         Ok(true)
     }
 
@@ -880,14 +909,16 @@ impl Editor {
     /// Map a click on a single-line `Text` control to a byte offset in
     /// its value, so the caret lands where the user clicked (#2573).
     ///
-    /// Rather than re-derive the field's label/bracket/truncation layout
-    /// by hand, this replays the exact widget render the dialog drew
+    /// The entry dialog is a modal that recomputes its own item positions
+    /// on click, so rather than store per-item geometry it reconstructs it:
+    /// it replays the exact widget render the dialog drew
     /// (`setting_control_to_widget_aligned` → `render_spec_no_autofocus`)
     /// and reads the value-layout breadcrumbs back off the field's `focus`
-    /// hit area — the same geometry inversion `render::hit_rect` uses, and
-    /// the same `screen_col_to_byte` / value-byte mapping the widget-panel
-    /// click path uses. Returns `None` for non-text controls or when the
-    /// render produced no text hit (e.g. an empty item name → no key).
+    /// hit area via [`WidgetTextClickGeometry`] — the same type the main
+    /// settings panel stamps at render time, and the same value-byte
+    /// mapping the widget-panel click path uses. Returns `None` for
+    /// non-text controls or when the render produced no text hit (e.g. an
+    /// empty item name → no key).
     fn entry_text_click_to_value_byte(
         control: &SettingControl,
         item_name: &str,
@@ -914,23 +945,9 @@ impl Editor {
             "",
             control_area_width.max(1) as u32,
         );
-        let hit = out
-            .hits
-            .iter()
-            .find(|h| h.widget_kind == "text" && h.event_type == "focus")?;
-        let entry = out.entries.get(hit.buffer_row as usize)?;
-        let row_text = entry.text.trim_end_matches('\n');
-        let click_in_row = click_col.saturating_sub(control_area_x) as usize;
-        let row_byte = crate::app::mouse_input::screen_col_to_byte(row_text, click_in_row);
-        let field = |k: &str| hit.payload.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        Some(crate::app::mouse_input::widget_row_byte_to_value_byte(
-            row_byte,
-            hit.byte_start,
-            field("valueInnerStart"),
-            field("valueDropped"),
-            field("ellipsisBytes"),
-            field("valueLen"),
-        ))
+        let geometry =
+            crate::widgets::WidgetTextClickGeometry::from_render_output(&out, control_area_x)?;
+        Some(geometry.value_byte_at(click_col))
     }
 
     fn handle_entry_dialog_item_click(
@@ -1045,7 +1062,7 @@ impl Editor {
                 // cursor at end-of-value), so the click position wins.
                 if let Some(byte) = click_byte {
                     if let SettingControl::Text(ts) = &mut dialog.items[idx].control {
-                        ts.editor.set_cursor_from_flat(byte);
+                        ts.set_cursor_from_flat(byte);
                     }
                 }
                 return Ok(true);

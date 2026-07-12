@@ -17,6 +17,7 @@
 mod actions;
 mod registry;
 mod render;
+mod text_click;
 
 pub use actions::{
     append_tree_nodes_in_spec, find_widget_by_key, set_list_items_in_spec, set_raw_entries_in_spec,
@@ -32,3 +33,4 @@ pub use render::{
     wrap_index, EmbedRect, FocusCursor, OverlayRow, RenderOutput, ScrollRegion,
     DROPDOWN_VISIBLE_OPTIONS,
 };
+pub use text_click::{row_byte_to_value_byte, WidgetTextClickGeometry};

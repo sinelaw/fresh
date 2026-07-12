@@ -2787,9 +2787,9 @@ impl Editor {
             .unwrap_or(0) as usize;
 
         // Translate the click's field byte → value byte (shared with the
-        // Settings entry dialog). `offset_in_field` already rebased the
-        // click by `hit_byte_start`, so pass `byte_start = 0` here.
-        let value_byte = crate::app::mouse_input::widget_row_byte_to_value_byte(
+        // Settings UI via `crate::widgets`). `offset_in_field` already
+        // rebased the click by `hit_byte_start`, so pass `byte_start = 0`.
+        let value_byte = crate::widgets::row_byte_to_value_byte(
             offset_in_field,
             0,
             inner_start,

@@ -1518,7 +1518,10 @@ fn render_control(
 
         SettingControl::Text(state) => {
             if skip_rows > 0 {
-                return ControlLayoutInfo::Text(Rect::default());
+                return ControlLayoutInfo::Text {
+                    area: Rect::default(),
+                    geometry: None,
+                };
             }
             if read_only {
                 // Truly read-only fields (e.g., Key: in entry dialogs) render as plain text
@@ -1541,7 +1544,10 @@ fn render_control(
                     Paragraph::new(value.as_str()).style(value_style),
                     value_area,
                 );
-                ControlLayoutInfo::Text(Rect::default())
+                ControlLayoutInfo::Text {
+                    area: Rect::default(),
+                    geometry: None,
+                }
             } else {
                 // Editable text (and nullable-null) render through the
                 // widget framework. While editing, focus the widget (by
@@ -1560,11 +1566,20 @@ fn render_control(
                     prev,
                 );
                 let rect = hit_rect(&out, "text", "focus", area, 0);
-                ControlLayoutInfo::Text(if rect.width > 0 {
-                    rect
-                } else {
-                    Rect::new(area.x, area.y, area.width, 1)
-                })
+                // Stamp the field's click geometry from the render we just
+                // did, so a later click maps to a caret position without
+                // reverse-engineering the layout. The row is painted at
+                // `area.x` (its byte 0).
+                let geometry =
+                    crate::widgets::WidgetTextClickGeometry::from_render_output(&out, area.x);
+                ControlLayoutInfo::Text {
+                    area: if rect.width > 0 {
+                        rect
+                    } else {
+                        Rect::new(area.x, area.y, area.width, 1)
+                    },
+                    geometry,
+                }
             }
         }
 
@@ -1720,7 +1735,10 @@ fn render_control(
                 label_width,
                 prev,
             );
-            ControlLayoutInfo::Text(Rect::new(area.x, area.y, area.width, 1))
+            ControlLayoutInfo::Text {
+                area: Rect::new(area.x, area.y, area.width, 1),
+                geometry: None,
+            }
         }
 
         SettingControl::Complex { .. } => {
@@ -1766,7 +1784,16 @@ pub enum ControlLayoutInfo {
         option_areas: Vec<Rect>,
         scroll_offset: usize,
     },
-    Text(Rect),
+    Text {
+        area: Rect,
+        /// Stamped at render time for single-line editable text fields so a
+        /// click can be mapped to a caret position without reconstructing
+        /// the field's label/bracket/truncation layout (#2573). `None` for
+        /// read-only or multi-line (JSON) text. When Settings controls are
+        /// mounted as real widget panels this becomes redundant with the
+        /// registry hit path (see `widgets::WidgetTextClickGeometry`).
+        geometry: Option<crate::widgets::WidgetTextClickGeometry>,
+    },
     TextList {
         /// (data_index, screen_area) - None index means "add new" row
         rows: Vec<(Option<usize>, Rect)>,

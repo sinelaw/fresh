@@ -171,6 +171,17 @@ impl TextInputState {
         self.editor.delete();
     }
 
+    /// Position the caret at a flat byte offset in the value — used for
+    /// click-to-position (#2573). Like the arrow keys, an explicit caret
+    /// placement cancels the "next keystroke replaces the value" arm: the
+    /// user pointed at a spot, so the following keystroke must insert
+    /// there, not wipe the field. The offset is grapheme-snapped and
+    /// clamped by `TextEdit`.
+    pub fn set_cursor_from_flat(&mut self, byte: usize) {
+        self.pending_replace_on_type = false;
+        self.editor.set_cursor_from_flat(byte);
+    }
+
     /// Move cursor left
     pub fn move_left(&mut self) {
         self.pending_replace_on_type = false;

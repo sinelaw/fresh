@@ -4171,7 +4171,10 @@ impl Editor {
             .unwrap_or_default();
         let local_screen_col = (col - inner.x) as usize;
         let bcol = match entries.get(brow as usize) {
-            Some(entry) => screen_col_to_byte(&entry.text, local_screen_col),
+            Some(entry) => crate::primitives::display_width::grapheme_byte_at_visual_column(
+                &entry.text,
+                local_screen_col,
+            ),
             None => return false,
         };
         let (mut payload, key, kind) =
@@ -4277,7 +4280,10 @@ impl Editor {
             .unwrap_or_default();
         let local_screen_col = (col - inner.x) as usize;
         let bcol = match entries.get(brow as usize) {
-            Some(entry) => screen_col_to_byte(&entry.text, local_screen_col),
+            Some(entry) => crate::primitives::display_width::grapheme_byte_at_visual_column(
+                &entry.text,
+                local_screen_col,
+            ),
             None => return,
         };
         let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match self
@@ -4389,100 +4395,5 @@ impl Editor {
         ms.drag_start_popup_scroll = None;
         ms.dragging_prompt_scrollbar = false;
         ms.selecting_in_popup = None;
-    }
-}
-
-/// Translate a display-column offset within a rendered line into a
-/// UTF-8 byte offset inside the entry's text. Walks the string
-/// codepoint-by-codepoint using `unicode-width` so wide glyphs
-/// (CJK, emoji) advance by their actual screen width.
-/// Translate a byte offset into a rendered widget-row (`text`) back to a
-/// byte offset into the field's *value*, undoing the field's layout: the
-/// label/`[` prefix (`byte_start` + `inner_start`) and single-line
-/// head-truncation (a `…`-prefixed tail view, `ellipsis`/`dropped`).
-///
-/// Shared by every click-to-position-cursor path — the widget hit handler
-/// and the Settings entry dialog — so the truncation arithmetic lives in
-/// one place. `row_byte` typically comes from [`screen_col_to_byte`].
-pub(crate) fn widget_row_byte_to_value_byte(
-    row_byte: usize,
-    byte_start: usize,
-    inner_start: usize,
-    dropped: usize,
-    ellipsis: usize,
-    value_len: usize,
-) -> usize {
-    let offset_in_field = row_byte.saturating_sub(byte_start);
-    // A click left of the value (label / `[` / gutter) clamps to the
-    // start; a click on the `…` ellipsis maps to the first visible byte;
-    // a click past the last character clamps to end-of-value.
-    let rel = offset_in_field.saturating_sub(inner_start);
-    if ellipsis > 0 {
-        if rel < ellipsis {
-            dropped
-        } else {
-            dropped + (rel - ellipsis)
-        }
-    } else {
-        rel
-    }
-    .min(value_len)
-}
-
-pub(crate) fn screen_col_to_byte(text: &str, target_col: usize) -> usize {
-    use unicode_segmentation::UnicodeSegmentation;
-    use unicode_width::UnicodeWidthStr;
-    let mut byte = 0;
-    let mut col = 0usize;
-    // Advance a whole grapheme cluster at a time, measuring each cluster's
-    // display width with `UnicodeWidthStr` — the same measure the renderer
-    // uses (see `split_rendering::spans`). Per-codepoint width would both
-    // mis-size clusters like emoji ZWJ sequences / flags and let the caret
-    // land between a cluster's codepoints; returning the cluster's start
-    // byte keeps it on a grapheme boundary and aligned with the glyph.
-    for cluster in text.graphemes(true) {
-        let w = UnicodeWidthStr::width(cluster);
-        if col + w > target_col {
-            return byte;
-        }
-        col += w;
-        byte += cluster.len();
-    }
-    byte
-}
-
-#[cfg(test)]
-mod screen_col_to_byte_tests {
-    use super::screen_col_to_byte;
-
-    #[test]
-    fn ascii_maps_col_to_byte_one_to_one() {
-        assert_eq!(screen_col_to_byte("abcdef", 0), 0);
-        assert_eq!(screen_col_to_byte("abcdef", 3), 3);
-        // Past the end clamps to the byte length.
-        assert_eq!(screen_col_to_byte("abcdef", 99), 6);
-    }
-
-    #[test]
-    fn wide_cjk_advances_two_columns_per_cluster() {
-        // Each CJK ideograph is 3 bytes and 2 display columns wide.
-        let s = "中文x"; // 中(0..3) 文(3..6) x(6)
-        assert_eq!(screen_col_to_byte(s, 0), 0);
-        // Column 1 is the right half of 中 — still resolves to its start.
-        assert_eq!(screen_col_to_byte(s, 1), 0);
-        assert_eq!(screen_col_to_byte(s, 2), 3); // start of 文
-        assert_eq!(screen_col_to_byte(s, 4), 6); // the 'x'
-    }
-
-    #[test]
-    fn multi_codepoint_cluster_never_splits() {
-        // Decomposed "é" (e + U+0301) is one column, one 3-byte cluster.
-        let s = "e\u{301}z"; // cluster(0..3) z(3)
-        assert_eq!(screen_col_to_byte(s, 0), 0);
-        assert_eq!(screen_col_to_byte(s, 1), 3); // never returns byte 1 (mid-cluster)
-        // Thai cluster: 9 bytes, one column.
-        let thai = "ที่z"; // cluster(0..9) z(9)
-        assert_eq!(screen_col_to_byte(thai, 0), 0);
-        assert_eq!(screen_col_to_byte(thai, 1), 9);
     }
 }
