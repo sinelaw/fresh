@@ -13,14 +13,35 @@ use crate::services::remote::protocol::{
 };
 use std::io::{self, Cursor, Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, UNIX_EPOCH};
+
+/// Static per-connection system info fetched once from the agent's `info`
+/// response. `$HOME` and the temp dir don't change over a session, so they are
+/// cached — the sync `FileSystem` accessors that need them
+/// ([`RemoteFileSystem::home_dir`] / [`RemoteFileSystem::unique_temp_path`])
+/// run on the editor thread, and issuing a blocking request there would hang
+/// the whole single-threaded UI for the full request timeout when the link is
+/// unresponsive (issue: web editor freezes on switching to an unreachable SSH
+/// workspace).
+#[derive(Debug, Clone)]
+struct RemoteSysInfo {
+    /// Remote `$HOME`, when the agent reported one.
+    home: Option<PathBuf>,
+    /// Remote temp dir (agent's `tempfile.gettempdir()`), `/tmp` fallback.
+    temp_dir: PathBuf,
+}
 
 /// Remote filesystem that communicates with the Python agent
 pub struct RemoteFileSystem {
     channel: Arc<AgentChannel>,
     /// Display string for the connection
     connection_string: String,
+    /// Cached `info` snapshot (see [`RemoteSysInfo`]). Primed once on the
+    /// connect worker by [`RemoteFileSystem::prime_sys_info`]; read lock-free
+    /// thereafter so the editor-thread accessors that need `$HOME` / the temp
+    /// dir don't issue a blocking round-trip on the hot path.
+    sys_info: Arc<OnceLock<RemoteSysInfo>>,
 }
 
 impl RemoteFileSystem {
@@ -29,7 +50,62 @@ impl RemoteFileSystem {
         Self {
             channel,
             connection_string,
+            sys_info: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Parse the agent `info` response into the cached [`RemoteSysInfo`].
+    fn parse_sys_info(info: &serde_json::Value) -> RemoteSysInfo {
+        RemoteSysInfo {
+            home: info.get("home").and_then(|v| v.as_str()).map(PathBuf::from),
+            temp_dir: Self::parse_temp_dir_from_info(Some(info)),
+        }
+    }
+
+    /// Fetch the static `info` (home / temp dir) once and cache it, awaiting
+    /// the agent's reply. Call this on the **connect worker** (never the editor
+    /// thread): it doubles as a liveness gate — a host that completed the SSH
+    /// handshake but can't answer the agent (a stalled/half-open link) makes
+    /// this error, letting the caller refuse to promote a session that would
+    /// otherwise block the editor thread on the request timeout for every
+    /// subsequent file op. Once it succeeds, `home_dir` / `unique_temp_path`
+    /// serve from the cache and never touch the link again.
+    pub async fn prime_sys_info(&self) -> io::Result<()> {
+        if self.sys_info.get().is_some() {
+            return Ok(());
+        }
+        let resp = self
+            .channel
+            .request("info", serde_json::json!({}))
+            .await
+            .map_err(Self::to_io_error)?;
+        // A concurrent prime may have set it first; either snapshot is fine.
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = self.sys_info.set(Self::parse_sys_info(&resp));
+        Ok(())
+    }
+
+    /// The connection's static `info` (home / temp dir): the value cached at
+    /// connect time when present, else a one-shot blocking fetch that caches
+    /// its result. On the SSH connect path `prime_sys_info` primes this ahead
+    /// of time, so the editor-thread callers (`home_dir` during workspace
+    /// restore / file open, the file-explorer root) hit the cache and never
+    /// block. The blocking branch is only reached by a directly-constructed
+    /// filesystem (the `--remote` CLI startup, tests), where a synchronous
+    /// resolve is expected and there is no editor loop to stall.
+    fn sys_info(&self) -> Option<RemoteSysInfo> {
+        if let Some(info) = self.sys_info.get() {
+            return Some(info.clone());
+        }
+        let resp = self
+            .channel
+            .request_blocking("info", serde_json::json!({}))
+            .ok()?;
+        let info = Self::parse_sys_info(&resp);
+        // A concurrent prime may have set it first; either snapshot is fine.
+        #[allow(clippy::let_underscore_must_use)]
+        let _ = self.sys_info.set(info.clone());
+        Some(info)
     }
 
     /// Get the connection string for display
@@ -489,28 +565,25 @@ impl FileSystem for RemoteFileSystem {
     }
 
     fn home_dir(&self) -> io::Result<PathBuf> {
-        let result = self
-            .channel
-            .request_blocking("info", serde_json::json!({}))
-            .map_err(Self::to_io_error)?;
-
-        let home = result.get("home").and_then(|v| v.as_str()).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "missing home in response")
-        })?;
-
-        Ok(PathBuf::from(home))
+        // Served from the connect-time cache on the hot path (workspace
+        // restore / file open / file explorer), so the editor thread doesn't
+        // block; see `sys_info`. A remote that couldn't answer `info` never
+        // gets this far — the connect-time liveness gate (`prime_sys_info`)
+        // rejects it before the session is promoted.
+        self.sys_info()
+            .and_then(|info| info.home)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "remote home directory unknown"))
     }
 
     fn unique_temp_path(&self, dest_path: &Path) -> PathBuf {
-        // Query the remote system's temp directory instead of hardcoding /tmp,
-        // which doesn't exist on Windows remotes. Falls back to /tmp if the
-        // info request fails (e.g. older agent without temp_dir support).
-        let temp_dir = Self::parse_temp_dir_from_info(
-            self.channel
-                .request_blocking("info", serde_json::json!({}))
-                .ok()
-                .as_ref(),
-        );
+        // Use the remote system's temp directory instead of hardcoding /tmp,
+        // which doesn't exist on Windows remotes. Served from the connect-time
+        // cache when primed (see `sys_info`); falls back to /tmp if the info
+        // request fails (e.g. older agent without temp_dir support).
+        let temp_dir = self
+            .sys_info()
+            .map(|i| i.temp_dir)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
         let file_name = dest_path
             .file_name()
             .unwrap_or_else(|| std::ffi::OsStr::new("fresh-save"));

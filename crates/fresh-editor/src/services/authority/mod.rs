@@ -1107,6 +1107,7 @@ pub async fn connect_ssh_authority(
     type Built = Result<
         (
             SshConnection,
+            RemoteFileSystem,
             tokio::task::JoinHandle<()>,
             tokio::runtime::Runtime,
         ),
@@ -1128,7 +1129,7 @@ pub async fn connect_ssh_authority(
                 // The channel/reconnect tasks spawned here live on `runtime`'s
                 // workers, surviving after this helper thread exits — until the
                 // `runtime` (moved into the keepalive) drops.
-                let (connection, reconnect) = runtime.block_on(async {
+                let (connection, remote_fs, reconnect) = runtime.block_on(async {
                     // Race the connect against the cancel signal. On cancel the
                     // connect future is dropped, which drops the in-flight ssh
                     // child (spawned kill-on-drop) so a hung handshake leaves no
@@ -1143,26 +1144,43 @@ pub async fn connect_ssh_authority(
                         },
                         None => SshConnection::connect(bootstrap_params.clone()).await?,
                     };
+                    // Liveness gate + cache warm-up, on this connect worker (NOT
+                    // the editor thread). Prove the agent actually answers before
+                    // we hand back a live authority: a host that finished the SSH
+                    // handshake but then can't service requests (a stalled or
+                    // half-open link) would otherwise promote into a session whose
+                    // workspace restore — and every later file op — blocks the
+                    // single-threaded editor for the full request timeout. The
+                    // fetched $HOME/temp-dir is cached on the filesystem we build
+                    // here so the editor thread never has to ask for it later.
+                    // Doing this inside `runtime.block_on` (a sync context) also
+                    // means a failure drops `runtime` cleanly, rather than from an
+                    // async context (which tokio forbids).
+                    let remote_fs = RemoteFileSystem::new(
+                        connection.channel(),
+                        connection.connection_string().to_string(),
+                    );
+                    remote_fs.prime_sys_info().await.map_err(|e| {
+                        SshError::AgentStartFailed(format!("remote agent is not responding: {e}"))
+                    })?;
                     let reconnect =
                         spawn_reconnect_task(connection.channel(), connection.params().clone());
-                    Ok::<_, SshError>((connection, reconnect))
+                    Ok::<_, SshError>((connection, remote_fs, reconnect))
                 })?;
-                Ok((connection, reconnect, runtime))
+                Ok((connection, remote_fs, reconnect, runtime))
             })();
             #[allow(clippy::let_underscore_must_use)]
             let _ = tx.send(built);
         })
         .map_err(|e| SshError::AgentStartFailed(format!("connect thread: {e}")))?;
 
-    let (connection, reconnect, runtime) = rx
+    let (connection, remote_fs, reconnect, runtime) = rx
         .await
         .map_err(|_| SshError::AgentStartFailed("connect thread vanished".to_string()))??;
 
     let channel = connection.channel();
-    let connection_string = connection.connection_string().to_string();
     let reconnect_params = connection.params().clone();
-    let filesystem: Arc<dyn FileSystem + Send + Sync> =
-        Arc::new(RemoteFileSystem::new(channel.clone(), connection_string));
+    let filesystem: Arc<dyn FileSystem + Send + Sync> = Arc::new(remote_fs);
     let process_spawner: Arc<dyn ProcessSpawner> = Arc::new(RemoteProcessSpawner::new(
         channel.clone(),
         Arc::clone(&env),

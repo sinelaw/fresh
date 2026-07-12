@@ -1727,3 +1727,88 @@ for line in sys.stdin:
     // Tidy up so the python process doesn't outlive the test.
     let _ = child.start_kill();
 }
+
+/// Regression test for the "web editor freezes on switching to an unreachable
+/// SSH workspace" bug. The freeze was `home_dir()` issuing a blocking `info`
+/// request on the editor thread during a dormant session's workspace restore;
+/// on a host that finished the SSH handshake but then can't answer, that hung
+/// the whole single-threaded UI for the request timeout.
+///
+/// The fix is a connect-time liveness gate: [`RemoteFileSystem::prime_sys_info`]
+/// must reject a link that can't answer `info`, so the dive fails the connect
+/// (Disconnected + Retry) instead of promoting into a session whose restore
+/// then blocks the editor. Against a live agent it succeeds and primes the
+/// cache that `home_dir` is then served from.
+#[test]
+fn prime_sys_info_gates_unresponsive_link_and_caches_when_live() {
+    // --- Live agent: the gate accepts it and primes the $HOME cache. ---
+    if let Some((fs, _temp_dir, rt)) = create_test_filesystem() {
+        rt.block_on(fs.prime_sys_info())
+            .expect("liveness gate must accept a responsive agent");
+        let home = fs
+            .home_dir()
+            .expect("home_dir is served from the primed cache");
+        assert!(
+            home.is_absolute(),
+            "expected an absolute remote home, got {home:?}",
+        );
+    } else {
+        eprintln!("Skipping live half: could not spawn local agent");
+    }
+
+    // --- Silent agent (ready handshake, then no responses): gate rejects it. ---
+    use fresh::services::remote::AgentChannel;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command as TokioCommand;
+
+    let script = r#"
+import sys, json
+sys.stdout.write(json.dumps({"id": 0, "ok": True, "v": 1}) + "\n")
+sys.stdout.flush()
+for line in sys.stdin:
+    pass
+"#;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
+
+    let mut child = match TokioCommand::new("python3")
+        .arg("-u")
+        .arg("-c")
+        .arg(script)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!("Skipping silent half: python3 not available");
+            return;
+        }
+    };
+
+    let stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+    let mut ready_line = String::new();
+    rt.block_on(reader.read_line(&mut ready_line))
+        .expect("read ready");
+    assert!(!ready_line.is_empty(), "silent agent did not send ready");
+
+    let channel = Arc::new(AgentChannel::new(reader, stdin));
+    // Bound how long the unanswered `info` waits; the assertion is on the
+    // *outcome* (an error), not on elapsed time — the agent never replies, so
+    // the gate rejects it regardless of runner speed (matches
+    // `test_remote_filesystem_explicit_timeout_fires`).
+    channel.set_request_timeout(Duration::from_millis(200));
+    let fs = RemoteFileSystem::new(channel, "test@silent".to_string());
+
+    let gated = rt.block_on(fs.prime_sys_info());
+    assert!(
+        gated.is_err(),
+        "liveness gate must reject a link that cannot answer info",
+    );
+
+    let _ = child.start_kill();
+}
