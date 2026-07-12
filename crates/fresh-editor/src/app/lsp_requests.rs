@@ -2146,6 +2146,12 @@ impl Editor {
     }
 
     /// Request document formatting from LSP.
+    ///
+    /// When the primary cursor has an active selection and the server
+    /// advertises range formatting, only the selected range is formatted
+    /// (`textDocument/rangeFormatting`) — mirroring VS Code's "Format
+    /// Selection". Otherwise the whole document is formatted
+    /// (`textDocument/formatting`).
     pub(crate) fn request_formatting(&mut self) {
         let buffer_id = self.active_buffer();
         let metadata = match self.active_window().buffer_metadata.get(&buffer_id) {
@@ -2176,6 +2182,16 @@ impl Editor {
         let tab_size = self.config.editor.tab_size as u32;
         let insert_spaces = !self.config.editor.use_tabs;
 
+        // Convert the active selection (if any) to LSP positions so we can
+        // ask the server to format just that range.
+        let selection_range = self.active_cursors().primary().selection_range();
+        let selection_lsp = selection_range.map(|range| {
+            let buffer = &self.active_state().buffer;
+            let (s_line, s_char) = buffer.position_to_lsp_position(range.start);
+            let (e_line, e_char) = buffer.position_to_lsp_position(range.end);
+            (s_line as u32, s_char as u32, e_line as u32, e_char as u32)
+        });
+
         self.active_window_mut().next_lsp_request_id += 1;
         let request_id = self.active_window_mut().next_lsp_request_id;
 
@@ -2183,18 +2199,58 @@ impl Editor {
 
         if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
             if let Some(sh) = lsp.handle_for_feature_mut(&language, LspFeature::Format) {
-                if let Err(e) = sh.handle.document_formatting(
-                    request_id,
-                    uri.as_uri().clone(),
-                    tab_size,
-                    insert_spaces,
-                ) {
+                // Prefer range formatting when a selection is active and the
+                // server supports it; otherwise format the whole document.
+                let result = match selection_lsp {
+                    Some((sl, sc, el, ec)) if sh.capabilities.document_range_formatting => {
+                        sh.handle.document_range_formatting(
+                            request_id,
+                            uri.as_uri().clone(),
+                            sl,
+                            sc,
+                            el,
+                            ec,
+                            tab_size,
+                            insert_spaces,
+                        )
+                    }
+                    _ => sh.handle.document_formatting(
+                        request_id,
+                        uri.as_uri().clone(),
+                        tab_size,
+                        insert_spaces,
+                    ),
+                };
+                if let Err(e) = result {
                     tracing::warn!("Failed to request formatting: {}", e);
                 }
             } else {
                 self.set_status_message("Formatting not supported by LSP server".to_string());
             }
         }
+    }
+
+    /// Whether the active buffer's LSP server advertises range formatting
+    /// (`textDocument/rangeFormatting`). Used to decide whether an active
+    /// selection can be range-formatted instead of falling back to a
+    /// whole-file external format.
+    pub(crate) fn active_lsp_supports_range_formatting(&self) -> bool {
+        let buffer_id = self.active_buffer();
+        let lsp_enabled = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
+            .map(|m| m.lsp_enabled)
+            .unwrap_or(false);
+        if !lsp_enabled {
+            return false;
+        }
+        let language = self.active_state().language.clone();
+        self.active_window()
+            .lsp
+            .handle_for_feature(&language, LspFeature::Format)
+            .map(|sh| sh.capabilities.document_range_formatting)
+            .unwrap_or(false)
     }
 
     /// Handle find references response from LSP

@@ -82,6 +82,7 @@ pub mod issue_2373_buffer_switcher_virtual;
 pub mod issue_2405_brackets_in_comments;
 pub mod issue_2449_scrollback_wrapped_ansi_color;
 pub mod issue_2566_env_detector_labels;
+pub mod issue_2605_format_selection_range;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
 pub mod language_dialog_esc_cancels_edit;

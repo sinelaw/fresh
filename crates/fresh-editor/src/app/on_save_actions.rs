@@ -128,6 +128,18 @@ impl Editor {
         // Get language from buffer's stored state
         let language = self.active_state().language.clone();
 
+        // An active selection means the user wants to reformat only that
+        // region (as in VS Code's "Format Selection"). External formatters can
+        // only rewrite the whole file, so when a selection is active and the
+        // language server supports range formatting, route through LSP range
+        // formatting instead of silently reformatting the entire buffer.
+        if self.active_cursors().primary().selection_range().is_some()
+            && self.active_lsp_supports_range_formatting()
+        {
+            self.request_formatting();
+            return Ok(());
+        }
+
         // Get formatter for this language
         let formatter = self
             .config

@@ -7,7 +7,7 @@ Fresh has native support for the Language Server Protocol (LSP), providing featu
 *   **Code actions:** Quick fixes, refactorings, and server-initiated file create/rename/delete, all through a single popup that merges actions from every configured server.
 *   **Navigation:** Go to Definition (`F12`), Find References (`Shift+F12`), and Go to Implementation (`Ctrl+F12`).
 *   **Hover, rename, and signature help.**
-*   **Formatting:** "Format Buffer" from the command palette uses the configured external formatter, falling back to LSP formatting (including range formatting) when none is set.
+*   **Formatting:** "Format Buffer" from the command palette formats the whole file with the configured external formatter, falling back to LSP formatting when none is set. With an active selection it formats only that range via the language server's range formatting (`textDocument/rangeFormatting`) when the server supports it, matching VS Code's "Format Selection".
 
 All LSP operations are available as palette commands (search for "LSP"). Use the [Keybinding Editor](./keybinding-editor.md) to see or change the keys bound to each one.
 
