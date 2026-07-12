@@ -520,6 +520,7 @@ impl Editor {
     /// dialog (`handle_entry_dialog_item_click`, non-TextList path). Used by
     /// the web `/settings` route so the entry dialog is clickable instead of
     /// keyboard-only.
+    #[cfg(feature = "web")]
     pub(crate) fn entry_dialog_select_item(&mut self, idx: usize) {
         if let Some(state) = self.settings_state.as_mut() {
             if let Some(dialog) = state.entry_dialog_mut() {
@@ -539,6 +540,7 @@ impl Editor {
     /// Activate an entry-dialog button by semantic name ("save" | "cancel" |
     /// "delete"). Routing by name rather than index keeps the web and TUI in
     /// agreement even though they lay the buttons out in a different order.
+    #[cfg(feature = "web")]
     pub(crate) fn entry_dialog_activate_button(&mut self, kind: &str) {
         let Some(state) = self.settings_state.as_mut() else {
             return;

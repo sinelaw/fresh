@@ -298,6 +298,7 @@ impl Editor {
     /// Select a display row by index (and toggle it if it's a section header) —
     /// the same effect as a TUI click on that table row. Used by the web
     /// `/kbedit` route so a native row click selects through the real editor.
+    #[cfg(feature = "web")]
     pub(crate) fn kbedit_select_display_row(&mut self, idx: usize) {
         if let Some(ed) = self.keybinding_editor.as_mut() {
             if idx < ed.display_rows.len() {

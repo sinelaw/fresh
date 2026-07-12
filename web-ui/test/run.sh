@@ -30,8 +30,8 @@ case "$PROFILE" in
   *) echo "PROFILE must be 'debug' or 'release' (got '$PROFILE')" >&2; exit 2 ;;
 esac
 
-# 1) Build the bridge.
-(cd "$REPO_ROOT" && cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} -p fresh-editor --example webui_server)
+# 1) Build the bridge. The example lives behind the `web` feature.
+(cd "$REPO_ROOT" && cargo build ${CARGO_PROFILE_FLAGS[@]+"${CARGO_PROFILE_FLAGS[@]}"} --features web -p fresh-editor --example webui_server)
 
 # 2) Install the JS deps if missing. With CHROMIUM provided, skip playwright's
 #    browser download entirely; otherwise fetch Chromium only when it isn't

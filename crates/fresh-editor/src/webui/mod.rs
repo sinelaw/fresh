@@ -80,6 +80,16 @@ use crate::model::filesystem::{FileSystem, StdFileSystem};
 /// so `run()` and the `/reset` route can't drift apart.
 const DEFAULT_SIZE: (u16, u16) = (140, 44);
 
+/// The web-UI frontend served at `GET /`, embedded at compile time from
+/// `web-ui/index.html`. This is the *only* source for the page — there is no
+/// on-disk fallback, so `fresh --web` (and the example bridge) is fully
+/// self-contained and behaves identically wherever the binary runs. Editing
+/// the frontend therefore requires a rebuild.
+const INDEX_HTML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../web-ui/index.html"
+));
+
 /// Cap on the clipboard text exposed in the scene (`ClipboardSync`). Anything
 /// larger is truncated at a char boundary — a copy that big is better served
 /// by a future dedicated fetch than by riding along on every scene response.
@@ -266,7 +276,6 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     eprintln!(
         "fresh web bridge on http://{addr}  (real render pipeline, no mocks; WS push on /ws)"
     );
-    let html_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../web-ui/index.html");
 
     // In-flight HTTP requests whose head/body hasn't fully arrived yet (reads
     // are nonblocking so a slow client can never stall the editor loop).
@@ -342,7 +351,6 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
                         conn.stream,
                         &req,
                         &mut editor,
-                        html_path,
                         &mut cols,
                         &mut rows,
                         files,
@@ -521,7 +529,6 @@ fn serve_request(
     mut stream: TcpStream,
     req: &HttpRequest,
     editor: &mut Editor,
-    html_path: &str,
     cols: &mut u16,
     rows: &mut u16,
     files: &[PathBuf],
@@ -542,7 +549,7 @@ fn serve_request(
             None => Ok(Served::Http { mutated: false }),
         };
     }
-    let mutated = handle_http(&mut stream, req, editor, html_path, cols, rows, files, clip)?;
+    let mutated = handle_http(&mut stream, req, editor, cols, rows, files, clip)?;
     Ok(Served::Http { mutated })
 }
 
@@ -553,7 +560,6 @@ fn handle_http(
     stream: &mut TcpStream,
     req: &HttpRequest,
     editor: &mut Editor,
-    html_path: &str,
     cols: &mut u16,
     rows: &mut u16,
     files: &[PathBuf],
@@ -562,13 +568,11 @@ fn handle_http(
     let body_json = || serde_json::from_slice::<Value>(&req.body).unwrap_or_else(|_| json!({}));
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/") => {
-            let html = std::fs::read_to_string(html_path)
-                .unwrap_or_else(|_| "<h1>web-ui/index.html not found</h1>".into());
             respond(
                 stream,
                 "200 OK",
                 "text/html; charset=utf-8",
-                html.as_bytes(),
+                INDEX_HTML.as_bytes(),
             )?;
             Ok(false)
         }

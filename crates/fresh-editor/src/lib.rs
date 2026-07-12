@@ -48,7 +48,8 @@ pub mod client;
 pub mod server;
 
 // Local HTTP bridge hosting the real Editor for the web UI frontend (no mocks).
-#[cfg(feature = "runtime")]
+// Opt-in via the `web` feature (implies `runtime`); reached from `fresh --web`.
+#[cfg(feature = "web")]
 pub mod webui;
 
 // View module - available for runtime, WASM, and dev-bins (schema generation)

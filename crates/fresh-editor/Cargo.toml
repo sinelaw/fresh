@@ -35,6 +35,20 @@ required-features = ["dev-bins", "runtime"]
 name = "fresh"
 path = "src/lib.rs"
 
+# The web-UI bridge server example and the web/TUI scene-parity test both use
+# the `webui` module, which only exists under the `web` feature. Declaring
+# them here lets `cargo build`/`cargo test` skip them cleanly when `web` is off
+# instead of failing to resolve `fresh::webui`.
+[[example]]
+name = "webui_server"
+path = "examples/webui_server.rs"
+required-features = ["web"]
+
+[[test]]
+name = "scene_parity"
+path = "tests/scene_parity.rs"
+required-features = ["web"]
+
 [features]
 default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http"]
 plugins = [
@@ -102,6 +116,13 @@ runtime = [
 # When disabled, those paths become no-ops / return errors and the whole
 # TLS stack (ureq + rustls + ring + webpki) is dropped from the binary.
 http = ["dep:ureq"]
+# Web UI: `fresh --web [ADDR]` serves the real editor to a browser over a
+# local HTTP + WebSocket bridge (the `webui` module). The frontend
+# (`web-ui/index.html`) is embedded into the binary so the build is
+# self-contained. Opt-in (not in `default`) because it embeds ~140 KiB of
+# HTML and pulls in the sha1 WebSocket-handshake dep. Requires the full
+# editor `runtime`.
+web = ["runtime", "dep:sha1"]
 # GUI mode - native window with GPU-accelerated rendering via wgpu
 # All windowing/GPU dependencies live in the fresh-gui crate.
 gui = [
@@ -194,8 +215,9 @@ anyhow = { workspace = true }
 # base64 for remote protocol encoding (and the webui WebSocket handshake)
 base64 = { version = "0.22" }
 # sha1 for the webui WebSocket handshake (Sec-WebSocket-Accept); already in
-# Cargo.lock as a transitive dep, so this adds no new compilation.
-sha1 = { version = "0.11" }
+# Cargo.lock as a transitive dep, so enabling `web` adds no new compilation.
+# Gated behind the `web` feature — the only place it is used.
+sha1 = { version = "0.11", optional = true }
 # thiserror for custom error types
 thiserror = { version = "2.0" }
 # dirs is always needed for path_utils home directory expansion

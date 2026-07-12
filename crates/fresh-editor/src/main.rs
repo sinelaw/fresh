@@ -144,6 +144,13 @@ struct Cli {
     #[cfg(feature = "gui")]
     #[arg(long)]
     gui: bool,
+
+    /// Serve the editor to a browser over a local HTTP/WebSocket bridge.
+    /// Optionally give a bind address (default 127.0.0.1:8137). Any FILES are
+    /// opened in the served editor.
+    #[cfg(feature = "web")]
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137")]
+    web: Option<String>,
 }
 
 // Internal Args struct - maps from new Cli to format used by rest of codebase
@@ -184,6 +191,9 @@ struct Args {
     /// Launch in GUI mode
     #[cfg(feature = "gui")]
     gui: bool,
+    /// Serve the web UI on this bind address (`--web [ADDR]`)
+    #[cfg(feature = "web")]
+    web: Option<String>,
 }
 
 impl From<Cli> for Args {
@@ -466,6 +476,8 @@ impl From<Cli> for Args {
             open_files_in_session,
             #[cfg(feature = "gui")]
             gui: cli.gui,
+            #[cfg(feature = "web")]
+            web: cli.web,
         }
     }
 }
@@ -3486,6 +3498,11 @@ fn run_if_subcommand(
     }
     if args.attach {
         return Some(run_attach_command(args));
+    }
+    #[cfg(feature = "web")]
+    if let Some(addr) = &args.web {
+        let files: Vec<PathBuf> = args.files.iter().map(PathBuf::from).collect();
+        return Some(fresh::webui::run(addr, &files));
     }
     #[cfg(feature = "gui")]
     if !console_available || args.gui {

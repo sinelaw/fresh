@@ -43,7 +43,7 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: Run scene parity test
-        run: cargo test -p fresh-editor --test scene_parity
+        run: cargo test -p fresh-editor --features web --test scene_parity
 
   playwright:
     name: playwright suite

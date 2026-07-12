@@ -18,8 +18,10 @@
   TUI and GUI exactly.
   Transport: a WebSocket (/ws) pushes scene region diffs from the server and
   carries all input; the HTTP routes remain for curl / the parity harness.
-  Served by the bridge that hosts a real Editor:
-    cargo run -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
+  Served by the bridge that hosts a real Editor (built into `fresh` behind the
+  `web` feature, which also embeds this file):
+    fresh --web 127.0.0.1:8139 <files…>          # installed binary
+    cargo run --features web -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
 -->
 <style>
   :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#333;--fg:#d4d4d4;--muted:#9aa0a6;

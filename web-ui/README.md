@@ -77,18 +77,27 @@ HTTP-side mutation is pushed to the connected browser as a diff immediately.
 
 ## Run it
 
-For interactive use, serve a **release** build — the debug scene render dominates
-the key→frame round-trip (see docs/internal/web-ui.md §3.1 for the measured
-debug vs release numbers):
+The bridge ships in the main `fresh` binary behind the opt-in `web` feature,
+which also embeds this `index.html` so the build is self-contained. Build with
+that feature and launch with `--web [ADDR]` (address optional, default
+`127.0.0.1:8137`); any files given are opened in the served editor:
 
 ```sh
-cargo run --release -p fresh-editor --example webui_server -- 127.0.0.1:8137 \
-  crates/fresh-editor/src/view/scene.rs   # or any file(s)
+cargo run --release --features web -p fresh-editor -- \
+  --web 127.0.0.1:8137 crates/fresh-editor/src/view/scene.rs   # or any file(s)
 # then open http://127.0.0.1:8137  and type — edits go through the real editor.
 ```
 
-For development iteration a debug build works too (same command without
-`--release`), just with visibly higher typing latency.
+For interactive use serve a **release** build — the debug scene render dominates
+the key→frame round-trip (see docs/internal/web-ui.md §3.1 for the measured
+debug vs release numbers). A debug build works for development iteration too
+(same command without `--release`), just with visibly higher typing latency.
+
+The `webui_server` example is the equivalent entry point for the parity harness
+and headless suite (`cargo run --features web -p fresh-editor --example
+webui_server -- [ADDR] [FILES…]`). Both it and `fresh --web` serve the same
+compile-time-embedded `index.html` — there is no on-disk fallback, so editing
+the frontend requires a rebuild.
 
 > ⚠️ The bridge binds plain localhost HTTP and hosts a live editor with
 > filesystem access. It's a local-development prototype, **not** for exposure on
