@@ -1629,6 +1629,7 @@ mod large_file_encoding_tests {
 mod rebuild_pristine_saved_root_tests {
     use super::*;
     use crate::model::piece_tree::BufferLocation;
+    use proptest::prelude::*;
     use std::sync::Arc;
 
     /// Create a large-file-mode TextBuffer from raw bytes, simulating what
@@ -1998,6 +1999,75 @@ mod rebuild_pristine_saved_root_tests {
         assert_eq!(buf.get_text_range_mut(0, total).unwrap(), content);
         // ...and the line count is still exact once fully loaded.
         assert_eq!(buf.line_count(), Some(expected_lf + 1));
+    }
+
+    /// Fill `size` bytes with fixed-width lines (`line_len - 1` `x`s + `\n`),
+    /// truncating the final line. Varying `line_len` moves the newlines around
+    /// relative to the 64 KB / 1 MB chunk boundaries.
+    fn make_lines(size: usize, line_len: usize) -> Vec<u8> {
+        let line_len = line_len.max(1);
+        let mut out = Vec::with_capacity(size);
+        while out.len() < size {
+            let remaining = size - out.len();
+            if remaining >= line_len {
+                out.extend(std::iter::repeat(b'x').take(line_len - 1));
+                out.push(b'\n');
+            } else {
+                out.extend(std::iter::repeat(b'x').take(remaining));
+            }
+        }
+        out
+    }
+
+    proptest! {
+        // Each case does MB-scale disk I/O (write + lazy reads + a full scan),
+        // so keep the case count modest.
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        /// The invariant behind #2596: after the line-index scan the reported
+        /// line count must be exact **no matter which chunks were loaded** (i.e.
+        /// however the piece tree was split) before the scan ran. Viewport loads
+        /// land on the 64 KB `CHUNK_ALIGNMENT` grid, while the scan and the
+        /// pristine rebuild reason in 1 MB `LOAD_CHUNK_SIZE` units, so any
+        /// pre-scan load can leave the tree split off that grid. The bug applied
+        /// the index-keyed scan counts to a uniformly re-split pristine tree,
+        /// which undercounted whenever the boundaries diverged.
+        #[test]
+        fn prop_line_count_exact_after_scan_with_arbitrary_preloads(
+            // > 1 MB so the file spans several chunks (and crosses boundaries).
+            extra_bytes in 0usize..(2 * 1024 * 1024),
+            line_len in 20usize..200,
+            // Up to four arbitrary viewport loads before the scan: an offset
+            // (as a fraction of the file) and a length.
+            loads in prop::collection::vec((0u8..=255u8, 1usize..(1024 * 1024)), 0..5),
+        ) {
+            let size = 1024 * 1024 + extra_bytes;
+            let content = make_lines(size, line_len);
+            let expected_lf = content.iter().filter(|&&b| b == b'\n').count();
+
+            let tmp = tempfile::NamedTempFile::new().unwrap();
+            std::fs::write(tmp.path(), &content).unwrap();
+            let mut buf = large_file_buffer_unloaded(tmp.path(), content.len());
+
+            // Load arbitrary viewport chunks BEFORE scanning, restructuring the
+            // tree off the 1 MB grid in unpredictable ways.
+            for (off_pct, len) in loads {
+                let total = buf.total_bytes();
+                let offset = (total - 1) * off_pct as usize / 255;
+                let len = len.min(total - offset).max(1);
+                let _ = buf.get_text_range_mut(offset, len).unwrap();
+            }
+
+            let updates = scan_line_feeds(&mut buf);
+            buf.rebuild_with_pristine_saved_root(&updates);
+
+            prop_assert_eq!(buf.line_count(), Some(expected_lf + 1));
+            // Scanning is not an edit.
+            prop_assert!(buf.diff_since_saved().equal);
+            // Content round-trips unchanged.
+            let total = buf.total_bytes();
+            prop_assert_eq!(buf.get_text_range_mut(0, total).unwrap(), content);
+        }
     }
 
     /// After rebuild, diff_since_saved should visit a small number of nodes
