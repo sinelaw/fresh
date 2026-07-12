@@ -1335,3 +1335,107 @@ done
 
     Ok(())
 }
+
+/// Regression test for #2601: dismissing a hover popup must not remove an
+/// error diagnostic elsewhere in the buffer.
+///
+/// Root cause: while showing a hover, the editor adds a subtle symbol-highlight
+/// overlay (priority 90) and remembers its handle for removal on dismiss. That
+/// handle was captured via `overlays.all().last()` — but overlays are
+/// priority-sorted, so `.last()` returns the *highest-priority* overlay, which
+/// is an error diagnostic (priority 100), not the just-added hover highlight.
+/// Dismissing the hover then removed the error's overlay, dropping it from the
+/// status-bar severity count, the gutter marker, and `F8` navigation (while the
+/// Diagnostics panel, which reads `stored_diagnostics`, still listed it) until
+/// the next save re-published.
+///
+/// The hover here is requested on `x` (line 1, char 8), *away* from the error
+/// range (chars 17-24), so the hover highlight does not overlap the diagnostic —
+/// exactly the reporter's scenario of hovering at an unrelated position.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses Bash-based fake LSP server
+fn test_dismissing_hover_preserves_error_diagnostic_2601() -> anyhow::Result<()> {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("fresh=debug")
+        .try_init();
+
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = create_hover_plus_diagnostic_server_script(temp_dir.path());
+    let log_file = temp_dir.path().join("hover_dismiss_diag_log.txt");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(
+        &test_file,
+        "fn main() {\n    let x: i32 = \"hello\";\n    println!(\"{}\", x);\n}\n",
+    )?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for the error diagnostic to be published and shown (E:1).
+    harness.wait_until(|_| {
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log.contains("SENT: publishDiagnostics")
+    })?;
+    harness.wait_until(|h| h.screen_to_string().contains("E:1"))?;
+
+    // Move the cursor onto `x` (line 1, char 8) — away from the error range
+    // (chars 17-24) — and request a hover there. The fake server answers with a
+    // hover body plus a range at char 8-9, so the editor adds its symbol
+    // highlight overlay there.
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE)?;
+    }
+    harness.editor_mut().request_hover()?;
+    harness.wait_until(|h| h.editor().active_state().popups.is_visible())?;
+    harness.render()?;
+
+    // Sanity: the error is still shown while the hover popup is open.
+    assert!(
+        harness.screen_to_string().contains("E:1"),
+        "Error diagnostic should be visible while the hover popup is open.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Dismiss the hover popup (Escape), matching the reporter's steps.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.wait_until(|h| !h.editor().active_state().popups.is_visible())?;
+    harness.render()?;
+
+    // The error must survive the dismissal: still counted in the status bar.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("E:1"),
+        "Dismissing the hover popup must NOT drop the error diagnostic (#2601).\nScreen:\n{}",
+        screen
+    );
+
+    Ok(())
+}

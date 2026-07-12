@@ -23,7 +23,17 @@ use super::Editor;
 impl Editor {
     // === Overlay Management (Event-Driven) ===
 
-    /// Add an overlay for decorations (underlines, highlights, etc.)
+    /// Add a decoration overlay (underline, highlight, etc.) to the active
+    /// buffer and return its handle for later removal.
+    ///
+    /// Decoration overlays are ephemeral and not part of the undo history, and
+    /// `AddOverlay` fires no plugin hook, so this adds directly to the buffer's
+    /// overlay manager rather than round-tripping through an `AddOverlay` event
+    /// — which would discard the handle. The handle comes straight from the add
+    /// (via [`EditorState::add_overlay`]); recovering it from
+    /// `overlays.all().last()` would be wrong, since overlays are
+    /// priority-sorted and `.last()` is the highest-priority overlay (e.g. an
+    /// error diagnostic at priority 100), not the one just added.
     pub fn add_overlay(
         &mut self,
         namespace: Option<crate::view::overlay::OverlayNamespace>,
@@ -32,24 +42,8 @@ impl Editor {
         priority: i32,
         message: Option<String>,
     ) -> crate::view::overlay::OverlayHandle {
-        let event = Event::AddOverlay {
-            namespace,
-            range,
-            face,
-            priority,
-            message,
-            extend_to_line_end: false,
-            url: None,
-        };
-        self.apply_event_to_active_buffer(&event);
-        // Return the handle of the last added overlay
-        let state = self.active_state();
-        state
-            .overlays
-            .all()
-            .last()
-            .map(|o| o.handle.clone())
-            .unwrap_or_default()
+        self.active_state_mut()
+            .add_overlay(namespace, range, face, priority, message, false, None)
     }
 
     /// Remove an overlay by handle

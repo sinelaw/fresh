@@ -1066,31 +1066,22 @@ impl Editor {
                 self.apply_event_to_active_buffer(&remove_event);
             }
 
-            // Add overlay to highlight the hovered symbol
-            let event = crate::model::event::Event::AddOverlay {
-                namespace: None,
-                range: start_byte..end_byte,
-                face: crate::model::event::OverlayFace::Background {
+            // Add an overlay to highlight the hovered symbol and remember its
+            // handle so it can be removed when the hover is dismissed. The
+            // handle comes straight from the add — recovering it via
+            // `overlays.all().last()` would grab the highest-priority overlay
+            // (an error diagnostic at priority 100) instead, so dismissing the
+            // hover would then remove the error's overlay (#2601).
+            let handle = self.add_overlay(
+                None,
+                start_byte..end_byte,
+                crate::model::event::OverlayFace::Background {
                     color: (80, 80, 120), // Subtle highlight for hovered symbol
                 },
-                priority: 90, // Below rename (100) but above syntax (lower)
-                message: None,
-                extend_to_line_end: false,
-                url: None,
-            };
-            self.apply_event_to_active_buffer(&event);
-            // Store the handle for later removal
-            if let Some(state) = self
-                .windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .get(&self.active_buffer())
-            {
-                if let Some(handle) = state.overlays.all().last().map(|o| o.handle.clone()) {
-                    self.active_window_mut().hover.set_symbol_overlay(handle);
-                }
-            }
+                90, // Below rename (100) but above syntax (lower)
+                None,
+            );
+            self.active_window_mut().hover.set_symbol_overlay(handle);
         } else {
             // No range provided by LSP - compute word boundaries at hover position
             // This prevents the popup from following the mouse within the same word

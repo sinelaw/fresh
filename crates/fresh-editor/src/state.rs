@@ -952,18 +952,45 @@ impl EditorState {
 
     /// Materialize an `AddOverlay` event into a tracked [`Overlay`].
     fn apply_add_overlay(&mut self, spec: AddOverlaySpec) {
-        let overlay_face = convert_event_face_to_overlay_face(spec.face);
-        let mut overlay = Overlay::with_priority(
-            &mut self.marker_list,
+        self.add_overlay(
+            spec.namespace.clone(),
             spec.range.clone(),
-            overlay_face,
+            spec.face.clone(),
             spec.priority,
+            spec.message.clone(),
+            spec.extend_to_line_end,
+            spec.url.clone(),
         );
-        overlay.namespace = spec.namespace.clone();
-        overlay.message = spec.message.clone();
-        overlay.extend_to_line_end = spec.extend_to_line_end;
-        overlay.url = spec.url.clone();
-        self.overlays.add(overlay);
+    }
+
+    /// Add an overlay to this buffer's overlay manager and return its handle.
+    ///
+    /// This is the shared materialization point for both the `AddOverlay`
+    /// event (via [`apply_add_overlay`](Self::apply_add_overlay)) and direct
+    /// callers that need the handle back for later removal — e.g. the hover /
+    /// rename symbol highlights. Returning the handle from the add itself is
+    /// what `OverlayManager::add` already provides; callers must **not** try to
+    /// recover it via `overlays.all().last()`, which returns the
+    /// highest-priority overlay (priority-sorted), not the one just added.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_overlay(
+        &mut self,
+        namespace: Option<crate::view::overlay::OverlayNamespace>,
+        range: Range<usize>,
+        face: EventOverlayFace,
+        priority: i32,
+        message: Option<String>,
+        extend_to_line_end: bool,
+        url: Option<String>,
+    ) -> crate::view::overlay::OverlayHandle {
+        let overlay_face = convert_event_face_to_overlay_face(&face);
+        let mut overlay =
+            Overlay::with_priority(&mut self.marker_list, range, overlay_face, priority);
+        overlay.namespace = namespace;
+        overlay.message = message;
+        overlay.extend_to_line_end = extend_to_line_end;
+        overlay.url = url;
+        self.overlays.add(overlay)
     }
 
     /// Show a popup synthesized from replayed [`PopupData`].
