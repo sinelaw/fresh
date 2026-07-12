@@ -5,7 +5,7 @@
 //! - Toggle Line Numbers
 //! - Reset Buffer Settings
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs::File;
@@ -221,6 +221,64 @@ fn test_new_buffer_shows_configured_whitespace_indicators() {
         screen.contains('·'),
         "Configured space indicators should be visible in a new buffer. Screen:\n{}",
         screen
+    );
+}
+
+/// Regression test for #2580 follow-up: changing a buffer's language via the
+/// "Set Language" command must re-resolve whitespace indicators so the new
+/// language's `show_whitespace_tabs` override takes effect immediately.
+///
+/// A Go buffer hides tab indicators (`show_whitespace_tabs: false`); switching
+/// it to Plain Text (which shows them) must make the "→" reappear. Previously
+/// `Set Language` only swapped the highlighter and left the stale Go visibility
+/// in place, so the tab stayed unmarked until the file was reopened.
+///
+/// The switch is driven through the unambiguous "Plain Text" entry and the
+/// result is asserted purely on rendered output (the "→" glyph), per the
+/// "E2E Tests Observe, Not Inspect" guideline.
+#[test]
+fn test_set_language_updates_whitespace_tab_override() {
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_project_root()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    let project_dir = harness.project_dir().unwrap();
+
+    // A Go file whose first line starts with a real tab. Go's config sets
+    // show_whitespace_tabs=false, so the tab is NOT marked with "→" on open.
+    let go_file = project_dir.join("sample.go");
+    std::fs::write(&go_file, "\thello\n").unwrap();
+    harness.open_file(&go_file).unwrap();
+    harness.render().unwrap();
+
+    let before = harness.screen_to_string();
+    assert!(
+        !before.contains('→'),
+        "Go hides tab indicators, so no → should show on open. Screen:\n{}",
+        before
+    );
+
+    // Switch the language to Plain Text, which shows tab indicators by default.
+    run_command(&mut harness, "Set Language");
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Plain Text").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_to_string();
+    assert!(
+        after.contains('→'),
+        "After switching to Plain Text, the tab indicator should reappear. \
+         Screen:\n{}",
+        after
     );
 }
 

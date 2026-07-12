@@ -1242,6 +1242,25 @@ impl Editor {
         }
     }
 
+    /// Re-resolve the active buffer's whitespace indicator visibility from the
+    /// current config after its language changed. This applies the new
+    /// language's `show_whitespace_tabs` override (and restores config defaults
+    /// when switching away from a language that hid tab indicators), matching
+    /// what the file-open path does so a manual **Set Language** stays
+    /// consistent with opening a file of that type (issue #2580).
+    fn refresh_whitespace_visibility(&mut self, buffer_id: fresh_core::BufferId) {
+        let whitespace = self.configured_whitespace_visibility(buffer_id);
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.buffer_settings.whitespace = whitespace;
+        }
+    }
+
     /// Handle SetLanguage prompt confirmation.
     fn handle_set_language(&mut self, input: &str) {
         use crate::primitives::detected_language::DetectedLanguage;
@@ -1261,6 +1280,7 @@ impl Editor {
                 state.apply_language(DetectedLanguage::plain_text());
                 self.set_status_message("Language set to Plain Text".to_string());
             }
+            self.refresh_whitespace_visibility(buffer_id);
             #[cfg(feature = "plugins")]
             self.update_plugin_state_snapshot();
             self.plugin_manager.read().unwrap().run_hook(
@@ -1291,6 +1311,7 @@ impl Editor {
                 state.apply_language(detected);
                 self.set_status_message(format!("Language set to {}", trimmed));
             }
+            self.refresh_whitespace_visibility(buffer_id);
             #[cfg(feature = "plugins")]
             self.update_plugin_state_snapshot();
             self.plugin_manager.read().unwrap().run_hook(
