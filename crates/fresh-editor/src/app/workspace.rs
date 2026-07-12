@@ -418,13 +418,13 @@ impl Editor {
     /// override (`mouse_enabled`) is applied by
     /// `Window::apply_workspace_layout`.
     fn restore_config_overrides(&mut self, overrides: &WorkspaceConfigOverrides) {
-        // `line_numbers`, `line_wrap`, and `enable_inlay_hints` are legacy
-        // fields — read for serde compatibility with workspaces written by
-        // older builds, but no longer applied: their global toggles persist
-        // to the config file, which is the single source of truth. Stamping
-        // a workspace snapshot here silently overrode config edits made in
-        // other projects or by hand (same treatment as `menu_bar_hidden`,
-        // issue #1156).
+        // `line_numbers`, `line_wrap`, `enable_inlay_hints`, and
+        // `enable_code_lens` are legacy fields — read for serde compatibility
+        // with workspaces written by older builds, but no longer applied:
+        // their global toggles persist to the config file, which is the single
+        // source of truth. Stamping a workspace snapshot here silently
+        // overrode config edits made in other projects or by hand (same
+        // treatment as `menu_bar_hidden`, issue #1156).
         if let Some(relative_line_numbers) = overrides.relative_line_numbers {
             self.config_mut().editor.relative_line_numbers = relative_line_numbers;
         }
@@ -2863,6 +2863,7 @@ impl crate::app::window::Window {
                     .mouse_capture
                     .load(std::sync::atomic::Ordering::Relaxed),
             ),
+            enable_code_lens: Some(cfg.enable_code_lens),
             menu_bar_hidden: None,
         };
 

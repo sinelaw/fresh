@@ -331,6 +331,7 @@ pub enum Action {
     LspHover,
     LspSignatureHelp,
     LspCodeActions,
+    LspCodeLens,
     LspRestart,
     LspStop,
     ToggleInlayHints,

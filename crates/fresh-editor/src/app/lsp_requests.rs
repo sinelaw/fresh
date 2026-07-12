@@ -3579,6 +3579,9 @@ impl Editor {
 
     /// Request code lenses for a specific buffer if supported.
     pub(crate) fn request_code_lens_for_buffer(&mut self, buffer_id: BufferId) {
+        if !self.config.editor.enable_code_lens {
+            return;
+        }
         let Some(metadata) = self.active_window().buffer_metadata.get(&buffer_id) else {
             return;
         };
@@ -3620,6 +3623,90 @@ impl Editor {
             self.active_window_mut()
                 .pending_code_lens_requests
                 .insert(request_id, super::CodeLensRequest { buffer_id, version });
+        }
+    }
+
+    /// Show executable code lenses attached to the current source line.
+    pub(crate) fn show_code_lenses(&mut self) {
+        let buffer_id = self.active_buffer();
+        let cursor_position = self.active_cursors().primary().position;
+        let line = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|state| state.buffer.position_to_lsp_position(cursor_position).0 as u32)
+            .unwrap_or(0);
+
+        let commands: Vec<lsp_types::Command> = self
+            .active_window()
+            .code_lenses
+            .get(&buffer_id)
+            .into_iter()
+            .flatten()
+            .filter(|lens| lens.range.start.line <= line && line <= lens.range.end.line)
+            .filter_map(|lens| lens.command.clone())
+            .collect();
+
+        if commands.is_empty() {
+            self.set_status_message(t!("lsp.no_code_lenses").to_string());
+            return;
+        }
+
+        use crate::view::popup::{Popup, PopupKind, PopupListItem, PopupPosition, PopupResolver};
+        let items = commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| PopupListItem {
+                text: command.title.clone(),
+                detail: None,
+                icon: None,
+                data: Some(index.to_string()),
+                disabled: false,
+            })
+            .collect();
+        self.active_window_mut().pending_code_lens_commands = Some(commands);
+
+        let mut popup = Popup::list(items, &self.theme.read().unwrap());
+        popup.kind = PopupKind::Action;
+        popup.title = Some(t!("lsp.popup_code_lenses").to_string());
+        popup.position = PopupPosition::BelowCursor;
+        popup.width = 60;
+        popup.max_height = 15;
+        popup.resolver = PopupResolver::CodeLens;
+        popup.focused = true;
+        self.active_state_mut().popups.show_or_replace(popup);
+    }
+
+    pub(crate) fn execute_code_lens(&mut self, index: usize) {
+        let command = self
+            .active_window()
+            .pending_code_lens_commands
+            .as_ref()
+            .and_then(|commands| commands.get(index))
+            .cloned();
+        let Some(command) = command else {
+            tracing::warn!("Code lens index {} out of range", index);
+            return;
+        };
+
+        tracing::info!(
+            "Executing code lens command: {} ({})",
+            command.title,
+            command.command
+        );
+        let title = command.title.clone();
+        let command_id = command.command.clone();
+        let arguments = command.arguments.clone();
+        let buffer_id = self.active_buffer();
+        let sent = self
+            .with_lsp_for_buffer(buffer_id, LspFeature::CodeLens, |handle, _, _| {
+                handle.execute_command(command_id, arguments).is_ok()
+            })
+            .unwrap_or(false);
+
+        if sent {
+            self.set_status_message(t!("lsp.code_lens_executed", title = &title).to_string());
+        } else {
+            self.set_status_message(t!("lsp.code_lens_failed", title = &title).to_string());
         }
     }
 

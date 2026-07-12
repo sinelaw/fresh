@@ -883,6 +883,9 @@ impl Editor {
             Action::LspCodeActions => {
                 self.request_code_actions()?;
             }
+            Action::LspCodeLens => {
+                self.show_code_lenses();
+            }
             Action::LspRestart => {
                 self.handle_lsp_restart();
             }
