@@ -248,11 +248,14 @@ fn test_search_replace_arrow_from_toolbar_focuses_results() {
     harness.type_text("hello").unwrap();
     harness.render().unwrap();
 
-    // Wait for streamed results across both matching files. Match rows
+    // Wait for streamed results across both matching files AND for the
+    // panel to stop re-rendering. Navigating mid-stream races the
+    // debounced search re-render (which briefly rebuilds the tree),
+    // so wait for a stable frame before sending focus keys. Match rows
     // render as `[v] alpha.txt:1 - …`; the `filename:` distinguishes a
     // match row from the always-present option toggles.
     harness
-        .wait_until(|h| {
+        .wait_until_stable(|h| {
             let s = h.screen_to_string();
             s.contains("alpha.txt:") && s.contains("beta.txt:")
         })
