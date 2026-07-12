@@ -432,67 +432,56 @@
           156,
           214
         ],
-        "keyword_modifier": null,
         "string": [
           206,
           145,
           120
         ],
-        "string_modifier": null,
         "comment": [
           106,
           153,
           85
         ],
-        "comment_modifier": null,
         "function": [
           220,
           220,
           170
         ],
-        "function_modifier": null,
         "type": [
           78,
           201,
           176
         ],
-        "type_modifier": null,
         "variable": [
           156,
           220,
           254
         ],
-        "variable_modifier": null,
         "variable_builtin": [
           86,
           156,
           214
         ],
-        "variable_builtin_modifier": null,
         "constant": [
           79,
           193,
           255
         ],
-        "constant_modifier": null,
         "operator": [
           212,
           212,
           212
         ],
-        "operator_modifier": null,
         "punctuation_bracket": [
           212,
           212,
           212
         ],
-        "punctuation_bracket_modifier": null,
         "punctuation_delimiter": [
           212,
           212,
           212
-        ],
-        "punctuation_delimiter_modifier": null
+        ]
       }
     }
   },
@@ -1599,241 +1588,140 @@
       }
     },
     "SyntaxColors": {
-      "description": "Syntax highlighting colors",
+      "description": "Syntax highlighting colors.\n\nEach field is a [`StyledColorDef`]: a bare color, or a color bundled with\nthe text attributes to render it with. The bundle keeps a category's color\nand its attributes in one value — no parallel `*_modifier` keys.",
       "type": "object",
       "properties": {
         "keyword": {
           "description": "Language keywords (if, for, fn, etc.)",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             86,
             156,
             214
           ]
         },
-        "keyword_modifier": {
-          "description": "Text attributes applied to language keywords.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "string": {
           "description": "String literals",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             206,
             145,
             120
           ]
         },
-        "string_modifier": {
-          "description": "Text attributes applied to string literals.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "comment": {
           "description": "Code comments",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             106,
             153,
             85
           ]
         },
-        "comment_modifier": {
-          "description": "Text attributes applied to comments.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "function": {
           "description": "Function names",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             220,
             220,
             170
           ]
         },
-        "function_modifier": {
-          "description": "Text attributes applied to function names.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "type": {
           "description": "Type names",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             78,
             201,
             176
           ]
         },
-        "type_modifier": {
-          "description": "Text attributes applied to type names.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "variable": {
           "description": "Variable names",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             156,
             220,
             254
           ]
         },
-        "variable_modifier": {
-          "description": "Text attributes applied to variable and property names.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "variable_builtin": {
           "description": "Built-in language variables (self, this, super, etc.)",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             86,
             156,
             214
           ]
         },
-        "variable_builtin_modifier": {
-          "description": "Text attributes applied to built-in language variables.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "constant": {
           "description": "Constants and literals",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             79,
             193,
             255
           ]
         },
-        "constant_modifier": {
-          "description": "Text attributes applied to constants, numbers, and attributes.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
         "operator": {
           "description": "Operators (+, -, =, etc.)",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             212,
             212,
             212
           ]
-        },
-        "operator_modifier": {
-          "description": "Text attributes applied to operators.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         },
         "punctuation_bracket": {
           "description": "Punctuation brackets ({, }, (, ), [, ])",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             212,
             212,
             212
           ]
-        },
-        "punctuation_bracket_modifier": {
-          "description": "Text attributes applied to punctuation brackets.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         },
         "punctuation_delimiter": {
           "description": "Punctuation delimiters (;, ,, .)",
-          "$ref": "#/$defs/ColorDef",
+          "$ref": "#/$defs/StyledColorDef",
           "default": [
             212,
             212,
             212
           ]
-        },
-        "punctuation_delimiter_modifier": {
-          "description": "Text attributes applied to punctuation delimiters.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ModifierDef"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       }
+    },
+    "StyledColorDef": {
+      "description": "A syntax color that may carry text attributes.\n\nA theme key is either a bare color (`[156, 220, 254]` or `\"Blue\"`) or an\nobject bundling that color with a modifier list\n(`{\"color\": [156, 220, 254], \"modifier\": [\"bold\"]}`). Bundling keeps the\ncolor and its attributes in one value, so nothing has to declare a separate\n`*_modifier` sibling key or map one to the other. A bare color carries no\nattributes.\n\n`Plain` must precede `Styled`: untagged deserialization tries variants in\norder, and only an object can match `Styled`, so an array/string settles on\n`Plain` and an object falls through to `Styled`.",
+      "anyOf": [
+        {
+          "description": "A color with no text attributes.",
+          "$ref": "#/$defs/ColorDef"
+        },
+        {
+          "description": "A color bundled with the text attributes to render it with.",
+          "type": "object",
+          "properties": {
+            "color": {
+              "$ref": "#/$defs/ColorDef"
+            },
+            "modifier": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ModifierDef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "color"
+          ]
+        }
+      ]
     }
   }
 }

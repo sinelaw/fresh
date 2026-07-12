@@ -252,18 +252,14 @@ function fieldRefersToColorDef(fieldObj: Record<string, unknown>): boolean {
   return false;
 }
 
-/** Whether a schema property is a ModifierDef, directly or inside Option. */
-function fieldRefersToModifierDef(fieldObj: Record<string, unknown>): boolean {
-  const refs: unknown[] = [fieldObj["$ref"]];
-  const anyOf = fieldObj["anyOf"];
-  if (Array.isArray(anyOf)) {
-    for (const variant of anyOf) {
-      if (variant && typeof variant === "object") {
-        refs.push((variant as Record<string, unknown>)["$ref"]);
-      }
-    }
-  }
-  return refs.some(ref => typeof ref === "string" && ref.endsWith("/ModifierDef"));
+/**
+ * Whether a property schema refers to `StyledColorDef` — a syntax value that
+ * is either a bare color or a `{color, modifier}` bundle. Such a field is
+ * edited as a color plus a synthetic sibling `<name>_modifier` attributes row.
+ */
+function fieldRefersToStyledColorDef(fieldObj: Record<string, unknown>): boolean {
+  const refStr = fieldObj["$ref"];
+  return typeof refStr === "string" && refStr.endsWith("/StyledColorDef");
 }
 
 /**
@@ -318,28 +314,35 @@ function loadThemeSections(): ThemeSection[] {
     const sectionProps = resolvedSchema.properties as Record<string, unknown> || {};
     const fields: ThemeFieldDef[] = [];
 
+    // Build a field def from a field key + kind, resolving its i18n labels.
+    const makeFieldDef = (
+      key: string,
+      kind: "color" | "modifier",
+      fallbackDesc: string,
+    ): ThemeFieldDef => ({
+      key,
+      displayName: editor.t(`field.${key}`) || fallbackDesc || key,
+      description: editor.t(`field.${key}_desc`) || fallbackDesc,
+      section: sectionName,
+      kind,
+    });
+
     for (const [fieldName, fieldSchema] of Object.entries(sectionProps)) {
       const fieldObj = fieldSchema as Record<string, unknown>;
       const fieldDesc = (fieldObj.description as string) || "";
 
-      const kind = fieldRefersToColorDef(fieldObj)
-        ? "color"
-        : sectionName === "syntax" && fieldRefersToModifierDef(fieldObj)
-          ? "modifier"
-          : null;
-      if (!kind) continue;
+      const styled = fieldRefersToStyledColorDef(fieldObj);
+      if (!styled && !fieldRefersToColorDef(fieldObj)) continue;
 
-      // Generate i18n keys from field names
-      const i18nName = `field.${fieldName}`;
-      const i18nDesc = `field.${fieldName}_desc`;
+      fields.push(makeFieldDef(fieldName, "color", fieldDesc));
 
-      fields.push({
-        key: fieldName,
-        displayName: editor.t(i18nName) || fieldDesc || fieldName,
-        description: editor.t(i18nDesc) || fieldDesc,
-        section: sectionName,
-        kind,
-      });
+      // A styled color bundles text attributes with the color. The editor
+      // stores color and attributes as separate keys internally, so expose
+      // the attributes as a synthetic `<name>_modifier` row; both fold back
+      // into the one bundled value on save.
+      if (styled) {
+        fields.push(makeFieldDef(`${fieldName}_modifier`, "modifier", fieldDesc));
+      }
     }
 
     // Sort fields alphabetically (use simple comparison to avoid ICU issues in QuickJS)
@@ -749,6 +752,53 @@ function setNestedValue(obj: Record<string, unknown>, path: string, value: unkno
   current[parts[parts.length - 1]] = value;
 }
 
+// =============================================================================
+// Syntax style bundling
+//
+// On disk a syntax key is either a bare color (`[r,g,b]` / `"Named"`) or a
+// `{color, modifier}` bundle. Internally the editor works with a flat model —
+// a color at `<key>` and its attributes at `<key>_modifier` — so the whole
+// field pipeline treats attributes like any other value. These two helpers
+// bridge the on-disk bundle and the flat in-memory form.
+// =============================================================================
+
+const MODIFIER_SUFFIX = "_modifier";
+
+/** Expand on-disk `{color, modifier}` bundles into flat color + `_modifier`. */
+function expandSyntaxBundles(themeData: Record<string, unknown>): void {
+  const syntax = themeData.syntax;
+  if (!syntax || typeof syntax !== "object" || Array.isArray(syntax)) return;
+  const obj = syntax as Record<string, unknown>;
+  for (const [key, value] of Object.entries(obj)) {
+    // A bundle is a plain object; a bare color is an array or string.
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const bundle = value as Record<string, unknown>;
+    obj[key] = bundle.color;
+    if (Array.isArray(bundle.modifier) && bundle.modifier.length > 0) {
+      obj[`${key}${MODIFIER_SUFFIX}`] = bundle.modifier;
+    }
+  }
+}
+
+/**
+ * Collapse a flat syntax section (color + `<key>_modifier`) back to the
+ * on-disk form: a `{color, modifier}` bundle when attributes are present,
+ * otherwise the bare color.
+ */
+function collapseSyntaxBundles(syntax: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(syntax)) {
+    if (key.endsWith(MODIFIER_SUFFIX)) continue;
+    const modifier = syntax[`${key}${MODIFIER_SUFFIX}`];
+    if (Array.isArray(modifier) && modifier.length > 0) {
+      out[key] = { color: value, modifier };
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 /**
  * Load theme registry and populate state.themeRegistry + state.builtinKeys.
  *
@@ -782,8 +832,9 @@ async function loadThemeRegistry(): Promise<void> {
  */
 function loadThemeFile(key: string): Record<string, unknown> | null {
   try {
-    const data = editor.getThemeData(key);
-    return data as Record<string, unknown> | null;
+    const data = editor.getThemeData(key) as Record<string, unknown> | null;
+    if (data) expandSyntaxBundles(data);
+    return data;
   } catch (e) {
     editor.debug(`[theme_editor] Failed to load theme data for '${key}': ${e}`);
     return null;
@@ -2073,7 +2124,9 @@ async function saveTheme(name?: string, restorePath?: string | null): Promise<bo
           sectionData[field.key] = value;
         }
       }
-      completeTheme[section.name] = sectionData;
+      // Re-bundle syntax color + attributes into the single on-disk value.
+      completeTheme[section.name] =
+        section.name === "syntax" ? collapseSyntaxBundles(sectionData) : sectionData;
     }
 
     const content = JSON.stringify(completeTheme, null, 2);

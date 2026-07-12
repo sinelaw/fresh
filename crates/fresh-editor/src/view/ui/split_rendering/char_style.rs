@@ -139,7 +139,7 @@ pub(super) fn compute_char_style(ctx: &CharStyleContext) -> CharStyleOutput {
     // the syntax modifier when an LSP semantic token later refines the color.
     if ctx.token_style.is_none() && highlight_color.is_some() {
         if let Some(key) = ctx.highlight_theme_key {
-            style = style.add_modifier(ctx.theme.modifier_for_syntax_key(key));
+            style = style.add_modifier(ctx.theme.resolve_modifier_key(key));
         }
     }
 

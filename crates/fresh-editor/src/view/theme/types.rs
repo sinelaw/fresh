@@ -254,6 +254,65 @@ impl From<Modifier> for ModifierDef {
     }
 }
 
+/// A syntax color that may carry text attributes.
+///
+/// A theme key is either a bare color (`[156, 220, 254]` or `"Blue"`) or an
+/// object bundling that color with a modifier list
+/// (`{"color": [156, 220, 254], "modifier": ["bold"]}`). Bundling keeps the
+/// color and its attributes in one value, so nothing has to declare a separate
+/// `*_modifier` sibling key or map one to the other. A bare color carries no
+/// attributes.
+///
+/// `Plain` must precede `Styled`: untagged deserialization tries variants in
+/// order, and only an object can match `Styled`, so an array/string settles on
+/// `Plain` and an object falls through to `Styled`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum StyledColorDef {
+    /// A color with no text attributes.
+    Plain(ColorDef),
+    /// A color bundled with the text attributes to render it with.
+    Styled {
+        color: ColorDef,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modifier: Option<ModifierDef>,
+    },
+}
+
+impl StyledColorDef {
+    /// The color component, regardless of whether attributes are present.
+    pub fn color(&self) -> &ColorDef {
+        match self {
+            StyledColorDef::Plain(color) => color,
+            StyledColorDef::Styled { color, .. } => color,
+        }
+    }
+
+    /// The text attributes, or `Modifier::empty()` for a bare color.
+    pub fn modifier(&self) -> Modifier {
+        match self {
+            StyledColorDef::Plain(_) => Modifier::empty(),
+            StyledColorDef::Styled { modifier, .. } => {
+                modifier.as_ref().map(Modifier::from).unwrap_or_default()
+            }
+        }
+    }
+
+    /// Build the serialized form from a resolved color + modifier pair,
+    /// collapsing to a bare color when there are no attributes so unchanged
+    /// themes round-trip to their original compact JSON.
+    pub fn from_parts(color: Color, modifier: Modifier) -> Self {
+        if modifier.is_empty() {
+            StyledColorDef::Plain(color.into())
+        } else {
+            StyledColorDef::Styled {
+                color: color.into(),
+                modifier: Some(modifier.into()),
+            }
+        }
+    }
+}
+
 /// Convert a named color string (e.g. "Yellow", "Red") to a ratatui Color.
 /// Returns None if the string is not a recognized named color.
 pub fn named_color_from_str(name: &str) -> Option<Color> {
@@ -1218,110 +1277,84 @@ fn default_diagnostic_hint_bg() -> ColorDef {
     ColorDef::Rgb(30, 30, 30)
 }
 
-/// Syntax highlighting colors
+/// Syntax highlighting colors.
+///
+/// Each field is a [`StyledColorDef`]: a bare color, or a color bundled with
+/// the text attributes to render it with. The bundle keeps a category's color
+/// and its attributes in one value — no parallel `*_modifier` keys.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SyntaxColors {
     /// Language keywords (if, for, fn, etc.)
     #[serde(default = "default_syntax_keyword")]
-    pub keyword: ColorDef,
-    /// Text attributes applied to language keywords.
-    #[serde(default)]
-    pub keyword_modifier: Option<ModifierDef>,
+    pub keyword: StyledColorDef,
     /// String literals
     #[serde(default = "default_syntax_string")]
-    pub string: ColorDef,
-    /// Text attributes applied to string literals.
-    #[serde(default)]
-    pub string_modifier: Option<ModifierDef>,
+    pub string: StyledColorDef,
     /// Code comments
     #[serde(default = "default_syntax_comment")]
-    pub comment: ColorDef,
-    /// Text attributes applied to comments.
-    #[serde(default)]
-    pub comment_modifier: Option<ModifierDef>,
+    pub comment: StyledColorDef,
     /// Function names
     #[serde(default = "default_syntax_function")]
-    pub function: ColorDef,
-    /// Text attributes applied to function names.
-    #[serde(default)]
-    pub function_modifier: Option<ModifierDef>,
+    pub function: StyledColorDef,
     /// Type names
     #[serde(rename = "type", default = "default_syntax_type")]
-    pub type_: ColorDef,
-    /// Text attributes applied to type names.
-    #[serde(default)]
-    pub type_modifier: Option<ModifierDef>,
+    pub type_: StyledColorDef,
     /// Variable names
     #[serde(default = "default_syntax_variable")]
-    pub variable: ColorDef,
-    /// Text attributes applied to variable and property names.
-    #[serde(default)]
-    pub variable_modifier: Option<ModifierDef>,
+    pub variable: StyledColorDef,
     /// Built-in language variables (self, this, super, etc.)
     #[serde(default = "default_syntax_variable_builtin")]
-    pub variable_builtin: ColorDef,
-    /// Text attributes applied to built-in language variables.
-    #[serde(default)]
-    pub variable_builtin_modifier: Option<ModifierDef>,
+    pub variable_builtin: StyledColorDef,
     /// Constants and literals
     #[serde(default = "default_syntax_constant")]
-    pub constant: ColorDef,
-    /// Text attributes applied to constants, numbers, and attributes.
-    #[serde(default)]
-    pub constant_modifier: Option<ModifierDef>,
+    pub constant: StyledColorDef,
     /// Operators (+, -, =, etc.)
     #[serde(default = "default_syntax_operator")]
-    pub operator: ColorDef,
-    /// Text attributes applied to operators.
-    #[serde(default)]
-    pub operator_modifier: Option<ModifierDef>,
+    pub operator: StyledColorDef,
     /// Punctuation brackets ({, }, (, ), [, ])
     #[serde(default = "default_syntax_punctuation_bracket")]
-    pub punctuation_bracket: ColorDef,
-    /// Text attributes applied to punctuation brackets.
-    #[serde(default)]
-    pub punctuation_bracket_modifier: Option<ModifierDef>,
+    pub punctuation_bracket: StyledColorDef,
     /// Punctuation delimiters (;, ,, .)
     #[serde(default = "default_syntax_punctuation_delimiter")]
-    pub punctuation_delimiter: ColorDef,
-    /// Text attributes applied to punctuation delimiters.
-    #[serde(default)]
-    pub punctuation_delimiter_modifier: Option<ModifierDef>,
+    pub punctuation_delimiter: StyledColorDef,
 }
 
 // Default syntax colors (VSCode Dark+ inspired)
-fn default_syntax_keyword() -> ColorDef {
-    ColorDef::Rgb(86, 156, 214)
+fn default_syntax_keyword() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(86, 156, 214))
 }
-fn default_syntax_string() -> ColorDef {
-    ColorDef::Rgb(206, 145, 120)
+fn default_syntax_string() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(206, 145, 120))
 }
-fn default_syntax_comment() -> ColorDef {
-    ColorDef::Rgb(106, 153, 85)
+fn default_syntax_comment() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(106, 153, 85))
 }
-fn default_syntax_function() -> ColorDef {
-    ColorDef::Rgb(220, 220, 170)
+fn default_syntax_function() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(220, 220, 170))
 }
-fn default_syntax_type() -> ColorDef {
-    ColorDef::Rgb(78, 201, 176)
+fn default_syntax_type() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(78, 201, 176))
 }
-fn default_syntax_variable() -> ColorDef {
-    ColorDef::Rgb(156, 220, 254)
+fn default_syntax_variable() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(156, 220, 254))
 }
-fn default_syntax_variable_builtin() -> ColorDef {
-    ColorDef::Rgb(86, 156, 214) // same as keyword — self/this/super are language-defined
+fn default_syntax_variable_builtin() -> StyledColorDef {
+    // same as keyword — self/this/super are language-defined
+    StyledColorDef::Plain(ColorDef::Rgb(86, 156, 214))
 }
-fn default_syntax_constant() -> ColorDef {
-    ColorDef::Rgb(79, 193, 255)
+fn default_syntax_constant() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(79, 193, 255))
 }
-fn default_syntax_operator() -> ColorDef {
-    ColorDef::Rgb(212, 212, 212)
+fn default_syntax_operator() -> StyledColorDef {
+    StyledColorDef::Plain(ColorDef::Rgb(212, 212, 212))
 }
-fn default_syntax_punctuation_bracket() -> ColorDef {
-    ColorDef::Rgb(212, 212, 212) // default foreground — brackets blend with text
+fn default_syntax_punctuation_bracket() -> StyledColorDef {
+    // default foreground — brackets blend with text
+    StyledColorDef::Plain(ColorDef::Rgb(212, 212, 212))
 }
-fn default_syntax_punctuation_delimiter() -> ColorDef {
-    ColorDef::Rgb(212, 212, 212) // default foreground — delimiters blend with text
+fn default_syntax_punctuation_delimiter() -> StyledColorDef {
+    // default foreground — delimiters blend with text
+    StyledColorDef::Plain(ColorDef::Rgb(212, 212, 212))
 }
 
 /// Comprehensive theme structure with all UI colors
@@ -1774,83 +1807,28 @@ impl From<ThemeFile> for Theme {
             diagnostic_info_bg: file.diagnostic.info_bg.into(),
             diagnostic_hint_fg: file.diagnostic.hint_fg.into(),
             diagnostic_hint_bg: file.diagnostic.hint_bg.into(),
-            syntax_keyword: file.syntax.keyword.into(),
-            syntax_keyword_modifier: file
-                .syntax
-                .keyword_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_string: file.syntax.string.into(),
-            syntax_string_modifier: file
-                .syntax
-                .string_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_comment: file.syntax.comment.into(),
-            syntax_comment_modifier: file
-                .syntax
-                .comment_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_function: file.syntax.function.into(),
-            syntax_function_modifier: file
-                .syntax
-                .function_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_type: file.syntax.type_.into(),
-            syntax_type_modifier: file
-                .syntax
-                .type_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_variable: file.syntax.variable.into(),
-            syntax_variable_modifier: file
-                .syntax
-                .variable_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_variable_builtin: file.syntax.variable_builtin.into(),
-            syntax_variable_builtin_modifier: file
-                .syntax
-                .variable_builtin_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_constant: file.syntax.constant.into(),
-            syntax_constant_modifier: file
-                .syntax
-                .constant_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_operator: file.syntax.operator.into(),
-            syntax_operator_modifier: file
-                .syntax
-                .operator_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_punctuation_bracket: file.syntax.punctuation_bracket.into(),
-            syntax_punctuation_bracket_modifier: file
-                .syntax
-                .punctuation_bracket_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
-            syntax_punctuation_delimiter: file.syntax.punctuation_delimiter.into(),
-            syntax_punctuation_delimiter_modifier: file
-                .syntax
-                .punctuation_delimiter_modifier
-                .as_ref()
-                .map(Modifier::from)
-                .unwrap_or_default(),
+            syntax_keyword: file.syntax.keyword.color().clone().into(),
+            syntax_keyword_modifier: file.syntax.keyword.modifier(),
+            syntax_string: file.syntax.string.color().clone().into(),
+            syntax_string_modifier: file.syntax.string.modifier(),
+            syntax_comment: file.syntax.comment.color().clone().into(),
+            syntax_comment_modifier: file.syntax.comment.modifier(),
+            syntax_function: file.syntax.function.color().clone().into(),
+            syntax_function_modifier: file.syntax.function.modifier(),
+            syntax_type: file.syntax.type_.color().clone().into(),
+            syntax_type_modifier: file.syntax.type_.modifier(),
+            syntax_variable: file.syntax.variable.color().clone().into(),
+            syntax_variable_modifier: file.syntax.variable.modifier(),
+            syntax_variable_builtin: file.syntax.variable_builtin.color().clone().into(),
+            syntax_variable_builtin_modifier: file.syntax.variable_builtin.modifier(),
+            syntax_constant: file.syntax.constant.color().clone().into(),
+            syntax_constant_modifier: file.syntax.constant.modifier(),
+            syntax_operator: file.syntax.operator.color().clone().into(),
+            syntax_operator_modifier: file.syntax.operator.modifier(),
+            syntax_punctuation_bracket: file.syntax.punctuation_bracket.color().clone().into(),
+            syntax_punctuation_bracket_modifier: file.syntax.punctuation_bracket.modifier(),
+            syntax_punctuation_delimiter: file.syntax.punctuation_delimiter.color().clone().into(),
+            syntax_punctuation_delimiter_modifier: file.syntax.punctuation_delimiter.modifier(),
         }
     }
 }
@@ -1999,43 +1977,47 @@ impl From<Theme> for ThemeFile {
                 hint_bg: theme.diagnostic_hint_bg.into(),
             },
             syntax: SyntaxColors {
-                keyword: theme.syntax_keyword.into(),
-                keyword_modifier: (!theme.syntax_keyword_modifier.is_empty())
-                    .then(|| theme.syntax_keyword_modifier.into()),
-                string: theme.syntax_string.into(),
-                string_modifier: (!theme.syntax_string_modifier.is_empty())
-                    .then(|| theme.syntax_string_modifier.into()),
-                comment: theme.syntax_comment.into(),
-                comment_modifier: (!theme.syntax_comment_modifier.is_empty())
-                    .then(|| theme.syntax_comment_modifier.into()),
-                function: theme.syntax_function.into(),
-                function_modifier: (!theme.syntax_function_modifier.is_empty())
-                    .then(|| theme.syntax_function_modifier.into()),
-                type_: theme.syntax_type.into(),
-                type_modifier: (!theme.syntax_type_modifier.is_empty())
-                    .then(|| theme.syntax_type_modifier.into()),
-                variable: theme.syntax_variable.into(),
-                variable_modifier: (!theme.syntax_variable_modifier.is_empty())
-                    .then(|| theme.syntax_variable_modifier.into()),
-                variable_builtin: theme.syntax_variable_builtin.into(),
-                variable_builtin_modifier: (!theme.syntax_variable_builtin_modifier.is_empty())
-                    .then(|| theme.syntax_variable_builtin_modifier.into()),
-                constant: theme.syntax_constant.into(),
-                constant_modifier: (!theme.syntax_constant_modifier.is_empty())
-                    .then(|| theme.syntax_constant_modifier.into()),
-                operator: theme.syntax_operator.into(),
-                operator_modifier: (!theme.syntax_operator_modifier.is_empty())
-                    .then(|| theme.syntax_operator_modifier.into()),
-                punctuation_bracket: theme.syntax_punctuation_bracket.into(),
-                punctuation_bracket_modifier: (!theme
-                    .syntax_punctuation_bracket_modifier
-                    .is_empty())
-                .then(|| theme.syntax_punctuation_bracket_modifier.into()),
-                punctuation_delimiter: theme.syntax_punctuation_delimiter.into(),
-                punctuation_delimiter_modifier: (!theme
-                    .syntax_punctuation_delimiter_modifier
-                    .is_empty())
-                .then(|| theme.syntax_punctuation_delimiter_modifier.into()),
+                keyword: StyledColorDef::from_parts(
+                    theme.syntax_keyword,
+                    theme.syntax_keyword_modifier,
+                ),
+                string: StyledColorDef::from_parts(
+                    theme.syntax_string,
+                    theme.syntax_string_modifier,
+                ),
+                comment: StyledColorDef::from_parts(
+                    theme.syntax_comment,
+                    theme.syntax_comment_modifier,
+                ),
+                function: StyledColorDef::from_parts(
+                    theme.syntax_function,
+                    theme.syntax_function_modifier,
+                ),
+                type_: StyledColorDef::from_parts(theme.syntax_type, theme.syntax_type_modifier),
+                variable: StyledColorDef::from_parts(
+                    theme.syntax_variable,
+                    theme.syntax_variable_modifier,
+                ),
+                variable_builtin: StyledColorDef::from_parts(
+                    theme.syntax_variable_builtin,
+                    theme.syntax_variable_builtin_modifier,
+                ),
+                constant: StyledColorDef::from_parts(
+                    theme.syntax_constant,
+                    theme.syntax_constant_modifier,
+                ),
+                operator: StyledColorDef::from_parts(
+                    theme.syntax_operator,
+                    theme.syntax_operator_modifier,
+                ),
+                punctuation_bracket: StyledColorDef::from_parts(
+                    theme.syntax_punctuation_bracket,
+                    theme.syntax_punctuation_bracket_modifier,
+                ),
+                punctuation_delimiter: StyledColorDef::from_parts(
+                    theme.syntax_punctuation_delimiter,
+                    theme.syntax_punctuation_delimiter_modifier,
+                ),
             },
         }
     }
@@ -2113,77 +2095,20 @@ fn apply_theme_overrides(theme: &mut Theme, theme_file: &ThemeFile, raw: &serde_
                 continue;
             }
             let key = format!("{}.{}", section, field);
-            if let Ok(color_def) = serde_json::from_value::<ColorDef>(value.clone()) {
-                if let Some(slot) = theme.resolve_theme_key_mut(&key) {
-                    *slot = color_def.into();
-                }
+            // A value is a bare color or a `{color, modifier}` bundle; the
+            // richer form also accepts a bare color (empty modifier). The
+            // whole value defines the style, so a bare color clears any
+            // modifier the base theme set for this key.
+            let Ok(styled) = serde_json::from_value::<StyledColorDef>(value.clone()) else {
+                continue;
+            };
+            if let Some(slot) = theme.resolve_theme_key_mut(&key) {
+                *slot = styled.color().clone().into();
+            }
+            if let Some(slot) = theme.resolve_modifier_key_mut(&key) {
+                *slot = styled.modifier();
             }
         }
-    }
-
-    // Modifiers are not colors and therefore do not go through the color-key
-    // resolver above. Only replace a base theme's modifier when the user
-    // explicitly supplied the corresponding field.
-    if let Some(syntax) = raw.get("syntax").and_then(|v| v.as_object()) {
-        macro_rules! override_modifier {
-            ($json_key:literal, $file_field:ident, $theme_field:ident) => {
-                if syntax.contains_key($json_key) {
-                    theme.$theme_field = theme_file
-                        .syntax
-                        .$file_field
-                        .as_ref()
-                        .map(Modifier::from)
-                        .unwrap_or_default();
-                }
-            };
-        }
-        override_modifier!(
-            "keyword_modifier",
-            keyword_modifier,
-            syntax_keyword_modifier
-        );
-        override_modifier!("string_modifier", string_modifier, syntax_string_modifier);
-        override_modifier!(
-            "comment_modifier",
-            comment_modifier,
-            syntax_comment_modifier
-        );
-        override_modifier!(
-            "function_modifier",
-            function_modifier,
-            syntax_function_modifier
-        );
-        override_modifier!("type_modifier", type_modifier, syntax_type_modifier);
-        override_modifier!(
-            "variable_modifier",
-            variable_modifier,
-            syntax_variable_modifier
-        );
-        override_modifier!(
-            "variable_builtin_modifier",
-            variable_builtin_modifier,
-            syntax_variable_builtin_modifier
-        );
-        override_modifier!(
-            "constant_modifier",
-            constant_modifier,
-            syntax_constant_modifier
-        );
-        override_modifier!(
-            "operator_modifier",
-            operator_modifier,
-            syntax_operator_modifier
-        );
-        override_modifier!(
-            "punctuation_bracket_modifier",
-            punctuation_bracket_modifier,
-            syntax_punctuation_bracket_modifier
-        );
-        override_modifier!(
-            "punctuation_delimiter_modifier",
-            punctuation_delimiter_modifier,
-            syntax_punctuation_delimiter_modifier
-        );
     }
 
     if raw
@@ -2258,24 +2183,6 @@ impl Theme {
             _ => Modifier::empty(),
         }
     }
-
-    /// Text attributes associated with a syntax theme key.
-    pub fn modifier_for_syntax_key(&self, key: &str) -> Modifier {
-        match key {
-            "syntax.keyword" => self.syntax_keyword_modifier,
-            "syntax.string" => self.syntax_string_modifier,
-            "syntax.comment" => self.syntax_comment_modifier,
-            "syntax.function" => self.syntax_function_modifier,
-            "syntax.type" => self.syntax_type_modifier,
-            "syntax.variable" => self.syntax_variable_modifier,
-            "syntax.variable_builtin" => self.syntax_variable_builtin_modifier,
-            "syntax.constant" => self.syntax_constant_modifier,
-            "syntax.operator" => self.syntax_operator_modifier,
-            "syntax.punctuation_bracket" => self.syntax_punctuation_bracket_modifier,
-            "syntax.punctuation_delimiter" => self.syntax_punctuation_delimiter_modifier,
-            _ => Modifier::empty(),
-        }
-    }
 }
 
 /// Split a `"section.field"` theme key into its two components, returning
@@ -2303,7 +2210,7 @@ macro_rules! theme_color_keys {
     (
         $(
             $section:literal => {
-                $( $field_key:literal => $kind:tt $field:ident ),* $(,)?
+                $( $field_key:literal => $kind:tt $field:ident $(modifier $mod:ident)? ),* $(,)?
             }
         ),* $(,)?
     ) => {
@@ -2340,6 +2247,41 @@ macro_rules! theme_color_keys {
                     _ => None,
                 }
             }
+
+            /// Text-attribute [`Modifier`] a `"section.field"` color key opts
+            /// into, if any. The color key and its modifier field are declared
+            /// on the same table row, so the relation lives in one place instead
+            /// of a hand-maintained parallel `match`. Keys with no declared
+            /// modifier (and unknown keys) return `Modifier::empty()`.
+            pub fn resolve_modifier_key(&self, key: &str) -> Modifier {
+                let Some((section, field)) = split_theme_key(key) else {
+                    return Modifier::empty();
+                };
+                match section {
+                    $(
+                        $section => match field {
+                            $( $field_key => theme_color_keys!(@mod self $(, $mod)?), )*
+                            _ => Modifier::empty(),
+                        },
+                    )*
+                    _ => Modifier::empty(),
+                }
+            }
+
+            /// Mutable companion to [`Theme::resolve_modifier_key`]; yields the
+            /// modifier slot for a color key that declares one.
+            pub fn resolve_modifier_key_mut(&mut self, key: &str) -> Option<&mut Modifier> {
+                let (section, field) = split_theme_key(key)?;
+                match section {
+                    $(
+                        $section => match field {
+                            $( $field_key => theme_color_keys!(@mod_mut self $(, $mod)?), )*
+                            _ => None,
+                        },
+                    )*
+                    _ => None,
+                }
+            }
         }
     };
 
@@ -2349,6 +2291,13 @@ macro_rules! theme_color_keys {
     (@get $self:ident, opt $field:ident) => { $self.$field };
     (@get_mut $self:ident, color $field:ident) => { Some(&mut $self.$field) };
     (@get_mut $self:ident, opt $field:ident) => { $self.$field.as_mut() };
+
+    // Modifier accessors. A row without `modifier <field>` contributes no
+    // attribute; one with it resolves to that `Modifier` field.
+    (@mod $self:ident) => { Modifier::empty() };
+    (@mod $self:ident, $mod:ident) => { $self.$mod };
+    (@mod_mut $self:ident) => { None };
+    (@mod_mut $self:ident, $mod:ident) => { Some(&mut $self.$mod) };
 }
 
 theme_color_keys! {
@@ -2463,17 +2412,17 @@ theme_color_keys! {
         "text_input_selection_bg" => color text_input_selection_bg,
     },
     "syntax" => {
-        "comment" => color syntax_comment,
-        "constant" => color syntax_constant,
-        "function" => color syntax_function,
-        "keyword" => color syntax_keyword,
-        "operator" => color syntax_operator,
-        "punctuation_bracket" => color syntax_punctuation_bracket,
-        "punctuation_delimiter" => color syntax_punctuation_delimiter,
-        "string" => color syntax_string,
-        "type" => color syntax_type,
-        "variable" => color syntax_variable,
-        "variable_builtin" => color syntax_variable_builtin,
+        "comment" => color syntax_comment modifier syntax_comment_modifier,
+        "constant" => color syntax_constant modifier syntax_constant_modifier,
+        "function" => color syntax_function modifier syntax_function_modifier,
+        "keyword" => color syntax_keyword modifier syntax_keyword_modifier,
+        "operator" => color syntax_operator modifier syntax_operator_modifier,
+        "punctuation_bracket" => color syntax_punctuation_bracket modifier syntax_punctuation_bracket_modifier,
+        "punctuation_delimiter" => color syntax_punctuation_delimiter modifier syntax_punctuation_delimiter_modifier,
+        "string" => color syntax_string modifier syntax_string_modifier,
+        "type" => color syntax_type modifier syntax_type_modifier,
+        "variable" => color syntax_variable modifier syntax_variable_modifier,
+        "variable_builtin" => color syntax_variable_builtin modifier syntax_variable_builtin_modifier,
     },
     "diagnostic" => {
         "error_bg" => color diagnostic_error_bg,
@@ -2620,26 +2569,60 @@ mod tests {
 
     #[test]
     fn syntax_modifiers_parse_and_map_to_theme_keys() {
+        // A syntax key is either a bare color or a `{color, modifier}` bundle.
         let theme = Theme::from_json(
             r#"{
                 "name": "syntax-attributes",
                 "syntax": {
-                    "keyword_modifier": ["bold", "underlined"],
-                    "comment_modifier": ["italic", "dim"]
+                    "keyword": { "color": [1, 2, 3], "modifier": ["bold", "underlined"] },
+                    "comment": { "color": [4, 5, 6], "modifier": ["italic", "dim"] },
+                    "string": [7, 8, 9]
                 }
             }"#,
         )
         .unwrap();
 
+        // The bundle sets both the color and its attributes.
+        assert_eq!(theme.syntax_keyword, Color::Rgb(1, 2, 3));
         assert_eq!(
-            theme.modifier_for_syntax_key("syntax.keyword"),
+            theme.resolve_modifier_key("syntax.keyword"),
             Modifier::BOLD | Modifier::UNDERLINED
         );
+        assert_eq!(theme.syntax_comment, Color::Rgb(4, 5, 6));
         assert_eq!(
-            theme.modifier_for_syntax_key("syntax.comment"),
+            theme.resolve_modifier_key("syntax.comment"),
             Modifier::ITALIC | Modifier::DIM
         );
-        assert!(theme.modifier_for_syntax_key("syntax.string").is_empty());
+        // A bare color carries no attributes.
+        assert_eq!(theme.syntax_string, Color::Rgb(7, 8, 9));
+        assert!(theme.resolve_modifier_key("syntax.string").is_empty());
+    }
+
+    #[test]
+    fn bare_color_override_clears_base_modifier() {
+        // The value fully defines the style: overriding a keyword that the
+        // base theme rendered bold with a bare color drops the bold.
+        let theme = Theme::from_json(
+            r#"{
+                "name": "clears-modifier",
+                "extends": "builtin://dark",
+                "syntax": {
+                    "keyword": { "color": [1, 2, 3], "modifier": ["bold"] }
+                }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(theme.resolve_modifier_key("syntax.keyword"), Modifier::BOLD);
+
+        let cleared = Theme::from_json(
+            r#"{
+                "name": "clears-modifier",
+                "extends": "builtin://dark",
+                "syntax": { "keyword": [1, 2, 3] }
+            }"#,
+        )
+        .unwrap();
+        assert!(cleared.resolve_modifier_key("syntax.keyword").is_empty());
     }
 
     #[test]
