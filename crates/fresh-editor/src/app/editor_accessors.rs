@@ -1357,19 +1357,19 @@ impl Editor {
 
         // Get hover state without borrowing self
         let hover_info = match self.active_window_mut().mouse_state.lsp_hover_state {
-            Some((byte_pos, start_time, screen_x, screen_y)) => {
+            Some((byte_pos, start_time, screen_x, screen_y, buffer_id)) => {
                 if self.active_window_mut().mouse_state.lsp_hover_request_sent {
                     return false; // Already sent request for this position
                 }
                 if start_time.elapsed() < hover_delay {
                     return false; // Timer hasn't expired yet
                 }
-                Some((byte_pos, screen_x, screen_y))
+                Some((byte_pos, screen_x, screen_y, buffer_id))
             }
             None => return false,
         };
 
-        let Some((byte_pos, screen_x, screen_y)) = hover_info else {
+        let Some((byte_pos, screen_x, screen_y, buffer_id)) = hover_info else {
             return false;
         };
 
@@ -1379,7 +1379,7 @@ impl Editor {
             .set_screen_position((screen_x, screen_y));
 
         // Request hover at the byte position — only mark as sent if dispatched
-        match self.request_hover_at_position(byte_pos) {
+        match self.request_hover_at_position(byte_pos, buffer_id) {
             Ok(true) => {
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = true;
                 true

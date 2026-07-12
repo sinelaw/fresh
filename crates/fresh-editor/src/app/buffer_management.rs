@@ -630,7 +630,7 @@ impl Editor {
         self.active_window()
             .mouse_state
             .lsp_hover_state
-            .map(|(pos, _, x, y)| (pos, x, y))
+            .map(|(pos, _, x, y, _)| (pos, x, y))
     }
 
     /// Check if a transient popup (hover/signature help) is currently visible
@@ -644,14 +644,14 @@ impl Editor {
     /// Force check the mouse hover timer (for testing)
     /// This bypasses the normal 500ms delay
     pub fn force_check_mouse_hover(&mut self) -> bool {
-        if let Some((byte_pos, _, screen_x, screen_y)) =
+        if let Some((byte_pos, _, screen_x, screen_y, buffer_id)) =
             self.active_window_mut().mouse_state.lsp_hover_state
         {
             if !self.active_window_mut().mouse_state.lsp_hover_request_sent {
                 self.active_window_mut()
                     .hover
                     .set_screen_position((screen_x, screen_y));
-                match self.request_hover_at_position(byte_pos) {
+                match self.request_hover_at_position(byte_pos, buffer_id) {
                     Ok(true) => {
                         self.active_window_mut().mouse_state.lsp_hover_request_sent = true;
                         return true;

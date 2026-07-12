@@ -937,9 +937,11 @@ impl Editor {
             }
         }
 
-        // Check if we're still hovering the same position
-        if let Some((old_pos, _, _, _)) = self.active_window_mut().mouse_state.lsp_hover_state {
-            if old_pos == byte_pos {
+        // Check if we're still hovering the same position in the same buffer
+        if let Some((old_pos, _, _, _, old_buf)) =
+            self.active_window_mut().mouse_state.lsp_hover_state
+        {
+            if old_pos == byte_pos && old_buf == buffer_id {
                 // Same position - keep existing state
                 return;
             }
@@ -950,9 +952,11 @@ impl Editor {
             // mouse passed through whitespace between two words (issue #692).
         }
 
-        // Start tracking new hover position
+        // Start tracking new hover position (remembering which buffer the
+        // pointer is over, so the request targets that buffer — not the
+        // active one — see `lsp_hover_state`).
         self.active_window_mut().mouse_state.lsp_hover_state =
-            Some((byte_pos, std::time::Instant::now(), col, row));
+            Some((byte_pos, std::time::Instant::now(), col, row, buffer_id));
         self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
     }
 

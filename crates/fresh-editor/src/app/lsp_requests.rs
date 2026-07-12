@@ -937,9 +937,20 @@ impl Editor {
     /// Used for mouse-triggered hover
     /// Returns `Ok(true)` if the request was dispatched, `Ok(false)` if no
     /// eligible server was available (e.g. not yet initialized).
-    pub(crate) fn request_hover_at_position(&mut self, byte_pos: usize) -> AnyhowResult<bool> {
-        // Get the current buffer
-        let state = self.active_state();
+    pub(crate) fn request_hover_at_position(
+        &mut self,
+        byte_pos: usize,
+        buffer_id: BufferId,
+    ) -> AnyhowResult<bool> {
+        // Resolve against the buffer the pointer is over — not necessarily the
+        // active one. Hovering a non-active split (or a virtual UI buffer with
+        // no language server, like the Search/Replace panel) must query that
+        // buffer, so the hover card never leaks in from the active buffer
+        // (#2572). A virtual buffer has no `file_uri`, so `with_lsp_for_buffer`
+        // below returns `None` and nothing pops up.
+        let Some(state) = self.buffers().get(&buffer_id) else {
+            return Ok(false);
+        };
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(byte_pos);
@@ -955,7 +966,6 @@ impl Editor {
             );
         }
 
-        let buffer_id = self.active_buffer();
         let request_id = self.active_window_mut().next_lsp_request_id;
 
         // Use helper to ensure didOpen is sent before the request
@@ -1085,10 +1095,16 @@ impl Editor {
         } else {
             // No range provided by LSP - compute word boundaries at hover position
             // This prevents the popup from following the mouse within the same word
-            let computed_range = if let Some((hover_byte_pos, _, _, _)) =
+            let computed_range = if let Some((hover_byte_pos, _, _, _, hover_buf)) =
                 self.active_window_mut().mouse_state.lsp_hover_state
             {
-                let state = self.active_state();
+                // Compute word boundaries in the buffer the pointer is over —
+                // the same buffer the hover request targeted — not the active
+                // one (#2572).
+                let state = self
+                    .buffers()
+                    .get(&hover_buf)
+                    .unwrap_or(self.active_state());
                 let start_byte = find_word_start(&state.buffer, hover_byte_pos);
                 let end_byte = find_word_end(&state.buffer, hover_byte_pos);
                 if start_byte < end_byte {
