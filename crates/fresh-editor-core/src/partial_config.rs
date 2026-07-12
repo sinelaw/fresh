@@ -175,6 +175,7 @@ pub struct PartialEditorConfig {
     pub large_file_threshold_bytes: Option<u64>,
     pub estimated_line_length: Option<usize>,
     pub enable_inlay_hints: Option<bool>,
+    pub enable_code_lens: Option<bool>,
     pub enable_semantic_tokens_full: Option<bool>,
     pub diagnostics_inline_text: Option<bool>,
     pub recovery_enabled: Option<bool>,
@@ -272,6 +273,7 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.estimated_line_length);
         self.enable_inlay_hints
             .merge_from(&other.enable_inlay_hints);
+        self.enable_code_lens.merge_from(&other.enable_code_lens);
         self.enable_semantic_tokens_full
             .merge_from(&other.enable_semantic_tokens_full);
         self.diagnostics_inline_text
@@ -665,6 +667,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
             estimated_line_length: Some(cfg.estimated_line_length),
             enable_inlay_hints: Some(cfg.enable_inlay_hints),
+            enable_code_lens: Some(cfg.enable_code_lens),
             enable_semantic_tokens_full: Some(cfg.enable_semantic_tokens_full),
             diagnostics_inline_text: Some(cfg.diagnostics_inline_text),
             recovery_enabled: Some(cfg.recovery_enabled),
@@ -791,6 +794,7 @@ impl PartialEditorConfig {
             enable_inlay_hints: self
                 .enable_inlay_hints
                 .unwrap_or(defaults.enable_inlay_hints),
+            enable_code_lens: self.enable_code_lens.unwrap_or(defaults.enable_code_lens),
             enable_semantic_tokens_full: self
                 .enable_semantic_tokens_full
                 .unwrap_or(defaults.enable_semantic_tokens_full),

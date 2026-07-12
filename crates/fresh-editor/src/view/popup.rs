@@ -87,6 +87,9 @@ pub enum PopupResolver {
     /// `Editor::pending_code_actions` (heavy `lsp_types` payload stays
     /// there to keep the view crate free of LSP types).
     CodeAction,
+    /// LSP code-lens chooser. Selected row indexes the commands retained by
+    /// the active window.
+    CodeLens,
     /// Plugin-requested action popup (`editor.showActionPopup`). Confirm
     /// fires `action_popup_result` with this popup's id and the selected
     /// row's `data` as the action id.

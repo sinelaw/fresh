@@ -506,6 +506,7 @@ impl crate::app::window::Window {
         if let Some(state) = self.buffers.get_mut(&request.buffer_id) {
             super::Editor::apply_code_lens_to_state(state, &lenses);
         }
+        self.code_lenses.insert(request.buffer_id, lenses);
     }
 }
 
