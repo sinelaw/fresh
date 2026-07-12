@@ -209,7 +209,9 @@ Some LSP servers expect a different `languageId` than Fresh's internal language 
 
 ### Rust LSP Mode Switching
 
-Use "Switch Rust Analyzer Mode" from the command palette to toggle between Full and Reduced Memory modes for rust-analyzer.
+Use **Rust LSP: Configure Mode** from the command palette to toggle between Full and Reduced Memory modes for rust-analyzer.
+
+**Reduced Memory** mode restarts rust-analyzer with `checkOnSave`, `cachePriming`, and `cargo.buildScripts` disabled, plus 50% RAM / 90% CPU process limits. Proc-macro expansion stays enabled so hover and Go to Definition keep working on macro names and on symbols inside macro arguments (e.g. a call inside `println!(...)`); disabling it silently breaks that navigation. **Full** mode restores rust-analyzer's defaults with no process limits.
 
 ## Configuring Language Detection via Settings UI
 
