@@ -105,6 +105,35 @@ fn test_rulers_span_full_height() {
     }
 }
 
+/// Regression (#2631): the ruler must span the full editor height even when the
+/// buffer has fewer lines than the viewport. Previously it stopped at the last
+/// written line, leaving the empty area below without the guide — so a buffer
+/// with a single short line showed the ruler on just one row.
+#[test]
+fn test_rulers_span_full_height_short_buffer() {
+    let mut config = Config::default();
+    config.editor.rulers = vec![10];
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    // Only three lines of text in a 24-row terminal: most of the pane is empty.
+    let _fixture = harness
+        .load_buffer_from_text("line one\nline two\nline three")
+        .unwrap();
+    harness.render().unwrap();
+
+    let (content_first_row, content_last_row) = harness.content_area_rows();
+    let ruler_x = gutter_width(&harness) + 10;
+
+    // The ruler must appear on every content row, including the empty rows
+    // below the last line of text.
+    for row in content_first_row..=content_last_row {
+        assert!(
+            has_ruler_bg(&harness, ruler_x, row as u16),
+            "Ruler bg should appear on row {row} (short buffer, {content_first_row}..={content_last_row})"
+        );
+    }
+}
+
 /// Test that rulers scroll horizontally with content.
 #[test]
 fn test_rulers_horizontal_scroll() {

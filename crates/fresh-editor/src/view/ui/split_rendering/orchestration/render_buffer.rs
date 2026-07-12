@@ -525,7 +525,12 @@ pub(crate) fn draw_buffer_in_split(
         None
     };
 
-    // Render config-based vertical rulers
+    // Render config-based vertical rulers. Span the full editor height rather
+    // than stopping at the last text line: the ruler is a column guide, so it
+    // must stay visible through the empty area below the buffer (matching VS
+    // Code / Zed). Bounding it to `content_lines_rendered` made a short buffer
+    // show the ruler only on written lines, leaving the rest of the pane blank
+    // and the guide looking truncated (#2631).
     if !rulers.is_empty() {
         let ruler_cols: Vec<u16> = rulers.iter().map(|&r| r as u16).collect();
         render_ruler_bg(
@@ -534,7 +539,7 @@ pub(crate) fn draw_buffer_in_split(
             theme.ruler_bg,
             render_area,
             gutter_width,
-            layout_output.render_output.content_lines_rendered,
+            render_area.height as usize,
             layout_output.left_column,
         );
     }
