@@ -4145,6 +4145,16 @@ function toggleShowWorktrees(): void {
   const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
   openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
   refreshOpenDialog();
+  // Turning "Show all worktrees" ON re-scans *now* so the rows reflect every
+  // project's on-disk worktrees at this moment — not just whatever the single
+  // scan at dialog-open time happened to catch. Discovery walks every known
+  // project (each open/persisted session's repo, plus the cwd repo), so a
+  // fresh scan here is what makes the toggle show worktrees across all
+  // projects rather than a stale subset. Async; `refreshDiscoveredWorktrees`
+  // re-renders the dialog when the scan lands.
+  if (openDialog.showWorktrees) {
+    void refreshDiscoveredWorktrees();
+  }
 }
 
 registerHandler("orchestrator_toggle_worktrees", toggleShowWorktrees);

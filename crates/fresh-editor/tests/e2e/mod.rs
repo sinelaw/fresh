@@ -252,6 +252,7 @@ pub mod theme;
 pub mod theme_screenshots;
 pub mod toggle_bars;
 pub mod toggle_comment;
+pub mod trust_activation_cancellable;
 pub mod undo_bulk_edit_after_save;
 pub mod undo_redo_marker_roundtrip;
 pub mod unicode_cursor;

@@ -3,9 +3,11 @@
 //! A bespoke security modal (radio group + descriptions + an OK button and a
 //! secondary button), rendered on a dimmed backdrop in the modal z-band. As
 //! the mandatory open-time gate the secondary button is "Quit" (exit the
-//! editor) and there is no undecided outcome; when opened voluntarily from the
-//! command palette the secondary button is "Cancel" (close without changing
-//! the current level).
+//! editor) and there is no undecided outcome. Every other trigger — opening it
+//! voluntarily from the command palette, or activating another workspace on an
+//! already-running editor (an Orchestrator session, a project switch) — uses
+//! "Cancel" (dismiss without changing the current level), because there are
+//! other open sessions that must survive the dismissal.
 
 use crate::primitives::display_width::{str_width, DisplayWidth};
 use crate::view::theme::Theme;

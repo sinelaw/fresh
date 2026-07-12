@@ -4023,8 +4023,10 @@ fn real_main() -> AnyhowResult<()> {
 
         // Surface the Workspace Trust prompt for an undecided project with
         // executable content. The in-process run path needs this explicitly —
-        // the session-server path calls it from `initialize_editor`.
-        editor.maybe_prompt_workspace_trust();
+        // the session-server path calls it from `initialize_editor`. This is
+        // the mandatory open-time gate, so the secondary button is Quit
+        // (`cancellable = false`).
+        editor.maybe_prompt_workspace_trust(false);
 
         let iteration = run_editor_iteration(
             &mut editor,

@@ -4575,7 +4575,7 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
         .authority()
         .workspace_trust
         .set_store(Some(store));
-    h.editor_mut().maybe_prompt_workspace_trust();
+    h.editor_mut().maybe_prompt_workspace_trust(false);
     h.render().unwrap();
 
     // The folder opens Restricted, and the security prompt names the markers.

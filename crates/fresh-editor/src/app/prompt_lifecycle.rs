@@ -577,8 +577,11 @@ impl Editor {
         self.set_active_window(new_id);
         self.close_window(old_id);
 
-        // Re-evaluate workspace trust for the freshly-rooted project.
-        self.maybe_prompt_workspace_trust();
+        // Re-evaluate workspace trust for the freshly-rooted project. This is
+        // a project switch on a running editor, so the prompt's secondary is
+        // Cancel (not Quit): cancelling leaves the new project Restricted
+        // instead of quitting and losing the other open windows.
+        self.maybe_prompt_workspace_trust(true);
     }
 
     /// Load directory contents for the file open dialog

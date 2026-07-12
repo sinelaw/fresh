@@ -1189,7 +1189,16 @@ impl Editor {
     /// `.sln`/`.csproj`, …). No-op once a decision is recorded or when there's
     /// nothing to gate. Called from every editor-startup path (in-process run
     /// and the session server) so the prompt fires regardless of launch mode.
-    pub fn maybe_prompt_workspace_trust(&mut self) {
+    ///
+    /// `cancellable` picks the modal's secondary button. The mandatory
+    /// open-time gate (`false`) offers **Quit** — there is nothing else to fall
+    /// back to before a decision is made. Prompts raised by *activating another
+    /// workspace* in an already-running editor (opening/switching an
+    /// Orchestrator session, changing the project) pass `true` so the secondary
+    /// is **Cancel**: dismissing it simply leaves the just-activated workspace
+    /// Restricted rather than tearing down the whole editor — the other open
+    /// sessions must survive.
+    pub fn maybe_prompt_workspace_trust(&mut self, cancellable: bool) {
         // Phase 1 of the trust+env+devcontainer UX plan (see
         // `docs/internal/trust-env-devcontainer-ux-plan.md`): when the
         // workspace is undecided AND has executable content, the core trust
@@ -1254,10 +1263,10 @@ impl Editor {
             .workspace_trust
             .set_level_transient(crate::services::workspace_trust::TrustLevel::Restricted);
 
-        // Non-cancellable on open: the choice has to be made, but any
-        // concrete option resolves it. (`Esc` is inert on the forced-choice
-        // variant; the user must pick a row.)
-        self.show_workspace_trust_popup(false);
+        // Secondary button follows the caller: Quit for the mandatory
+        // open-time gate, Cancel for a workspace-activation prompt (where any
+        // concrete option resolves it and Esc just leaves it Restricted).
+        self.show_workspace_trust_popup(cancellable);
     }
 
     /// Show the workspace-trust prompt: a centered list asking how this

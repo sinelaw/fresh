@@ -140,7 +140,7 @@ fn boot_with_dir_context(
         .authority()
         .workspace_trust
         .set_store(Some(store));
-    harness.editor_mut().maybe_prompt_workspace_trust();
+    harness.editor_mut().maybe_prompt_workspace_trust(false);
     // Republish the plugin state snapshot so JS reads the trust level
     // we just installed. Without this, `editor.workspaceTrustLevel()`
     // from the plugin returns whatever was current when the editor was

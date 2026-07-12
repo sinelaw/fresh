@@ -661,7 +661,8 @@ impl EditorServer {
         self.terminal = Some(terminal);
         self.editor = Some(editor);
 
-        self.maybe_prompt_workspace_trust();
+        // Initial open-time gate: secondary is Quit (nothing to fall back to).
+        self.maybe_prompt_workspace_trust(false);
 
         tracing::info!(
             "Editor initialized with size {}x{}",
@@ -674,10 +675,13 @@ impl EditorServer {
 
     /// Surface the workspace-trust prompt after the editor is built. Delegates
     /// to `Editor::maybe_prompt_workspace_trust` (single source of truth shared
-    /// with the in-process run path).
-    fn maybe_prompt_workspace_trust(&mut self) {
+    /// with the in-process run path). `cancellable` selects the secondary
+    /// button: `false` (Quit) for the initial open-time gate, `true` (Cancel)
+    /// for a re-evaluation after a working-directory change on a running
+    /// editor.
+    fn maybe_prompt_workspace_trust(&mut self, cancellable: bool) {
         if let Some(editor) = self.editor.as_mut() {
-            editor.maybe_prompt_workspace_trust();
+            editor.maybe_prompt_workspace_trust(cancellable);
         }
     }
 
@@ -788,8 +792,10 @@ impl EditorServer {
 
         // A working-dir change lands us in a possibly-undecided project;
         // re-evaluate the trust prompt. (A rebuild triggered by a trust
-        // decision just recorded one, so this is a no-op there.)
-        self.maybe_prompt_workspace_trust();
+        // decision just recorded one, so this is a no-op there.) This is an
+        // activation on an already-running editor, so the secondary is Cancel
+        // (`cancellable = true`) — dismissing must not quit the server.
+        self.maybe_prompt_workspace_trust(true);
 
         // Force every attached client to repaint from scratch — the
         // previous frame described the old editor's screen.

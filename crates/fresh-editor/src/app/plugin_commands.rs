@@ -1770,6 +1770,15 @@ impl Editor {
                 }
             }
         }
+
+        // Per-session plugin state carries a session's *identity* (the
+        // Orchestrator writes `project_path` / `shared_worktree` here right
+        // after creating a window). That identity is part of the persisted
+        // workspace file, so checkpoint the window now: a session created via
+        // the dock is written to the on-disk registry the moment it's tagged,
+        // rather than only at clean quit. Without this, a hard kill right after
+        // creating a session forgot it entirely. Guarded + best-effort.
+        self.checkpoint_window_workspace(id);
     }
 
     /// Handle SetLineNumbers command

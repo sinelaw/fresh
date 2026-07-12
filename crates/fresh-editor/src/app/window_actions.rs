@@ -300,7 +300,11 @@ impl crate::app::Editor {
             .remote_connection_info()
             .is_none()
         {
-            self.maybe_prompt_workspace_trust();
+            // Activating a new Orchestrator session on a running editor:
+            // secondary is Cancel, not Quit — dismissing the prompt must leave
+            // the new session Restricted, never tear down the editor and the
+            // other open sessions.
+            self.maybe_prompt_workspace_trust(true);
         }
 
         // The argv to re-run if this session is restored. `None` (plain
@@ -494,6 +498,14 @@ impl crate::app::Editor {
         }
 
         let previous_id = self.active_window;
+
+        // Checkpoint the outgoing window's workspace before we leave it, so a
+        // later kill can't lose its layout. Switching away is the natural
+        // save point — the window is fully materialized and its state is now
+        // final until the user returns to it. (No-op for an unmaterialized
+        // seed or a window with no splits — see `checkpoint_window_workspace`.)
+        self.checkpoint_window_workspace(previous_id);
+
         // Capture the outgoing backend label so we can tell, after the
         // switch, whether the active *authority* actually changed (most
         // window switches are between same-authority local sessions, where

@@ -607,6 +607,37 @@ impl Editor {
         }
     }
 
+    /// Persist a single window's workspace *now*, as a crash-safety checkpoint
+    /// outside the quit path.
+    ///
+    /// Sessions used to be written only when the editor exited cleanly
+    /// (`save_all_windows_workspaces` on quit). A killed or crashed editor
+    /// therefore forgot every Orchestrator session created since the last clean
+    /// exit — the directory-keyed registry (`workspaces/*.json`) is *the* record
+    /// of which sessions exist, and it never got the new file. Calling this at
+    /// natural checkpoints — finalizing a new session's identity, and switching
+    /// away from a window — keeps that on-disk registry current, so the dock
+    /// remembers every open workspace even after a hard kill.
+    ///
+    /// Mirrors `save_all_windows_workspaces`'s guard exactly: never write a
+    /// window still pending lazy materialization (it holds only an empty seed
+    /// while its on-disk file is authoritative) or one without a split layout
+    /// yet. Best-effort — a failed write is logged and swallowed so a checkpoint
+    /// never disrupts the interactive action that triggered it.
+    pub(crate) fn checkpoint_window_workspace(&mut self, id: fresh_core::WindowId) {
+        let savable = self
+            .windows
+            .get(&id)
+            .is_some_and(|w| w.buffers.splits().is_some())
+            && !self.materialize_pending.contains(&id);
+        if !savable {
+            return;
+        }
+        if let Err(e) = self.save_workspace_for(id) {
+            tracing::warn!("checkpoint_window_workspace: failed to save window {id}: {e}");
+        }
+    }
+
     /// Restore window `id`'s persisted workspace from disk the first
     /// time it's dived into or previewed — the lazy counterpart to the
     /// active window's eager `try_restore_workspace`. Idempotent: the
