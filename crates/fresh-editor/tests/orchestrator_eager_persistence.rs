@@ -103,6 +103,11 @@ fn saved_contains_file(ws: &Workspace, file: &Path) -> bool {
 /// creating a session, to tag its `project_path`) checkpoints the window, so a
 /// freshly created session is in the registry the moment it is tagged — before
 /// any switch or quit.
+///
+/// `SetWindowState` is a plugin command (`handle_plugin_command` only exists
+/// with the `plugins` feature), so this test is gated to that build — the
+/// min-size / no-plugins configuration has no session-tagging path to exercise.
+#[cfg(feature = "plugins")]
 #[test]
 fn tagging_a_new_session_persists_it_without_a_quit() {
     use fresh_core::api::PluginCommand;
@@ -139,7 +144,9 @@ fn tagging_a_new_session_persists_it_without_a_quit() {
     e.handle_plugin_command(PluginCommand::SetWindowState {
         plugin_name: "orchestrator".into(),
         key: "project_path".into(),
-        value: Some(serde_json::Value::String(proj_b.to_string_lossy().into_owned())),
+        value: Some(serde_json::Value::String(
+            proj_b.to_string_lossy().into_owned(),
+        )),
     })
     .unwrap();
 

@@ -23,10 +23,7 @@ const HEIGHT: u16 = 40;
 fn arm_undecided_project_with_markers(harness: &mut EditorTestHarness) {
     let dir = harness.editor().working_dir().to_path_buf();
     std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
-    let store_path = harness
-        .editor()
-        .dir_context()
-        .project_state_dir(&dir);
+    let store_path = harness.editor().dir_context().project_state_dir(&dir);
     let store = fresh::services::workspace_trust::TrustStore::for_project_dir(&store_path);
     harness
         .editor()
