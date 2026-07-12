@@ -4222,3 +4222,94 @@ fn test_file_explorer_git_decorations_monorepo_subrepos() {
         "project-b should show git status decorations in monorepo layout.\nScreen:\n{screen}"
     );
 }
+
+/// Regression test for #2592: git status decorations must appear for files in a
+/// nested sub-repo even when the workspace root is *itself* a git repo (the
+/// classic monorepo-with-vendored-repo layout). Previously the explorer only
+/// ran `git status` in the outer repo, which sees the nested repo as a single
+/// untracked directory and never reports the inner file's real status — so the
+/// inner file rendered with no decoration while gutter/blame/Review Diff all
+/// resolved the nested repo correctly.
+///
+/// Layout:
+///   /tmp/outer/            (git repo; outer.py modified)
+///     vendored/            (nested git repo; inner.py modified)
+#[test]
+#[cfg_attr(windows, ignore)] // Git plugin tests are flaky on Windows CI
+fn test_file_explorer_git_decorations_nested_subrepo_under_repo_root() {
+    use crate::common::git_test_helper::git_command;
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use tempfile::TempDir;
+
+    let outer_dir = TempDir::new().expect("Failed to create outer dir");
+    let outer = outer_dir.path();
+
+    // Outer repo with a committed-then-modified tracked file.
+    let output = git_command(outer).arg("init").output().unwrap();
+    assert!(output.status.success(), "git init outer failed");
+    fs::write(outer.join("outer.py"), "outer_var = 1\n").unwrap();
+    git_command(outer).args(["add", "."]).output().unwrap();
+    git_command(outer)
+        .args(["commit", "-m", "outer"])
+        .output()
+        .unwrap();
+    fs::write(outer.join("outer.py"), "outer_var = 1\nouter_var2 = 2\n").unwrap();
+
+    // Nested repo inside the outer repo, with its own modified tracked file.
+    let vendored = outer.join("vendored");
+    fs::create_dir_all(&vendored).unwrap();
+    let output = git_command(&vendored).arg("init").output().unwrap();
+    assert!(output.status.success(), "git init vendored failed");
+    fs::write(vendored.join("inner.py"), "inner_a = 1\ninner_b = 2\n").unwrap();
+    git_command(&vendored).args(["add", "."]).output().unwrap();
+    git_command(&vendored)
+        .args(["commit", "-m", "inner"])
+        .output()
+        .unwrap();
+    fs::write(
+        vendored.join("inner.py"),
+        "inner_a = 1\ninner_b = 2\ninner_c = 3\n",
+    )
+    .unwrap();
+
+    // Install the git_explorer plugin into the workspace.
+    let plugins_dir = outer.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "git_explorer");
+    copy_plugin_lib(&plugins_dir);
+
+    let mut harness = EditorTestHarness::with_working_dir(120, 40, outer.to_path_buf()).unwrap();
+
+    // Open the nested file first, then reveal it in the explorer: Ctrl+B
+    // auto-expands the tree down to the current file (issue #1569), so the
+    // `inner.py` row appears without relying on ordering-sensitive keyboard
+    // navigation into the `vendored` folder.
+    harness.open_file(&vendored.join("inner.py")).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // The `inner.py` *tree row* (a panel-body line starting with the `│`
+    // border, not the tab strip whose header row starts with `┌`) must pick up
+    // an `M` badge from the *nested* repo's own status. Before the fix the
+    // explorer only ran `git status` in the outer repo, which reports the
+    // sub-repo as a single untracked directory and never sees inner.py, so the
+    // row rendered with no decoration.
+    let is_inner_tree_row =
+        |line: &str| line.starts_with('│') && line.contains("inner.py") && line.contains('M');
+    harness
+        .wait_until(|h| h.screen_to_string().lines().any(is_inner_tree_row))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Nested sub-repo under repo root:\n{screen}");
+    let inner_line = screen
+        .lines()
+        .find(|l| l.starts_with('│') && l.contains("inner.py"))
+        .unwrap_or("");
+    assert!(
+        inner_line.contains('M'),
+        "inner.py tree row should show a modified (M) decoration from its own nested repo. Line: '{inner_line}'"
+    );
+}

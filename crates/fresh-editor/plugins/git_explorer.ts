@@ -165,27 +165,36 @@ async function refreshGitExplorerDecorations() {
     // (a bare startsWith(root) mis-groups sibling repos that share a prefix,
     // e.g. project-a vs project-a-extra).
     const repoGroups: Array<{ root: string; decorations: Decoration[] }> = [];
+    // Guard against decorating the same repo twice — e.g. the workspace root
+    // repo and a discovered sub-repo path that resolves back to it.
+    const seenRoots = new Set<string>();
 
-    if (rootResult.exit_code === 0 && rootResult.stdout.trim()) {
-      // cwd is inside a git repo — single-repo mode
-      const repoRoot = rootResult.stdout.trim();
+    // Run `git status` in `repoRoot` and record its decorations, skipping any
+    // repo already collected.
+    const addRepoGroup = async (repoRoot: string): Promise<void> => {
+      if (!repoRoot || seenRoots.has(repoRoot)) return;
+      seenRoots.add(repoRoot);
       const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
       if (statusResult.exit_code === 0) {
         repoGroups.push({ root: repoRoot, decorations: parseStatusOutput(statusResult.stdout, repoRoot) });
       }
-    } else {
-      // cwd is not a git repo — discover sub-repos (monorepo/multi-repo)
-      const subRepos = discoverSubRepos(editor, cwd);
-      for (const subDir of subRepos) {
-        const subRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], subDir);
-        if (subRootResult.exit_code !== 0) continue;
-        const repoRoot = subRootResult.stdout.trim();
-        if (!repoRoot) continue;
-        const statusResult = await editor.spawnProcess("git", ["status", "--porcelain", "-z"], repoRoot);
-        if (statusResult.exit_code === 0) {
-          repoGroups.push({ root: repoRoot, decorations: parseStatusOutput(statusResult.stdout, repoRoot) });
-        }
-      }
+    };
+
+    // Decorate the workspace root's own repo when it is one.
+    if (rootResult.exit_code === 0 && rootResult.stdout.trim()) {
+      await addRepoGroup(rootResult.stdout.trim());
+    }
+    // Always also discover nested sub-repos below cwd. A monorepo whose root
+    // is *itself* a repo can still vendor independent git repos; those files
+    // must be decorated from their own repo's status, not left blank because
+    // the outer `git status` (which only sees the sub-repo dir as untracked)
+    // stops at the boundary (#2592). When the root is not a repo this is the
+    // sole discovery path (plain monorepo/multi-repo layout).
+    const subRepos = discoverSubRepos(editor, cwd);
+    for (const subDir of subRepos) {
+      const subRootResult = await editor.spawnProcess("git", ["rev-parse", "--show-toplevel"], subDir);
+      if (subRootResult.exit_code !== 0) continue;
+      await addRepoGroup(subRootResult.stdout.trim());
     }
 
     const allDecorations = repoGroups.flatMap(g => g.decorations);

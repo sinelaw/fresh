@@ -85,10 +85,12 @@ impl Editor {
     }
 }
 
-/// Resolve the paths to every `.git/index` reachable from `working_dir`. In a
-/// normal repo this returns a single entry; in a monorepo (working dir is not
-/// itself a git repo) it BFS-scans subdirectories up to 3 levels deep and
-/// returns one entry per discovered sub-repo so that *all* indexes are watched.
+/// Resolve the paths to every `.git/index` reachable from `working_dir`:
+/// the workspace root's own index when it is a repo, plus every nested
+/// sub-repo's index found by BFS-scanning subdirectories up to 3 levels deep.
+/// The two are additive so a monorepo whose root is *itself* a repo still has
+/// its vendored sub-repos watched (#2592); a plain multi-repo workspace (root
+/// not a repo) is covered by the same scan.
 ///
 /// Uses the `ProcessSpawner` so it works transparently on both local and
 /// remote (SSH) filesystems. Takes owned handles (no `&self`) so it can run on
@@ -99,37 +101,27 @@ fn resolve_git_indexes_blocking(
     working_dir: PathBuf,
     rt: Arc<tokio::runtime::Runtime>,
 ) -> Vec<PathBuf> {
-    let cwd = working_dir.to_string_lossy().to_string();
+    let mut indexes: Vec<PathBuf> = Vec::new();
 
-    let result = rt.block_on(spawner.spawn(
-        "git".to_string(),
-        vec!["rev-parse".to_string(), "--git-dir".to_string()],
-        Some(cwd),
-    ));
-
-    if let Ok(ref output) = result {
-        if output.exit_code == 0 {
-            let git_dir = output.stdout.trim();
-            let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
-                PathBuf::from(git_dir)
-            } else {
-                working_dir.join(git_dir)
-            };
-            return vec![git_dir_path.join("index")];
-        }
+    // Watch the workspace root's own index when it is itself a repo.
+    if let Some(index) = git_dir_index(&spawner, &working_dir, &rt) {
+        indexes.push(index);
     }
 
-    // Working dir is not a git repo — scan subdirectories to find all
-    // sub-repos' .git/index (monorepo). `MAX_DEPTH` levels below the working
-    // dir are scanned (level 1 = direct children). This MUST match the levels
-    // scanned by the TypeScript `discoverSubRepos` (lib/git_history.ts) — the
-    // two walks are expected to discover the same repos.
+    // Always also scan subdirectories for nested sub-repos' .git/index. A
+    // monorepo whose root is *itself* a repo can still vendor independent git
+    // repos, and their indexes must be watched too so the explorer refreshes
+    // when they change (#2592) — mirroring the TypeScript `discoverSubRepos`
+    // (lib/git_repo.ts), which now discovers sub-repos in both cases. When the
+    // root is not a repo this is the sole discovery path (plain monorepo).
+    // `MAX_DEPTH` levels below the working dir are scanned (level 1 = direct
+    // children); this MUST match the levels the TypeScript walk scans — the two
+    // are expected to discover the same repos.
     use std::collections::VecDeque;
     const MAX_DEPTH: u32 = 3;
     // Queue entries are (dir_to_scan, level_of_that_dir's_children).
     let mut queue: VecDeque<(PathBuf, u32)> = VecDeque::new();
     queue.push_back((working_dir, 1));
-    let mut indexes = Vec::new();
 
     while let Some((dir, level)) = queue.pop_front() {
         let entries = match fs.read_dir(&dir) {
@@ -147,21 +139,9 @@ fn resolve_git_indexes_blocking(
 
             let dot_git = entry.path.join(".git");
             if fs.exists(&dot_git) {
-                let sub_cwd = entry.path.to_string_lossy().to_string();
-                let sub_result = rt.block_on(spawner.spawn(
-                    "git".to_string(),
-                    vec!["rev-parse".to_string(), "--git-dir".to_string()],
-                    Some(sub_cwd),
-                ));
-                if let Ok(ref output) = sub_result {
-                    if output.exit_code == 0 {
-                        let git_dir = output.stdout.trim();
-                        let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
-                            PathBuf::from(git_dir)
-                        } else {
-                            entry.path.join(git_dir)
-                        };
-                        indexes.push(git_dir_path.join("index"));
+                if let Some(index) = git_dir_index(&spawner, &entry.path, &rt) {
+                    if !indexes.contains(&index) {
+                        indexes.push(index);
                     }
                 }
             } else if level < MAX_DEPTH {
@@ -171,4 +151,31 @@ fn resolve_git_indexes_blocking(
     }
 
     indexes
+}
+
+/// Resolve the `.git/index` path for the repo rooted at (or containing) `dir`,
+/// or `None` when `dir` is not inside a git repo. Shared by the workspace-root
+/// probe and the nested sub-repo scan so both resolve the index the same way.
+fn git_dir_index(
+    spawner: &Arc<dyn crate::services::remote::ProcessSpawner>,
+    dir: &std::path::Path,
+    rt: &Arc<tokio::runtime::Runtime>,
+) -> Option<PathBuf> {
+    let cwd = dir.to_string_lossy().to_string();
+    let result = rt.block_on(spawner.spawn(
+        "git".to_string(),
+        vec!["rev-parse".to_string(), "--git-dir".to_string()],
+        Some(cwd),
+    ));
+    let output = result.ok()?;
+    if output.exit_code != 0 {
+        return None;
+    }
+    let git_dir = output.stdout.trim();
+    let git_dir_path = if std::path::Path::new(git_dir).is_absolute() {
+        PathBuf::from(git_dir)
+    } else {
+        dir.join(git_dir)
+    };
+    Some(git_dir_path.join("index"))
 }

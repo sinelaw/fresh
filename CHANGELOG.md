@@ -36,6 +36,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Whitespace indicators** - the master toggle (**Toggle Whitespace Indicators**) now turns indicators back **on**, restoring your configured visibility (e.g. space indicators) instead of the built-in default; previously toggling off then on only brought back tab indicators, so a restart was needed to see configured space indicators again (#2579).
 * **File Explorer context menu** now grabs the keyboard while open, like the tab context menu and "+" popup: keys no longer leak into the tree's type-ahead find underneath, which could silently retarget which file a menu action operated on (#2587).
 * **Git Grep** - a search with no matches is now reported as a plain "No matches" instead of logging an error and raising the status-bar warning badge; `git grep` exits 1 when nothing matches, which was wrongly treated as a failure, so every fruitless search looked like a plugin crash (#2591).
+* **File Explorer git decorations** now show a nested sub-repo's own status even when the workspace root is itself a git repo (the monorepo-with-vendored-repo layout): files inside the nested repo previously had no decoration while the gutter, blame, and Review Diff all resolved it correctly (#2592).
 
 ### Internals
 
