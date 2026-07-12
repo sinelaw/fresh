@@ -589,5 +589,39 @@ impl Editor {
         {
             mgr_mut.set_split_buffer(next_split, next_buf);
         }
+
+        // Treat the target pane's buffer exactly like `next_split`/`prev_split`
+        // and `next_buffer`/`prev_buffer` do: re-derive terminal mode for the
+        // newly focused buffer. A terminal resumes its remembered
+        // live/scrollback mode (key context → Terminal for a live PTY), and a
+        // non-terminal clears terminal mode. Without this the key context kept
+        // whatever value it had before the jump, so landing on a terminal via
+        // NextPane/PrevPane never routed keys to the PTY, and the non-explicit
+        // `ExitTerminalMode` deferred on the way out — which is a no-op that
+        // relies on "the upcoming focus change re-derives the key context" —
+        // left a stale Terminal context when jumping away. Single restore
+        // authority, same as the split/buffer commands.
+        self.sync_terminal_mode_to_active_buffer();
+
+        // The target tab may be a terminal that was hidden behind another tab
+        // in its split (so a window resize never reached it). Refresh visible
+        // terminal sizes so its PTY child sees the pane it now occupies —
+        // mirrors `set_active_buffer` (issue #1795).
+        self.active_window_mut().resize_visible_terminals();
+
+        // Keep the newly active tab scrolled into view within its split,
+        // matching `switch_split` and `set_active_buffer`.
+        let tabs_width = self.active_window().effective_tabs_width();
+        self.active_window_mut()
+            .ensure_active_tab_visible(next_split, next_buf, tabs_width);
+
+        // Emit the buffer_activated hook for plugins, matching every other
+        // focus-changing command.
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated {
+                buffer_id: next_buf,
+            },
+        );
     }
 }

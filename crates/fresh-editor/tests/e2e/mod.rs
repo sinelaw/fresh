@@ -246,6 +246,7 @@ pub mod tab_new_button;
 pub mod terminal;
 pub mod terminal_close;
 pub mod terminal_link;
+pub mod terminal_pane_navigation_live;
 pub mod terminal_resize;
 pub mod terminal_resume_mode_after_close;
 pub mod terminal_split_focus_live;
