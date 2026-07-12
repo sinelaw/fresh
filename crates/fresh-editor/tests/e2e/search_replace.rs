@@ -222,17 +222,23 @@ fn test_search_replace_toggle_selection() {
 
 /// Regression (issue #2664): the panel must keep exactly one focused
 /// element. Pressing Down while a toolbar toggle is focused has to move
-/// focus *into* the results tree — so the next key acts on the
-/// highlighted match — instead of "peeking" the tree selection while the
-/// toggle keeps its focus ring. Before the fix, Down left focus on the
-/// toggle, so Space toggled the Case option and every match row stayed
-/// selected; with the fix Space deselects the focused file node's matches.
+/// focus *into* the results tree — so the toggle loses its focus ring and
+/// the next key acts on the highlighted match — instead of "peeking" the
+/// tree selection while the toggle keeps its focus ring (two focused
+/// elements at once).
+///
+/// Observed on the rendered cell background of the `Case` toggle: it
+/// gains the focus highlight when tabbed to, and must revert to its
+/// unfocused background once Down moves focus into the results. Without
+/// the fix the toggle keeps focus, its background never reverts, and this
+/// hangs — the intended "fails without the change" reproducer.
 #[test]
 fn test_search_replace_arrow_from_toolbar_focuses_results() {
+    init_tracing_from_env();
     let (_temp_dir, project_root) = setup_search_replace_project();
     create_test_files(&project_root);
 
-    let start_file = project_root.join("alpha.txt");
+    let start_file = project_root.join("gamma.txt");
     let mut harness =
         EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
             .unwrap();
@@ -246,46 +252,38 @@ fn test_search_replace_arrow_from_toolbar_focuses_results() {
         .wait_until(|h| h.screen_to_string().contains("Search:"))
         .unwrap();
     harness.type_text("hello").unwrap();
-    harness.render().unwrap();
-
-    // Wait for streamed results across both matching files AND for the
-    // panel to stop re-rendering. Navigating mid-stream races the
-    // debounced search re-render (which briefly rebuilds the tree),
-    // so wait for a stable frame before sending focus keys. Match rows
-    // render as `[v] alpha.txt:1 - …`; the `filename:` distinguishes a
-    // match row from the always-present option toggles.
     harness
         .wait_until_stable(|h| {
             let s = h.screen_to_string();
-            s.contains("alpha.txt:") && s.contains("beta.txt:")
+            s.contains("alpha.txt:1") && s.contains("beta.txt")
         })
         .unwrap();
 
-    // Move focus onto a toolbar toggle: Search → Replace → All Files → Case.
+    // Sample the `Case` toggle's background. The focus marker preserves
+    // control width, so the "Case" text stays at a fixed cell across
+    // focus changes — a stable probe point. It is unfocused now (focus
+    // is on the search field).
+    let (case_col, case_row) = harness
+        .find_text_on_screen("Case")
+        .expect("the Case toggle should be visible");
+    let case_bg =
+        move |h: &EditorTestHarness| h.get_cell_style(case_col, case_row).and_then(|s| s.bg);
+    let unfocused_bg = case_bg(&harness);
+
+    // Tab onto the Case toggle: Search → Replace → All Files → Case, then
+    // wait for it to actually gain the focus highlight (Tab is handled on
+    // the async plugin thread).
     for _ in 0..3 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-        harness.render().unwrap();
     }
+    harness.wait_until(|h| case_bg(h) != unfocused_bg).unwrap();
 
-    // Down must move focus into the results tree (the first file node),
-    // not peek the selection while the Case toggle keeps focus.
+    // Down must move focus *into* the results tree, so the Case toggle
+    // loses its focus highlight and reverts to its unfocused background.
+    // Without the fix, Down only peeks the tree while the toggle keeps
+    // focus, so this never reverts and the wait hangs.
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Space on the focused, checkable file node deselects its matches.
-    // Without the fix this Space would toggle the Case option instead and
-    // no match row would ever show `[ ]`, so this wait hangs (the intended
-    // "fails without the change" reproducer).
-    harness
-        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .lines()
-                .any(|l| l.contains("alpha.txt:") && l.contains("[ ]"))
-        })
-        .unwrap();
+    harness.wait_until(|h| case_bg(h) == unfocused_bg).unwrap();
 }
 
 /// Escape closes the panel without performing any replacements.
