@@ -37,6 +37,42 @@ fn indentation_guide_render_configured_glyph_in_editor_flow() {
 }
 
 #[test]
+fn rainbow_indentation_colors_guides_by_nesting_depth() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("rainbow_guides.rs");
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    if true {\n        nested();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+    config.editor.rainbow_indentation = true;
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let (text_col, row) = harness
+        .find_text_on_screen("nested();")
+        .expect("expected nested line on screen");
+    let guides: Vec<_> = (0..text_col)
+        .filter(|&x| harness.get_cell(x, row).as_deref() == Some("┊"))
+        .collect();
+    assert_eq!(guides.len(), 2, "expected two guide levels");
+
+    let outer = harness.get_cell_style(guides[0], row).unwrap();
+    let inner = harness.get_cell_style(guides[1], row).unwrap();
+    assert_ne!(
+        outer.fg, inner.fg,
+        "successive indentation levels should use distinct rainbow colors"
+    );
+}
+
+#[test]
 fn indentation_guide_keeps_subdued_color_inside_selection() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("guides_selected.rs");

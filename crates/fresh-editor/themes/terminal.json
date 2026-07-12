@@ -20,6 +20,12 @@
     "diff_modify_collision_fg": "Black",
     "ruler_bg": "DarkGray",
     "whitespace_indicator_fg": "DarkGray",
+    "indent_rainbow_1": "Cyan",
+    "indent_rainbow_2": "Green",
+    "indent_rainbow_3": "Yellow",
+    "indent_rainbow_4": "Magenta",
+    "indent_rainbow_5": "White",
+    "indent_rainbow_6": "LightBlue",
     "after_eof_bg": "Default"
   },
   "ui": {

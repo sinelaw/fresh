@@ -222,6 +222,7 @@ pub struct PartialEditorConfig {
     pub rulers: Option<Vec<usize>>,
     pub indentation_guide: Option<IndentationGuideMode>,
     pub indentation_guide_glyph: Option<String>,
+    pub rainbow_indentation: Option<bool>,
     pub whitespace_show: Option<bool>,
     pub whitespace_spaces_leading: Option<bool>,
     pub whitespace_spaces_inner: Option<bool>,
@@ -345,6 +346,8 @@ impl Merge for PartialEditorConfig {
         self.indentation_guide.merge_from(&other.indentation_guide);
         self.indentation_guide_glyph
             .merge_from(&other.indentation_guide_glyph);
+        self.rainbow_indentation
+            .merge_from(&other.rainbow_indentation);
         self.whitespace_show.merge_from(&other.whitespace_show);
         self.whitespace_spaces_leading
             .merge_from(&other.whitespace_spaces_leading);
@@ -663,6 +666,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             rulers: Some(cfg.rulers.clone()),
             indentation_guide: Some(cfg.indentation_guide),
             indentation_guide_glyph: Some(cfg.indentation_guide_glyph.clone()),
+            rainbow_indentation: Some(cfg.rainbow_indentation),
             whitespace_show: Some(cfg.whitespace_show),
             whitespace_spaces_leading: Some(cfg.whitespace_spaces_leading),
             whitespace_spaces_inner: Some(cfg.whitespace_spaces_inner),
@@ -841,6 +845,9 @@ impl PartialEditorConfig {
                 .indentation_guide_glyph
                 .map(|glyph| crate::config::normalize_indentation_guide_glyph(&glyph))
                 .unwrap_or_else(|| defaults.indentation_guide_glyph.clone()),
+            rainbow_indentation: self
+                .rainbow_indentation
+                .unwrap_or(defaults.rainbow_indentation),
             whitespace_show: self.whitespace_show.unwrap_or(defaults.whitespace_show),
             whitespace_spaces_leading: self
                 .whitespace_spaces_leading

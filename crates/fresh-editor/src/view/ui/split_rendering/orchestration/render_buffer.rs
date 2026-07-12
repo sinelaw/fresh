@@ -113,6 +113,7 @@ pub(crate) fn compute_buffer_layout(
     show_tilde: bool,
     indentation_guide: IndentationGuideMode,
     indentation_guide_glyph: &str,
+    rainbow_indentation: bool,
     cell_theme_map: Option<(&mut Vec<CellThemeInfo>, u16)>,
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
@@ -386,6 +387,7 @@ pub(crate) fn compute_buffer_layout(
         highlight_current_line,
         indentation_guide,
         indentation_guide_glyph,
+        rainbow_indentation,
         cell_theme_map: map_ref,
         screen_width: sw,
     });
@@ -643,6 +645,7 @@ pub(crate) fn render_buffer_in_split(
         diagnostics_inline_text,
         indentation_guide,
         indentation_guide_glyph,
+        rainbow_indentation,
         ..
     } = cfg;
     let layout_output = compute_buffer_layout(
@@ -669,6 +672,7 @@ pub(crate) fn render_buffer_in_split(
         show_tilde,
         indentation_guide,
         indentation_guide_glyph,
+        rainbow_indentation,
         Some((cell_theme_map, screen_width)),
     );
 

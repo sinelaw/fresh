@@ -65,6 +65,7 @@ pub struct EditorRenderConfig<'a> {
     pub highlight_current_column: bool,
     pub indentation_guide: IndentationGuideMode,
     pub indentation_guide_glyph: &'a str,
+    pub rainbow_indentation: bool,
     pub hide_current_line_on_selection: bool,
     pub background_fade: f32,
     pub software_cursor_only: bool,
@@ -94,6 +95,7 @@ impl<'a> EditorRenderConfig<'a> {
             highlight_current_column: editor.highlight_current_column,
             indentation_guide: editor.indentation_guide,
             indentation_guide_glyph: &editor.indentation_guide_glyph,
+            rainbow_indentation: editor.rainbow_indentation,
             hide_current_line_on_selection: editor.hide_current_line_on_selection,
             background_fade,
             software_cursor_only,
@@ -536,6 +538,7 @@ mod tests {
             highlight_current_line: true,
             indentation_guide,
             indentation_guide_glyph: &indentation_guide_glyph,
+            rainbow_indentation: false,
             cell_theme_map: &mut dummy_theme_map,
             screen_width: 0,
         });
@@ -640,6 +643,7 @@ mod tests {
             highlight_current_line: true,
             indentation_guide: IndentationGuideMode::All,
             indentation_guide_glyph: &glyph,
+            rainbow_indentation: false,
             cell_theme_map: &mut dummy_theme_map,
             screen_width: 0,
         })
@@ -3186,6 +3190,7 @@ mod tests {
             highlight_current_line,
             indentation_guide: IndentationGuideMode::None,
             indentation_guide_glyph: "▏",
+            rainbow_indentation: false,
             cell_theme_map: &mut Vec::new(),
             screen_width: 0,
         })

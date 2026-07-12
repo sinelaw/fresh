@@ -82,6 +82,7 @@
         "rulers": [],
         "indentation_guide": "none",
         "indentation_guide_glyph": "▏",
+        "rainbow_indentation": false,
         "whitespace_show": true,
         "whitespace_spaces_leading": false,
         "whitespace_spaces_inner": false,
@@ -599,6 +600,12 @@
           "description": "Glyph used to draw indentation guides. The default is a left-aligned\nvertical guide character. Leading/trailing whitespace is ignored, and\nblank values reset to the default glyph. Use a single display-cell glyph\nfor stable layout.\nDefault: ▏",
           "type": "string",
           "default": "▏",
+          "x-section": "Display"
+        },
+        "rainbow_indentation": {
+          "description": "Color indentation guides by nesting depth. The six rainbow colors are\nconfigured independently by the active theme (`indent_rainbow_1`\nthrough `indent_rainbow_6`). Has no effect when indentation guides are\ndisabled.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "whitespace_show": {

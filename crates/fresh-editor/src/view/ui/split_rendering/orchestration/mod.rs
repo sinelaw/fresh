@@ -1165,6 +1165,7 @@ pub(crate) fn compute_content_layout(
             show_tilde,
             IndentationGuideMode::None,
             "▏",
+            false,
             None, // No cell theme map for layout-only computation
         );
 

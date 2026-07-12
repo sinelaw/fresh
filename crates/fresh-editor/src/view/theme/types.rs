@@ -598,6 +598,24 @@ pub struct EditorColors {
     /// light themes while still allowing a dedicated override.
     #[serde(default)]
     pub indentation_guide_fg: Option<ColorDef>,
+    /// Rainbow indentation-guide color (nesting level 1)
+    #[serde(default = "default_indent_rainbow_1")]
+    pub indent_rainbow_1: ColorDef,
+    /// Rainbow indentation-guide color (nesting level 2)
+    #[serde(default = "default_indent_rainbow_2")]
+    pub indent_rainbow_2: ColorDef,
+    /// Rainbow indentation-guide color (nesting level 3)
+    #[serde(default = "default_indent_rainbow_3")]
+    pub indent_rainbow_3: ColorDef,
+    /// Rainbow indentation-guide color (nesting level 4)
+    #[serde(default = "default_indent_rainbow_4")]
+    pub indent_rainbow_4: ColorDef,
+    /// Rainbow indentation-guide color (nesting level 5)
+    #[serde(default = "default_indent_rainbow_5")]
+    pub indent_rainbow_5: ColorDef,
+    /// Rainbow indentation-guide color (nesting level 6)
+    #[serde(default = "default_indent_rainbow_6")]
+    pub indent_rainbow_6: ColorDef,
     /// Whitespace indicator foreground color (for tab arrows and space dots)
     #[serde(default = "default_whitespace_indicator_fg")]
     pub whitespace_indicator_fg: ColorDef,
@@ -689,6 +707,24 @@ fn default_bracket_rainbow_5() -> ColorDef {
     ColorDef::Rgb(255, 127, 80) // Coral
 }
 fn default_bracket_rainbow_6() -> ColorDef {
+    ColorDef::Rgb(147, 112, 219) // Medium Purple
+}
+fn default_indent_rainbow_1() -> ColorDef {
+    ColorDef::Rgb(255, 215, 0) // Gold
+}
+fn default_indent_rainbow_2() -> ColorDef {
+    ColorDef::Rgb(218, 112, 214) // Orchid
+}
+fn default_indent_rainbow_3() -> ColorDef {
+    ColorDef::Rgb(50, 205, 50) // Lime Green
+}
+fn default_indent_rainbow_4() -> ColorDef {
+    ColorDef::Rgb(30, 144, 255) // Dodger Blue
+}
+fn default_indent_rainbow_5() -> ColorDef {
+    ColorDef::Rgb(255, 127, 80) // Coral
+}
+fn default_indent_rainbow_6() -> ColorDef {
     ColorDef::Rgb(147, 112, 219) // Medium Purple
 }
 
@@ -1386,6 +1422,12 @@ pub struct Theme {
 
     // Indentation guide color
     pub indentation_guide_fg: Color,
+    pub indent_rainbow_1: Color,
+    pub indent_rainbow_2: Color,
+    pub indent_rainbow_3: Color,
+    pub indent_rainbow_4: Color,
+    pub indent_rainbow_5: Color,
+    pub indent_rainbow_6: Color,
 
     // Whitespace indicator color (tab arrows, space dots)
     pub whitespace_indicator_fg: Color,
@@ -1608,6 +1650,12 @@ impl From<ThemeFile> for Theme {
                 .clone()
                 .unwrap_or_else(|| file.editor.whitespace_indicator_fg.clone())
                 .into(),
+            indent_rainbow_1: file.editor.indent_rainbow_1.into(),
+            indent_rainbow_2: file.editor.indent_rainbow_2.into(),
+            indent_rainbow_3: file.editor.indent_rainbow_3.into(),
+            indent_rainbow_4: file.editor.indent_rainbow_4.into(),
+            indent_rainbow_5: file.editor.indent_rainbow_5.into(),
+            indent_rainbow_6: file.editor.indent_rainbow_6.into(),
             whitespace_indicator_fg: file.editor.whitespace_indicator_fg.into(),
             bracket_match_fg: file.editor.bracket_match_fg.into(),
             bracket_rainbow_1: file.editor.bracket_rainbow_1.into(),
@@ -1864,6 +1912,12 @@ impl From<Theme> for ThemeFile {
                 diff_modify_collision_fg: theme.diff_modify_collision_fg.map(|c| c.into()),
                 ruler_bg: theme.ruler_bg.into(),
                 indentation_guide_fg: Some(theme.indentation_guide_fg.into()),
+                indent_rainbow_1: theme.indent_rainbow_1.into(),
+                indent_rainbow_2: theme.indent_rainbow_2.into(),
+                indent_rainbow_3: theme.indent_rainbow_3.into(),
+                indent_rainbow_4: theme.indent_rainbow_4.into(),
+                indent_rainbow_5: theme.indent_rainbow_5.into(),
+                indent_rainbow_6: theme.indent_rainbow_6.into(),
                 whitespace_indicator_fg: theme.whitespace_indicator_fg.into(),
                 bracket_match_fg: theme.bracket_match_fg.into(),
                 bracket_rainbow_1: theme.bracket_rainbow_1.into(),
@@ -2317,6 +2371,12 @@ theme_color_keys! {
         "fg" => color editor_fg,
         "inactive_cursor" => color inactive_cursor,
         "indentation_guide_fg" => color indentation_guide_fg,
+        "indent_rainbow_1" => color indent_rainbow_1,
+        "indent_rainbow_2" => color indent_rainbow_2,
+        "indent_rainbow_3" => color indent_rainbow_3,
+        "indent_rainbow_4" => color indent_rainbow_4,
+        "indent_rainbow_5" => color indent_rainbow_5,
+        "indent_rainbow_6" => color indent_rainbow_6,
         "line_number_bg" => color line_number_bg,
         "line_number_fg" => color line_number_fg,
         "ruler_bg" => color ruler_bg,
@@ -2443,6 +2503,19 @@ theme_color_keys! {
 }
 
 impl Theme {
+    /// Return the independently configurable indentation-guide color for a
+    /// zero-based nesting depth, cycling after the sixth level.
+    pub fn indent_rainbow_color(&self, depth: usize) -> Color {
+        match depth % 6 {
+            0 => self.indent_rainbow_1,
+            1 => self.indent_rainbow_2,
+            2 => self.indent_rainbow_3,
+            3 => self.indent_rainbow_4,
+            4 => self.indent_rainbow_5,
+            _ => self.indent_rainbow_6,
+        }
+    }
+
     /// Apply a map of `"section.field" -> Color` overrides to the running
     /// theme in-place. Returns the number of keys that matched a known
     /// theme field. Unknown keys are silently dropped so a typo in a fast
@@ -2852,6 +2925,24 @@ mod tests {
 
         assert_eq!(theme.whitespace_indicator_fg, Color::Rgb(12, 34, 56));
         assert_eq!(theme.indentation_guide_fg, Color::Rgb(12, 34, 56));
+    }
+
+    #[test]
+    fn test_indent_rainbow_colors_are_independent_from_bracket_colors() {
+        let json = r#"{
+            "name": "independent-indent-rainbow",
+            "editor": {
+                "indent_rainbow_1": [1, 2, 3],
+                "indent_rainbow_2": [4, 5, 6],
+                "bracket_rainbow_1": [200, 201, 202]
+            }
+        }"#;
+        let theme = Theme::from_json(json).expect("theme should parse");
+
+        assert_eq!(theme.indent_rainbow_1, Color::Rgb(1, 2, 3));
+        assert_eq!(theme.indent_rainbow_2, Color::Rgb(4, 5, 6));
+        assert_eq!(theme.bracket_rainbow_1, Color::Rgb(200, 201, 202));
+        assert_eq!(theme.indent_rainbow_color(6), Color::Rgb(1, 2, 3));
     }
 
     #[test]

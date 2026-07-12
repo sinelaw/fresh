@@ -24,6 +24,8 @@ Enable vertical indentation guides in the Settings UI. The default is off; choos
 
 Guides are visual-only: they replace rendered leading whitespace cells without changing buffer text, cursor positions, byte mappings, or mouse behavior. Themes can set the guide color with the `indentation_guide_fg` key; when omitted, it inherits the whitespace-indicator color.
 
+Turn on `editor.rainbow_indentation` to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
+
 ## Current-Line Highlight
 
 The row the cursor is on is highlighted for quick visual tracking. Enabled by default; toggle via the command palette ("Toggle Current Line Highlight") or in the Settings UI. A matching **Toggle Current Column Highlight** highlights the cursor's column too — useful for visually aligning code with rulers. The Settings UI also has an option to drop the line highlight while text is selected.

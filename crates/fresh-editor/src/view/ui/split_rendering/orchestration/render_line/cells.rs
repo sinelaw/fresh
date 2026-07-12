@@ -61,10 +61,14 @@ pub(super) struct CellPassInput<'a, 'c> {
     pub highlight_current_line: bool,
     pub indentation_guide: IndentationGuideMode,
     pub indentation_guide_glyph: &'a str,
+    pub rainbow_indentation: bool,
     pub indentation_guide_columns: &'c [usize],
     /// In active mode, the one guide column to draw for this line when it is
     /// inside the active cursor's indentation block.
     pub active_indentation_guide_col: Option<usize>,
+    /// Zero-based nesting depth of the active guide, inferred from ancestor
+    /// indentation rather than raw tab stops.
+    pub active_indentation_guide_depth: Option<usize>,
 }
 
 /// Per-line results the later passes consume.
@@ -320,7 +324,7 @@ impl CellPass<'_, '_, '_> {
         // selected. Whitespace indicators still defer to selection styling.
         let mut style = resolved.style;
         if is_indentation_guide && !is_cursor {
-            style = style.fg(self.input.theme.indentation_guide_fg);
+            style = style.fg(self.indentation_guide_color());
         } else if is_whitespace_indicator && !is_cursor && !is_selected {
             style = style.fg(self.input.theme.whitespace_indicator_fg);
         }
@@ -379,6 +383,25 @@ impl CellPass<'_, '_, '_> {
                 self.input.active_indentation_guide_col == Some(self.col_offset)
             }
         }
+    }
+
+    fn indentation_guide_color(&self) -> Color {
+        if !self.input.rainbow_indentation {
+            return self.input.theme.indentation_guide_fg;
+        }
+
+        let depth = match self.input.indentation_guide {
+            IndentationGuideMode::All => self
+                .input
+                .indentation_guide_columns
+                .iter()
+                .position(|&column| column == self.col_offset)
+                .unwrap_or(0),
+            IndentationGuideMode::Active => self.input.active_indentation_guide_depth.unwrap_or(0),
+            IndentationGuideMode::None => 0,
+        };
+
+        self.input.theme.indent_rainbow_color(depth)
     }
 
     fn is_leading_indent_cell(&self) -> bool {

@@ -1288,6 +1288,15 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub indentation_guide_glyph: String,
 
+    /// Color indentation guides by nesting depth. The six rainbow colors are
+    /// configured independently by the active theme (`indent_rainbow_1`
+    /// through `indent_rainbow_6`). Has no effect when indentation guides are
+    /// disabled.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub rainbow_indentation: bool,
+
     // ===== Whitespace =====
     /// Master toggle for whitespace indicator visibility.
     /// When disabled, no whitespace indicators (·, →) are shown regardless
@@ -1887,6 +1896,7 @@ impl Default for EditorConfig {
             rulers: Vec::new(),
             indentation_guide: IndentationGuideMode::None,
             indentation_guide_glyph: default_indentation_guide_glyph(),
+            rainbow_indentation: false,
             whitespace_show: true,
             whitespace_spaces_leading: false,
             whitespace_spaces_inner: false,
@@ -8305,6 +8315,14 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.editor.indentation_guide, IndentationGuideMode::All);
         assert_eq!(cfg.editor.indentation_guide_glyph, "┊");
+    }
+
+    #[test]
+    fn test_rainbow_indentation_defaults_off_and_deserializes() {
+        assert!(!Config::default().editor.rainbow_indentation);
+        let cfg: Config =
+            serde_json::from_str(r#"{"editor":{"rainbow_indentation":true}}"#).unwrap();
+        assert!(cfg.editor.rainbow_indentation);
     }
 
     #[test]

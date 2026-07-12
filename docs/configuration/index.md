@@ -401,6 +401,8 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 | Line numbers | Show line numbers in gutter | on |
 | Line wrap | Soft-wrap long lines | off |
 | Rulers | Column positions for vertical ruler lines | none |
+| Indentation guides | Draw all guides, the active guide, or none | none |
+| Rainbow indentation | Color indentation-guide levels using theme `indent_rainbow_*` colors | off |
 | Vertical scrollbar | Show vertical scrollbar | on |
 | Horizontal scrollbar | Show horizontal scrollbar | off |
 | Terminal background | Let terminal background show through | off |

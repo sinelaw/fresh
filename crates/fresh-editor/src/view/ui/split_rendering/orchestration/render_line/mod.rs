@@ -83,6 +83,8 @@ pub(crate) struct LineRenderInput<'a> {
     pub indentation_guide: IndentationGuideMode,
     /// Glyph used when an indentation guide is drawn.
     pub indentation_guide_glyph: &'a str,
+    /// Color indentation guides by nesting depth.
+    pub rainbow_indentation: bool,
     /// Per-cell theme key map for the theme inspector (screen_width used for indexing)
     pub cell_theme_map: &'a mut Vec<crate::app::types::CellThemeInfo>,
     /// Screen width for cell_theme_map indexing
@@ -126,6 +128,7 @@ struct SpanCursors {
 #[derive(Clone, Copy, Debug)]
 struct ActiveIndentationGuide {
     column: usize,
+    depth: usize,
     first_line_idx: usize,
     last_line_idx: usize,
 }
@@ -176,6 +179,12 @@ impl ActiveIndentationGuide {
             .buffer
             .get_line(state.buffer.get_line_number(header_byte))?;
         let column = indent_folding::slice_indent(&header_line, tab_size).0;
+        let ancestors =
+            prime_guide_stack_from_buffer(&state.buffer, header_byte, tab_size, max_upward);
+        let depth = ancestors
+            .iter()
+            .position(|&ancestor| ancestor == column)
+            .unwrap_or(ancestors.len());
 
         // Map the fold's hidden byte range onto the visible view-line indices.
         let first_line_idx = view_lines
@@ -193,6 +202,7 @@ impl ActiveIndentationGuide {
 
         Some(Self {
             column,
+            depth,
             first_line_idx,
             last_line_idx,
         })
@@ -411,6 +421,8 @@ fn append_blank_line_guides(
     content_width: usize,
     glyph: char,
     style: Style,
+    rainbow_theme: Option<&Theme>,
+    active_rainbow_depth: Option<usize>,
     rendered_cols: &mut usize,
     line_spans: &mut Vec<Span<'static>>,
     line_view_map: &mut Vec<Option<usize>>,
@@ -432,15 +444,28 @@ fn append_blank_line_guides(
         return;
     }
 
-    let mut text = String::with_capacity(end_col + 1 - start);
-    for col in start..=end_col {
-        text.push(if guide_columns.contains(&col) {
-            glyph
-        } else {
-            ' '
-        });
+    if let Some(theme) = rainbow_theme {
+        for col in start..=end_col {
+            let (ch, cell_style) = match guide_columns.iter().position(|&guide| guide == col) {
+                Some(depth) => {
+                    let depth = active_rainbow_depth.unwrap_or(depth);
+                    (glyph, style.fg(theme.indent_rainbow_color(depth)))
+                }
+                None => (' ', style),
+            };
+            push_span_with_map(line_spans, line_view_map, ch.to_string(), cell_style, None);
+        }
+    } else {
+        let mut text = String::with_capacity(end_col + 1 - start);
+        for col in start..=end_col {
+            text.push(if guide_columns.contains(&col) {
+                glyph
+            } else {
+                ' '
+            });
+        }
+        push_span_with_map(line_spans, line_view_map, text, style, None);
     }
-    push_span_with_map(line_spans, line_view_map, text, style, None);
     *rendered_cols += end_col + 1 - start;
 }
 
@@ -471,6 +496,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         highlight_current_line,
         indentation_guide,
         indentation_guide_glyph,
+        rainbow_indentation,
         cell_theme_map,
         screen_width,
     } = input;
@@ -761,6 +787,9 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // modes); reused by the cell pass and the blank-line guide synthesis.
         let active_guide_col =
             active_indentation_guide.and_then(|guide| guide.column_for_line(current_view_line_idx));
+        let active_guide_depth = active_indentation_guide
+            .filter(|guide| guide.column_for_line(current_view_line_idx).is_some())
+            .map(|guide| guide.depth);
 
         // Per-cell pass: walk the line's characters and emit styled spans
         let cells = render_line_cells(
@@ -784,8 +813,10 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 highlight_current_line,
                 indentation_guide,
                 indentation_guide_glyph,
+                rainbow_indentation,
                 indentation_guide_columns: &guide_columns_buf,
                 active_indentation_guide_col: active_guide_col,
+                active_indentation_guide_depth: active_guide_depth,
             },
             &mut selection_sweep,
             &mut overlay_sweep,
@@ -920,6 +951,8 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 content_width,
                 guide_glyph_char,
                 guide_style,
+                rainbow_indentation.then_some(theme),
+                active_guide_depth,
                 &mut rendered_cols,
                 &mut line_spans,
                 &mut line_view_map,
