@@ -3341,6 +3341,15 @@ impl Window {
                 any_sent = true;
             }
         }
+
+        // Keep stored diagnostics aligned with the buffer between server
+        // re-publishes. A server (e.g. rust-analyzer's cargo checkOnSave) only
+        // re-publishes on save, so after inserting/deleting lines above an
+        // error its stored positions go stale; the next `merge_and_apply`
+        // would rebuild overlays there, snapping the gutter marker, F8 target,
+        // inline text, and diagnostics panel back to the pre-edit line (#2602).
+        self.shift_stored_diagnostics_for_changes(uri.as_str(), &changes);
+
         if any_sent {
             tracing::trace!("Successfully sent batched didChange to LSP");
 
@@ -3363,6 +3372,41 @@ impl Window {
                     std::time::Instant::now()
                         + std::time::Duration::from_millis(INLAY_HINTS_DEBOUNCE_MS),
                 ));
+            }
+        }
+    }
+
+    /// Shift stored diagnostics (push, pull, and the merged view) for `uri`
+    /// so their positions track incremental buffer edits between server
+    /// re-publishes (#2602).
+    ///
+    /// The three maps hold independent `Diagnostic` copies, so each is shifted
+    /// directly — keeping them consistent without a full re-merge. On the next
+    /// publish/pull the authoritative positions replace these. Full-document
+    /// replacements carry no positional delta and are ignored.
+    pub(crate) fn shift_stored_diagnostics_for_changes(
+        &mut self,
+        uri: &str,
+        changes: &[lsp_types::TextDocumentContentChangeEvent],
+    ) {
+        use crate::services::lsp::diagnostics::shift_diagnostics_for_changes;
+
+        if changes.iter().all(|c| c.range.is_none()) {
+            return;
+        }
+
+        if let Some(server_map) = self.stored_push_diagnostics.get_mut(uri) {
+            for diags in server_map.values_mut() {
+                shift_diagnostics_for_changes(diags, changes);
+            }
+        }
+        if let Some(diags) = self.stored_pull_diagnostics.get_mut(uri) {
+            shift_diagnostics_for_changes(diags, changes);
+        }
+        if self.stored_diagnostics.contains_key(uri) {
+            if let Some(diags) = std::sync::Arc::make_mut(&mut self.stored_diagnostics).get_mut(uri)
+            {
+                shift_diagnostics_for_changes(diags, changes);
             }
         }
     }

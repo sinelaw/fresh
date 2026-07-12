@@ -5,7 +5,7 @@
 use crate::model::buffer::Buffer;
 use crate::state::EditorState;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayNamespace};
-use lsp_types::{Diagnostic, DiagnosticSeverity};
+use lsp_types::{Diagnostic, DiagnosticSeverity, Position, TextDocumentContentChangeEvent};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -252,6 +252,96 @@ pub fn apply_diagnostics_to_state(
     }
 }
 
+/// Compute the end position of an edit that inserts `text` starting at
+/// `start`. LSP character offsets are UTF-16 code units, so lengths are
+/// measured in UTF-16, and line breaks are counted by `\n`.
+fn edit_new_end(start: Position, text: &str) -> Position {
+    let newlines = text.matches('\n').count();
+    if newlines == 0 {
+        Position::new(
+            start.line,
+            start.character + text.encode_utf16().count() as u32,
+        )
+    } else {
+        // Characters on the last inserted line, after the final `\n`.
+        let last_line_len = text
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .encode_utf16()
+            .count() as u32;
+        Position::new(start.line + newlines as u32, last_line_len)
+    }
+}
+
+/// Shift a single position to account for one text edit that replaced the
+/// range `[start, old_end)` with text spanning `[start, new_end)`.
+///
+/// Mirrors how an LSP client remaps positions between server publishes: a
+/// position before the edit is untouched, a position inside the replaced
+/// region collapses to the edit start (its text no longer exists), and a
+/// position after the edit shifts by the edit's line delta — plus the
+/// character delta when it sat on the edit's trailing line.
+fn shift_position(
+    pos: Position,
+    start: Position,
+    old_end: Position,
+    new_end: Position,
+) -> Position {
+    // At or before the edit start: unaffected.
+    if pos.line < start.line || (pos.line == start.line && pos.character <= start.character) {
+        return pos;
+    }
+    // Inside the replaced region: collapse to the edit start. There is no
+    // faithful mapping for deleted text; the next check-on-save republishes.
+    if pos.line < old_end.line || (pos.line == old_end.line && pos.character <= old_end.character) {
+        return start;
+    }
+    // After the edit: shift by the line delta, and by the character delta only
+    // when the position was on the edit's trailing (old_end) line.
+    let line_delta = new_end.line as i64 - old_end.line as i64;
+    let new_line = (pos.line as i64 + line_delta).max(0) as u32;
+    let new_character = if pos.line == old_end.line {
+        (pos.character as i64 + (new_end.character as i64 - old_end.character as i64)).max(0) as u32
+    } else {
+        pos.character
+    };
+    Position::new(new_line, new_character)
+}
+
+/// Shift the ranges of `diagnostics` in place to track a sequence of
+/// incremental buffer edits.
+///
+/// LSP servers publish diagnostics at fixed positions and only re-publish
+/// after a re-check (for rust-analyzer's cargo `checkOnSave`, that means on
+/// save). Between publishes the buffer can change — most commonly lines get
+/// inserted above an existing error. Without remapping, the next
+/// `merge_and_apply` rebuilds overlays from stale line/character positions,
+/// snapping the gutter marker, `F8` target, inline text, and diagnostics
+/// panel back to where the error was when it was last published (#2602).
+/// Applying the same content changes here keeps them aligned with the text,
+/// matching what the LSP client does in VS Code.
+///
+/// Full-document replacements (`range: None`) carry no positional delta and
+/// are skipped; the next publish overwrites those positions anyway.
+pub fn shift_diagnostics_for_changes(
+    diagnostics: &mut [Diagnostic],
+    changes: &[TextDocumentContentChangeEvent],
+) {
+    for change in changes {
+        let Some(change_range) = change.range else {
+            continue;
+        };
+        let start = change_range.start;
+        let old_end = change_range.end;
+        let new_end = edit_new_end(start, &change.text);
+        for diag in diagnostics.iter_mut() {
+            diag.range.start = shift_position(diag.range.start, start, old_end, new_end);
+            diag.range.end = shift_position(diag.range.end, start, old_end, new_end);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,5 +491,119 @@ mod tests {
         // end: line 1, char 2 = byte 8 ("ne")
         assert_eq!(range.start, 3);
         assert_eq!(range.end, 8);
+    }
+
+    // --- shift_diagnostics_for_changes -------------------------------------
+
+    fn diag_at(start_line: u32, start_char: u32, end_line: u32, end_char: u32) -> Diagnostic {
+        Diagnostic {
+            range: Range {
+                start: Position::new(start_line, start_char),
+                end: Position::new(end_line, end_char),
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: None,
+            code_description: None,
+            source: None,
+            message: "e".to_string(),
+            related_information: None,
+            tags: None,
+            data: None,
+        }
+    }
+
+    /// An insertion is a zero-width range at the insertion point, exactly as
+    /// `collect_lsp_changes` builds it for an `Insert` event.
+    fn insert_change(line: u32, character: u32, text: &str) -> TextDocumentContentChangeEvent {
+        let pos = Position::new(line, character);
+        TextDocumentContentChangeEvent {
+            range: Some(Range::new(pos, pos)),
+            range_length: None,
+            text: text.to_string(),
+        }
+    }
+
+    fn delete_change(
+        start_line: u32,
+        start_char: u32,
+        end_line: u32,
+        end_char: u32,
+    ) -> TextDocumentContentChangeEvent {
+        TextDocumentContentChangeEvent {
+            range: Some(Range::new(
+                Position::new(start_line, start_char),
+                Position::new(end_line, end_char),
+            )),
+            range_length: None,
+            text: String::new(),
+        }
+    }
+
+    #[test]
+    fn shift_inserting_lines_above_moves_diagnostic_down() {
+        // Issue #2602: error on line 8, insert a 6-line block above it.
+        // The diagnostic should ride down to line 14, not stay on line 8.
+        let mut diags = vec![diag_at(8, 4, 8, 12)];
+        let changes = vec![insert_change(1, 0, "aaa\nbbb\nccc\nddd\neee\nfff\n")];
+        shift_diagnostics_for_changes(&mut diags, &changes);
+        assert_eq!(diags[0].range.start, Position::new(14, 4));
+        assert_eq!(diags[0].range.end, Position::new(14, 12));
+    }
+
+    #[test]
+    fn shift_leaves_diagnostics_above_the_edit_untouched() {
+        let mut diags = vec![diag_at(2, 0, 2, 5)];
+        let changes = vec![insert_change(5, 0, "new line\n")];
+        shift_diagnostics_for_changes(&mut diags, &changes);
+        assert_eq!(diags[0].range.start, Position::new(2, 0));
+        assert_eq!(diags[0].range.end, Position::new(2, 5));
+    }
+
+    #[test]
+    fn shift_same_line_insert_before_moves_characters() {
+        // Insert text earlier on the same line as the diagnostic.
+        let mut diags = vec![diag_at(3, 10, 3, 15)];
+        let changes = vec![insert_change(3, 2, "abcd")];
+        shift_diagnostics_for_changes(&mut diags, &changes);
+        assert_eq!(diags[0].range.start, Position::new(3, 14));
+        assert_eq!(diags[0].range.end, Position::new(3, 19));
+    }
+
+    #[test]
+    fn shift_deleting_lines_above_moves_diagnostic_up() {
+        // Delete lines 2..5 (three full lines); a diagnostic on line 8 rises to 5.
+        let mut diags = vec![diag_at(8, 4, 8, 12)];
+        let changes = vec![delete_change(2, 0, 5, 0)];
+        shift_diagnostics_for_changes(&mut diags, &changes);
+        assert_eq!(diags[0].range.start, Position::new(5, 4));
+        assert_eq!(diags[0].range.end, Position::new(5, 12));
+    }
+
+    #[test]
+    fn shift_ignores_full_document_replacement() {
+        let mut diags = vec![diag_at(8, 4, 8, 12)];
+        let changes = vec![TextDocumentContentChangeEvent {
+            range: None,
+            range_length: None,
+            text: "whole new file".to_string(),
+        }];
+        shift_diagnostics_for_changes(&mut diags, &changes);
+        // Unchanged: no positional delta is available for a full replacement.
+        assert_eq!(diags[0].range.start, Position::new(8, 4));
+        assert_eq!(diags[0].range.end, Position::new(8, 12));
+    }
+
+    #[test]
+    fn shift_applies_a_batch_of_changes_in_order() {
+        // Two inserts above the error; deltas accumulate.
+        let mut diags = vec![diag_at(8, 0, 8, 3)];
+        let changes = vec![
+            insert_change(1, 0, "one\n"),
+            insert_change(2, 0, "two\nthree\n"),
+        ];
+        shift_diagnostics_for_changes(&mut diags, &changes);
+        // +1 line then +2 lines => line 11.
+        assert_eq!(diags[0].range.start, Position::new(11, 0));
+        assert_eq!(diags[0].range.end, Position::new(11, 3));
     }
 }
