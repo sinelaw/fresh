@@ -24,6 +24,20 @@
     cargo run --features web -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
 -->
 <style>
+  /* ---- typography: ONE family, ONE size, for every pixel of the UI --------
+     The buffer is a cell grid, so the shared family has to be the monospace
+     stack; chrome (menus, tabs, status, palette, modals, widgets) inherits the
+     exact same family and size, which also makes the native chrome's text
+     advance agree with the cell widths the editor computed server-side.
+     --font-size-base is the single source of truth and is read back by JS
+     (see BASE_FONT); --font-size is the *live* size — measureMetrics() rewrites
+     it as zoom changes so chrome scales with the buffer. Everything downstream
+     sizes itself in em, never px. */
+  :root{
+    --font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
+    --font-size-base:13px;
+    --font-size:var(--font-size-base);
+    --line-height:1.4}
   :root{--bg:#1e1e1e;--bg2:#252526;--bg3:#333;--fg:#d4d4d4;--muted:#9aa0a6;
     --accent:#0a84ff;--border:#3a3a3a;--menuhi:#0a64c8;
     --status-bg:#0a84ff;--status-fg:#fff;
@@ -46,7 +60,10 @@
   :focus{outline:none}
   html,body{height:100%;margin:0}
   body{height:100vh;background:var(--bg);color:var(--fg);overflow:hidden;
-    font:13px/1.4 -apple-system,Segoe UI,Roboto,system-ui,sans-serif;-webkit-font-smoothing:antialiased;user-select:none}
+    font:var(--font-size)/var(--line-height) var(--font-family);-webkit-font-smoothing:antialiased;user-select:none}
+  /* No element re-declares a family, and any element that needs a size states it
+     in em relative to the inherited base. */
+  input,button,textarea,select{font:inherit}
   #app{position:relative;width:100vw;height:100vh}
   .region{position:absolute;overflow:hidden}
 
@@ -69,7 +86,7 @@
   .mitem.hi{background:var(--menuhi);color:#fff}
   .mitem.disabled{color:#6a6a6a}
   .mitem .lab{flex:1;display:flex;align-items:center;gap:6px}
-  .mitem .accel{color:var(--muted);font-size:11px}
+  .mitem .accel{color:var(--muted)}
   .mitem.hi .accel{color:#dfe8ff}
   .mitem .arrow{color:var(--muted)}
   .mitem .check{width:12px;display:inline-block;text-align:center}
@@ -89,7 +106,7 @@
 
   /* ---- status bar (native) ---- */
   .statusbar{display:flex;align-items:center;background:var(--status-bg);color:var(--status-fg);
-    padding:0 10px;font-size:12px;gap:0;white-space:pre}
+    padding:0 10px;gap:0;white-space:pre}
   .statusbar .txt{padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60vw}
   .statusbar .seg{padding:0 8px;border-radius:3px;cursor:default}
   .statusbar .seg:hover{background:rgba(255,255,255,.18)}
@@ -107,8 +124,8 @@
   .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:ellipsis}
   .palette.input-only .pinput .q{flex:0 1 auto}
   .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
-  .palette .pinput .status{color:var(--muted);font-size:11px}
-  .palette .pinput .count{color:var(--muted);font-size:11px}
+  .palette .pinput .status{color:var(--muted)}
+  .palette .pinput .count{color:var(--muted)}
   .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}
   .palette .prow{display:flex;align-items:center;gap:10px;padding:3px 12px;cursor:default;color:var(--fg)}
   .palette .prow.sel{background:var(--menuhi);color:#fff}
@@ -116,14 +133,14 @@
   .palette .prow .ptext{flex:0 0 auto}
   .palette .prow .pdesc{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .palette .prow.sel .pdesc{color:#dfe8ff}
-  .palette .prow .pkey{color:var(--muted);font-size:11px;border:1px solid #555;border-radius:3px;padding:0 5px}
+  .palette .prow .pkey{color:var(--muted);border:1px solid #555;border-radius:3px;padding:0 5px}
   .palette .prow.sel .pkey{color:#fff;border-color:#9bbcf0}
-  .palette .ptitle{padding:6px 12px;color:var(--muted);font-size:11px;border-bottom:1px solid #3a3a3a}
+  .palette .ptitle{padding:6px 12px;color:var(--muted);border-bottom:1px solid #3a3a3a}
   /* Sidebar is chrome/frame — match the menu bar's neutral surface (--bg3),
      not the popup surface (--bg2), which in some light themes is a tinted
      blue-grey that clashes with the neutral bar and the white buffer. */
-  .fileexplorer{background:var(--bg3);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
-  .fileexplorer .fx-title{padding:2px 8px;color:var(--muted);text-transform:uppercase;font-size:11px;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto}
+  .fileexplorer{background:var(--bg3);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+  .fileexplorer .fx-title{padding:2px 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto}
   .fileexplorer .fx-list{overflow:auto;flex:1}
   .fileexplorer .fx-row{display:flex;align-items:center;gap:4px;padding:0 6px;white-space:nowrap;cursor:default;color:var(--fg);line-height:1.5}
   .fileexplorer .fx-row.sel{background:var(--menuhi);color:#fff}
@@ -148,15 +165,15 @@
   /* ---- workspace-trust dialog (native modal) ---- */
   .modal-scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:95}
   .trustdialog{position:absolute;z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;
-    border-radius:8px;box-shadow:0 20px 70px rgba(0,0,0,.6);overflow:auto;display:flex;flex-direction:column;padding:10px 14px;font-size:13px;min-width:420px}
+    border-radius:8px;box-shadow:0 20px 70px rgba(0,0,0,.6);overflow:auto;display:flex;flex-direction:column;padding:10px 14px;min-width:420px}
   .trustdialog .td-title{color:#e5c07b;font-weight:700;margin-bottom:6px}
-  .trustdialog .td-path{color:var(--fg);font-family:ui-monospace,monospace;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .trustdialog .td-triggers{color:var(--muted);font-size:11px;margin:2px 0 8px}
+  .trustdialog .td-path{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trustdialog .td-triggers{color:var(--muted);margin:2px 0 8px}
   .trustdialog .td-opt{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:5px;cursor:default}
   .trustdialog .td-opt.sel{background:var(--menuhi);color:#fff}
   .trustdialog .td-opt .td-radio{flex:0 0 auto}
   .trustdialog .td-opt .td-otext .td-olabel{font-weight:600}
-  .trustdialog .td-opt .td-otext .td-odesc{color:var(--muted);font-size:11px}
+  .trustdialog .td-opt .td-otext .td-odesc{color:var(--muted)}
   .trustdialog .td-opt.sel .td-odesc{color:#dfe8ff}
   .trustdialog .td-buttons{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
   .trustdialog .td-btn{padding:3px 14px;border:1px solid #5a5a5a;border-radius:5px;cursor:default;color:var(--fg)}
@@ -170,18 +187,17 @@
   .w-toggle{display:inline-flex;align-items:center;gap:4px;cursor:default;padding:1px 4px;border-radius:4px}
   .w-toggle.on{color:var(--accent)}
   .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
-  .w-toggle .w-box{font-size:13px}
-  .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
+    .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
   .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .w-button.danger{border-color:#c0392b;color:#e57373}
   .w-button.disabled{opacity:.5}
   .w-divider{border-top:1px solid var(--border);margin:4px 0;align-self:stretch}
-  .w-hintbar{display:flex;gap:12px;color:var(--muted);font-size:11px}
+  .w-hintbar{display:flex;gap:12px;color:var(--muted)}
   .w-hint b{color:var(--accent);font-weight:600}
   .w-section{border:1px solid var(--border);border-radius:6px;padding:6px}
-  .w-section-label{color:var(--muted);font-size:11px;margin-bottom:4px}
-  .w-raw{white-space:pre;font-family:ui-monospace,monospace}
-  .w-unsupported{color:var(--muted);font-style:italic;font-size:11px}
+  .w-section-label{color:var(--muted);margin-bottom:4px}
+  .w-raw{white-space:pre}
+  .w-unsupported{color:var(--muted);font-style:italic}
   .w-text{display:flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:4px;padding:1px 6px;background:var(--bg)}
   .w-text.focus{outline:1px solid var(--accent)}
   .w-text-label{color:var(--muted)}
@@ -195,19 +211,19 @@
   .w-list-card .w-section{border:none;padding:0}
   /* native Settings (full modal) */
   .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(960px,90vw);height:min(640px,86vh);
-    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
+    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
   .settings-modal .set-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
   .settings-modal .set-body{flex:1;display:flex;overflow:hidden}
   .settings-modal .set-cats{width:210px;flex:0 0 auto;overflow:auto;border-right:1px solid var(--border);padding:4px 0}
   .settings-modal .set-cats.focus,.settings-modal .set-items.focus{box-shadow:inset 0 0 0 1px var(--accent)}
   .settings-modal .set-cat{padding:2px 10px;white-space:nowrap;cursor:default} .settings-modal .set-cat.sel{background:var(--menuhi);color:#fff}
-  .settings-modal .set-cat-sec{padding:1px 10px;color:var(--muted);font-size:11px}
+  .settings-modal .set-cat-sec{padding:1px 10px;color:var(--muted)}
   .settings-modal .set-items{flex:1;overflow:auto;padding:4px 0}
-  .settings-modal .set-section{padding:6px 14px 2px;color:var(--accent);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+  .settings-modal .set-section{padding:6px 14px 2px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
   .settings-modal .set-item{padding:4px 14px;border-bottom:1px solid rgba(255,255,255,.04)} .settings-modal .set-item.sel{background:var(--menuhi)}
   .settings-modal .set-item.ro{opacity:.6}
   .settings-modal .set-item-head{display:flex;align-items:center;gap:12px}
-  .settings-modal .set-name{flex:1;min-width:0} .settings-modal .set-desc{color:var(--muted);font-size:11px;white-space:normal;margin-top:1px}
+  .settings-modal .set-name{flex:1;min-width:0} .settings-modal .set-desc{color:var(--muted);white-space:normal;margin-top:1px}
   .settings-modal .set-ctl-wrap{flex:0 0 auto;max-width:50%;text-align:right;display:flex;justify-content:flex-end;align-items:center}
   .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px}
   .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
@@ -217,11 +233,10 @@
   .settings-modal .set-switch.on{background:var(--accent)} .settings-modal .set-switch.on::after{left:14px;background:#fff}
   /* number stepper */
   .settings-modal .set-step{display:inline-block;width:18px;text-align:center;border:1px solid #5a5a5a;border-radius:3px;cursor:default}
-  .settings-modal .set-num-v{min-width:34px;text-align:center;font-family:ui-monospace,monospace}
+  .settings-modal .set-num-v{min-width:34px;text-align:center}
   /* dropdown pill + text field */
   .settings-modal .set-pill{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg)}
-  .settings-modal .set-field{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace}
-  .settings-modal .set-field.mono{font-size:11px}
+  .settings-modal .set-field{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .settings-modal .set-dd{position:absolute;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:3}
   .settings-modal .set-dd-row{padding:1px 10px} .settings-modal .set-dd-row.sel{background:var(--accent);color:#fff}
   /* composite list controls */
@@ -229,16 +244,15 @@
   .settings-modal .set-list-row{display:flex;align-items:center;gap:8px;padding:2px 10px;border-bottom:1px solid rgba(255,255,255,.05)}
   .settings-modal .set-list-row:last-child{border-bottom:none}
   .settings-modal .set-list-badge{color:var(--accent)}
-  .settings-modal .set-list-label{font-family:ui-monospace,monospace}
   .settings-modal .set-list-sub{color:var(--muted);margin-left:auto;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .settings-modal .set-list-empty{padding:3px 10px;color:var(--muted);font-style:italic}
   .settings-modal .set-list-add{padding:2px 10px;color:var(--accent);cursor:default;border-top:1px solid rgba(255,255,255,.06)}
   .settings-modal .set-dual{display:flex;align-items:stretch;gap:6px;margin:4px 0 2px 8px}
   .settings-modal .set-dual-col{flex:1;border:1px solid var(--border);border-radius:6px;overflow:hidden;min-width:0}
   .settings-modal .set-dual-col.active{border-color:var(--accent)}
-  .settings-modal .set-dual-coltitle{padding:2px 8px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(255,255,255,.06)}
+  .settings-modal .set-dual-coltitle{padding:2px 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(255,255,255,.06)}
   .settings-modal .set-dual-list{max-height:160px;overflow:auto}
-  .settings-modal .set-dual-row{padding:2px 8px;font-family:ui-monospace,monospace;cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .settings-modal .set-dual-row{padding:2px 8px;cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .settings-modal .set-dual-row:hover{background:rgba(255,255,255,.05)}
   .settings-modal .set-dual-row.sel{background:var(--menuhi);color:#fff}
   .settings-modal .set-dual-mid{display:flex;flex-direction:column;justify-content:center;gap:4px}
@@ -257,17 +271,16 @@
   .settings-modal .set-entry-title{font-weight:600;margin-bottom:8px}
   /* native keybinding editor (full modal) */
   .kbedit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(900px,88vw);max-height:84vh;
-    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px}
+    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
   .kbedit .kb-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
   .kbedit .kb-header{padding:4px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px}
-  .kbedit .kb-cfg{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .kbedit .kb-search{font-family:ui-monospace,monospace}
+  .kbedit .kb-cfg{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .kbedit .kb-search.focus{outline:1px solid var(--accent);border-radius:3px;padding:0 4px}
   .kbedit .kb-search b{color:var(--accent);margin-right:4px}
-  .kbedit .kb-filters{display:flex;gap:12px;align-items:center;font-size:11px}
+  .kbedit .kb-filters{display:flex;gap:12px;align-items:center}
   .kbedit .kb-chip{color:var(--muted)} .kbedit .kb-chip.on{color:#fff;font-weight:600}
   .kbedit .kb-count{margin-left:auto;color:var(--muted)}
-  .kbedit .kb-table{overflow:auto;flex:1;font-family:ui-monospace,monospace}
+  .kbedit .kb-table{overflow:auto;flex:1}
   .kbedit .kb-row{display:flex;padding:0 12px;white-space:nowrap;line-height:1.5}
   .kbedit .kb-row.kb-head{color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:#2b2b2b}
   .kbedit .kb-row.sel{background:var(--menuhi);color:#fff}
@@ -275,30 +288,30 @@
   .kbedit .kb-col{overflow:hidden;text-overflow:ellipsis}
   .kbedit .kb-key{width:16ch;flex:0 0 auto} .kbedit .kb-action{width:26ch;flex:0 0 auto}
   .kbedit .kb-description{flex:1;min-width:0} .kbedit .kb-context{width:16ch;flex:0 0 auto} .kbedit .kb-source{width:8ch;flex:0 0 auto;color:var(--muted)}
-  .kbedit .kb-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .kbedit .kb-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:420px;z-index:2}
   .kbedit .kb-dlg-title,.kbedit .kb-confirm-msg{font-weight:600;margin-bottom:8px}
   .kbedit .kb-field{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:4px}
   .kbedit .kb-field.focus{background:var(--menuhi);color:#fff}
   .kbedit .kb-field-l{width:80px;color:var(--muted)} .kbedit .kb-field.focus .kb-field-l{color:#dfe8ff}
-  .kbedit .kb-field-v{font-family:ui-monospace,monospace} .kbedit .kb-field-x{margin-left:auto;color:var(--muted);font-size:11px}
+  .kbedit .kb-field-x{margin-left:auto;color:var(--muted)}
   .kbedit .kb-err{color:#e57373;margin-left:8px}
   .kbedit .kb-autocomplete{margin:2px 0 2px 88px;border:1px solid var(--border);border-radius:4px;max-height:140px;overflow:auto}
-  .kbedit .kb-ac-row{padding:1px 8px;font-family:ui-monospace,monospace} .kbedit .kb-ac-row.sel{background:var(--accent);color:#fff}
-  .kbedit .kb-conflicts{margin:6px 0;color:#e5c07b;font-size:11px}
+  .kbedit .kb-ac-row{padding:1px 8px} .kbedit .kb-ac-row.sel{background:var(--accent);color:#fff}
+  .kbedit .kb-conflicts{margin:6px 0;color:#e5c07b}
   .kbedit .kb-dlg-btns{display:flex;gap:12px;justify-content:flex-end;margin-top:10px}
   .kbedit .kb-btn{padding:2px 12px;border:1px solid #5a5a5a;border-radius:5px} .kbedit .kb-btn.focus{background:var(--accent);border-color:var(--accent);color:#fff}
   /* native auxiliary modals (keybindings / event-debug / theme-info) */
-  .auxmodal{z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;font-size:12px;max-height:80vh}
+  .auxmodal{z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;max-height:80vh}
   .auxmodal.centered{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:520px;max-width:80vw}
   .auxmodal.anchored{position:absolute;min-width:240px}
   .auxmodal .am-title{padding:5px 12px;font-weight:600;border-bottom:1px solid var(--border);background:var(--bg3)}
   .auxmodal .am-body{overflow:auto;padding:4px 0}
-  .auxmodal .am-line{padding:1px 12px;white-space:pre;font-family:ui-monospace,monospace;color:var(--fg)}
+  .auxmodal .am-line{padding:1px 12px;white-space:pre;color:var(--fg)}
   .auxmodal .am-line.sel{background:var(--menuhi);color:#fff}
-  .auxmodal .am-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);font-size:11px}
+  .auxmodal .am-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted)}
   /* native right-click / new-tab context menu */
-  .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;font-size:12px;min-width:160px}
+  .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;min-width:160px}
   .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
   .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
   /* floating / dock widget panel surfaces (native plugin UI). The surface is
@@ -309,7 +322,7 @@
      the fallback for list-less panels taller than their rect; when a list is
      present the flex chain makes the content fit exactly, so the surface
      never scrolls. */
-  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;font-size:12px;padding:4px 6px;
+  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;padding:4px 6px;
     display:flex;flex-direction:column}
   .widget-surface>.w-col,.widget-surface>.w-row{flex:1 1 auto;min-height:0}
   .widget-surface .w-list{flex:1 1 auto;min-height:0;overflow-y:auto}
@@ -322,7 +335,7 @@
 
   /* ---- popups (completion / hover / action / list / text) — native ---- */
   .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
-    border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;font-size:12px;display:flex;flex-direction:column}
+    border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;display:flex;flex-direction:column}
   .popup .popup-title{padding:3px 10px;color:var(--fg);background:#2d2d30;border-bottom:1px solid #3a3a3a;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .popup .popup-desc{padding:2px 10px;color:var(--muted);border-bottom:1px solid #3a3a3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .popup .popup-body{overflow:auto;max-height:60vh}
@@ -334,8 +347,7 @@
   .popup .popup-row.sel .pdetail{color:#dfe8ff}
   .popup .popup-row .picon{width:14px;text-align:center;flex:0 0 auto}
   .popup .popup-line{padding:0 10px;white-space:pre;color:var(--fg)}
-  svg.cells{display:block;width:100%;height:100%;
-    font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace}
+  svg.cells{display:block;width:100%;height:100%;font-family:var(--font-family)}
   #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
 
   /* ======================================================================
@@ -442,7 +454,7 @@
   /* ---- reconnect pill (client WS state, fixed corner) ---- */
   #reconnect{position:fixed;right:12px;bottom:10px;z-index:98;display:none;
     align-items:center;gap:8px;padding:5px 12px 5px 11px;border-radius:999px;
-    font-size:12px;font-weight:600;color:var(--fg);
+    font-weight:600;color:var(--fg);
     background:var(--surface);border:1px solid var(--hairline-strong);
     box-shadow:var(--shadow)}
   #reconnect.show{display:inline-flex}
@@ -574,7 +586,6 @@
      chrome is hidden and replaced with native touch bars.
      ====================================================================== */
   #mobile{display:none}
-  body.mobile{font-size:14px}
   body.mobile #mobile{display:block}
   body.mobile .menubar,body.mobile .tabbar,body.mobile .statusbar,
   body.mobile .scrollbar,body.mobile .thumb,body.mobile .separator,
@@ -588,9 +599,9 @@
   .m-logo{display:flex;align-items:center;gap:5px;font-weight:700;color:var(--fg);white-space:nowrap}
   .m-logo .m-spark{color:var(--accent)}
   .m-file{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    color:var(--muted);font-size:12.5px}
+    color:var(--muted)}
   .m-icon{flex:0 0 auto;width:30px;height:28px;display:flex;align-items:center;justify-content:center;
-    border-radius:var(--r-sm);color:var(--fg);font-size:15px}
+    border-radius:var(--r-sm);color:var(--fg);font-size:1.15em}
   .m-icon:active{background:var(--hover)}
   .m-icon.on{color:var(--on-accent);background:var(--accent)}
   /* Invisible capture input that raises/dismisses the native soft keyboard.
@@ -615,18 +626,18 @@
     border-bottom:1px solid var(--hairline);-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .m-syms::-webkit-scrollbar{display:none}
   .m-sym{flex:0 0 auto;min-width:32px;height:32px;padding:0 9px;display:flex;align-items:center;
-    justify-content:center;font:14px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    justify-content:center;line-height:1;
     color:var(--fg);background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-sm)}
   .m-sym:active{background:var(--hover)}
   .m-sym.m-save{margin-left:auto;color:var(--on-accent);background:var(--accent);
-    border-color:var(--accent);font-weight:700;font-family:inherit;padding:0 16px}
+    border-color:var(--accent);font-weight:700;padding:0 16px}
 
   /* Termux-style modifier / navigation row (optional; toggled from overflow). */
   .m-mods{display:flex;gap:6px;overflow-x:auto;padding:6px 8px;
     border-bottom:1px solid var(--hairline);-webkit-overflow-scrolling:touch;scrollbar-width:none}
   .m-mods::-webkit-scrollbar{display:none}
   .m-mod{flex:0 0 auto;min-width:34px;height:32px;padding:0 11px;display:flex;align-items:center;
-    justify-content:center;font-size:12.5px;color:var(--fg);background:var(--surface);
+    justify-content:center;color:var(--fg);background:var(--surface);
     border:1px solid var(--hairline);border-radius:var(--r-sm)}
   .m-mod:active{background:var(--hover)}
   /* armed sticky modifier (Ctrl/Alt/Shift held for the next key) */
@@ -638,15 +649,15 @@
   .m-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:2px;padding:7px 0 6px;color:var(--muted);border-radius:var(--r-sm)}
   .m-nav-item:active{background:var(--hover)}
-  .m-nav-item .m-nav-ic{font-size:17px;line-height:1}
-  .m-nav-item .m-nav-lb{font-size:10px;letter-spacing:.02em}
+  .m-nav-item .m-nav-ic{font-size:1.3em;line-height:1}
+  .m-nav-item .m-nav-lb{letter-spacing:.02em}
   .m-nav-item.active{color:var(--accent)}
 
   .m-status{display:flex;align-items:center;gap:0;height:22px;padding:0 6px;
     border-top:1px solid var(--hairline);background:var(--surface);overflow-x:auto;
     scrollbar-width:none;white-space:nowrap}
   .m-status::-webkit-scrollbar{display:none}
-  .m-status .m-seg{flex:0 0 auto;padding:0 7px;font-size:11px;color:var(--muted)}
+  .m-status .m-seg{flex:0 0 auto;padding:0 7px;color:var(--muted)}
   .m-status .m-seg.trust{color:var(--accent)}
 
   /* Panels/overlays become full-width sheets between the header and bottom stack. */
@@ -658,7 +669,6 @@
     width:96vw!important;top:42px!important;bottom:calc(var(--m-bottom,124px) + 6px)!important;
     height:auto!important;max-height:none!important;transform:none!important}
   body.mobile .settings-modal .set-cats{width:128px}
-  body.mobile .settings-modal .set-body{font-size:12px}
   body.mobile .kbedit .kb-context,body.mobile .kbedit .kb-source{display:none}
   body.mobile .kbedit .kb-key{width:11ch}
   body.mobile .kbedit .kb-action{width:18ch}
@@ -698,8 +708,14 @@ let scene = null;
 // keydown handler) multiplies the base font size; it is a pure view
 // preference persisted in localStorage (same class as mShowMods), never
 // editor state — the editor only sees the resulting cols/rows re-fit.
-const FONT_STACK = "ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace";
-const BASE_FONT = 13;             // CSS px at zoom 1.0
+// Family and base size come from the CSS custom properties (--font-family /
+// --font-size-base) so the stylesheet stays the single place typography is
+// declared: the same family and size the chrome inherits are what the cell grid
+// is measured with.
+const rootCss = getComputedStyle(document.documentElement);
+const FONT_STACK = rootCss.getPropertyValue("--font-family").trim()
+  || "ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace";
+const BASE_FONT = parseFloat(rootCss.getPropertyValue("--font-size-base")) || 13;  // CSS px at zoom 1.0
 const CELL_AIR = 1.0477;          // cell width / glyph advance (see above)
 let zoom = 1;
 try{ const z=parseFloat(localStorage.getItem("fresh.zoom")); if(z>=0.5&&z<=3) zoom=z; }catch(_){}
@@ -711,6 +727,10 @@ function measureMetrics(){
   const adv = measureCtx.measureText("M0".repeat(60)).width/120;  // per-cell advance
   CW = adv>0 ? Math.round(adv*CELL_AIR*100)/100 : 8.2*zoom;       // canvas-less fallback
   CH = Math.round(FONT*(18/13)*100)/100;
+  // Publish the zoomed size back to CSS: chrome sizes itself in em off
+  // --font-size, so the native UI scales with the buffer instead of staying
+  // pinned at the unzoomed base.
+  document.documentElement.style.setProperty("--font-size", FONT+"px");
 }
 measureMetrics();
 function setZoom(z){
