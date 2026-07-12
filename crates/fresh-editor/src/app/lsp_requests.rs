@@ -2692,6 +2692,16 @@ impl Editor {
 
         let mut total_changes = 0;
 
+        // Applying edits to a file opens it via `open_file`, which focuses
+        // it in the active split. For a cross-file edit (e.g. a rename
+        // invoked from a use site that also touches the definition's file)
+        // that steals the active tab away from the buffer the user was
+        // editing and drops them at the other buffer's stale cursor
+        // position. Remember what was focused so we can restore it once all
+        // edits are applied — a refactoring should never relocate the user
+        // (matches VS Code / Sublime / IntelliJ). Issue #2599.
+        let original_active = self.active_buffer();
+
         // Handle changes (map of URI -> Vec<TextEdit>)
         if let Some(changes) = workspace_edit.changes {
             for (uri, edits) in changes {
@@ -2746,6 +2756,16 @@ impl Editor {
                     }
                 }
             }
+        }
+
+        // Restore focus to the buffer the user was editing when the edit
+        // was invoked. Only if it still exists (a resource operation could
+        // have closed it) and focus actually moved (single-file edits leave
+        // it untouched, so this is a no-op there). `set_active_buffer`
+        // short-circuits when the buffer is already active.
+        if original_active != self.active_buffer() && self.buffers().get(&original_active).is_some()
+        {
+            self.set_active_buffer(original_active);
         }
 
         Ok(total_changes)

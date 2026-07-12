@@ -14,6 +14,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **LSP Rename**: a cross-file rename (F2) invoked from a use site no longer steals the active tab, jumping you to the definition's file at its stale cursor position; focus stays on the buffer you were editing, matching VS Code / Sublime / IntelliJ (#2599).
 * **Vi mode**: the indent operators `>>` / `<<` (with counts and motions like `>j`) and visual, visual-line, and visual-block `>` / `<` now shift lines by one level instead of doing nothing; `.` repeats them (#2438, #2606).
 * **Vi mode**: quote text objects `i"`/`a"` (and `'`/`` ` ``) now search forward on the line, so `ci"`/`di"` work from before the quotes — e.g. from the start of the line — instead of only when the cursor is already inside them (#2439).
 * **Vi mode**: the `a"` text object (and `'`/`` ` ``) now includes the trailing whitespace after the closing quote — falling back to leading whitespace when there is none — matching Vim's `:help aquote`, so `da"` on `the "quick" brown fox` leaves `the brown fox` instead of a stray double space (#2604).

@@ -2169,6 +2169,115 @@ fn test_handle_rename_response_with_document_changes() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Regression test for #2599: a cross-file rename (WorkspaceEdit touching a
+/// file other than the one the user is editing) must not steal the active
+/// tab. Applying edits opens each affected file, and opening focuses it —
+/// so before the fix the user was yanked to the definition's file at its
+/// stale cursor position. Focus must stay on the invoking buffer.
+#[test]
+fn test_cross_file_rename_keeps_focus_on_invoking_buffer() -> anyhow::Result<()> {
+    use lsp_types::{
+        DocumentChanges, OneOf, OptionalVersionedTextDocumentIdentifier, Position, Range,
+        TextDocumentEdit, TextEdit, WorkspaceEdit,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    let temp_dir = tempfile::tempdir()?;
+    let shapes_file = temp_dir.path().join("shapes.rs");
+    let main_file = temp_dir.path().join("main.rs");
+    std::fs::write(
+        &shapes_file,
+        "pub struct Circle {\n    pub radius: f64,\n}\n",
+    )?;
+    std::fs::write(
+        &main_file,
+        "mod shapes;\nuse shapes::Circle;\n\nfn main() {\n    let c = Circle { radius: 2.0 };\n}\n",
+    )?;
+
+    // Open the definition's file first, then the file the user is editing,
+    // so both buffers exist and `main.rs` is the active tab — the setup the
+    // issue describes (both files opened, rename invoked from the use site).
+    harness.open_file(&shapes_file)?;
+    harness.open_file(&main_file)?;
+    harness.render()?;
+
+    let main_buffer = harness.editor().active_buffer();
+
+    // Build a cross-file WorkspaceEdit renaming `radius` -> `rad`, editing
+    // the use site in main.rs AND the definition in shapes.rs.
+    let main_uri = fresh_core::file_uri::path_to_lsp_uri(&main_file).unwrap();
+    let shapes_uri = fresh_core::file_uri::path_to_lsp_uri(&shapes_file).unwrap();
+    let main_edit = TextDocumentEdit {
+        text_document: OptionalVersionedTextDocumentIdentifier {
+            uri: main_uri,
+            version: Some(1),
+        },
+        edits: vec![OneOf::Left(TextEdit {
+            range: Range {
+                start: Position {
+                    line: 4,
+                    character: 21,
+                },
+                end: Position {
+                    line: 4,
+                    character: 27,
+                },
+            },
+            new_text: "rad".to_string(),
+        })],
+    };
+    let shapes_edit = TextDocumentEdit {
+        text_document: OptionalVersionedTextDocumentIdentifier {
+            uri: shapes_uri,
+            version: Some(1),
+        },
+        edits: vec![OneOf::Left(TextEdit {
+            range: Range {
+                start: Position {
+                    line: 1,
+                    character: 8,
+                },
+                end: Position {
+                    line: 1,
+                    character: 14,
+                },
+            },
+            new_text: "rad".to_string(),
+        })],
+    };
+
+    let workspace_edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Edits(vec![main_edit, shapes_edit])),
+        change_annotations: None,
+    };
+
+    harness
+        .editor_mut()
+        .handle_rename_response(0, Ok(workspace_edit))?;
+    harness.render()?;
+
+    // Focus must remain on the buffer the user was editing.
+    assert_eq!(
+        harness.editor().active_buffer(),
+        main_buffer,
+        "Cross-file rename should keep focus on the invoking buffer (main.rs), not switch to the definition's file"
+    );
+
+    // Both files should still have been edited correctly.
+    assert!(
+        std::fs::read_to_string(&main_file)?.contains("let c = Circle { rad: 2.0 };")
+            || harness
+                .get_buffer_content()
+                .unwrap()
+                .contains("let c = Circle { rad: 2.0 };"),
+        "main.rs use site should be renamed to 'rad'"
+    );
+
+    Ok(())
+}
+
 /// Test that editor remains responsive while LSP is completely stuck
 ///
 /// This test verifies that the UI doesn't block when the LSP server is unresponsive.
