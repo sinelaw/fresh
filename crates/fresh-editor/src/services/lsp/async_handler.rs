@@ -357,7 +357,8 @@ impl LspClientState {
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        CompletionClientCapabilities, CompletionItemCapability,
+        CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
         DiagnosticWorkspaceClientCapabilities, DocumentFormattingClientCapabilities,
         DocumentHighlightClientCapabilities, DocumentRangeFormattingClientCapabilities,
         DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
@@ -432,6 +433,24 @@ fn create_client_capabilities() -> ClientCapabilities {
             // entitled to never register the provider. See sinelaw/fresh#2195.
             completion: Some(CompletionClientCapabilities {
                 dynamic_registration: Some(true),
+                // Advertise lazy resolution of `additionalTextEdits`. Servers
+                // like rust-analyzer only offer *auto-import* ("imports on the
+                // fly") completions — an unimported `HashMap` tagged with its
+                // `use std::collections::HashMap;` edit — when the client can
+                // resolve that import edit lazily via `completionItem/resolve`.
+                // Without this capability rust-analyzer gates those items off
+                // entirely (`enable_imports_on_the_fly` stays false), so the
+                // documented "auto-imports are applied when you accept a
+                // completion" behaviour can never trigger. We already send
+                // `completionItem/resolve` on accept and apply the resolved
+                // `additional_text_edits`, so all that is missing is the
+                // advertisement. See sinelaw/fresh#2603.
+                completion_item: Some(CompletionItemCapability {
+                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                        properties: vec!["additionalTextEdits".to_string()],
+                    }),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
@@ -5403,6 +5422,34 @@ mod tests {
                 "expected codeActionKind value_set to include {required:?}, got {kinds:?}",
             );
         }
+    }
+
+    /// rust-analyzer (and other servers that follow the same spec branch) only
+    /// offer *auto-import* / "imports on the fly" completions — an unimported
+    /// `HashMap` carrying its `use std::collections::HashMap;` edit — when the
+    /// client advertises that it can resolve `additionalTextEdits` lazily via
+    /// `completionItem/resolve`. Without it, those items are gated off entirely
+    /// and the documented auto-import-on-accept behaviour never triggers
+    /// (sinelaw/fresh#2603).
+    #[test]
+    fn completion_capability_advertises_additional_text_edits_resolve() {
+        let caps = create_client_capabilities();
+        let resolve = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .and_then(|ci| ci.resolve_support.as_ref())
+            .expect("completion completionItem.resolveSupport must be advertised");
+
+        assert!(
+            resolve
+                .properties
+                .iter()
+                .any(|p| p == "additionalTextEdits"),
+            "resolveSupport.properties must include \"additionalTextEdits\", got {:?}",
+            resolve.properties,
+        );
     }
 
     #[test]
