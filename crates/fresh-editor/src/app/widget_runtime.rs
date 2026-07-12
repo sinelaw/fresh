@@ -829,9 +829,7 @@ impl Editor {
                         // doesn't have a meaningful Up/Down (single-
                         // line Text, Button, Toggle, or no focus),
                         // route the arrow to the first scrollable
-                        // widget in the panel. Lets a filter input
-                        // stay focused for typing while arrows
-                        // navigate the adjacent list.
+                        // widget in the panel.
                         let scrollable = self
                             .widget_registry
                             .get(panel_key)
@@ -842,6 +840,9 @@ impl Editor {
                             });
                             match target_kind {
                                 Some(fresh_core::api::WidgetSpec::List { .. }) => {
+                                    // A List peek keeps the filter input
+                                    // focused for typing while the arrow moves
+                                    // the list selection.
                                     self.handle_widget_select_move_for_key(
                                         panel_key,
                                         &target_key,
@@ -849,11 +850,18 @@ impl Editor {
                                     );
                                 }
                                 Some(fresh_core::api::WidgetSpec::Tree { .. }) => {
-                                    self.handle_widget_tree_select_move_for_key(
-                                        panel_key,
-                                        &target_key,
-                                        delta,
-                                    );
+                                    // A Tree is a real (tabbable) focus target.
+                                    // Peek-forwarding here would move the tree's
+                                    // selection while the previously focused
+                                    // button/field keeps its focus ring — two
+                                    // focused elements at once, and Enter would
+                                    // still act on the button, not the
+                                    // highlighted row. Move focus *into* the
+                                    // tree so it becomes the single focused
+                                    // element; set_panel_focus_and_notify seeds
+                                    // its selection to the first visible row.
+                                    self.set_panel_focus_and_notify(panel_key, target_key.clone());
+                                    self.rerender_widget_panel(panel_key);
                                 }
                                 _ => {}
                             }
@@ -1077,12 +1085,104 @@ impl Editor {
         );
         self.widget_registry
             .set_focus_key(panel_key, new_key.clone());
+        // Keep exactly one focused element when focus crosses a Tree
+        // boundary: clear a blurred tree's selection and seed a newly
+        // focused tree's, so the tree's selected-row highlight never
+        // lingers next to another widget's focus ring (and Tab focus is
+        // never invisible).
+        self.sync_tree_focus_selection(panel_key, &old_key, &new_key);
         self.fire_widget_event(
             panel_key,
             new_key,
             "focus".to_string(),
             serde_json::json!({ "previous": old_key }),
         );
+    }
+
+    /// Keep the single-focus invariant consistent when focus moves
+    /// between a `Tree` widget and other controls in the same panel.
+    ///
+    /// A Tree renders a highlight on its selected row independent of the
+    /// panel focus — that is deliberate, so editor-driven match
+    /// navigation (`search_replace_next_match`) can highlight a row while
+    /// the panel is unfocused. The cost is that focus moving *within* the
+    /// panel could leave a toolbar button's focus ring next to a
+    /// highlighted tree row (two focused elements), or Tab onto the tree
+    /// with no visible selection (invisible focus). To keep exactly one
+    /// focused element:
+    ///   * clear the previously focused Tree's selection on blur, and
+    ///   * seed the newly focused Tree's selection to its first visible
+    ///     row when it has none.
+    fn sync_tree_focus_selection(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        old_key: &str,
+        new_key: &str,
+    ) {
+        if old_key != new_key && !old_key.is_empty() && self.widget_key_is_tree(panel_key, old_key)
+        {
+            if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                Self::set_widget_selected_index_state(panel, old_key, -1);
+            }
+        }
+        if !new_key.is_empty() && self.widget_key_is_tree(panel_key, new_key) {
+            let cur_sel = match self
+                .widget_registry
+                .get(panel_key)
+                .and_then(|p| p.instance_states.get(new_key))
+            {
+                Some(crate::widgets::WidgetInstanceState::Tree { selected_index, .. }) => {
+                    *selected_index
+                }
+                _ => -1,
+            };
+            if cur_sel < 0 {
+                if let Some(first) = self.first_visible_tree_index(panel_key, new_key) {
+                    if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                        Self::set_widget_selected_index_state(panel, new_key, first);
+                    }
+                }
+            }
+        }
+    }
+
+    /// True when `key` names a `Tree` widget in `panel_key`'s spec.
+    fn widget_key_is_tree(&self, panel_key: &crate::widgets::PanelKey, key: &str) -> bool {
+        self.widget_registry
+            .get(panel_key)
+            .and_then(|p| crate::widgets::find_widget_by_key(&p.spec, key))
+            .map(|w| matches!(w, fresh_core::api::WidgetSpec::Tree { .. }))
+            .unwrap_or(false)
+    }
+
+    /// First visible (un-collapsed) absolute node index of the Tree at
+    /// `tree_key`, honoring the host's instance-state expansion set
+    /// (falling back to the spec's initial `expanded_keys`). `None` when
+    /// the widget isn't a Tree or has no visible rows.
+    fn first_visible_tree_index(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+        tree_key: &str,
+    ) -> Option<i32> {
+        let panel = self.widget_registry.get(panel_key)?;
+        let (nodes, item_keys, spec_expanded) =
+            match crate::widgets::find_widget_by_key(&panel.spec, tree_key)? {
+                fresh_core::api::WidgetSpec::Tree {
+                    nodes,
+                    item_keys,
+                    expanded_keys,
+                    ..
+                } => (nodes, item_keys, expanded_keys),
+                _ => return None,
+            };
+        let expanded = match panel.instance_states.get(tree_key) {
+            Some(crate::widgets::WidgetInstanceState::Tree { expanded_keys, .. }) => {
+                expanded_keys.clone()
+            }
+            _ => spec_expanded.iter().cloned().collect(),
+        };
+        let visible = collect_visible_tree_indices(nodes, item_keys, &expanded);
+        visible.first().map(|&i| i as i32)
     }
 
     fn handle_widget_activate(&mut self, panel_key: &crate::widgets::PanelKey) {

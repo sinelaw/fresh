@@ -220,6 +220,71 @@ fn test_search_replace_toggle_selection() {
     );
 }
 
+/// Regression (issue #2664): the panel must keep exactly one focused
+/// element. Pressing Down while a toolbar toggle is focused has to move
+/// focus *into* the results tree — so the next key acts on the
+/// highlighted match — instead of "peeking" the tree selection while the
+/// toggle keeps its focus ring. Before the fix, Down left focus on the
+/// toggle, so Space toggled the Case option and every match row stayed
+/// selected; with the fix Space deselects the focused file node's matches.
+#[test]
+fn test_search_replace_arrow_from_toolbar_focuses_results() {
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    create_test_files(&project_root);
+
+    let start_file = project_root.join("alpha.txt");
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+
+    // Type the pattern with focus on the search field (no Tab to replace).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search:"))
+        .unwrap();
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    // Wait for streamed results across both matching files. Match rows
+    // render as `[v] alpha.txt:1 - …`; the `filename:` distinguishes a
+    // match row from the always-present option toggles.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("alpha.txt:") && s.contains("beta.txt:")
+        })
+        .unwrap();
+
+    // Move focus onto a toolbar toggle: Search → Replace → All Files → Case.
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+
+    // Down must move focus into the results tree (the first file node),
+    // not peek the selection while the Case toggle keeps focus.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    // Space on the focused, checkable file node deselects its matches.
+    // Without the fix this Space would toggle the Case option instead and
+    // no match row would ever show `[ ]`, so this wait hangs (the intended
+    // "fails without the change" reproducer).
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.contains("alpha.txt:") && l.contains("[ ]"))
+        })
+        .unwrap();
+}
+
 /// Escape closes the panel without performing any replacements.
 #[test]
 fn test_search_replace_escape_closes_panel() {
