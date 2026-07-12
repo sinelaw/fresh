@@ -453,6 +453,50 @@ fn test_keyboard_down_wraps() {
     );
 }
 
+// ── keyboard grab (#2587) ─────────────────────────────────────────────────────
+
+/// While the context menu is open it grabs the keyboard: printable keys must
+/// not leak into the tree's type-ahead find underneath. Without the grab,
+/// typing activates the explorer search — the title renders ` /<query> ` —
+/// and silently retargets the selection the menu's actions operate on.
+#[test]
+fn test_context_menu_grabs_keyboard_printable_keys() {
+    let mut h = EditorTestHarness::with_temp_project(100, 30).unwrap();
+    let root = h.project_dir().unwrap();
+    fs::write(root.join("alpha.txt"), "a").unwrap();
+    fs::create_dir(root.join("subdir")).unwrap();
+
+    h.editor_mut().focus_file_explorer();
+    h.wait_for_file_explorer().unwrap();
+    h.wait_for_file_explorer_item("alpha.txt").unwrap();
+
+    // Open the context menu on a file row.
+    h.mouse_right_click(EXPLORER_COL, 3).unwrap();
+    assert!(context_menu_visible(&h), "context menu should open");
+
+    // Type printable characters while the menu is open.
+    for c in ['s', 'u', 'b'] {
+        h.send_key(KeyCode::Char(c), KeyModifiers::NONE).unwrap();
+    }
+    h.render().unwrap();
+
+    let screen = h.screen_to_string();
+    // The type-ahead find renders its query as ` /<query> ` in the explorer
+    // title — it must be absent, since the keys were aimed at the open menu.
+    assert!(
+        !screen.contains(" /sub"),
+        "typing while the context menu is open must not activate the explorer \
+         type-ahead find. Screen:\n{}",
+        screen
+    );
+    // The menu is still up and usable.
+    assert!(
+        context_menu_visible(&h),
+        "context menu should stay open after printable keys. Screen:\n{}",
+        screen
+    );
+}
+
 // ── hover highlight ──────────────────────────────────────────────────────────
 
 /// Hovering over context menu items updates the highlighted item without

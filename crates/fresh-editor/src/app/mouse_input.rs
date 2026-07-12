@@ -3624,8 +3624,18 @@ impl Editor {
         Some(Ok(()))
     }
 
-    /// Handle keyboard navigation for the file explorer context menu.
-    /// Returns `Some` if the key was consumed, `None` to let normal dispatch continue.
+    /// Handle keyboard input for the file explorer right-click context menu.
+    ///
+    /// Modal like [`handle_tab_context_menu_key`]: while the menu is open it
+    /// **grabs the keyboard**. Up/Down navigate, Enter activates the
+    /// highlighted item, Esc dismisses, and every other key — printable
+    /// characters, Backspace, modified chords — is swallowed so it can't leak
+    /// into the tree's type-ahead find underneath and silently retarget the
+    /// selection the menu acts on (#2587). This mirrors the 0.4.2 keyboard
+    /// grab already applied to the tab context menu and the "+" new-tab popup.
+    ///
+    /// Returns `Some` whenever the menu is open, `None` only when there is no
+    /// menu so normal dispatch continues.
     pub(super) fn handle_file_explorer_context_menu_key(
         &mut self,
         code: crossterm::event::KeyCode,
@@ -3634,41 +3644,50 @@ impl Editor {
         use crossterm::event::KeyCode;
         use crossterm::event::KeyModifiers;
 
-        if modifiers != KeyModifiers::NONE {
-            return None;
+        // Only act while the menu is actually open; otherwise fall through to
+        // normal dispatch.
+        self.active_window().file_explorer_context_menu.as_ref()?;
+
+        // Navigation/activation keys act only when unmodified.
+        if modifiers == KeyModifiers::NONE {
+            match code {
+                KeyCode::Up => {
+                    if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu
+                    {
+                        menu.prev_item();
+                    }
+                    return Some(Ok(()));
+                }
+                KeyCode::Down => {
+                    if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu
+                    {
+                        menu.next_item();
+                    }
+                    return Some(Ok(()));
+                }
+                KeyCode::Enter => {
+                    let item = {
+                        let menu = self
+                            .active_window_mut()
+                            .file_explorer_context_menu
+                            .as_ref()?;
+                        menu.items()[menu.highlighted]
+                    };
+                    self.active_window_mut().file_explorer_context_menu = None;
+                    self.execute_file_explorer_context_menu_action(item);
+                    return Some(Ok(()));
+                }
+                KeyCode::Esc => {
+                    self.active_window_mut().file_explorer_context_menu = None;
+                    return Some(Ok(()));
+                }
+                _ => {}
+            }
         }
 
-        match code {
-            KeyCode::Up => {
-                if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu {
-                    menu.prev_item();
-                }
-                Some(Ok(()))
-            }
-            KeyCode::Down => {
-                if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu {
-                    menu.next_item();
-                }
-                Some(Ok(()))
-            }
-            KeyCode::Enter => {
-                let item = {
-                    let menu = self
-                        .active_window_mut()
-                        .file_explorer_context_menu
-                        .as_ref()?;
-                    menu.items()[menu.highlighted]
-                };
-                self.active_window_mut().file_explorer_context_menu = None;
-                self.execute_file_explorer_context_menu_action(item);
-                Some(Ok(()))
-            }
-            KeyCode::Esc => {
-                self.active_window_mut().file_explorer_context_menu = None;
-                Some(Ok(()))
-            }
-            _ => None,
-        }
+        // Modal: swallow every other key while the menu is open so nothing
+        // leaks into the type-ahead find beneath it.
+        Some(Ok(()))
     }
 
     /// Handle left-click on the file explorer context menu
