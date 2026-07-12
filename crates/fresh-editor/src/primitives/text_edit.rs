@@ -148,19 +148,21 @@ impl TextEdit {
     /// Move the cursor to the position designated by a flat UTF-8 byte
     /// offset into `value()`. Clears any active selection (matching the
     /// other non-selecting cursor-move methods). Clamps to the value's
-    /// length and snaps to the nearest preceding char boundary.
+    /// length and snaps down to the nearest grapheme-cluster boundary, so
+    /// an externally computed offset (e.g. from a mouse click) can never
+    /// land the caret between the codepoints of a single cluster — Thai
+    /// combining marks, emoji ZWJ sequences, flags — matching how
+    /// `move_left`/`move_right` traverse the value.
     pub fn set_cursor_from_flat(&mut self, byte: usize) {
         self.clear_selection();
         let total = self.value().len();
         let mut remaining = byte.min(total);
         for (i, line) in self.lines.iter().enumerate() {
             if remaining <= line.len() {
-                let mut col = remaining;
-                while col > 0 && !line.is_char_boundary(col) {
-                    col -= 1;
-                }
                 self.cursor_row = i;
-                self.cursor_col = col;
+                self.cursor_col = crate::primitives::grapheme::snap_to_grapheme_boundary(
+                    line, remaining,
+                );
                 return;
             }
             remaining -= line.len() + 1; // step past the line and its trailing '\n'
@@ -765,6 +767,28 @@ mod tests {
         let mut edit = TextEdit::single_line_with_text("é");
         edit.set_cursor_from_flat(1);
         assert_eq!(edit.cursor_col, 0);
+    }
+
+    #[test]
+    fn test_set_cursor_from_flat_snaps_to_grapheme_boundary() {
+        // Decomposed "é" = 'e' + combining acute (U+0301, 2 bytes) is one
+        // grapheme cluster spanning 3 bytes. Byte 1 is a valid *char*
+        // boundary (between 'e' and the mark) but lands mid-cluster; the
+        // caret must snap back to the cluster start (0), not sit inside it.
+        let mut edit = TextEdit::single_line_with_text("e\u{301}");
+        edit.set_cursor_from_flat(1);
+        assert_eq!(edit.cursor_col, 0);
+        // Byte 3 (past the whole cluster) is the end boundary — kept as-is.
+        edit.set_cursor_from_flat(3);
+        assert_eq!(edit.cursor_col, 3);
+
+        // Thai "ที่" is a single 9-byte cluster; any interior offset snaps
+        // to its start, and the trailing 'x' stays reachable at its start.
+        let mut thai = TextEdit::single_line_with_text("ที่x");
+        thai.set_cursor_from_flat(6);
+        assert_eq!(thai.cursor_col, 0);
+        thai.set_cursor_from_flat(9);
+        assert_eq!(thai.cursor_col, 9);
     }
 
     #[test]

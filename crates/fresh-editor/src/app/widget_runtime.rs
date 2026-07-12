@@ -2786,21 +2786,17 @@ impl Editor {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as usize;
 
-        // Translate the click's field byte → value byte. A click left of
-        // the value (label / `[` / gutter) clamps to the start; a click
-        // on the `…` ellipsis maps to the first visible byte; a click
-        // past the last character clamps to end-of-value.
-        let rel = offset_in_field.saturating_sub(inner_start);
-        let value_byte = if ellipsis > 0 {
-            if rel < ellipsis {
-                dropped
-            } else {
-                dropped + (rel - ellipsis)
-            }
-        } else {
-            rel
-        }
-        .min(value_len);
+        // Translate the click's field byte → value byte (shared with the
+        // Settings entry dialog). `offset_in_field` already rebased the
+        // click by `hit_byte_start`, so pass `byte_start = 0` here.
+        let value_byte = crate::app::mouse_input::widget_row_byte_to_value_byte(
+            offset_in_field,
+            0,
+            inner_start,
+            dropped,
+            ellipsis,
+            value_len,
+        );
 
         self.with_focused_text_editor(panel_key, |editor| editor.set_cursor_from_flat(value_byte));
     }

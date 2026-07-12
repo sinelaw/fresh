@@ -877,6 +877,62 @@ impl Editor {
         Ok(false)
     }
 
+    /// Map a click on a single-line `Text` control to a byte offset in
+    /// its value, so the caret lands where the user clicked (#2573).
+    ///
+    /// Rather than re-derive the field's label/bracket/truncation layout
+    /// by hand, this replays the exact widget render the dialog drew
+    /// (`setting_control_to_widget_aligned` → `render_spec_no_autofocus`)
+    /// and reads the value-layout breadcrumbs back off the field's `focus`
+    /// hit area — the same geometry inversion `render::hit_rect` uses, and
+    /// the same `screen_col_to_byte` / value-byte mapping the widget-panel
+    /// click path uses. Returns `None` for non-text controls or when the
+    /// render produced no text hit (e.g. an empty item name → no key).
+    fn entry_text_click_to_value_byte(
+        control: &SettingControl,
+        item_name: &str,
+        label_col_width: u16,
+        control_area_x: u16,
+        control_area_width: u16,
+        click_col: u16,
+    ) -> Option<usize> {
+        if !matches!(control, SettingControl::Text(_)) {
+            return None;
+        }
+        // Mirrors `render_entry_items`: the control is indented by the
+        // 3-col focus-indicator gutter, and the widget's own label column
+        // is the dialog-wide width minus that gutter.
+        const FOCUS_INDICATOR_WIDTH: u16 = 3;
+        let spec = crate::view::settings::widget_map::setting_control_to_widget_aligned(
+            item_name,
+            control,
+            Some(label_col_width.saturating_sub(FOCUS_INDICATOR_WIDTH)),
+        );
+        let out = crate::widgets::render_spec_no_autofocus(
+            &spec,
+            &std::collections::HashMap::new(),
+            "",
+            control_area_width.max(1) as u32,
+        );
+        let hit = out
+            .hits
+            .iter()
+            .find(|h| h.widget_kind == "text" && h.event_type == "focus")?;
+        let entry = out.entries.get(hit.buffer_row as usize)?;
+        let row_text = entry.text.trim_end_matches('\n');
+        let click_in_row = click_col.saturating_sub(control_area_x) as usize;
+        let row_byte = crate::app::mouse_input::screen_col_to_byte(row_text, click_in_row);
+        let field = |k: &str| hit.payload.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        Some(crate::app::mouse_input::widget_row_byte_to_value_byte(
+            row_byte,
+            hit.byte_start,
+            field("valueInnerStart"),
+            field("valueDropped"),
+            field("ellipsisBytes"),
+            field("valueLen"),
+        ))
+    }
+
     fn handle_entry_dialog_item_click(
         &mut self,
         col: u16,
@@ -952,12 +1008,45 @@ impl Editor {
                 if matches!(item.control, SettingControl::TextList(_)) {
                     return self.handle_text_list_click(idx, sub_row, col, layout);
                 }
+                // Click-to-position: resolve the clicked column to a value
+                // byte before mutating the dialog (the immutable `item`
+                // borrow is still live here). `label_col_width` mirrors
+                // `render_settings_entry_dialog`'s dialog-wide computation.
+                let click_byte = if matches!(item.control, SettingControl::Text(_)) {
+                    const FOCUS_INDICATOR_WIDTH: u16 = 3;
+                    let max_label_width = (layout.inner_width / 2).max(20);
+                    let label_col_width = dialog
+                        .items
+                        .iter()
+                        .map(|it| it.name.len() as u16 + 2)
+                        .filter(|&w| w <= max_label_width)
+                        .max()
+                        .unwrap_or(20)
+                        .min(max_label_width);
+                    Self::entry_text_click_to_value_byte(
+                        &item.control,
+                        &item.name,
+                        label_col_width,
+                        layout.inner_x + FOCUS_INDICATOR_WIDTH,
+                        layout.inner_width.saturating_sub(FOCUS_INDICATOR_WIDTH),
+                        col,
+                    )
+                } else {
+                    None
+                };
                 dialog.focus_on_buttons = false;
                 dialog.field_button_focus = None;
                 dialog.selected_item = idx;
                 dialog.update_focus_states();
                 if !dialog.editing_text {
                     dialog.start_editing();
+                }
+                // Place the caret after `start_editing` (which seeds the
+                // cursor at end-of-value), so the click position wins.
+                if let Some(byte) = click_byte {
+                    if let SettingControl::Text(ts) = &mut dialog.items[idx].control {
+                        ts.editor.set_cursor_from_flat(byte);
+                    }
                 }
                 return Ok(true);
             }

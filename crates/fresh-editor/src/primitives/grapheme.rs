@@ -97,6 +97,42 @@ pub fn grapheme_at(s: &str, pos: usize) -> Option<(&str, usize, usize)> {
     None
 }
 
+/// Snap a byte position **down** to the nearest grapheme-cluster
+/// boundary at or before it.
+///
+/// Unlike [`prev_grapheme_boundary`], a `pos` that already sits on a
+/// boundary is returned unchanged — this is the "don't land inside a
+/// cluster" clamp used when placing the cursor from an externally
+/// computed byte offset (e.g. a mouse click), not a movement operation.
+///
+/// # Examples
+/// ```ignore
+/// let s = "aที่b"; // 'a'(1) + Thai cluster(9) + 'b'(1)
+/// assert_eq!(snap_to_grapheme_boundary(s, 1), 1);  // already a boundary
+/// assert_eq!(snap_to_grapheme_boundary(s, 5), 1);  // inside the cluster → its start
+/// assert_eq!(snap_to_grapheme_boundary(s, 10), 10); // cluster end / 'b' start
+/// ```
+#[inline]
+pub fn snap_to_grapheme_boundary(s: &str, pos: usize) -> usize {
+    if pos == 0 || s.is_empty() {
+        return 0;
+    }
+    if pos >= s.len() {
+        return s.len();
+    }
+    let mut last_boundary = 0;
+    for (idx, _) in s.grapheme_indices(true) {
+        if idx == pos {
+            return pos;
+        }
+        if idx > pos {
+            break;
+        }
+        last_boundary = idx;
+    }
+    last_boundary
+}
+
 /// Count the number of grapheme clusters in a string.
 ///
 /// This is what users would count as "characters".
@@ -138,6 +174,23 @@ mod tests {
 
         // From middle of grapheme, prev should go to start
         assert_eq!(prev_grapheme_boundary(s, 3), 0);
+    }
+
+    #[test]
+    fn test_snap_to_grapheme_boundary() {
+        // ASCII: every byte is a boundary, so nothing moves.
+        assert_eq!(snap_to_grapheme_boundary("hello", 3), 3);
+        assert_eq!(snap_to_grapheme_boundary("hello", 0), 0);
+        assert_eq!(snap_to_grapheme_boundary("hello", 99), 5);
+
+        // Thai cluster (9 bytes) + 'x': interior offsets snap to the
+        // cluster start; the boundary at its end is preserved.
+        let s = "ที่x";
+        assert_eq!(snap_to_grapheme_boundary(s, 0), 0);
+        assert_eq!(snap_to_grapheme_boundary(s, 3), 0); // mid-cluster
+        assert_eq!(snap_to_grapheme_boundary(s, 6), 0); // mid-cluster
+        assert_eq!(snap_to_grapheme_boundary(s, 9), 9); // cluster end / 'x' start
+        assert_eq!(snap_to_grapheme_boundary(s, 10), 10); // end of string
     }
 
     #[test]
