@@ -1401,7 +1401,14 @@ impl crate::app::window::Window {
         };
 
         let enable_inlay_hints = self.resources.config.editor.enable_inlay_hints;
-        let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
+        // Per-server last result_ids for this URI, snapshotted before the
+        // `&mut self.lsp` borrow below. Diagnostics is a merged feature, so
+        // each diagnostic-capable server is pulled with its own cursor.
+        let previous_result_ids = self
+            .diagnostic_result_ids
+            .get(uri.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         // Get buffer line count and version for inlay hints
         let (last_line, last_char, buffer_version) = self
@@ -1454,14 +1461,15 @@ impl crate::app::window::Window {
                 // check returns `None` (capabilities aren't known until the
                 // `initialize` response arrives); the `LspInitialized`
                 // handler replays these requests once capabilities land.
-                if let Some(sh) =
-                    lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
+                for sh in
+                    lsp.handles_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
                 {
                     let request_id = {
                         let id = *__next_id;
                         *__next_id += 1;
                         id
                     };
+                    let previous_result_id = previous_result_ids.get(&sh.name).cloned();
                     if let Err(e) = sh.handle.document_diagnostic(
                         request_id,
                         uri.as_uri().clone(),
@@ -1470,8 +1478,9 @@ impl crate::app::window::Window {
                         tracing::debug!("Failed to request pull diagnostics: {}", e);
                     } else {
                         tracing::info!(
-                            "Requested pull diagnostics for {} (request_id={})",
+                            "Requested pull diagnostics for {} from '{}' (request_id={})",
                             uri.as_str(),
+                            sh.name,
                             request_id
                         );
                     }

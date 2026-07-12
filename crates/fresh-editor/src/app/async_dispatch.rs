@@ -248,11 +248,18 @@ impl Editor {
                 AsyncMessage::LspPulledDiagnostics {
                     request_id: _,
                     uri,
+                    server_name,
                     result_id,
                     diagnostics,
                     unchanged,
                 } => {
-                    self.handle_lsp_pulled_diagnostics(uri, result_id, diagnostics, unchanged);
+                    self.handle_lsp_pulled_diagnostics(
+                        uri,
+                        server_name,
+                        result_id,
+                        diagnostics,
+                        unchanged,
+                    );
                 }
                 AsyncMessage::LspInlayHints {
                     request_id,

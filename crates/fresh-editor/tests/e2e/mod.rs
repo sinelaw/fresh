@@ -127,6 +127,7 @@ pub mod lsp_inlay_hints_capability;
 pub mod lsp_lifecycle_visibility;
 pub mod lsp_missing_binary_and_dismiss;
 pub mod lsp_multi_semantic_tokens;
+pub mod lsp_multi_server_diagnostic_pull;
 pub mod lsp_no_config;
 pub mod lsp_order;
 pub mod lsp_popup_focus_keybinding;

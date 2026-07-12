@@ -221,42 +221,61 @@ impl Editor {
     pub(super) fn handle_lsp_pulled_diagnostics(
         &mut self,
         uri: String,
+        server_name: String,
         result_id: Option<String>,
         diagnostics: Vec<Diagnostic>,
         unchanged: bool,
     ) {
+        // Drop reports from servers that have since been shut down, matching
+        // the push path — queued messages can outlive the server.
+        if let Some(lsp) = self.lsp() {
+            if !lsp.has_server_named(&server_name) {
+                tracing::debug!(
+                    "Dropping pulled diagnostics from stopped server '{}' for {}",
+                    server_name,
+                    uri
+                );
+                return;
+            }
+        }
+
+        // Store result_id (per-server) even on an unchanged report so the
+        // next pull for this server keeps sending the correct cursor.
+        if let Some(result_id) = result_id {
+            self.active_window_mut()
+                .diagnostic_result_ids
+                .entry(uri.clone())
+                .or_default()
+                .insert(server_name.clone(), result_id);
+        }
+
         if unchanged {
-            tracing::debug!(
-                "Diagnostics unchanged for {} (result_id: {:?})",
-                uri,
-                result_id
-            );
+            tracing::debug!("Diagnostics unchanged for {} from '{}'", uri, server_name);
             return;
         }
 
         tracing::debug!(
-            "Processing {} pulled diagnostics for {} (result_id: {:?})",
+            "Processing {} pulled diagnostics for {} from '{}'",
             diagnostics.len(),
             uri,
-            result_id
+            server_name
         );
 
-        // Store result_id for incremental updates
-        if let Some(result_id) = result_id {
-            self.active_window_mut()
-                .diagnostic_result_ids
-                .insert(uri.clone(), result_id);
-        }
-
         let anchored = self.anchor_diagnostics(&uri, diagnostics);
+        let server_map = self
+            .active_window_mut()
+            .stored_pull_diagnostics
+            .entry(uri.clone())
+            .or_default();
         if anchored.is_empty() {
-            self.active_window_mut()
-                .stored_pull_diagnostics
-                .remove(&uri);
+            server_map.remove(&server_name);
+            if server_map.is_empty() {
+                self.active_window_mut()
+                    .stored_pull_diagnostics
+                    .remove(&uri);
+            }
         } else {
-            self.active_window_mut()
-                .stored_pull_diagnostics
-                .insert(uri.clone(), anchored);
+            server_map.insert(server_name, anchored);
         }
 
         self.merge_and_apply_diagnostics(&uri);
@@ -264,23 +283,29 @@ impl Editor {
 
     /// Clear all diagnostics originating from a specific server.
     ///
-    /// Removes the server's entries from `stored_push_diagnostics`, then
+    /// Removes the server's entries from both `stored_push_diagnostics`
+    /// and `stored_pull_diagnostics` (plus its per-server result_id), then
     /// re-merges and re-applies diagnostics for every affected URI so that
     /// overlays on screen are updated immediately.
     pub(crate) fn clear_diagnostics_for_server(&mut self, server_name: &str) {
-        // Collect URIs that have diagnostics from this server.
-        let affected_uris: Vec<String> = self
-            .active_window()
-            .stored_push_diagnostics
-            .iter()
-            .filter_map(|(uri, server_map)| {
-                if server_map.contains_key(server_name) {
-                    Some(uri.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        // Collect URIs that have push or pull diagnostics from this server.
+        let mut affected_uris: Vec<String> = {
+            let win = self.active_window();
+            let mut uris: std::collections::HashSet<String> = win
+                .stored_push_diagnostics
+                .iter()
+                .filter(|(_, sm)| sm.contains_key(server_name))
+                .map(|(uri, _)| uri.clone())
+                .collect();
+            uris.extend(
+                win.stored_pull_diagnostics
+                    .iter()
+                    .filter(|(_, sm)| sm.contains_key(server_name))
+                    .map(|(uri, _)| uri.clone()),
+            );
+            uris.into_iter().collect()
+        };
+        affected_uris.sort();
 
         if affected_uris.is_empty() {
             return;
@@ -293,6 +318,22 @@ impl Editor {
         );
 
         for uri in &affected_uris {
+            if let Some(server_map) = self
+                .active_window_mut()
+                .stored_pull_diagnostics
+                .get_mut(uri)
+            {
+                server_map.remove(server_name);
+                if server_map.is_empty() {
+                    self.active_window_mut().stored_pull_diagnostics.remove(uri);
+                }
+            }
+            if let Some(id_map) = self.active_window_mut().diagnostic_result_ids.get_mut(uri) {
+                id_map.remove(server_name);
+                if id_map.is_empty() {
+                    self.active_window_mut().diagnostic_result_ids.remove(uri);
+                }
+            }
             if let Some(server_map) = self
                 .active_window_mut()
                 .stored_push_diagnostics
@@ -981,30 +1022,11 @@ impl Editor {
         let Some(__win) = self.windows.get_mut(&__active_id) else {
             return;
         };
-        let diagnostic_result_ids = &__win.diagnostic_result_ids;
-        let lsp = &mut __win.lsp;
-        let Some(sh) = lsp.handle_for_feature_mut(language, crate::types::LspFeature::Diagnostics)
-        else {
-            return;
-        };
-        let client = &mut sh.handle;
-        let __next_id = &mut __win.next_lsp_request_id;
 
+        // Fan each URI out to every diagnostic-capable server (merged
+        // feature), not just the first-listed one.
         for uri in uris {
-            let request_id = *__next_id;
-            *__next_id += 1;
-            let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
-            if let Err(e) =
-                client.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
-            {
-                tracing::debug!("Failed to re-pull diagnostics for {}: {}", uri.as_str(), e);
-            } else {
-                tracing::info!(
-                    "Re-pulling diagnostics for {} (request_id={})",
-                    uri.as_str(),
-                    request_id
-                );
-            }
+            __win.pull_diagnostics_for_uri(language, &uri);
         }
     }
 

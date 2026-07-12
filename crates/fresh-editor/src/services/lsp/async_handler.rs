@@ -2384,6 +2384,7 @@ impl LspState {
                     let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
                         request_id,
                         uri: uri_string,
+                        server_name: (*self.server_name).clone(),
                         result_id,
                         diagnostics,
                         unchanged: false,
@@ -2405,6 +2406,7 @@ impl LspState {
                     let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
                         request_id,
                         uri: uri_string,
+                        server_name: (*self.server_name).clone(),
                         result_id: Some(result_id),
                         diagnostics: Vec::new(),
                         unchanged: true,
@@ -2418,6 +2420,7 @@ impl LspState {
                     let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
                         request_id,
                         uri: uri_string,
+                        server_name: (*self.server_name).clone(),
                         result_id: None,
                         diagnostics: Vec::new(),
                         unchanged: false,
@@ -2432,6 +2435,7 @@ impl LspState {
                 let _ = self.async_tx.send(AsyncMessage::LspPulledDiagnostics {
                     request_id,
                     uri: uri.as_str().to_string(),
+                    server_name: (*self.server_name).clone(),
                     result_id: None,
                     diagnostics: Vec::new(),
                     unchanged: false,
@@ -3522,6 +3526,7 @@ impl LspTask {
                         let _ = state.async_tx.send(AsyncMessage::LspPulledDiagnostics {
                             request_id,
                             uri: uri.as_str().to_string(),
+                            server_name: (*state.server_name).clone(),
                             result_id: None,
                             diagnostics: Vec::new(),
                             unchanged: false,

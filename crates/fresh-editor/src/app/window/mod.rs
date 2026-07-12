@@ -627,10 +627,14 @@ pub struct Window {
     /// overlays, and buffers are per-window, so the namespace follows.
     pub lsp_diagnostic_namespace: crate::view::overlay::OverlayNamespace,
 
-    /// Last `result_id` seen from the LSP server per URI for incremental
-    /// pull diagnostics. Per-window because each window has its own
-    /// LSP manager and therefore its own result-id stream.
-    pub diagnostic_result_ids: HashMap<String, String>,
+    /// Last `result_id` seen per URI *and per server* for incremental
+    /// pull diagnostics. Keyed URI → server name → result_id. Per-server
+    /// because `Diagnostics` is a merged feature: several servers (e.g.
+    /// `ruff` + `ty`) can each pull-serve the same URI with their own
+    /// independent result-id streams, so a single shared id would send
+    /// one server's cursor to another. Per-window because each window has
+    /// its own LSP manager.
+    pub diagnostic_result_ids: HashMap<String, HashMap<String, String>>,
 
     /// `$/progress` token → progress info for this window's LSP servers.
     /// Drives the spinner in the status bar's LSP pill. Per-window
@@ -674,11 +678,15 @@ pub struct Window {
     /// position tracks edits between re-publishes via `CoordMap` (#2602).
     pub stored_push_diagnostics: HashMap<String, HashMap<String, Vec<AnchoredDiagnostic>>>,
 
-    /// Pull-model diagnostics (rust-analyzer-style native pull)
-    /// keyed by URI. Independent of `stored_push_diagnostics`; the
-    /// two are merged into `stored_diagnostics` for plugin / overlay
-    /// consumption.
-    pub stored_pull_diagnostics: HashMap<String, Vec<AnchoredDiagnostic>>,
+    /// Pull-model diagnostics (rust-analyzer-style native pull) keyed by
+    /// URI, then by server name — mirroring `stored_push_diagnostics`.
+    /// `Diagnostics` is a merged feature, so multiple servers (e.g.
+    /// `ruff` + `ty` for Python) can each pull-serve the same URI; keying
+    /// by server keeps their results from clobbering one another (#2615).
+    /// Independent of `stored_push_diagnostics`; both are merged into
+    /// `stored_diagnostics`. Each entry carries a byte anchor so its
+    /// position tracks edits between re-pulls via `CoordMap` (#2602).
+    pub stored_pull_diagnostics: HashMap<String, HashMap<String, Vec<AnchoredDiagnostic>>>,
 
     /// Merged view of push + pull diagnostics with every position mapped
     /// forward to the buffer's current version, exposed to plugins and read
@@ -2814,33 +2822,79 @@ impl Window {
             return false;
         };
 
-        let previous_result_id = self.diagnostic_result_ids.get(uri.as_str()).cloned();
-        let request_id = self.next_lsp_request_id;
-        self.next_lsp_request_id += 1;
-
-        let lsp = &mut self.lsp;
-        let Some(sh) = lsp.handle_for_feature_mut(&language, crate::types::LspFeature::Diagnostics)
-        else {
-            return false;
-        };
-        if let Err(e) =
-            sh.handle
-                .document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
-        {
-            tracing::debug!(
-                "Failed to pull diagnostics after edit for {}: {}",
-                uri.as_str(),
-                e
-            );
-        } else {
-            tracing::debug!(
-                "Pulling diagnostics after edit for {} (request_id={})",
-                uri.as_str(),
-                request_id
-            );
-        }
+        self.pull_diagnostics_for_uri(&language, &uri);
 
         false
+    }
+
+    /// Send a `textDocument/diagnostic` pull request for `uri` to **every**
+    /// diagnostic-capable server for `language`, each with its own last
+    /// `result_id`.
+    ///
+    /// `Diagnostics` is a merged feature, so when several servers pull-serve
+    /// the same language (e.g. `ruff` + `ty` for Python) each one must be
+    /// re-pulled — pulling only the first-listed server leaves the others'
+    /// diagnostics (type errors, in the reported case) stale until restart
+    /// (sinelaw/fresh#2615). Servers that never advertised `diagnosticProvider`
+    /// drop the request on the async side, so fanning out to every eligible
+    /// handle is safe.
+    pub(crate) fn pull_diagnostics_for_uri(
+        &mut self,
+        language: &str,
+        uri: &crate::app::types::LspUri,
+    ) {
+        // Snapshot the eligible server names first so we can read
+        // `diagnostic_result_ids` and bump request ids without holding the
+        // `&mut self.lsp` borrow that `handles_for_feature_mut` needs.
+        let server_names: Vec<String> = self
+            .lsp
+            .handles_for_feature(language, crate::types::LspFeature::Diagnostics)
+            .into_iter()
+            .map(|sh| sh.name.clone())
+            .collect();
+        if server_names.is_empty() {
+            return;
+        }
+
+        let mut plan: Vec<(String, u64, Option<String>)> = Vec::with_capacity(server_names.len());
+        for name in server_names {
+            let previous_result_id = self
+                .diagnostic_result_ids
+                .get(uri.as_str())
+                .and_then(|m| m.get(&name))
+                .cloned();
+            let request_id = self.next_lsp_request_id;
+            self.next_lsp_request_id += 1;
+            plan.push((name, request_id, previous_result_id));
+        }
+
+        let lsp = &mut self.lsp;
+        for sh in lsp.handles_for_feature_mut(language, crate::types::LspFeature::Diagnostics) {
+            let Some((_, request_id, previous_result_id)) =
+                plan.iter().find(|(n, _, _)| n.as_str() == sh.name.as_str())
+            else {
+                continue;
+            };
+            if let Err(e) = sh.handle.document_diagnostic(
+                *request_id,
+                uri.as_uri().clone(),
+                previous_result_id.clone(),
+            ) {
+                tracing::debug!(
+                    "Failed to pull diagnostics for {} from '{}': {}",
+                    uri.as_str(),
+                    sh.name,
+                    e
+                );
+            } else {
+                tracing::debug!(
+                    "Pulling diagnostics for {} from '{}' (request_id={})",
+                    uri.as_str(),
+                    sh.name,
+                    request_id
+                );
+            }
+        }
     }
 
     /// Open a local file in this window (always uses local filesystem,
@@ -3445,8 +3499,10 @@ impl Window {
                 merged.extend(entries.iter().map(|e| e.at_current_version(state)));
             }
         }
-        if let Some(pull) = self.stored_pull_diagnostics.get(uri) {
-            merged.extend(pull.iter().map(|e| e.at_current_version(state)));
+        if let Some(server_map) = self.stored_pull_diagnostics.get(uri) {
+            for entries in server_map.values() {
+                merged.extend(entries.iter().map(|e| e.at_current_version(state)));
+            }
         }
 
         let store = Arc::make_mut(&mut self.stored_diagnostics);

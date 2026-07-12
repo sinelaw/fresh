@@ -509,28 +509,37 @@ impl Editor {
                 if any_opened {
                     tracing::info!("Successfully sent didOpen to LSP after confirmation");
 
-                    // Request pull diagnostics from primary handle
-                    if let Some(handle) = lsp.get_handle_mut(language) {
-                        let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
+                    // Request pull diagnostics from EVERY diagnostic-capable
+                    // server (merged feature), each with its own result_id —
+                    // not just the first-listed handle.
+                    for sh in
+                        lsp.handles_for_feature_mut(language, crate::types::LspFeature::Diagnostics)
+                    {
                         let request_id = {
                             let id = *__next_id;
                             *__next_id += 1;
                             id
                         };
-
-                        if let Err(e) = handle.document_diagnostic(
+                        let previous_result_id = diagnostic_result_ids
+                            .get(uri.as_str())
+                            .and_then(|m| m.get(&sh.name))
+                            .cloned();
+                        if let Err(e) = sh.handle.document_diagnostic(
                             request_id,
                             uri.as_uri().clone(),
                             previous_result_id,
                         ) {
                             tracing::debug!(
-                                "Failed to request pull diagnostics (server may not support): {}",
+                                "Failed to request pull diagnostics from '{}' (server may not support): {}",
+                                sh.name,
                                 e
                             );
                         }
+                    }
 
-                        // Request inlay hints if enabled
-                        if enable_inlay_hints {
+                    // Request inlay hints if enabled (uses the primary handle).
+                    if enable_inlay_hints {
+                        if let Some(handle) = lsp.get_handle_mut(language) {
                             let request_id = {
                                 let id = *__next_id;
                                 *__next_id += 1;

@@ -3468,6 +3468,7 @@ fn test_pull_diagnostics_message_handling() -> anyhow::Result<()> {
         let _ = bridge.sender().send(AsyncMessage::LspPulledDiagnostics {
             request_id: 1,
             uri: uri.as_str().to_string(),
+            server_name: "test-server".to_string(),
             result_id: Some("test-result-id-123".to_string()),
             diagnostics: vec![diagnostic],
             unchanged: false,
@@ -3511,6 +3512,7 @@ fn test_pull_diagnostics_unchanged_response() -> anyhow::Result<()> {
         let _ = bridge.sender().send(AsyncMessage::LspPulledDiagnostics {
             request_id: 2,
             uri: uri.as_str().to_string(),
+            server_name: "test-server".to_string(),
             result_id: Some("test-result-id-456".to_string()),
             diagnostics: Vec::new(), // Empty when unchanged
             unchanged: true,

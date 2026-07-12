@@ -1174,7 +1174,6 @@ impl Editor {
         let Some(__win) = self.windows.get_mut(&__active_id) else {
             return;
         };
-        let diagnostic_result_ids = &__win.diagnostic_result_ids;
         let __next_id = &mut __win.next_lsp_request_id;
         let buffer_metadata = &mut __win.buffer_metadata;
         let lsp = &mut __win.lsp;
@@ -1198,16 +1197,15 @@ impl Editor {
             metadata.lsp_opened_with.insert(handle_id);
         }
 
-        // Request diagnostics
+        // Request diagnostics. We just re-sent didOpen, so ask for a full
+        // report (no previous result_id) — any prior per-server result_ids
+        // for this URI were cleared when LSP was disabled for the buffer.
         let request_id = {
             let id = *__next_id;
             *__next_id += 1;
             id
         };
-        let previous_result_id = diagnostic_result_ids.get(uri.as_str()).cloned();
-        if let Err(e) =
-            handle.document_diagnostic(request_id, uri.as_uri().clone(), previous_result_id)
-        {
+        if let Err(e) = handle.document_diagnostic(request_id, uri.as_uri().clone(), None) {
             tracing::warn!("LSP document_diagnostic request failed: {}", e);
         }
 

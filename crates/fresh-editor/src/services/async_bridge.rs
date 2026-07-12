@@ -214,6 +214,11 @@ pub enum AsyncMessage {
     LspPulledDiagnostics {
         request_id: u64,
         uri: String,
+        /// Name of the server that produced this pull report. Pull
+        /// diagnostics are tracked per-server (several servers can
+        /// pull-serve the same URI), so the response must say who it
+        /// came from.
+        server_name: String,
         /// New result_id for incremental updates (None if server doesn't support)
         result_id: Option<String>,
         /// Diagnostics (empty if unchanged)
