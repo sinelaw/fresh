@@ -644,9 +644,17 @@ fn create_client_capabilities() -> ClientCapabilities {
         general: Some(GeneralClientCapabilities {
             ..Default::default()
         }),
-        // Enable rust-analyzer experimental features
+        // rust-analyzer suppresses runnable CodeLens entries unless the client
+        // declares the extension commands carried by those lenses. Fresh
+        // exposes CodeLens commands through its chooser, so advertise the
+        // runnable command Fresh can execute in its integrated terminal.
         experimental: Some(serde_json::json!({
-            "serverStatusNotification": true
+            "serverStatusNotification": true,
+            "commands": {
+                "commands": [
+                    "rust-analyzer.runSingle"
+                ]
+            }
         })),
         ..Default::default()
     }
@@ -6064,6 +6072,25 @@ mod tests {
             Some(true),
             "workspace.symbol must advertise dynamicRegistration"
         );
+    }
+
+    #[test]
+    fn advertises_rust_analyzer_code_lens_commands() {
+        let caps = create_client_capabilities();
+        let commands = caps
+            .experimental
+            .as_ref()
+            .and_then(|value| value.get("commands"))
+            .and_then(|value| value.get("commands"))
+            .and_then(serde_json::Value::as_array)
+            .expect("experimental.commands.commands must be advertised");
+
+        assert!(commands
+            .iter()
+            .any(|value| value == "rust-analyzer.runSingle"));
+        assert!(!commands
+            .iter()
+            .any(|value| value == "rust-analyzer.debugSingle"));
     }
 
     #[test]

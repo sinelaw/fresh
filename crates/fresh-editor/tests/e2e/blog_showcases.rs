@@ -5092,6 +5092,7 @@ impl Pool {
                         "--as".to_string(),
                         agent.to_string(),
                     ]),
+                    environment: Vec::new(),
                     title: Some(agent.to_string()),
                     env: std::collections::HashMap::new(),
                 })
