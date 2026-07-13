@@ -60,7 +60,10 @@
   :focus{outline:none}
   html,body{height:100%;margin:0}
   body{height:100vh;background:var(--bg);color:var(--fg);overflow:hidden;
-    font:var(--font-size)/var(--line-height) var(--font-family);-webkit-font-smoothing:antialiased;user-select:none}
+    font:var(--font-size)/var(--line-height) var(--font-family);-webkit-font-smoothing:antialiased;user-select:none;
+    /* One chrome glyph == one grid cell (see measureMetrics/--cell-tracking), so
+       native chrome text lines up with the CW-pitch SVG buffer. */
+    letter-spacing:var(--cell-tracking,0)}
   /* No element re-declares a family, and any element that needs a size states it
      in em relative to the inherited base. */
   input,button,textarea,select{font:inherit}
@@ -95,12 +98,18 @@
 
   /* ---- tabs (native) ---- */
   .tabbar{display:flex;align-items:stretch;background:var(--bg2);border-bottom:1px solid var(--border);overflow:hidden}
-  .tab{display:flex;align-items:center;gap:6px;padding:0 10px;border-right:1px solid var(--border);
-    color:var(--muted);background:var(--bg2);max-width:220px;cursor:default}
+  /* No max-width and no icon: a tab is as wide as the TUI already made it
+     (`tab_area` = the full " name × " it laid out — see view/ui/tabs.rs), so
+     names show in full and only the .tabbar's own overflow:hidden clips the
+     edge tab when the bar is full, exactly like the terminal. */
+  .tab{display:flex;align-items:center;gap:6px;padding:0 8px;border-right:1px solid var(--border);
+    color:var(--muted);background:var(--bg2);cursor:default}
   .tab.active{color:var(--fg);background:var(--bg)}
-  .tab .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;visibility:hidden}
-  .tab.modified .dot{visibility:visible}
+  .tab .name{overflow:hidden;text-overflow:clip;white-space:nowrap}
+  /* Modified marker only occupies space when shown (the TUI likewise spends a
+     cell on it only when dirty), so a clean tab isn't padded by a hidden dot. */
+  .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;display:none}
+  .tab.modified .dot{display:inline-block}
   .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
   .tab .x:hover{background:#5a5a5a;color:#fff}
 
@@ -121,8 +130,12 @@
   .palette .ppreview svg.cells{width:100%;height:100%}
   .palette .pinput{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg)}
   .palette .pinput .pmsg{color:var(--muted);white-space:pre;flex:0 0 auto}
-  .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:ellipsis}
-  .palette.input-only .pinput .q{flex:0 1 auto}
+  /* The input line never ellipsises: the TUI already fits the prompt to the row,
+     so we show the query in full and, if it's longer than the box, scroll it to
+     the caret (scrollToCaret) — the terminal's own behaviour — instead of
+     hiding the tail behind a "…". */
+  .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:clip}
+  .palette.input-only .pinput .q{flex:1}
   .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
   .palette .pinput .status{color:var(--muted)}
   .palette .pinput .count{color:var(--muted)}
@@ -347,7 +360,7 @@
   .popup .popup-row.sel .pdetail{color:#dfe8ff}
   .popup .popup-row .picon{width:14px;text-align:center;flex:0 0 auto}
   .popup .popup-line{padding:0 10px;white-space:pre;color:var(--fg)}
-  svg.cells{display:block;width:100%;height:100%;font-family:var(--font-family)}
+  svg.cells{display:block;width:100%;height:100%;font-family:var(--font-family);letter-spacing:0}
   #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
 
   /* ======================================================================
@@ -433,13 +446,9 @@
   .tab.active::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
     background:var(--accent);border-radius:2px 2px 0 0}
 
-  /* ---- shared inline-SVG icons (tabs + file explorer) ---- */
+  /* ---- shared inline-SVG icons (file explorer) ---- */
   .ficon{width:14px;height:14px;display:block;flex:0 0 auto}
-  .tab .ticon,.fileexplorer .fx-icon{display:inline-flex;align-items:center;flex:0 0 auto}
-  /* Tab icon: muted while the text is muted (inactive), lifts to --fg on the
-     active tab so it reads at full strength alongside the accent rule. */
-  .tab .ticon{color:var(--muted)}
-  .tab.active .ticon{color:var(--accent)}
+  .fileexplorer .fx-icon{display:inline-flex;align-items:center;flex:0 0 auto}
   /* Explorer icons: quietly muted; folders take the accent so the tree structure
      reads at a glance. Selected rows flip to --on-sel via currentColor. */
   .fileexplorer .fx-icon{color:var(--muted)}
@@ -673,12 +682,11 @@
   body.mobile .kbedit .kb-key{width:11ch}
   body.mobile .kbedit .kb-action{width:18ch}
 
-  /* ---- show full text: opt out of chrome truncation ----
-     The web UI mirrors the TUI's fixed-cell layout, where every label is
-     hard-clipped to its box; here that was reproduced with
-     `text-overflow:ellipsis`, so long tab names, the prompt / Open-File input
-     line, status text, tree rows, and dialog labels showed a "…" and hid their
-     tail. Turn that off WITHOUT disturbing hit-testing or layout:
+  /* ---- show full text: opt out of the remaining chrome truncation ----
+     Tabs and the prompt input line are fixed at the source now (they honour the
+     TUI's own cell geometry). The elements below have no distinct server rect to
+     size to, so we simply turn off the `text-overflow:ellipsis` the layout used
+     as a space-saver — WITHOUT disturbing hit-testing or layout:
        - Hit-testing is unaffected either way. Every overlay row forwards its own
          precomputed LOGICAL cell (col/row from the server rect), never a
          pixel-derived one, and onChrome() keeps the grid's pixel->cell handler
@@ -689,11 +697,6 @@
          (B) stay flex-shrinkable and clip (no ellipsis) when the box is truly
          too small. Nothing wraps — every row stays a single line so it keeps
          mapping 1:1 to the editor's row model. */
-
-  /* (A) Tabs grow to their full name; .tabbar (overflow:hidden) clips the row's
-     right edge, so wide tabs never spill outside it. */
-  .tab{max-width:none}
-  .tab .name{overflow:visible;text-overflow:clip}
 
   /* (A) File-tree and palette rows size to their content; the panel — which
      already scrolls vertically — now also scrolls horizontally to reveal it,
@@ -710,7 +713,6 @@
      box has room yet can never push its neighbours (status-bar segments, the
      palette count, dialog controls) or spill out of its box when it doesn't. */
   .statusbar .txt,
-  .palette .pinput .q,
   .fileexplorer .fx-title,
   .trustdialog .td-path,
   .w-list-row,
@@ -784,6 +786,14 @@ function measureMetrics(){
   // --font-size, so the native UI scales with the buffer instead of staying
   // pinned at the unzoomed base.
   document.documentElement.style.setProperty("--font-size", FONT+"px");
+  // Font/cell alignment: the SVG buffer pins every glyph to a CW-pitch column,
+  // but native chrome text flows at the font's *natural* advance (~CW/CELL_AIR),
+  // so N characters of chrome were narrower than the N cells the TUI budgeted
+  // for them — which is why chrome boxes sized to a server cell-rect couldn't
+  // hold their own text. Add exactly the missing tracking (CW − advance) as
+  // letter-spacing so one chrome glyph advances one cell, matching the grid.
+  const advNat = adv>0 ? adv : CW/CELL_AIR;
+  document.documentElement.style.setProperty("--cell-tracking", (Math.round((CW-advNat)*1000)/1000)+"px");
 }
 measureMetrics();
 function setZoom(z){
@@ -1221,7 +1231,6 @@ function tabBarEl(p){
     const el=div("tab"+(t.active?" active":"")+(t.modified?" modified":""));
     if(t.rect){ const c=rectCell(t.rect);
       el.onmousedown=e=>{ if(e.target.classList.contains("x")) return; e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row}); }; }
-    const ic=document.createElement("span"); ic.className="ticon"; ic.innerHTML=fileIcon(t.label,{}); el.appendChild(ic);
     const name=document.createElement("span"); name.className="name"; name.textContent=t.label; el.appendChild(name);
     const dot=document.createElement("span"); dot.className="dot"; el.appendChild(dot);
     const x=document.createElement("span"); x.className="x"; x.textContent="×";
@@ -1272,14 +1281,23 @@ function paletteInputOnlyEl(p){
   const bar=div("pinput");
   bar.style.borderBottom="none";
   bar.style.borderTop="1px solid var(--hairline)";
+  // The TUI draws this prompt flush from column 0 across the full row; drop the
+  // horizontal inset so the query box is as wide as the row the TUI fit its text
+  // into (the inset was stealing ~3 cells and forcing needless truncation).
+  bar.style.padding="7px 0";
   if(p.message){ const m=document.createElement("span"); m.className="pmsg"; m.textContent=p.message; bar.appendChild(m); }
   const q=document.createElement("span"); q.className="q";
   q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
-  bar.appendChild(q);
+  bar.appendChild(q); scrollToCaret(q);
   if(p.status){ const st=document.createElement("span"); st.className="status"; st.textContent=p.status; bar.appendChild(st); }
   el.appendChild(bar);
   return el;
 }
+
+// Keep the caret end of an overflowing input line in view (the TUI scrolls its
+// prompt to the caret rather than eliding the tail). overflow:hidden boxes are
+// still programmatically scrollable; measure after layout via rAF.
+function scrollToCaret(q){ requestAnimationFrame(()=>{ q.scrollLeft = q.scrollWidth; }); }
 
 function paletteEl(p){
   const list = p.listRect || p.outerRect;
@@ -1326,7 +1344,7 @@ function paletteEl(p){
   const bar=div("pinput");
   const q=document.createElement("span"); q.className="q";
   q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
-  bar.appendChild(q);
+  bar.appendChild(q); scrollToCaret(q);
   if(p.status){ const st=document.createElement("span"); st.className="status"; st.textContent=p.status; bar.appendChild(st); }
   const cnt=document.createElement("span"); cnt.className="count";
   cnt.textContent=(p.total!=null)?((p.selected!=null?p.selected+1:0)+" / "+p.total):"";
