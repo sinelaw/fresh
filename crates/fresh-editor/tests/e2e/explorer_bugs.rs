@@ -1461,11 +1461,14 @@ fn test_rename_directory_redirects_save_to_new_path() {
 
     let new_inner = project_root.join("renamed_dir").join("inner.txt");
     let old_inner = project_root.join("mydir").join("inner.txt");
-    assert!(new_inner.exists(), "rename must have landed on disk");
-    assert!(
-        !project_root.join("mydir").exists(),
-        "old directory must be gone after rename"
-    );
+    // The rename is async filesystem I/O: the prompt closing only means the
+    // dialog dismissed, not that the move has landed on disk. Wait
+    // semantically for the new path to appear (and the old one to vanish)
+    // instead of reading an immediate snapshot, which races on loaded CI.
+    let old_dir = project_root.join("mydir");
+    harness
+        .wait_until(|_| new_inner.exists() && !old_dir.exists())
+        .unwrap();
 
     // Switch focus back to the editor (Ctrl+E from explorer focuses the
     // editor), append a sentinel, Ctrl+S to save.
