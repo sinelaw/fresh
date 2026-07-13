@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Gruppo saltato: %{group}",
   "calibration.skipped_key": "Saltato (uso predefinito)",
   "calibration.started": "Calibrazione guidata avviata",
+  "calibration.tui_only": "La calibrazione della tastiera funziona solo nell'interfaccia terminale",
   "calibration.step": "Passaggio",
   "calibration.title_capture": "Calibrazione Input - Cattura",
   "calibration.title_verify": "Calibrazione Input - Verifica",

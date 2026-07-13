@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Групу пропущено: %{group}",
   "calibration.skipped_key": "Пропущено (використовується значення за замовчуванням)",
   "calibration.started": "Майстер калібрування запущено",
+  "calibration.tui_only": "Калібрування клавіатури працює лише в терміналі",
   "calibration.step": "Крок",
   "calibration.title_capture": "Калібрування введення - Захоплення",
   "calibration.title_verify": "Калібрування введення - Перевірка",

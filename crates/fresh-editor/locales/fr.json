@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Groupe ignoré : %{group}",
   "calibration.skipped_key": "Ignorée (valeur par défaut utilisée)",
   "calibration.started": "Assistant de calibration démarré",
+  "calibration.tui_only": "La calibration du clavier ne fonctionne que dans l'interface terminal",
   "calibration.step": "Étape",
   "calibration.title_capture": "Calibration d'entrée - Capture",
   "calibration.title_verify": "Calibration d'entrée - Vérification",

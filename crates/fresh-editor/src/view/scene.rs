@@ -311,6 +311,29 @@ pub struct SuggestionView {
     pub disabled: bool,
 }
 
+/// One search-option toggle (Case / Whole Word / Regex / Confirm-each) as the
+/// TUI lays it out on the options row: state + the cell span of its checkbox,
+/// so a non-cell frontend can render a native toggle and route clicks back to
+/// the exact cells `SearchOptionsLayout::checkbox_at` hit-tests.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOptionView {
+    pub name: &'static str,
+    pub label: String,
+    pub shortcut: Option<String>,
+    pub active: bool,
+    pub x: u16,
+    pub w: u16,
+}
+
+/// The search-options row shown with search/replace prompts.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchOptionsView {
+    pub row: u16,
+    pub options: Vec<SearchOptionView>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaletteView {
@@ -340,6 +363,10 @@ pub struct PaletteView {
     pub toolbar: Option<fresh_core::api::WidgetSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub toolbar_focus: Option<String>,
+    /// Search-option toggles for search/replace prompts (the TUI's checkbox
+    /// row above the prompt line). `None` for every other prompt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_options: Option<SearchOptionsView>,
 }
 
 /// Stable tag for a prompt type so the frontend can label the palette/picker.
@@ -434,28 +461,86 @@ impl Editor {
         let sugg_area = chrome.suggestions_area;
         let prompt_results = chrome.prompt_results_area;
         let p = self.active_window().prompt.as_ref()?;
-        // A picker list (non-empty suggestions) or a floating overlay always
-        // projects. But a plain non-overlay prompt whose body is drawn into the
-        // pane cells rather than into `suggestions` — the file browser
-        // (`OpenFile`/`SaveFileAs`, whose `file_browser_layout` lives in the
-        // window and is rendered to cells) — still needs its INPUT LINE surfaced
-        // to non-cell frontends: the TUI draws that line on the bottom prompt row
-        // in place of the status bar, so without it the web has no path box to
-        // type into. Such prompts have no native suggestion list; the frontend
-        // renders just the input bar (null `list_rect`/`outer_rect` below).
-        use crate::view::prompt::PromptType;
-        let has_cell_browser = matches!(
-            p.prompt_type,
-            PromptType::OpenFile | PromptType::OpenFileWithEncoding { .. } | PromptType::SaveFileAs
-        );
-        if p.suggestions.is_empty() && !p.overlay && !has_cell_browser {
-            return None;
-        }
+        // EVERY active prompt projects. A picker list (non-empty suggestions)
+        // or a floating overlay projects its full geometry; everything else —
+        // plain input prompts (Add Ruler's column, goto-line, …) and prompts
+        // whose body is drawn into the pane cells rather than `suggestions`
+        // (the `OpenFile`/`SaveFileAs` file browser) — still needs its INPUT
+        // LINE surfaced to non-cell frontends: the TUI draws that line on the
+        // bottom prompt row in place of the status bar, so without projecting
+        // it the web shows no prompt at all while the editor waits for input.
+        // Such prompts have no native suggestion list; the frontend renders
+        // just the input bar (null `list_rect`/`outer_rect` below).
         let (scroll_start, visible, total) = sugg_area.map(|(_, s, v, t)| (s, v, t)).unwrap_or((
             p.scroll_offset,
             p.suggestions.len(),
             p.suggestions.len(),
         ));
+        // Search-option toggles: mirror the TUI's options row from the layout
+        // the renderer recorded (`search_options_layout`) — same cell spans the
+        // TUI hit-tests — plus the live state and the same label/shortcut
+        // derivation `StatusBarRenderer::render_search_options` uses.
+        let search_options = chrome.search_options_layout.as_ref().map(|lo| {
+            use crate::input::keybindings::{Action, KeyContext};
+            use rust_i18n::t;
+            let win = self.active_window();
+            let kb = self.keybinding_resolver();
+            let shortcut = |a: &Action| {
+                kb.get_keybinding_for_action(a, KeyContext::SearchPrompt)
+                    .or_else(|| kb.get_keybinding_for_action(a, KeyContext::Prompt))
+                    .or_else(|| kb.get_keybinding_for_action(a, KeyContext::Global))
+            };
+            let opt = |span: Option<(u16, u16)>,
+                       name: &'static str,
+                       label: String,
+                       active: bool,
+                       shortcut: Option<String>| {
+                span.map(|(x0, x1)| SearchOptionView {
+                    name,
+                    label,
+                    shortcut,
+                    active,
+                    x: x0,
+                    w: x1.saturating_sub(x0).max(1),
+                })
+            };
+            SearchOptionsView {
+                row: lo.row,
+                options: [
+                    opt(
+                        lo.case_sensitive,
+                        "case",
+                        t!("search.case_sensitive").to_string(),
+                        win.search_case_sensitive,
+                        shortcut(&Action::ToggleSearchCaseSensitive),
+                    ),
+                    opt(
+                        lo.whole_word,
+                        "word",
+                        t!("search.whole_word").to_string(),
+                        win.search_whole_word,
+                        shortcut(&Action::ToggleSearchWholeWord),
+                    ),
+                    opt(
+                        lo.regex,
+                        "regex",
+                        t!("search.regex").to_string(),
+                        win.search_use_regex,
+                        shortcut(&Action::ToggleSearchRegex),
+                    ),
+                    opt(
+                        lo.confirm_each,
+                        "confirm",
+                        t!("search.confirm_each").to_string(),
+                        win.search_confirm_each,
+                        shortcut(&Action::ToggleSearchConfirmEach),
+                    ),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
+            }
+        });
         Some(PaletteView {
             query: p.input.clone(),
             message: p.message.clone(),
@@ -497,6 +582,7 @@ impl Editor {
                 .collect(),
             toolbar: p.toolbar_widget.clone(),
             toolbar_focus: p.toolbar_focus.clone(),
+            search_options,
         })
     }
 }

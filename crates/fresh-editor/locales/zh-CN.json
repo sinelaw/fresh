@@ -448,6 +448,7 @@
   "calibration.skipped_group": "已跳过组: %{group}",
   "calibration.skipped_key": "已跳过（使用默认值）",
   "calibration.started": "校准向导已启动",
+  "calibration.tui_only": "键盘校准仅在终端界面中可用",
   "calibration.step": "步骤",
   "calibration.title_capture": "输入校准 - 捕获",
   "calibration.title_verify": "输入校准 - 验证",

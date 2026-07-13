@@ -1023,6 +1023,14 @@ impl Editor {
 
     // --- semantic accessors for the web/GUI chrome (read-only projections) ---
 
+    /// Read access to the shared keybinding resolver, for view projections
+    /// that surface shortcut hints (e.g. the search-options toggles).
+    pub(crate) fn keybinding_resolver(
+        &self,
+    ) -> std::sync::RwLockReadGuard<'_, crate::input::keybindings::KeybindingResolver> {
+        self.keybindings.read().unwrap()
+    }
+
     /// The menu-bar state (which menu is open, highlighted item, condition
     /// context for `when`/checkbox evaluation).
     pub(crate) fn menu_state(&self) -> &crate::view::ui::MenuState {

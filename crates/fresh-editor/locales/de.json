@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Gruppe übersprungen: %{group}",
   "calibration.skipped_key": "Übersprungen (Standardwert wird verwendet)",
   "calibration.started": "Kalibrierungsassistent gestartet",
+  "calibration.tui_only": "Die Tastaturkalibrierung funktioniert nur in der Terminal-Oberfläche",
   "calibration.step": "Schritt",
   "calibration.title_capture": "Eingabekalibrierung - Erfassung",
   "calibration.title_verify": "Eingabekalibrierung - Überprüfung",

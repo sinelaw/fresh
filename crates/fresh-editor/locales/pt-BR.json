@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Grupo pulado: %{group}",
   "calibration.skipped_key": "Pulada (usando padrão)",
   "calibration.started": "Assistente de calibração iniciado",
+  "calibration.tui_only": "A calibração do teclado só funciona na interface de terminal",
   "calibration.step": "Etapa",
   "calibration.title_capture": "Calibração de Entrada - Captura",
   "calibration.title_verify": "Calibração de Entrada - Verificar",

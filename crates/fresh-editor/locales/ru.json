@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Группа пропущена: %{group}",
   "calibration.skipped_key": "Пропущено (используется значение по умолчанию)",
   "calibration.started": "Мастер калибровки запущен",
+  "calibration.tui_only": "Калибровка клавиатуры работает только в терминальном интерфейсе",
   "calibration.step": "Шаг",
   "calibration.title_capture": "Калибровка ввода - Захват",
   "calibration.title_verify": "Калибровка ввода - Проверка",

@@ -461,6 +461,7 @@
   "calibration.skip": "Skip",
   "calibration.skip_group": "Skip group",
   "calibration.started": "Calibration wizard started",
+  "calibration.tui_only": "Keyboard calibration only works in the terminal UI",
   "calibration.step": "Step",
   "calibration.title_capture": "Input Calibration - Capture",
   "calibration.title_verify": "Input Calibration - Verify",

@@ -448,6 +448,7 @@
   "calibration.skipped_group": "그룹 건너뜀: %{group}",
   "calibration.skipped_key": "건너뜀 (기본값 사용)",
   "calibration.started": "보정 마법사가 시작되었습니다",
+  "calibration.tui_only": "키보드 보정은 터미널 UI에서만 작동합니다",
   "calibration.step": "단계",
   "calibration.title_capture": "입력 보정 - 캡처",
   "calibration.title_verify": "입력 보정 - 확인",

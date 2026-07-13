@@ -448,6 +448,7 @@
   "calibration.skipped_group": "グループをスキップしました: %{group}",
   "calibration.skipped_key": "スキップしました（デフォルト値を使用）",
   "calibration.started": "キャリブレーションウィザードを開始しました",
+  "calibration.tui_only": "キーボードのキャリブレーションはターミナルUIでのみ動作します",
   "calibration.step": "ステップ",
   "calibration.title_capture": "入力キャリブレーション - キャプチャ",
   "calibration.title_verify": "入力キャリブレーション - 確認",

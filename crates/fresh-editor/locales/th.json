@@ -448,6 +448,7 @@
   "calibration.skipped_group": "ข้ามกลุ่ม: %{group}",
   "calibration.skipped_key": "ข้าม (ใช้ค่าเริ่มต้น)",
   "calibration.started": "เริ่มตัวช่วยการปรับเทียบแล้ว",
+  "calibration.tui_only": "การปรับเทียบแป้นพิมพ์ใช้ได้เฉพาะในหน้าจอเทอร์มินัลเท่านั้น",
   "calibration.step": "ขั้นตอน",
   "calibration.title_capture": "การปรับเทียบการป้อนข้อมูล - จับภาพ",
   "calibration.title_verify": "การปรับเทียบการป้อนข้อมูล - ตรวจสอบ",

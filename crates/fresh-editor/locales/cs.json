@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Skupina přeskočena: %{group}",
   "calibration.skipped_key": "Přeskočeno (použita výchozí hodnota)",
   "calibration.started": "Průvodce kalibrací spuštěn",
+  "calibration.tui_only": "Kalibrace klávesnice funguje pouze v terminálovém rozhraní",
   "calibration.step": "Krok",
   "calibration.title_capture": "Kalibrace vstupu - Záznam",
   "calibration.title_verify": "Kalibrace vstupu - Ověření",

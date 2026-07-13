@@ -448,6 +448,7 @@
   "calibration.skipped_group": "Đã bỏ qua nhóm: %{group}",
   "calibration.skipped_key": "Đã bỏ qua (sử dụng mặc định)",
   "calibration.started": "Đã bắt đầu trình hướng dẫn hiệu chỉnh",
+  "calibration.tui_only": "Hiệu chỉnh bàn phím chỉ hoạt động trong giao diện terminal",
   "calibration.step": "Bước",
   "calibration.title_capture": "Hiệu chỉnh đầu vào - Bắt",
   "calibration.title_verify": "Hiệu chỉnh đầu vào - Xác minh",

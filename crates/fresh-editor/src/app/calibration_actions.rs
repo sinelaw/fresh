@@ -11,6 +11,14 @@ use rust_i18n::t;
 impl Editor {
     /// Open the calibration wizard
     pub fn open_calibration_wizard(&mut self) {
+        // The wizard calibrates the *terminal's* key encoding and renders
+        // TUI-only cells (`!suppress_chrome_cells`, no web projection). On the
+        // web bridge it would be an invisible modal that owns the keyboard —
+        // a lockout, not a tool — so refuse with a visible status message.
+        if self.suppress_chrome_cells {
+            self.set_status_message(t!("calibration.tui_only").to_string());
+            return;
+        }
         self.calibration_wizard = Some(CalibrationWizard::new());
         self.set_status_message(t!("calibration.started").to_string());
     }
