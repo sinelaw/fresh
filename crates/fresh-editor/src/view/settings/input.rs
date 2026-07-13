@@ -1094,6 +1094,19 @@ impl SettingsState {
             return self.handle_dual_list_editing_input(event);
         }
 
+        // A plain single-line Text field routes every caret-motion and
+        // text-mutation key through the one shared text-key engine
+        // (`primitives::text_key::apply_text_key`) — the same table the
+        // plugin widget runtime uses, so Home/End, forward-Delete, word
+        // motion, and shift-selection can never drift between the two
+        // surfaces again. Chrome keys (Enter/Tab/Esc, Up/Down field-nav,
+        // Ctrl+A/C/V) come back unhandled and fall through to the match
+        // below; composite controls (TextList/Map) keep their own per-row
+        // handling there.
+        if self.is_editing_plain_text() && self.apply_plain_text_key(event) {
+            return InputResult::Consumed;
+        }
+
         match event.code {
             KeyCode::Esc => {
                 // A plain Text field: Esc cancels the in-progress edit and
@@ -1160,30 +1173,20 @@ impl SettingsState {
                 self.text_backspace();
                 InputResult::Consumed
             }
+            // The arms below only run for composite controls (TextList/Map):
+            // a plain Text field consumed its motion/mutation keys through
+            // `apply_plain_text_key` above.
             KeyCode::Delete => {
-                // A plain Text field forward-deletes the character at the
-                // cursor. TextList/Map keep Delete = remove the focused row.
-                if self.is_editing_plain_text() {
-                    self.text_delete();
-                } else {
-                    self.text_remove_focused();
-                }
+                // TextList/Map: Delete removes the focused row.
+                self.text_remove_focused();
                 InputResult::Consumed
             }
             KeyCode::Left => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) && self.is_editing_plain_text() {
-                    self.text_move_left_selecting();
-                } else {
-                    self.text_move_left();
-                }
+                self.text_move_left();
                 InputResult::Consumed
             }
             KeyCode::Right => {
-                if event.modifiers.contains(KeyModifiers::SHIFT) && self.is_editing_plain_text() {
-                    self.text_move_right_selecting();
-                } else {
-                    self.text_move_right();
-                }
+                self.text_move_right();
                 InputResult::Consumed
             }
             KeyCode::Home => {

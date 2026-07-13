@@ -31,6 +31,12 @@ pub mod word_navigation;
 // and the plugin widget framework.
 pub mod text_edit;
 
+// The single `key → text-editing operation` table shared by the Settings
+// input handler and the plugin widget runtime. Runtime-gated because it
+// speaks crossterm's `KeyEvent`; both callers are `runtime`-only.
+#[cfg(feature = "runtime")]
+pub mod text_key;
+
 // Modules using ratatui types (Color, Style, etc.) - available for both runtime and WASM
 // since ratatui core is WASM-compatible (only the crossterm backend is native-only)
 #[cfg(any(feature = "runtime", feature = "wasm"))]

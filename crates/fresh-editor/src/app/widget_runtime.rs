@@ -54,6 +54,29 @@ fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<Stri
     spec.children().find_map(find_scrollable_widget_key)
 }
 
+/// Re-hydrate the plugin runtime's flattened key *name* (e.g. `"Home"`)
+/// back into a `KeyEvent`, so widget text editing can go through the shared
+/// [`apply_text_key`](crate::primitives::text_key::apply_text_key) table
+/// rather than its own dispatch. Only the bare named keys the widget key
+/// router forwards to text fields are recognized; `"Enter"` is handled by
+/// the caller, and modifier chords aren't currently surfaced to widget
+/// text fields.
+fn widget_key_name_to_event(name: &str) -> Option<crossterm::event::KeyEvent> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let code = match name {
+        "Backspace" => KeyCode::Backspace,
+        "Delete" => KeyCode::Delete,
+        "Left" => KeyCode::Left,
+        "Right" => KeyCode::Right,
+        "Up" => KeyCode::Up,
+        "Down" => KeyCode::Down,
+        "Home" => KeyCode::Home,
+        "End" => KeyCode::End,
+        _ => return None,
+    };
+    Some(KeyEvent::new(code, KeyModifiers::NONE))
+}
+
 /// A `DualList` interaction, resolved from a keystroke or click by
 /// [`Editor::handle_widget_dual`].
 pub(super) enum DualOp {
@@ -2801,23 +2824,34 @@ impl Editor {
         self.with_focused_text_editor(panel_key, |editor| editor.set_cursor_from_flat(value_byte));
     }
 
-    /// Apply a non-printable editing key to the focused text widget
-    /// by dispatching to the corresponding `TextEdit` method. The
-    /// single/multi-line discriminator is carried by `TextEdit`'s
-    /// `multiline` field, so the same set of methods serves both
-    /// kinds — single-line just no-ops on Up/Down/Enter.
+    /// Apply a non-printable editing key to the focused text widget. See
+    /// [`widget_key_name_to_event`] for the name → `KeyEvent` re-hydration.
+    ///
+    /// Every caret-motion / mutation key is routed through the shared
+    /// [`apply_text_key`](crate::primitives::text_key::apply_text_key)
+    /// table — the single source of truth the Settings input handler also
+    /// uses, so the two surfaces can't drift. `Enter` = newline is the one
+    /// widget-multiline affordance the shared table deliberately leaves as
+    /// chrome (it means "commit" on other surfaces), so it's handled here.
+    ///
+    /// The single/multi-line discriminator is carried by `TextEdit`'s own
+    /// `multiline` field, so passing `multiline: true` lets the router
+    /// forward Up/Down while a single-line editor simply no-ops on them —
+    /// matching the prior dispatch.
     fn handle_widget_text_key(&mut self, panel_key: &crate::widgets::PanelKey, key: &str) {
-        self.with_focused_text_editor(panel_key, |editor| match key {
-            "Backspace" => editor.backspace(),
-            "Delete" => editor.delete(),
-            "Left" => editor.move_left(),
-            "Right" => editor.move_right(),
-            "Up" => editor.move_up(),
-            "Down" => editor.move_down(),
-            "Home" => editor.move_home(),
-            "End" => editor.move_end(),
-            "Enter" => editor.insert_char('\n'),
-            _ => { /* unknown key — no-op */ }
+        if key == "Enter" {
+            self.with_focused_text_editor(panel_key, |editor| editor.insert_char('\n'));
+            return;
+        }
+        let Some(event) = widget_key_name_to_event(key) else {
+            return;
+        };
+        self.with_focused_text_editor(panel_key, |editor| {
+            crate::primitives::text_key::apply_text_key(
+                editor,
+                &event,
+                crate::primitives::text_key::TextKeyContext::multiline(true),
+            );
         });
     }
 

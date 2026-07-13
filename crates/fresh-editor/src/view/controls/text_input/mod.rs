@@ -218,6 +218,89 @@ impl TextInputState {
         self.editor.move_right_selecting();
     }
 
+    /// Move cursor up a visual line (multi-line surfaces; a no-op on the
+    /// single-line control, but part of the shared [`TextSurface`] contract).
+    pub fn move_up(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_up();
+    }
+
+    /// Move cursor down a visual line (see [`Self::move_up`]).
+    pub fn move_down(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_down();
+    }
+
+    /// Move the cursor one word left (Ctrl+Left).
+    pub fn move_word_left(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_word_left();
+    }
+
+    /// Move the cursor one word right (Ctrl+Right).
+    pub fn move_word_right(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_word_right();
+    }
+
+    /// Extend the selection to the line start (Shift+Home).
+    pub fn move_home_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_home_selecting();
+    }
+
+    /// Extend the selection to the line end (Shift+End).
+    pub fn move_end_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_end_selecting();
+    }
+
+    /// Extend the selection up a line (Shift+Up; multi-line surfaces).
+    pub fn move_up_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_up_selecting();
+    }
+
+    /// Extend the selection down a line (Shift+Down; multi-line surfaces).
+    pub fn move_down_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_down_selecting();
+    }
+
+    /// Extend the selection one word left (Ctrl+Shift+Left).
+    pub fn move_word_left_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_word_left_selecting();
+    }
+
+    /// Extend the selection one word right (Ctrl+Shift+Right).
+    pub fn move_word_right_selecting(&mut self) {
+        self.pending_replace_on_type = false;
+        self.editor.move_word_right_selecting();
+    }
+
+    /// Delete the word before the cursor (Ctrl+Backspace).
+    pub fn delete_word_backward(&mut self) {
+        if !self.is_enabled() {
+            return;
+        }
+        if self.consume_pending_replace() {
+            return;
+        }
+        self.editor.delete_word_backward();
+    }
+
+    /// Delete the word at/after the cursor (Ctrl+Delete).
+    pub fn delete_word_forward(&mut self) {
+        if !self.is_enabled() {
+            return;
+        }
+        if self.consume_pending_replace() {
+            return;
+        }
+        self.editor.delete_word_forward();
+    }
+
     /// Select the whole value (Ctrl+A). The selection is live editor
     /// state — the next insert replaces it — so the replace-on-type
     /// affordance is superseded and cleared.

@@ -2549,16 +2549,23 @@ impl SettingsState {
         }
     }
 
-    /// Extend the selection left in the focused plain Text control
-    /// (Shift+Left).
-    pub fn text_move_left_selecting(&mut self) {
-        self.with_editing_text(|state| state.move_left_selecting());
-    }
-
-    /// Extend the selection right in the focused plain Text control
-    /// (Shift+Right).
-    pub fn text_move_right_selecting(&mut self) {
-        self.with_editing_text(|state| state.move_right_selecting());
+    /// Route a key through the shared text-key engine
+    /// ([`crate::primitives::text_key::apply_text_key`]) when a plain,
+    /// single-line `Text` field is being edited. Returns `true` when the key
+    /// was a universal text-editing key (caret motion, mutation, or
+    /// selection) and was applied, so the caller can stop; `false` leaves
+    /// chrome keys (Enter/Tab/Esc, Up/Down field-nav, Ctrl+A/C/V) for the
+    /// caller's own handling. This is the seam that makes the Settings body
+    /// and the plugin widget runtime share one `key → op` table.
+    pub fn apply_plain_text_key(&mut self, event: &crossterm::event::KeyEvent) -> bool {
+        use crate::primitives::text_key::{apply_text_key, TextKeyContext, TextKeyResult};
+        self.with_editing_text(|state| {
+            matches!(
+                apply_text_key(state, event, TextKeyContext::single_line()),
+                TextKeyResult::Handled
+            )
+        })
+        .unwrap_or(false)
     }
 
     /// Select the focused plain Text control's whole value (Ctrl+A).
@@ -2636,14 +2643,6 @@ impl SettingsState {
                 _ => {}
             }
         }
-    }
-
-    /// Forward-delete the character at the cursor (Delete key) in the focused
-    /// plain `Text` control. TextList/Map use Delete to remove the focused row
-    /// instead (see [`Self::text_remove_focused`]), so this is gated to plain
-    /// Text and no-ops for the others.
-    pub fn text_delete(&mut self) {
-        self.with_editing_text(|state| state.delete());
     }
 
     /// Move focus to previous item in TextList/Map (wraps within control)
