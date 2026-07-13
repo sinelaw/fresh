@@ -71,6 +71,9 @@ pub struct ViewLine {
     /// (it can't recover the bg from `char_styles.first()` when there
     /// are no chars). `None` for source lines.
     pub virtual_line_style: Option<ViewTokenStyle>,
+    /// Namespace of the virtual text that produced this row. Preserved in
+    /// render mappings so feature-owned virtual lines can handle mouse input.
+    pub virtual_text_namespace: Option<String>,
 }
 
 impl ViewLine {
@@ -573,6 +576,7 @@ impl LineAccumulator {
             ends_with_newline,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            virtual_text_namespace: None,
         }
     }
 }
@@ -607,6 +611,7 @@ impl<'a> Iterator for ViewLineIterator<'a> {
                     ends_with_newline: false,
                     virtual_gutter_glyph: None,
                     virtual_line_style: None,
+                    virtual_text_namespace: None,
                 });
             }
             return None;

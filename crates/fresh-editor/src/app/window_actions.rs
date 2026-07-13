@@ -473,6 +473,7 @@ impl crate::app::Editor {
                 focus: true,       // newly spawned terminal is the seed
                 persistent: false, // ephemeral by default; orchestrator owns persistence
                 command,
+                environment: Vec::new(),
                 title: title.filter(|t| !t.is_empty()),
                 env: terminal_env.clone(),
             })

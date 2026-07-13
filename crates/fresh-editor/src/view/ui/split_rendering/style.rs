@@ -262,6 +262,7 @@ fn build_virtual_view_line(
         ends_with_newline: true,
         virtual_gutter_glyph: gutter_glyph,
         virtual_line_style: Some(token_style.clone()),
+        virtual_text_namespace: None,
     }
 }
 

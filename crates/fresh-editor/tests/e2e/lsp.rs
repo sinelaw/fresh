@@ -3805,6 +3805,81 @@ fn test_inlay_hints_render_on_screen() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// CodeLens uses a full virtual line, so exercise the final render pipeline
+/// rather than only inspecting VirtualTextManager's internal state.
+#[test]
+fn test_code_lens_renders_on_screen() -> anyhow::Result<()> {
+    use lsp_types::{CodeLens, Command, Position, Range};
+
+    fn display_column(line: &str, needle: &str) -> Option<usize> {
+        line.find(needle)
+            .map(|byte| unicode_width::UnicodeWidthStr::width(&line[..byte]))
+    }
+
+    let mut harness = EditorTestHarness::new(80, 24)?;
+    harness
+        .type_text("#[cfg(test)]\nmod tests {\n    #[test]\n    fn emit_isolated_demo() {}\n}\n")?;
+
+    let lenses = [
+        CodeLens {
+            // rust-analyzer points at the symbol, not its source indentation.
+            range: Range::new(Position::new(1, 4), Position::new(1, 4)),
+            command: Some(Command::new(
+                "▶︎ Run Tests".to_string(),
+                "fresh.test".to_string(),
+                None,
+            )),
+            data: None,
+        },
+        CodeLens {
+            range: Range::new(Position::new(3, 7), Position::new(3, 7)),
+            command: Some(Command::new(
+                "▶︎ Run Test".to_string(),
+                "fresh.test".to_string(),
+                None,
+            )),
+            data: None,
+        },
+    ];
+    let state = harness.editor_mut().active_state_mut();
+    let buffer_len = state.buffer.len();
+    state.marker_list.adjust_for_insert(0, buffer_len);
+    fresh::app::Editor::apply_code_lens_to_state(state, &lenses);
+
+    harness.render()?;
+    let screen = harness.screen_to_string();
+    let module_lens_column = screen
+        .lines()
+        .find(|line| line.contains("▶︎ Run Tests"))
+        .and_then(|line| display_column(line, "▶︎"))
+        .expect("rendered module CodeLens column");
+    let module_column = screen
+        .lines()
+        .find(|line| line.contains("mod tests {"))
+        .and_then(|line| display_column(line, "mod tests {"))
+        .expect("rendered module column");
+    assert_eq!(
+        module_lens_column, module_column,
+        "module CodeLens must align with the source indentation:\n{screen}"
+    );
+
+    let function_lens_column = screen
+        .lines()
+        .find(|line| line.contains("▶︎ Run Test") && !line.contains("▶︎ Run Tests"))
+        .and_then(|line| display_column(line, "▶︎"))
+        .expect("rendered function CodeLens column");
+    let function_column = screen
+        .lines()
+        .find(|line| line.contains("fn emit_isolated_demo() {}"))
+        .and_then(|line| display_column(line, "fn emit_isolated_demo() {}"))
+        .expect("rendered function column");
+    assert_eq!(
+        function_lens_column, function_column,
+        "function CodeLens must align with the source indentation:\n{screen}"
+    );
+    Ok(())
+}
+
 /// Test that virtual text positions update when buffer is edited
 #[test]
 fn test_inlay_hints_position_tracking() -> anyhow::Result<()> {

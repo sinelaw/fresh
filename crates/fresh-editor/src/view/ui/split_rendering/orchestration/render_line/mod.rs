@@ -631,6 +631,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 ends_with_newline: false,
                 virtual_gutter_glyph: None,
                 virtual_line_style: None,
+                virtual_text_namespace: None,
             })
         } else {
             break;
@@ -1645,5 +1646,39 @@ fn build_view_line_mapping(
         line_end_byte,
         is_plugin_virtual,
         end_exclusive,
+        virtual_text_namespace: view_line.virtual_text_namespace.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::view::ui::view_pipeline::LineStart;
+    use std::collections::HashSet;
+
+    #[test]
+    fn virtual_text_namespace_reaches_click_mapping() {
+        let view_line = ViewLine {
+            text: "  Run".to_string(),
+            source_start_byte: None,
+            char_source_bytes: vec![None; 5],
+            char_styles: vec![None; 5],
+            char_visual_cols: (0..5).collect(),
+            visual_to_char: (0..5).collect(),
+            tab_starts: HashSet::new(),
+            line_start: LineStart::AfterInjectedNewline,
+            ends_with_newline: true,
+            virtual_gutter_glyph: None,
+            virtual_line_style: None,
+            virtual_text_namespace: Some("lsp-code-lens".to_string()),
+        };
+
+        let buffer = crate::model::buffer::Buffer::from_str_test("0123456789");
+        let mapping = build_view_line_mapping(&view_line, &[None; 5], 0, 0, 10, &buffer);
+        assert!(mapping.is_plugin_virtual);
+        assert_eq!(
+            mapping.virtual_text_namespace.as_deref(),
+            Some("lsp-code-lens")
+        );
     }
 }
