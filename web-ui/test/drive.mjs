@@ -352,7 +352,7 @@ const m2 = await page.evaluate(() => window.fresh.metrics);
 check('Ctrl+0 resets zoom and restores the measured base metrics', m2.zoom === 1 && m2.cw === m0.cw && m2.ch === m0.ch, JSON.stringify(m2));
 await page.waitForTimeout(400);   // let the reset resize round-trip settle
 
-console.log('\n[TUI-parity placement: dropdown flush under the menu bar, palette at the bottom]');
+console.log('\n[TUI-parity placement: dropdown flush under the menu bar; palette bottom-sheet + centered-modal modes]');
 // The dropdown panel is placed on the pipeline's full bordered box, whose top
 // edge is the row directly under the menu bar — no border-row gap.
 await page.locator('.menubar .menu', { hasText: 'File' }).first().click();
@@ -362,12 +362,33 @@ const ddBox = await page.locator('.dropdown').first().boundingBox();
 check('dropdown panel sits flush under the menu bar (no row gap)',
   !!ddBox && Math.abs(ddBox.y - (mbBox.y + mbBox.height)) <= 2, `gap=${ddBox && (ddBox.y - (mbBox.y + mbBox.height))}px`);
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
-// The palette is a bottom sheet on the editor's geometry: card bottom at the
-// cell grid's bottom edge, input bar UNDER the list (the terminal's order).
+
+// Core regression (suggestions-box Clear gate): opening the palette must NOT
+// blank the buffer cells beneath it. The suggestions Clear used to punch a
+// hole at the bottom of the buffer that only the bottom sheet happened to
+// cover — a centered modal exposed it as a missing strip. Assert the pane
+// keeps at least as many non-blank rows once the palette is open.
+const nonBlankRows = s => s.regions.panes.reduce(
+  (n, p) => n + p.cells.filter(row => row.some(x => x.t && x.t.trim())).length, 0);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+const rowsBefore = nonBlankRows(await scene(page));
 await page.locator('body').click();
 await page.keyboard.press('Control+p');
 await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
 await page.waitForTimeout(200);
+check('opening the palette does not blank the buffer cells beneath it (no bottom hole)',
+  nonBlankRows(await scene(page)) >= rowsBefore,
+  `before=${rowsBefore} after=${nonBlankRows(await scene(page))}`);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
+// Bottom-sheet placement: card bottom at the cell grid's bottom edge, input bar
+// UNDER the list (the terminal's order), and no scrim.
+await page.evaluate(() => window.fresh.setPaletteCentered(false));
+await page.locator('body').click();
+await page.keyboard.press('Control+p');
+await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
+await page.waitForTimeout(200);
+check('bottom-sheet placement has no scrim', (await page.locator('.modal-scrim').count()) === 0);
 const palBox = await page.locator('.palette').boundingBox();
 const gridBottom = await page.evaluate(() => window.fresh.scene.h * window.fresh.metrics.ch);
 check('palette hugs the bottom of the cell grid (TUI placement)',
@@ -378,6 +399,35 @@ check('palette input bar sits BELOW the suggestion list (terminal order)',
     return !!bar && !!list && bar.getBoundingClientRect().top >= list.getBoundingClientRect().bottom - 1;
   }));
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
+// Centered-modal placement: a `.modal-scrim` backdrop, the card centered in the
+// viewport (not hugging the bottom), and the input bar ABOVE the list — the
+// familiar command-palette order.
+await page.evaluate(() => window.fresh.setPaletteCentered(true));
+await page.locator('body').click();
+await page.keyboard.press('Control+p');
+await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
+await page.waitForTimeout(200);
+check('centered placement adds a .modal-scrim backdrop', (await page.locator('.modal-scrim').count()) >= 1);
+check('centered palette card carries the .centered class', (await page.locator('.palette.centered').count()) >= 1);
+const cBox = await page.locator('.palette').boundingBox();
+const vp = page.viewportSize();
+check('centered palette is horizontally centered in the viewport',
+  !!cBox && Math.abs((cBox.x + cBox.width / 2) - vp.width / 2) <= Math.max(10, vp.width * 0.06),
+  `mid=${cBox && (cBox.x + cBox.width / 2)} vpmid=${vp.width / 2}`);
+check('centered palette does NOT hug the grid bottom',
+  !!cBox && (cBox.y + cBox.height) < gridBottom - 20, `bottom=${cBox && (cBox.y + cBox.height)} grid=${gridBottom}`);
+check('centered palette input bar sits ABOVE the suggestion list (modal order)',
+  await page.evaluate(() => {
+    const bar = document.querySelector('.palette .pinput'), list = document.querySelector('.palette .plist');
+    return !!bar && !!list && bar.getBoundingClientRect().bottom <= list.getBoundingClientRect().top + 1;
+  }));
+await page.screenshot({ path: `${SHOTS}/23b-centered-palette.png` });
+// Click-away: tapping the scrim (well outside the centered card) dismisses the
+// palette via Escape through the real editor.
+await page.locator('.modal-scrim').click({ position: { x: 6, y: 6 } });
+await page.waitForTimeout(200);
+check('clicking the scrim closed the palette', !(await scene(page)).regions.palette);
 
 console.log('\n[wave animation: any key/mouse dismisses it and is consumed (TUI parity)]');
 // The interactive wave (also the screensaver) repaints every tick, so frames

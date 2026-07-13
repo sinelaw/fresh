@@ -2486,7 +2486,17 @@ impl Editor {
             height: height - hints_height,
         };
 
-        frame.render_widget(ratatui::widgets::Clear, suggestions_area);
+        // Blank the buffer cells under the suggestions box only when the
+        // pipeline is actually drawing chrome into cells (the TUI). In web mode
+        // (`suppress_chrome_cells`) the palette is drawn as native DOM on top of
+        // the cell buffer, so clearing here would punch a visible hole in the
+        // buffer wherever the native palette is NOT positioned over these rows
+        // (e.g. a centered-modal layout). Mirrors the gating every other chrome
+        // `Clear` already uses (overlay prompt, preview pane): compute geometry,
+        // don't mutate the cell buffer for chrome the frontend renders itself.
+        if !self.suppress_chrome_cells {
+            frame.render_widget(ratatui::widgets::Clear, suggestions_area);
+        }
 
         // Adjust the prompt's scroll position to keep the selected item
         // visible, scrolling the minimum amount required.
@@ -2512,7 +2522,11 @@ impl Editor {
             chrome.suggestions_outer_area = Some(suggestions_area);
         }
 
-        if is_quick_open {
+        // The quick-open hints row is chrome drawn into cells; the web renders
+        // no hints, so in `suppress_chrome_cells` mode we skip it entirely
+        // rather than stamp hint glyphs into the buffer cells the frontend
+        // slices (which would show through a centered-modal palette).
+        if is_quick_open && !self.suppress_chrome_cells {
             let hints_area = ratatui::layout::Rect {
                 // Align with the prompt / suggestions box, which sit in the
                 // chrome area to the right of a left dock (`prompt_area.x`).

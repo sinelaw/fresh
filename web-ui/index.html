@@ -133,6 +133,15 @@
   .palette{position:absolute;z-index:90;display:flex;flex-direction:column;
     background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);overflow:hidden}
   .palette.with-preview{overflow:hidden}
+  /* Centered-modal placement (paletteCentered): float the palette as a modal
+     panel over the whole view instead of the bottom sheet. Placement is CSS-
+     driven — the card is centered by transform and capped by max-width/height,
+     with a `.modal-scrim` behind it (emitted by the palette region filler).
+     A preview overlay keeps its cell-derived width (set inline) so the results
+     column still lines up with the framed preview beside it. */
+  .palette.centered{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);
+    z-index:96;width:min(720px,92vw);max-width:92vw;max-height:82vh}
+  .palette.centered .plist{max-height:min(58vh,440px)}
   .palette .pbody{display:flex;align-items:stretch;min-height:0}
   .palette .pbody .plist{max-height:none;border-right:1px solid var(--border)}
   .palette .ppreview{background:var(--bg);overflow:hidden}
@@ -688,7 +697,11 @@
   body.mobile .fileexplorer{position:fixed!important;left:0!important;top:36px!important;
     width:100vw!important;height:auto!important;bottom:var(--m-bottom,124px)!important;z-index:80;
     border-right:none;border-bottom:1px solid var(--hairline)}
-  body.mobile .palette{left:3vw!important;width:94vw!important;top:7vh!important}
+  /* On mobile the palette is always a top-floating panel (never a true bottom
+     sheet). Neutralise the centered-mode transform / caps so the explicit
+     anchor here wins for both placement modes. */
+  body.mobile .palette{left:3vw!important;width:94vw!important;top:7vh!important;
+    bottom:auto!important;transform:none!important;max-width:none!important}
   body.mobile .settings-modal,body.mobile .kbedit{left:2vw!important;right:2vw!important;
     width:96vw!important;top:42px!important;bottom:calc(var(--m-bottom,124px) + 6px)!important;
     height:auto!important;max-height:none!important;transform:none!important}
@@ -931,6 +944,23 @@ function setZoom(z){
   measureMetrics();
   if(scene) render();   // re-place everything at the new metrics now…
   resize();             // …then the editor re-fits cols/rows to the new cell size
+}
+// Command-palette placement — a pure frontend view preference (same class as
+// `zoom` / `mShowMods`), persisted in localStorage, never editor state.
+// `true`  → float the palette as a centered modal over the whole view (a
+//           `.modal-scrim` dims the dock / explorer / buffers behind it);
+// `false` → keep the terminal-style sheet hugging the bottom of the grid.
+// The editor is unaffected either way: row clicks/scroll still route through
+// its logical suggestion cell rect, so only the pixels move. Toggle with the
+// frontend-owned Ctrl/Cmd+Alt+P chord or the mobile ⋮ sheet.
+let paletteCentered = true;
+try{ if(localStorage.getItem("fresh.palette.centered")==="0") paletteCentered=false; }catch(_){}
+function setPaletteCentered(on){
+  on=!!on;
+  if(on===paletteCentered) return;
+  paletteCentered=on;
+  try{ localStorage.setItem("fresh.palette.centered", on?"1":"0"); }catch(_){}
+  if(scene) render();
 }
 // Browser zoom or a monitor move changes devicePixelRatio without any event;
 // the matchMedia re-arm pattern fires once per change — re-measure (rounding
@@ -1195,9 +1225,10 @@ const REGION_FILL={
   // native popups (completion / hover / action / list / text) — semantic, not cells
   popups(c,reg){ for(const p of (reg.popups||[])) c.appendChild(popupEl(p)); },
   // native command palette / picker (semantic; routes back to the real editor).
-  // The live-grep / quick-open preview pane is rendered inside the card by
-  // paletteEl (a results|preview body), matching the TUI's single box.
-  palette(c,reg){ if(reg.palette) c.appendChild(paletteEl(reg.palette)); },
+  // paletteEls emits the card (with the live-grep / quick-open preview pane
+  // rendered inside it, matching the TUI's single box) plus a `.modal-scrim`
+  // behind it in centered-modal placement.
+  palette(c,reg){ if(reg.palette) for(const el of paletteEls(reg.palette)) c.appendChild(el); },
   // native plugin widget panels (floating / dock)
   widgets(c,reg){ if(reg.widgets) for(const s of reg.widgets) for(const el of widgetSurfaceEls(s)) c.appendChild(el); },
   contextMenu(c,reg){ if(reg.contextMenu) c.appendChild(contextMenuEl(reg.contextMenu)); },
@@ -1460,14 +1491,14 @@ function paletteInputOnlyEl(p){
 // still programmatically scrollable; measure after layout via rAF.
 function scrollToCaret(q){ requestAnimationFrame(()=>{ q.scrollLeft = q.scrollWidth; }); }
 
-function paletteEl(p){
-  const list = p.listRect || p.outerRect;
-  // Input-only prompts (OpenFile / SaveFileAs) have NO native suggestion list —
-  // their file browser is drawn into the pane cells already. The editor still
-  // projects the prompt so its INPUT LINE can be surfaced; render JUST an input
-  // bar on the bottom prompt row (where the TUI draws it in place of the status
-  // bar), full grid width, and no (empty) suggestion list.
-  if(!list) return paletteInputOnlyEl(p);
+// Build the palette CARD (title / toolbar / input / list / preview). Placement
+// is decided from `paletteCentered`: a centered modal (CSS-positioned, input on
+// top) or the terminal-style bottom sheet (input under the list, hugging the
+// grid bottom). Either way the interior — and every row click / wheel route
+// back to the editor's logical suggestion cell rect — is identical; only the
+// container's geometry and the header/list order differ.
+function paletteCardEl(p, list){
+  const centered = paletteCentered;
   // When the overlay has a preview pane, the card spans BOTH columns and lays
   // out exactly like the TUI's single box: a full-width header (title/toolbar/
   // input) on top, then a body split into results | preview below. Otherwise
@@ -1475,10 +1506,15 @@ function paletteEl(p){
   const hasPreview = !!(p.previewRect && p.previewCells && list);
   let outer = p.outerRect || list;
   if(hasPreview){ outer = {x:list.x, y:list.y, w:(p.previewRect.x+p.previewRect.w)-list.x, h:list.h}; }
-  const el=div("palette"+(hasPreview?" with-preview":""));
+  const el=div("palette"+(hasPreview?" with-preview":"")+(centered?" centered":""));
   // Position the card on the outer rect, with the input bar stacked above it so
   // it reads as one palette. (Clicks use the list cell rect below.)
-  if(hasPreview){
+  if(centered){
+    // Centered modal: geometry is CSS-driven (transform-centered, capped by
+    // max-width/height). A preview overlay still sizes its card to the editor
+    // cell geometry so the results column lines up with the framed preview.
+    if(hasPreview){ el.style.width=Math.max(360,px(outer.w,CW))+"px"; }
+  } else if(hasPreview){
     // Preview overlays (quick-open / live-grep) keep the editor's geometry so the
     // results column lines up with the framed preview cells beside it.
     const inputH=34, w=Math.max(360,px(outer.w,CW));
@@ -1525,6 +1561,12 @@ function paletteEl(p){
     pv.innerHTML=cellsSvg(p.previewCells, p.previewRect.w);
     body.appendChild(listBox); body.appendChild(pv);
     el.appendChild(body);
+  } else if(centered){
+    // Centered modal: header on top (input → options → results) — the familiar
+    // command-palette order.
+    el.appendChild(bar);
+    const so=searchOptionsEl(p); if(so) el.appendChild(so);
+    el.appendChild(listBox);
   } else {
     // Bottom sheet: list above, input UNDER it — the terminal's prompt order,
     // with the search-options row (when present) between them like the TUI.
@@ -1535,6 +1577,25 @@ function paletteEl(p){
     el.appendChild(bar);
   }
   return el;
+}
+
+// Palette region nodes: the card, plus a dimming `.modal-scrim` behind it in
+// centered-modal mode (same pattern as settings / aux modals). Input-only
+// prompts (OpenFile / SaveFileAs) have NO native suggestion list — their file
+// browser is drawn into the pane cells already — so they always keep their
+// bottom prompt-row input bar (a floating modal would detach it from its list)
+// and never take a scrim.
+function paletteEls(p){
+  const list = p.listRect || p.outerRect;
+  if(!list) return [paletteInputOnlyEl(p)];
+  const card = paletteCardEl(p, list);
+  if(!paletteCentered) return [card];
+  const scrim = div("modal-scrim");
+  // Click-away dismiss: a command palette is lightweight, so tapping the
+  // backdrop closes it (Escape through the real editor). stopPropagation keeps
+  // the click from also reaching the buffer's mouse handler underneath.
+  scrim.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendKey({key:"Escape"}); };
+  return [scrim, card];
 }
 
 // ---- native status bar --------------------------------------------------
@@ -2208,6 +2269,9 @@ function renderMobileChrome(reg){
     // show/hide the Termux-style modifier row (local view preference)
     const tog=div("m-sheet-item"); tog.innerHTML='<span class="m-sheet-ic">'+(mShowMods?"☑":"☐")+'</span>Modifier keys';
     tog.onclick=e=>{ e.stopPropagation(); mShowMods=!mShowMods; mSheetOpen=false; resize(); }; sh.appendChild(tog);
+    // centered-modal vs bottom-sheet command palette (local view preference)
+    const pct=div("m-sheet-item"); pct.innerHTML='<span class="m-sheet-ic">'+(paletteCentered?"☑":"☐")+'</span>Centered palette';
+    pct.onclick=e=>{ e.stopPropagation(); mSheetOpen=false; setPaletteCentered(!paletteCentered); }; sh.appendChild(pct);
     host.appendChild(sh);
   }
 
@@ -2389,6 +2453,15 @@ document.addEventListener("keydown",e=>{
     setZoom(e.key==="0" ? 1 : zoom + ((e.key==="-"||e.key==="_") ? -0.1 : 0.1));
     return;
   }
+  // Palette placement toggle: Ctrl/Cmd+Alt+P is FRONTEND-OWNED (like zoom) —
+  // it flips the command palette between the centered modal and the bottom
+  // sheet and never reaches the editor. Alt distinguishes it from the editor's
+  // own Ctrl/Cmd+P (quick open), which still forwards normally.
+  if((e.ctrlKey||e.metaKey) && e.altKey && (e.key==="p"||e.key==="P"||e.code==="KeyP")){
+    e.preventDefault();
+    setPaletteCentered(!paletteCentered);
+    return;
+  }
   // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
   // shortcuts reach the editor) and the named navigation/edit keys.
   const single=e.key.length===1;
@@ -2529,9 +2602,11 @@ mqMobile.addEventListener("change", resize);
 // the region containers the last render pass actually rebuilt (per-region
 // patching); `metrics` exposes the measured grid unit + zoom factor.
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
+  setPaletteCentered,
   get frames(){return frameCount;}, get seq(){return lastSeq;},
   get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;},
   get renderedRegions(){return renderedRegions;},
+  get paletteCentered(){return paletteCentered;},
   get metrics(){return {cw:CW, ch:CH, font:FONT, zoom};} };
 focusSink();  // desktop: arm the hidden text sink (IME/dead-key path)
 connect();    // WS: hello replaces the scene, then resize() fits the grid
