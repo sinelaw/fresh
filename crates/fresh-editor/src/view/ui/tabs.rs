@@ -37,6 +37,11 @@ fn preview_suffix(t: &TabTarget, preview_buffer: Option<BufferId>) -> String {
 pub struct TabHitArea {
     /// The tab target this tab represents (buffer or group)
     pub target: TabTarget,
+    /// The resolved, disambiguated display label (the filename for file
+    /// buffers, the group name for groups) — the *same* string the TUI draws
+    /// and the tab width was computed from. Non-cell frontends (the web) render
+    /// this directly so they can't diverge from the terminal on tab text.
+    pub label: String,
     /// The area covering the tab name (clickable to switch to the target)
     pub tab_area: Rect,
     /// The area covering the close button
@@ -657,6 +662,7 @@ fn build_visible_line(
 fn map_tab_hit_areas(
     layout: &mut TabLayout,
     rendered_targets: &[TabTarget],
+    resolved_names: &HashMap<TabTarget, String>,
     tab_ranges: &[(usize, usize, usize)],
     area: Rect,
     offset: usize,
@@ -723,6 +729,7 @@ fn map_tab_hit_areas(
 
         layout.tabs.push(TabHitArea {
             target: *target,
+            label: resolved_names.get(target).cloned().unwrap_or_default(),
             tab_area: Rect::new(screen_start, area.y, tab_width, 1),
             close_area: Rect::new(screen_close_start, area.y, close_width, 1),
         });
@@ -940,6 +947,7 @@ impl TabsRenderer {
         map_tab_hit_areas(
             &mut layout,
             &rendered_targets,
+            &resolved_names,
             &tab_ranges,
             area,
             offset,
@@ -1153,6 +1161,7 @@ mod tests {
 
         layout.tabs.push(TabHitArea {
             target: target1,
+            label: "buf1".to_string(),
             tab_area: Rect::new(0, 0, 16, 1),
             close_area: Rect::new(12, 0, 4, 1),
         });

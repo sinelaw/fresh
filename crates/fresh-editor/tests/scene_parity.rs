@@ -46,16 +46,27 @@ fn web_scene_and_tui_cells_agree() {
     {
         let scene = scene_value(&mut ed, COLS, ROWS);
         let cells = render_tui_cells(&mut ed, COLS, ROWS);
-        let tabs = scene["regions"]["tabBar"]["tabs"].as_array();
-        let label = tabs
-            .and_then(|t| t.iter().find_map(|x| x["label"].as_str()))
-            .map(str::to_string);
-        if let Some(label) = label {
-            assert!(
-                cells.contains(&label),
-                "tab '{label}' in the web scene must also appear in the TUI cells\n{cells}"
-            );
-        }
+        // Tabs live per-pane (`regions.panes[].tabs`), not at `regions.tabBar`.
+        let label = scene["regions"]["panes"]
+            .as_array()
+            .and_then(|panes| {
+                panes
+                    .iter()
+                    .flat_map(|p| p["tabs"].as_array().into_iter().flatten())
+                    .find_map(|x| x["label"].as_str())
+            })
+            .map(str::to_string)
+            .expect("the opened file's tab must appear in the web scene");
+        // The tab label is the filename the TUI draws, not the workspace-relative
+        // path (regression for the web tab showing e.g. `src/view/scene.rs`).
+        assert_eq!(
+            label, "scene.rs",
+            "web tab label must be the bare filename, matching the TUI"
+        );
+        assert!(
+            cells.contains(&label),
+            "tab '{label}' in the web scene must also appear in the TUI cells\n{cells}"
+        );
     }
 
     // ── status-bar parity: a stable segment (language for a .rs file) agrees ──

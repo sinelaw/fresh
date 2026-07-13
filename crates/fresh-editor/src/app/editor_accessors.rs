@@ -1036,14 +1036,6 @@ impl Editor {
         })
     }
 
-    /// Display name for a buffer (tab label), if known.
-    pub(crate) fn buffer_display_name(&self, id: fresh_core::BufferId) -> Option<String> {
-        self.active_window()
-            .buffer_metadata
-            .get(&id)
-            .map(|m| m.display_name.clone())
-    }
-
     /// Whether a buffer has unsaved changes (for the tab's modified dot).
     pub(crate) fn buffer_is_modified(&self, id: fresh_core::BufferId) -> bool {
         self.buffers()

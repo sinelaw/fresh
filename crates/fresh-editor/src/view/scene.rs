@@ -373,9 +373,12 @@ impl Editor {
                         let bid = tab.target.as_buffer();
                         TabView {
                             buffer_id: bid.map(|b| b.0),
-                            label: bid
-                                .and_then(|b| self.buffer_display_name(b))
-                                .unwrap_or_else(|| "untitled".into()),
+                            // The label the renderer resolved for this tab — the
+                            // disambiguated filename (or group name), matching the
+                            // TUI and the width the tab was laid out for. Reading
+                            // the buffer's metadata display name here instead would
+                            // leak the full workspace-relative path into the tab.
+                            label: tab.label.clone(),
                             active: bid == Some(active),
                             modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
                             rect: RectView::from(tab.tab_area),
