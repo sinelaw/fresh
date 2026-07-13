@@ -251,6 +251,53 @@ fn indentation_guide_all_mode_continues_through_wrapped_line() {
 }
 
 #[test]
+fn indentation_guide_all_mode_no_staircase_gap_when_openers_scrolled_off() {
+    // Regression: when the enclosing block openers have scrolled far above the
+    // viewport (beyond the bounded upward scan that primes the guide stack), a
+    // deeply-indented row must still draw a guide at *every* level. The stack is
+    // seeded with only the shallowest ancestor visible in the scan window, and
+    // the off-screen levels below it fall back to tab stops. Previously that
+    // fallback added a single guide at column 0 instead of one per tab stop, so
+    // a row one level deeper than its block opener dropped an intermediate guide
+    // — the guide jumped from column 4 to column 8, leaving a staircase gap.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides_scrolled.rs");
+
+    // Two enclosing openers (columns 0 and 4), then enough same-level filler to
+    // push those openers past the upward-scan window before the target block.
+    let mut src = String::from("root {\n    mid {\n");
+    for i in 0..300 {
+        src.push_str(&format!("        stmt_{i} = {i};\n"));
+    }
+    // Target block (indent 8) with a body one level deeper (indent 12).
+    src.push_str("        block {\n            deep = 1;\n        }\n    }\n}\n");
+    std::fs::write(&file_path, src).unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    // Jump to the end of the document so the target block sits deep inside the
+    // buffer, its `root`/`mid` openers well above the scan window.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    // The indent-12 body row must carry a guide at all three levels (columns 0,
+    // 4 and 8) — a continuous staircase, not a jump from column 4 to column 8.
+    assert!(
+        screen.contains("▏   ▏   ▏   deep = 1;"),
+        "deeply nested row should draw a guide at every level even with the block \
+         openers scrolled off-screen\n{screen}"
+    );
+}
+
+#[test]
 fn indentation_guide_active_mode_continues_through_wrapped_line() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("guides_wrap_active.rs");

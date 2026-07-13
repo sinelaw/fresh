@@ -372,26 +372,27 @@ fn prime_guide_stack_from_buffer(
 }
 
 /// Fill `out` with the guide columns for a line of indent `width` whose open
-/// ancestors (strictly increasing, all `< width`) are `ancestors`. With no
-/// visible ancestor the guides fall back to tab stops so a scrolled view still
-/// shows guides for its topmost rows.
+/// ancestors (strictly increasing, all `< width`) are `ancestors`. Any indent
+/// level shallower than the shallowest known ancestor has scrolled off-screen,
+/// so its guides fall back to tab stops — the same fallback used when no
+/// ancestor is visible at all — keeping a scrolled view's staircase continuous.
 fn fill_guide_columns(ancestors: &[usize], width: usize, tab_size: usize, out: &mut Vec<usize>) {
     out.clear();
-    if ancestors.is_empty() {
-        let tab_size = normalized_tab_size(tab_size);
-        let mut col = 0;
-        while col < width {
-            out.push(col);
-            col += tab_size;
-        }
-    } else {
-        out.extend_from_slice(ancestors);
-        // A guide at column 0 is implied whenever the shallowest visible
-        // ancestor is itself indented (its own parent scrolled off-screen).
-        if ancestors[0] != 0 {
-            out.push(0);
-        }
+    // Everything below the shallowest visible ancestor (or the whole indent, if
+    // none is visible) is drawn at tab stops: those enclosing openers have
+    // scrolled above the viewport, so their exact columns are unknown and we
+    // assume regular tab-width indents. Filling this gap with the same tab-stop
+    // rule the empty-stack case uses stops deeper rows from dropping the
+    // intermediate guides that shallower rows still draw (which showed up as a
+    // staircase gap when a block's opener sat beyond the upward scan window).
+    let boundary = ancestors.first().copied().unwrap_or(width);
+    let step = normalized_tab_size(tab_size);
+    let mut col = 0;
+    while col < boundary {
+        out.push(col);
+        col += step;
     }
+    out.extend_from_slice(ancestors);
 }
 
 /// Append guide glyphs for `guide_columns` lying *beyond* the row's own rendered
