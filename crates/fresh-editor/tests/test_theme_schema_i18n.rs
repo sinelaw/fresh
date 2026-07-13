@@ -55,7 +55,7 @@ fn parse_schema_i18n_keys(
         {
             for (field_name, _field_schema) in section_props {
                 // Numbered indent-rainbow fields use one localized template
-                // with a `{level}` parameter in the theme editor.
+                // with a `%{level}` parameter in the theme editor.
                 let i18n_field = field_name
                     .strip_prefix("indent_rainbow_")
                     .filter(|level| matches!(*level, "1" | "2" | "3" | "4" | "5" | "6"))

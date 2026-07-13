@@ -1,7 +1,7 @@
 {
   "cs": {
-    "field.indent_rainbow": "Duha odsazení {level}",
-    "field.indent_rainbow_desc": "Barva duhového vodítka odsazení (úroveň vnoření {level})",
+    "field.indent_rainbow": "Duha odsazení %{level}",
+    "field.indent_rainbow_desc": "Barva duhového vodítka odsazení (úroveň vnoření %{level})",
     "cmd.edit_theme": "upravit Theme",
     "cmd.edit_theme_desc": "Open the theme barva upravitor",
     "cmd.close_editor": "Theme: zavřít upravitor",
@@ -399,8 +399,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "de": {
-    "field.indent_rainbow": "Einrückungsregenbogen {level}",
-    "field.indent_rainbow_desc": "Farbe der Einrückungsführung (Verschachtelungsebene {level})",
+    "field.indent_rainbow": "Einrückungsregenbogen %{level}",
+    "field.indent_rainbow_desc": "Farbe der Einrückungsführung (Verschachtelungsebene %{level})",
     "cmd.edit_theme": "Theme bearbeiten",
     "cmd.edit_theme_desc": "Theme-Farbeditor oeffnen",
     "cmd.close_editor": "Theme: Editor schliessen",
@@ -798,8 +798,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "en": {
-    "field.indent_rainbow": "Indent Rainbow {level}",
-    "field.indent_rainbow_desc": "Rainbow indentation-guide color (nesting level {level})",
+    "field.indent_rainbow": "Indent Rainbow %{level}",
+    "field.indent_rainbow_desc": "Rainbow indentation-guide color (nesting level %{level})",
     "cmd.edit_theme": "Edit Theme",
     "cmd.edit_theme_desc": "Open the theme color editor",
     "cmd.close_editor": "Theme: Close Editor",
@@ -1197,8 +1197,8 @@
     "field.label_fg_desc": "Jump label text color"
   },
   "es": {
-    "field.indent_rainbow": "Arcoíris de sangría {level}",
-    "field.indent_rainbow_desc": "Color de la guía de sangría (nivel de anidamiento {level})",
+    "field.indent_rainbow": "Arcoíris de sangría %{level}",
+    "field.indent_rainbow_desc": "Color de la guía de sangría (nivel de anidamiento %{level})",
     "cmd.edit_theme": "Editar tema",
     "cmd.edit_theme_desc": "Abrir el editor de colores del tema",
     "cmd.close_editor": "Tema: Cerrar editor",
@@ -1596,8 +1596,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "fr": {
-    "field.indent_rainbow": "Arc-en-ciel d’indentation {level}",
-    "field.indent_rainbow_desc": "Couleur du guide d’indentation (niveau d’imbrication {level})",
+    "field.indent_rainbow": "Arc-en-ciel d’indentation %{level}",
+    "field.indent_rainbow_desc": "Couleur du guide d’indentation (niveau d’imbrication %{level})",
     "cmd.edit_theme": "Modifier le theme",
     "cmd.edit_theme_desc": "Ouvrir l'editeur de couleurs du theme",
     "cmd.close_editor": "Theme: Fermer l'editeur",
@@ -1995,8 +1995,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "ja": {
-    "field.indent_rainbow": "インデントレインボー {level}",
-    "field.indent_rainbow_desc": "インデントガイドの虹色（ネストレベル {level}）",
+    "field.indent_rainbow": "インデントレインボー %{level}",
+    "field.indent_rainbow_desc": "インデントガイドの虹色（ネストレベル %{level}）",
     "cmd.edit_theme": "テーマを編集",
     "cmd.edit_theme_desc": "テーマカラーエディタを開く",
     "cmd.close_editor": "テーマ: エディタを閉じる",
@@ -2394,8 +2394,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "ko": {
-    "field.indent_rainbow": "들여쓰기 무지개 {level}",
-    "field.indent_rainbow_desc": "들여쓰기 안내선 무지개 색상(중첩 수준 {level})",
+    "field.indent_rainbow": "들여쓰기 무지개 %{level}",
+    "field.indent_rainbow_desc": "들여쓰기 안내선 무지개 색상(중첩 수준 %{level})",
     "cmd.edit_theme": "편집 Theme",
     "cmd.edit_theme_desc": "Open the theme 색상 편집or",
     "cmd.close_editor": "Theme: 닫기 편집or",
@@ -2793,8 +2793,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "pt-BR": {
-    "field.indent_rainbow": "Arco-íris de indentação {level}",
-    "field.indent_rainbow_desc": "Cor do guia de indentação (nível de aninhamento {level})",
+    "field.indent_rainbow": "Arco-íris de indentação %{level}",
+    "field.indent_rainbow_desc": "Cor do guia de indentação (nível de aninhamento %{level})",
     "cmd.edit_theme": "editar Theme",
     "cmd.edit_theme_desc": "Open the theme cor editaror",
     "cmd.close_editor": "Theme: fechar editaror",
@@ -3192,8 +3192,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "ru": {
-    "field.indent_rainbow": "Радужный отступ {level}",
-    "field.indent_rainbow_desc": "Цвет направляющей отступа (уровень вложенности {level})",
+    "field.indent_rainbow": "Радужный отступ %{level}",
+    "field.indent_rainbow_desc": "Цвет направляющей отступа (уровень вложенности %{level})",
     "cmd.edit_theme": "редактировать Theme",
     "cmd.edit_theme_desc": "Open the theme цвет редактироватьor",
     "cmd.close_editor": "Theme: закрыть редактироватьor",
@@ -3591,8 +3591,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "th": {
-    "field.indent_rainbow": "แนวเยื้องสีรุ้ง {level}",
-    "field.indent_rainbow_desc": "สีของเส้นนำการเยื้อง (ระดับการซ้อน {level})",
+    "field.indent_rainbow": "แนวเยื้องสีรุ้ง %{level}",
+    "field.indent_rainbow_desc": "สีของเส้นนำการเยื้อง (ระดับการซ้อน %{level})",
     "cmd.edit_theme": "แก้ไข Theme",
     "cmd.edit_theme_desc": "Open the theme สี แก้ไขor",
     "cmd.close_editor": "Theme: ปิด แก้ไขor",
@@ -3990,8 +3990,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "uk": {
-    "field.indent_rainbow": "Райдужний відступ {level}",
-    "field.indent_rainbow_desc": "Колір напрямної відступу (рівень вкладеності {level})",
+    "field.indent_rainbow": "Райдужний відступ %{level}",
+    "field.indent_rainbow_desc": "Колір напрямної відступу (рівень вкладеності %{level})",
     "cmd.edit_theme": "редагувати Theme",
     "cmd.edit_theme_desc": "Open the theme колір редагуватиor",
     "cmd.close_editor": "Theme: закрити редагуватиor",
@@ -4389,8 +4389,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "vi": {
-    "field.indent_rainbow": "Cầu vồng thụt lề {level}",
-    "field.indent_rainbow_desc": "Màu đường dẫn thụt lề (mức lồng nhau {level})",
+    "field.indent_rainbow": "Cầu vồng thụt lề %{level}",
+    "field.indent_rainbow_desc": "Màu đường dẫn thụt lề (mức lồng nhau %{level})",
     "cmd.edit_theme": "Chỉnh sửa giao diện",
     "cmd.edit_theme_desc": "Mở trình chỉnh sửa màu giao diện",
     "cmd.close_editor": "Giao diện: Đóng trình chỉnh sửa",
@@ -4788,8 +4788,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "zh-CN": {
-    "field.indent_rainbow": "彩虹缩进 {level}",
-    "field.indent_rainbow_desc": "缩进参考线颜色（嵌套层级 {level}）",
+    "field.indent_rainbow": "彩虹缩进 %{level}",
+    "field.indent_rainbow_desc": "缩进参考线颜色（嵌套层级 %{level}）",
     "cmd.edit_theme": "编辑主题",
     "cmd.edit_theme_desc": "打开主题颜色编辑器",
     "cmd.close_editor": "主题: 关闭编辑器",
@@ -5187,8 +5187,8 @@
     "field.punctuation_delimiter_modifier_desc": "Text attributes applied to punctuation delimiters"
   },
   "it": {
-    "field.indent_rainbow": "Arcobaleno rientri {level}",
-    "field.indent_rainbow_desc": "Colore della guida di rientro (livello di annidamento {level})",
+    "field.indent_rainbow": "Arcobaleno rientri %{level}",
+    "field.indent_rainbow_desc": "Colore della guida di rientro (livello di annidamento %{level})",
     "cmd.edit_theme": "Modifica tema",
     "cmd.edit_theme_desc": "Apri l editor dei colori del tema",
     "cmd.close_editor": "Tema: Chiudi editor",
