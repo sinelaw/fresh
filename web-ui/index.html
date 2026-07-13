@@ -427,7 +427,12 @@
 
   /* Quiet, uniform hover affordance. */
   .menu:hover{background:var(--hover)}
-  .tab .x:hover{background:var(--hover)}
+  /* Hovering a non-active tab marks it (background lift + name brought up to
+     full fg), so pointing at a tab gives feedback before you click it. The
+     active tab already reads as selected, so it's left untouched. */
+  .tab:not(.active):hover{background:var(--hover)}
+  .tab:not(.active):hover .name{color:var(--fg)}
+  .tab .x:hover{background:var(--hairline-strong)}
   .statusbar .seg:hover{background:var(--hover)}
   .settings-modal .set-dual-row:hover{background:var(--hover)}
   .prow:not(.sel):hover,.popup-row:not(.sel):not(.disabled):hover,
@@ -583,8 +588,9 @@
   /* Text on accent-filled controls the base still leaves white but the earlier
      polish block didn't cover. */
   .kbedit .kb-ac-row.sel{color:var(--on-accent)}
-  /* Tab close-button hover → theme hover, not a fixed dark grey. */
-  .tab .x:hover{background:var(--hover);color:var(--fg)}
+  /* Tab close-button hover → a stronger fill than the tab-body hover so the ×
+     reads as its own target even while the whole tab is also hover-lifted. */
+  .tab .x:hover{background:var(--hairline-strong);color:var(--fg)}
 
   /* ======================================================================
      Mobile / portrait touch shell. Gated entirely by body.mobile (set in JS

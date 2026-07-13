@@ -186,13 +186,21 @@ pub fn tabs_render_width(tabs_total: usize, bar_width: usize) -> usize {
     }
 }
 
-/// Compute scroll offset to bring the active tab into view.
-/// Always scrolls to put the active tab at a comfortable position.
-/// `tab_widths` includes separators between tabs.
+/// Compute the scroll offset that brings the active tab into view with the
+/// **least** movement from the current offset.
+///
+/// This is a plain scroll-into-view: if the active tab is already fully
+/// visible the offset is left untouched, so activating a tab never yanks the
+/// bar around. Only when the tab sits past an edge do we scroll — just far
+/// enough to reveal it against that edge (its start against the left edge, or
+/// its end against the right edge), never re-centering it.
+///
+/// `tab_widths` includes the 1-column separators between tabs. `current_offset`
+/// is the split's live `tab_scroll_offset`.
 pub fn scroll_to_show_tab(
     tab_widths: &[usize],
     active_idx: usize,
-    _current_offset: usize,
+    current_offset: usize,
     max_width: usize,
 ) -> usize {
     if tab_widths.is_empty() || max_width == 0 || active_idx >= tab_widths.len() {
@@ -204,53 +212,48 @@ pub fn scroll_to_show_tab(
     let tab_width = tab_widths[active_idx];
     let tab_end = tab_start + tab_width;
 
-    // Try to put the active tab about 1/4 from the left edge
-    let preferred_position = max_width / 4;
-    let target_offset = tab_start.saturating_sub(preferred_position);
-
-    // Ensure the active tab is fully visible, accounting for scroll indicators.
-    // When offset > 0, a "<" indicator uses 1 column on the left.
-    // When content extends past the right edge, a ">" uses 1 column on the right.
-    // The visible content window is [offset .. offset+available) where
-    // available = max_width - indicator_columns.
-    //
-    // max_offset must also account for the left indicator: when scrolled to the
-    // end, the "<" takes 1 column, so we can see only max_width-1 content chars.
-    let max_offset_with_indicator = total_width.saturating_sub(max_width.saturating_sub(1));
-    let max_offset_no_indicator = total_width.saturating_sub(max_width);
-    let max_offset = if total_width > max_width {
-        max_offset_with_indicator
-    } else {
-        0
-    };
-    let mut result = target_offset.min(max_offset);
-
-    // Use worst-case (both indicators) for the right-edge check to avoid
-    // circular dependency between offset and indicator presence.
-    let available_worst = max_width.saturating_sub(2);
-
-    if tab_end > result + available_worst {
-        // Tab extends past the visible window — scroll right so tab_end
-        // aligns with the right edge of the visible content area.
-        result = tab_end.saturating_sub(available_worst);
+    // Everything fits — nothing to scroll, park at the origin.
+    if total_width <= max_width {
+        return 0;
     }
-    if tab_start < result {
-        // Tab starts before the visible window, scroll left to reveal it.
-        // If this brings us to 0, no left indicator needed.
-        result = tab_start;
-    }
-    // Final clamp — use the no-indicator max if result is 0, otherwise the
-    // indicator-aware max.
-    let effective_max = if result > 0 {
-        max_offset
-    } else {
-        max_offset_no_indicator
+
+    // Furthest we can scroll: at the right end a "<" indicator eats one column,
+    // so only max_width-1 content columns remain visible there.
+    let max_offset = total_width.saturating_sub(max_width.saturating_sub(1));
+
+    // Visible content window for a candidate offset, reserving columns for the
+    // scroll indicators the renderer will actually draw: a "<" when offset > 0,
+    // a ">" when content extends past the right edge.
+    let visible = |off: usize| -> (usize, usize) {
+        let show_left = off > 0;
+        let show_right = total_width.saturating_sub(off) > max_width;
+        let available = max_width
+            .saturating_sub(show_left as usize)
+            .saturating_sub(show_right as usize);
+        (off, off + available)
     };
-    result = result.min(effective_max);
+
+    let offset = current_offset.min(max_offset);
+    let (vis_start, vis_end) = visible(offset);
+
+    let result = if tab_start >= vis_start && tab_end <= vis_end {
+        // Already fully on screen — don't move at all.
+        offset
+    } else if tab_start < vis_start {
+        // Off the left edge: reveal the tab start against the left edge.
+        tab_start.min(max_offset)
+    } else {
+        // Off the right edge: align the tab end with the right edge. Reserve
+        // both indicators (worst case) so the tab can't be clipped by an
+        // indicator that appears at the new offset. This sidesteps the circular
+        // dependency between the offset and which indicators are shown.
+        let available_worst = max_width.saturating_sub(2);
+        tab_end.saturating_sub(available_worst).min(max_offset)
+    };
 
     tracing::debug!(
-        "scroll_to_show_tab: idx={}, tab={}..{}, target={}, result={}, total={}, max_width={}, max_offset={}",
-        active_idx, tab_start, tab_end, target_offset, result, total_width, max_width, max_offset
+        "scroll_to_show_tab: idx={}, tab={}..{}, cur={}, result={}, total={}, max_width={}, max_offset={}",
+        active_idx, tab_start, tab_end, current_offset, result, total_width, max_width, max_offset
     );
     result
 }
