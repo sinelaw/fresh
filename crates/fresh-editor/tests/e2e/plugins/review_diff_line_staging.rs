@@ -139,6 +139,13 @@ fn test_review_visual_stage_single_added_line() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
+    // Read the row→line mapping only from a converged frame — the async,
+    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
+    // cursor lands off "+extra line" and the wait below hangs until the
+    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
+    // state behind an unbounded wait).
+    harness.wait_for_screen_contains("+extra line").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let target = diff_line_of(&mut harness, "+extra line");
     move_cursor_to_line(&mut harness, target);
 
@@ -184,6 +191,11 @@ fn test_review_visual_stage_modified_line_pair() {
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
     // Land on the removed "-beta" row, then visual-extend down over "+BETA".
+    // Read the row→line mapping only from a converged frame — the async,
+    // multi-phase hunk-jump repaint can otherwise mis-map the target and hang
+    // the wait below until the external timeout (CONTRIBUTING.md §3/§16).
+    harness.wait_for_screen_contains("-beta").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let target = diff_line_of(&mut harness, "-beta");
     move_cursor_to_line(&mut harness, target);
     harness
@@ -218,6 +230,13 @@ fn test_review_visual_discard_single_added_line() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
+    // Read the row→line mapping only from a converged frame — the async,
+    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
+    // cursor lands off "+extra line" and the wait below hangs until the
+    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
+    // state behind an unbounded wait).
+    harness.wait_for_screen_contains("+extra line").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let target = diff_line_of(&mut harness, "+extra line");
     move_cursor_to_line(&mut harness, target);
     harness
@@ -254,6 +273,13 @@ fn test_review_visual_discard_status_is_localized() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
+    // Read the row→line mapping only from a converged frame — the async,
+    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
+    // cursor lands off "+extra line" and the wait below hangs until the
+    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
+    // state behind an unbounded wait).
+    harness.wait_for_screen_contains("+extra line").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let target = diff_line_of(&mut harness, "+extra line");
     move_cursor_to_line(&mut harness, target);
     harness
@@ -339,6 +365,17 @@ fn test_review_visual_stage_only_selected_line_of_hunk() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
+    // The hunk-jump repaint is async + multi-phase (focus mode paints the
+    // focused file's body, then the panel can still reflow). `diff_line_of`
+    // maps a *screen* row to a diff-buffer line against a fixed panel offset,
+    // so sampling a mid-reflow frame yields a wrong target: the cursor lands
+    // off `+ADD1`, `s` stages nothing, and the wait below hangs until the
+    // external timeout. Wait for the body to appear *and* for the async plugin
+    // pipeline to go quiet, so the row→line mapping is read from a converged
+    // frame (CONTRIBUTING.md §3 semantic waiting, §16 no wrong state behind an
+    // unbounded wait).
+    harness.wait_for_screen_contains("+ADD1").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let target = diff_line_of(&mut harness, "+ADD1");
     move_cursor_to_line(&mut harness, target);
     harness
@@ -470,6 +507,13 @@ fn test_review_visual_unstage_single_added_line() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
+    // Read the row→line mapping only from a converged frame — the async,
+    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
+    // cursor lands off "+extra line" and the wait below hangs until the
+    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
+    // state behind an unbounded wait).
+    harness.wait_for_screen_contains("+extra line").unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
     let target = diff_line_of(&mut harness, "+extra line");
     move_cursor_to_line(&mut harness, target);
     harness
