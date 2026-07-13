@@ -1288,10 +1288,8 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub indentation_guide_glyph: String,
 
-    /// Color indentation guides by nesting depth. The six rainbow colors are
-    /// configured independently by the active theme (`indent_rainbow_1`
-    /// through `indent_rainbow_6`). Has no effect when indentation guides are
-    /// disabled.
+    /// Color indentation guides by indent level, using the active theme's
+    /// `indent_rainbow_1` through `indent_rainbow_6` colors.
     /// Default: false
     #[serde(default = "default_false")]
     #[schemars(extend("x-section" = "Display"))]

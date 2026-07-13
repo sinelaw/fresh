@@ -83,7 +83,8 @@ pub(crate) struct LineRenderInput<'a> {
     pub indentation_guide: IndentationGuideMode,
     /// Glyph used when an indentation guide is drawn.
     pub indentation_guide_glyph: &'a str,
-    /// Color indentation guides by nesting depth.
+    /// Color indentation guides by indent level (palette slot picked from the
+    /// guide's column, one slot per tab stop).
     pub rainbow_indentation: bool,
     /// Per-cell theme key map for the theme inspector (screen_width used for indexing)
     pub cell_theme_map: &'a mut Vec<crate::app::types::CellThemeInfo>,
@@ -128,7 +129,6 @@ struct SpanCursors {
 #[derive(Clone, Copy, Debug)]
 struct ActiveIndentationGuide {
     column: usize,
-    depth: usize,
     first_line_idx: usize,
     last_line_idx: usize,
 }
@@ -179,10 +179,6 @@ impl ActiveIndentationGuide {
             .buffer
             .get_line(state.buffer.get_line_number(header_byte))?;
         let column = indent_folding::slice_indent(&header_line, tab_size).0;
-        // `column` was already resolved by the fold search above. Derive the
-        // palette slot from it directly instead of walking upward through the
-        // buffer a second time on every render.
-        let depth = column / tab_size;
 
         // Map the fold's hidden byte range onto the visible view-line indices.
         let first_line_idx = view_lines
@@ -200,7 +196,6 @@ impl ActiveIndentationGuide {
 
         Some(Self {
             column,
-            depth,
             first_line_idx,
             last_line_idx,
         })
@@ -420,7 +415,7 @@ fn append_blank_line_guides(
     glyph: char,
     style: Style,
     rainbow_theme: Option<&Theme>,
-    active_rainbow_depth: Option<usize>,
+    tab_size: usize,
     rendered_cols: &mut usize,
     line_spans: &mut Vec<Span<'static>>,
     line_view_map: &mut Vec<Option<usize>>,
@@ -443,13 +438,12 @@ fn append_blank_line_guides(
     }
 
     if let Some(theme) = rainbow_theme {
+        let tab_size = normalized_tab_size(tab_size);
         for col in start..=end_col {
-            let (ch, cell_style) = match guide_columns.iter().position(|&guide| guide == col) {
-                Some(depth) => {
-                    let depth = active_rainbow_depth.unwrap_or(depth);
-                    (glyph, style.fg(theme.indent_rainbow_color(depth)))
-                }
-                None => (' ', style),
+            let (ch, cell_style) = if guide_columns.contains(&col) {
+                (glyph, style.fg(theme.indent_rainbow_color(col / tab_size)))
+            } else {
+                (' ', style)
             };
             push_span_with_map(line_spans, line_view_map, ch.to_string(), cell_style, None);
         }
@@ -785,9 +779,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // modes); reused by the cell pass and the blank-line guide synthesis.
         let active_guide_col =
             active_indentation_guide.and_then(|guide| guide.column_for_line(current_view_line_idx));
-        let active_guide_depth = active_indentation_guide
-            .filter(|guide| guide.column_for_line(current_view_line_idx).is_some())
-            .map(|guide| guide.depth);
 
         // Per-cell pass: walk the line's characters and emit styled spans
         let cells = render_line_cells(
@@ -814,7 +805,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 rainbow_indentation,
                 indentation_guide_columns: &guide_columns_buf,
                 active_indentation_guide_col: active_guide_col,
-                active_indentation_guide_depth: active_guide_depth,
             },
             &mut selection_sweep,
             &mut overlay_sweep,
@@ -950,7 +940,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 guide_glyph_char,
                 guide_style,
                 rainbow_indentation.then_some(theme),
-                active_guide_depth,
+                state.buffer_settings.tab_size,
                 &mut rendered_cols,
                 &mut line_spans,
                 &mut line_view_map,

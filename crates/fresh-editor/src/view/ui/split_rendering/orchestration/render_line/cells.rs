@@ -66,9 +66,6 @@ pub(super) struct CellPassInput<'a, 'c> {
     /// In active mode, the one guide column to draw for this line when it is
     /// inside the active cursor's indentation block.
     pub active_indentation_guide_col: Option<usize>,
-    /// Zero-based nesting depth of the active guide, inferred from ancestor
-    /// indentation rather than raw tab stops.
-    pub active_indentation_guide_depth: Option<usize>,
 }
 
 /// Per-line results the later passes consume.
@@ -390,18 +387,13 @@ impl CellPass<'_, '_, '_> {
             return self.input.theme.indentation_guide_fg;
         }
 
-        let depth = match self.input.indentation_guide {
-            IndentationGuideMode::All => self
-                .input
-                .indentation_guide_columns
-                .iter()
-                .position(|&column| column == self.col_offset)
-                .unwrap_or(0),
-            IndentationGuideMode::Active => self.input.active_indentation_guide_depth.unwrap_or(0),
-            IndentationGuideMode::None => 0,
-        };
-
-        self.input.theme.indent_rainbow_color(depth)
+        // The palette slot is a pure function of the guide's column: one slot
+        // per tab stop. Both guide modes therefore give a guide at a given
+        // column the same color, stable under scrolling and cursor movement.
+        let tab_size = super::normalized_tab_size(self.input.state.buffer_settings.tab_size);
+        self.input
+            .theme
+            .indent_rainbow_color(self.col_offset / tab_size)
     }
 
     fn is_leading_indent_cell(&self) -> bool {

@@ -603,7 +603,7 @@
           "x-section": "Display"
         },
         "rainbow_indentation": {
-          "description": "Color indentation guides by nesting depth. The six rainbow colors are\nconfigured independently by the active theme (`indent_rainbow_1`\nthrough `indent_rainbow_6`). Has no effect when indentation guides are\ndisabled.\nDefault: false",
+          "description": "Color indentation guides by indent level, using the active theme's\n`indent_rainbow_1` through `indent_rainbow_6` colors.\nDefault: false",
           "type": "boolean",
           "default": false,
           "x-section": "Display"

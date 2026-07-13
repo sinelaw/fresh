@@ -73,6 +73,57 @@ fn rainbow_indentation_colors_guides_by_nesting_depth() {
 }
 
 #[test]
+fn rainbow_active_guide_color_follows_guide_column() {
+    // The rainbow palette slot is a pure function of the guide's column
+    // (`column / tab_size`), so the single `active`-mode guide changes color as
+    // the cursor moves between blocks whose guides sit at different columns —
+    // and matches the color `all` mode gives a guide at the same column.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("rainbow_active.rs");
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    first();\n    if a {\n        inner();\n    }\n}\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::Active;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+    config.editor.rainbow_indentation = true;
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+
+    let guide_fg_on = |harness: &mut EditorTestHarness, text: &str| {
+        harness.render().unwrap();
+        let (text_col, row) = harness
+            .find_text_on_screen(text)
+            .unwrap_or_else(|| panic!("expected {text:?} on screen"));
+        let guide_col = (0..text_col)
+            .find(|&x| harness.get_cell(x, row).as_deref() == Some("┊"))
+            .unwrap_or_else(|| panic!("expected an active guide left of {text:?}"));
+        harness.get_cell_style(guide_col, row).unwrap().fg
+    };
+
+    // Cursor on "    first();" — enclosing block is `fn main`, guide at
+    // column 0.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    let outer_fg = guide_fg_on(&mut harness, "first();");
+
+    // Cursor on "        inner();" — enclosing block is `if a`, guide at
+    // column 4.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    let inner_fg = guide_fg_on(&mut harness, "inner();");
+
+    assert_ne!(
+        outer_fg, inner_fg,
+        "active guides at different columns should use distinct rainbow colors"
+    );
+}
+
+#[test]
 fn indentation_guide_keeps_subdued_color_inside_selection() {
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("guides_selected.rs");
