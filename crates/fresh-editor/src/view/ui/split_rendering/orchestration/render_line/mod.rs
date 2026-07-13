@@ -179,12 +179,10 @@ impl ActiveIndentationGuide {
             .buffer
             .get_line(state.buffer.get_line_number(header_byte))?;
         let column = indent_folding::slice_indent(&header_line, tab_size).0;
-        let ancestors =
-            prime_guide_stack_from_buffer(&state.buffer, header_byte, tab_size, max_upward);
-        let depth = ancestors
-            .iter()
-            .position(|&ancestor| ancestor == column)
-            .unwrap_or(ancestors.len());
+        // `column` was already resolved by the fold search above. Derive the
+        // palette slot from it directly instead of walking upward through the
+        // buffer a second time on every render.
+        let depth = column / tab_size;
 
         // Map the fold's hidden byte range onto the visible view-line indices.
         let first_line_idx = view_lines

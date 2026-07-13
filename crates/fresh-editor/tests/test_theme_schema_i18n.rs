@@ -54,8 +54,15 @@ fn parse_schema_i18n_keys(
             .and_then(|p| p.as_object())
         {
             for (field_name, _field_schema) in section_props {
-                let field_i18n_name = format!("field.{}", field_name);
-                let field_i18n_desc = format!("field.{}_desc", field_name);
+                // Numbered indent-rainbow fields use one localized template
+                // with a `{level}` parameter in the theme editor.
+                let i18n_field = field_name
+                    .strip_prefix("indent_rainbow_")
+                    .filter(|level| matches!(*level, "1" | "2" | "3" | "4" | "5" | "6"))
+                    .map(|_| "indent_rainbow")
+                    .unwrap_or(field_name);
+                let field_i18n_name = format!("field.{}", i18n_field);
+                let field_i18n_desc = format!("field.{}_desc", i18n_field);
                 fields.push((field_name.clone(), field_i18n_name, field_i18n_desc));
             }
         }

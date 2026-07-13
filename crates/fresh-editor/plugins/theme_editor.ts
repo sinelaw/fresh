@@ -319,13 +319,21 @@ function loadThemeSections(): ThemeSection[] {
       key: string,
       kind: "color" | "modifier",
       fallbackDesc: string,
-    ): ThemeFieldDef => ({
-      key,
-      displayName: editor.t(`field.${key}`) || fallbackDesc || key,
-      description: editor.t(`field.${key}_desc`) || fallbackDesc,
-      section: sectionName,
-      kind,
-    });
+    ): ThemeFieldDef => {
+      // Numbered indent-rainbow fields share one translated template. Keeping
+      // the level as data avoids twelve near-identical locale keys and lets
+      // translators place the number where their language expects it.
+      const indentRainbow = /^indent_rainbow_([1-6])$/.exec(key);
+      const i18nKey = indentRainbow ? "indent_rainbow" : key;
+      const params = indentRainbow ? { level: indentRainbow[1] } : undefined;
+      return {
+        key,
+        displayName: editor.t(`field.${i18nKey}`, params) || fallbackDesc || key,
+        description: editor.t(`field.${i18nKey}_desc`, params) || fallbackDesc,
+        section: sectionName,
+        kind,
+      };
+    };
 
     for (const [fieldName, fieldSchema] of Object.entries(sectionProps)) {
       const fieldObj = fieldSchema as Record<string, unknown>;
