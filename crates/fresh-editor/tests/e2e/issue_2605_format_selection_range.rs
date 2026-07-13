@@ -179,8 +179,27 @@ fn setup(
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for the LSP to be reported ready (capabilities received).
+    // Wait for the LSP pill to appear. NOTE: "LSP (on)" also renders while the
+    // server is merely Starting/Initializing (see app/lsp_status.rs — those
+    // states deliberately count as "on"), so it does NOT prove the initialize
+    // handshake finished or that the client has stored the server's
+    // capabilities.
     harness.wait_for_screen_contains("LSP (on)")?;
+
+    // Gate on the server having logged didOpen before returning. The client
+    // sends didOpen only after it has processed the initialize *response*
+    // (which is when it records documentRangeFormattingProvider), so a logged
+    // didOpen means the range-formatting capability is known client-side.
+    // Without this, a fast Format Buffer can race the still-initializing client:
+    // the selection then falls back to whole-file formatting, the range request
+    // is never sent, and the test's rangeFormatting wait hangs to the external
+    // timeout (CONTRIBUTING.md §3 semantic waiting; LSP lifecycle: didOpen must
+    // precede other requests). Mirrors hot_exit_recovery_lsp_sync.rs.
+    harness.wait_until(|_| {
+        std::fs::read_to_string(log_file)
+            .unwrap_or_default()
+            .contains("METHOD:textDocument/didOpen")
+    })?;
 
     Ok((harness, test_file))
 }
