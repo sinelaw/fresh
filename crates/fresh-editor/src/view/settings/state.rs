@@ -2612,6 +2612,40 @@ impl SettingsState {
         }
     }
 
+    /// Move cursor to the start of the current editable control (Home).
+    pub fn text_move_home(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::TextList(state) => state.move_home(),
+                SettingControl::Text(state) => state.move_home(),
+                SettingControl::Map(state) => state.cursor = 0,
+                SettingControl::Json(state) => state.move_home(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Move cursor to the end of the current editable control (End).
+    pub fn text_move_end(&mut self) {
+        if let Some(item) = self.current_item_mut() {
+            match &mut item.control {
+                SettingControl::TextList(state) => state.move_end(),
+                SettingControl::Text(state) => state.move_end(),
+                SettingControl::Map(state) => state.cursor = state.new_key_text.len(),
+                SettingControl::Json(state) => state.move_end(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Forward-delete the character at the cursor (Delete key) in the focused
+    /// plain `Text` control. TextList/Map use Delete to remove the focused row
+    /// instead (see [`Self::text_remove_focused`]), so this is gated to plain
+    /// Text and no-ops for the others.
+    pub fn text_delete(&mut self) {
+        self.with_editing_text(|state| state.delete());
+    }
+
     /// Move focus to previous item in TextList/Map (wraps within control)
     pub fn text_focus_prev(&mut self) {
         if let Some(item) = self.current_item_mut() {

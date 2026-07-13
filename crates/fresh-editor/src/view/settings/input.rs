@@ -1161,7 +1161,13 @@ impl SettingsState {
                 InputResult::Consumed
             }
             KeyCode::Delete => {
-                self.text_remove_focused();
+                // A plain Text field forward-deletes the character at the
+                // cursor. TextList/Map keep Delete = remove the focused row.
+                if self.is_editing_plain_text() {
+                    self.text_delete();
+                } else {
+                    self.text_remove_focused();
+                }
                 InputResult::Consumed
             }
             KeyCode::Left => {
@@ -1178,6 +1184,14 @@ impl SettingsState {
                 } else {
                     self.text_move_right();
                 }
+                InputResult::Consumed
+            }
+            KeyCode::Home => {
+                self.text_move_home();
+                InputResult::Consumed
+            }
+            KeyCode::End => {
+                self.text_move_end();
                 InputResult::Consumed
             }
             KeyCode::Up => {
@@ -1581,6 +1595,32 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    /// The value shown in the currently-focused plain `Text` control.
+    fn text_value(state: &SettingsState) -> String {
+        match state.current_item().map(|i| &i.control) {
+            Some(SettingControl::Text(s)) => s.value(),
+            _ => panic!("current item is not a Text control"),
+        }
+    }
+
+    /// Focus the first editable plain `Text` control in the body. The
+    /// Terminal shell `command` field is one such scalar; any Text control
+    /// exercises the same shared body text handler.
+    fn select_first_text_control(state: &mut SettingsState) -> bool {
+        for pi in 0..state.pages.len() {
+            for ii in 0..state.pages[pi].items.len() {
+                if let SettingControl::Text(s) = &state.pages[pi].items[ii].control {
+                    if s.is_enabled() {
+                        state.selected_category = pi;
+                        state.selected_item = ii;
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     #[test]
     fn test_settings_is_modal() {
         // SettingsState should be modal - consume all unhandled input
@@ -1914,6 +1954,63 @@ mod tests {
         assert!(
             !state.is_number_editing(),
             "Tab while editing a Number control must exit editing mode"
+        );
+    }
+
+    /// A plain `Text` field in the main settings body (e.g. Terminal ▸
+    /// Command) must honor Home, End, and forward-Delete. The body text
+    /// handler previously had no `Home`/`End` arms — the caret never moved —
+    /// and routed `Delete` to list-item removal, a no-op on a scalar field.
+    /// Regression guard for both.
+    #[test]
+    fn test_body_text_field_home_end_and_forward_delete() {
+        let schema = include_str!("../../../plugins/config-schema.json");
+        let config = crate::config::Config::default();
+        let mut state = SettingsState::new(schema, &config).unwrap();
+        state.visible = true;
+        state.focus.set(FocusPanel::Settings);
+
+        assert!(
+            select_first_text_control(&mut state),
+            "expected at least one editable Text control in the schema"
+        );
+
+        let mut ctx = InputContext::new();
+
+        // Enter edit mode and type a known value. The first keystroke clears
+        // any armed replace-on-type, so the field ends up holding "abcdef".
+        state.start_editing();
+        for c in "abcdef".chars() {
+            state.handle_key_event(&key(KeyCode::Char(c)), &mut ctx);
+        }
+        assert_eq!(text_value(&state), "abcdef");
+
+        // Home moves the caret to the start: the next char lands there.
+        state.handle_key_event(&key(KeyCode::Home), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('X')), &mut ctx);
+        assert_eq!(
+            text_value(&state),
+            "Xabcdef",
+            "Home must move the caret to the start of the field"
+        );
+
+        // End moves the caret to the end: the next char appends.
+        state.handle_key_event(&key(KeyCode::End), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Char('Z')), &mut ctx);
+        assert_eq!(
+            text_value(&state),
+            "XabcdefZ",
+            "End must move the caret to the end of the field"
+        );
+
+        // Delete forward-deletes: Left puts the caret before 'Z', Delete
+        // removes the 'Z' at the caret (rather than no-op'ing).
+        state.handle_key_event(&key(KeyCode::Left), &mut ctx);
+        state.handle_key_event(&key(KeyCode::Delete), &mut ctx);
+        assert_eq!(
+            text_value(&state),
+            "Xabcdef",
+            "Delete must forward-delete the character at the caret"
         );
     }
 }
