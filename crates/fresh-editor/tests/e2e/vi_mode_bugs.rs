@@ -1523,6 +1523,14 @@ fn test_vi_bug_2441_semicolon_repeats_find() {
     enable_vi_mode(&mut harness);
 
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'o'; otherwise a fast/slow-CI race
+    // delivers 'o' while still in vi-normal, where it means "open line below"
+    // (→ insert mode), the find never happens, and the cursor wait below hangs
+    // to the external timeout. Matches the f-find sibling tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'o');
     harness.wait_until(|h| h.cursor_position() == 4).unwrap();
 
@@ -1541,7 +1549,17 @@ fn test_vi_bug_2441_comma_repeats_find_reverse() {
     enable_vi_mode(&mut harness);
 
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'o'; otherwise a fast/slow-CI race
+    // delivers 'o' while still in vi-normal, where it means "open line below"
+    // (→ insert mode), the find never happens, and the cursor waits below hang
+    // to the external timeout. Gate each subsequent step on the cursor landing
+    // so `;`/`,` repeat a completed find rather than racing an in-flight one.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'o');
+    harness.wait_until(|h| h.cursor_position() == 4).unwrap();
     send_key(&mut harness, ';');
     harness.wait_until(|h| h.cursor_position() == 7).unwrap();
 
