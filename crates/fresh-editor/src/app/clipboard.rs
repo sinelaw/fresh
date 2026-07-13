@@ -1255,6 +1255,20 @@ impl Editor {
             return;
         }
 
+        // Read-only buffers must reject a paste, exactly as they reject
+        // typing and `Ctrl+V`. The `Action::Paste` (Ctrl+V) path gates on
+        // `is_editing_disabled` before it ever reaches here, but a
+        // terminal-initiated bracketed paste (`Ev::Paste`: right-click /
+        // middle-click / Ctrl+Shift+V) lands straight in `paste_text`,
+        // bypassing that gate (issue #2674). Enforce the gate at this single
+        // buffer-destined fork — after the prompt and live-terminal routes
+        // above, which have their own targets and are unaffected by the
+        // buffer's read-only state.
+        if self.active_window().is_editing_disabled() {
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
+            return;
+        }
+
         // Collect cursor info sorted in reverse order by position
         let vs_mode = self.active_state().buffer_settings.virtual_space;
         let mut cursor_data: Vec<_> = {

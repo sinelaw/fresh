@@ -305,3 +305,87 @@ fn test_auto_read_only_disabled_opens_library_file_editable() {
         screen
     );
 }
+
+/// A terminal-initiated bracketed paste (`Event::Paste` — right-click /
+/// middle-click / Ctrl+Shift+V) must be rejected in a read-only buffer, just
+/// like typing and `Ctrl+V` are (issue #2674). Before the fix this path
+/// bypassed the read-only gate and mutated the buffer.
+#[test]
+fn test_bracketed_paste_blocked_in_read_only_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let lib_dir = temp_dir.path().join("node_modules").join("somelib");
+    std::fs::create_dir_all(&lib_dir).unwrap();
+    let file_path = lib_dir.join("index.js");
+    std::fs::write(&file_path, "library content\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        24,
+        Config::default(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("library content");
+    harness.assert_screen_contains(READ_ONLY_INDICATOR);
+
+    // Deliver a bracketed paste, exactly as the terminal does.
+    harness.send_paste("ZZPASTEDZZ").unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+
+    assert!(
+        !screen.contains("ZZPASTEDZZ"),
+        "Bracketed paste must not insert into a read-only buffer. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains(EDITING_DISABLED_MSG),
+        "Blocked bracketed paste should surface the editing-disabled message. Screen:\n{}",
+        screen
+    );
+    assert!(
+        screen.contains(READ_ONLY_INDICATOR),
+        "Buffer should remain read-only after the blocked paste. Screen:\n{}",
+        screen
+    );
+}
+
+/// The read-only paste gate must not over-block: in an editable buffer a
+/// terminal bracketed paste still lands. Guards against the gate leaking into
+/// the normal-editing path.
+#[test]
+fn test_bracketed_paste_works_in_editable_buffer() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("editable.txt");
+    std::fs::write(&file_path, "editable content\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        24,
+        Config::default(),
+        temp_dir.path().to_path_buf(),
+    )
+    .unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("editable content");
+
+    harness.send_paste("ZZPASTEDZZ").unwrap();
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+
+    assert!(
+        screen.contains("ZZPASTEDZZ"),
+        "Bracketed paste should insert into an editable buffer. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains(EDITING_DISABLED_MSG),
+        "No editing-disabled message expected for an editable buffer. Screen:\n{}",
+        screen
+    );
+}
