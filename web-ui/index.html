@@ -672,6 +672,42 @@
   body.mobile .kbedit .kb-context,body.mobile .kbedit .kb-source{display:none}
   body.mobile .kbedit .kb-key{width:11ch}
   body.mobile .kbedit .kb-action{width:18ch}
+
+  /* ---- show full text: opt out of chrome truncation ----
+     The web UI mirrors the TUI's fixed-cell layout, where every label is
+     hard-clipped to its box; here that was reproduced with
+     `text-overflow:ellipsis`, so long tab names, the prompt / Open-File input
+     line, status text, tree rows, and dialog labels showed a "…" and hid their
+     tail. This block turns that off everywhere: fixed chrome (tabs, status bar,
+     header path) grows to fit its content, and scrollable panels (file tree,
+     palette list) reveal the overflow by scrolling instead of clipping it. */
+  .tab{max-width:none}
+  .tab .name,
+  .statusbar .txt,
+  .palette .pinput .q,
+  .palette .prow .pdesc,
+  .fileexplorer .fx-title,
+  .fileexplorer .fx-row .fx-name,
+  .trustdialog .td-path,
+  .w-list-row,
+  .settings-modal .set-field,
+  .settings-modal .set-list-sub,
+  .settings-modal .set-list-label,
+  .settings-modal .set-dual-row,
+  .kbedit .kb-cfg,
+  .kbedit .kb-col,
+  .kbedit .kb-footer,
+  .popup .popup-title,
+  .popup .popup-desc,
+  .popup .popup-row .pdetail,
+  .m-file{overflow:visible;text-overflow:clip;max-width:none}
+  /* Let panels that already scroll vertically also scroll horizontally, and let
+     their rows size to their content, so the revealed full-length text is
+     reachable rather than spilling out of the box. */
+  .fileexplorer .fx-list{overflow:auto}
+  .fileexplorer .fx-row{width:max-content;min-width:100%}
+  .palette .plist{overflow:auto}
+  .palette .prow{width:max-content;min-width:100%}
 </style>
 </head>
 <body>
