@@ -678,16 +678,40 @@
      hard-clipped to its box; here that was reproduced with
      `text-overflow:ellipsis`, so long tab names, the prompt / Open-File input
      line, status text, tree rows, and dialog labels showed a "…" and hid their
-     tail. This block turns that off everywhere: fixed chrome (tabs, status bar,
-     header path) grows to fit its content, and scrollable panels (file tree,
-     palette list) reveal the overflow by scrolling instead of clipping it. */
+     tail. Turn that off WITHOUT disturbing hit-testing or layout:
+       - Hit-testing is unaffected either way. Every overlay row forwards its own
+         precomputed LOGICAL cell (col/row from the server rect), never a
+         pixel-derived one, and onChrome() keeps the grid's pixel->cell handler
+         off these elements. Nothing here reads element geometry.
+       - So the only thing to protect is visual layout: overflowing text must
+         never push a sibling or spill past a non-clipping parent. Two safe
+         shapes are used. (A) grow inside a parent that already clips/scrolls;
+         (B) stay flex-shrinkable and clip (no ellipsis) when the box is truly
+         too small. Nothing wraps — every row stays a single line so it keeps
+         mapping 1:1 to the editor's row model. */
+
+  /* (A) Tabs grow to their full name; .tabbar (overflow:hidden) clips the row's
+     right edge, so wide tabs never spill outside it. */
   .tab{max-width:none}
-  .tab .name,
+  .tab .name{overflow:visible;text-overflow:clip}
+
+  /* (A) File-tree and palette rows size to their content; the panel — which
+     already scrolls vertically — now also scrolls horizontally to reveal it,
+     so the full text is reachable and stays inside the panel box. */
+  .fileexplorer .fx-list{overflow:auto}
+  .fileexplorer .fx-row{width:max-content;min-width:100%}
+  .fileexplorer .fx-row .fx-name{overflow:visible;text-overflow:clip}
+  .palette .plist{overflow:auto}
+  .palette .prow{width:max-content;min-width:100%}
+  .palette .prow .pdesc{overflow:visible;text-overflow:clip}
+
+  /* (B) Everything else: drop the ellipsis and any hard width cap, but keep the
+     element flex-shrinkable and clipped, so a long value shows in full when the
+     box has room yet can never push its neighbours (status-bar segments, the
+     palette count, dialog controls) or spill out of its box when it doesn't. */
   .statusbar .txt,
   .palette .pinput .q,
-  .palette .prow .pdesc,
   .fileexplorer .fx-title,
-  .fileexplorer .fx-row .fx-name,
   .trustdialog .td-path,
   .w-list-row,
   .settings-modal .set-field,
@@ -700,14 +724,7 @@
   .popup .popup-title,
   .popup .popup-desc,
   .popup .popup-row .pdetail,
-  .m-file{overflow:visible;text-overflow:clip;max-width:none}
-  /* Let panels that already scroll vertically also scroll horizontally, and let
-     their rows size to their content, so the revealed full-length text is
-     reachable rather than spilling out of the box. */
-  .fileexplorer .fx-list{overflow:auto}
-  .fileexplorer .fx-row{width:max-content;min-width:100%}
-  .palette .plist{overflow:auto}
-  .palette .prow{width:max-content;min-width:100%}
+  .m-file{min-width:0;overflow:hidden;text-overflow:clip;max-width:none}
 </style>
 </head>
 <body>
