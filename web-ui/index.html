@@ -235,8 +235,13 @@
   .w-row{display:flex;flex-direction:row;align-items:center;gap:8px;flex-wrap:nowrap}
   .w-row.wrap{flex-wrap:wrap}
   .w-col{display:flex;flex-direction:column;gap:4px}
-  .w-toggle{display:inline-flex;align-items:center;gap:4px;cursor:default;padding:1px 4px;border-radius:4px}
+  .w-toggle{display:inline-flex;align-items:center;gap:6px;cursor:default;padding:1px 4px;border-radius:4px}
   .w-toggle.on{color:var(--accent)}
+  /* Sliding switch, identical geometry to the Settings `.set-switch`. */
+  .w-toggle .w-box{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;flex:0 0 auto;transition:background .1s}
+  .w-toggle .w-box::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
+  .w-toggle.on .w-box{background:var(--accent)}
+  .w-toggle.on .w-box::after{left:14px;background:var(--on-accent,#fff)}
   .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
     .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
   .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -1773,7 +1778,9 @@ function widgetEl(spec, ctx){
   }
   if(kind==="toggle"){
     const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":""));
-    const box=document.createElement("span"); box.className="w-box"; box.textContent=spec.checked?"☑":"☐"; el.appendChild(box);
+    // A sliding switch (CSS-drawn), matching the Settings UI toggles —
+    // not a unicode ☑/☐ glyph.
+    const box=document.createElement("span"); box.className="w-box"; el.appendChild(box);
     const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
     if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
@@ -2166,6 +2173,19 @@ function widgetSurfaceEls(s){
     const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
   }
   const el=div("region widget-surface w-"+s.kind); place(el,s.rect);
+  if(s.kind==="floatingModal"){
+    // The host sizes the panel in whole terminal cells, but the DOM adds
+    // per-row gaps + padding a cell grid can't express, so a snug dialog
+    // (e.g. the New Folder dialog) would overflow its fixed height and clip
+    // its buttons under `overflow:auto`. Treat the host height as a minimum
+    // and let the modal grow to fit its content; nudge it up by half the
+    // overflow so it stays visually centered.
+    const want=el.style.height; el.style.minHeight=want; el.style.height="auto";
+    requestAnimationFrame(()=>{
+      const grew=el.offsetHeight-parseFloat(want||"0");
+      if(grew>0) el.style.top=(parseFloat(el.style.top)-grew/2)+"px";
+    });
+  }
   const ctx={ kind:"panel", plugin:s.plugin, panelId:s.panelId, hits:s.hits, instances:s.instances, focusKey:s.focusKey };
   el.appendChild(widgetEl(s.spec, ctx));
   // A left dock's rightmost column is an editor resize border (dock_resizing);
