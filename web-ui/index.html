@@ -256,6 +256,12 @@
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  .w-tree{display:flex;flex-direction:column;overflow:auto}
+  .w-tree-row{padding:1px 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
+  .w-tree-row.sel{background:var(--menuhi);color:#fff}
+  .w-tree-disc,.w-tree-check{color:var(--muted)} .w-tree-row.sel .w-tree-disc,.w-tree-row.sel .w-tree-check{color:#dfe8ff}
+  .w-overlay{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+    box-shadow:0 10px 34px rgba(0,0,0,.5);padding:4px;margin:2px 0;z-index:4;position:relative}
   .w-list-cards{gap:4px;padding:2px}
   .w-list-card{border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:default;background:rgba(255,255,255,.02)}
   .w-list-card.sel{border-color:var(--accent);background:var(--menuhi)}
@@ -389,10 +395,10 @@
   .widget-surface{background:var(--bg2);overflow:auto;z-index:40;padding:4px 6px;
     display:flex;flex-direction:column}
   .widget-surface>.w-col,.widget-surface>.w-row{flex:1 1 auto;min-height:0}
-  .widget-surface .w-list{flex:1 1 auto;min-height:0;overflow-y:auto}
+  .widget-surface .w-list,.widget-surface .w-tree{flex:1 1 auto;min-height:0;overflow-y:auto}
   /* rows/cards keep their natural height — the LIST scrolls, its items never
      squash to fit the flex-constrained track */
-  .widget-surface .w-list>*{flex:0 0 auto}
+  .widget-surface .w-list>*,.widget-surface .w-tree>*{flex:0 0 auto}
   .widget-surface.w-dock{border-right:1px solid var(--border)}
   .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
   .widget-surface .w-col{gap:3px}
@@ -1823,8 +1829,67 @@ function widgetEl(spec, ctx){
     }
     return el;
   }
+  if(kind==="tree"){
+    // Same semantics as the TUI's render_widget_tree: the host-owned
+    // instance state (selection, expanded set) is authoritative, a node is
+    // visible iff every ancestor is expanded, and rows fire the identical
+    // select / expand hits. Rendered natively (all visible rows, no TUI
+    // scroll window) — off-window clicks are synthesized bridge-side.
+    const el=div("w-tree"+(focused?" focus":""));
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const sel=inst&&inst.selectedIndex!=null?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
+    const expanded=new Set(inst&&inst.expandedKeys?inst.expandedKeys:(spec.expandedKeys||[]));
+    const keys=spec.itemKeys||[];
+    const open=[];
+    (spec.nodes||[]).forEach((n,i)=>{
+      const d=n.depth||0; open.length=d;
+      const vis=open.every(Boolean);
+      const key=keys[i]||"";
+      const isOpen=n.hasChildren?(!!key&&expanded.has(key)):true;
+      open.push(isOpen);
+      if(!vis) return;
+      const row=div("w-tree-row"+(i===sel?" sel":""));
+      row.style.paddingLeft=(d*2)+"ch";
+      if(n.hasChildren){
+        const g=document.createElement("span"); g.className="w-tree-disc"; g.textContent=isOpen?"▼ ":"▶ ";
+        g.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"expand",{index:i,key,expanded:!isOpen}); };
+        row.appendChild(g);
+      }
+      if(spec.checkable&&n.checked!=null){
+        const cb=document.createElement("span"); cb.className="w-tree-check"; cb.textContent=n.checked?"☑ ":"☐ ";
+        cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"toggle",{index:i,key,checked:!n.checked}); };
+        row.appendChild(cb);
+      }
+      const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
+      row.appendChild(t);
+      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"select",{index:i,key}); };
+      el.appendChild(row);
+    });
+    return el;
+  }
+  if(kind==="overlay"){
+    // The TUI floats the child over the following rows; here it renders as
+    // a raised dropdown card in flow, right under the row that opened it.
+    const el=div("w-overlay");
+    if(spec.child) el.appendChild(widgetEl(spec.child, ctx));
+    return el;
+  }
   if(kind==="raw"&&spec.entries){ const el=div("w-raw"); el.textContent=spec.entries.map(entryText).join("\n"); return el; }
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
+}
+
+// Route a tree row interaction by identity (tree spec key + event + row
+// payload). When the TUI recorded a hit for this row, reuse its exact
+// payload + index so the bridge's strict identity tier matches; rows below
+// the TUI's scroll window carry just the synthesized payload and resolve
+// through the bridge's tree synthesis.
+function routeTree(ctx, node, eventType, payload){
+  const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
+  const hit=(ctx.hits||[]).find(h=>h.widgetKind==="tree"&&h.eventType===eventType
+    &&h.widgetKey===(node.key||"")&&h.payload&&h.payload.index===payload.index);
+  const msg={...base,widgetKey:node.key||"",eventType,payload:hit?hit.payload:payload};
+  if(hit) msg.hitIndex=hit.index;
+  sendWidget(msg);
 }
 
 // Native Settings — a control's value rendered semantically (read from the

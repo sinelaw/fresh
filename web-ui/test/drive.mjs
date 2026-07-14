@@ -160,6 +160,11 @@ if (!((await scene(page)).regions.widgets || []).length) {
 await page.waitForFunction(() => { const w = window.fresh.scene.regions.widgets; return w && w.length > 0; }, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
 check('editor reports a widget surface', !!((await scene(page)).regions.widgets || []).length);
+// The redesigned dock (hierarchical folder tree) collapses the filter
+// toggles behind a "Filters" disclosure — expand it so the full toolbar
+// (view / project / worktree / hide-trivial / Manage) is rendered.
+await page.locator('.widget-surface.w-dock .w-button', { hasText: 'Filters' }).first().click();
+await page.waitForTimeout(400);
 check('dock rendered as a native widget panel', (await page.locator('.widget-surface .w-button').count()) >= 3);
 check('NO svg/cells inside the widget panel', (await page.locator('.widget-surface svg').count()) === 0);
 await page.screenshot({ path: `${SHOTS}/28-native-dock.png` });
@@ -207,8 +212,8 @@ await page.waitForFunction(v2 => { const d = (window.fresh.scene.regions.widgets
   return d && !!(f(d.spec) || {}).checked !== v2; }, t2v, { timeout: 5000 }).catch(() => {});
 const t3v = !!(findByKey((await dockSurf()).spec, 'hide-trivial') || {}).checked;
 check('stale hitIndex + correct identity still delivers (drift regression)', t3v !== t2v, `checked ${t2v}->${t3v}`);
-// A workspace-row (card) click selects it through the same identity path.
-await page.locator('.widget-surface.w-dock .w-list-card').first().click();
+// A session tree-row click selects it through the same identity path.
+await page.locator('.widget-surface.w-dock .w-tree-row').first().click();
 await page.waitForTimeout(500);
 const dSel = await dockSurf();
 check('clicking a dock workspace row selects it in the scene',
@@ -605,14 +610,19 @@ if (!((await scene(page)).regions.widgets || []).some(w => w.kind === 'dock')) {
 }
 await page.waitForTimeout(200);
 check('dock alone (no modal) has zero modal-scrims', (await page.locator('.modal-scrim').count()) === 0);
-await page.locator('.widget-surface.w-dock .w-button', { hasText: 'New' }).first().click();
+// "New Task… ▾" opens a create dropdown first (dock redesign); pick the
+// "New Task…" option (rendered as "  New Task…" / "● New Task…") to open
+// the form.
+await page.locator('.widget-surface.w-dock .w-button', { hasText: 'New Task' }).first().click();
+await page.waitForTimeout(300);
+await page.locator('.widget-surface.w-dock .w-button', { hasText: /New Task…$/ }).first().click();
 await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(200);
 check('New Workspace dialog is a floatingModal', ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
 check('exactly one modal-scrim behind the floatingModal', (await page.locator('.modal-scrim').count()) === 1);
 const dockSel = async () => { const d = ((await scene(page)).regions.widgets || []).find(w => w.kind === 'dock'); return d && d.instances && d.instances.sessions ? d.instances.sessions.selectedIndex : null; };
 const sel0 = await dockSel();
-const cardBox = await page.locator('.widget-surface.w-dock .w-list-card').first().boundingBox();
+const cardBox = await page.locator('.widget-surface.w-dock .w-tree-row').first().boundingBox();
 if (cardBox) await page.mouse.click(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);
 await page.waitForTimeout(300);
 const sel1 = await dockSel();

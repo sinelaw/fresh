@@ -396,6 +396,16 @@ impl Editor {
                         h.event_type == event_type
                             && h.widget_key == widget_key
                             && (!strict || h.payload == *payload)
+                            // Never loose-match across rows: tree hits all
+                            // share the tree's spec key, so when both payloads
+                            // carry an `index` they must agree — otherwise a
+                            // click on an off-window row would deliver some
+                            // other row's recorded hit.
+                            && (strict
+                                || match (h.payload.get("index"), payload.get("index")) {
+                                    (Some(a), Some(b)) => a == b,
+                                    _ => true,
+                                })
                     })
                     .cloned()
             };
@@ -415,6 +425,7 @@ impl Editor {
                 })
                 .or_else(|| hit_index.and_then(|i| panel.hits.get(i).cloned()))
                 .or_else(|| Self::synthesize_list_hit(panel, event_type, payload))
+                .or_else(|| Self::synthesize_tree_hit(panel, widget_key, event_type, payload))
         };
         if let Some(hit) = hit {
             self.deliver_widget_hit(&panel_key, &hit, None);
@@ -468,6 +479,60 @@ impl Editor {
                 "list_key": list_key,
             }),
             event_type: "select",
+        })
+    }
+
+    /// Rebuild the `HitArea` `render_widget_tree` would have emitted for a
+    /// tree row outside the TUI's scroll window (so no hit was recorded),
+    /// from the panel's own spec: `widget_key` must name a `Tree`, the
+    /// payload's `index` must be in bounds, and the row's item key comes
+    /// from the spec's `item_keys`. Covers the row-body `select` and the
+    /// disclosure `expand` events (the natively-scrolled web frontend can
+    /// click any row, not just the TUI's visible window).
+    fn synthesize_tree_hit(
+        panel: &crate::widgets::WidgetPanelState,
+        widget_key: &str,
+        event_type: &str,
+        payload: &serde_json::Value,
+    ) -> Option<crate::widgets::HitArea> {
+        if (event_type != "select" && event_type != "expand") || widget_key.is_empty() {
+            return None;
+        }
+        let index = payload.get("index")?.as_i64()?;
+        let spec = crate::widgets::find_widget_by_key(&panel.spec, widget_key)?;
+        let fresh_core::api::WidgetSpec::Tree {
+            nodes, item_keys, ..
+        } = spec
+        else {
+            return None;
+        };
+        if index < 0 || index as usize >= nodes.len() {
+            return None;
+        }
+        let item_key = item_keys.get(index as usize).cloned().unwrap_or_default();
+        let (event_type, payload) = if event_type == "expand" {
+            (
+                "expand",
+                serde_json::json!({
+                    "index": index,
+                    "key": item_key,
+                    "expanded": payload.get("expanded").and_then(|v| v.as_bool()).unwrap_or(true),
+                }),
+            )
+        } else {
+            (
+                "select",
+                serde_json::json!({ "index": index, "key": item_key }),
+            )
+        };
+        Some(crate::widgets::HitArea {
+            widget_key: widget_key.to_string(),
+            widget_kind: "tree",
+            buffer_row: 0,
+            byte_start: 0,
+            byte_end: 0,
+            payload,
+            event_type,
         })
     }
 
