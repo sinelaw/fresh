@@ -147,8 +147,10 @@
     backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
     border:1px solid var(--hairline-strong);box-shadow:0 28px 90px rgba(0,0,0,.62)}
   /* Roomier list — a min-height keeps the modal a substantial panel even when
-     only a few commands match, instead of collapsing to a tiny box. */
-  .palette.centered .plist{max-height:min(62vh,560px);min-height:330px}
+     only a few commands match, instead of collapsing to a tiny box. The cap is
+     a pure viewport fraction (no fixed pixel ceiling) so a tall display shows
+     more rows; the WIDTH stays capped above, which is the point of a palette. */
+  .palette.centered .plist{max-height:66vh;min-height:330px}
   /* Let the frosted surface show through the header rows (they'd otherwise be
      painted opaque by their own --bg / --bg2 fills). */
   .palette.centered .pinput{background:transparent}
@@ -720,6 +722,21 @@
      anchor here wins for both placement modes. */
   body.mobile .palette{left:3vw!important;width:94vw!important;top:7vh!important;
     bottom:auto!important;transform:none!important;max-width:none!important}
+  /* Small-screen palette: grow into a near-full-height sheet as results fill
+     it, sized in dvh so the browser toolbars (and, where the browser reports
+     it, the on-screen keyboard) are accounted for — never overflowing a short
+     viewport. Drop the desktop list-height floor (it would overflow a phone),
+     WRAP long command rows instead of hard-clipping the description, give rows
+     finger-sized padding, and hide the keyboard-shortcut pills (dead weight on
+     a touch device). */
+  body.mobile .palette.centered{top:3dvh!important;max-height:92dvh!important}
+  body.mobile .palette.centered .plist{min-height:0!important;max-height:78dvh!important}
+  /* width:auto cancels the desktop `width:max-content` (which makes rows scroll
+     horizontally) so the row instead fills the viewport width and WRAPS. */
+  body.mobile .palette .prow{flex-wrap:wrap;align-items:flex-start;padding:8px 14px;row-gap:1px;width:auto}
+  body.mobile .palette .prow .ptext{flex:1 1 100%}
+  body.mobile .palette .prow .pdesc{flex:1 1 100%;white-space:normal;overflow:visible;text-overflow:clip}
+  body.mobile .palette .prow .pkey{display:none}
   body.mobile .settings-modal,body.mobile .kbedit{left:2vw!important;right:2vw!important;
     width:96vw!important;top:42px!important;bottom:calc(var(--m-bottom,124px) + 6px)!important;
     height:auto!important;max-height:none!important;transform:none!important}
