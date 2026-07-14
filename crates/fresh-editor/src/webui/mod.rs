@@ -36,10 +36,13 @@
 //! `409 Conflict` before any upgrade (the editor is one single-threaded
 //! session; interleaving two browsers' input would be an accident, not a
 //! feature — multi-session is §3.7, PLANNED). The `Origin` header, when
-//! present, must have the same host as the server's bind address or the
-//! upgrade is rejected with `403 Forbidden` — a malicious page on another
-//! origin can open WebSockets cross-origin, so this is the browser-facing
-//! guard; non-browser tools send no Origin and are accepted.
+//! present, must have the same host as the request's `Host` header (i.e. the
+//! request is same-origin) or the upgrade is rejected with `403 Forbidden` —
+//! a malicious page on another origin can open WebSockets cross-origin, so
+//! this is the browser-facing guard. Comparing against `Host` (rather than
+//! the bind address) is what lets a wildcard bind like `--web 0.0.0.0:8137`
+//! work when reached as `127.0.0.1:8137`; non-browser tools send no Origin
+//! and are accepted.
 //!
 //! **HTTP routes** all keep working exactly as before (full-scene responses;
 //! curl and the parity harness depend on them). A mutation made over HTTP
@@ -271,7 +274,9 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
 
     let listener = TcpListener::bind(addr)?;
     listener.set_nonblocking(true)?;
-    // Host part of the bind address, for the Origin check on WS upgrades.
+    // Host part of the bind address — only the fallback for the WS-upgrade
+    // Origin check when a request carries no Host header (the check prefers
+    // the request's Host header; see `origin_host_matches`).
     let bind_host = addr.rsplit_once(':').map(|(h, _)| h).unwrap_or(addr);
     eprintln!(
         "fresh web bridge on http://{addr}  (real render pipeline, no mocks; WS push on /ws)"
@@ -812,21 +817,36 @@ fn ws_accept_key(key: &str) -> String {
     BASE64.encode(h.finalize())
 }
 
-/// True when the Origin header's host equals the server's bind host (any
-/// port). Non-browser tools send no Origin and never reach this check.
-fn origin_host_matches(origin: &str, bind_host: &str) -> bool {
-    let rest = origin.split("://").nth(1).unwrap_or(origin);
+/// The bare host of a `host[:port]` or `scheme://host[:port]/path` string,
+/// unwrapping an IPv6 bracket (`[::1]:8080` → `::1`).
+fn host_only(s: &str) -> &str {
+    let rest = s.split("://").nth(1).unwrap_or(s);
     let hostport = rest.split('/').next().unwrap_or(rest);
-    let host = if let Some(h) = hostport.strip_prefix('[') {
-        h.split(']').next().unwrap_or(h) // [::1]:8080 → ::1
+    if let Some(h) = hostport.strip_prefix('[') {
+        h.split(']').next().unwrap_or(h)
     } else {
         hostport
             .rsplit_once(':')
             .map(|(h, _)| h)
             .unwrap_or(hostport)
-    };
-    let bind = bind_host.trim_start_matches('[').trim_end_matches(']');
-    host.eq_ignore_ascii_case(bind)
+    }
+}
+
+/// True when the WebSocket upgrade is same-origin: the `Origin` header's host
+/// matches the host the browser actually connected to, taken from the `Host`
+/// header. This is the real cross-origin guard — a page on another origin
+/// sends its own `Origin` while still connecting to our `Host`, so the two
+/// disagree and it's rejected.
+///
+/// Comparing against `Host` (not the bind address) is what makes wildcard
+/// binds work: with `--web 0.0.0.0:8137` the browser reaches the server as
+/// `127.0.0.1:8137` (or a LAN IP), and its `Origin` host matches that `Host`,
+/// even though neither equals the literal bind host `0.0.0.0`. When no `Host`
+/// header is present we fall back to the bind host. Non-browser tools send no
+/// `Origin` and never reach this check.
+fn origin_host_matches(origin: &str, host_header: Option<&str>, bind_host: &str) -> bool {
+    let target = host_only(host_header.unwrap_or(bind_host));
+    host_only(origin).eq_ignore_ascii_case(target)
 }
 
 /// Handle a `/ws` upgrade request: enforce the single-client model (409) and
@@ -854,7 +874,7 @@ fn upgrade_ws(
         return Ok(None);
     }
     if let Some(origin) = req.header("origin") {
-        if !origin_host_matches(origin, bind_host) {
+        if !origin_host_matches(origin, req.header("host"), bind_host) {
             respond(
                 &mut stream,
                 "403 Forbidden",
@@ -1688,4 +1708,78 @@ fn indexed_css(i: u8) -> String {
         (v, v, v)
     };
     hex(r, g, b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{host_only, origin_host_matches};
+
+    #[test]
+    fn host_only_strips_scheme_port_and_brackets() {
+        assert_eq!(host_only("http://127.0.0.1:8137/ws"), "127.0.0.1");
+        assert_eq!(host_only("127.0.0.1:8137"), "127.0.0.1");
+        assert_eq!(host_only("localhost"), "localhost");
+        assert_eq!(host_only("http://[::1]:8137"), "::1");
+        assert_eq!(host_only("[::1]:8137"), "::1");
+        assert_eq!(host_only("0.0.0.0"), "0.0.0.0");
+    }
+
+    #[test]
+    fn same_origin_upgrade_is_allowed_for_wildcard_bind() {
+        // The regression: `--web 0.0.0.0:8137` reached via 127.0.0.1. The
+        // browser's Origin host matches the Host it connected to, so the
+        // upgrade must be allowed even though neither equals the bind host.
+        assert!(origin_host_matches(
+            "http://127.0.0.1:8137",
+            Some("127.0.0.1:8137"),
+            "0.0.0.0",
+        ));
+        // Same for a LAN IP served by the same wildcard bind.
+        assert!(origin_host_matches(
+            "http://192.168.1.5:8137",
+            Some("192.168.1.5:8137"),
+            "0.0.0.0",
+        ));
+        // ...and for localhost / IPv6 loopback.
+        assert!(origin_host_matches(
+            "http://localhost:8137",
+            Some("localhost:8137"),
+            "0.0.0.0",
+        ));
+        assert!(origin_host_matches(
+            "http://[::1]:8137",
+            Some("[::1]:8137"),
+            "::",
+        ));
+    }
+
+    #[test]
+    fn cross_origin_upgrade_is_rejected() {
+        // A page on another origin connects to our Host but carries its own
+        // Origin — the mismatch is the guard that must still fire.
+        assert!(!origin_host_matches(
+            "http://evil.example.com",
+            Some("127.0.0.1:8137"),
+            "0.0.0.0",
+        ));
+        assert!(!origin_host_matches(
+            "https://attacker.test:443",
+            Some("127.0.0.1:8137"),
+            "127.0.0.1",
+        ));
+    }
+
+    #[test]
+    fn falls_back_to_bind_host_without_a_host_header() {
+        assert!(origin_host_matches(
+            "http://127.0.0.1:8137",
+            None,
+            "127.0.0.1",
+        ));
+        assert!(!origin_host_matches(
+            "http://127.0.0.1:8137",
+            None,
+            "10.0.0.1",
+        ));
+    }
 }
