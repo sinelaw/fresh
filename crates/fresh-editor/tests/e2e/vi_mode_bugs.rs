@@ -1263,6 +1263,13 @@ fn test_vi_indent_line_repeat() {
         .wait_for_buffer_content("    alpha\nbeta\n")
         .unwrap();
 
+    // The buffer matches as soon as the indent lands, but `vi_indent_line` is
+    // still finishing up (placing the cursor, then switching back to normal
+    // mode). A `.` sent while the editor is still in operator-pending mode is
+    // unbound there and gets swallowed, so wait for normal mode first —
+    // matching the sibling repeat tests in vi_mode.rs.
+    wait_normal(&mut harness);
+
     // `.` indents the same line again -> two levels (8 spaces).
     send_key(&mut harness, '.');
     harness
