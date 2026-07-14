@@ -407,6 +407,26 @@
   .widget-surface.w-dock{border-right:1px solid var(--border)}
   .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
   .widget-surface .w-col{gap:3px}
+  /* --- Plugin dialog polish (New Folder, etc.) ---------------------------
+     A floating modal whose root is a labeledSection is a small dialog. Give
+     it a clean card: the section owns the padding (so its border doesn't
+     double up with the modal frame), a titled header rule, roomy vertical
+     rhythm, a real input field, and right-aligned buttons. Scoped with
+     :has()/`>` so the big new-session form (root .w-col) is untouched. */
+  .widget-surface.w-floatingModal:has(> .w-section){padding:0}
+  .w-floatingModal>.w-section{border:none;padding:16px 18px}
+  .w-floatingModal>.w-section>.w-section-label{font-weight:600;color:var(--fg);
+    margin:0 0 14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+  .w-floatingModal>.w-section>.w-col{gap:14px}
+  .w-floatingModal>.w-section .w-row{align-items:center}
+  .w-floatingModal>.w-section .w-text{flex:1;border:1px solid var(--border);
+    border-radius:6px;padding:4px 8px;background:var(--bg)}
+  /* Only the switch reflects state; the label stays normal weight/colour. */
+  .w-floatingModal>.w-section .w-toggle.on{color:inherit}
+  .w-floatingModal>.w-section .w-row.wrap{justify-content:flex-end;gap:10px;margin-top:6px}
+  .w-floatingModal>.w-section .w-button{padding:5px 16px}
+  /* Dimmed placeholder text so an empty field doesn't read as a real value. */
+  .w-text-val.ph{color:var(--muted)}
 
   /* ---- popups (completion / hover / action / list / text) — native ---- */
   .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
@@ -1806,7 +1826,8 @@ function widgetEl(spec, ctx){
   if(kind==="text"){
     const el=div("w-text"+(focused?" focus":""));
     if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
-    const v=document.createElement("span"); v.className="w-text-val"; v.textContent=spec.value||spec.placeholder||""; el.appendChild(v);
+    const v=document.createElement("span"); const showingPh=!spec.value&&!!spec.placeholder;
+    v.className="w-text-val"+(showingPh?" ph":""); v.textContent=spec.value||spec.placeholder||""; el.appendChild(v);
     if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
