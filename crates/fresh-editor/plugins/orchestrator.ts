@@ -1014,10 +1014,15 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
   const proj = editor.pathBasename(projectKeyOf(s));
   segs.push({ text: "  " + PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } });
   segs.push({ text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } });
-  if (s.discovered) {
+  // A remote session surfaces its backend target (host / ns·pod) coloured
+  // by the connection state — pill parity (the pill shows it at the right
+  // end of line 1). The discovered "· on-disk" tag is NOT repeated here:
+  // the card's third line (prLineEntries) already carries it, exactly like
+  // the pill.
+  if (s.remote) {
     segs.push({
-      text: "  " + editor.t("pill.on_disk_worktree"),
-      style: { fg: "ui.menu_disabled_fg", italic: true },
+      text: "  " + s.remote.detail,
+      style: { fg: remoteStateFg(s.remote.state), italic: true },
     });
   }
   return styledRow(segs as Parameters<typeof styledRow>[0]);

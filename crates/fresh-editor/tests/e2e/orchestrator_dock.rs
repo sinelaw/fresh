@@ -2037,7 +2037,7 @@ fn dock_new_folder_and_move_session_into_it() {
     open_dock(&mut h);
 
     // Open the "New Task… ▾" create dropdown, move the cursor to
-    // "New Folder…", and accept it — that raises a name prompt.
+    // "New Folder…", and accept it — that opens the New Folder dialog.
     let new_row = row_of(&h, "New Task") as u16;
     h.mouse_click(4, new_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("New Folder"))
@@ -2045,14 +2045,25 @@ fn dock_new_folder_and_move_session_into_it() {
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // Name the folder "Docs" at the prompt.
-    h.wait_for_prompt().unwrap();
+    // The dialog opens with focus in the (empty) name field. Type the
+    // name, then Tab onto the "Organize … under this folder" checkbox and
+    // Space it OFF — this test exercises the explicit move-into-folder
+    // path below, so the folder must start empty. Enter submits from
+    // anywhere in the dialog.
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
     h.type_text("Docs").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // The folder appears in the dock tree, initially empty.
-    h.wait_until(|h| h.screen_to_string().contains("Docs"))
-        .unwrap();
+    // The dialog closes and the folder appears in the dock tree,
+    // initially empty (no member count).
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("Docs")
+    })
+    .unwrap();
 
     // Right-click the alphaproj session row and choose "Move to Folder…".
     let session_row = row_of(&h, "alphaproj") as u16;
