@@ -745,7 +745,7 @@ fn list_selection(focus: FocusState, focused: Option<usize>) -> i32 {
 
 /// Human column title from a `display_field` pointer (`/grammar` →
 /// `Grammar`).
-fn column_title(display_field: &str) -> String {
+pub(crate) fn column_title(display_field: &str) -> String {
     let last = display_field.rsplit('/').next().unwrap_or(display_field);
     let mut chars = last.chars();
     match chars.next() {

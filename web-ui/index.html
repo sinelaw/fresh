@@ -297,7 +297,12 @@
   .settings-modal .set-list-row{display:flex;align-items:center;gap:8px;padding:2px 10px;border-bottom:1px solid rgba(255,255,255,.05)}
   .settings-modal .set-list-row:last-child{border-bottom:none}
   .settings-modal .set-list-badge{color:var(--accent)}
-  .settings-modal .set-list-sub{color:var(--muted);margin-left:auto;max-width:50%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Two-column list rows mirroring the TUI's map layout: a fixed-ish key
+     column ("Name") that must never collapse, then the flexible value
+     preview. The header row reuses the same spans so columns line up. */
+  .settings-modal .set-list-label{flex:0 0 auto;min-width:16ch;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .settings-modal .set-list-sub{color:var(--muted);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .settings-modal .set-list-head,.settings-modal .set-list-head .set-list-sub{color:var(--muted)}
   .settings-modal .set-list-empty{padding:3px 10px;color:var(--muted);font-style:italic}
   .settings-modal .set-list-add{padding:2px 10px;color:var(--accent);cursor:default;border-top:1px solid rgba(255,255,255,.06)}
   .settings-modal .set-dual{display:flex;align-items:stretch;gap:6px;margin:4px 0 2px 8px}
@@ -534,10 +539,7 @@
   .settings-modal .set-cat{padding:3px 12px}
   .settings-modal .set-item{padding:6px 16px}
 
-  /* Keep long composite-list values (e.g. the Languages JSON) on one tidy line
-     instead of overflowing the row. */
   .settings-modal .set-list-row{min-width:0;gap:10px}
-  .settings-modal .set-list-label{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   /* Slim, rounded, low-contrast scrollbars that match the hairline language. */
   *::-webkit-scrollbar{width:10px;height:10px}
@@ -782,8 +784,6 @@
   .trustdialog .td-path,
   .w-list-row,
   .settings-modal .set-field,
-  .settings-modal .set-list-sub,
-  .settings-modal .set-list-label,
   .settings-modal .set-dual-row,
   .kbedit .kb-cfg,
   .kbedit .kb-col,
@@ -1851,8 +1851,13 @@ function settingListEl(c, idx, live){
   // rowHit: (rowIndex) -> SettingsHit for clicking that row; addHit for "＋ Add".
   let rowHit=null, addHit=null;
   if(k==="textList"){ rows=c.items.map(t=>({label:t})); rowHit=i=>["controlTextListRow",idx,i]; addHit=["controlTextListRow",idx,c.items.length]; }
-  else if(k==="map"){ rows=c.entries.map(e=>({label:e.key, sub:e.display})); rowHit=i=>["controlMapRow",idx,i]; addHit=["controlMapAddNew",idx]; }
+  else if(k==="map"){ rows=c.entries.map(e=>({label:e.key, sub:e.display})); rowHit=i=>["controlMapRow",idx,i]; if(!c.noAdd) addHit=["controlMapAddNew",idx]; }
   else if(k==="objectArray"){ rows=c.entries.map(t=>({label:t})); rowHit=i=>["controlMapRow",idx,i]; }   // select item; Enter edits
+  // Column header (`Name │ <column>`), mirroring the TUI's dimmed header row.
+  if(k==="map"&&c.column&&rows.length){ const h=div("set-list-row set-list-head");
+    const l=document.createElement("span"); l.className="set-list-label"; l.textContent="Name"; h.appendChild(l);
+    const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=c.column; h.appendChild(s);
+    el.appendChild(h); }
   if(!rows.length){ const e=div("set-list-empty"); e.textContent="No entries"; el.appendChild(e); }
   rows.forEach((r,i)=>{ const row=div("set-list-row");
     if(r.badge){ const b=document.createElement("span"); b.className="set-list-badge"; b.textContent=r.badge; row.appendChild(b); }
@@ -1860,7 +1865,8 @@ function settingListEl(c, idx, live){
     if(r.sub){ const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=r.sub; row.appendChild(s); }
     if(live&&rowHit){ const h=rowHit(i); row.onmousedown=setHit(h[0],h[1],h[2]); }
     el.appendChild(row); });
-  const add=div("set-list-add"); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add);
+  // Auto-managed maps (noAdd, e.g. Languages/LSP) hide the add row like the TUI.
+  if(!(k==="map"&&c.noAdd)){ const add=div("set-list-add"); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add); }
   return el;
 }
 // Two-column dual list (Available ⇄ Included) with native add/remove/move

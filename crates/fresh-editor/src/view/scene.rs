@@ -1350,8 +1350,16 @@ pub enum SettingControlView {
         available_cursor: usize,
         active_column: &'static str, // "included" | "available"
     },
+    // Variant-level camelCase (see DualList above).
+    #[serde(rename_all = "camelCase")]
     Map {
         entries: Vec<MapEntryView>,
+        /// Title for the value column (`Name │ <column>` header in the TUI),
+        /// derived from the control's `display_field`. `None` = no header.
+        column: Option<String>,
+        /// Auto-managed maps (e.g. Languages, LSP) take no user-added
+        /// entries; the TUI hides the add row for them.
+        no_add: bool,
     },
     ObjectArray {
         entries: Vec<String>,
@@ -1478,30 +1486,49 @@ fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> Set
                 crate::view::controls::DualListColumn::Available => "available",
             },
         },
+        // Rows must read exactly as the TUI's: the same domain helper
+        // (`get_display_value`, e.g. `/grammar` → "Assembly") formats the
+        // value preview, and the value-column title mirrors the TUI's
+        // `Name │ <Col>` header — never the raw JSON blob.
         C::Map(s) => SettingControlView::Map {
             entries: s
                 .entries
                 .iter()
                 .map(|(k, v)| MapEntryView {
                     key: k.clone(),
-                    display: v
-                        .as_str()
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| v.to_string()),
+                    display: s.get_display_value(v),
                 })
                 .collect(),
+            column: s
+                .display_field
+                .as_deref()
+                .map(crate::view::settings::widget_map::column_title),
+            no_add: s.no_add,
         },
+        // Same combo → action row text the TUI renders (keybinding-shaped
+        // entries), collapsing to the bare display value when there is no
+        // key combo (LSP server lists and other non-keybinding arrays).
         C::ObjectArray(s) => SettingControlView::ObjectArray {
             entries: s
                 .bindings
                 .iter()
-                .map(|v| {
-                    s.display_field
-                        .as_ref()
-                        .and_then(|f| v.pointer(f))
-                        .and_then(|x| x.as_str())
-                        .map(|x| x.to_string())
-                        .unwrap_or_else(|| v.to_string())
+                .map(|b| {
+                    let field = s
+                        .display_field
+                        .as_deref()
+                        .and_then(|p| p.strip_prefix('/'))
+                        .or(s.display_field.as_deref())
+                        .unwrap_or("action");
+                    let combo = crate::view::controls::keybinding_list::format_key_combo(b);
+                    let action = b
+                        .get(field)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no action)");
+                    if combo.trim().is_empty() {
+                        action.to_string()
+                    } else {
+                        format!("{combo} → {action}")
+                    }
                 })
                 .collect(),
         },

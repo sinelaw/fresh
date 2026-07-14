@@ -256,6 +256,30 @@ const setSize = await page.evaluate(() => {
   return { pw: +(100 * r.width / window.innerWidth).toFixed(1), ph: +(100 * r.height / window.innerHeight).toFixed(1) };
 });
 check('settings modal uses ~80% of the viewport', setSize.pw >= 79 && setSize.ph >= 79, JSON.stringify(setSize));
+// Map/list parity with the TUI: entries render as a visible key column plus
+// the domain display value (e.g. Languages: "asm │ Assembly") under a dimmed
+// Name│<column> header — never the raw JSON blob — and auto-managed (noAdd)
+// maps hide the add row exactly like the TUI.
+const langRows = await page.evaluate(() => {
+  const item = [...document.querySelectorAll('.settings-modal .set-items > .set-item')]
+    .find(r => r.textContent.startsWith('Languages'));
+  if (!item) return null;
+  const head = item.querySelector('.set-list-head');
+  const row = item.querySelector('.set-list-row:not(.set-list-head)');
+  const label = row && row.querySelector('.set-list-label');
+  const sub = row && row.querySelector('.set-list-sub');
+  const model = window.fresh.scene.regions.settings.items.find(i => i.name === 'Languages');
+  return { header: head && head.textContent, key: label && label.textContent,
+           keyWidth: label ? label.getBoundingClientRect().width : 0,
+           display: sub && sub.textContent, noAdd: model.control.noAdd,
+           addRows: item.querySelectorAll('.set-list-add').length };
+});
+check('map entries render key + TUI display value (visible key, no raw JSON)',
+  !!langRows && langRows.keyWidth > 10 && !!langRows.display && !langRows.display.startsWith('{'),
+  JSON.stringify(langRows));
+check('map shows the Name│<column> header; add row follows the noAdd projection',
+  !!langRows && /Name/.test(langRows.header || '') && langRows.addRows === (langRows.noAdd ? 0 : 1),
+  JSON.stringify(langRows));
 await page.keyboard.press('Escape'); await page.waitForTimeout(120); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
 console.log('\n[Settings search jump scrolls the selection into view]');
