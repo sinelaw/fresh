@@ -303,6 +303,12 @@
   .settings-modal .set-list-label{flex:0 0 auto;min-width:16ch;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .settings-modal .set-list-sub{color:var(--muted);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .settings-modal .set-list-head,.settings-modal .set-list-head .set-list-sub{color:var(--muted)}
+  /* Keyboard focus inside a list control: highlight the focused entry / add
+     row and show the TUI's dim `[Enter to edit]` hint. */
+  .settings-modal .set-list-row.sel,.settings-modal .set-list-add.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-list-row.sel .set-list-sub{color:#dfe8ff}
+  .settings-modal .set-list-hint{flex:0 0 auto;margin-left:8px;color:var(--muted);font-style:italic}
+  .settings-modal .set-list-row.sel .set-list-hint{color:#cfd8ea}
   .settings-modal .set-list-empty{padding:3px 10px;color:var(--muted);font-style:italic}
   .settings-modal .set-list-add{padding:2px 10px;color:var(--accent);cursor:default;border-top:1px solid rgba(255,255,255,.06)}
   .settings-modal .set-dual{display:flex;align-items:stretch;gap:6px;margin:4px 0 2px 8px}
@@ -1296,7 +1302,7 @@ function renderRegion(name){
 // after the scroll restore, and only when the row is actually outside the
 // panel, so a user's own wheel position is otherwise left alone.
 function settingsEnsureSelectionVisible(c){
-  for(const sel of c.querySelectorAll(".set-cat.sel,.set-item.sel,.set-sresult.sel")){
+  for(const sel of c.querySelectorAll(".set-cat.sel,.set-item.sel,.set-sresult.sel,.set-list-row.sel,.set-list-add.sel")){
     const list=sel.closest(".set-cats,.set-items,.set-overlay");
     if(!list) continue;
     const lr=list.getBoundingClientRect(), sr=sel.getBoundingClientRect();
@@ -1850,23 +1856,24 @@ function settingListEl(c, idx, live){
   const el=div("set-list"); let rows=[];
   // rowHit: (rowIndex) -> SettingsHit for clicking that row; addHit for "＋ Add".
   let rowHit=null, addHit=null;
-  if(k==="textList"){ rows=c.items.map(t=>({label:t})); rowHit=i=>["controlTextListRow",idx,i]; addHit=["controlTextListRow",idx,c.items.length]; }
-  else if(k==="map"){ rows=c.entries.map(e=>({label:e.key, sub:e.display})); rowHit=i=>["controlMapRow",idx,i]; if(!c.noAdd) addHit=["controlMapAddNew",idx]; }
-  else if(k==="objectArray"){ rows=c.entries.map(t=>({label:t})); rowHit=i=>["controlMapRow",idx,i]; }   // select item; Enter edits
+  if(k==="textList"){ rows=c.items.map((t,i)=>({label:t, focused:i===c.focused})); rowHit=i=>["controlTextListRow",idx,i]; addHit=["controlTextListRow",idx,c.items.length]; }
+  else if(k==="map"){ rows=c.entries.map((e,i)=>({label:e.key, sub:e.display, focused:i===c.focused})); rowHit=i=>["controlMapRow",idx,i]; if(!c.noAdd) addHit=["controlMapAddNew",idx]; }
+  else if(k==="objectArray"){ rows=c.entries.map((t,i)=>({label:t, focused:i===c.focused})); rowHit=i=>["controlMapRow",idx,i]; }   // select item; Enter edits
   // Column header (`Name │ <column>`), mirroring the TUI's dimmed header row.
   if(k==="map"&&c.column&&rows.length){ const h=div("set-list-row set-list-head");
     const l=document.createElement("span"); l.className="set-list-label"; l.textContent="Name"; h.appendChild(l);
     const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=c.column; h.appendChild(s);
     el.appendChild(h); }
   if(!rows.length){ const e=div("set-list-empty"); e.textContent="No entries"; el.appendChild(e); }
-  rows.forEach((r,i)=>{ const row=div("set-list-row");
+  rows.forEach((r,i)=>{ const row=div("set-list-row"+(r.focused?" sel":""));
     if(r.badge){ const b=document.createElement("span"); b.className="set-list-badge"; b.textContent=r.badge; row.appendChild(b); }
     const l=document.createElement("span"); l.className="set-list-label"; l.textContent=r.label; row.appendChild(l);
     if(r.sub){ const s=document.createElement("span"); s.className="set-list-sub"; s.textContent=r.sub; row.appendChild(s); }
+    if(r.focused&&(k==="map"||k==="objectArray")){ const h=document.createElement("span"); h.className="set-list-hint"; h.textContent="[Enter to edit]"; row.appendChild(h); }
     if(live&&rowHit){ const h=rowHit(i); row.onmousedown=setHit(h[0],h[1],h[2]); }
     el.appendChild(row); });
   // Auto-managed maps (noAdd, e.g. Languages/LSP) hide the add row like the TUI.
-  if(!(k==="map"&&c.noAdd)){ const add=div("set-list-add"); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add); }
+  if(!(k==="map"&&c.noAdd)){ const add=div("set-list-add"+(c.addFocused?" sel":"")); add.textContent="＋ Add…"; if(live&&addHit) add.onmousedown=setHit(addHit[0],addHit[1],addHit[2]); el.appendChild(add); }
   return el;
 }
 // Two-column dual list (Available ⇄ Included) with native add/remove/move
@@ -2571,7 +2578,10 @@ function sendWidget(o){ wsSend({type:"widget",...o}); }
 function sendSettings(o){ wsSend({type:"settings",...o}); }
 function sendKbedit(o){ wsSend({type:"kbedit",...o}); }
 // click handler that forwards a SettingsHit (kind + indices) to the editor
-function setHit(kind,a,b){ return e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind,a,b}); }; }
+// `double` carries the browser's click count so entry rows (map/list) can
+// open their edit dialog on double-click, exactly like the TUI's
+// double-click path (single click only focuses the row).
+function setHit(kind,a,b){ return e=>{ e.preventDefault(); e.stopPropagation(); sendSettings({kind,a,b,double:e.detail>=2}); }; }
 // Forward a hover as a `moved` event at a chrome element's *editor cell* (not the
 // pixel under the pointer — native chrome is laid out by CSS, so pixels don't map
 // to the editor's cell columns). Called from `onmousemove` (which, unlike

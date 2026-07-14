@@ -1360,9 +1360,19 @@ pub enum SettingControlView {
         /// Auto-managed maps (e.g. Languages, LSP) take no user-added
         /// entries; the TUI hides the add row for them.
         no_add: bool,
+        /// Entry row carrying keyboard focus (only while the control itself
+        /// is focused), same condition the TUI's list highlight uses.
+        focused: Option<usize>,
+        /// The add-new row is the focused row (`focused_entry == None` on a
+        /// focused control), mirroring the TUI's add-row highlight.
+        add_focused: bool,
     },
+    #[serde(rename_all = "camelCase")]
     ObjectArray {
         entries: Vec<String>,
+        /// Focused entry row / add-row focus, as in `Map` above.
+        focused: Option<usize>,
+        add_focused: bool,
     },
     Json {
         value: String,
@@ -1504,6 +1514,11 @@ fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> Set
                 .as_deref()
                 .map(crate::view::settings::widget_map::column_title),
             no_add: s.no_add,
+            focused: (s.focus == crate::view::controls::FocusState::Focused)
+                .then_some(s.focused_entry)
+                .flatten(),
+            add_focused: s.focus == crate::view::controls::FocusState::Focused
+                && s.focused_entry.is_none(),
         },
         // Same combo → action row text the TUI renders (keybinding-shaped
         // entries), collapsing to the bare display value when there is no
@@ -1531,6 +1546,11 @@ fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> Set
                     }
                 })
                 .collect(),
+            focused: (s.focus == crate::view::controls::FocusState::Focused)
+                .then_some(s.focused_index)
+                .flatten(),
+            add_focused: s.focus == crate::view::controls::FocusState::Focused
+                && s.focused_index.is_none(),
         },
         C::Json(s) => SettingControlView::Json { value: s.value() },
         C::Complex { type_name } => SettingControlView::Complex {

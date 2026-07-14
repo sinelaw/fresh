@@ -114,7 +114,7 @@ frames without page input, region diffs on typing, idle silence, and the
 single-client 409 — plus per-region DOM patching (a typing frame rebuilds
 only its pane), measured metrics + app zoom (Ctrl+= / Ctrl+0, hit-testing
 while zoomed), and touch pan/tap in a `hasTouch` mobile context.
-**113 assertions** across the chrome surfaces, plus screenshots.
+**117 assertions** across the chrome surfaces, plus screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,

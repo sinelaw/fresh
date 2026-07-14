@@ -1972,8 +1972,13 @@ impl Editor {
         }
         if let Some(ref mut settings_state) = self.settings_state {
             if !draw_settings {
-                // keyboard-driven native render; skip cells (and the focus-state
-                // update tied to the cell layout pass).
+                // keyboard-driven native render; skip the cell layout pass but
+                // still sync per-control focus states — they're pure state the
+                // scene projection reads (map/list entry highlight), not
+                // something tied to cell geometry.
+                if settings_state.visible {
+                    settings_state.update_focus_states();
+                }
             } else if settings_state.visible {
                 settings_state.update_focus_states();
                 let settings_layout = crate::view::settings::render_settings(

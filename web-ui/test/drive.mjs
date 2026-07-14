@@ -304,6 +304,47 @@ check('Enter on a search result scrolls the selected item into view', setScroll.
 await page.screenshot({ path: `${SHOTS}/31-settings-search-jump.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
+console.log('\n[Settings map entry rows: mouse + keyboard, TUI-parity interactions]');
+// Single click focuses a row (highlight + [Enter to edit] hint, no dialog);
+// Enter / double-click open the entry edit dialog; arrow keys walk the
+// entries with the focused row kept highlighted and scrolled into view.
+await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(250);
+const langIdx = await page.evaluate(() => [...document.querySelectorAll('.set-items > .set-item')]
+  .findIndex(r => (r.querySelector('.set-name') || {}).textContent === 'Languages'));
+const langRowsLoc = page.locator('.set-items > .set-item').nth(langIdx).locator('.set-list-row:not(.set-list-head)');
+await langRowsLoc.nth(2).click(); await page.waitForTimeout(250);
+const rowFocus = await page.evaluate(() => {
+  const it = window.fresh.scene.regions.settings.items.find(i => i.name === 'Languages');
+  const sel = document.querySelector('.set-items .set-list-row.sel');
+  return { focused: it.control.focused, dialog: !!window.fresh.scene.regions.settings.entryDialog,
+           sel: sel && sel.textContent.slice(0, 20), hint: !!(sel && sel.querySelector('.set-list-hint')) };
+});
+check('clicking a map entry row focuses + highlights it (no dialog)',
+  rowFocus.focused === 2 && !rowFocus.dialog && !!rowFocus.sel && rowFocus.hint, JSON.stringify(rowFocus));
+await page.keyboard.press('Enter'); await page.waitForTimeout(350);
+check('Enter opens the focused entry edit dialog',
+  await page.evaluate(() => !!window.fresh.scene.regions.settings.entryDialog));
+await page.keyboard.press('Escape'); await page.waitForTimeout(250);
+await langRowsLoc.nth(3).dblclick(); await page.waitForTimeout(350);
+check('double-click opens the entry edit dialog',
+  await page.evaluate(() => !!window.fresh.scene.regions.settings.entryDialog));
+await page.keyboard.press('Escape'); await page.waitForTimeout(250);
+await langRowsLoc.nth(2).click(); await page.waitForTimeout(200);
+for (let i = 0; i < 40; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(30); }
+await page.waitForTimeout(250);
+const entryWalk = await page.evaluate(() => {
+  const list = document.querySelector('.settings-modal .set-items');
+  const sel = document.querySelector('.set-items .set-list-row.sel');
+  if (!sel) return { sel: false };
+  const lr = list.getBoundingClientRect(), sr = sel.getBoundingClientRect();
+  return { visible: sr.top >= lr.top - 1 && sr.bottom <= lr.bottom + 1, scrollTop: list.scrollTop };
+});
+check('keyboard walk through entries keeps the focused row visible', !!entryWalk.visible && entryWalk.scrollTop > 0, JSON.stringify(entryWalk));
+await page.screenshot({ path: `${SHOTS}/32-settings-entry-rows.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
 console.log('\n[WebSocket push transport (no polling)]');
 check('WebSocket transport is open (window.fresh.wsOpen)', await page.evaluate(() => window.fresh.wsOpen));
 // Genuine server PUSH: mutate the editor over the HTTP route (curl-equivalent,
