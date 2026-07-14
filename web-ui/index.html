@@ -140,8 +140,26 @@
      A preview overlay keeps its cell-derived width (set inline) so the results
      column still lines up with the framed preview beside it. */
   .palette.centered{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);
-    z-index:96;width:min(720px,92vw);max-width:92vw;max-height:82vh}
-  .palette.centered .plist{max-height:min(58vh,440px)}
+    z-index:96;width:min(880px,94vw);max-width:94vw;max-height:84vh;
+    /* Stained-glass: a translucent surface with a heavy backdrop blur so the
+       editor behind it reads through as frosted colour, not a flat panel. */
+    background:color-mix(in srgb, var(--bg2) 68%, transparent);
+    backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+    border:1px solid var(--hairline-strong);box-shadow:0 28px 90px rgba(0,0,0,.62)}
+  /* Roomier list — a min-height keeps the modal a substantial panel even when
+     only a few commands match, instead of collapsing to a tiny box. */
+  .palette.centered .plist{max-height:min(62vh,560px);min-height:330px}
+  /* Let the frosted surface show through the header rows (they'd otherwise be
+     painted opaque by their own --bg / --bg2 fills). */
+  .palette.centered .pinput{background:transparent}
+  /* Title bar: label on the left, a close 'x' on the right. */
+  .palette.centered .ptitlebar{display:flex;align-items:center;justify-content:space-between;
+    gap:10px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--hairline);
+    color:var(--fg);font-weight:600;flex:0 0 auto}
+  .palette.centered .ptitlebar .ptbtext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette.centered .ptitlebar .ptbclose{cursor:pointer;color:var(--muted);flex:0 0 auto;
+    width:24px;height:24px;line-height:23px;text-align:center;border-radius:6px;font-size:15px}
+  .palette.centered .ptitlebar .ptbclose:hover{background:var(--hover);color:var(--fg)}
   .palette .pbody{display:flex;align-items:stretch;min-height:0}
   .palette .pbody .plist{max-height:none;border-right:1px solid var(--border)}
   .palette .ppreview{background:var(--bg);overflow:hidden}
@@ -1536,7 +1554,18 @@ function paletteCardEl(p, list){
     el.style.bottom=Math.max(0, window.innerHeight-gridBottom)+"px";
   }
 
-  if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
+  if(centered){
+    // Centered modal gets a proper title bar with a close 'x' (Escape route),
+    // in place of the plain title strip used by the bottom sheet.
+    const tb=div("ptitlebar");
+    const tt=document.createElement("span"); tt.className="ptbtext";
+    tt.textContent=p.title||"Command Palette"; tb.appendChild(tt);
+    const xb=document.createElement("span"); xb.className="ptbclose";
+    xb.textContent="✕"; xb.title="Close (Esc)";
+    xb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendKey({key:"Escape"}); };
+    tb.appendChild(xb);
+    el.appendChild(tb);
+  } else if(p.title){ const t=div("ptitle"); t.textContent=p.title; el.appendChild(t); }
   // plugin-built toolbar (real WidgetSpec widgets, e.g. live-grep scope toggles)
   if(p.toolbar){ const tb=div("ptoolbar"); tb.appendChild(widgetEl(p.toolbar, {kind:"toolbar", focusKey:p.toolbarFocus})); el.appendChild(tb); }
   // input bar (query + status + count)
