@@ -858,7 +858,13 @@ fn collect_row(
         // new line (pieces are never split). Each piece's hits get
         // their byte offset shifted by the line-so-far and their
         // `buffer_row` set to the line index.
-        assemble_wrapped_row(row_pieces, panel_width, &mut entries, &mut hits, &mut focus_cursor);
+        assemble_wrapped_row(
+            row_pieces,
+            panel_width,
+            &mut entries,
+            &mut hits,
+            &mut focus_cursor,
+        );
     } else {
         assemble_inline_row(
             row_pieces,
