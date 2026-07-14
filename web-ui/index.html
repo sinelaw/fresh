@@ -261,7 +261,9 @@
   .w-list-card.sel{border-color:var(--accent);background:var(--menuhi)}
   .w-list-card .w-section{border:none;padding:0}
   /* native Settings (full modal) */
-  .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(960px,90vw);height:min(640px,86vh);
+  /* Use ~80% of the viewport on large screens; keep the old 960×640-capped
+     size as a floor so small windows behave exactly as before. */
+  .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:max(min(960px,90vw),80vw);height:max(min(640px,86vh),80vh);
     background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
   .settings-modal .set-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
   .settings-modal .set-body{flex:1;display:flex;overflow:hidden}
@@ -1281,6 +1283,25 @@ function renderRegion(name){
   if(name!=="caret") c.textContent="";     // the caret patches its own child in place
   REGION_FILL[name](c, scene.regions);
   c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(saved[i]) e.scrollTop=saved[i]; });
+  if(name==="settings") settingsEnsureSelectionVisible(c);
+}
+
+// The TUI windows the settings rows with the core's scroll offset, so its
+// selection is always on screen; the web renders the FULL list in native
+// overflow:auto panels, and the snapshot/restore above deliberately pins the
+// previous scrollTop. When a rebuild moves the selection (arrow keys past the
+// fold, and especially a search jump: "/" + query + Enter lands anywhere in
+// the tree while the restored scrollTop is from the results view), nudge each
+// scrolled panel just enough to bring its selected row back into view. Runs
+// after the scroll restore, and only when the row is actually outside the
+// panel, so a user's own wheel position is otherwise left alone.
+function settingsEnsureSelectionVisible(c){
+  for(const sel of c.querySelectorAll(".set-cat.sel,.set-item.sel,.set-sresult.sel")){
+    const list=sel.closest(".set-cats,.set-items,.set-overlay");
+    if(!list) continue;
+    const lr=list.getBoundingClientRect(), sr=sel.getBoundingClientRect();
+    if(sr.top<lr.top||sr.bottom>lr.bottom) sel.scrollIntoView({block:"nearest"});
+  }
 }
 
 // Full rebuild of every region container: hello (connect/reconnect), the HTTP

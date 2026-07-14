@@ -249,7 +249,36 @@ await page.keyboard.press('Enter');
 await page.waitForFunction(() => { const s = window.fresh.scene.regions.settings; return s && s.entryDialog; }, { timeout: 5000 }).catch(() => {});
 check('Settings entry (add/edit) dialog renders natively', (await page.locator('.settings-modal .set-entry .set-item').count()) >= 3);
 await page.screenshot({ path: `${SHOTS}/30-native-settings.png` });
+// Size: the modal should claim ~80% of the viewport (with the old capped size
+// only as a small-window floor), not a fixed 960×640 box.
+const setSize = await page.evaluate(() => {
+  const r = document.querySelector('.settings-modal').getBoundingClientRect();
+  return { pw: +(100 * r.width / window.innerWidth).toFixed(1), ph: +(100 * r.height / window.innerHeight).toFixed(1) };
+});
+check('settings modal uses ~80% of the viewport', setSize.pw >= 79 && setSize.ph >= 79, JSON.stringify(setSize));
 await page.keyboard.press('Escape'); await page.waitForTimeout(120); await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
+console.log('\n[Settings search jump scrolls the selection into view]');
+await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(250);
+await page.keyboard.press('/'); await page.waitForTimeout(150);
+await page.keyboard.type('scroll', { delay: 30 }); await page.waitForTimeout(250);
+check('"/" enters search mode with results', await page.evaluate(() => {
+  const s = window.fresh.scene.regions.settings; return s.searchActive && s.searchResults.length >= 2; }));
+await page.keyboard.press('ArrowDown'); await page.keyboard.press('ArrowDown'); await page.waitForTimeout(150);
+await page.keyboard.press('Enter'); await page.waitForTimeout(400);
+const setScroll = await page.evaluate(() => {
+  const list = document.querySelector('.settings-modal .set-items');
+  const sel = document.querySelector('.settings-modal .set-item.sel');
+  if (!list || !sel) return { ok: false, why: 'missing ' + (!list ? '.set-items' : '.set-item.sel') };
+  const lr = list.getBoundingClientRect(), sr = sel.getBoundingClientRect();
+  return { ok: sr.top >= lr.top - 1 && sr.bottom <= lr.bottom + 1,
+           selTop: Math.round(sr.top), listTop: Math.round(lr.top), listBottom: Math.round(lr.bottom), scrollTop: list.scrollTop };
+});
+check('Enter on a search result scrolls the selected item into view', setScroll.ok, JSON.stringify(setScroll));
+await page.screenshot({ path: `${SHOTS}/31-settings-search-jump.png` });
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
 console.log('\n[WebSocket push transport (no polling)]');
 check('WebSocket transport is open (window.fresh.wsOpen)', await page.evaluate(() => window.fresh.wsOpen));
