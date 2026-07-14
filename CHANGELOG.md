@@ -8,48 +8,44 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Indent rainbow** - indentation guides can be colored by indent level with `editor.rainbow_indentation`; themes control a separate six-color `indent_rainbow_1` through `indent_rainbow_6` palette. Also fixes translated locale strings that rendered the literal `{level}` placeholder instead of the indent level (#2632, requested by @akarinotomoshibi, by @asukaminato0721).
-* **Virtual space** - the cursor can move beyond the end of a line, like in Visual Studio and Vim's `virtualedit`. Set `editor.virtual_space` to `on` (arrow keys, clicks, and block selections go past line ends — including below the last line: clicking there — or pressing ArrowDown at the bottom — parks the cursor on a virtual line, and typing anywhere in the void fills the gap with newlines and spaces) or `block` (only block selections extend past line ends, making rectangular copy/insert operate on true rectangles). Off by default, toggleable per buffer via **Toggle Virtual Space (Current Buffer)** in the command palette (persisted with the workspace).
-* **Theme text attributes** - syntax categories can now render with `bold`, `italic`, `underlined`, `dim`, or `reversed` in addition to a color, e.g. `"comment": {"color": [...], "modifier": ["italic"]}` in a theme's `syntax` block; existing themes are unaffected (#2638, by @asukaminato0721).
-* **`NextPane` / `PrevPane`** - cycle through every split+tab pane in a window as a single flat list (distinct from `NextSplit`/`PrevSplit`, which stay on the current tab, and `NextWindow`/`PrevWindow`, which switch editor windows); available as command-palette commands for custom keybindings. Landing on a terminal pane this way now also switches key handling into terminal mode, so keystrokes reach the PTY (#2562, by @masmu).
-* **Web UI** - `fresh --web [ADDR]` (default `127.0.0.1:8137`) now runs the browser bridge from the regular installed binary behind an opt-in `web` build feature, instead of only being reachable via a development example.
-* **Web UI redesign** - navy/teal frosted-glass chrome, unified monospace typography across all chrome text, and a centered floating command palette (toggle with `Ctrl`/`Cmd+Alt+P`) that adapts to mobile (full-height sheet, wrapping rows) and wide screens alike; tabs and other chrome text now show in full instead of being ellipsis-truncated, and hovering a tab gives visual feedback before clicking.
-* **Orchestrator dock** - the session list is now a hierarchical, user-organized folder tree: create/rename/delete folders and file sessions into them from the right-click menu or "Move to Folder…"; the toolbar is condensed to a "New Task…" dropdown and a "Search Tasks" field, with the density/project/worktree filters tucked into a collapsible "Filters" section.
+* **Indent rainbow** - color indentation guides by indent level via `editor.rainbow_indentation` and a six-color `indent_rainbow_1`-`indent_rainbow_6` theme palette; also fixes a literal `{level}` placeholder leaking into translated locale strings (#2632, requested by @akarinotomoshibi, by @asukaminato0721).
+* **Virtual space** - the cursor can move past a line's end, like Visual Studio or Vim's `virtualedit`. Enable with `editor.virtual_space` (`on` or `block`), toggle per buffer via **Toggle Virtual Space (Current Buffer)**.
+* **Theme text attributes** - syntax colors can now carry `bold`/`italic`/`underlined`/`dim`/`reversed` modifiers (#2638, by @asukaminato0721).
+* **`NextPane` / `PrevPane`** - cycle through every split+tab pane as one flat list, distinct from `NextSplit`/`PrevSplit` and `NextWindow`/`PrevWindow`; landing on a terminal now also switches it into terminal mode (#2562, by @masmu).
+* **Orchestrator dock** - the session list is now a customizable folder tree (create/rename/delete folders, "Move to Folder…"); the toolbar is condensed to a "New Task…" dropdown and a "Search Tasks" field, with other filters tucked into a collapsible section.
 
 ### Bug Fixes
 
-* **LSP diagnostics** now track buffer edits: inserting or deleting lines above an error shifts its gutter marker, `F8` target, inline underline, hover, and the diagnostics panel down/up with the text, instead of leaving them frozen at the pre-edit line until the next save re-publishes. Each diagnostic is anchored to the buffer and carried forward by the same edit-tracking the editor uses for its own markers, so it stays put through ordinary typing, multi-cursor edits, code actions, and undo/redo alike, matching VS Code (#2602).
-* **LSP diagnostics** - dismissing a hover popup (`Alt+K`, `Escape`, or moving the cursor) no longer drops an unrelated error from the status-bar count, gutter marker, and `F8` navigation until the next save; the Diagnostics panel was unaffected (#2601).
-* **LSP Rename**: a cross-file rename (F2) invoked from a use site no longer steals the active tab, jumping you to the definition's file at its stale cursor position; focus stays on the buffer you were editing, matching VS Code / Sublime / IntelliJ (#2599).
-* **LSP pull diagnostics** (`textDocument/diagnostic`) are now requested from every diagnostic-capable server for a language, not just the first configured one - e.g. with both `ruff` and `ty` configured for Python, `ty`'s type errors used to go stale after edits until a restart (#2615, reported by @ak24watch).
-* **Search & Replace**: stepping through matches (`Ctrl+Alt+→`/`←`) and Enter-opening a result now land on the match's live position instead of its stale pre-edit line/column once the buffer has been edited (#2583).
-* **Search & Replace** and **Settings** text fields: clicking now positions the caret at the clicked column instead of always jumping to the end, so the value can be edited from where you clicked; Settings fields additionally gained `Home`/`End`, forward-`Delete`, word motion (`Ctrl+Left`/`Right`), and `Shift+Home`/`End` selection (#2573, reported by @asukaminato0721).
-* **Search and Replace in Project**: the results panel now keeps exactly one focused element - `Tab` reaches the results list (with a visibly focused row), and moving into it with `Down`/`Up` takes focus off the toolbar so `Enter` acts on the highlighted match instead of a stale toolbar button (#2664).
-* **Vi mode**: the indent operators `>>` / `<<` (with counts and motions like `>j`) and visual, visual-line, and visual-block `>` / `<` now shift lines by one level instead of doing nothing; `.` repeats them (#2438, #2606).
-* **Vi mode**: quote text objects `i"`/`a"` (and `'`/`` ` ``) now search forward on the line, so `ci"`/`di"` work from before the quotes — e.g. from the start of the line — instead of only when the cursor is already inside them (#2439).
-* **Vi mode**: the `a"` text object (and `'`/`` ` ``) now includes the trailing whitespace after the closing quote — falling back to leading whitespace when there is none — matching Vim's `:help aquote`, so `da"` on `the "quick" brown fox` leaves `the brown fox` instead of a stray double space (#2604).
-* **Vi mode**: moving with `j` / `k` onto a shorter line now clamps the cursor to that line's last character (like Vim) instead of parking it one past the end, so a following `x` deletes a character rather than the newline and joins lines. The desired column is still remembered for the next vertical move (#2442).
-* **Vi mode**: `cw` on a non-blank now changes up to the end of the word like Vim (matching `ce`) instead of swallowing the trailing whitespace (#2437).
-* **Virtual space** - the status-bar `Ln, Col` readout now tracks the cursor into virtual space (past a line's end, or onto a virtual line below the buffer) instead of freezing at the last real-text position (#2577).
-* **Indentation guides** - in `all` mode, a row more than one level deeper than its block opener (with the opener scrolled off-screen) no longer drops an intermediate guide, leaving a gap in the staircase between a block's header/body and closing lines (#2679).
-* **Large files** - the command-palette `:N` line jump now offers the "Scan file for exact line numbers?" prompt (like `Ctrl+G`) before a line index exists, instead of teleporting the cursor to the end of the file and falsely reporting "Jumped to line 1" (#2597).
-* **Large files** - "Scan file for exact line numbers" now counts every line even when you scrolled through the file before scanning; previously the first scan could undercount the total (so **Go to Line** clamped below the real last line and the end-of-file gutter showed the wrong number), and only a second scan fixed it (#2596).
-* **Remote terminal (SSH)** - opening the integrated terminal on a remote whose login shell is fish (or any non-POSIX shell) no longer fails with `fish: Unsupported use of '='`; the workspace-landing command is now wrapped in `sh -c` so the login shell only parses the wrapper (#2584, reported by @demin-dmitriy).
-* **Remote workspaces (SSH)** - switching to a remote workspace whose connection has stalled (handshake finished, but no longer answering) no longer freezes the editor - including the single-threaded `--web` bridge - for up to 10 seconds per open file; a dead connection now fails at connect time instead of hanging during workspace restore.
-* **Terminal**: a split terminal with a continuously-updating pane no longer makes scrolling extremely slow and pins a CPU core. Auto-revert is now a genuine per-buffer setting (and always off for terminal buffers, whose backing file the PTY already streams into), and terminal buffers never line-wrap, since wrapping their column-formatted output was both wrong and the main cost of the slowdown (#2608, #2609).
-* **Bracketed paste** (right-click, middle-click, or `Ctrl+Shift+V` paste) is now blocked in read-only buffers, matching typing and `Ctrl+V` - previously it could silently modify a "read-only" buffer (#2674).
-* **Whitespace indicators** - the master toggle (**Toggle Whitespace Indicators**) now turns indicators back **on**, restoring your configured visibility (e.g. space indicators) instead of the built-in default; previously toggling off then on only brought back tab indicators, so a restart was needed to see configured space indicators again (#2579).
-* **Whitespace indicators** now show in new, unsaved buffers (previously only after the first save) and re-resolve when a buffer's language is changed via **Set Language**, instead of requiring a reopen (#2580, reported by @braindevices).
-* **File Explorer context menu** now grabs the keyboard while open, like the tab context menu and "+" popup: keys no longer leak into the tree's type-ahead find underneath, which could silently retarget which file a menu action operated on (#2587).
-* **Git Grep** - a search with no matches is now reported as a plain "No matches" instead of logging an error and raising the status-bar warning badge; `git grep` exits 1 when nothing matches, which was wrongly treated as a failure, so every fruitless search looked like a plugin crash (#2591).
-* **File Explorer git decorations** now show a nested sub-repo's own status even when the workspace root is itself a git repo (the monorepo-with-vendored-repo layout): files inside the nested repo previously had no decoration while the gutter, blame, and Review Diff all resolved it correctly (#2592).
-* **Web UI** - buffer tabs now show only the filename, matching the terminal UI, instead of the full workspace-relative (or absolute) path, which also rendered wider than the space the editor had allotted for the tab (#2677).
-* **Web UI** - a same-origin WebSocket upgrade is no longer rejected (403, endless "Reconnecting…") when the server is bound to a wildcard address like `0.0.0.0`; the check now compares against the request's `Host` header instead of the literal bind address.
-* **Orchestrator** - a killed (not cleanly quit) editor now remembers every workspace opened since the last quit and includes their projects when "Show all worktrees" is on; activating a workspace that trips the trust prompt now shows "Cancel" instead of "Quit" as the secondary button, so dismissing it no longer exits every other open session (#2658).
+* **LSP diagnostics track buffer edits** - the gutter marker, `F8` target, hover, and panel now shift with inserted/deleted lines instead of freezing at the pre-edit position until the next save (#2602).
+* **LSP diagnostics survive hover dismissal** - closing a hover popup no longer drops an unrelated error from the status bar, gutter, and `F8` navigation (#2601).
+* **LSP Rename keeps focus** - a cross-file F2 rename no longer jumps you to the definition's file at a stale cursor position (#2599).
+* **LSP now pulls diagnostics from every server** configured for a language, not just the first - e.g. both `ruff` and `ty` for Python now stay live (#2615, reported by @ak24watch).
+* **Search & Replace match stepping follows edits** - `Ctrl+Alt+→`/`←` and Enter-open now land on a match's live position instead of a stale one (#2583).
+* **Click-to-position caret** in Search & Replace and Settings text fields; Settings fields also gained `Home`/`End`, word motion, and `Shift`-selection (#2573, reported by @asukaminato0721).
+* **Search and Replace in Project: single focused element** - `Tab` now reaches the results list, and `Down`/`Up` moves focus off the toolbar so `Enter` opens the highlighted match (#2664).
+* **Vi mode `>>`/`<<` indent operators now work**, including visual/visual-line/visual-block and `.` repeat (#2438, #2606).
+* **Vi mode `i"`/`a"` now search forward** on the line instead of requiring the cursor already inside the quotes (#2439).
+* **Vi mode `a"` includes trailing whitespace**, matching Vim's `:help aquote` (#2604).
+* **Vi mode `j`/`k` clamp to the line's last character** on shorter lines instead of overshooting by one (#2442).
+* **Vi mode `cw` stops at word end** instead of eating the trailing whitespace like `dw` (#2437).
+* **Virtual space status bar tracks the cursor** into virtual space instead of freezing at the last real position (#2577).
+* **Indentation guide staircase gap fixed** when a block's opener is scrolled off-screen (#2679).
+* **Large file `:N` line jump offers a scan prompt** instead of jumping to line 1 (#2597).
+* **Large file line-count scan no longer undercounts** on the first pass (#2596).
+* **Remote terminal now works with fish login shells** instead of failing on `=` syntax (#2584, reported by @demin-dmitriy).
+* **Remote workspace switch no longer freezes on a stalled SSH link** - a dead connection now fails at connect time instead of hanging during workspace restore.
+* **Terminal scrolling no longer pins a CPU core** - auto-revert is now per-buffer (off for terminals), and terminal buffers never line-wrap (#2608, #2609).
+* **Bracketed paste now respects read-only buffers**, matching typing and `Ctrl+V` (#2674).
+* **Whitespace master toggle restores your configured indicators**, not just tabs, when turned back on (#2579).
+* **Whitespace indicators show in new/unsaved buffers** and re-resolve after **Set Language** (#2580, reported by @braindevices).
+* **File Explorer context menu grabs the keyboard** while open, so keys no longer leak into the tree underneath (#2587).
+* **Git Grep no-match is reported as "No matches"**, not an error (#2591).
+* **File Explorer decorates nested sub-repos** even when the workspace root is itself a git repo (#2592).
+* **Orchestrator remembers workspaces after a crash** and shows "Cancel" instead of "Quit" on the trust prompt (#2658).
 
 ### Internals
 
-* A round of flaky-e2e-test stabilization replaced fixed-delay waits with semantic waits (async renders, LSP `didOpen`, mode transitions) across the vi-mode, LSP, review-diff, and search-replace suites.
+* A round of flaky-e2e-test stabilization replaced fixed-delay waits with semantic waits across the vi-mode, LSP, review-diff, and search-replace suites.
 
 ## 0.4.3
 
