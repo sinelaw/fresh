@@ -8,7 +8,10 @@
 //! Determinism: instead of spawning a shell (whose prompt output races with the
 //! test), we spawn a no-output command (`sleep`) and feed the program output
 //! directly into the terminal grid via `process_output`. That mirrors exactly
-//! what the PTY read loop does, minus the timing nondeterminism.
+//! what the PTY read loop does, minus the timing nondeterminism. One wrinkle
+//! remains: on Windows, ConPTY itself paints the (empty) screen when the child
+//! spawns, racing with — and possibly wiping — the injected bytes, so the
+//! helpers re-feed the output until it is stably visible on screen.
 //!
 //! NOTE: requires a working PTY (/dev/ptmx); skipped where unavailable.
 
@@ -38,12 +41,58 @@ fn harness_or_skip(
     EditorTestHarness::with_working_dir(width, height, working_dir).ok()
 }
 
+/// Feed program output directly into the terminal grid, exactly as the PTY
+/// read loop would (minus the timing nondeterminism).
+fn feed_output(harness: &EditorTestHarness, terminal_id: TerminalId, output: &[u8]) {
+    harness
+        .editor()
+        .terminal_manager()
+        .get(terminal_id)
+        .expect("terminal handle")
+        .state
+        .lock()
+        .expect("lock terminal state")
+        .process_output(output);
+}
+
+/// Feed `output` into the terminal grid and wait until `marker` (a substring
+/// of that output) is visible on the rendered screen, re-feeding it if it
+/// disappears.
+///
+/// The re-feed matters on Windows: even a no-output child makes ConPTY paint
+/// the screen *it* knows about when the process spawns — and that screen does
+/// not include bytes injected behind its back — so the PTY reader thread can
+/// race with the injection and wipe it from the grid. That burst is finite
+/// (`sleep` itself prints nothing), so re-feeding until the text survives a
+/// render converges.
+fn feed_output_until_visible(
+    harness: &mut EditorTestHarness,
+    terminal_id: TerminalId,
+    output: &[u8],
+    marker: &str,
+) {
+    feed_output(harness, terminal_id, output);
+    harness
+        .wait_until(|h| {
+            if h.screen_to_string().contains(marker) {
+                return true;
+            }
+            // A racing repaint consumed it — feed it again and re-check after
+            // the next tick's render.
+            feed_output(h, terminal_id, output);
+            false
+        })
+        .unwrap();
+}
+
 /// Spawn a no-output terminal (`sleep`) in the active split, enter live
 /// terminal mode, and feed `output` into its grid as if a program had printed
-/// it. Returns the terminal buffer id.
+/// it, waiting until `visible_marker` shows on screen. Returns the terminal
+/// and its buffer id.
 fn open_terminal_with_output(
     harness: &mut EditorTestHarness,
     output: &[u8],
+    visible_marker: &str,
 ) -> (TerminalId, BufferId) {
     let (terminal_id, buffer_id, _leaf) = harness
         .editor_mut()
@@ -59,17 +108,7 @@ fn open_terminal_with_output(
         })
         .expect("spawn sleep terminal");
     harness.editor_mut().enter_terminal_mode();
-    // Feed program output directly into the grid (no PTY/prompt race).
-    harness
-        .editor()
-        .terminal_manager()
-        .get(terminal_id)
-        .expect("terminal handle")
-        .state
-        .lock()
-        .expect("lock terminal state")
-        .process_output(output);
-    harness.render().unwrap();
+    feed_output_until_visible(harness, terminal_id, output, visible_marker);
     (terminal_id, buffer_id)
 }
 
@@ -121,10 +160,11 @@ fn ctrl_click_opens_workdir_relative_path_at_line() {
         None => return,
     };
 
-    open_terminal_with_output(&mut harness, b"build error at src/main.rs:2:6 here\n");
-
-    // Sanity: the path is visible in the live terminal grid.
-    harness.assert_screen_contains("src/main.rs:2:6");
+    open_terminal_with_output(
+        &mut harness,
+        b"build error at src/main.rs:2:6 here\n",
+        "src/main.rs:2:6",
+    );
 
     let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
     // Click a few cells into the path token.
@@ -167,9 +207,7 @@ fn ctrl_click_resolves_path_via_osc7_cwd() {
         .trim_start_matches('/')
         .to_string();
     let osc7 = format!("\x1b]7;file://host/{uri_path}\x1b\\edit notes.txt now\n");
-    open_terminal_with_output(&mut harness, osc7.as_bytes());
-
-    harness.assert_screen_contains("edit notes.txt now");
+    open_terminal_with_output(&mut harness, osc7.as_bytes(), "edit notes.txt now");
 
     let (col, row) = find_on_screen(&harness, "notes.txt").expect("path on screen");
     ctrl_left_click(&mut harness, col + 1, row);
@@ -196,7 +234,11 @@ fn ctrl_click_opens_path_in_scrollback_view() {
         None => return,
     };
 
-    open_terminal_with_output(&mut harness, b"build error at src/main.rs:2:6 here\n");
+    open_terminal_with_output(
+        &mut harness,
+        b"build error at src/main.rs:2:6 here\n",
+        "src/main.rs:2:6",
+    );
 
     // Leave live terminal mode: drop the focused split into read-only
     // scrollback (syncs the grid into the buffer), exactly as a scroll/
@@ -225,13 +267,23 @@ fn ctrl_click_on_nonexistent_path_is_inert() {
         None => return,
     };
 
-    open_terminal_with_output(&mut harness, b"see does/not/exist.rs:1:1 here\n");
-    harness.assert_screen_contains("does/not/exist.rs");
+    let output: &[u8] = b"see does/not/exist.rs:1:1 here\n";
+    let (terminal_id, _buffer_id) =
+        open_terminal_with_output(&mut harness, output, "does/not/exist.rs");
 
     let (col, row) = find_on_screen(&harness, "does/not/exist.rs").expect("path on screen");
     ctrl_left_click(&mut harness, col + 2, row);
     harness.render().unwrap();
 
-    // Nothing opened: the terminal text is still the active view.
-    harness.assert_screen_contains("does/not/exist.rs");
+    // Nothing opened. The link open path is synchronous, so a wrongly-opened
+    // file would already show as a tab — assert on the tab bar (which a
+    // ConPTY repaint can't wipe, unlike the grid text itself).
+    let tab_bar = harness.get_row_text(1);
+    assert!(
+        !tab_bar.contains("exist.rs"),
+        "Ctrl+Click on a nonexistent path must not open a buffer; tab bar: {tab_bar}"
+    );
+    // And the live terminal is still the active view: its grid still renders
+    // to the screen (re-feed in case a racing repaint wiped it).
+    feed_output_until_visible(&mut harness, terminal_id, output, "does/not/exist.rs");
 }
