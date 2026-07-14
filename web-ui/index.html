@@ -268,6 +268,10 @@
   .w-tree-row{padding:1px 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-tree-row.sel{background:var(--menuhi);color:#fff}
   .w-tree-disc,.w-tree-check{color:var(--muted)} .w-tree-row.sel .w-tree-disc,.w-tree-row.sel .w-tree-check{color:#dfe8ff}
+  /* Continuation rows of a fixed-height card (Tree.itemHeight > 1): muted
+     detail lines that select + highlight with their card's primary row. */
+  .w-tree-xrow{padding:0 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px;color:var(--muted)}
+  .w-tree-xrow.sel{background:var(--menuhi);color:#dfe8ff}
   .w-overlay{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
     box-shadow:0 10px 34px rgba(0,0,0,.5);padding:4px;margin:2px 0;z-index:4;position:relative}
   .w-list-cards{gap:4px;padding:2px}
@@ -1907,6 +1911,18 @@ function widgetEl(spec, ctx){
       row.appendChild(t);
       row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"select",{index:i,key}); };
       el.appendChild(row);
+      // Fixed-height card rows (Tree.itemHeight > 1): the node's
+      // extraLines render as continuation rows below the primary line,
+      // indented past the disclosure column. The whole card is one
+      // click target and highlights as a block — same contract as the
+      // TUI, which emits a select hit for every continuation row.
+      for(const ex of (n.extraLines||[])){
+        const xr=div("w-tree-xrow"+(i===sel?" sel":""));
+        xr.style.paddingLeft=((d*2)+2)+"ch";
+        xr.textContent=entryText(ex);
+        xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"select",{index:i,key}); };
+        el.appendChild(xr);
+      }
     });
     return el;
   }
