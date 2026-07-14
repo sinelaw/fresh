@@ -3391,6 +3391,18 @@ function buildDockSpec(): WidgetSpec {
     : -1;
 
   const newLabel = editor.t("dock.new_btn");
+  // The "New Task…" button and the search field share one row, wrapping
+  // the search below the button when the dock is too narrow to hold both.
+  // The button renders as "[ <label> ]" (label + 4 cols); size the search
+  // field to fill the rest of a default-width dock, floored so it stays
+  // usable — and so the two overflow (and wrap) on a narrow/dragged dock.
+  // The host wraps against the *actual* rendered width, so this estimate
+  // only needs to be close for the default-dock case.
+  const newBtnCols = newLabel.length + 4;
+  const dockCols = dockContentCols(dockDefaultWidth());
+  const SEARCH_MIN_FIELD = 10;
+  const searchField = Math.max(SEARCH_MIN_FIELD, dockCols - newBtnCols - 4);
+  const toolbarWraps = newBtnCols + 1 + searchField + 2 > dockCols;
   const worktreeLabel = editor.t("dock.all_worktrees");
   const trivialLabel = editor.t("dock.show_empty");
   const projWord = openDialog.projectFilter === null
@@ -3455,12 +3467,14 @@ function buildDockSpec(): WidgetSpec {
     ]
     : [];
 
-  // Size the tree to fill the dock. Top chrome is variable: title, New
-  // button, search, filter header, divider (5), plus the expanded filter
-  // body rows when open. The tree soaks up the rest.
+  // Size the tree to fill the dock. Top chrome is variable: title, the
+  // New+search toolbar (1 row, or 2 when the search wraps below the
+  // button on a narrow dock), filter header, divider — plus the expanded
+  // filter body rows when open. The tree soaks up the rest.
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  const chromeRows = 5 + filterBody.length + bottomRows;
+  const toolbarRows = toolbarWraps ? 2 : 1;
+  const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
 
@@ -3468,19 +3482,21 @@ function buildDockSpec(): WidgetSpec {
 
   return col(
     dockTitleRow(),
-    row(
+    // New-task button + search on one row; a narrow dock wraps the search
+    // to its own row beneath the button (pieces are never split).
+    wrappingRow(
       button(newLabel, { intent: "primary", key: "new-session" }),
-      flexSpacer(),
+      spacer(1),
+      text({
+        value: openDialog.filter.value,
+        cursorByte: openDialog.filter.cursor,
+        placeholder: editor.t("dock.filter_placeholder"),
+        fieldWidth: searchField,
+        key: "filter",
+      }),
     ),
     // The "New Task…" create dropdown floats just under its button.
     ...(openDialog.dockMenu?.kind === "new" ? [dockNewMenu()] : []),
-    text({
-      value: openDialog.filter.value,
-      cursorByte: openDialog.filter.cursor,
-      placeholder: editor.t("dock.filter_placeholder"),
-      fullWidth: true,
-      key: "filter",
-    }),
     filterHeader,
     ...filterBody,
     // The "Move to folder…" dropdown floats over the tree without

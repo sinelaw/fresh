@@ -858,7 +858,7 @@ fn collect_row(
         // new line (pieces are never split). Each piece's hits get
         // their byte offset shifted by the line-so-far and their
         // `buffer_row` set to the line index.
-        assemble_wrapped_row(row_pieces, panel_width, &mut entries, &mut hits);
+        assemble_wrapped_row(row_pieces, panel_width, &mut entries, &mut hits, &mut focus_cursor);
     } else {
         assemble_inline_row(
             row_pieces,
@@ -5076,6 +5076,7 @@ fn assemble_wrapped_row(
     panel_width: u32,
     entries: &mut Vec<TextPropertyEntry>,
     hits: &mut Vec<HitArea>,
+    focus_cursor: &mut Option<FocusCursor>,
 ) {
     use crate::primitives::display_width::str_width;
     let max_w = panel_width as usize;
@@ -5093,6 +5094,7 @@ fn assemble_wrapped_row(
         let RowPiece::Inline {
             mut entry,
             hits: child_hits,
+            focus_cursor: piece_fc,
             ..
         } = piece
         else {
@@ -5117,6 +5119,14 @@ fn assemble_wrapped_row(
             h.byte_end += shift;
             h.buffer_row = row;
             hits.push(h);
+        }
+        // A focused piece (e.g. the search TextInput) reports its caret;
+        // shift it by the line-so-far and stamp the wrapped line index so
+        // the host draws the cursor on the right row.
+        if let Some(mut fc) = piece_fc {
+            fc.byte_in_row += shift as u32;
+            fc.buffer_row = row;
+            *focus_cursor = Some(fc);
         }
         match acc.as_mut() {
             Some(merged) => merge_inline(merged, &mut entry),
