@@ -1612,8 +1612,8 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     // The filter *input* must clear too, not just the filtering: the box
     // is a controlled widget, so without resetting its value it would
     // still read the old query while the list shows everything. The
-    // empty box shows its placeholder ("…to search…").
-    h.assert_screen_contains("to search");
+    // empty box shows its "Search Tasks" placeholder.
+    h.assert_screen_contains("Search Tasks");
 }
 
 /// F6: the auto-generated session name is rooted in the project
