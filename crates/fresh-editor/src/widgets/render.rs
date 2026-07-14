@@ -2702,27 +2702,44 @@ fn render_widget_tree(
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
         let hit_row = (out.entries.len() - 1) as u32;
-        // Continuation rows of a card (item_height > 1). They carry no
-        // hit areas of their own — the primary row owns select/expand/
-        // toggle — but they do take the selection highlight so the card
-        // highlights as a unit.
+        // Tree hits use the *tree's* spec key for `widget_key` (so
+        // click-to-focus works the same as Toggle/Button — the tree is
+        // tabbable). The per-row key travels in the payload.
+        let tree_spec_key = tree_key.unwrap_or("").to_string();
+        // Continuation rows of a card (item_height > 1). The primary row
+        // owns expand/toggle, but every continuation row carries its own
+        // `select` hit — a card selects as a unit, so clicking its branch
+        // or PR line must behave like clicking its title line (the web
+        // renderer already treats the whole card as one click target).
+        // They also take the selection highlight so the card highlights
+        // as a block.
         for mut extra in rendered.extra_entries {
             if is_selected {
                 select_style(&mut extra);
             }
+            let extra_byte_end = extra.text.len();
             ensure_trailing_newline(&mut extra);
             out.entries.push(extra);
+            if extra_byte_end > 0 {
+                out.hits.push(HitArea {
+                    widget_key: tree_spec_key.clone(),
+                    widget_kind: "tree",
+                    buffer_row: (out.entries.len() - 1) as u32,
+                    byte_start: 0,
+                    byte_end: extra_byte_end,
+                    payload: json!({
+                        "index": abs_idx as i64,
+                        "key": item_key.clone(),
+                    }),
+                    event_type: "select",
+                });
+            }
         }
         // Disclosure hit (only when has_children) — fires
         // `expand`. The host toggles instance-state
         // `expanded_keys` and re-renders before firing the
         // event; the plugin only listens if it cares about
         // expansion changes.
-        // Tree hits use the *tree's* spec key for
-        // `widget_key` (so click-to-focus works the same
-        // as Toggle/Button — the tree is tabbable). The
-        // per-row key travels in the payload.
-        let tree_spec_key = tree_key.unwrap_or("").to_string();
         if let Some(disc_range) = rendered.disclosure_range {
             out.hits.push(HitArea {
                 widget_key: tree_spec_key.clone(),
@@ -2770,14 +2787,14 @@ fn render_widget_tree(
         };
         if body_start < row_byte_end {
             out.hits.push(HitArea {
-                widget_key: tree_spec_key,
+                widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
                 byte_start: body_start,
                 byte_end: row_byte_end,
                 payload: json!({
                     "index": abs_idx as i64,
-                    "key": item_key,
+                    "key": item_key.clone(),
                 }),
                 event_type: "select",
             });

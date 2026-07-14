@@ -761,12 +761,47 @@ fn open_dock(harness: &mut EditorTestHarness) {
 }
 
 /// 0-based screen row containing `needle`, or panic with the screen.
-fn dock_row_of(harness: &EditorTestHarness, needle: &str) -> usize {
-    let screen = harness.screen_to_string();
-    screen
-        .lines()
-        .position(|l| l.contains(needle))
-        .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
+/// Row of the first screen line containing `needle`, tolerant of a
+/// transient dock refresh: the discovered-worktree rescan re-keys its
+/// synthetic sessions, so a snapshot taken mid-refresh can briefly miss
+/// a row that both the preceding wait and the next frame show (observed
+/// as a flaky "screen missing 'feature-x'" on CI). Polls until the
+/// needle is present and returns its row from that same snapshot.
+fn wait_dock_row_of(harness: &mut EditorTestHarness, needle: &str) -> usize {
+    let mut row: Option<usize> = None;
+    harness
+        .wait_until(|h| {
+            row = h
+                .screen_to_string()
+                .lines()
+                .position(|l| l.contains(needle));
+            row.is_some()
+        })
+        .unwrap_or_else(|_| panic!("screen missing '{needle}':\n{}", harness.screen_to_string()));
+    row.unwrap()
+}
+
+/// Positions of two needles taken from the SAME screen snapshot — an
+/// ordering assertion must not compare rows from different frames (a
+/// dock refresh between two row lookups would skew it). Retries like
+/// [`wait_dock_row_of`] until a snapshot shows both.
+fn wait_dock_rows_of(harness: &mut EditorTestHarness, a: &str, b: &str) -> (usize, usize) {
+    let mut rows: Option<(usize, usize)> = None;
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            let ra = s.lines().position(|l| l.contains(a));
+            let rb = s.lines().position(|l| l.contains(b));
+            rows = ra.zip(rb);
+            rows.is_some()
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "screen missing '{a}' and/or '{b}':\n{}",
+                harness.screen_to_string()
+            )
+        });
+    rows.unwrap()
 }
 
 /// Clicking a discovered (on-disk) worktree row in the *dock* opens it
@@ -809,7 +844,9 @@ fn dock_click_attaches_discovered_worktree() {
         });
 
     // A single click on the discovered row opens it — no Enter needed.
-    let row = dock_row_of(&harness, "· on-disk") as u16;
+    // (Row looked up with retry: a rescan refresh can transiently drop
+    // the discovered row between the wait above and this snapshot.)
+    let row = wait_dock_row_of(&mut harness, "· on-disk") as u16;
     harness.mouse_click(3, row).unwrap();
 
     // Attach is async (`createWindowWithTerminal`). It opens a live
@@ -913,8 +950,9 @@ fn dock_opening_worktree_keeps_its_row_position() {
         .unwrap();
 
     // Stable lexicographic order before opening: feature-x above feature-y.
-    let fx_before = dock_row_of(&harness, "feature-x");
-    let fy_before = dock_row_of(&harness, "feature-y");
+    // (Both rows from ONE snapshot, with retry — a rescan refresh can
+    // transiently drop the discovered rows between frames.)
+    let (fx_before, fy_before) = wait_dock_rows_of(&mut harness, "feature-x", "feature-y");
     assert!(
         fx_before < fy_before,
         "initial order should be lexicographic (feature-x above feature-y).\n\
@@ -922,8 +960,11 @@ fn dock_opening_worktree_keeps_its_row_position() {
         harness.screen_to_string()
     );
 
-    // Open feature-x by clicking it.
-    harness.mouse_click(3, fx_before as u16).unwrap();
+    // Open feature-x by clicking it. Re-resolve the row just before the
+    // click so a refresh between the snapshot above and the click can't
+    // land it on a shifted row.
+    let fx_click = wait_dock_row_of(&mut harness, "feature-x");
+    harness.mouse_click(3, fx_click as u16).unwrap();
     harness
         .wait_until(|h| {
             // feature-x is now live (its on-disk tag is gone) while feature-y
@@ -940,8 +981,7 @@ fn dock_opening_worktree_keeps_its_row_position() {
         });
 
     // Stable: feature-x kept its place above feature-y after going live.
-    let fx_after = dock_row_of(&harness, "feature-x");
-    let fy_after = dock_row_of(&harness, "feature-y");
+    let (fx_after, fy_after) = wait_dock_rows_of(&mut harness, "feature-x", "feature-y");
     assert!(
         fx_after < fy_after,
         "opening feature-x must not reorder it below feature-y — the sort is \
