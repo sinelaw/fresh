@@ -374,6 +374,30 @@ let formPanel: FloatingWidgetPanel | null = null;
 
 const NEW_SESSION_MODE = "orchestrator-new-form";
 
+// The "New Folder" dialog — a small centered floating panel with a name
+// field, an "organize the current session under it" checkbox, and
+// Cancel / Create Folder buttons. Replaces the old bottom-of-screen
+// minibuffer prompt (and works identically in the web UI, which renders
+// the same WidgetSpec). Enter submits (via a one-binding editor mode);
+// Esc / Cancel dismiss.
+const CREATE_FOLDER_MODE = "orchestrator-folder-dialog";
+interface CreateFolderDialogState {
+  // The name field: mirror of the host TextInput's value + cursor byte.
+  name: { value: string; cursor: number };
+  // Checkbox: file `sessionId` under the new folder on create. Default
+  // true. Only shown when `sessionId` resolves to a live session.
+  organizeCurrent: boolean;
+  // Parent folder for the new folder (null = top level; a folder id for
+  // the "New Subfolder…" path).
+  parent: string | null;
+  // The session the checkbox organizes — the active window for the
+  // toolbar / subfolder paths, or the explicitly-moved session for the
+  // "Move to → New folder…" path. null ⇒ no session to organize.
+  sessionId: number | null;
+}
+let createFolderDialog: CreateFolderDialogState | null = null;
+let createFolderPanel: FloatingWidgetPanel | null = null;
+
 // Open dialog state. `null` ⇒ the picker isn't mounted. Lives
 // alongside the new-session form state but is independent of
 // it — the two dialogs share the orchestrator mode plumbing but
@@ -873,8 +897,20 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
     keys.push(folderNodeKey(f.id));
     model.push({ kind: "folder", folderId: f.id });
   };
+  // "card" density (dock only) renders session leaves as fixed-height
+  // multi-row cards; "compact" keeps the single-line row. Folders stay
+  // one meaningful line either way (the host blank-pads them to the
+  // card height so the tree's rows line up).
+  const card = dockMode && dockView === "card";
   const emitSession = (id: number, depth: number): void => {
-    nodes.push(treeNode(sessionNodeEntry(id, activeId), { depth, hasChildren: false }));
+    const primary = card ? sessionCardPrimary(id, activeId) : sessionNodeEntry(id, activeId);
+    nodes.push(
+      treeNode(primary, {
+        depth,
+        hasChildren: false,
+        extraLines: card ? sessionCardExtraLines(id) : undefined,
+      }),
+    );
     keys.push(sessionNodeKey(id));
     model.push({ kind: "session", sessionId: id });
   };
@@ -947,6 +983,65 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
     });
   }
   return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
+
+// The dock's "card" density renders each session leaf as a fixed
+// 3-row card inside the tree (the host pads/aligns the extra rows).
+// This mirrors the modal picker's pill, minus the flex right-align
+// the tree can't express: line 1 = glyph · [facet] · NAME + project;
+// line 2 = branch + git summary; line 3 = PR badge (blank when none).
+const DOCK_CARD_HEIGHT = 3;
+
+// Card line 1 (the tree node's primary text): state glyph, optional
+// remote facet, the name (highlighted when active), then a dim project
+// tag. Distinct from the compact `sessionNodeEntry`, which trails the
+// branch on the single line instead of the project.
+function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
+  const s = orchestratorSessions.get(id);
+  if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
+  const isActive = id === activeId;
+  const segs: Entry[] = [stateGlyphEntry(s)];
+  if (s.remote) {
+    segs.push({
+      text: REMOTE_GLYPH[s.remote.kind] + " ",
+      style: { fg: remoteStateFg(s.remote.state), bold: true },
+    });
+  }
+  segs.push({
+    text: s.label,
+    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
+  });
+  const proj = editor.pathBasename(projectKeyOf(s));
+  segs.push({ text: "  " + PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } });
+  segs.push({ text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } });
+  if (s.discovered) {
+    segs.push({
+      text: "  " + editor.t("pill.on_disk_worktree"),
+      style: { fg: "ui.menu_disabled_fg", italic: true },
+    });
+  }
+  return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
+
+// Card lines 2 & 3 (continuation rows). Line 2 is the branch + a
+// compact git summary; line 3 is the PR badge (or a blank spacer when
+// there's no PR, keeping every card the same height). Right-alignment
+// isn't expressible in a single tree-row text, so the git summary sits
+// just after the branch instead of flush-right.
+function sessionCardExtraLines(id: number): TextPropertyEntry[] {
+  const s = orchestratorSessions.get(id);
+  if (!s) return [];
+  const git = gitLineParts(s);
+  const gitSegs: Entry[] = [...git.left];
+  if (git.right.length) {
+    gitSegs.push({ text: "   " });
+    gitSegs.push(...git.right);
+  }
+  const pr = prLineEntries(s);
+  return [
+    styledRow(gitSegs as Parameters<typeof styledRow>[0]),
+    styledRow((pr.length ? pr : [{ text: " " }]) as Parameters<typeof styledRow>[0]),
+  ];
 }
 
 // Per-session content summary keyed by canonical session root, built
@@ -3512,6 +3607,10 @@ function buildDockSpec(): WidgetSpec {
       selectedIndex: selIdx,
       visibleRows: listRows,
       expandedKeys: expandedSeed,
+      // "card" density renders each node as a fixed 3-row card; "compact"
+      // keeps single-line rows. The host keeps scroll/selection in node
+      // units either way.
+      itemHeight: dockView === "card" ? DOCK_CARD_HEIGHT : 1,
       // Focusable in the dock (unlike the modal, where Up/Down forward
       // from the filter): the tree itself is the default focus so ↑↓
       // drive live-switch, →← fold, and Enter dives / toggles a folder.
@@ -3663,7 +3762,7 @@ function runDockMenuOption(optKey: string): void {
   }
   if (optKey === "new:folder") {
     closeDockMenu();
-    void promptCreateFolder(null);
+    openCreateFolderDialog(null);
     return;
   }
   if (optKey.startsWith("move:") && menu?.kind === "move") {
@@ -3671,7 +3770,7 @@ function runDockMenuOption(optKey: string): void {
     const target = optKey.slice("move:".length);
     if (target === "new") {
       closeDockMenu();
-      void promptCreateFolder(null, sessionId);
+      openCreateFolderDialog(null, sessionId);
       return;
     }
     assignSessionToFolder(sessionId, target === "root" ? null : target);
@@ -3700,29 +3799,129 @@ function dockSelectedSessionId(): number | null {
 }
 
 // ---------------------------------------------------------------------
-// Folder operations driven by an async text prompt.
+// Folder operations.
 // ---------------------------------------------------------------------
 
-// Prompt for a name and create a folder under `parent`. When
-// `assignSession` is given, the new folder immediately adopts that
-// session (used by the "Move to → New folder…" path).
-async function promptCreateFolder(
+// Open the "New Folder" dialog. `parent` is the parent folder (null =
+// top level). `assignSession` names a specific session to file under the
+// new folder (the "Move to → New folder…" path); when omitted the dialog
+// offers to organize the *current* (active) session instead. The dialog
+// itself commits the folder on "Create Folder" — see `submitCreateFolder`.
+function openCreateFolderDialog(
   parent: string | null,
   assignSession?: number,
-): Promise<void> {
-  const name = await dockPrompt(
-    editor.t("dock.new_folder_prompt"),
-    editor.t("dock.new_folder_default"),
-  );
-  if (name === null) return;
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  const id = createFolder(trimmed, parent);
-  if (typeof assignSession === "number") {
-    assignSessionToFolder(assignSession, id);
+): void {
+  // The session the "organize under this folder" checkbox targets: the
+  // explicitly-moved session when given, else the active window.
+  const candidate = typeof assignSession === "number"
+    ? assignSession
+    : editor.activeWindow();
+  const sessionId = candidate > 0 && orchestratorSessions.has(candidate)
+    ? candidate
+    : null;
+  createFolderDialog = {
+    // Start empty with the default shown as a placeholder, so the first
+    // keystroke types a name cleanly (no pre-filled text to clear first).
+    // An empty submit falls back to the default name (see submitCreateFolder).
+    name: { value: "", cursor: 0 },
+    organizeCurrent: true,
+    parent,
+    sessionId,
+  };
+  // Yield the dock's keyboard while the dialog owns it (mirrors the
+  // new-session form and the context-menu confirm).
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
   }
+  createFolderPanel = new FloatingWidgetPanel();
+  createFolderPanel.mount(buildCreateFolderSpec(), {
+    widthPct: 50,
+    heightPct: 42,
+    focusMarker: true,
+  });
+  editor.floatingPanelControl(createFolderPanel.id(), "fullscreen", 1);
+  editor.setEditorMode(CREATE_FOLDER_MODE);
+  // Land focus in the name field so typing goes straight to it; the
+  // whole value starts selected-for-overwrite feel via a full cursor.
+  createFolderPanel.setFocusKey("folder-name");
+}
+
+// The dialog spec: a titled section with a "Folder name:" field, an
+// optional "organize <session> under this folder" checkbox, and the
+// Cancel / Create Folder buttons.
+function buildCreateFolderSpec(): WidgetSpec {
+  const d = createFolderDialog!;
+  const sess = d.sessionId != null ? orchestratorSessions.get(d.sessionId) : undefined;
+  const children: WidgetSpec[] = [
+    // Render the label inline ("Folder name: ") so the ": " separator
+    // appears the same way in the TUI and the web UI.
+    row(
+      raw([
+        styledRow([
+          { text: editor.t("dock.new_folder_prompt") + ": ", style: { fg: "ui.menu_disabled_fg" } },
+        ]),
+      ]),
+      text({
+        value: d.name.value,
+        cursorByte: d.name.cursor,
+        placeholder: editor.t("dock.new_folder_default"),
+        fieldWidth: 32,
+        key: "folder-name",
+      }),
+    ),
+  ];
+  if (sess) {
+    children.push(
+      toggle(d.organizeCurrent, editor.t("dock.new_folder_organize", { name: sess.label }), {
+        key: "folder-organize",
+      }),
+    );
+  }
+  children.push(
+    wrappingRow(
+      button(editor.t("dock.new_folder_btn_cancel"), { intent: "danger", key: "folder-cancel" }),
+      spacer(2),
+      button(editor.t("dock.new_folder_btn_create"), { intent: "primary", key: "folder-create" }),
+    ),
+  );
+  return labeledSection({
+    label: editor.t("dock.new_folder_dialog_title"),
+    child: col(...children),
+  });
+}
+
+// Commit the dialog: create the folder and (when the checkbox is on)
+// file the target session under it. No-op on an empty name, so the
+// dialog stays open for the user to type one.
+function submitCreateFolder(): void {
+  const d = createFolderDialog;
+  if (!d) return;
+  // Empty name ⇒ the default ("New Folder"), matching the placeholder.
+  const name = d.name.value.trim() || editor.t("dock.new_folder_default");
+  const id = createFolder(name, d.parent);
+  if (d.organizeCurrent && d.sessionId != null) {
+    assignSessionToFolder(d.sessionId, id);
+  }
+  closeCreateFolderDialog();
   if (openPanel && dockMode) {
     openPanel.setExpandedKeys("sessions", Array.from(loadExpanded()));
+    refreshOpenDialog();
+  }
+}
+
+// Tear down the dialog and hand keyboard focus back to the dock.
+function closeCreateFolderDialog(): void {
+  if (createFolderPanel) {
+    createFolderPanel.unmount();
+    createFolderPanel = null;
+  }
+  createFolderDialog = null;
+  editor.setEditorMode(null);
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    openPanel.setFocusKey("sessions");
     refreshOpenDialog();
   }
 }
@@ -7180,6 +7379,21 @@ const FORM_MODE_BINDINGS: [string, string][] = [
 
 editor.defineMode(NEW_SESSION_MODE, FORM_MODE_BINDINGS, true, true);
 
+// The "New Folder" dialog only needs Enter to submit from anywhere —
+// everything else (typing, Backspace, Tab focus-cycle, Space on the
+// toggle/buttons, Esc to cancel) uses the floating panel's default
+// smart-key routing. Binding Enter here makes the host defer to us
+// (mode bindings win over the generic "Enter = focus-advance") so the
+// name field's Enter submits instead of just advancing focus.
+const FOLDER_DIALOG_MODE_BINDINGS: [string, string][] = [
+  ["Enter", "orchestrator_folder_submit"],
+  ["C-Enter", "orchestrator_folder_submit"],
+];
+editor.defineMode(CREATE_FOLDER_MODE, FOLDER_DIALOG_MODE_BINDINGS, true, true);
+registerHandler("orchestrator_folder_submit", () => {
+  if (createFolderDialog) submitCreateFolder();
+});
+
 function dispatchFormKey(name: string): void {
   if (!form || !formPanel) return;
   formPanel.command(widgetKey(name));
@@ -7409,6 +7623,47 @@ function enterBulkConfirm(action: BulkAction): void {
 
 editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
+  // "New Folder" dialog: name field, organize checkbox, Cancel / Create.
+  // ---------------------------------------------------------------------
+  if (createFolderPanel && createFolderDialog && e.panel_id === createFolderPanel.id()) {
+    const d = createFolderDialog;
+    if (e.event_type === "cancel") {
+      // Esc / click-outside: the host already unmounted the panel, so
+      // just drop our handle and refocus the dock.
+      createFolderPanel = null;
+      createFolderDialog = null;
+      editor.setEditorMode(null);
+      if (openPanel && dockMode) {
+        dockBlurred = false;
+        editor.floatingPanelControl(openPanel.id(), "focus", 0);
+        openPanel.setFocusKey("sessions");
+        refreshOpenDialog();
+      }
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "folder-name") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.value === "string") d.name.value = payload.value;
+      if (typeof payload.cursorByte === "number") d.name.cursor = payload.cursorByte;
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "folder-organize") {
+      const checked = (e.payload as { checked?: unknown })?.checked;
+      d.organizeCurrent = typeof checked === "boolean" ? checked : !d.organizeCurrent;
+      createFolderPanel.update(buildCreateFolderSpec());
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "folder-cancel") {
+      closeCreateFolderDialog();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "folder-create") {
+      submitCreateFolder();
+      return;
+    }
+    return;
+  }
+  // ---------------------------------------------------------------------
   // Dock session context menu (right-click): Visit / Archive / Delete.
   // ---------------------------------------------------------------------
   if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
@@ -7438,7 +7693,7 @@ editor.on("widget_event", (e) => {
         }
         if (e.widget_key === "ctx-new-subfolder") {
           closeDockContextMenuAndRestoreDock();
-          void promptCreateFolder(target.id);
+          openCreateFolderDialog(target.id);
           return;
         }
         if (e.widget_key === "ctx-delete-folder") {

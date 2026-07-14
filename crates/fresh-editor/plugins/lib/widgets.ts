@@ -391,7 +391,18 @@ export function list(options: {
  * filters out descendants of collapsed nodes when rendering. */
 export function treeNode(
   text: TextPropertyEntry,
-  options?: { depth?: number; hasChildren?: boolean; checked?: boolean },
+  options?: {
+    depth?: number;
+    hasChildren?: boolean;
+    checked?: boolean;
+    /** Continuation lines rendered below `text` when the parent
+     * `tree` has `itemHeight > 1`. Each entry is one screen row,
+     * auto-indented to align under the primary line's body. The host
+     * renders at most `itemHeight - 1` of them and blank-pads shorter
+     * nodes so every card is the same height. Ignored when the tree
+     * is single-line (`itemHeight === 1`). */
+    extraLines?: TextPropertyEntry[];
+  },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
   // boolean: omitting it (== undefined here) maps to host-side
@@ -406,6 +417,9 @@ export function treeNode(
   };
   if (options?.checked !== undefined) {
     node.checked = options.checked;
+  }
+  if (options?.extraLines && options.extraLines.length > 0) {
+    node.extraLines = options.extraLines;
   }
   return node;
 }
@@ -445,6 +459,12 @@ export function tree(options: {
    * its model and pushes the new state back via
    * `panel.setCheckedKeys(...)`. */
   checkable?: boolean;
+  /** Fixed number of screen rows per node. `1` (default) is the
+   * classic single-line tree. A larger value renders every node as a
+   * card that tall — the node's primary `text` plus its `extraLines`,
+   * blank-padded to this height. Scroll/selection stay node-based, so
+   * single-line trees are unaffected. */
+  itemHeight?: number;
   key?: string;
 }): WidgetSpec {
   return {
@@ -455,6 +475,7 @@ export function tree(options: {
     visibleRows: options.visibleRows,
     expandedKeys: options.expandedKeys ?? [],
     checkable: options.checkable ?? false,
+    itemHeight: options.itemHeight ?? 1,
     key: options.key,
   };
 }

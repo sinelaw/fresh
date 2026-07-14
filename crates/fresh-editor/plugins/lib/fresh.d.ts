@@ -1052,6 +1052,15 @@ type TreeNode = {
 	* `WidgetMutation::SetCheckedKeys`.
 	*/
 	checked?: boolean | null;
+	/**
+	* Continuation lines rendered below the node's primary `text`
+	* line when the parent `Tree` has `item_height > 1`. Each entry
+	* is one screen row, indented to align under the primary line's
+	* body. The host renders at most `item_height - 1` of them and
+	* blank-pads a shorter node so every row is the same height.
+	* Ignored when `item_height == 1`.
+	*/
+	extraLines?: Array<TextPropertyEntry>;
 };
 type WidgetSpec = {
 	"kind": "row";
@@ -1325,6 +1334,16 @@ type WidgetSpec = {
 	* back via `WidgetMutation::SetCheckedKeys`.
 	*/
 	checkable: boolean;
+	/**
+	* Fixed number of screen rows each node occupies. `1` (the
+	* default) is the classic single-line tree. A larger value
+	* renders every node as a card of that many rows — the node's
+	* primary `text` plus its `extra_lines`, blank-padded to this
+	* height. Windowing/scroll stay node-based (the node budget
+	* becomes `visible_rows / item_height`), so single-line trees
+	* are unaffected.
+	*/
+	itemHeight: number;
 	key?: string | null;
 } | {
 	"kind": "text";

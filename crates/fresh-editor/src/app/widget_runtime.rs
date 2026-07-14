@@ -967,11 +967,20 @@ impl Editor {
                 }
                 // Page step = visible_rows - 1 (one row of overlap so
                 // the user keeps a visual anchor across pages). Ignored
-                // for non-scrollable widgets.
+                // for non-scrollable widgets. A Tree paces in *nodes*, so
+                // a multi-row card tree divides the row budget by its
+                // fixed item height first.
                 let page = match widget {
-                    Some(fresh_core::api::WidgetSpec::List { visible_rows, .. })
-                    | Some(fresh_core::api::WidgetSpec::Tree { visible_rows, .. }) => {
+                    Some(fresh_core::api::WidgetSpec::List { visible_rows, .. }) => {
                         visible_rows.saturating_sub(1).max(1) as i32
+                    }
+                    Some(fresh_core::api::WidgetSpec::Tree {
+                        visible_rows,
+                        item_height,
+                        ..
+                    }) => {
+                        let nodes = visible_rows / (*item_height).max(1);
+                        nodes.saturating_sub(1).max(1) as i32
                     }
                     _ => 0,
                 };

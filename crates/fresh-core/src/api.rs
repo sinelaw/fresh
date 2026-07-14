@@ -1464,6 +1464,14 @@ fn default_tree_visible_rows() -> u32 {
     20
 }
 
+/// Default `item_height` for a `Tree` — `1` ⇒ one screen row per
+/// node (the classic single-line tree). A larger value renders every
+/// node as a fixed-height card of that many rows (the node's primary
+/// `text` line plus its `extra_lines`, blank-padded to the height).
+fn default_tree_item_height() -> u32 {
+    1
+}
+
 /// Default `rows` for a `Text` widget — `1` ⇒ single-line. Plugins
 /// opt into multi-line by setting `rows >= 2`.
 fn default_text_rows() -> u32 {
@@ -1533,6 +1541,15 @@ pub struct TreeNode {
     /// `WidgetMutation::SetCheckedKeys`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checked: Option<bool>,
+    /// Continuation lines rendered below the node's primary `text`
+    /// line when the parent `Tree` has `item_height > 1`. Each entry
+    /// is one screen row, indented to align under the primary line's
+    /// body (past the indent + disclosure/checkbox prefix). The host
+    /// renders at most `item_height - 1` of them and blank-pads a
+    /// shorter node so every row in the tree is the same fixed height.
+    /// Ignored when `item_height == 1`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_lines: Vec<crate::text_property::TextPropertyEntry>,
 }
 
 /// Visual role for a `Button`. Maps to theme keys at render time —
@@ -1954,6 +1971,15 @@ pub enum WidgetSpec {
         /// back via `WidgetMutation::SetCheckedKeys`.
         #[serde(default)]
         checkable: bool,
+        /// Fixed number of screen rows each node occupies. `1` (the
+        /// default) is the classic single-line tree. A larger value
+        /// renders every node as a card of that many rows — the
+        /// node's primary `text` plus its `extra_lines`, blank-padded
+        /// to this height. Windowing/scroll stay node-based (the node
+        /// budget becomes `visible_rows / item_height`), so all
+        /// existing single-line trees are unaffected.
+        #[serde(default = "default_tree_item_height")]
+        item_height: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

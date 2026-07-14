@@ -684,6 +684,7 @@ fn render_collected(
             visible_rows,
             expanded_keys,
             checkable,
+            item_height,
             key: tree_key,
         } => render_widget_tree(
             nodes,
@@ -692,6 +693,7 @@ fn render_collected(
             *visible_rows,
             expanded_keys,
             *checkable,
+            *item_height,
             tree_key.as_deref(),
             prev,
             next_state,
@@ -2533,12 +2535,19 @@ fn render_widget_tree(
     visible_rows: u32,
     expanded_keys: &[String],
     checkable: bool,
+    item_height: u32,
     tree_key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
     panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
+    // Fixed rows per node. `1` is the classic single-line tree; a
+    // larger value renders every node as a card of this many rows.
+    // Windowing/scroll stay in *node* units — the node budget is just
+    // `visible_rows / item_height` — so single-line trees (the vast
+    // majority) are wholly unaffected.
+    let item_height = item_height.max(1);
     // Look up host-owned instance state (scroll, selection,
     // expanded set). Spec values are initial-only.
     let prev_state = tree_key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k));
@@ -2596,7 +2605,10 @@ fn render_widget_tree(
     // hidden (parent collapsed), find the closest visible
     // node at-or-before it. If no visible nodes, -1.
     let total_visible = visible_indices.len() as u32;
-    let visible = visible_rows.max(1);
+    // Node budget: how many fixed-height cards fit in the row budget.
+    // Everything below counts *nodes*, so item_height == 1 reduces to
+    // the original single-line behaviour exactly.
+    let visible = (visible_rows / item_height).max(1);
     let clamp_to_visible = |abs: i32| -> i32 {
         if abs < 0 || nodes.is_empty() {
             return -1;
@@ -2666,22 +2678,41 @@ fn render_widget_tree(
         // the (now byte-unit) overlays uniformly.
         let mut node = nodes[abs_idx].clone();
         node.text.normalize_widths();
+        for line in node.extra_lines.iter_mut() {
+            line.normalize_widths();
+        }
         let item_key = item_keys.get(abs_idx).cloned().unwrap_or_default();
         let is_expanded =
             node.has_children && !item_key.is_empty() && prev_expanded.contains(&item_key);
-        let rendered = render_tree_row(&node, is_expanded, checkable);
+        let rendered = render_tree_row(&node, is_expanded, checkable, item_height);
         let mut entry = rendered.entry;
         let is_selected = abs_idx as i32 == effective_sel_abs;
-        if is_selected {
-            let mut style = entry.style.unwrap_or_default();
+        // The selection highlight fills the whole card (every row),
+        // so a multi-row card reads as one selected block.
+        let select_style = |e: &mut TextPropertyEntry| {
+            let mut style = e.style.clone().unwrap_or_default();
             style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
             style.extend_to_line_end = true;
-            entry.style = Some(style);
+            e.style = Some(style);
+        };
+        if is_selected {
+            select_style(&mut entry);
         }
         let row_byte_end = entry.text.len();
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
         let hit_row = (out.entries.len() - 1) as u32;
+        // Continuation rows of a card (item_height > 1). They carry no
+        // hit areas of their own — the primary row owns select/expand/
+        // toggle — but they do take the selection highlight so the card
+        // highlights as a unit.
+        for mut extra in rendered.extra_entries {
+            if is_selected {
+                select_style(&mut extra);
+            }
+            ensure_trailing_newline(&mut extra);
+            out.entries.push(extra);
+        }
         // Disclosure hit (only when has_children) — fires
         // `expand`. The host toggles instance-state
         // `expanded_keys` and re-renders before firing the
@@ -2764,7 +2795,9 @@ fn render_widget_tree(
                 buffer_row: 0,
                 col_in_row: 0,
                 width_cols: panel_width,
-                height_rows: visible,
+                // The thumb is sized in node units (total/visible/scroll),
+                // but the track spans the painted screen rows.
+                height_rows: visible * item_height,
                 total: total_visible as usize,
                 visible: visible as usize,
                 scroll: scroll as usize,
@@ -4347,6 +4380,11 @@ pub struct RenderedTreeRow {
     /// `checkable`, or when this node has `checked: None`. The
     /// caller emits a `toggle` hit area over this range.
     pub checkbox_range: Option<(usize, usize)>,
+    /// Continuation rows below the primary entry when the parent Tree
+    /// has `item_height > 1`. Already indented to align under the
+    /// primary row's body and blank-padded so the card is exactly
+    /// `item_height` rows tall. Empty for a single-line tree.
+    pub extra_entries: Vec<TextPropertyEntry>,
 }
 
 /// Render a single `TreeNode` row.
@@ -4366,7 +4404,12 @@ pub struct RenderedTreeRow {
 /// checkbox glyph reuses `ui.tab_active_fg` (the same key the
 /// `Toggle` widget uses for its checked-state glyph) so it reads
 /// as a control surface against the row's text.
-pub fn render_tree_row(node: &TreeNode, expanded: bool, checkable: bool) -> RenderedTreeRow {
+pub fn render_tree_row(
+    node: &TreeNode,
+    expanded: bool,
+    checkable: bool,
+    item_height: u32,
+) -> RenderedTreeRow {
     let indent_cols = (node.depth as usize) * 2;
     let disclosure_glyph: &str = if node.has_children {
         if expanded {
@@ -4493,10 +4536,61 @@ pub fn render_tree_row(node: &TreeNode, expanded: bool, checkable: bool) -> Rend
         pad_to_chars: None,
         truncate_to_chars: None,
     };
+
+    // Continuation rows for a fixed-height card (item_height > 1).
+    // Each `extra_lines` entry is indented to align under the primary
+    // row's body (indent + the 2-col disclosure/leaf gutter + the
+    // checkbox column, when present), and the card is blank-padded to
+    // exactly `item_height` rows.
+    let extra_rows = item_height.saturating_sub(1) as usize;
+    let mut extra_entries: Vec<TextPropertyEntry> = Vec::with_capacity(extra_rows);
+    if extra_rows > 0 {
+        // Disclosure/leaf gutter is 2 columns wide in both cases (glyph
+        // + separator space, or two literal spaces). The checkbox, when
+        // rendered, adds `[v]` (3 cols) + a trailing space.
+        let checkbox_cols = if checkbox_glyph.is_some() { 4 } else { 0 };
+        let cont_indent_cols = indent_cols + 2 + checkbox_cols;
+        let indent_str = " ".repeat(cont_indent_cols);
+        let shift = indent_str.len();
+        for i in 0..extra_rows {
+            match node.extra_lines.get(i) {
+                Some(src) => {
+                    let mut line_text = String::with_capacity(shift + src.text.len());
+                    line_text.push_str(&indent_str);
+                    line_text.push_str(&src.text);
+                    let shifted: Vec<InlineOverlay> = src
+                        .inline_overlays
+                        .iter()
+                        .map(|o| {
+                            let mut s = o.clone();
+                            s.start += shift;
+                            s.end += shift;
+                            s
+                        })
+                        .collect();
+                    extra_entries.push(TextPropertyEntry {
+                        text: line_text,
+                        properties: src.properties.clone(),
+                        style: src.style.clone(),
+                        inline_overlays: shifted,
+                        segments: Vec::new(),
+                        pad_to_chars: None,
+                        truncate_to_chars: None,
+                    });
+                }
+                // Blank padding row (the node has fewer lines than the
+                // card is tall). `extend_to_line_end` on the selection
+                // style still fills its background when selected.
+                None => extra_entries.push(TextPropertyEntry::text(String::new())),
+            }
+        }
+    }
+
     RenderedTreeRow {
         entry,
         disclosure_range,
         checkbox_range,
+        extra_entries,
     }
 }
 
@@ -6978,6 +7072,7 @@ mod tests {
             depth,
             has_children,
             checked: None,
+            extra_lines: Vec::new(),
         }
     }
 
@@ -6996,13 +7091,14 @@ mod tests {
             visible_rows: visible,
             expanded_keys: expanded.iter().map(|s| s.to_string()).collect(),
             checkable: false,
+            item_height: 1,
             key: key.map(|s| s.to_string()),
         }
     }
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_collapsed() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), false, false);
+        let r = render_tree_row(&tnode("file.txt", 0, true), false, false, 1);
         assert!(r.entry.text.starts_with('\u{25B6}'), "starts with ▶");
         assert!(r.entry.text.contains("file.txt"));
         assert!(r.disclosure_range.is_some());
@@ -7010,13 +7106,13 @@ mod tests {
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_expanded() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), true, false);
+        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1);
         assert!(r.entry.text.starts_with('\u{25BC}'), "starts with ▼");
     }
 
     #[test]
     fn tree_row_leaf_uses_two_spaces_no_disclosure_hit() {
-        let r = render_tree_row(&tnode("match", 0, false), false, false);
+        let r = render_tree_row(&tnode("match", 0, false), false, false, 1);
         // No glyph, just spaces for alignment.
         assert!(r.entry.text.starts_with("  "));
         assert!(r.entry.text.contains("match"));
@@ -7025,7 +7121,7 @@ mod tests {
 
     #[test]
     fn tree_row_indents_by_depth_times_two() {
-        let r = render_tree_row(&tnode("nested", 2, false), false, false);
+        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1);
         // depth=2 → 4 leading spaces, then 2 alignment spaces, then "nested".
         assert!(r.entry.text.starts_with("      nested"));
     }
@@ -7043,7 +7139,7 @@ mod tests {
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         });
-        let r = render_tree_row(&node, false, false);
+        let r = render_tree_row(&node, false, false, 1);
         // depth=1 → 2 indent + 2 alignment = 4 prefix bytes (ASCII).
         // The plugin's [0..5] becomes [4..9].
         let plugin_overlay = r
@@ -7061,7 +7157,7 @@ mod tests {
         // Even with `checked: Some(_)`, no glyph if `checkable: false`.
         let mut node = tnode("file.rs", 0, false);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, false);
+        let r = render_tree_row(&node, false, false, 1);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -7073,7 +7169,7 @@ mod tests {
         // Lets a checkable tree mix non-checkbox-bearing nodes
         // (e.g. a separator or header) with checkbox rows.
         let node = tnode("section", 0, false);
-        let r = render_tree_row(&node, false, true);
+        let r = render_tree_row(&node, false, true, 1);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -7083,7 +7179,7 @@ mod tests {
     fn tree_row_renders_checked_glyph_after_disclosure() {
         let mut node = tnode("file.rs", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, true, true);
+        let r = render_tree_row(&node, true, true, 1);
         assert!(r.checkbox_range.is_some(), "checkbox range emitted");
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         // Layout: ▼(3 bytes UTF-8) + " " + [v] + " " + body
@@ -7095,7 +7191,7 @@ mod tests {
     fn tree_row_renders_unchecked_glyph_for_leaf() {
         let mut node = tnode("match-row", 1, false);
         node.checked = Some(false);
-        let r = render_tree_row(&node, false, true);
+        let r = render_tree_row(&node, false, true, 1);
         let (cb_start, cb_end) = r
             .checkbox_range
             .expect("checkbox range for leaf with checked: Some");
@@ -7110,7 +7206,7 @@ mod tests {
         // verbatim (no UTF-8 boundary issues from the disclosure).
         let mut node = tnode("path/with/é", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, true);
+        let r = render_tree_row(&node, false, true, 1);
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         assert!(r.entry.text.is_char_boundary(cb_start));
         assert!(r.entry.text.is_char_boundary(cb_end));
