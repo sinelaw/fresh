@@ -4185,8 +4185,11 @@ impl Editor {
                 Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
                 None => return false,
             };
-        // A context menu only makes sense over a real list row.
-        if kind != "list" {
+        // A context menu only makes sense over a real list or tree row.
+        // Trees carry the per-row key + index in the payload (like a list),
+        // so the dock's tree of sessions/folders can raise a context menu
+        // for the right-clicked node too.
+        if kind != "list" && kind != "tree" {
             return false;
         }
         // Carry the screen cell so the plugin can anchor its popup at the

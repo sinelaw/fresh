@@ -695,6 +695,7 @@ fn render_collected(
             tree_key.as_deref(),
             prev,
             next_state,
+            panel_width,
         ),
         WidgetSpec::Text {
             value,
@@ -2529,6 +2530,7 @@ fn render_widget_tree(
     tree_key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
+    panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
     // Look up host-owned instance state (scroll, selection,
@@ -2744,6 +2746,26 @@ fn render_widget_tree(
             });
         }
     }
+
+    // Surface a scroll region so the host paints a draggable overlay
+    // scrollbar when the tree overflows — mirroring the List path, so the
+    // dock's session tree gets the same hover scrollbar the card list had.
+    // Totals are in visible (un-collapsed) rows.
+    if total_visible > visible {
+        if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
+            out.scroll_regions.push(ScrollRegion {
+                list_key: k.to_string(),
+                buffer_row: 0,
+                col_in_row: 0,
+                width_cols: panel_width,
+                height_rows: visible,
+                total: total_visible as usize,
+                visible: visible as usize,
+                scroll: scroll as usize,
+            });
+        }
+    }
+
     out
 }
 

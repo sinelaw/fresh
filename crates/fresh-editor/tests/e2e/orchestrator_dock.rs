@@ -12,8 +12,8 @@
 //! * the session list order is stable as the active window changes
 //!   (the picker's current-project-first sort must not reorder the
 //!   persistent dock);
-//! * mouse clicks land on dock widgets (the "+ New" button opens the
-//!   new-session form).
+//! * mouse clicks land on dock widgets (the "New Task… ▾" button opens
+//!   the create dropdown).
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
@@ -72,6 +72,16 @@ fn row_of(h: &EditorTestHarness, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
+/// Expand the dock's collapsible "Filters" section so the density /
+/// project / worktree / trivial controls and the "Manage" button — which
+/// the redesigned toolbar tucks away by default — become visible.
+fn expand_filters(h: &mut EditorTestHarness) {
+    let frow = row_of(h, "Filters") as u16;
+    h.mouse_click(3, frow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+        .unwrap();
+}
+
 #[test]
 fn dock_renders_as_left_column_beside_chrome() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -83,7 +93,7 @@ fn dock_renders_as_left_column_beside_chrome() {
 
     // The dock and its controls render...
     h.assert_screen_contains("Orchestrator");
-    h.assert_screen_contains("+ New");
+    h.assert_screen_contains("New Task");
     // ...and the editor chrome (menu bar) is still present to its right,
     // i.e. the dock is a column beside the window, not a replacement.
     h.assert_screen_contains("File");
@@ -333,30 +343,19 @@ fn next_window_keeps_dock_order_stable_and_highlight_correct() {
         assert_eq!(
             order(&h),
             baseline,
-            "dock list reordered after Next Window:\n{}",
+            "dock tree reordered after Next Window:\n{}",
             h.screen_to_string()
         );
 
+        // The active session the editor switched to is still listed in the
+        // (stable-ordered) dock tree — the dock re-points its highlight at
+        // the active window rather than reordering to float it.
         let active_label = h.editor().active_window().label.clone();
-        let wc = wall_col(&h);
-        for label in &labels {
-            let r = dock_row(&h, label);
-            let wall_open = h.get_cell(wc, r).as_deref() != Some("│");
-            if *label == active_label {
-                assert!(
-                    wall_open,
-                    "active session {label} must wear the seamless tab (divider scooped away):\n{}",
-                    h.screen_to_string()
-                );
-            } else {
-                assert!(
-                    !wall_open,
-                    "inactive session {label} must keep its divider (only the active card is the \
-                     tab); active is {active_label}:\n{}",
-                    h.screen_to_string()
-                );
-            }
-        }
+        assert!(
+            labels.contains(&active_label),
+            "active session {active_label} must remain listed in the dock:\n{}",
+            h.screen_to_string()
+        );
     }
 }
 
@@ -417,14 +416,11 @@ fn next_window_cycles_only_dock_visible_sessions() {
     }
 }
 
-/// The active session's card wears the "seamless tab": its rows have the
-/// dock's right-edge divider scooped away so the card visually merges into
-/// the editor, while every other card stays walled off by the divider. And
-/// the tab tracks the active session — switching the active window moves it.
-///
-/// Uses two windows + a live active-window switch (no session spawn), so it
-/// exercises the rendering directly. Drives only the keyboard and asserts on
-/// rendered cells per CONTRIBUTING §2.
+/// The dock's session tree highlights the active window, and the
+/// highlight tracks it: arrowing the tree live-switches the active window
+/// to the highlighted session. Uses two windows + a live active-window
+/// switch (no session spawn). Drives only the keyboard and asserts on the
+/// active-window state per CONTRIBUTING §2.
 #[test]
 fn active_session_card_is_a_seamless_tab_and_follows_focus() {
     let (_tmp_a, root_a) = setup_project("aaa_project");
@@ -451,52 +447,19 @@ fn active_session_card_is_a_seamless_tab_and_follows_focus() {
     })
     .unwrap();
 
-    // The dock's right-edge divider column, sampled on the toolbar row (row
-    // 0), which is never part of a card so the wall always stands there.
-    let wall_col = |h: &EditorTestHarness| -> u16 {
-        let cols = h.screen_row_text(0).chars().count() as u16;
-        (0..cols)
-            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
-            .expect("dock right-edge divider should be present on the toolbar row")
-    };
-    // True when the divider is scooped away on `name`'s card row (the
-    // seamless tab); false when the wall `│` still stands there.
-    let wall_open_on = |h: &EditorTestHarness, name: &str| -> bool {
-        let wc = wall_col(h);
-        let row = row_of(h, name) as u16;
-        h.get_cell(wc, row).as_deref() != Some("│")
-    };
+    // aaa_project is the launch (active) session; the dock tree lists both.
+    assert_eq!(h.editor().active_window().label, "aaa_project");
 
-    // aaa_project is the launch (active) session: its card is the seamless
-    // tab (divider scooped away); zzz_project is walled off.
-    assert!(
-        wall_open_on(&h, "aaa_project"),
-        "the active session's card must drop the divider (seamless tab):\n{}",
-        h.screen_to_string()
-    );
-    assert!(
-        !wall_open_on(&h, "zzz_project"),
-        "an inactive session's card must keep the divider:\n{}",
-        h.screen_to_string()
-    );
-
-    // Arrow down live-switches the active window to zzz_project; the tab must
-    // follow it — zzz opens, aaa re-walls.
-    let pre = h.screen_to_string();
+    // Arrow down live-switches the active window to zzz_project (the
+    // highlight follows the arrow through the tree's session leaves).
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string() != pre).unwrap();
-    h.wait_until_stable(|_| true).unwrap();
+    h.wait_until(|h| h.editor().active_window().label == "zzz_project")
+        .unwrap();
 
-    assert!(
-        wall_open_on(&h, "zzz_project"),
-        "the seamless tab must follow the active session onto zzz_project:\n{}",
-        h.screen_to_string()
-    );
-    assert!(
-        !wall_open_on(&h, "aaa_project"),
-        "the previously-active aaa_project must regain its divider:\n{}",
-        h.screen_to_string()
-    );
+    // Arrow back up returns the active window to aaa_project.
+    h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.editor().active_window().label == "aaa_project")
+        .unwrap();
 }
 
 /// The dock's session-list scrollbar is overlay-style: shown ONLY while the
@@ -512,15 +475,15 @@ fn dock_list_scrollbar_shows_only_on_hover() {
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
             .unwrap();
-    // Enough extra sessions to overflow the dock list (cards are several rows
-    // tall, so a handful exceed the visible height and force a scrollbar).
-    for i in 0..8 {
+    // Enough extra sessions to overflow the dock tree (one row per session)
+    // and force a scrollbar.
+    for i in 0..30 {
         let dir = parent.join(format!("proj{i}"));
         fs::create_dir(&dir).unwrap();
         h.editor_mut().create_window_at(dir, format!("proj{i}"));
     }
     h.render().unwrap();
-    open_dock(&mut h); // the dock mounts focused (keyboard on the list)
+    open_dock(&mut h); // the dock mounts focused (keyboard on the tree)
 
     // The divider sits at the dock's right edge; the list's overlay scrollbar
     // sits one column to its left (nudged into the gutter, hugging the edge).
@@ -551,22 +514,6 @@ fn dock_list_scrollbar_shows_only_on_hover() {
         "the dock list scrollbar must appear while the pointer is over the list"
     );
 
-    // The active session renders as the seamless tab (its divider is scooped
-    // away). When shown, the scrollbar must paint *over* that tab rather than
-    // be erased by it: the active card's scrollbar cell differs between
-    // hovered (bar over the tab) and idle (bar hidden, tab open).
-    let active_row = row_of(&h, "alphaproj") as u16;
-    assert!(
-        (8..30).contains(&active_row),
-        "active card row {active_row} fell outside the sampled range"
-    );
-    let active_idx = (active_row - 8) as usize;
-    assert_ne!(
-        idle_focused[active_idx], hovered[active_idx],
-        "the scrollbar must show over the active card's seamless tab, not be \
-         obscured by the tab border"
-    );
-
     // Move the pointer off the list (into the editor, right of the divider) →
     // the bar hides again, matching the focused-but-unhovered state. This is
     // the key behaviour: keyboard focus stays on the list, yet the bar hides
@@ -594,7 +541,7 @@ fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
             .unwrap();
-    for i in 0..8 {
+    for i in 0..30 {
         let dir = parent.join(format!("proj{i}"));
         fs::create_dir(&dir).unwrap();
         h.editor_mut().create_window_at(dir, format!("proj{i}"));
@@ -647,10 +594,16 @@ fn mouse_click_on_dock_new_button_opens_form() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Click the "+ New" button inside the dock column. A click landing on
-    // a dock widget proves mouse hit-testing routes into the panel.
-    let new_row = row_of(&h, "+ New") as u16;
+    // Click the "New Task… ▾" dropdown button inside the dock column. A
+    // click landing on a dock widget proves mouse hit-testing routes into
+    // the panel; the button opens the create dropdown (New Task… / New
+    // Folder…). Choosing "New Task…" (the cursor's first option, accepted
+    // with Enter) then opens the new-session form.
+    let new_row = row_of(&h, "New Task") as u16;
     h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.assert_screen_contains("New Workspace");
@@ -707,31 +660,33 @@ fn dock_enter_on_focused_button_runs_button_action() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Focus opens on the sessions list. One Tab lands on the "+ New"
-    // button (spec-order first tabbable). Enter must open the new-session
-    // form — the same thing a click on "+ New" does — not dive the list.
+    // Focus opens on the sessions tree. One Tab lands on the "New Task… ▾"
+    // dropdown button (spec-order first tabbable). Enter must open the
+    // create dropdown — the same thing a click on the button does — not
+    // dive the tree.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
         .unwrap();
-    h.assert_screen_contains("New Workspace");
+    h.assert_screen_contains("New Folder");
 
-    // Esc the form; the dock is still mounted and re-focused on the list.
+    // Esc closes the dropdown; back on the tree, nothing dived.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
+    h.wait_until(|h| !h.screen_to_string().contains("New Folder"))
         .unwrap();
 
-    // Walk focus to the "view:" toggle button (sessions → new-session →
-    // manage → view-toggle) and Enter it. The label flips card↔compact,
-    // proving Enter activated the focused button rather than diving.
-    h.assert_screen_contains("view: card");
+    // Tab to the "Filters" header button and Enter it: the section
+    // expands (its "view:" control appears), proving Enter activated the
+    // focused button rather than diving the tree. Tab order from the tree
+    // is new-session → filter → filters-toggle.
+    h.assert_screen_not_contains("view: card");
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    h.wait_until(|h| h.screen_to_string().contains("view: card"))
         .unwrap();
-    h.assert_screen_contains("view: compact");
+    h.assert_screen_contains("view: card");
 }
 
 #[test]
@@ -846,6 +801,9 @@ fn dock_show_empty_toggle_flips_on_click() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
+    // The trivial-sessions toggle now lives in the collapsible Filters
+    // section — open it first.
+    expand_filters(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("show empty"))
         .unwrap();
     let trow = row_of(&h, "show empty") as u16;
@@ -944,6 +902,9 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
+    // The worktree toggle lives in the collapsible Filters section — open
+    // it so the checkbox state is visible (Alt+T flips the flag either way).
+    expand_filters(&mut h);
 
     // The dock's worktree filter starts off.
     h.wait_until(|h| h.screen_to_string().contains("[ ] all worktrees"))
@@ -986,10 +947,10 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     h.render().unwrap();
     open_dock(&mut h);
     // Sanity: the dock (not the modal picker) is what's up, and the dock's
-    // "Manage" button — which only the dock renders, never the picker — is
-    // on screen.
+    // "New Task… ▾" button — which only the dock renders, never the picker
+    // (its create button reads "+ New") — is on screen.
     h.assert_screen_not_contains("ORCHESTRATOR :: Workspaces");
-    h.assert_screen_contains("Manage");
+    h.assert_screen_contains("New Task");
 
     // Ctrl+P falls through (blurs the dock) and opens the palette; run
     // "Orchestrator: Open" from it.
@@ -1034,7 +995,7 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
     h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
-    h.assert_screen_contains("Manage");
+    h.assert_screen_contains("New Task");
 }
 
 /// The Quick Open hint bar (`file | >command | :line | #buffer`) must align
@@ -1761,6 +1722,8 @@ fn dock_project_dropdown_is_keyboard_navigable() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
+    // The project control lives in the collapsible Filters section.
+    expand_filters(&mut h);
 
     // The project control starts unfiltered.
     h.assert_screen_contains("All ▾");
@@ -1805,6 +1768,7 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
+    expand_filters(&mut h);
 
     h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("All projects"))
@@ -1878,48 +1842,28 @@ fn creating_session_moves_dock_highlight_to_new_session() {
         .expect("Create Workspace button should be visible");
     h.mouse_click(col, btn_row).unwrap();
 
-    // The dock's right-edge divider, sampled on the toolbar row (row 0),
-    // which is never part of a session card so the wall always stands there.
-    let wall_col = |h: &EditorTestHarness| -> u16 {
-        let cols = h.screen_row_text(0).chars().count() as u16;
-        (0..cols)
-            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
-            .expect("dock right-edge divider should be present on the toolbar row")
-    };
-    // Row of the (first) DOCK line mentioning `needle` — i.e. where `needle`
-    // starts left of the divider. Scoping to the dock column is essential:
-    // "plainwork" also shows in the still-open modal's "Project:" line and,
-    // once the new session is active, in its terminal's shell prompt (the cwd
-    // path) in the main view — both right of the divider. Matching those
-    // would read the wall on the wrong row and hang the wait.
-    let dock_row = |h: &EditorTestHarness, needle: &str| -> Option<u16> {
-        let wc = wall_col(h);
-        h.screen_to_string().lines().enumerate().find_map(|(r, l)| {
-            let byte = l.find(needle)?;
-            let col = l[..byte].chars().count() as u16;
-            (col < wc).then_some(r as u16)
-        })
-    };
-
-    // The new session appears in the dock and becomes the active card; its
-    // row's wall is scooped away (the seamless tab). The spawn + active-window
-    // switch + dock refresh are async, so wait until the new session's dock
-    // card shows and its divider has vanished.
+    // The new session becomes the active window; the dock — a passive
+    // mirror once focus dives into the new terminal — re-points its
+    // highlight at it (`syncDockSelectionToActive`) instead of stranding it
+    // on the previously-active alphaproj row. The spawn + active-window
+    // switch + dock refresh are async, so wait for the active window to
+    // become the new (plain) session.
     h.wait_until(|h| {
-        let wc = wall_col(h);
-        dock_row(h, "plainwork").is_some_and(|r| h.get_cell(wc, r).as_deref() != Some("│"))
+        h.editor()
+            .active_window()
+            .root
+            .to_string_lossy()
+            .contains("plainwork")
     })
     .unwrap();
 
-    let screen = h.screen_to_string();
-    let wc = wall_col(&h);
-    let alpha_row =
-        dock_row(&h, "alphaproj").expect("the original session row should still be listed");
-    assert_eq!(
-        h.get_cell(wc, alpha_row).as_deref(),
-        Some("│"),
-        "the previously-active session must keep the dock divider (no seamless tab):\n{screen}"
-    );
+    // Both sessions remain listed in the dock tree — the highlight moved,
+    // the old row wasn't dropped.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("plainwork") && s.contains("alphaproj")
+    })
+    .unwrap();
 }
 
 // ── right-click session context menu ──────────────────────────────────────
@@ -1979,12 +1923,12 @@ fn dock_right_click_opens_context_menu() {
 fn dock_context_menu_esc_closes() {
     let (_tmp, mut h) = open_dock_context_menu("alphaproj");
 
-    // Esc dismisses the menu; the dock returns (its "Manage" button shows)
-    // and the menu-only "Archive"/"Delete" actions are gone.
+    // Esc dismisses the menu; the dock returns (its "New Task… ▾" button
+    // shows) and the menu-only "Archive"/"Delete" actions are gone.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("Archive"))
         .unwrap();
-    h.assert_screen_contains("Manage");
+    h.assert_screen_contains("New Task");
 }
 
 #[test]
@@ -2073,5 +2017,62 @@ fn dock_context_menu_click_outside_dismisses() {
     h.mouse_click(90, 20).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("Archive"))
         .unwrap();
-    h.assert_screen_contains("Manage");
+    h.assert_screen_contains("New Task");
+}
+
+// ── folder tree ───────────────────────────────────────────────────────────
+
+/// The "New Task… ▾" dropdown can create a folder, and a session's
+/// context menu can file it into that folder — the dock's hierarchical
+/// organisation. Creating a folder then moving the session into it makes
+/// the folder report a member count of `(1)`.
+#[test]
+fn dock_new_folder_and_move_session_into_it() {
+    init_tracing_from_env();
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Open the "New Task… ▾" create dropdown, move the cursor to
+    // "New Folder…", and accept it — that raises a name prompt.
+    let new_row = row_of(&h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // Name the folder "Docs" at the prompt.
+    h.wait_for_prompt().unwrap();
+    h.type_text("Docs").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The folder appears in the dock tree, initially empty.
+    h.wait_until(|h| h.screen_to_string().contains("Docs"))
+        .unwrap();
+
+    // Right-click the alphaproj session row and choose "Move to Folder…".
+    let session_row = row_of(&h, "alphaproj") as u16;
+    h.mouse_right_click(4, session_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    let (mcol, mrow) = pos_of(&h, "Move to Folder");
+    h.mouse_click(mcol, mrow).unwrap();
+
+    // The move dropdown lists "Top level", then "Docs", then "New
+    // folder…". Move the cursor onto "Docs" and accept.
+    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The folder now reports one member — the session was filed into it.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Docs") && s.contains("(1)")
+    })
+    .unwrap();
 }

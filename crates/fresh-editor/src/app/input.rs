@@ -2643,10 +2643,18 @@ impl Editor {
             // this, those keys fell through to the generic list nav
             // below and drove the session list *under* the open menu,
             // so the dropdown was visible but un-navigable by keyboard.
+            // Any of the dock's inline dropdowns (project scope, the
+            // "New Task…" create menu, or a session's "Move to…" folder
+            // menu) owns the keyboard while panel focus sits on one of its
+            // option rows. The plugin moves focus onto a `project-pick:` /
+            // `menu-pick:` button when a menu opens; in that state ↑/↓ move
+            // the cursor, Enter commits, Esc cancels — all routed to the
+            // plugin as `dock_menu_*` events so they don't leak to the
+            // session tree underneath.
             let on_project_menu = self
                 .widget_registry
                 .focus_key(&panel_key)
-                .map(|k| k.starts_with("project-pick:"))
+                .map(|k| k.starts_with("project-pick:") || k.starts_with("menu-pick:"))
                 .unwrap_or(false);
             if on_project_menu {
                 match code {

@@ -35,6 +35,8 @@ import {
   text,
   textInputChar,
   toggle,
+  tree,
+  treeNode,
   windowEmbed,
   type WidgetSpec,
 } from "./lib/widgets.ts";
@@ -489,7 +491,33 @@ interface OpenDialogState {
   // with a `●`; this is just where ↑/↓ currently sit before Enter
   // commits. Only meaningful while `projectMenuOpen`.
   projectMenuIndex: number;
+  // Dock-only: the collapsible "Filters" section under the toolbar is
+  // expanded. When false the view/project/worktree/trivial controls are
+  // hidden, leaving just the "New Task…" dropdown and the search input.
+  filtersExpanded: boolean;
+  // Dock-only: a transient toolbar dropdown (the "New Task…" create menu
+  // or a session's "Move to folder…" menu), or null when none is open.
+  // Keyboard-navigated via the shared `dock_menu_*` events (the host
+  // routes them here while focus sits on a `menu-pick:` option button).
+  dockMenu: DockDropdown | null;
+  // Dock-only: the item key (`folder:<id>` / `session:<id>`) of the
+  // currently-highlighted tree node. The tree is host-owned; this mirror
+  // — updated from every `select` event — is how the dock resolves what
+  // Enter / a click / a right-click acts on, since a tree node index no
+  // longer maps 1:1 to a session in `filteredIds`.
+  dockSelKey: string | null;
+  // Dock-only: the flat node model (folders + session leaves) mirroring
+  // the last-emitted tree, and the parallel item keys. Rebuilt on every
+  // `buildDockSpec`; lets `dockSelKey` be resolved to a node/index.
+  dockNodes: DockNode[];
+  dockKeys: string[];
 }
+
+// A transient dock toolbar dropdown. `index` is the keyboard cursor into
+// the menu's option list. `move` also carries the session being filed.
+type DockDropdown =
+  | { kind: "new"; index: number }
+  | { kind: "move"; sessionId: number; index: number };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
 // The dock panel kept alive in its own host slot (PanelSlot::Dock) while
@@ -520,10 +548,17 @@ let dockSwitchToken = 0;
 // confirmation), reusing `buildConfirmPane`. Visit acts immediately.
 // `anchorCol`/`anchorRow` are the right-click cell, kept so a return
 // from confirm→menu (Cancel) re-anchors the popup where it opened.
+// The right-clicked target: a session (Visit / Move to folder… /
+// Archive / Delete) or a user folder (Rename / New Subfolder / Delete
+// Folder). The confirm stage only ever applies to a session's
+// destructive Archive/Delete.
+type DockMenuTarget =
+  | { kind: "session"; id: number }
+  | { kind: "folder"; id: string };
 type DockMenuState =
-  | { sessionId: number; anchorCol: number; anchorRow: number; stage: "menu" }
+  | { target: DockMenuTarget; anchorCol: number; anchorRow: number; stage: "menu" }
   | {
-      sessionId: number;
+      target: { kind: "session"; id: number };
       anchorCol: number;
       anchorRow: number;
       stage: "confirm";
@@ -597,6 +632,322 @@ let lastHideTrivial = true;
 let dockView: "card" | "compact" = "card";
 // Remembered dock project filter (see `OpenDialogState.projectFilter`).
 let lastDockProjectFilter: string | null = null;
+
+// =============================================================================
+// Dock folder tree
+//
+// The dock presents sessions in a user-organised hierarchy: arbitrary
+// folders the user creates to group, nest, and arrange their agent
+// sessions and remote connections however they like. Folders and the
+// session→folder assignment are editor-global plugin state (the dock
+// lists every project's sessions, so the organisation is global, not
+// per-project) and persist across restarts.
+//
+// A session is assigned by its *canonical root path*, not its numeric
+// window id: the id churns (a discovered on-disk worktree carries a
+// synthetic negative id that becomes a positive window id the moment it
+// is opened) and isn't stable run-to-run, whereas the root is the
+// session's durable identity (§3 of orchestrator-sessions.md).
+// =============================================================================
+
+interface DockFolder {
+  id: string; // stable unique id, e.g. "df3"
+  name: string;
+  parent: string | null; // parent folder id; null = top level
+}
+
+const FOLDERS_KEY = "orchestrator.dock.folders";
+const ASSIGN_KEY = "orchestrator.dock.assignments";
+const EXPANDED_KEY = "orchestrator.dock.expanded";
+const FOLDER_COUNTER_KEY = "orchestrator.dock.folder_counter";
+
+const FOLDER_NODE_PREFIX = "folder:";
+const SESSION_NODE_PREFIX = "session:";
+const FOLDER_GLYPH = "▤";
+
+// Lazily-hydrated in-memory caches, written through to global state on
+// every mutation so a later read (or the next launch) sees the change.
+let dockFolders: DockFolder[] | null = null;
+let dockAssign: Record<string, string> | null = null;
+let dockExpanded: Set<string> | null = null;
+
+function loadFolders(): DockFolder[] {
+  if (dockFolders) return dockFolders;
+  const raw = editor.getGlobalState(FOLDERS_KEY);
+  const out: DockFolder[] = [];
+  if (Array.isArray(raw)) {
+    for (const e of raw) {
+      if (e && typeof e === "object") {
+        const rec = e as Record<string, unknown>;
+        const id = rec.id;
+        const name = rec.name;
+        const parent = rec.parent;
+        if (typeof id === "string" && typeof name === "string") {
+          out.push({ id, name, parent: typeof parent === "string" ? parent : null });
+        }
+      }
+    }
+  }
+  dockFolders = out;
+  return out;
+}
+
+function saveFolders(): void {
+  editor.setGlobalState(FOLDERS_KEY, (dockFolders ?? []) as unknown as object);
+}
+
+function loadAssign(): Record<string, string> {
+  if (dockAssign) return dockAssign;
+  const raw = editor.getGlobalState(ASSIGN_KEY);
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string") out[k] = v;
+    }
+  }
+  dockAssign = out;
+  return out;
+}
+
+function saveAssign(): void {
+  editor.setGlobalState(ASSIGN_KEY, (dockAssign ?? {}) as unknown as object);
+}
+
+function loadExpanded(): Set<string> {
+  if (dockExpanded) return dockExpanded;
+  const raw = editor.getGlobalState(EXPANDED_KEY);
+  const out = new Set<string>();
+  if (Array.isArray(raw)) {
+    for (const v of raw) if (typeof v === "string") out.add(v);
+  }
+  dockExpanded = out;
+  return out;
+}
+
+function saveExpanded(): void {
+  editor.setGlobalState(
+    EXPANDED_KEY,
+    Array.from(dockExpanded ?? new Set<string>()) as unknown as object,
+  );
+}
+
+function allocFolderId(): string {
+  const raw = editor.getGlobalState(FOLDER_COUNTER_KEY);
+  const n = (typeof raw === "number" && raw >= 0 ? Math.floor(raw) : 0) + 1;
+  editor.setGlobalState(FOLDER_COUNTER_KEY, n as unknown as object);
+  return `df${n}`;
+}
+
+function folderNodeKey(id: string): string {
+  return FOLDER_NODE_PREFIX + id;
+}
+function sessionNodeKey(id: number): string {
+  return SESSION_NODE_PREFIX + id;
+}
+
+// The durable key a session is filed under (see the section header).
+function sessionAssignKey(s: AgentSession): string {
+  return normRoot(s.root);
+}
+
+function folderById(id: string): DockFolder | undefined {
+  return loadFolders().find((f) => f.id === id);
+}
+
+// Direct child folders of `parent` (null = top level), sorted by name so
+// the tree order is stable and predictable.
+function childFoldersOf(parent: string | null): DockFolder[] {
+  return loadFolders()
+    .filter((f) => (f.parent ?? null) === parent)
+    .sort((a, b) => {
+      const la = a.name.toLowerCase();
+      const lb = b.name.toLowerCase();
+      if (la !== lb) return la < lb ? -1 : 1;
+      return a.id < b.id ? -1 : 1;
+    });
+}
+
+// The folder a live session is filed under, or null when it is unfiled
+// or its folder was deleted out from under it (treated as top level).
+function folderOfSession(id: number): string | null {
+  const s = orchestratorSessions.get(id);
+  if (!s) return null;
+  const a = loadAssign()[sessionAssignKey(s)];
+  return a && folderById(a) ? a : null;
+}
+
+function createFolder(name: string, parent: string | null): string {
+  const id = allocFolderId();
+  loadFolders().push({ id, name, parent });
+  saveFolders();
+  // New folders open expanded so their contents are immediately visible.
+  loadExpanded().add(folderNodeKey(id));
+  saveExpanded();
+  return id;
+}
+
+function renameFolder(id: string, name: string): void {
+  const f = folderById(id);
+  if (f) {
+    f.name = name;
+    saveFolders();
+  }
+}
+
+// Delete a folder. Its child folders and member sessions reparent to the
+// deleted folder's own parent so nothing is orphaned — the subtree
+// bubbles up one level rather than disappearing.
+function deleteFolder(id: string): void {
+  const f = folderById(id);
+  if (!f) return;
+  const parent = f.parent ?? null;
+  const folders = loadFolders();
+  for (const c of folders) {
+    if ((c.parent ?? null) === id) c.parent = parent;
+  }
+  dockFolders = folders.filter((x) => x.id !== id);
+  saveFolders();
+  const assign = loadAssign();
+  for (const [k, v] of Object.entries(assign)) {
+    if (v === id) {
+      if (parent) assign[k] = parent;
+      else delete assign[k];
+    }
+  }
+  saveAssign();
+  loadExpanded().delete(folderNodeKey(id));
+  saveExpanded();
+}
+
+function assignSessionToFolder(id: number, folderId: string | null): void {
+  const s = orchestratorSessions.get(id);
+  if (!s) return;
+  const assign = loadAssign();
+  const key = sessionAssignKey(s);
+  if (folderId) assign[key] = folderId;
+  else delete assign[key];
+  saveAssign();
+}
+
+// A flat, depth-first traversal of the dock hierarchy: each entry is
+// either a user folder or a session leaf, in render order. Built by
+// `buildDockTree`, mirrored 1:1 with the emitted `TreeNode[]`.
+type DockNode =
+  | { kind: "folder"; folderId: string }
+  | { kind: "session"; sessionId: number };
+
+interface DockTree {
+  nodes: TreeNode[];
+  keys: string[];
+  model: DockNode[];
+}
+
+// Turn the filtered session list into the tree the dock renders:
+// user folders (nested) with their member sessions, then the ungrouped
+// sessions at top level. When a search is active, folders with no
+// matching descendant are dropped so results aren't buried under empty
+// folders.
+function buildDockTree(filtered: number[], activeId: number): DockTree {
+  const nodes: TreeNode[] = [];
+  const keys: string[] = [];
+  const model: DockNode[] = [];
+
+  const membersByFolder = new Map<string | null, number[]>();
+  for (const id of filtered) {
+    const fid = folderOfSession(id);
+    const arr = membersByFolder.get(fid) ?? [];
+    arr.push(id);
+    membersByFolder.set(fid, arr);
+  }
+  const countRec = (fid: string): number => {
+    let n = (membersByFolder.get(fid) ?? []).length;
+    for (const c of childFoldersOf(fid)) n += countRec(c.id);
+    return n;
+  };
+  const searching = (openDialog?.filter.value ?? "") !== "";
+
+  const emitFolder = (f: DockFolder, depth: number): void => {
+    nodes.push(
+      treeNode(folderNodeEntry(f, countRec(f.id)), { depth, hasChildren: true }),
+    );
+    keys.push(folderNodeKey(f.id));
+    model.push({ kind: "folder", folderId: f.id });
+  };
+  const emitSession = (id: number, depth: number): void => {
+    nodes.push(treeNode(sessionNodeEntry(id, activeId), { depth, hasChildren: false }));
+    keys.push(sessionNodeKey(id));
+    model.push({ kind: "session", sessionId: id });
+  };
+  const walk = (parent: string | null, depth: number): void => {
+    for (const f of childFoldersOf(parent)) {
+      if (searching && countRec(f.id) === 0) continue;
+      emitFolder(f, depth);
+      walk(f.id, depth + 1);
+      for (const sid of membersByFolder.get(f.id) ?? []) emitSession(sid, depth + 1);
+    }
+  };
+  walk(null, 0);
+  for (const sid of membersByFolder.get(null) ?? []) emitSession(sid, 0);
+
+  return { nodes, keys, model };
+}
+
+// One tree row for a folder: a folder glyph, the (bold) name, and the
+// recursive session count in dim parentheses.
+function folderNodeEntry(f: DockFolder, count: number): TextPropertyEntry {
+  const segs: Entry[] = [
+    { text: FOLDER_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } },
+    { text: f.name, style: { bold: true } },
+  ];
+  if (count > 0) {
+    segs.push({ text: `  (${count})`, style: { fg: "ui.menu_disabled_fg" } });
+  }
+  return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
+
+// One tree row for a session leaf: state glyph, optional remote facet,
+// the name (highlighted when it's the active window), and a dim branch
+// suffix. A single line — the tree owns indentation and the disclosure
+// column, so the rich two-line PR pill of the modal picker is traded for
+// a compact, nestable row here.
+function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
+  const s = orchestratorSessions.get(id);
+  if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
+  const isActive = id === activeId;
+  const segs: Entry[] = [stateGlyphEntry(s)];
+  if (s.remote) {
+    segs.push({
+      text: REMOTE_GLYPH[s.remote.kind] + " ",
+      style: { fg: remoteStateFg(s.remote.state), bold: true },
+    });
+  }
+  segs.push({
+    text: s.label,
+    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
+  });
+  // A remote session surfaces its backend target (host / ns·pod), coloured
+  // by the connection state — the same detail the pill shows on the right.
+  if (s.remote) {
+    segs.push({
+      text: "  " + s.remote.detail,
+      style: { fg: remoteStateFg(s.remote.state), italic: true },
+    });
+  } else if (s.branch) {
+    segs.push({
+      text: "  " + BRANCH_ICON + s.branch,
+      style: { fg: "ui.menu_disabled_fg", italic: true },
+    });
+  }
+  // A discovered on-disk worktree keeps its "· on-disk" tag — the "this
+  // row isn't an open session yet" indicator the pill also shows.
+  if (s.discovered) {
+    segs.push({
+      text: "  " + editor.t("pill.on_disk_worktree"),
+      style: { fg: "ui.menu_disabled_fg", italic: true },
+    });
+  }
+  return styledRow(segs as Parameters<typeof styledRow>[0]);
+}
 
 // Per-session content summary keyed by canonical session root, built
 // from the on-disk workspace files. The restored shell windows don't
@@ -2371,9 +2722,17 @@ function refreshOpenDialog(): void {
     openDialog.selectedIndex = 0;
   }
   openPanel.update(dockMode ? buildDockSpec() : buildOpenSpec());
-  // The list widget's `selectedIndex` in the spec is initial-only;
-  // pin it via mutation so re-renders don't snap back to 0.
-  if (openDialog.filteredIds.length > 0) {
+  // The list/tree widget's `selectedIndex` in the spec is initial-only;
+  // pin it via mutation so re-renders don't snap back to 0. In the dock
+  // (a tree) the pin follows the highlighted node key, which
+  // `buildDockSpec` just reconciled; in the modal (a list) it follows
+  // the `filteredIds` index.
+  if (dockMode) {
+    const idx = openDialog.dockSelKey
+      ? openDialog.dockKeys.indexOf(openDialog.dockSelKey)
+      : -1;
+    if (idx >= 0) openPanel.setSelectedIndex("sessions", idx);
+  } else if (openDialog.filteredIds.length > 0) {
     openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
   }
   // `filteredIds` is the single source of truth for the dock's visible list.
@@ -2396,9 +2755,10 @@ function refreshOpenDialog(): void {
 // (filtered) list.
 function syncDockSelectionToActive(): void {
   if (!openDialog || !openPanel || !dockMode) return;
-  const idx = openDialog.filteredIds.indexOf(editor.activeWindow());
+  const activeKey = sessionNodeKey(editor.activeWindow());
+  const idx = openDialog.dockKeys.indexOf(activeKey);
   if (idx < 0) return;
-  openDialog.selectedIndex = idx;
+  openDialog.dockSelKey = activeKey;
   openPanel.setSelectedIndex("sessions", idx);
 }
 
@@ -2684,6 +3044,11 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     projectFilter: asDock ? lastDockProjectFilter : null,
     projectMenuOpen: false,
     projectMenuIndex: 0,
+    filtersExpanded: false,
+    dockMenu: null,
+    dockSelKey: null,
+    dockNodes: [],
+    dockKeys: [],
   };
   // Set `dockMode` BEFORE the initial `filterSessions("")`. The sort
   // inside `filterSessions` keys off `pinCurrentFirst = !dockMode`: the
@@ -2933,6 +3298,9 @@ function openProjectMenu(): void {
   const keys = projectMenuKeys();
   const applied = openDialog.projectFilter;
   const idx = applied === null ? 0 : Math.max(0, keys.indexOf(applied));
+  // The project control lives in the collapsible Filters section; make
+  // sure it's open so the dropdown (and its anchor button) are visible.
+  openDialog.filtersExpanded = true;
   openDialog.projectMenuOpen = true;
   openDialog.projectMenuIndex = clampMenuIndex(idx, keys.length);
   // Render the menu first so its buttons exist in the spec, *then* move
@@ -2991,30 +3359,38 @@ function pickProject(optionKey: string): void {
   }
 }
 
-// Single-column spec for the dock. Reuses the same `sessions` list key +
-// filter/toggle keys as the modal so the existing `widget_event`
-// handlers fire unchanged. Lifecycle actions (Stop/Archive/Delete) and
-// bulk-select live in the modal picker — reached from the "Manage"
-// button — so the dock is a lean switcher: a session list that fills the
-// dock down to the last line, with the keyboard hints shown only while
-// the dock holds focus.
+// Single-column spec for the dock. The toolbar is deliberately lean —
+// a "New Task…" create dropdown and a "Search Tasks" input — with the
+// view/project/worktree/trivial controls tucked into a collapsible
+// "Filters" section so they're available without cluttering the top.
+// Below the toolbar the sessions render as a fully hierarchical **tree**
+// (widget key `sessions`, so the host's dock key routing is unchanged):
+// user-created folders group and nest sessions however the user likes,
+// with ungrouped sessions at the top level. Lifecycle actions
+// (Stop/Archive/Delete) and bulk-select live in the modal picker,
+// reached from the Filters section's "Manage" button.
 function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  // Rows size themselves to the host-laid-out dock width (flex
-  // right-align), so no plugin-side width estimate is needed — this is
-  // what lets the tags re-flow to a user-dragged dock width.
-  const itemSpecs = filtered.map((id) => renderPillSpec(id, activeId));
-  const itemKeys = filtered.map(String);
-  const selIdx = filtered.length === 0
-    ? -1
-    : Math.max(0, Math.min(openDialog.selectedIndex, filtered.length - 1));
-  const newKey = editor.getKeybindingLabel(
-    "orchestrator_open_new_from_picker",
-    OPEN_MODE,
-  );
-  const newLabel = newKey ? editor.t("dock.new_btn_key", { key: newKey }) : editor.t("list.new_btn");
+  const dockTree = buildDockTree(filtered, activeId);
+  // Mirror the emitted node model so selection / activation / context
+  // can resolve `dockSelKey` back to a folder or session.
+  openDialog.dockNodes = dockTree.model;
+  openDialog.dockKeys = dockTree.keys;
+  // Keep the highlighted node key pointing at something real: default to
+  // the active session's node, else the first node.
+  if (!openDialog.dockSelKey || !dockTree.keys.includes(openDialog.dockSelKey)) {
+    const activeKey = sessionNodeKey(activeId);
+    openDialog.dockSelKey = dockTree.keys.includes(activeKey)
+      ? activeKey
+      : (dockTree.keys[0] ?? null);
+  }
+  const selIdx = openDialog.dockSelKey
+    ? dockTree.keys.indexOf(openDialog.dockSelKey)
+    : -1;
+
+  const newLabel = editor.t("dock.new_btn");
   const worktreeLabel = editor.t("dock.all_worktrees");
   const trivialLabel = editor.t("dock.show_empty");
   const projWord = openDialog.projectFilter === null
@@ -3023,15 +3399,15 @@ function buildDockSpec(): WidgetSpec {
 
   // The hints belong to the dock only while it has keyboard focus
   // (req: hide them when the editor owns the keyboard). A blurred dock
-  // gives the row back to the list.
+  // gives the row back to the tree.
   const showHints = !dockBlurred;
-  // While the project dropdown owns the keyboard, the hints describe the
-  // dropdown (choose/select/cancel), not the session list — otherwise
-  // they'd advertise the wrong keys for where focus actually is.
+  const menuOpen = openDialog.projectMenuOpen || openDialog.dockMenu !== null;
+  // While a dropdown owns the keyboard, the hints describe the dropdown
+  // (choose/select/cancel), not the session tree.
   const hintRow = row(
     flexSpacer(),
     hintBar(
-      openDialog.projectMenuOpen
+      menuOpen
         ? [
           { keys: "↑↓", label: editor.t("dock.hint_choose") },
           { keys: "Enter", label: editor.t("dock.hint_select") },
@@ -3039,8 +3415,8 @@ function buildDockSpec(): WidgetSpec {
         ]
         : [
           { keys: "↑↓", label: editor.t("dock.hint_switch") },
+          { keys: "→←", label: editor.t("dock.hint_fold") },
           { keys: "Enter", label: editor.t("dock.hint_edit") },
-          { keys: "Esc", label: editor.t("dock.hint_editor") },
         ],
     ),
     flexSpacer(),
@@ -3048,64 +3424,346 @@ function buildDockSpec(): WidgetSpec {
   const bottom: WidgetSpec[] = showHints ? [hintRow] : [];
   const bottomRows = showHints ? 1 : 0;
 
-  // Size the list to fill the dock. The dock draws only a right border
-  // (no top/bottom), so its content area is the full terminal height.
-  // Fixed top chrome is 6 rows: title, New/Manage, view/project,
-  // worktrees toggle, empty toggle, filter, rule = 7.
-  const TOP_CHROME = 7;
+  // The collapsible Filters section: a header toggle plus, when open,
+  // the density / project / worktree / trivial controls and Manage.
+  const filtersArrow = openDialog.filtersExpanded ? "▾ " : "▸ ";
+  const filterHeader = row(
+    button(filtersArrow + editor.t("dock.filters"), { key: "filters-toggle" }),
+    flexSpacer(),
+  );
+  const filterBody: WidgetSpec[] = openDialog.filtersExpanded
+    ? [
+      row(
+        button(editor.t("dock.view_btn", { view: dockView }), { key: "view-toggle" }),
+        flexSpacer(),
+        button(editor.t("dock.project_btn", { word: projWord }), { key: "project-menu" }),
+      ),
+      // The project dropdown floats just under its toolbar button.
+      ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
+      row(
+        toggle(openDialog.showWorktrees, worktreeLabel, { key: "worktree-show" }),
+        flexSpacer(),
+      ),
+      row(
+        toggle(!openDialog.hideTrivial, trivialLabel, { key: "hide-trivial" }),
+        flexSpacer(),
+      ),
+      row(
+        flexSpacer(),
+        button(editor.t("dock.manage"), { key: "manage" }),
+      ),
+    ]
+    : [];
+
+  // Size the tree to fill the dock. Top chrome is variable: title, New
+  // button, search, filter header, divider (5), plus the expanded filter
+  // body rows when open. The tree soaks up the rest.
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  const listRows = Math.max(MIN_LIST_ROWS, innerH - TOP_CHROME - bottomRows);
+  const chromeRows = 5 + filterBody.length + bottomRows;
+  const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
+
+  const expandedSeed = dockTreeExpandedKeys(dockTree);
 
   return col(
     dockTitleRow(),
     row(
       button(newLabel, { intent: "primary", key: "new-session" }),
       flexSpacer(),
-      button(editor.t("dock.manage"), { key: "manage" }),
     ),
-    row(
-      button(editor.t("dock.view_btn", { view: dockView }), { key: "view-toggle" }),
-      flexSpacer(),
-      button(editor.t("dock.project_btn", { word: projWord }), { key: "project-menu" }),
-    ),
-    // The project dropdown floats just under its toolbar button.
-    ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
-    row(
-      toggle(openDialog.showWorktrees, worktreeLabel, { key: "worktree-show" }),
-      flexSpacer(),
-    ),
-    row(
-      toggle(!openDialog.hideTrivial, trivialLabel, { key: "hide-trivial" }),
-      flexSpacer(),
-    ),
+    // The "New Task…" create dropdown floats just under its button.
+    ...(openDialog.dockMenu?.kind === "new" ? [dockNewMenu()] : []),
     text({
       value: openDialog.filter.value,
       cursorByte: openDialog.filter.cursor,
-      label: editor.t("list.filter_label"),
       placeholder: editor.t("dock.filter_placeholder"),
       fullWidth: true,
       key: "filter",
     }),
+    filterHeader,
+    ...filterBody,
+    // The "Move to folder…" dropdown floats over the tree without
+    // reflowing it.
+    ...(openDialog.dockMenu?.kind === "move" ? [dockMoveMenu()] : []),
     // Host-rendered full-width rule: it spans whatever width the dock is
     // actually drawn at (incl. a user drag), so it can't drift from the
     // chrome the way a plugin-computed `"─".repeat(width)` did.
     divider({ style: { fg: "ui.menu_disabled_fg" } }),
-    list({
-      items: [],
-      itemSpecs,
-      itemKeys,
+    tree({
+      nodes: dockTree.nodes,
+      itemKeys: dockTree.keys,
       selectedIndex: selIdx,
       visibleRows: listRows,
+      expandedKeys: expandedSeed,
       // Focusable in the dock (unlike the modal, where Up/Down forward
-      // from the filter): the list itself is the default focus so
-      // ↑↓ drive live-switch and Enter blurs to the editor.
+      // from the filter): the tree itself is the default focus so ↑↓
+      // drive live-switch, →← fold, and Enter dives / toggles a folder.
       focusable: true,
       key: "sessions",
     }),
     ...bottom,
   );
+}
+
+// The folder keys to seed the tree's expansion with. During a search
+// every folder is force-open so matches aren't hidden; otherwise the
+// user's persisted expansion set is used.
+function dockTreeExpandedKeys(t: DockTree): string[] {
+  const searching = (openDialog?.filter.value ?? "") !== "";
+  if (searching) return t.keys.filter((k) => k.startsWith(FOLDER_NODE_PREFIX));
+  return Array.from(loadExpanded());
+}
+
+// ---------------------------------------------------------------------
+// Dock toolbar dropdowns — the "New Task…" create menu and a session's
+// "Move to folder…" menu. Both reuse the project dropdown's mechanics:
+// an `overlay(labeledSection(...))` of option buttons keyed `menu-pick:`,
+// keyboard-navigated via the shared `dock_menu_*` events (the host
+// routes them here while focus sits on a `menu-pick:` button). The `●`
+// marks the applied/current choice; `primary` intent marks the cursor.
+// ---------------------------------------------------------------------
+
+interface MenuOption {
+  key: string; // action key, e.g. "new:task" / "move:df3"
+  label: string;
+  marked?: boolean;
+}
+
+function menuPickKey(optKey: string): string {
+  return `menu-pick:${optKey}`;
+}
+
+// Options for the "New Task…" create dropdown.
+function dockNewOptions(): MenuOption[] {
+  return [
+    { key: "new:task", label: editor.t("dock.new_menu_task") },
+    { key: "new:folder", label: editor.t("dock.new_menu_folder") },
+  ];
+}
+
+// Options for a session's "Move to folder…" dropdown: every folder
+// (indented by depth), plus "top level" and "New folder…".
+function dockMoveOptions(sessionId: number): MenuOption[] {
+  const cur = folderOfSession(sessionId);
+  const opts: MenuOption[] = [
+    { key: "move:root", label: editor.t("dock.move_root"), marked: cur === null },
+  ];
+  const walk = (parent: string | null, depth: number): void => {
+    for (const f of childFoldersOf(parent)) {
+      opts.push({
+        key: `move:${f.id}`,
+        label: "  ".repeat(depth) + f.name,
+        marked: f.id === cur,
+      });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  opts.push({ key: "move:new", label: editor.t("dock.new_menu_folder") });
+  return opts;
+}
+
+function dockMenuOptions(): MenuOption[] {
+  const m = openDialog?.dockMenu;
+  if (!m) return [];
+  return m.kind === "new" ? dockNewOptions() : dockMoveOptions(m.sessionId);
+}
+
+function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
+  const rows: WidgetSpec[] = opts.map((o, i) =>
+    row(
+      button((o.marked ? "● " : "  ") + o.label, {
+        key: menuPickKey(o.key),
+        intent: i === cursor ? "primary" : "normal",
+      }),
+      flexSpacer(),
+    )
+  );
+  return overlay(labeledSection({ label, child: col(...rows) }));
+}
+
+function dockNewMenu(): WidgetSpec {
+  const cursor = clampMenuIndex(
+    openDialog?.dockMenu?.kind === "new" ? openDialog.dockMenu.index : 0,
+    dockNewOptions().length,
+  );
+  return dockDropdownOverlay(editor.t("dock.menu_new_label"), dockNewOptions(), cursor);
+}
+
+function dockMoveMenu(): WidgetSpec {
+  if (openDialog?.dockMenu?.kind !== "move") return col();
+  const opts = dockMoveOptions(openDialog.dockMenu.sessionId);
+  const cursor = clampMenuIndex(openDialog.dockMenu.index, opts.length);
+  return dockDropdownOverlay(editor.t("dock.menu_move_label"), opts, cursor);
+}
+
+// Open a dock dropdown and hand it the keyboard (focus onto the cursor's
+// `menu-pick:` button — the signal the host uses to route nav keys here
+// instead of the session tree).
+function openDockMenu(menu: DockDropdown): void {
+  if (!openDialog || !openPanel) return;
+  if (openDialog.projectMenuOpen) closeProjectMenu();
+  openDialog.dockMenu = menu;
+  openPanel.update(buildDockSpec());
+  const opts = dockMenuOptions();
+  const idx = clampMenuIndex(menu.index, opts.length);
+  if (opts[idx]) openPanel.setFocusKey(menuPickKey(opts[idx].key));
+}
+
+function closeDockMenu(): void {
+  if (!openDialog || !openPanel) return;
+  openDialog.dockMenu = null;
+  openPanel.update(buildDockSpec());
+  openPanel.setFocusKey("sessions");
+}
+
+function moveDockMenu(delta: number): void {
+  if (!openDialog || !openPanel || !openDialog.dockMenu) return;
+  const opts = dockMenuOptions();
+  const next = clampMenuIndex(openDialog.dockMenu.index + delta, opts.length);
+  openDialog.dockMenu = { ...openDialog.dockMenu, index: next };
+  openPanel.update(buildDockSpec());
+  if (opts[next]) openPanel.setFocusKey(menuPickKey(opts[next].key));
+}
+
+function acceptDockMenu(): void {
+  if (!openDialog || !openDialog.dockMenu) return;
+  const opts = dockMenuOptions();
+  const opt = opts[clampMenuIndex(openDialog.dockMenu.index, opts.length)];
+  if (opt) runDockMenuOption(opt.key);
+}
+
+// Apply a dropdown choice (shared by mouse click on an option button and
+// keyboard Enter on the cursor).
+function runDockMenuOption(optKey: string): void {
+  if (!openDialog) return;
+  const menu = openDialog.dockMenu;
+  if (optKey === "new:task") {
+    closeDockMenu();
+    dockBlurred = true;
+    openForm({ fromPicker: true });
+    return;
+  }
+  if (optKey === "new:folder") {
+    closeDockMenu();
+    void promptCreateFolder(null);
+    return;
+  }
+  if (optKey.startsWith("move:") && menu?.kind === "move") {
+    const sessionId = menu.sessionId;
+    const target = optKey.slice("move:".length);
+    if (target === "new") {
+      closeDockMenu();
+      void promptCreateFolder(null, sessionId);
+      return;
+    }
+    assignSessionToFolder(sessionId, target === "root" ? null : target);
+    closeDockMenu();
+    refreshOpenDialog();
+    return;
+  }
+  closeDockMenu();
+}
+
+// ---------------------------------------------------------------------
+// Dock tree selection resolution. The tree is host-owned; `dockSelKey`
+// (updated from every `select` event, seeded in `buildDockSpec`) is the
+// plugin's mirror of the highlighted node.
+// ---------------------------------------------------------------------
+
+function dockSelectedNode(): DockNode | null {
+  if (!openDialog || !openDialog.dockSelKey) return null;
+  const idx = openDialog.dockKeys.indexOf(openDialog.dockSelKey);
+  return idx >= 0 ? openDialog.dockNodes[idx] ?? null : null;
+}
+
+function dockSelectedSessionId(): number | null {
+  const node = dockSelectedNode();
+  return node && node.kind === "session" ? node.sessionId : null;
+}
+
+// ---------------------------------------------------------------------
+// Folder operations driven by an async text prompt.
+// ---------------------------------------------------------------------
+
+// Prompt for a name and create a folder under `parent`. When
+// `assignSession` is given, the new folder immediately adopts that
+// session (used by the "Move to → New folder…" path).
+async function promptCreateFolder(
+  parent: string | null,
+  assignSession?: number,
+): Promise<void> {
+  const name = await dockPrompt(
+    editor.t("dock.new_folder_prompt"),
+    editor.t("dock.new_folder_default"),
+  );
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const id = createFolder(trimmed, parent);
+  if (typeof assignSession === "number") {
+    assignSessionToFolder(assignSession, id);
+  }
+  if (openPanel && dockMode) {
+    openPanel.setExpandedKeys("sessions", Array.from(loadExpanded()));
+    refreshOpenDialog();
+  }
+}
+
+async function promptRenameFolder(id: string): Promise<void> {
+  const f = folderById(id);
+  if (!f) return;
+  const name = await dockPrompt(editor.t("dock.rename_folder_prompt"), f.name);
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  renameFolder(id, trimmed);
+  if (openPanel && dockMode) refreshOpenDialog();
+}
+
+// Run a minibuffer text prompt from the dock. The dock is a keyboard-
+// owning floating panel, so it must yield focus first or the typed name
+// is routed to the dock (the tree) instead of the prompt; focus is
+// handed back to the tree once the prompt resolves.
+async function dockPrompt(label: string, initial: string): Promise<string | null> {
+  const hadDock = !!openPanel && dockMode;
+  if (hadDock && openPanel) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  }
+  try {
+    return await editor.prompt(label, initial);
+  } finally {
+    if (hadDock && openPanel) {
+      dockBlurred = false;
+      editor.floatingPanelControl(openPanel.id(), "focus", 0);
+      openPanel.setFocusKey("sessions");
+    }
+  }
+}
+
+// Flip one folder's expansion in the persisted set and push it to the
+// host-owned tree state.
+function toggleDockFolderExpansion(folderKey: string): void {
+  if (!openPanel) return;
+  const set = loadExpanded();
+  if (set.has(folderKey)) set.delete(folderKey);
+  else set.add(folderKey);
+  saveExpanded();
+  openPanel.setExpandedKeys("sessions", Array.from(set));
+}
+
+// Reconcile the tree's host-owned expansion with the plugin's intent:
+// every folder open while a search is active, the user's persisted set
+// otherwise. Call after a rebuild (so `dockKeys` is current).
+function applyDockExpansion(): void {
+  if (!openPanel || !openDialog) return;
+  const searching = openDialog.filter.value !== "";
+  const keys = searching
+    ? openDialog.dockKeys.filter((k) => k.startsWith(FOLDER_NODE_PREFIX))
+    : Array.from(loadExpanded());
+  openPanel.setExpandedKeys("sessions", keys);
 }
 
 // ---------------------------------------------------------------------
@@ -3152,12 +3810,30 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     // Reuse the picker's confirmation pane (single-session form). Its
     // buttons are keyed `confirm-cancel` / `confirm-<action>`, handled
     // in the dock-menu `widget_event` block.
-    return buildConfirmPane({ action: state.action, ids: [state.sessionId] });
+    return buildConfirmPane({ action: state.action, ids: [state.target.id] });
   }
-  const s = orchestratorSessions.get(state.sessionId);
-  const label = s?.label ?? `[${state.sessionId}]`;
-  const canArchive = bulkEligible("archive", state.sessionId);
-  const canDelete = bulkEligible("delete", state.sessionId);
+  // A folder's context menu: organise actions (Rename / New Subfolder /
+  // Delete Folder).
+  if (state.target.kind === "folder") {
+    const f = folderById(state.target.id);
+    const label = f?.name ?? `[${state.target.id}]`;
+    return col(
+      { kind: "raw", entries: [
+        styledRow([{ text: FOLDER_GLYPH + " " + label, style: { bold: true } }]),
+      ] },
+      button(editor.t("dock.ctx_rename"), { intent: "primary", key: "ctx-rename" }),
+      button(editor.t("dock.ctx_new_subfolder"), { key: "ctx-new-subfolder" }),
+      button(editor.t("dock.ctx_delete_folder"), { intent: "danger", key: "ctx-delete-folder" }),
+      { kind: "raw", entries: [
+        styledRow([{ text: editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } }]),
+      ] },
+    );
+  }
+  const sid = state.target.id;
+  const s = orchestratorSessions.get(sid);
+  const label = s?.label ?? `[${sid}]`;
+  const canArchive = bulkEligible("archive", sid);
+  const canDelete = bulkEligible("delete", sid);
   // Intentionally intrinsic-width content only: NO `labeledSection`,
   // `flexSpacer`, or `fullWidth` widgets — those expand to the panel
   // width and would blow the anchored popup up to ~half the screen. The
@@ -3168,6 +3844,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       styledRow([{ text: `${label}`, style: { bold: true } }]),
     ] },
     button(editor.t("dock.ctx_visit"), { intent: "primary", key: "ctx-visit" }),
+    button(editor.t("dock.ctx_move"), { key: "ctx-move" }),
     button(editor.t("dock.ctx_archive"), { key: "ctx-archive", disabled: !canArchive }),
     button(editor.t("dock.ctx_delete"), { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
     { kind: "raw", entries: [
@@ -3199,18 +3876,22 @@ function anchorDockMenu(): void {
   );
 }
 
-// Open the right-click context menu for the session at filtered-list
-// `index`, anchored at the click cell `(col, row)`. The dock stays
-// mounted in its own slot behind the popup.
+// Open the right-click context menu for the tree node at flat `index`,
+// anchored at the click cell `(col, row)`. The dock stays mounted in its
+// own slot behind the popup. A folder node gets folder-organise actions;
+// a session node gets Visit / Move / Archive / Delete.
 function openDockContextMenu(index: number, col: number, row: number): void {
   if (!openDialog) return;
-  const id = openDialog.filteredIds[index];
-  if (typeof id !== "number") return;
+  const node = openDialog.dockNodes[index];
+  if (!node) return;
+  const target: DockMenuTarget = node.kind === "folder"
+    ? { kind: "folder", id: node.folderId }
+    : { kind: "session", id: node.sessionId };
   // Align the dock's highlighted row with the right-clicked one so the
-  // menu and the list agree on the target.
-  openDialog.selectedIndex = index;
+  // menu and the tree agree on the target.
+  openDialog.dockSelKey = openDialog.dockKeys[index] ?? openDialog.dockSelKey;
   if (openPanel) openPanel.setSelectedIndex("sessions", index);
-  dockMenuState = { sessionId: id, anchorCol: col, anchorRow: row, stage: "menu" };
+  dockMenuState = { target, anchorCol: col, anchorRow: row, stage: "menu" };
   if (!dockMenuPanel) dockMenuPanel = new FloatingWidgetPanel();
   // widthPct/heightPct seed the centered confirm stage; the anchored menu
   // stage ignores them (it sizes to content). Mount, then anchor.
@@ -3226,7 +3907,14 @@ function openDockContextMenu(index: number, col: number, row: number): void {
 // change.
 function dockMenuEnterConfirm(action: "archive" | "delete"): void {
   if (!dockMenuPanel || !dockMenuState) return;
-  dockMenuState = { ...dockMenuState, stage: "confirm", action };
+  if (dockMenuState.target.kind !== "session") return;
+  dockMenuState = {
+    target: dockMenuState.target,
+    anchorCol: dockMenuState.anchorCol,
+    anchorRow: dockMenuState.anchorRow,
+    stage: "confirm",
+    action,
+  };
   editor.floatingPanelControl(dockMenuPanel.id(), "center", 0);
   editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
   renderDockMenu();
@@ -3263,7 +3951,7 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     // Superseded by a later keystroke — let the latest one win.
     if (token !== dockSwitchToken) return;
     if (!openDialog || !openPanel || !dockMode || dockBlurred) return;
-    const id = openDialog.filteredIds[openDialog.selectedIndex];
+    const id = dockSelectedSessionId();
     if (typeof id !== "number") return;
     const sess = orchestratorSessions.get(id);
     // A discovered (on-disk) worktree has no window to switch to — in the
@@ -3302,7 +3990,7 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
 function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   if (!openDialog || !openPanel || !dockMode) return;
   dockSwitchToken++;
-  const id = openDialog.filteredIds[openDialog.selectedIndex];
+  const id = dockSelectedSessionId();
   if (typeof id !== "number") return;
   const sess = orchestratorSessions.get(id);
   // A discovered (on-disk) worktree has no live window — attach a fresh
@@ -6708,7 +7396,7 @@ editor.on("widget_event", (e) => {
   // Dock session context menu (right-click): Visit / Archive / Delete.
   // ---------------------------------------------------------------------
   if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
-    const id = dockMenuState.sessionId;
+    const target = dockMenuState.target;
     if (e.event_type === "cancel") {
       // Esc or a click outside dismissed the popup — the host already
       // unmounted the panel, so just drop our handle (don't unmount it
@@ -6725,10 +7413,42 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate") {
+      // Folder organise actions.
+      if (target.kind === "folder") {
+        if (e.widget_key === "ctx-rename") {
+          closeDockContextMenuAndRestoreDock();
+          void promptRenameFolder(target.id);
+          return;
+        }
+        if (e.widget_key === "ctx-new-subfolder") {
+          closeDockContextMenuAndRestoreDock();
+          void promptCreateFolder(target.id);
+          return;
+        }
+        if (e.widget_key === "ctx-delete-folder") {
+          deleteFolder(target.id);
+          closeDockContextMenuAndRestoreDock();
+          return;
+        }
+        return;
+      }
+      const id = target.id;
       if (e.widget_key === "ctx-visit") {
         // Visit dives into the editor — no dock refocus.
         closeDockContextMenu();
         dockMenuVisit(id);
+        return;
+      }
+      if (e.widget_key === "ctx-move") {
+        // Swap the anchored popup for the "Move to folder…" dropdown in
+        // the dock toolbar (so it shares the keyboard-navigable menu
+        // path and the folder list).
+        closeDockContextMenu();
+        if (openPanel && dockMode) {
+          dockBlurred = false;
+          editor.floatingPanelControl(openPanel.id(), "focus", 0);
+        }
+        openDockMenu({ kind: "move", sessionId: id, index: 0 });
         return;
       }
       if (e.widget_key === "ctx-archive" && bulkEligible("archive", id)) {
@@ -6742,7 +7462,12 @@ editor.on("widget_event", (e) => {
       if (e.widget_key === "confirm-cancel") {
         // Back to the anchored menu (not all the way out) so a mis-click
         // on a destructive action is one click from recoverable.
-        dockMenuState = { ...dockMenuState, stage: "menu" };
+        dockMenuState = {
+          target,
+          anchorCol: dockMenuState.anchorCol,
+          anchorRow: dockMenuState.anchorRow,
+          stage: "menu",
+        };
         renderDockMenu();
         anchorDockMenu();
         return;
@@ -6998,14 +7723,20 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "dock_activate") {
-      // Host Enter on the dock's session list — the "dive in" gesture.
-      // Every row is already the active session via the arrow/click
-      // live-switch (a discovered worktree was opened on navigation too),
-      // so Enter just hands keyboard focus to the editor. If the row is
-      // still discovered here (Enter pressed before the debounced switch
-      // landed) attach it now, diving in to match the live path below.
+      // Host Enter on the dock's session tree — the "dive in" gesture for
+      // a session, or expand/collapse for a folder. A session row is
+      // already the active window via the arrow/click live-switch (a
+      // discovered worktree was opened on navigation too), so Enter just
+      // hands keyboard focus to the editor. If the row is still discovered
+      // here (Enter pressed before the debounced switch landed) attach it
+      // now, diving in to match the live path below.
       if (!dockMode || !openPanel || !openDialog) return;
-      const id = openDialog.filteredIds[openDialog.selectedIndex];
+      const node = dockSelectedNode();
+      if (node && node.kind === "folder") {
+        toggleDockFolderExpansion(folderNodeKey(node.folderId));
+        return;
+      }
+      const id = dockSelectedSessionId();
       const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
       if (sel && sel.discovered) {
         void attachToWorktree({
@@ -7045,24 +7776,28 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
-    // Dock project dropdown keyboard nav. The host fires these only
-    // while panel focus sits on a `project-pick:` row (i.e. the menu is
-    // open and owns the keyboard), so ↑/↓/Enter/Esc drive the dropdown
-    // instead of leaking to the session list underneath.
+    // Dock dropdown keyboard nav. The host fires these only while panel
+    // focus sits on a `project-pick:` / `menu-pick:` row (a dropdown is
+    // open and owns the keyboard), so ↑/↓/Enter/Esc drive whichever
+    // dropdown is up instead of leaking to the session tree underneath.
     if (e.event_type === "dock_menu_prev") {
-      moveProjectMenu(-1);
+      if (openDialog.dockMenu) moveDockMenu(-1);
+      else moveProjectMenu(-1);
       return;
     }
     if (e.event_type === "dock_menu_next") {
-      moveProjectMenu(1);
+      if (openDialog.dockMenu) moveDockMenu(1);
+      else moveProjectMenu(1);
       return;
     }
     if (e.event_type === "dock_menu_accept") {
-      acceptProjectMenu();
+      if (openDialog.dockMenu) acceptDockMenu();
+      else acceptProjectMenu();
       return;
     }
     if (e.event_type === "dock_menu_cancel") {
-      closeProjectMenu();
+      if (openDialog.dockMenu) closeDockMenu();
+      else closeProjectMenu();
       return;
     }
     if (e.event_type === "change" && e.widget_key === "filter") {
@@ -7085,15 +7820,23 @@ editor.on("widget_event", (e) => {
       const nextIdx = prevId !== undefined ? next.indexOf(prevId) : -1;
       openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
       refreshOpenDialog();
+      // The tree force-opens every folder while a search is active (so
+      // matches aren't buried) and restores the user's expansion set when
+      // the search clears. `refreshOpenDialog` just rebuilt the tree, so
+      // `dockKeys` is current.
+      if (dockMode) applyDockExpansion();
       return;
     }
-    // Right-click on a session row → open its context menu. Only the
-    // dock wires this up (the host fires `context` for right-clicks in
-    // the dock column); the modal picker has its own action buttons.
+    // Right-click on a tree node → open its context menu. Only the dock
+    // wires this up (the host fires `context` for right-clicks in the dock
+    // column); the modal picker has its own action buttons. For the tree
+    // the node key rides in `payload.key`/`widget_key`; `payload.index` is
+    // the flat node index into `dockNodes`.
     if (
       e.event_type === "context" &&
       dockMode &&
-      ((e.payload ?? {}) as Record<string, unknown>).list_key === "sessions"
+      (e.widget_key === "sessions" ||
+        ((e.payload ?? {}) as Record<string, unknown>).list_key === "sessions")
     ) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
@@ -7115,26 +7858,38 @@ editor.on("widget_event", (e) => {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       const idx = payload.index;
       if (typeof idx === "number") {
-        const prevIdx = openDialog.selectedIndex;
-        openDialog.selectedIndex = idx;
         clearDialogError();
         if (dockMode) {
-          // The editor to the dock's right is the preview: arrowing the
-          // list switches the active window live (debounced), wiping down
-          // when moving down and up when moving up, and keeps focus on the
-          // dock so you can keep arrowing. A *click* is a deliberate "open
-          // this" gesture, so it also hands keyboard focus to the activated
-          // window (dive in) like Enter — otherwise keys keep going to the
-          // dock while the editor shows the switched session. A discovered
-          // (on-disk) worktree has no window to switch to, so both paths
-          // attach a fresh session to it instead.
+          // The dock is a tree. Track the highlighted node by key. A
+          // *folder* row only moves the highlight (and a click toggles
+          // its expansion — the disclosure column does that too). A
+          // *session* row live-switches the active window: arrowing
+          // wipes down/up and keeps focus on the dock so you can keep
+          // arrowing; a *click* is a deliberate "open this" gesture that
+          // also dives (hands keyboard focus to the window). A discovered
+          // on-disk worktree has no window, so both paths attach a fresh
+          // session instead.
+          const key = typeof payload.key === "string"
+            ? payload.key
+            : (openDialog.dockKeys[idx] ?? null);
+          const prevKey = openDialog.dockSelKey;
+          const prevIdx = prevKey ? openDialog.dockKeys.indexOf(prevKey) : -1;
+          openDialog.dockSelKey = key;
           openPanel.update(buildDockSpec());
-          openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+          openPanel.setSelectedIndex("sessions", idx);
+          const node = key
+            ? openDialog.dockNodes[openDialog.dockKeys.indexOf(key)] ?? null
+            : null;
+          if (node && node.kind === "folder") {
+            if (payload.via === "click") toggleDockFolderExpansion(key!);
+            return;
+          }
           const fromEdge = idx > prevIdx ? "bottom" : idx < prevIdx ? "top" : null;
           if (payload.via === "click") diveDockSelectionFromClick(fromEdge);
           else scheduleDockSwitch(fromEdge);
           return;
         }
+        openDialog.selectedIndex = idx;
         // Update preview pane.
         openPanel.update(buildOpenSpec());
         // Re-pin the list selection so the spec re-emit doesn't
@@ -7212,14 +7967,44 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "new-session") {
       if (dockMode) {
-        // The form is a centered modal in its own slot; keep the dock
-        // visible behind it (mirrors the Alt+N `dock_new` path).
-        dockBlurred = true;
-        openForm({ fromPicker: true });
+        // "New Task… ▾" is a dropdown: toggle the create menu (New Task…
+        // / New Folder…) rather than opening the form directly.
+        if (openDialog.dockMenu?.kind === "new") closeDockMenu();
+        else openDockMenu({ kind: "new", index: 0 });
         return;
       }
       closeOpenDialog();
       openForm({ fromPicker: true });
+      return;
+    }
+    // A dock dropdown option button was clicked (New / Move menus).
+    if (
+      e.event_type === "activate" &&
+      typeof e.widget_key === "string" &&
+      e.widget_key.startsWith("menu-pick:")
+    ) {
+      runDockMenuOption(e.widget_key.slice("menu-pick:".length));
+      return;
+    }
+    // Toggle the collapsible Filters section.
+    if (e.event_type === "activate" && e.widget_key === "filters-toggle") {
+      openDialog.filtersExpanded = !openDialog.filtersExpanded;
+      if (openPanel) openPanel.update(buildDockSpec());
+      return;
+    }
+    // Host-owned tree expansion changed (a disclosure click or →/← on a
+    // folder): mirror it into the persisted expansion set so it survives
+    // re-renders and restarts.
+    if (e.event_type === "expand" && e.widget_key === "sessions") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const key = payload.key;
+      const expanded = payload.expanded;
+      if (typeof key === "string" && key.startsWith(FOLDER_NODE_PREFIX)) {
+        const set = loadExpanded();
+        if (expanded === true) set.add(key);
+        else set.delete(key);
+        saveExpanded();
+      }
       return;
     }
     // Dock "Manage" → open the full modal picker (lifecycle actions
