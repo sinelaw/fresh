@@ -237,11 +237,14 @@
   .w-col{display:flex;flex-direction:column;gap:4px}
   .w-toggle{display:inline-flex;align-items:center;gap:6px;cursor:default;padding:1px 4px;border-radius:4px}
   .w-toggle.on{color:var(--accent)}
-  /* Sliding switch, identical geometry to the Settings `.set-switch`. */
+  /* Sliding switch, identical geometry to the Settings `.set-switch`.
+     On-state uses --ui-accent (the brandable teal), NOT --accent — that's
+     the cursor colour, which is white in the stock dark theme and would
+     render a white pill with an invisible white knob. */
   .w-toggle .w-box{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;flex:0 0 auto;transition:background .1s}
   .w-toggle .w-box::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
-  .w-toggle.on .w-box{background:var(--accent)}
-  .w-toggle.on .w-box::after{left:14px;background:var(--on-accent,#fff)}
+  .w-toggle.on .w-box{background:var(--ui-accent,var(--accent))}
+  .w-toggle.on .w-box::after{left:14px;background:var(--on-ui-accent,#fff)}
   .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
     .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
   .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
@@ -415,13 +418,25 @@
      :has()/`>` so the big new-session form (root .w-col) is untouched. */
   .widget-surface.w-floatingModal:has(> .w-section){padding:0}
   .w-floatingModal>.w-section{border:none;padding:16px 18px}
+  /* Header rule and field border use the soft --hairline, not --border
+     (the popup frame colour — bright cyan in some themes), so the frame
+     stays the only strong edge. */
   .w-floatingModal>.w-section>.w-section-label{font-weight:600;color:var(--fg);
-    margin:0 0 14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
+    margin:0 0 14px;padding-bottom:10px;border-bottom:1px solid var(--hairline,var(--border))}
   .w-floatingModal>.w-section>.w-col{gap:14px}
   .w-floatingModal>.w-section .w-row{align-items:center}
-  .w-floatingModal>.w-section .w-text{flex:1;border:1px solid var(--border);
+  .w-floatingModal>.w-section .w-text{flex:1;border:1px solid var(--hairline,var(--border));
     border-radius:6px;padding:4px 8px;background:var(--bg)}
-  /* Only the switch reflects state; the label stays normal weight/colour. */
+  /* Focus: one calm ui-accent ring (border + faint halo), replacing the
+     default cursor-colour border + heavy glow double ring. */
+  .w-floatingModal>.w-section .w-text.focus{
+    border-color:color-mix(in srgb, var(--ui-accent) 60%, transparent);
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--ui-accent) 20%, transparent)}
+  /* Only the switch reflects state; the label stays normal weight/colour.
+     Strip the toggle's own padding so the switch left-aligns with the
+     field label column, and shrink it to content so a focus ring hugs the
+     control instead of striping the full dialog width. */
+  .w-floatingModal>.w-section .w-toggle{padding:1px 0;align-self:flex-start}
   .w-floatingModal>.w-section .w-toggle.on{color:inherit}
   .w-floatingModal>.w-section .w-row.wrap{justify-content:flex-end;gap:10px;margin-top:6px}
   .w-floatingModal>.w-section .w-button{padding:5px 16px}
