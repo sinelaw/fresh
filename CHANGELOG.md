@@ -16,31 +16,20 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
-* **LSP diagnostics track buffer edits** - the gutter marker, `F8` target, hover, and panel now shift with inserted/deleted lines instead of freezing at the pre-edit position until the next save (#2602).
-* **LSP diagnostics survive hover dismissal** - closing a hover popup no longer drops an unrelated error from the status bar, gutter, and `F8` navigation (#2601).
+* **LSP diagnostic fixes**: the gutter marker, `F8` target, hover, and panel now shift with inserted/deleted lines instead of freezing at the pre-edit position until the next save (#2602); and dismissing a hover popup no longer drops an unrelated error from the status bar, gutter, and `F8` navigation (#2601).
 * **LSP Rename keeps focus** - a cross-file F2 rename no longer jumps you to the definition's file at a stale cursor position (#2599).
 * **LSP now pulls diagnostics from every server** configured for a language, not just the first - e.g. both `ruff` and `ty` for Python now stay live (#2615, reported by @ak24watch).
-* **Search & Replace match stepping follows edits** - `Ctrl+Alt+→`/`←` and Enter-open now land on a match's live position instead of a stale one (#2583).
-* **Click-to-position caret** in Search & Replace and Settings text fields; Settings fields also gained `Home`/`End`, word motion, and `Shift`-selection (#2573, reported by @asukaminato0721).
-* **Search and Replace in Project: single focused element** - `Tab` now reaches the results list, and `Down`/`Up` moves focus off the toolbar so `Enter` opens the highlighted match (#2664).
-* **Vi mode `>>`/`<<` indent operators now work**, including visual/visual-line/visual-block and `.` repeat (#2438, #2606).
-* **Vi mode `i"`/`a"` now search forward** on the line instead of requiring the cursor already inside the quotes (#2439).
-* **Vi mode `a"` includes trailing whitespace**, matching Vim's `:help aquote` (#2604).
-* **Vi mode `j`/`k` clamp to the line's last character** on shorter lines instead of overshooting by one (#2442).
-* **Vi mode `cw` stops at word end** instead of eating the trailing whitespace like `dw` (#2437).
+* **Search & Replace fixes**: match stepping (`Ctrl+Alt+→`/`←`, Enter-open) now follows live edits instead of landing on a stale position (#2583); clicking a Search & Replace or Settings text field now positions the caret at the clicked column, and Settings fields also gained `Home`/`End`, word motion, and `Shift`-selection (#2573, reported by @asukaminato0721); and Search and Replace in Project's results panel now keeps exactly one focused element, so `Tab`/`Down`/`Up` reach and highlight the results list correctly (#2664).
+* **Vi mode fixes**: `>>`/`<<` indent operators now work, including visual/visual-line/visual-block and `.` repeat (#2438, #2606); `i"`/`a"` now search forward on the line instead of requiring the cursor already inside the quotes (#2439); `a"` includes trailing whitespace, matching Vim's `:help aquote` (#2604); `j`/`k` clamp to the line's last character on shorter lines instead of overshooting by one (#2442); and `cw` stops at word end instead of eating the trailing whitespace like `dw` (#2437).
 * **Virtual space status bar tracks the cursor** into virtual space instead of freezing at the last real position (#2577).
 * **Indentation guide staircase gap fixed** when a block's opener is scrolled off-screen (#2679).
-* **Large file `:N` line jump offers a scan prompt** instead of jumping to line 1 (#2597).
-* **Large file line-count scan no longer undercounts** on the first pass (#2596).
-* **Remote terminal now works with fish login shells** instead of failing on `=` syntax (#2584, reported by @demin-dmitriy).
-* **Remote workspace switch no longer freezes on a stalled SSH link** - a dead connection now fails at connect time instead of hanging during workspace restore.
+* **Large file fixes**: the `:N` line jump now offers a scan prompt instead of jumping to line 1 (#2597), and the line-count scan no longer undercounts on the first pass (#2596).
+* **Remote fixes**: the integrated terminal now works when the remote's login shell is fish or any non-POSIX shell, instead of failing on `=` syntax (#2584, reported by @demin-dmitriy); and switching to a workspace on a stalled SSH link no longer freezes the editor, since a dead connection now fails at connect time instead of hanging during workspace restore.
 * **Terminal scrolling no longer pins a CPU core** - auto-revert is now per-buffer (off for terminals), and terminal buffers never line-wrap (#2608, #2609).
 * **Bracketed paste now respects read-only buffers**, matching typing and `Ctrl+V` (#2674).
-* **Whitespace master toggle restores your configured indicators**, not just tabs, when turned back on (#2579).
-* **Whitespace indicators show in new/unsaved buffers** and re-resolve after **Set Language** (#2580, reported by @braindevices).
-* **File Explorer context menu grabs the keyboard** while open, so keys no longer leak into the tree underneath (#2587).
+* **Whitespace indicator fixes**: the master toggle now restores your configured indicators, not just tabs, when turned back on (#2579); and indicators now show in new/unsaved buffers and re-resolve after **Set Language** (#2580, reported by @braindevices).
+* **File Explorer fixes**: the context menu now grabs the keyboard while open, so keys no longer leak into the tree underneath (#2587); and git decorations now cover nested sub-repos even when the workspace root is itself a git repo (#2592).
 * **Git Grep no-match is reported as "No matches"**, not an error (#2591).
-* **File Explorer decorates nested sub-repos** even when the workspace root is itself a git repo (#2592).
 * **Orchestrator remembers workspaces after a crash** and shows "Cancel" instead of "Quit" on the trust prompt (#2658).
 
 ### Internals
