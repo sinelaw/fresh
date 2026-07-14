@@ -277,6 +277,7 @@ fn build_pane_render_data(
             &ViewMode::Source, // Composite view uses source mode
             &empty_folds,
             theme,
+            &[], // composite panes render cursor-blind
         );
 
         let mut line_to_view_line: HashMap<usize, usize> = HashMap::new();

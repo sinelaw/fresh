@@ -449,8 +449,8 @@ impl Editor {
         {
             // Repair a stale anchor: the plugin computed `position` against the
             // `lines_changed` epoch, but later edits may have shifted it. Map it
-            // forward; if the epoch is too old to map, skip — convergence
-            // (cursor_moved → refreshLines) re-fires with fresh coordinates.
+            // forward; if the epoch is too old to map, skip — the next
+            // `lines_changed` for the line re-fires with fresh coordinates.
             let position = match state.map_plugin_coord(position, epoch) {
                 Some(p) => p,
                 None => return,
@@ -534,6 +534,7 @@ impl Editor {
     // ==================== Conceal Commands ====================
 
     /// Handle AddConceal command - add a conceal range that hides or replaces bytes
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_add_conceal(
         &mut self,
         buffer_id: BufferId,
@@ -542,6 +543,7 @@ impl Editor {
         end: usize,
         replacement: Option<String>,
         epoch: Option<u64>,
+        activation: Option<fresh_core::api::MarkerActivation>,
     ) {
         if let Some(state) = self
             .windows
@@ -556,9 +558,24 @@ impl Editor {
                 Some(r) => r,
                 None => return,
             };
-            state
-                .conceals
-                .add(&mut state.marker_list, namespace, start..end, replacement);
+            // The activation scope was computed against the same epoch —
+            // remap it the same way before it's re-anchored to the marker.
+            let activation = activation.and_then(|a| {
+                let (scope_start, scope_end) =
+                    state.map_plugin_range(a.scope_start, a.scope_end, epoch)?;
+                Some(fresh_core::api::MarkerActivation {
+                    if_cursor_in: a.if_cursor_in,
+                    scope_start,
+                    scope_end,
+                })
+            });
+            state.conceals.add_with_activation(
+                &mut state.marker_list,
+                namespace,
+                start..end,
+                replacement,
+                activation,
+            );
             #[cfg(feature = "plugins")]
             {
                 self.plugin_render_requested = true;
@@ -699,6 +716,7 @@ impl Editor {
         position: usize,
         indent: u16,
         epoch: Option<u64>,
+        activation: Option<fresh_core::api::MarkerActivation>,
     ) {
         if let Some(state) = self
             .windows
@@ -711,9 +729,24 @@ impl Editor {
                 Some(p) => p,
                 None => return,
             };
-            state
-                .soft_breaks
-                .add(&mut state.marker_list, namespace, position, indent);
+            // The activation scope was computed against the same epoch —
+            // remap it the same way before it's re-anchored to the marker.
+            let activation = activation.and_then(|a| {
+                let (scope_start, scope_end) =
+                    state.map_plugin_range(a.scope_start, a.scope_end, epoch)?;
+                Some(fresh_core::api::MarkerActivation {
+                    if_cursor_in: a.if_cursor_in,
+                    scope_start,
+                    scope_end,
+                })
+            });
+            state.soft_breaks.add_with_activation(
+                &mut state.marker_list,
+                namespace,
+                position,
+                indent,
+                activation,
+            );
             #[cfg(feature = "plugins")]
             {
                 self.plugin_render_requested = true;

@@ -599,7 +599,6 @@ impl Editor {
         let buffer_id = self.active_buffer();
 
         // Convert event to hook args and fire the appropriate hook
-        let mut cursor_changed_lines = false;
         let hook_args = match event {
             Event::Insert { position, text, .. } => {
                 let insert_position = *position;
@@ -732,9 +731,7 @@ impl Editor {
                 ..
             } => {
                 // Get line numbers for old and new positions (1-indexed for plugins)
-                let old_line = self.active_state().buffer.get_line_number(*old_position) + 1;
                 let line = self.active_state().buffer.get_line_number(*new_position) + 1;
-                cursor_changed_lines = old_line != line;
                 let text_props = self
                     .active_state()
                     .text_properties
@@ -771,35 +768,34 @@ impl Editor {
                 .run_hook(hook_name, args.clone());
         }
 
-        // After inter-line cursor_moved, proactively refresh lines so
-        // cursor-dependent conceals (e.g. emphasis auto-expose in compose
-        // mode tables) update in the same frame. Without this, there's a
-        // one-frame lag: the cursor_moved hook fires async to the plugin
-        // which calls refreshLines() back, but that round-trip means the
-        // first render after the cursor move still shows stale conceals.
+        // Cursor movement needs NO refresh here: cursor-dependent conceals
+        // and soft breaks carry activation scopes evaluated at render time
+        // (see view/activation.rs), so the very next frame picks up the
+        // reveal without any marker churn or plugin round-trip. Refreshing
+        // the viewport on every inter-line move used to clear
+        // `seen_byte_ranges`, re-fire `lines_changed` for all visible
+        // lines, and rebuild every conceal/soft-break marker — bumping the
+        // manager versions and invalidating the whole `LineWrapCache` and
+        // `VisualRowIndex` per keypress (the compose-mode arrow-key lag).
         //
-        // Only refresh on inter-line movement: intra-line moves (e.g.
-        // Left/Right within a row) don't change which row is auto-exposed,
-        // and the plugin's async refreshLines() handles span-level changes.
-        //
-        // A structure-changing edit (a newline inserted or deleted) needs the
-        // same full refresh, for a subtler reason: it renumbers every row below
-        // it, but the per-edit `seen_byte_ranges` invalidation only drops the
-        // single line containing the edit point — every other row merely shifts
-        // and stays "seen", so it never re-fires `lines_changed`. A per-line
-        // decoration plugin (markdown_compose's table borders / conceals) then
-        // leaves the prior frame's decorations in place, scattered across the
-        // buffer versions they were last emitted at. During an Insert/Delete
-        // storm (which emits no MoveCursor events at all) nothing ever forces a
-        // complete re-fire, so the stale decorations pile up and persist until
-        // the user happens to make an explicit cursor move. Clearing seen here
-        // gives every such edit one consistent, whole-viewport re-fire — the
-        // same convergence an inter-line cursor move already gets. Intra-line
-        // edits (no line-count change) stay on the cheap path: the edited
-        // line's own invalidation re-fires it, which is sufficient.
+        // A structure-changing edit (a newline inserted or deleted) still
+        // needs a full refresh, for a subtler reason: it renumbers every row
+        // below it, but the per-edit `seen_byte_ranges` invalidation only
+        // drops the single line containing the edit point — every other row
+        // merely shifts and stays "seen", so it never re-fires
+        // `lines_changed`. A per-line decoration plugin (markdown_compose's
+        // table borders / conceals) then leaves the prior frame's decorations
+        // in place, scattered across the buffer versions they were last
+        // emitted at. During an Insert/Delete storm (which emits no
+        // MoveCursor events at all) nothing ever forces a complete re-fire,
+        // so the stale decorations pile up and persist. Clearing seen here
+        // gives every such edit one consistent, whole-viewport re-fire.
+        // Intra-line edits (no line-count change) stay on the cheap path:
+        // the edited line's own invalidation re-fires it, which is
+        // sufficient.
         let edit_changed_line_count = matches!(event, Event::Insert { .. } | Event::Delete { .. })
             && line_info.line_delta != 0;
-        if cursor_changed_lines || edit_changed_line_count {
+        if edit_changed_line_count {
             self.handle_refresh_lines(buffer_id);
         }
     }

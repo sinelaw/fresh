@@ -19,6 +19,8 @@
 //! - The wrapping transform sees pre-broken content
 
 use crate::model::marker::{MarkerId, MarkerList};
+use crate::view::activation::ScopedActivation;
+use fresh_core::api::MarkerActivation;
 use fresh_core::overlay::OverlayNamespace;
 use std::collections::HashMap;
 
@@ -33,6 +35,11 @@ pub struct SoftBreakPoint {
 
     /// Number of hanging indent spaces to insert after the break
     pub indent: u16,
+
+    /// Optional cursor-dependent activation rule, scope stored relative to
+    /// the break marker. `None` = always active. Filtered at query time so
+    /// cursor movement never mutates the marker set (see view/activation.rs).
+    pub activation: Option<ScopedActivation>,
 }
 
 impl SoftBreakPoint {
@@ -85,6 +92,20 @@ impl SoftBreakManager {
         position: usize,
         indent: u16,
     ) {
+        self.add_with_activation(marker_list, namespace, position, indent, None);
+    }
+
+    /// Add a soft break point with an optional cursor-dependent activation
+    /// rule (wire format, absolute scope bytes — converted to the
+    /// marker-relative form here).
+    pub fn add_with_activation(
+        &mut self,
+        marker_list: &mut MarkerList,
+        namespace: OverlayNamespace,
+        position: usize,
+        indent: u16,
+        activation: Option<MarkerActivation>,
+    ) {
         let marker_id = marker_list.create(position, false); // right affinity
 
         let idx = self.breaks.len();
@@ -93,6 +114,7 @@ impl SoftBreakManager {
             namespace,
             marker_id,
             indent,
+            activation: activation.map(|rule| ScopedActivation::from_absolute(&rule, position)),
         });
         self.version = self.version.wrapping_add(1);
     }
@@ -176,17 +198,28 @@ impl SoftBreakManager {
 
     /// Query soft breaks that fall within a viewport range.
     /// Returns sorted `(position, indent)` pairs for efficient token processing.
+    ///
+    /// `cursors` are the rendering split's cursor byte positions, used to
+    /// evaluate cursor-dependent activation rules. Pass `&[]` for
+    /// cursor-blind consumers (scroll math, `VisualRowIndex`) — they see
+    /// the canonical "no cursor anywhere" rendering.
     pub fn query_viewport(
         &self,
         start: usize,
         end: usize,
         marker_list: &MarkerList,
+        cursors: &[usize],
     ) -> Vec<(usize, u16)> {
         let mut results: Vec<(usize, u16)> = self
             .breaks
             .iter()
             .filter_map(|b| {
                 let pos = b.position(marker_list);
+                if let Some(a) = &b.activation {
+                    if !a.is_active(pos, cursors) {
+                        return None;
+                    }
+                }
                 if pos >= start && pos < end {
                     Some((pos, b.indent))
                 } else {
@@ -258,7 +291,7 @@ mod tests {
         manager.remove_in_range(20, 50, &mut marker_list);
 
         let kept: Vec<_> = manager
-            .query_viewport(0, 1000, &marker_list)
+            .query_viewport(0, 1000, &marker_list, &[])
             .into_iter()
             .map(|(p, _)| p)
             .collect();
@@ -277,7 +310,7 @@ mod tests {
 
         manager.remove_in_range(10, 20, &mut marker_list);
         let kept: Vec<_> = manager
-            .query_viewport(0, 1000, &marker_list)
+            .query_viewport(0, 1000, &marker_list, &[])
             .into_iter()
             .map(|(p, _)| p)
             .collect();
@@ -351,7 +384,7 @@ mod tests {
             elapsed / LINES as u32,
         );
         let still_present = manager
-            .query_viewport(0, LINES * LINE_BYTES, &marker_list)
+            .query_viewport(0, LINES * LINE_BYTES, &marker_list, &[])
             .len();
         assert_eq!(still_present, initial);
     }
@@ -404,7 +437,7 @@ mod tests {
                         Op::RemoveInRange { start, end } => {
                             manager.remove_in_range(start, end, &mut marker_list);
                             // No surviving entry inside the removed range.
-                            for (p, _) in manager.query_viewport(0, BUFFER_SIZE, &marker_list) {
+                            for (p, _) in manager.query_viewport(0, BUFFER_SIZE, &marker_list, &[]) {
                                 prop_assert!(
                                     !(p >= start && p < end),
                                     "entry at {p} survived remove_in_range({start}..{end})",

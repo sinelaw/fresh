@@ -81,6 +81,35 @@ pub struct LineWrapKey {
     pub wrap_column: Option<u32>,
     pub hanging_indent: bool,
     pub line_wrap_enabled: bool,
+    /// Signature of the cursor positions inside this line (see
+    /// [`cursor_sig_for_line`]). Cursor-dependent conceal/soft-break
+    /// activation makes the cursor line's layout a function of where the
+    /// cursors sit within it; folding that into the key means a cursor
+    /// move invalidates at most the two lines whose signature changed
+    /// while every other entry stays valid. Cursor-blind consumers
+    /// (`VisualRowIndex`, scroll math) always use `0` — the canonical
+    /// "no cursor anywhere" layout.
+    pub cursor_sig: u64,
+}
+
+/// Fold the cursor positions that can affect a line's activation rules
+/// into a compact signature for [`LineWrapKey::cursor_sig`].
+///
+/// A cursor at byte `p` matters to line `[line_start, line_end)` when
+/// `line_start <= p <= line_end` — the inclusive upper bound covers
+/// plugin scopes that extend one past the line end (a cursor sitting at
+/// the start of the next line can still reveal this line's markup).
+/// Returns 0 when no cursor is in range, matching the cursor-blind
+/// convention.
+pub fn cursor_sig_for_line(cursors: &[usize], line_start: usize, line_end: usize) -> u64 {
+    let mut sig: u64 = 0;
+    for &p in cursors {
+        if p >= line_start && p <= line_end {
+            let rel = (p - line_start + 1) as u64;
+            sig = sig.wrapping_mul(0x100_0000_01b3).wrapping_add(rel);
+        }
+    }
+    sig
 }
 
 /// Derive the combined pipeline-inputs version from the three source
@@ -327,6 +356,7 @@ pub fn layout_for_line(
     line_start: usize,
     line_end: usize,
     geom: &WrapGeometry,
+    cursors: &[usize],
 ) -> Arc<Vec<ViewLine>> {
     let version = pipeline_inputs_version(
         state.buffer.version(),
@@ -334,11 +364,15 @@ pub fn layout_for_line(
         state.conceals.version(),
         state.virtual_texts.version(),
     );
-    let key = geom.key(line_start, version);
+    let key = geom.key(
+        line_start,
+        version,
+        cursor_sig_for_line(cursors, line_start, line_end),
+    );
     if let Some(cached) = state.line_wrap_cache.get(&key) {
         return cached;
     }
-    let layout = compute_line_layout(state, line_start, line_end, geom);
+    let layout = compute_line_layout(state, line_start, line_end, geom, cursors);
     let arc = Arc::new(layout);
     state.line_wrap_cache.put(key, arc.clone());
     arc
@@ -419,8 +453,15 @@ pub struct WrapGeometry {
 
 impl WrapGeometry {
     /// Build a cache key for a logical line at `line_start` under these
-    /// geometry and pipeline-input versions.
-    pub fn key(&self, line_start: usize, pipeline_inputs_version: u64) -> LineWrapKey {
+    /// geometry and pipeline-input versions. `cursor_sig` is the line's
+    /// cursor signature ([`cursor_sig_for_line`]); pass 0 for
+    /// cursor-blind consumers.
+    pub fn key(
+        &self,
+        line_start: usize,
+        pipeline_inputs_version: u64,
+        cursor_sig: u64,
+    ) -> LineWrapKey {
         LineWrapKey {
             pipeline_inputs_version,
             view_mode: self.view_mode,
@@ -430,6 +471,7 @@ impl WrapGeometry {
             wrap_column: self.wrap_column,
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
+            cursor_sig,
         }
     }
 }
@@ -461,6 +503,7 @@ pub fn compute_line_layout(
     line_start: usize,
     line_end: usize,
     geom: &WrapGeometry,
+    cursors: &[usize],
 ) -> Vec<ViewLine> {
     let is_binary = state.buffer.is_binary();
     let line_ending = state.buffer.line_ending();
@@ -482,9 +525,10 @@ pub fn compute_line_layout(
 
     // Step 2: soft breaks (Compose mode only; same gating as the renderer).
     if is_compose && !state.soft_breaks.is_empty() {
-        let sb = state
-            .soft_breaks
-            .query_viewport(line_start, line_end, &state.marker_list);
+        let sb =
+            state
+                .soft_breaks
+                .query_viewport(line_start, line_end, &state.marker_list, cursors);
         if !sb.is_empty() {
             tokens = apply_soft_breaks(tokens, &sb);
         }
@@ -494,7 +538,7 @@ pub fn compute_line_layout(
     if is_compose && !state.conceals.is_empty() {
         let cr = state
             .conceals
-            .query_viewport(line_start, line_end, &state.marker_list);
+            .query_viewport(line_start, line_end, &state.marker_list, cursors);
         if !cr.is_empty() {
             tokens = apply_conceal_ranges(tokens, &cr);
         }
@@ -572,7 +616,10 @@ pub fn count_visual_rows_via_pipeline(
     line_end: usize,
     geom: &WrapGeometry,
 ) -> u32 {
-    compute_line_layout(state, line_start, line_end, geom).len() as u32
+    // Cursor-blind by convention: scroll math sees the canonical
+    // "no cursor anywhere" layout (activation rules evaluated with no
+    // cursors), consistent with `VisualRowIndex`.
+    compute_line_layout(state, line_start, line_end, geom, &[]).len() as u32
 }
 
 /// Combined version of all pipeline inputs on the given state.  Fold into
@@ -798,6 +845,7 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            cursor_sig: 0,
         }
     }
 
@@ -1299,6 +1347,7 @@ mod tests {
                 wrap_column: None,
                 hanging_indent: false,
                 line_wrap_enabled: true,
+                cursor_sig: 0,
             };
             let real_val = real.get_or_insert_with(key, || dummy_lines(shadow_rows));
             assert_eq!(
@@ -1331,6 +1380,7 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            cursor_sig: 0,
         };
         cache.get_or_insert_with(key_v0, || dummy_lines(5));
         assert_eq!(cache.get(&key_v0).map(|v| v.len()), Some(5));
@@ -1373,6 +1423,7 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            cursor_sig: 0,
         };
 
         // Vary each field in turn; each variation must be a distinct key.
@@ -1407,6 +1458,7 @@ mod tests {
             },
             LineWrapKey {
                 line_wrap_enabled: false,
+                cursor_sig: 0,
                 ..base
             },
         ];

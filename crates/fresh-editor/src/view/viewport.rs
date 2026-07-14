@@ -355,6 +355,9 @@ impl Viewport {
                     wrap_column: None,
                     hanging_indent: wrap_config.hanging_indent,
                     line_wrap_enabled: true,
+                    // Scroll math is cursor-blind by convention (matches
+                    // `VisualRowIndex` and its own cursor-free inputs).
+                    cursor_sig: 0,
                 };
                 return cache.get_or_insert_with(key, compute).len() + extra_virtual_rows;
             }

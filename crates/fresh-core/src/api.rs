@@ -2450,6 +2450,31 @@ pub enum WidgetMutation {
     SetFocusKey { widget_key: String },
 }
 
+/// Cursor-dependent activation rule for a conceal range or soft break.
+///
+/// Lets a plugin emit *both* renderings of a cursor-revealable decoration
+/// once (e.g. markdown_compose's concealed markup plus its cursor-row
+/// variant) and have the renderer pick per frame based on where the
+/// cursors are — instead of deleting and recreating markers on every
+/// cursor move, which invalidates the whole line-wrap cache and
+/// visual-row index (the compose-mode arrow-key lag).
+///
+/// The scope is a half-open byte range `[scope_start, scope_end)`
+/// evaluated against the rendering split's cursor positions. Absolute at
+/// emission time; the editor stores it relative to the decoration's own
+/// marker so it shifts with edits elsewhere in the buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct MarkerActivation {
+    /// `true`: active only while a cursor IS inside the scope
+    /// (`if-cursor-in`). `false`: active only while NO cursor is inside
+    /// the scope (`unless-cursor-in`).
+    pub if_cursor_in: bool,
+    /// Scope start byte (absolute, at emission time).
+    pub scope_start: usize,
+    /// Scope end byte, exclusive (absolute, at emission time).
+    pub scope_end: usize,
+}
+
 /// Plugin command - allows plugins to send commands to the editor
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -2973,6 +2998,9 @@ pub enum PluginCommand {
         /// verbatim.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         epoch: Option<u64>,
+        /// Optional cursor-dependent activation rule. `None` = always active.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activation: Option<MarkerActivation>,
     },
 
     /// Clear all conceal ranges in a namespace
@@ -3056,6 +3084,9 @@ pub enum PluginCommand {
         /// from a lagged hook lands at the row's current bytes. `None` = verbatim.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         epoch: Option<u64>,
+        /// Optional cursor-dependent activation rule. `None` = always active.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        activation: Option<MarkerActivation>,
     },
 
     /// Clear all soft breaks in a namespace

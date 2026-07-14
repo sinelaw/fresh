@@ -59,6 +59,11 @@ pub struct VisualRowIndexKey {
 
 impl VisualRowIndexKey {
     /// Build the matching per-line `LineWrapKey` for a given line start.
+    /// The index is cursor-blind (`cursor_sig: 0`): it models the
+    /// canonical "no cursor anywhere" layout, so cursor movement never
+    /// invalidates it. The renderer writes the cursor line's real layout
+    /// under a non-zero signature; that entry simply doesn't serve this
+    /// index, which recounts that one line in its cursor-free form.
     fn line_key(&self, line_start: usize) -> LineWrapKey {
         LineWrapKey {
             pipeline_inputs_version: self.pipeline_inputs_version,
@@ -69,6 +74,7 @@ impl VisualRowIndexKey {
             wrap_column: self.wrap_column,
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
+            cursor_sig: 0,
         }
     }
 }
@@ -223,9 +229,11 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
     let soft_break_pairs: Vec<(usize, u16)> = if state.soft_breaks.is_empty() {
         Vec::new()
     } else {
+        // Cursor-blind: activation rules evaluated with no cursors, so the
+        // index never has to rebuild on cursor movement.
         state
             .soft_breaks
-            .query_viewport(0, buffer_len + 1, &state.marker_list)
+            .query_viewport(0, buffer_len + 1, &state.marker_list, &[])
     };
     let virtual_line_positions: Vec<usize> = if state.virtual_texts.is_empty() {
         Vec::new()

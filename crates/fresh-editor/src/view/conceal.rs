@@ -20,6 +20,8 @@
 //! - Wrapping operates on the concealed (shorter) lines
 
 use crate::model::marker::{MarkerId, MarkerList};
+use crate::view::activation::ScopedActivation;
+use fresh_core::api::MarkerActivation;
 use fresh_core::overlay::OverlayNamespace;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -39,6 +41,11 @@ pub struct ConcealRange {
     /// Optional replacement text to show instead of the concealed content.
     /// If None, the range is simply hidden (zero-width).
     pub replacement: Option<String>,
+
+    /// Optional cursor-dependent activation rule, scope stored relative to
+    /// the start marker. `None` = always active. Filtered at query time so
+    /// cursor movement never mutates the marker set (see view/activation.rs).
+    pub activation: Option<ScopedActivation>,
 }
 
 impl ConcealRange {
@@ -93,6 +100,20 @@ impl ConcealManager {
         range: Range<usize>,
         replacement: Option<String>,
     ) {
+        self.add_with_activation(marker_list, namespace, range, replacement, None);
+    }
+
+    /// Add a conceal range with an optional cursor-dependent activation
+    /// rule (wire format, absolute scope bytes — converted to the
+    /// marker-relative form here).
+    pub fn add_with_activation(
+        &mut self,
+        marker_list: &mut MarkerList,
+        namespace: OverlayNamespace,
+        range: Range<usize>,
+        replacement: Option<String>,
+        activation: Option<MarkerActivation>,
+    ) {
         let start_marker = marker_list.create(range.start, true); // left affinity
         let end_marker = marker_list.create(range.end, false); // right affinity
 
@@ -104,6 +125,7 @@ impl ConcealManager {
             start_marker,
             end_marker,
             replacement,
+            activation: activation.map(|rule| ScopedActivation::from_absolute(&rule, range.start)),
         });
         self.version = self.version.wrapping_add(1);
     }
@@ -247,13 +269,19 @@ impl ConcealManager {
 
     /// Query conceal ranges that overlap a viewport range.
     /// Returns ranges sorted by start position for efficient token filtering.
+    ///
+    /// `cursors` are the rendering split's cursor byte positions, used to
+    /// evaluate cursor-dependent activation rules. Pass `&[]` for
+    /// cursor-blind consumers (scroll math, `VisualRowIndex`) — they see
+    /// the canonical "no cursor anywhere" rendering.
     pub fn query_viewport(
         &self,
         start: usize,
         end: usize,
         marker_list: &MarkerList,
+        cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
-        self.query_viewport_excluding(start, end, marker_list, None)
+        self.query_viewport_excluding(start, end, marker_list, None, cursors)
     }
 
     /// Like [`query_viewport`](Self::query_viewport), but skips ranges whose
@@ -271,6 +299,7 @@ impl ConcealManager {
         end: usize,
         marker_list: &MarkerList,
         exclude_ns: Option<&OverlayNamespace>,
+        cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
         let mut results: Vec<(Range<usize>, Option<&str>)> = self
             .ranges
@@ -278,6 +307,11 @@ impl ConcealManager {
             .filter(|r| exclude_ns != Some(&r.namespace))
             .filter_map(|r| {
                 let range = r.range(marker_list);
+                if let Some(a) = &r.activation {
+                    if !a.is_active(range.start, cursors) {
+                        return None;
+                    }
+                }
                 if range.start < end && start < range.end {
                     Some((range, r.replacement.as_deref()))
                 } else {
@@ -382,7 +416,7 @@ mod tests {
         manager.remove_in_range(&(15..35), &mut marker_list);
 
         let kept: Vec<_> = manager
-            .query_viewport(0, 1000, &marker_list)
+            .query_viewport(0, 1000, &marker_list, &[])
             .into_iter()
             .map(|(r, _)| r)
             .collect();
@@ -454,7 +488,7 @@ mod tests {
         // Only "md"'s in-range range is gone; "other" and the out-of-range
         // "md" entry remain.
         let kept: Vec<_> = manager
-            .query_viewport(0, 1000, &marker_list)
+            .query_viewport(0, 1000, &marker_list, &[])
             .into_iter()
             .map(|(r, _)| r)
             .collect();
@@ -538,7 +572,7 @@ mod tests {
         );
         // Steady state preserved.
         let still_present = manager
-            .query_viewport(0, LINES * LINE_BYTES, &marker_list)
+            .query_viewport(0, LINES * LINE_BYTES, &marker_list, &[])
             .len();
         assert_eq!(still_present, initial);
     }
@@ -605,7 +639,7 @@ mod tests {
                         }
                         Op::RemoveInRange { start, end } => {
                             manager.remove_in_range(&(start..end), &mut marker_list);
-                            for (rng, _) in manager.query_viewport(0, BUFFER_SIZE, &marker_list) {
+                            for (rng, _) in manager.query_viewport(0, BUFFER_SIZE, &marker_list, &[]) {
                                 let overlaps = rng.start < end && start < rng.end;
                                 prop_assert!(
                                     !overlaps,

@@ -183,6 +183,11 @@ pub(crate) fn compute_buffer_layout(
     // Clone view_transform so we can reuse it if scrolling triggers a rebuild
     let view_transform_for_rebuild = view_transform.clone();
 
+    // This split's cursor byte positions, for cursor-dependent conceal /
+    // soft-break activation (evaluated per render, per split — cursor
+    // movement changes what's active without any marker churn).
+    let cursor_positions = cursors.positions();
+
     let view_data = {
         let _span = tracing::trace_span!("build_view_data").entered();
         build_view_data(
@@ -197,6 +202,7 @@ pub(crate) fn compute_buffer_layout(
             &view_mode,
             folds,
             theme,
+            &cursor_positions,
         )
     };
 
@@ -225,6 +231,7 @@ pub(crate) fn compute_buffer_layout(
             &view_mode,
             folds,
             theme,
+            &cursor_positions,
         );
         viewport.scroll_to_end_of_view(&rebuilt.lines);
         (rebuilt, None)
@@ -267,6 +274,7 @@ pub(crate) fn compute_buffer_layout(
                 &view_mode,
                 folds,
                 theme,
+                &cursor_positions,
             );
             let _ = viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width);
             rebuilt

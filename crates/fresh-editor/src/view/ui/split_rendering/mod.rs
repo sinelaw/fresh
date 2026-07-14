@@ -480,6 +480,7 @@ mod tests {
             &ViewMode::Source, // Tests use source mode
             &empty_folds,
             &theme,
+            &[],
         );
         let view_anchor = calculate_view_anchor(&view_data.lines, 0);
 
@@ -584,6 +585,7 @@ mod tests {
             &ViewMode::Source,
             &empty_folds,
             &theme,
+            &[],
         );
         let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
 
@@ -1256,6 +1258,7 @@ mod tests {
             &ViewMode::Source,
             &folds,
             &theme,
+            &[],
         );
 
         let lines: Vec<String> = view_data.lines.iter().map(|l| l.text.clone()).collect();
@@ -1294,6 +1297,7 @@ mod tests {
             &ViewMode::Source,
             &folds,
             &theme,
+            &[],
         );
 
         let indicators = fold_indicators_for_viewport(&state, &folds, &view_data.lines);
@@ -3133,6 +3137,7 @@ mod tests {
             &ViewMode::Source,
             &empty_folds,
             &theme,
+            &[],
         );
         let view_anchor = calculate_view_anchor(&view_data.lines, 0);
 

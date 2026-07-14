@@ -37,6 +37,12 @@ pub(super) struct ViewData {
 /// Run the entire view pipeline for the current viewport:
 /// base tokens → (optional plugin transform) → soft breaks → conceal →
 /// wrapping → [`ViewLine`] conversion → virtual lines → folding.
+///
+/// `cursor_positions` are the rendering split's cursor byte positions,
+/// used to evaluate cursor-dependent conceal / soft-break activation
+/// rules (e.g. markdown_compose revealing the markup under the cursor).
+/// Pass `&[]` for cursor-less consumers (previews) — they render the
+/// canonical "no cursor anywhere" form.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_view_data(
     state: &mut EditorState,
@@ -50,6 +56,7 @@ pub(super) fn build_view_data(
     view_mode: &ViewMode,
     folds: &FoldManager,
     theme: &Theme,
+    cursor_positions: &[usize],
 ) -> ViewData {
     let adjusted_visible_count = fold_adjusted_visible_count(
         &state.buffer,
@@ -94,10 +101,12 @@ pub(super) fn build_view_data(
             .next_back()
             .unwrap_or(viewport.top_byte)
             + 1;
-        let soft_breaks =
-            state
-                .soft_breaks
-                .query_viewport(viewport.top_byte, viewport_end, &state.marker_list);
+        let soft_breaks = state.soft_breaks.query_viewport(
+            viewport.top_byte,
+            viewport_end,
+            &state.marker_list,
+            cursor_positions,
+        );
         if !soft_breaks.is_empty() {
             tokens = apply_soft_breaks(tokens, &soft_breaks);
         }
@@ -125,6 +134,7 @@ pub(super) fn build_view_data(
             viewport_end,
             &state.marker_list,
             exclude_ns.as_ref(),
+            cursor_positions,
         );
         if !conceal_ranges.is_empty() {
             tokens = apply_conceal_ranges(tokens, &conceal_ranges);
@@ -243,7 +253,9 @@ pub(super) fn build_view_data(
         && fold_skip.is_empty()
         && state.virtual_texts.is_empty()
     {
-        use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode, LineWrapKey};
+        use crate::view::line_wrap_cache::{
+            cursor_sig_for_line, pipeline_inputs_version, CacheViewMode, LineWrapKey,
+        };
         use crate::view::ui::view_pipeline::LineStart;
         use std::sync::Arc;
 
@@ -258,7 +270,7 @@ pub(super) fn build_view_data(
             state.conceals.version(),
             state.virtual_texts.version(),
         );
-        let make_key = |line_start: usize, mode: CacheViewMode| LineWrapKey {
+        let make_key = |line_start: usize, mode: CacheViewMode, cursor_sig: u64| LineWrapKey {
             pipeline_inputs_version: pipeline_inputs_ver,
             view_mode: mode,
             line_start,
@@ -267,6 +279,7 @@ pub(super) fn build_view_data(
             wrap_column: viewport.wrap_column.map(|c| c as u32),
             hanging_indent,
             line_wrap_enabled: true,
+            cursor_sig,
         };
 
         // Walk `source_lines` grouping consecutive rows that belong to
@@ -316,18 +329,36 @@ pub(super) fn build_view_data(
             if !has_injected {
                 // Slice `source_lines[i..j]` corresponds to one logical
                 // line with no plugin-injected reshaping.  Store it.
+                //
+                // The key's cursor signature spans through the byte after
+                // the line's last rendered source byte (the start of the
+                // next line when the row ends in a newline), matching the
+                // inclusive bound cursor-activation scopes use.
                 let slice: Vec<ViewLine> = source_lines[i..j].to_vec();
+                let sig_end = slice
+                    .iter()
+                    .flat_map(|l| l.char_source_bytes.iter().copied().flatten())
+                    .max()
+                    .map(|b| b + 1)
+                    .unwrap_or(line_start_byte);
+                let cursor_sig = cursor_sig_for_line(cursor_positions, line_start_byte, sig_end);
                 let arc = Arc::new(slice);
-                state
-                    .line_wrap_cache
-                    .put(make_key(line_start_byte, cache_view_mode), arc.clone());
+                state.line_wrap_cache.put(
+                    make_key(line_start_byte, cache_view_mode, cursor_sig),
+                    arc.clone(),
+                );
                 // Also write under `Source` so scroll math (which
                 // queries with its `Source` convention) hits the
                 // same entry.  Same value, same Arc — no deep copy.
+                // Scroll math queries with `cursor_sig: 0`, so the
+                // cursor line's entry (non-zero sig) deliberately
+                // doesn't serve it — cursor-blind consumers recompute
+                // that one line in its cursor-free form.
                 if !matches!(cache_view_mode, CacheViewMode::Source) {
-                    state
-                        .line_wrap_cache
-                        .put(make_key(line_start_byte, CacheViewMode::Source), arc);
+                    state.line_wrap_cache.put(
+                        make_key(line_start_byte, CacheViewMode::Source, cursor_sig),
+                        arc,
+                    );
                 }
             }
             i = j;

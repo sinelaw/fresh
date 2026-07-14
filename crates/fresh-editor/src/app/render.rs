@@ -366,14 +366,14 @@ impl Editor {
             // Process any plugin commands (like AddOverlay) that resulted from the hooks.
             //
             // This is non-blocking: we collect whatever the plugin has sent so far.
-            // The plugin thread runs in parallel, and because we proactively call
-            // handle_refresh_lines after cursor_moved (in fire_cursor_hooks), the
-            // lines_changed hook fires early in the render cycle. By the time we
-            // reach this point, the plugin has typically already processed all hooks
-            // and sent back conceal/overlay commands. On rare occasions (high CPU
-            // load), the response arrives one frame late, which is imperceptible
-            // at 60fps. The plugin's own refreshLines() call from cursor_moved
-            // ensures a follow-up render cycle picks up any missed commands.
+            // The plugin thread runs in parallel; by the time we reach this point
+            // it has typically already processed the hooks and sent back
+            // conceal/overlay commands. On rare occasions (high CPU load), the
+            // response arrives one frame late, which is imperceptible at 60fps —
+            // each arriving decoration command sets `plugin_render_requested`, so
+            // a follow-up render cycle picks up anything missed here. (Cursor
+            // movement no longer participates: cursor-dependent decorations carry
+            // activation scopes evaluated at render time, see view/activation.rs.)
             #[cfg(not(feature = "plugins"))]
             let dispatched_any = false;
             #[cfg(feature = "plugins")]

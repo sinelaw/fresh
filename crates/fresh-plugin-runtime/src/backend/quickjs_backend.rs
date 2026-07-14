@@ -1046,6 +1046,31 @@ impl JsEditorApi {
                 .cloned()
         })
     }
+
+    /// Build the wire-format cursor-activation rule from `addConceal` /
+    /// `addSoftBreak`'s optional trailing parameters. Unknown activation
+    /// strings and missing scope bounds fall back to `None` (always
+    /// active) rather than erroring — a plugin bug should degrade to
+    /// today's behavior, not break rendering.
+    fn parse_activation(
+        activation: Option<String>,
+        scope_start: Option<u32>,
+        scope_end: Option<u32>,
+    ) -> Option<fresh_core::api::MarkerActivation> {
+        let if_cursor_in = match activation.as_deref() {
+            Some("if-cursor-in") => true,
+            Some("unless-cursor-in") => false,
+            _ => return None,
+        };
+        let (Some(start), Some(end)) = (scope_start, scope_end) else {
+            return None;
+        };
+        Some(fresh_core::api::MarkerActivation {
+            if_cursor_in,
+            scope_start: start as usize,
+            scope_end: end as usize,
+        })
+    }
 }
 
 #[plugin_api_impl]
@@ -3580,7 +3605,15 @@ impl JsEditorApi {
 
     // === Conceal Ranges ===
 
-    /// Add a conceal range that hides or replaces a byte range during rendering
+    /// Add a conceal range that hides or replaces a byte range during rendering.
+    ///
+    /// `activation` optionally makes the conceal cursor-dependent:
+    /// `"unless-cursor-in"` (active only while no cursor is inside
+    /// `[scopeStart, scopeEnd)`) or `"if-cursor-in"` (active only while a
+    /// cursor IS inside it). Emitting both renderings of a
+    /// cursor-revealable decoration once — instead of rebuilding markers
+    /// on every cursor move — is what keeps cursor movement free of
+    /// marker churn (and of the cache invalidation it causes).
     pub fn add_conceal(
         &self,
         buffer_id: u32,
@@ -3588,6 +3621,9 @@ impl JsEditorApi {
         start: u32,
         end: u32,
         replacement: Option<String>,
+        activation: rquickjs::function::Opt<String>,
+        scope_start: rquickjs::function::Opt<u32>,
+        scope_end: rquickjs::function::Opt<u32>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -3605,6 +3641,7 @@ impl JsEditorApi {
                 end: end as usize,
                 replacement,
                 epoch: self.hook_epoch_for(buffer_id),
+                activation: Self::parse_activation(activation.0, scope_start.0, scope_end.0),
             })
             .is_ok()
     }
@@ -3755,13 +3792,19 @@ impl JsEditorApi {
 
     // === Soft Breaks ===
 
-    /// Add a soft break point for marker-based line wrapping
+    /// Add a soft break point for marker-based line wrapping.
+    ///
+    /// `activation` optionally makes the break cursor-dependent — same
+    /// semantics as `addConceal`'s activation parameters.
     pub fn add_soft_break(
         &self,
         buffer_id: u32,
         namespace: String,
         position: u32,
         indent: u32,
+        activation: rquickjs::function::Opt<String>,
+        scope_start: rquickjs::function::Opt<u32>,
+        scope_end: rquickjs::function::Opt<u32>,
     ) -> bool {
         // Track namespace for cleanup on unload
         self.plugin_tracked_state
@@ -3778,6 +3821,7 @@ impl JsEditorApi {
                 position: position as usize,
                 indent: indent as u16,
                 epoch: self.hook_epoch_for(buffer_id),
+                activation: Self::parse_activation(activation.0, scope_start.0, scope_end.0),
             })
             .is_ok()
     }

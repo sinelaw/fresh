@@ -519,8 +519,17 @@ impl Editor {
                 end,
                 replacement,
                 epoch,
+                activation,
             } => {
-                self.handle_add_conceal(buffer_id, namespace, start, end, replacement, epoch);
+                self.handle_add_conceal(
+                    buffer_id,
+                    namespace,
+                    start,
+                    end,
+                    replacement,
+                    epoch,
+                    activation,
+                );
             }
             PluginCommand::ClearConcealNamespace {
                 buffer_id,
@@ -570,8 +579,11 @@ impl Editor {
                 position,
                 indent,
                 epoch,
+                activation,
             } => {
-                self.handle_add_soft_break(buffer_id, namespace, position, indent, epoch);
+                self.handle_add_soft_break(
+                    buffer_id, namespace, position, indent, epoch, activation,
+                );
             }
             PluginCommand::ClearSoftBreakNamespace {
                 buffer_id,

@@ -922,17 +922,18 @@ type OverlayOptions = {
 	*/
 	extendToLineEnd: boolean;
 	/**
+	* Whether to render with reverse video (fg/bg swapped). Used for
+	* block-style text carets in form controls, where a hardware
+	* cursor isn't available (modal overlays).
+	*/
+	reversed: boolean;
+	/**
 	* When `true`, `fg` is applied only on cells whose existing fg
 	* matches this overlay's resolved bg — i.e. a same-colour fg/bg
 	* collision. Lets a row-wide overlay stay legible on tokens that
 	* share the bg's colour without repainting unrelated tokens.
 	*/
 	fgOnCollisionOnly: boolean;
-	/**
-	* Whether to render reverse-video (swap fg/bg). Modal surfaces use
-	* this for the block caret and selection cells.
-	*/
-	reversed: boolean;
 	/**
 	* Optional URL for OSC 8 terminal hyperlinks.
 	* When set, the overlay text becomes a clickable hyperlink in terminals
@@ -1080,20 +1081,25 @@ type WidgetSpec = {
 	label: string;
 	focused: boolean;
 	/**
-	* Neither checked nor unchecked: renders a neutral `[-]` chip
-	* for an unset value that inherits from a lower config layer.
+	* Neither checked nor unchecked: renders a neutral `[-]` chip.
+	* Used for values that are unset and inherit from a lower
+	* config layer (issue #2345) — a definite `[ ]` would read as
+	* "the user turned this off". Defaults to `false`.
 	*/
-	indeterminate?: boolean;
+	indeterminate: boolean;
 	/**
-	* Form layout `label: [v]` (chip after the label; only the
-	* chip is clickable). Default chip-first `[v] label`.
+	* Form-style layout: render `label: [v]` (label first, chip
+	* after) instead of the default `[v] label`. In this layout
+	* the toggle's hit area covers only the chip, so clicks on
+	* the label don't flip the value. Defaults to `false`.
 	*/
-	labelFirst?: boolean;
+	labelFirst: boolean;
 	/**
-	* Pad the label to this display width in `labelFirst` layout
-	* so a column of controls aligns. `0` = no padding.
+	* Pad the label to this display width in `label_first`
+	* layout so a column of controls aligns their chips. `0` =
+	* no padding. Defaults to `0`.
 	*/
-	labelWidth?: number;
+	labelWidth: number;
 	key?: string | null;
 } | {
 	"kind": "number";
@@ -1141,17 +1147,24 @@ type WidgetSpec = {
 	* Pad the label to this display width so a column of
 	* controls aligns their value cells. `0` = no padding.
 	*/
-	labelWidth?: number;
+	labelWidth: number;
 	/**
-	* In-place edit buffer: when set, the cell renders this text
-	* (with caret / selection) instead of the formatted value.
+	* In-place edit buffer. `Some` = the value is being edited:
+	* the cell renders this text (with caret / selection) instead
+	* of the formatted value. `None` = display mode.
 	*/
 	editText?: string | null;
-	/** Byte offset of the edit caret in `editText` (`-1` none). */
-	editCursor?: number;
-	/** Selection byte range in `editText` (`-1` = none). */
-	editSelStart?: number;
-	editSelEnd?: number;
+	/**
+	* Byte offset of the edit caret within `edit_text`. `-1` =
+	* no caret (ignored unless `edit_text` is `Some`).
+	*/
+	editCursor: number;
+	/**
+	* Selection byte range within `edit_text` (`start`, `end`).
+	* `-1` for either end = no selection.
+	*/
+	editSelStart: number;
+	editSelEnd: number;
 	key?: string | null;
 } | {
 	"kind": "dropdown";
@@ -1179,17 +1192,18 @@ type WidgetSpec = {
 	* Pad the label to this display width so a column of
 	* controls aligns their value buttons. `0` = no padding.
 	*/
-	labelWidth?: number;
+	labelWidth: number;
 	/**
 	* Whether the option list is expanded inline below the value
-	* button (`▲` arrow + one row per visible option).
+	* button (`▲` arrow + one row per visible option). Closed
+	* (`▼`) by default.
 	*/
-	open?: boolean;
+	open: boolean;
 	/**
 	* First visible option row when `open` and the list is
-	* taller than its window.
+	* taller than its window. Defaults to `0`.
 	*/
-	scrollOffset?: number;
+	scrollOffset: number;
 	key?: string | null;
 } | {
 	"kind": "dualList";
@@ -1418,27 +1432,34 @@ type WidgetSpec = {
 	*/
 	completionsVisibleRows: number;
 	/**
-	* Paint the caret as a REVERSED block cell inside the row (in
-	* addition to the hardware-cursor position) — used by modal
-	* form surfaces where a hardware cursor isn't visible.
+	* Paint the caret as a REVERSED block cell inside the row
+	* (in addition to publishing the hardware-cursor position).
+	* Modal form surfaces (e.g. Settings) use this — a hardware
+	* cursor isn't shown over a modal, so the block cell is the
+	* only visible caret. Defaults to `false`.
 	*/
-	blockCaret?: boolean;
+	blockCaret: boolean;
 	/**
 	* Selection byte range within `value` (`start`, `end`), shown
-	* with the selection background while focused. `-1` for either
-	* end = no selection. Seed-only, like `cursorByte`.
+	* with the selection background while the widget is focused.
+	* `-1` for either end = no selection. Seed-only, like
+	* `cursor_byte`: once host-owned instance state exists, the
+	* editor's own selection wins. Mirrors `Number`'s
+	* `edit_sel_start`/`edit_sel_end`.
 	*/
-	selStart?: number;
-	selEnd?: number;
+	selStart: number;
+	selEnd: number;
 	/**
 	* Form label-column width. When `> 0` (and `label` is set) the
-	* single-line field pads the label to this column and separates it
-	* from the value with `: `, so a column of `text`, `toggle`,
-	* `number`, and `dropdown` controls aligns their value cells. `0`
-	* (default) keeps the compact `label [value]` form. Clamped to keep
-	* the cell on-screen on narrow surfaces.
+	* single-line field pads the label to this column and separates
+	* it from the value with `: `, so a column of `Text`, `Toggle`,
+	* `Number`, and `Dropdown` controls aligns their value cells
+	* (the Settings entry dialog sets it to the page's max label
+	* width). `0` (default) keeps the compact `label [value]` form
+	* plugins get by default. Clamped to keep the cell on-screen on
+	* narrow surfaces.
 	*/
-	labelWidth?: number;
+	labelWidth: number;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";
@@ -2790,9 +2811,17 @@ interface EditorAPI {
 	*/
 	removeOverlay(bufferId: number, handle: string): boolean;
 	/**
-	* Add a conceal range that hides or replaces a byte range during rendering
+	* Add a conceal range that hides or replaces a byte range during rendering.
+	* 
+	* `activation` optionally makes the conceal cursor-dependent:
+	* `"unless-cursor-in"` (active only while no cursor is inside
+	* `[scopeStart, scopeEnd)`) or `"if-cursor-in"` (active only while a
+	* cursor IS inside it). Emitting both renderings of a
+	* cursor-revealable decoration once — instead of rebuilding markers
+	* on every cursor move — is what keeps cursor movement free of
+	* marker churn (and of the cache invalidation it causes).
 	*/
-	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null): boolean;
+	addConceal(bufferId: number, namespace: string, start: number, end: number, replacement: string | null, activation?: string, scopeStart?: number, scopeEnd?: number): boolean;
 	/**
 	* Clear all conceal ranges in a namespace
 	*/
@@ -2848,9 +2877,12 @@ interface EditorAPI {
 	*/
 	setFoldingRanges(bufferId: number, rangesArr: Record<string, unknown>[]): boolean;
 	/**
-	* Add a soft break point for marker-based line wrapping
+	* Add a soft break point for marker-based line wrapping.
+	* 
+	* `activation` optionally makes the break cursor-dependent — same
+	* semantics as `addConceal`'s activation parameters.
 	*/
-	addSoftBreak(bufferId: number, namespace: string, position: number, indent: number): boolean;
+	addSoftBreak(bufferId: number, namespace: string, position: number, indent: number, activation?: string, scopeStart?: number, scopeEnd?: number): boolean;
 	/**
 	* Clear all soft breaks in a namespace
 	*/

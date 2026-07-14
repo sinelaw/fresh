@@ -497,8 +497,8 @@ impl EditorState {
     /// `epoch` carried by the `lines_changed` hook). `None` means the caller
     /// has no epoch to remap against, so the coordinate is taken as-is.
     /// `Some(_)` returning `None` means the epoch is too old to map (evicted or
-    /// barriered) — the caller should skip the operation and let convergence
-    /// (`cursor_moved → refreshLines`) redo it with fresh coordinates.
+    /// barriered) — the caller should skip the operation; the next
+    /// `lines_changed` for the affected line redoes it with fresh coordinates.
     pub fn map_plugin_coord(&self, coord: usize, epoch: Option<u64>) -> Option<usize> {
         match epoch {
             None => Some(coord),
@@ -1500,8 +1500,10 @@ impl EditorState {
             return Vec::new();
         }
         // query_viewport already returns pairs sorted by ascending position.
+        // Cursor-blind: scroll math consumers see the canonical "no cursor
+        // anywhere" break set, consistent with `VisualRowIndex`.
         self.soft_breaks
-            .query_viewport(0, self.buffer.len() + 1, &self.marker_list)
+            .query_viewport(0, self.buffer.len() + 1, &self.marker_list, &[])
     }
 
     // ========== DocumentModel Helper Methods ==========

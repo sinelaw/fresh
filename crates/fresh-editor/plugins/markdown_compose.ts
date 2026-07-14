@@ -598,7 +598,6 @@ function enableMarkdownCompose(bufferId: number): void {
 // Disable compose mode for a buffer
 function disableMarkdownCompose(bufferId: number): void {
   if (isComposing(bufferId)) {
-    editor.setViewState(bufferId, "last-cursor-line", null);
     // Clear all table border virtual lines (one shared namespace) so the frame
     // can't linger as orphaned virtual lines after compose is toggled off, and
     // drop the per-table width memos.
@@ -1069,33 +1068,42 @@ function wrapText(text: string, width: number): string[] {
 
 /**
  * Process a single line: add overlays (emphasis, link styling) and conceals
- * (hide markdown syntax markers). Cursor-aware: when cursor is inside a span,
- * markers are revealed instead of concealed.
+ * (hide markdown syntax markers).
+ *
+ * Cursor-dependent rendering (revealing the markup under the cursor,
+ * un-truncating the table row the cursor is on) is expressed as *activation
+ * scopes* on the markers themselves — for each cursor-revealable decoration
+ * this pass emits the concealed variant tagged `unless-cursor-in` and, where
+ * the cursor-row rendering differs, a counterpart tagged `if-cursor-in`.
+ * The renderer picks per frame from the live cursor positions, so this pass
+ * runs only when *content* changes — never on cursor movement. That is what
+ * keeps arrow-key navigation free of marker churn (and of the whole-buffer
+ * cache invalidation it used to cause).
  */
 function processLineConceals(
   bufferId: number,
   lineContent: string,
   byteStart: number,
   byteEnd: number,
-  cursors: number[],
   lineNumber?: number,
 ): void {
   // Clear existing conceals and overlays for this line first.
   // This ensures clear+add commands are sent together from the plugin thread
   // and processed atomically in the same process_commands() batch, avoiding
   // the one-frame glitch where conceals are cleared but not yet rebuilt.
-  editor.debug(`[mc] processLine clear+rebuild bytes=${byteStart}..${byteEnd} content="${lineContent.slice(0,40)}"`);
   editor.clearConcealsInRange(bufferId, byteStart, byteEnd);
   // Only clear our own emphasis overlays — clearing ALL overlays in the range
   // would also wipe editor-owned overlays like LSP diagnostics (issue #2146).
   editor.clearOverlaysInRangeForNamespace(bufferId, "md-emphasis", byteStart, byteEnd);
 
-  const cursorOnLine = cursors.some(c => c >= byteStart && c <= byteEnd);
-  // Strict version: excludes the boundary at byteEnd so that the cursor
-  // sitting at the start of the *next* line doesn't count as being on
-  // *this* line.  Used for table row auto-expose to avoid exposing the
-  // previous row's emphasis markers.
-  const cursorStrictlyOnLine = cursors.some(c => c >= byteStart && c < byteEnd);
+  // Activation scopes:
+  //   - lineScopeInclEnd: "cursor anywhere on the line", including the
+  //     boundary position at byteEnd — a cursor sitting at the start of the
+  //     next line still reveals this line (matches the old `c <= byteEnd`).
+  //   - lineScopeStrictEnd: excludes byteEnd; used for table rows so a
+  //     cursor at the start of the next row doesn't expose this one.
+  const lineScopeInclEnd = byteEnd + 1;
+  const lineScopeStrictEnd = byteEnd;
 
   // Skip lines inside code fences (we'd need multi-line context for this;
   // for now, detect fence lines and code content lines)
@@ -1103,10 +1111,10 @@ function processLineConceals(
   if (trimmed.startsWith('```')) return; // fence line itself
 
   // --- Table row handling ---
-  // Always apply table conceals even when cursor is on the line.
-  // Tables are structural: pipes → box-drawing, cells padded for alignment.
-  // Toggling conceals on/off per cursor line causes visual width shifts that
-  // break cursor navigation (stuck cursor, ghost cursors) and lose alignment.
+  // Table conceals apply even when the cursor is on the line (pipes stay
+  // box-drawing). Tables are structural: pipes → box-drawing, cells padded
+  // for alignment. Only *cell padding* and *truncation/wrapping* differ on
+  // the cursor row, and those are emitted as unless/if-cursor-in pairs.
   const truncatedByteRanges: Array<{start: number; end: number}> = [];
   let isTableRow = false;
   if (trimmed.startsWith('|') || trimmed.endsWith('|')) {
@@ -1123,15 +1131,21 @@ function processLineConceals(
     if (inner.endsWith('|')) inner = inner.slice(0, -1);
     const cells = inner.split('|');
 
-    // Check if any data cell needs multi-line wrapping
+    // Pipe char positions, shared by truncation and both padding variants.
+    const pipePositions: number[] = [];
+    for (let i = 0; i < lineContent.length; i++) {
+      if (lineContent[i] === '|') pipePositions.push(i);
+    }
+
+    // Check if any data cell needs multi-line wrapping (concealed widths —
+    // the wrapped rendering is the cursor-OFF variant).
     let handledByWrapping = false;
-    if (colWidths && !isSeparator && !cursorStrictlyOnLine) {
+    if (colWidths && !isSeparator) {
       const numCols = Math.min(cells.length, colWidths.length);
       const cellWrapped: string[][] = [];
       let maxVisualLines = 1;
       for (let ci = 0; ci < numCols; ci++) {
-        // When cursor is on the row, use raw text (emphasis markers revealed).
-        const cellText = cursorStrictlyOnLine ? cells[ci].trim() : concealedText(cells[ci]).trim();
+        const cellText = concealedText(cells[ci]).trim();
         const wrapW = Math.max(1, colWidths[ci] - 2); // 1 leading + 1 trailing space margin
         const wrapped = wrapText(cellText, wrapW);
         cellWrapped.push(wrapped);
@@ -1187,30 +1201,46 @@ function processLineConceals(
         for (let vl = 0; vl < actualVisualLines; vl++) {
           const sByteS = charToByte(lineContent, segStarts[vl], byteStart);
           const sByteE = charToByte(lineContent, segEnds[vl], byteStart);
-          editor.addConceal(bufferId, "md-syntax", sByteS, sByteE, visualLines[vl] || '');
+          editor.addConceal(
+            bufferId, "md-syntax", sByteS, sByteE, visualLines[vl] || '',
+            "unless-cursor-in", byteStart, lineScopeStrictEnd,
+          );
         }
         handledByWrapping = true;
+
+        // Cursor-ON variant: the row the cursor is on renders as a plain
+        // single-line row — raw text, raw-width padding, no wrapping — so
+        // its full content stays editable.
+        let pipeIdx = 0;
+        for (let i = 0; i < lineContent.length; i++) {
+          if (lineContent[i] !== '|') continue;
+          const pipeByte = charToByte(lineContent, i, byteStart);
+          const pipeByteEnd = charToByte(lineContent, i + 1, byteStart);
+          let padOn = "";
+          const cellIdx = pipeIdx - 1;
+          if (pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
+            const rawW = displayWidth(cells[cellIdx]);
+            if (rawW <= colWidths[cellIdx]) {
+              padOn = " ".repeat(colWidths[cellIdx] - rawW);
+            }
+          }
+          editor.addConceal(
+            bufferId, "md-syntax", pipeByte, pipeByteEnd, padOn + "│",
+            "if-cursor-in", byteStart, lineScopeStrictEnd,
+          );
+          pipeIdx++;
+        }
       }
     }
 
     if (!handledByWrapping) {
-      // Find pipe positions for byte-range computation of truncated cells
-      const pipePositions: number[] = [];
-      for (let i = 0; i < lineContent.length; i++) {
-        if (lineContent[i] === '|') pipePositions.push(i);
-      }
-
-      // Precompute which cells will be truncated. Per-character conceals
-      // that land inside a truncated cell must be suppressed — the cell-
-      // wide truncate conceal already renders the replacement. When both
-      // fire, the per-char conceal at the cell's first byte emits its
-      // replacement, and the cell-wide conceal emits its replacement one
-      // byte later, producing a cell one character wider than allocated.
+      // Precompute which cells the cursor-off state truncates (concealed
+      // width exceeds the allocation), so the '-' substitution pass —
+      // which visits a cell's chars BEFORE its closing pipe — can tell.
       const truncatedCellCharRanges: Array<{start: number; end: number}> = [];
-      if (!cursorStrictlyOnLine && colWidths) {
+      if (colWidths) {
         for (let ci = 0; ci < Math.min(cells.length, colWidths.length); ci++) {
-          const cellText = concealedText(cells[ci]);
-          if (displayWidth(cellText) > colWidths[ci]) {
+          if (displayWidth(concealedText(cells[ci])) > colWidths[ci]) {
             const prevPipe = pipePositions[ci];
             const nextPipe = pipePositions[ci + 1];
             if (prevPipe !== undefined && nextPipe !== undefined) {
@@ -1227,8 +1257,8 @@ function processLineConceals(
           const pipeByte = charToByte(lineContent, i, byteStart);
           const pipeByteEnd = charToByte(lineContent, i + 1, byteStart);
 
-          // Compute padding (and, off the cursor row, truncation) for the cell
-          // that just ended.
+          // Compute padding for the cell that just ended, in both cursor
+          // states.
           //
           // Columns are sized to the widest *raw* cell, so a row only aligns
           // when its rendered cell is padded out to that width. The row the
@@ -1239,57 +1269,87 @@ function processLineConceals(
           // glitch). Trailing padding never hides content, so it is safe on the
           // cursor row; we still skip *truncation* there so a too-wide cell
           // stays fully visible for editing.
-          let padding = "";
+          let padOff = ""; // cursor elsewhere: concealed text width
+          let padOn = ""; // cursor on this row: raw text width
           const cellIdx = pipeIdx - 1;
           if (colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
-            // The cursor row shows raw text (markers revealed), so measure its
-            // raw width; every other row shows concealed text.
-            const cellText = cursorStrictlyOnLine ? cells[cellIdx] : concealedText(cells[cellIdx]);
-            const cellWidth = displayWidth(cellText);
+            const offText = concealedText(cells[cellIdx]);
+            const offWidth = displayWidth(offText);
+            const rawWidth = displayWidth(cells[cellIdx]);
             const allocatedWidth = colWidths[cellIdx];
 
-            if (cellWidth > allocatedWidth) {
-              if (!cursorStrictlyOnLine) {
-                // Truncate: conceal entire cell content and replace with truncated text.
-                // Separator rows use box-drawing ─ to match the non-truncated path
-                // (per-char conceals replace source `-` with ─ and pad via pipe replacement).
-                const prevPipeCharPos = pipePositions[pipeIdx - 1];
-                const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
-                const cellByteEnd = pipeByte;
-                const truncated = isSeparator
-                  ? '─'.repeat(allocatedWidth)
-                  : cellText.slice(0, allocatedWidth - 1) + '-';
-                editor.addConceal(bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated);
-                truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
-              }
-              // On the cursor row a too-wide cell is left raw (no padding, no
-              // truncation) so its full content stays editable.
+            if (offWidth > allocatedWidth) {
+              // Truncate (cursor-off only): conceal entire cell content and
+              // replace with truncated text. Separator rows use box-drawing ─
+              // to match the non-truncated path (per-char conceals replace
+              // source `-` with ─ and pad via pipe replacement).
+              const prevPipeCharPos = pipePositions[pipeIdx - 1];
+              const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
+              const cellByteEnd = pipeByte;
+              const truncated = isSeparator
+                ? '─'.repeat(allocatedWidth)
+                : offText.slice(0, allocatedWidth - 1) + '-';
+              editor.addConceal(
+                bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated,
+                "unless-cursor-in", byteStart, lineScopeStrictEnd,
+              );
+              truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
+              // padOff stays "" — the truncate conceal fills the cell.
             } else {
-              const padCount = allocatedWidth - cellWidth;
+              const padCount = allocatedWidth - offWidth;
               if (padCount > 0) {
-                padding = isSeparator ? "─".repeat(padCount) : " ".repeat(padCount);
+                padOff = isSeparator ? "─".repeat(padCount) : " ".repeat(padCount);
               }
             }
+            if (rawWidth <= allocatedWidth) {
+              const padCount = allocatedWidth - rawWidth;
+              if (padCount > 0) {
+                padOn = isSeparator ? "─".repeat(padCount) : " ".repeat(padCount);
+              }
+            }
+            // rawWidth > allocatedWidth: the cursor row keeps the too-wide
+            // cell raw (no padding, no truncation) so it stays editable.
           }
 
+          let glyph = "│";
           if (isSeparator) {
             const pipeIndex = lineContent.substring(0, i + 1).split('|').length - 1;
             const totalPipes = lineContent.split('|').length - 1;
-            let replacement = '┼';
-            if (pipeIndex === 1) replacement = '├';
-            else if (pipeIndex === totalPipes) replacement = '┤';
-            editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padding + replacement);
+            glyph = '┼';
+            if (pipeIndex === 1) glyph = '├';
+            else if (pipeIndex === totalPipes) glyph = '┤';
+          }
+          if (padOff === padOn) {
+            // Same rendering in both cursor states — one always-active conceal.
+            editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph);
           } else {
-            editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padding + "│");
+            editor.addConceal(
+              bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph,
+              "unless-cursor-in", byteStart, lineScopeStrictEnd,
+            );
+            editor.addConceal(
+              bufferId, "md-syntax", pipeByte, pipeByteEnd, padOn + glyph,
+              "if-cursor-in", byteStart, lineScopeStrictEnd,
+            );
           }
           pipeIdx++;
         } else if (isSeparator && lineContent[i] === '-') {
-          // Skip per-character conceals that land inside a truncated cell;
-          // the cell-wide truncate conceal already handles the rendering.
+          // Per-character conceals inside a truncated cell are suppressed in
+          // the cursor-off state — the cell-wide truncate conceal already
+          // renders the replacement; if both fired, the cell would come out
+          // one character wider than allocated. On the cursor row the cell is
+          // raw (no truncate conceal), so the ─ substitution applies there.
           const inTruncated = truncatedCellCharRanges.some(r => i >= r.start && i < r.end);
-          if (inTruncated) continue;
           const db = charToByte(lineContent, i, byteStart);
-          editor.addConceal(bufferId, "md-syntax", db, charToByte(lineContent, i + 1, byteStart), "─");
+          const de = charToByte(lineContent, i + 1, byteStart);
+          if (inTruncated) {
+            editor.addConceal(
+              bufferId, "md-syntax", db, de, "─",
+              "if-cursor-in", byteStart, lineScopeStrictEnd,
+            );
+          } else {
+            editor.addConceal(bufferId, "md-syntax", db, de, "─");
+          }
         }
       }
     }
@@ -1299,12 +1359,17 @@ function processLineConceals(
   }
 
   // --- Image links: ![alt](url) → "Image: alt — url" ---
+  // The concealed banner deactivates while the cursor is on the line, which
+  // leaves the raw `![alt](url)` markup visible for editing.
   const imageRe = /^!\[([^\]]*)\]\(([^)]+)\)$/;
   const imageMatch = trimmed.match(imageRe);
-  if (imageMatch && !cursorOnLine) {
+  if (imageMatch) {
     const alt = imageMatch[1];
     const url = imageMatch[2];
-    editor.addConceal(bufferId, "md-syntax", byteStart, byteEnd, `Image: ${alt} — ${url}`);
+    editor.addConceal(
+      bufferId, "md-syntax", byteStart, byteEnd, `Image: ${alt} — ${url}`,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
     return;
   }
 
@@ -1348,24 +1413,24 @@ function processLineConceals(
       // entities: no overlay
     }
 
-    // Conceals (cursor-aware).
-    // For table rows: skip ALL emphasis conceals when cursor is on the line,
-    // not just the span the cursor is in. This "auto-expose entire row"
-    // approach keeps the row layout consistent with the raw-text-based
-    // column widths, preventing overflow/wrapping.
-    const cursorInSpan = cursors.some(c => c >= byteMS && c <= byteME);
-    const skipConceal = (isTableRow && cursorStrictlyOnLine) || cursorInSpan;
-    if (!skipConceal) {
-      for (const range of span.concealRanges) {
-        const rStart = charToByte(lineContent, range.start, byteStart);
-        const rEnd = charToByte(lineContent, range.end, byteStart);
-        editor.addConceal(bufferId, "md-syntax", rStart, rEnd, range.replacement);
-      }
+    // Conceals deactivate while a cursor is inside their reveal scope.
+    // For table rows the scope is the whole line ("auto-expose entire row"):
+    // this keeps the row layout consistent with the raw-text-based column
+    // widths, preventing overflow/wrapping. For other lines the scope is the
+    // span itself, so only the markup under the cursor is revealed.
+    const scopeStart = isTableRow ? byteStart : byteMS;
+    const scopeEnd = isTableRow ? lineScopeStrictEnd : byteME + 1;
+    for (const range of span.concealRanges) {
+      const rStart = charToByte(lineContent, range.start, byteStart);
+      const rEnd = charToByte(lineContent, range.end, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", rStart, rEnd, range.replacement,
+        "unless-cursor-in", scopeStart, scopeEnd,
+      );
     }
   }
 }
 
-// Last cursor line is tracked per-buffer-per-split via setViewState/getViewState
 
 // Track viewport width per buffer for resize detection
 let lastViewportWidth = 0;
@@ -1384,7 +1449,6 @@ function processLineSoftBreaks(
   lineContent: string,
   byteStart: number,
   byteEnd: number,
-  cursors: number[],
   lineNumber?: number,
 ): void {
   // Clear existing soft breaks for this line range
@@ -1406,15 +1470,20 @@ function processLineSoftBreaks(
                  block.type === 'heading' || block.type === 'image' ||
                  block.type === 'empty';
 
-  // Image blocks: add a trailing blank line for visual separation when concealed
+  // Image blocks: add a trailing blank line for visual separation when
+  // concealed. Deactivates while the cursor is on the line (same scope as
+  // the image conceal), where the raw markup shows instead.
   if (block.type === 'image') {
-    const cursorOnLine = cursors.some(c => c >= byteStart && c <= byteEnd);
-    if (!cursorOnLine) {
-      editor.addSoftBreak(bufferId, "md-wrap", byteEnd - 1, 0);
-    }
+    editor.addSoftBreak(
+      bufferId, "md-wrap", byteEnd - 1, 0,
+      "unless-cursor-in", byteStart, byteEnd + 1,
+    );
   }
 
-  // Table row wrapping: add soft breaks for multi-line cells
+  // Table row wrapping: add soft breaks for multi-line cells. Computed from
+  // concealed cell widths — the cursor-OFF rendering. The breaks deactivate
+  // while the cursor is on the row (strict scope, matching the segment
+  // conceals), where the row renders as a plain single line.
   if (block.type === 'table-row') {
     const trimmedLine = lineContent.trim();
     const isSep = /^\|[-:\s|]+\|$/.test(trimmedLine);
@@ -1427,9 +1496,8 @@ function processLineSoftBreaks(
         const tableCells = innerLine.split('|');
         let maxVisualLines = 1;
         const numCols = Math.min(tableCells.length, colWidths.length);
-        const cursorOnTableLine = cursors.some(c => c >= byteStart && c < byteEnd);
         for (let ci = 0; ci < numCols; ci++) {
-          const cellText = cursorOnTableLine ? tableCells[ci].trim() : concealedText(tableCells[ci]).trim();
+          const cellText = concealedText(tableCells[ci]).trim();
           const wrapW = Math.max(1, colWidths[ci] - 2);
           const wrapped = wrapText(cellText, wrapW);
           maxVisualLines = Math.max(maxVisualLines, wrapped.length);
@@ -1450,7 +1518,10 @@ function processLineSoftBreaks(
           const breakChars = spacePositions.slice(0, maxVisualLines - 1);
           for (const charPos of breakChars) {
             const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, charPos));
-            editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, 0);
+            editor.addSoftBreak(
+              bufferId, "md-wrap", breakBytePos, 0,
+              "unless-cursor-in", byteStart, byteEnd,
+            );
           }
         }
       }
@@ -1637,9 +1708,6 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 // after_delete: no-op for conceals/overlays (same reasoning as after_insert).
 
 
-// cursor_moved: update cursor-aware reveal/conceal for old and new cursor lines
-
-
 // view_transform_request is no longer needed — soft wrapping is handled by
 // marker-based soft breaks (computed in lines_changed), and layout hints
 // are set directly via setLayoutHints. This eliminates the one-frame flicker
@@ -1659,14 +1727,11 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 // Register hooks
 editor.on("lines_changed", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
-  const lineNums = data.lines.map(l => `${l.line_number}(${l.byte_start}..${l.byte_end})`).join(', ');
-  editor.debug(`[mc] lines_changed: ${data.lines.length} lines: [${lineNums}]`);
-  // Only use cursor positions for reveal/conceal decisions when the active
-  // split is in compose mode.  When a source-mode split is active, the cursor
-  // lives in that source view — it should NOT trigger "reveal" (skip-conceal)
-  // in the compose-mode split, because conceals are buffer-level decorations
-  // shared across splits.
-  const cursors = isComposing(data.buffer_id) ? [editor.getCursorPosition()] : [];
+  // Cursor reveal/conceal decisions are NOT made here: every emitted
+  // decoration carries an activation scope and the renderer evaluates it
+  // per frame against each split's own cursors. This handler runs only
+  // when content changes — cursor movement re-renders with the existing
+  // markers, so navigating never rebuilds anything.
 
   // Column widths for every table row in this batch (uniform per table, via the
   // grow-only memo). If a wider row scrolled into view and grew a table's
@@ -1691,8 +1756,8 @@ editor.on("lines_changed", (data) => {
     // off by the async lag).
     clearRowBorders(data.buffer_id, line.byte_start, line.byte_end);
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
-    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, cursors, line.line_number);
+    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
+    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
 
     if (isTableRowContent(line.content)) {
       const widths = currentRowWidths.get(line.byte_start) ?? [];
@@ -1743,24 +1808,12 @@ editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
 });
-editor.on("cursor_moved", (data) => {
-  if (!isComposingInAnySplit(data.buffer_id)) return;
-
-  const prevLine = editor.getViewState(data.buffer_id, "last-cursor-line") as number | undefined;
-  editor.setViewState(data.buffer_id, "last-cursor-line", data.line);
-
-  editor.debug(`[mc] cursor_moved: old_pos=${data.old_position} new_pos=${data.new_position} line=${data.line} prevLine=${prevLine}`);
-
-  // Refresh all visible lines so span-level auto-expose (revealing the markup
-  // the cursor sits on) and table-row un/re-wrap stay consistent across the
-  // whole viewport, including intra-line moves.
-  //
-  // This re-fires `lines_changed` for the viewport. Tables are emitted per line
-  // (clear+rebuild each row's conceals and border frame from the live event),
-  // so repeated refreshes are idempotent and the frame stays correct no matter
-  // how often the cursor moves.
-  editor.refreshLines(data.buffer_id);
-});
+// cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
+// un/re-wrap are baked into the markers as activation scopes (emitted in the
+// lines_changed pass above) and evaluated by the renderer per frame — cursor
+// movement changes what's *active* without touching any marker, so it never
+// re-fires lines_changed, never bumps the conceal/soft-break versions, and
+// never invalidates the line-wrap cache or visual-row index.
 // view_transform_request hook no longer needed — wrapping is handled by soft breaks
 editor.on("buffer_closed", (data) => {
   // View state is cleaned up automatically when the buffer is removed from keyed_states
