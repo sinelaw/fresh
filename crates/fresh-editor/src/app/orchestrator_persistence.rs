@@ -776,47 +776,57 @@ impl Editor {
         // `save_all_windows_workspaces` (called just before this on
         // quit), and the session list is rediscovered from those files
         // at boot. Only editor-global plugin state is written here.
-
-        // Plugin global state — one file per plugin. Single
-        // global directory now (no per-cwd split), so two
-        // editor processes writing the same plugin's state
-        // still need atomic-rename safety.
-        let state_dir = global_state_dir(&data_dir);
-        if !self.plugin_global_state.is_empty() {
-            if let Err(e) = self.authority().filesystem.create_dir_all(&state_dir) {
-                tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
-                return;
-            }
+        for plugin in self.plugin_global_state.keys() {
+            self.persist_plugin_global_state(plugin);
         }
-        for (plugin, map) in &self.plugin_global_state {
-            if !plugin_name_is_safe(plugin) {
-                tracing::warn!(
-                    "orchestrator persistence: skipping plugin with unsafe name: {plugin:?}"
-                );
-                continue;
-            }
-            if map.is_empty() {
-                continue;
-            }
-            match serde_json::to_vec_pretty(map) {
-                Ok(bytes) => {
-                    let path = global_plugin_state_path(&data_dir, plugin);
-                    let tmp = path.with_extension("json.tmp");
-                    if let Err(e) = self.authority().filesystem.write_file(&tmp, &bytes) {
-                        tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
-                        continue;
-                    }
-                    if let Err(e) = self.authority().filesystem.rename(&tmp, &path) {
-                        tracing::warn!(
-                            "orchestrator persistence: failed to rename {tmp:?} → {path:?}: {e}"
-                        );
-                    }
+    }
+
+    /// Write one plugin's global-state file (atomic tmp+rename). Called
+    /// eagerly from `handle_set_global_state` on every mutation — not just
+    /// at clean quit — so a killed or crashed editor doesn't forget
+    /// editor-global plugin state (e.g. the Orchestrator dock's folders and
+    /// session→folder assignments; issue #2703). Mirrors the eager
+    /// per-session workspace checkpointing (`checkpoint_window_workspace`).
+    /// Best-effort: errors are logged at WARN and swallowed.
+    ///
+    /// An empty (or absent) map is still written as `{}` so deleting a
+    /// plugin's last key survives a later crash too.
+    pub(crate) fn persist_plugin_global_state(&self, plugin: &str) {
+        if !plugin_name_is_safe(plugin) {
+            tracing::warn!(
+                "orchestrator persistence: skipping plugin with unsafe name: {plugin:?}"
+            );
+            return;
+        }
+        let data_dir = self.dir_context.data_dir.clone();
+        // Plugin global state — one file per plugin. Single global
+        // directory (no per-cwd split), so two editor processes writing
+        // the same plugin's state still need atomic-rename safety.
+        let state_dir = global_state_dir(&data_dir);
+        if let Err(e) = self.authority().filesystem.create_dir_all(&state_dir) {
+            tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
+            return;
+        }
+        let empty = HashMap::new();
+        let map = self.plugin_global_state.get(plugin).unwrap_or(&empty);
+        match serde_json::to_vec_pretty(map) {
+            Ok(bytes) => {
+                let path = global_plugin_state_path(&data_dir, plugin);
+                let tmp = path.with_extension("json.tmp");
+                if let Err(e) = self.authority().filesystem.write_file(&tmp, &bytes) {
+                    tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
+                    return;
                 }
-                Err(e) => {
+                if let Err(e) = self.authority().filesystem.rename(&tmp, &path) {
                     tracing::warn!(
-                        "orchestrator persistence: failed to serialise plugin {plugin}: {e}"
+                        "orchestrator persistence: failed to rename {tmp:?} → {path:?}: {e}"
                     );
                 }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "orchestrator persistence: failed to serialise plugin {plugin}: {e}"
+                );
             }
         }
     }

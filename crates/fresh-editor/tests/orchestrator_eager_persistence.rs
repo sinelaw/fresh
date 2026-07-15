@@ -99,6 +99,69 @@ fn saved_contains_file(ws: &Workspace, file: &Path) -> bool {
     !name.is_empty() && json.contains(name)
 }
 
+/// Setting editor-global plugin state (what the Orchestrator does when the
+/// user organises dock sessions into folders) must be flushed to
+/// `<data>/orchestrator/state/<plugin>.json` immediately — before any quit.
+/// It used to be written only by the clean-quit `save_orchestrator_state`
+/// call, so a killed or crashed editor forgot every folder and
+/// session→folder assignment made since the last clean exit (issue #2703).
+#[cfg(feature = "plugins")]
+#[test]
+fn setting_global_state_persists_it_without_a_quit() {
+    use fresh_core::api::PluginCommand;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let proj = sandbox.path().join("proj");
+    let data_home = sandbox.path().join("data-home");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&data_home).unwrap();
+    let proj = proj.canonicalize().unwrap();
+
+    let dir_context = DirectoryContext::for_testing(&data_home);
+    let mut e = editor_in(&proj, &dir_context);
+
+    let folders = serde_json::json!([{ "id": "df1", "name": "myfolder", "parent": null }]);
+    e.handle_plugin_command(PluginCommand::SetGlobalState {
+        plugin_name: "orchestrator".into(),
+        key: "orchestrator.dock.folders".into(),
+        value: Some(folders.clone()),
+    })
+    .unwrap();
+
+    // No quit has happened — the state file must already be on disk.
+    let state_path = dir_context
+        .data_dir
+        .join("orchestrator")
+        .join("state")
+        .join("orchestrator.json");
+    let bytes = std::fs::read(&state_path).unwrap_or_else(|e| {
+        panic!(
+            "setting global state must persist {} without a quit: {e}",
+            state_path.display()
+        )
+    });
+    let map: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        map["orchestrator.dock.folders"], folders,
+        "the persisted state carries the folder list the plugin just set"
+    );
+
+    // Deleting the key persists too (an empty map on disk, not the stale
+    // folder list) — clearing your last folder must also survive a crash.
+    e.handle_plugin_command(PluginCommand::SetGlobalState {
+        plugin_name: "orchestrator".into(),
+        key: "orchestrator.dock.folders".into(),
+        value: None,
+    })
+    .unwrap();
+    let map: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    assert!(
+        map.get("orchestrator.dock.folders").is_none(),
+        "deleting the key must be flushed as well, got: {map}"
+    );
+}
+
 /// Setting per-session plugin state (what the Orchestrator does right after
 /// creating a session, to tag its `project_path`) checkpoints the window, so a
 /// freshly created session is in the registry the moment it is tagged — before

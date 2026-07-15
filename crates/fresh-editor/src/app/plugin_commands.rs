@@ -1725,7 +1725,7 @@ impl Editor {
         match value {
             Some(v) => {
                 self.plugin_global_state
-                    .entry(plugin_name)
+                    .entry(plugin_name.clone())
                     .or_default()
                     .insert(key, v);
             }
@@ -1738,6 +1738,13 @@ impl Editor {
                 }
             }
         }
+        // Editor-global plugin state is durable state (the Orchestrator
+        // files its dock folders / session→folder assignments here), so
+        // checkpoint it to disk now: without this it was flushed only by a
+        // clean quit, and a killed or crashed editor forgot the user's whole
+        // dock organisation (issue #2703). Guarded + best-effort, mirroring
+        // `handle_set_session_state`'s workspace checkpoint below.
+        self.persist_plugin_global_state(&plugin_name);
     }
 
     /// Set per-session state on the **active** session. Mirrors
