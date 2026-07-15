@@ -839,15 +839,54 @@ pub struct WidgetHitView {
     pub payload: serde_json::Value,
 }
 
-/// Host-owned instance state a frontend needs to render a widget correctly
-/// (List/Tree selection + scroll). Keyed by widget `key`.
-#[derive(Debug, Clone, Serialize)]
+/// Host-owned instance state a frontend needs to render a widget correctly.
+/// Keyed by widget `key`. The host is authoritative for ALL of this — the
+/// spec's `value`/`checked`/`selected_index` are initial-only seeds once a
+/// widget has mounted (see `WidgetInstanceState`), so a frontend that renders
+/// from the spec alone shows stale values (e.g. a text field that only
+/// updates after the plugin's spec round-trip instead of on every keystroke).
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WidgetInstanceView {
     pub selected_index: Option<i32>,
     pub scroll_offset: Option<u32>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub expanded_keys: Vec<String>,
+    /// Text widget: the host `TextEdit`'s live value — what the TUI echoes
+    /// per keystroke.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_value: Option<String>,
+    /// Text widget: cursor position as a flat byte offset into `text_value`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_byte: Option<u32>,
+    /// Text widget: active selection as a flat `[start, end)` byte range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<(u32, u32)>,
+    /// Text widget: completion popup candidate labels (empty = closed).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub completions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_selected: Option<u32>,
+    /// Text widget: whether ↑/↓ has moved into the open completion popup
+    /// (drives the highlighted row, mirroring the TUI).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_navigated: Option<bool>,
+    /// Number widget: the host-owned current value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_value: Option<f64>,
+    /// Dropdown widget: whether the option list is open (the selected
+    /// option index rides in `selected_index`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dropdown_open: Option<bool>,
+    /// DualList widget: host-owned ordered included values + column focus.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub included: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_included: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_cursor: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub included_cursor: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -901,7 +940,7 @@ impl Editor {
                     } => WidgetInstanceView {
                         selected_index: Some(*selected_index),
                         scroll_offset: Some(*scroll_offset),
-                        expanded_keys: Vec::new(),
+                        ..Default::default()
                     },
                     W::Tree {
                         scroll_offset,
@@ -911,8 +950,53 @@ impl Editor {
                         selected_index: Some(*selected_index),
                         scroll_offset: Some(*scroll_offset),
                         expanded_keys: expanded_keys.iter().cloned().collect(),
+                        ..Default::default()
                     },
-                    _ => continue,
+                    // The host TextEdit is the live editing state — export
+                    // value + caret + selection so a frontend echoes every
+                    // keystroke (the spec's `value` is initial-only and lags
+                    // until the plugin round-trips it), plus the completion
+                    // popup the TUI paints as overlay rows.
+                    W::Text {
+                        editor: te,
+                        completions,
+                        completion_selected_index,
+                        completion_navigated,
+                        ..
+                    } => WidgetInstanceView {
+                        text_value: Some(te.value()),
+                        cursor_byte: Some(te.flat_cursor_byte() as u32),
+                        selection: te.selection_flat_range().map(|(s, e)| (s as u32, e as u32)),
+                        completions: completions.iter().map(|c| c.value.clone()).collect(),
+                        completion_selected: Some(*completion_selected_index as u32),
+                        completion_navigated: Some(*completion_navigated),
+                        ..Default::default()
+                    },
+                    W::Number { value } => WidgetInstanceView {
+                        number_value: Some(*value),
+                        ..Default::default()
+                    },
+                    W::Dropdown {
+                        selected_index,
+                        open,
+                    } => WidgetInstanceView {
+                        selected_index: Some(*selected_index),
+                        dropdown_open: Some(*open),
+                        ..Default::default()
+                    },
+                    W::DualList {
+                        included,
+                        active_included,
+                        available_cursor,
+                        included_cursor,
+                    } => WidgetInstanceView {
+                        included: included.clone(),
+                        active_included: Some(*active_included),
+                        available_cursor: Some(*available_cursor),
+                        included_cursor: Some(*included_cursor),
+                        ..Default::default()
+                    },
+                    W::None => continue,
                 };
                 instances.insert(key.clone(), view);
             }

@@ -426,7 +426,7 @@ impl Editor {
                 .or_else(|| hit_index.and_then(|i| panel.hits.get(i).cloned()))
                 .or_else(|| Self::synthesize_list_hit(panel, event_type, payload))
                 .or_else(|| Self::synthesize_tree_hit(panel, widget_key, event_type, payload))
-                .or_else(|| Self::synthesize_control_hit(panel, widget_key, event_type))
+                .or_else(|| Self::synthesize_control_hit(panel, widget_key, event_type, payload))
         };
         if let Some(hit) = hit {
             self.deliver_widget_hit(&panel_key, &hit, None);
@@ -589,31 +589,67 @@ impl Editor {
     }
 
     /// Rebuild the `HitArea` the renderer would have emitted for a keyed
-    /// control widget (Button / Toggle / Text) that recorded no hit because
-    /// the TUI clipped it — a native frontend grows a floating panel to fit
-    /// its content, so it can render (and click) a control that fell below
-    /// the TUI's inner rect. State comes from the panel's own spec: a
-    /// disabled Button synthesizes nothing (the renderer records no hit for
-    /// it either), and a Toggle's `checked` is read from the spec, never
-    /// from the frontend.
+    /// control widget that recorded no hit — because the TUI clipped it (a
+    /// native frontend grows a floating panel to fit its content) or
+    /// because the frontend renders states the TUI's hit window didn't
+    /// (e.g. a dropdown's option rows). State comes from the panel's own
+    /// spec: a disabled Button synthesizes nothing (the renderer records no
+    /// hit for it either), a Toggle's `checked` and a Dropdown's option
+    /// bounds are read from the spec, never trusted from the frontend.
     fn synthesize_control_hit(
         panel: &crate::widgets::WidgetPanelState,
         widget_key: &str,
         event_type: &str,
+        payload: &serde_json::Value,
     ) -> Option<crate::widgets::HitArea> {
         if widget_key.is_empty() {
             return None;
         }
         let spec = crate::widgets::find_widget_by_key(&panel.spec, widget_key)?;
         use fresh_core::api::WidgetSpec as W;
-        let (widget_kind, payload) = match (spec, event_type) {
+        let (widget_kind, event_type, payload): (_, &'static str, _) = match (spec, event_type) {
             (W::Button { disabled, .. }, "activate") if !disabled => {
-                ("button", serde_json::json!({}))
+                ("button", "activate", serde_json::json!({}))
             }
-            (W::Toggle { checked, .. }, "toggle") => {
-                ("toggle", serde_json::json!({ "checked": !checked }))
+            (W::Toggle { checked, .. }, "toggle") => (
+                "toggle",
+                "toggle",
+                serde_json::json!({ "checked": !checked }),
+            ),
+            (W::Text { .. }, "focus") => ("text", "focus", serde_json::json!({})),
+            (W::Number { .. }, "number_value") => ("number", "number_value", serde_json::json!({})),
+            (W::Dropdown { .. }, "dropdown_toggle") => {
+                ("dropdown", "dropdown_toggle", serde_json::json!({}))
             }
-            (W::Text { .. }, "focus") => ("text", serde_json::json!({})),
+            (W::Dropdown { options, .. }, "dropdown_select") => {
+                let index = payload.get("index")?.as_i64()?;
+                if index < 0 || index as usize >= options.len() {
+                    return None;
+                }
+                (
+                    "dropdown",
+                    "dropdown_select",
+                    serde_json::json!({ "index": index }),
+                )
+            }
+            (W::DualList { options, .. }, "dual_focus") => {
+                let column = payload.get("column")?.as_str()?;
+                if column != "available" && column != "included" {
+                    return None;
+                }
+                let index = payload.get("index")?.as_i64()?;
+                // Loose bound: either column's row count can never exceed
+                // the full option universe; the click handler clamps to the
+                // live column length itself.
+                if index < 0 || index as usize >= options.len().max(1) {
+                    return None;
+                }
+                (
+                    "dual_list",
+                    "dual_focus",
+                    serde_json::json!({ "column": column, "index": index }),
+                )
+            }
             _ => return None,
         };
         Some(crate::widgets::HitArea {
@@ -623,12 +659,34 @@ impl Editor {
             byte_start: 0,
             byte_end: 0,
             payload,
-            event_type: match event_type {
-                "activate" => "activate",
-                "toggle" => "toggle",
-                _ => "focus",
-            },
+            event_type,
         })
+    }
+
+    /// Native-frontend entry point: place a text widget's caret at a flat
+    /// byte offset into its value. A browser input positions its caret
+    /// natively on click (it owns the font metrics), then reports the
+    /// position here so the host `TextEdit` — the single source of truth —
+    /// follows. `set_cursor_from_flat` clamps, snaps to a grapheme
+    /// boundary, and clears any selection (matching a plain GUI click).
+    pub fn set_widget_text_cursor(
+        &mut self,
+        plugin: &str,
+        panel_id: u64,
+        widget_key: &str,
+        byte: usize,
+    ) {
+        let panel_key = crate::widgets::PanelKey::new(plugin, panel_id);
+        let Some(panel) = self.widget_registry.get_mut(&panel_key) else {
+            return;
+        };
+        let Some(crate::widgets::WidgetInstanceState::Text { editor: te, .. }) =
+            panel.instance_states.get_mut(widget_key)
+        else {
+            return;
+        };
+        te.set_cursor_from_flat(byte);
+        self.rerender_widget_panel(&panel_key);
     }
 
     /// Deliver a `widget_event` hook to the plugin owning `panel_key` —

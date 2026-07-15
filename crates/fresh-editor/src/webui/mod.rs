@@ -706,6 +706,16 @@ fn apply_widget(editor: &mut Editor, v: &Value) {
         Some("panel") => {
             let plugin = v.get("plugin").and_then(|p| p.as_str()).unwrap_or("");
             let panel_id = v.get("panelId").and_then(|p| p.as_u64()).unwrap_or(0);
+            // Caret placement from a native text input: the browser
+            // positioned its caret on click and reports the byte offset;
+            // the host TextEdit (source of truth) follows. Not a widget
+            // *event* — no plugin hook fires, exactly like a TUI click
+            // that only moves the caret.
+            if let Some(byte) = v.get("textCursor").and_then(|b| b.as_u64()) {
+                let widget_key = v.get("widgetKey").and_then(|k| k.as_str()).unwrap_or("");
+                editor.set_widget_text_cursor(plugin, panel_id, widget_key, byte as usize);
+                return;
+            }
             let hit_index = v
                 .get("hitIndex")
                 .and_then(|i| i.as_u64())

@@ -247,6 +247,32 @@ await page.locator('.modal-scrim.scrim-clear').click({ position: { x: 900, y: 60
 await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
 check('outside-click dismisses the context menu', !(await modalSurf()));
 
+console.log('\n[widget text field = native <input>, host-authoritative echo + caret]');
+// The dock's "Search Tasks" field is a widget Text: it must render as a real
+// <input> whose value/caret mirror the host TextEdit per keystroke (the spec
+// value is initial-only and would lag until the plugin round-trip).
+const dockSearch = page.locator('.widget-surface.w-dock input.w-text-input').first();
+check('widget text field renders as a native <input>', (await dockSearch.count()) === 1);
+await dockSearch.click();
+await page.waitForTimeout(400);
+check('clicking the field takes real DOM focus (native caret)', await page.evaluate(() =>
+  document.activeElement && document.activeElement.classList.contains('w-text-input')));
+let echoOk = true;
+for (const ch of 'abc') {
+  await page.keyboard.type(ch);
+  const want = 'abc'.slice(0, 'abc'.indexOf(ch) + 1);
+  const ok = await page.waitForFunction(w => document.activeElement.value === w, want, { timeout: 2000 }).then(() => true).catch(() => false);
+  if (!ok) { echoOk = false; break; }
+}
+check('every keystroke echoes into the input (host TextEdit → instance state)', echoOk,
+  JSON.stringify(await page.evaluate(() => document.activeElement.value)));
+await page.keyboard.press('Home'); await page.waitForTimeout(300);
+check('caret follows the host cursor (Home → 0)', (await page.evaluate(() => document.activeElement.selectionStart)) === 0);
+// Clear the filter so later dock assertions see the full session list.
+await page.keyboard.press('End');
+for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
+await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+
 console.log('\n[keybinding editor = full native modal incl. edit dialog]');
 // Start clean: dismiss any focused dock/floating panel so keys reach the editor.
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);

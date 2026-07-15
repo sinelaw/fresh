@@ -453,6 +453,42 @@
   .w-floatingModal>.w-section .w-button{padding:5px 16px}
   /* Dimmed placeholder text so an empty field doesn't read as a real value. */
   .w-text-val.ph{color:var(--muted)}
+  /* Native input inside a .w-text field: the outer div keeps the themed box
+     (base .w-text rules above); the input is a transparent editing surface
+     whose value/caret the host drives. caret-color makes the real blinking
+     caret theme-aware; position:relative anchors the completion popup. */
+  .w-text{position:relative}
+  .w-text-input{flex:1;min-width:0;background:transparent;border:none;outline:none;
+    color:inherit;font:inherit;padding:0;caret-color:var(--accent)}
+  .w-text-input::placeholder{color:var(--muted);opacity:1}
+  textarea.w-text-input{resize:none}
+  /* Completion popup under a text field (host-owned candidates). */
+  .w-complete{position:absolute;left:0;right:0;top:100%;z-index:98;background:var(--bg2);
+    border:1px solid var(--hairline,var(--border));border-radius:4px;max-height:200px;overflow-y:auto;
+    box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .w-complete-row{padding:1px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .w-complete-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  /* number / dropdown / dual-list controls (host-state-driven) */
+  .w-number{display:flex;align-items:center;gap:4px}
+  .w-num-step{cursor:default;padding:0 6px;border:1px solid var(--hairline,var(--border));border-radius:4px}
+  .w-num-val{padding:0 6px;min-width:3ch;text-align:center}
+  .w-number.focus .w-num-val{outline:1px solid var(--accent)}
+  .w-dropdown{display:flex;align-items:center;gap:4px;position:relative}
+  .w-dd-pill{padding:0 8px;border:1px solid var(--hairline,var(--border));border-radius:4px}
+  .w-dropdown.focus .w-dd-pill{outline:1px solid var(--accent)}
+  .w-dd{position:absolute;left:0;top:100%;z-index:98;background:var(--bg2);
+    border:1px solid var(--hairline,var(--border));border-radius:4px;max-height:200px;overflow-y:auto;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);min-width:100%}
+  .w-dd-row{padding:1px 10px;white-space:nowrap}
+  .w-dd-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-dual-cols{display:flex;gap:10px}
+  .w-dual-col{flex:1;border:1px solid var(--hairline,var(--border));border-radius:4px;padding:2px;min-height:3em}
+  .w-dual-col.active{border-color:var(--accent)}
+  .w-dual-title{color:var(--muted);padding:0 4px}
+  .w-dual-row{padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .w-dual-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-embed-ph{display:flex;align-items:center;justify-content:center;color:var(--muted);
+    border:1px dashed var(--hairline,var(--border));border-radius:4px;padding:8px}
 
   /* ---- popups (completion / hover / action / list / text) — native ---- */
   .popup{position:absolute;z-index:75;background:#252526;border:1px solid #454545;
@@ -1347,6 +1383,9 @@ function renderRegion(name){
   REGION_FILL[name](c, scene.regions);
   c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(saved[i]) e.scrollTop=saved[i]; });
   if(name==="settings") settingsEnsureSelectionVisible(c);
+  // A widgets rebuild replaces any focused text input — restore DOM focus
+  // and caret to the host-focused field (or the hidden sink if none).
+  if(name==="widgets") syncWidgetInputFocus();
 }
 
 // The TUI windows the settings rows with the core's scroll offset, so its
@@ -1829,6 +1868,62 @@ function routeWidget(ctx, node, listIndex, ev){
   }
 }
 
+// Route a control interaction by key + SPECIFIC eventType. routeWidget's
+// keyed path picks the first hit with a matching key, which is ambiguous
+// for widgets that record several hit kinds under one key (a dropdown
+// records `dropdown_toggle` plus one `dropdown_select` per option row).
+// Falls back to sending the bare identity; the bridge synthesizes the hit
+// from the panel's spec (same as the clipped-control path).
+function routeControl(ctx,key,eventType,payload){
+  const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
+  const hit=(ctx.hits||[]).find(h=>h.widgetKey===key&&h.eventType===eventType
+    &&(!(payload&&payload.index!=null)||(h.payload&&h.payload.index===payload.index)));
+  const msg={...base,widgetKey:key,eventType,payload:hit?hit.payload:(payload||{})};
+  if(hit) msg.hitIndex=hit.index;
+  sendWidget(msg);
+}
+
+// UTF-8 byte offset ⇄ UTF-16 code-unit index conversions for text widgets:
+// the host TextEdit speaks bytes, input.selectionStart speaks UTF-16.
+function byteToUtf16(s,byte){
+  let b=0;
+  for(let i=0;i<s.length;i++){
+    if(b>=byte) return i;
+    const c=s.codePointAt(i);
+    b+=c<0x80?1:c<0x800?2:c<0x10000?3:4;
+    if(c>0xffff) i++;
+  }
+  return s.length;
+}
+function utf16ToByte(s,idx){
+  let b=0;
+  for(let i=0;i<Math.min(idx,s.length);i++){
+    const c=s.codePointAt(i);
+    b+=c<0x80?1:c<0x800?2:c<0x10000?3:4;
+    if(c>0xffff) i++;
+  }
+  return b;
+}
+
+// After a widgets-region rebuild: hand real DOM focus to the host-focused
+// text widget's input (so the native caret blinks and IME composes there),
+// pin its caret to the host TextEdit's cursor, and fall back to the hidden
+// sink when no widget input holds focus anymore. Skipped mid-IME-composition
+// so a caret write can't cancel the preedit.
+function syncWidgetInputFocus(){
+  const t=document.querySelector(".w-text-input[data-wfocus='1']");
+  if(t){
+    if(document.activeElement!==t) t.focus({preventScroll:true});
+    if(!t.dataset.composing&&t.dataset.caret!==""&&t.dataset.caret!=null){
+      const i=+t.dataset.caret;
+      try{ t.setSelectionRange(i,i); }catch(_){}
+    }
+  } else if(document.activeElement&&document.activeElement.classList
+      &&document.activeElement.classList.contains("w-text-input")){
+    focusSink();
+  }
+}
+
 function widgetEl(spec, ctx){
   if(!spec) return document.createTextNode("");
   const kind=spec.kind, fk=ctx.focusKey;
@@ -1866,11 +1961,139 @@ function widgetEl(spec, ctx){
     if(spec.child) el.appendChild(widgetEl(spec.child, ctx)); return el;
   }
   if(kind==="text"){
+    // A REAL <input>/<textarea>, but the editor stays the single source of
+    // truth: the host TextEdit's live value + caret arrive via instance
+    // state (instances[key].textValue / cursorByte) and are written into
+    // the element on every frame. Keystrokes never edit the element
+    // locally — the global keydown handler preventDefaults and forwards
+    // them, and the pushed frame echoes the authoritative result back.
+    // The native element buys the real caret, focus ring, IME target and
+    // browser-computed click-to-caret positions for free.
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
     const el=div("w-text"+(focused?" focus":""));
     if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
-    const v=document.createElement("span"); const showingPh=!spec.value&&!!spec.placeholder;
-    v.className="w-text-val"+(showingPh?" ph":""); v.textContent=spec.value||spec.placeholder||""; el.appendChild(v);
-    if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
+    const multi=(spec.rows||1)>1;
+    const input=document.createElement(multi?"textarea":"input");
+    input.className="w-text-input";
+    if(multi) input.rows=spec.rows;
+    input.value=val;
+    input.placeholder=spec.placeholder||"";
+    input.setAttribute("autocapitalize","off"); input.setAttribute("autocomplete","off");
+    input.setAttribute("autocorrect","off"); input.setAttribute("spellcheck","false");
+    // Block every local edit outside the key-forwarding path (autofill,
+    // drag-drop text, context-menu paste): the paste event still bubbles to
+    // the document paste listener (the one real paste path), and IME
+    // composition — which beforeinput can't cancel — is forwarded on commit
+    // exactly like the hidden sink does, then discarded locally.
+    input.addEventListener("beforeinput",ev=>{ if(!ev.isComposing) ev.preventDefault(); });
+    input.addEventListener("compositionstart",()=>{ input.dataset.composing="1"; });
+    input.addEventListener("compositionend",ev=>{ delete input.dataset.composing; if(ev.data) sendPaste(ev.data); input.value=val; });
+    input.addEventListener("input",ev=>{ if(!ev.isComposing) input.value=val; });
+    // Mousedown focuses the widget host-side (the same `focus` event a TUI
+    // click fires). No preventDefault — the browser places its caret
+    // natively, and mouseup reports that position so the host TextEdit
+    // follows. (A drag-selection is left as a browser-local convenience
+    // for copy; the host tracks selection only via its own keybindings.)
+    input.addEventListener("mousedown",e=>{ e.stopPropagation(); if(spec.key) routeWidget(ctx,spec); });
+    input.addEventListener("mouseup",e=>{ e.stopPropagation();
+      if(spec.key && input.selectionStart===input.selectionEnd)
+        sendWidget({surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId,widgetKey:spec.key,
+          textCursor:utf16ToByte(input.value,input.selectionStart)});
+    });
+    if(focused){
+      input.dataset.wfocus="1";
+      input.dataset.caret=(inst&&inst.cursorByte!=null)?String(byteToUtf16(val,inst.cursorByte)):"";
+    }
+    el.appendChild(input);
+    // Completion popup (e.g. path complete): candidates are host instance
+    // state; the highlighted row appears only once ↑/↓ entered the popup,
+    // mirroring the TUI.
+    if(focused&&inst&&inst.completions&&inst.completions.length){
+      const dd=div("w-complete");
+      inst.completions.forEach((cand,i)=>{
+        const r=div("w-complete-row"+((inst.completionNavigated&&i===(inst.completionSelected||0))?" sel":""));
+        r.textContent=cand; dd.appendChild(r);
+      });
+      el.appendChild(dd);
+    }
+    return el;
+  }
+  if(kind==="number"){
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const val=(inst&&inst.numberValue!=null)?inst.numberValue:(spec.value||0);
+    const el=div("w-number"+(focused?" focus":""));
+    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    const disp=spec.editText!=null?spec.editText
+      :spec.percent?Math.round(val*100)+"%"
+      :spec.integer?String(Math.trunc(val))
+      :String(+(+val).toFixed(3));
+    // −/+ steppers focus the widget then step it via the host's own
+    // Left/Right handling — the value math (min/max/step) stays host-side.
+    const mk=(t,key)=>{ const b=document.createElement("span"); b.className="w-num-step"; b.textContent=t;
+      b.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(!spec.key) return;
+        routeControl(ctx,spec.key,"number_value",{}); sendKey({key}); };
+      return b; };
+    el.appendChild(mk("−","ArrowLeft"));
+    const v=document.createElement("span"); v.className="w-num-val"; v.textContent=disp;
+    v.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"number_value",{}); };
+    el.appendChild(v);
+    el.appendChild(mk("+","ArrowRight"));
+    return el;
+  }
+  if(kind==="dropdown"){
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    const selIdx=(inst&&inst.selectedIndex!=null)?inst.selectedIndex:(spec.selectedIndex||0);
+    const open=inst?!!inst.dropdownOpen:!!spec.open;
+    const el=div("w-dropdown"+(focused?" focus":""));
+    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    const pill=document.createElement("span"); pill.className="w-dd-pill";
+    pill.textContent=((spec.options||[])[selIdx]??"—")+(open?" ▲":" ▾");
+    pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_toggle",{}); };
+    el.appendChild(pill);
+    if(open){
+      const dd=div("w-dd");
+      (spec.options||[]).forEach((o,i)=>{
+        const r=div("w-dd-row"+(i===selIdx?" sel":"")); r.textContent=o;
+        r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_select",{index:i}); };
+        dd.appendChild(r);
+      });
+      el.appendChild(dd);
+    }
+    return el;
+  }
+  if(kind==="dualList"){
+    // Two-column ordered-subset picker. Rows are derived exactly like the
+    // host: Available = options minus included minus excluded (in option
+    // order); Included = the host-owned ordered instance list. Clicks fire
+    // the same `dual_focus` hits a TUI cell click resolves; moves/reorders
+    // stay keyboard-driven through the host (Space / PageUp / PageDown).
+    const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
+    // `included` is skip-serialized when empty, so detect "host state
+    // exists" via activeIncluded (always present for a DualList instance).
+    const included=(inst&&inst.activeIncluded!=null)?(inst.included||[]):(spec.included||[]);
+    const activeIncluded=inst?!!inst.activeIncluded:false;
+    const cursors={available:inst&&inst.availableCursor||0, included:inst&&inst.includedCursor||0};
+    const optLabel=v=>{ const o=(spec.options||[]).find(o=>(o.value??o)===v); return o?(o.label??o.value??o):v; };
+    const excluded=new Set([...(spec.excluded||[]),...included]);
+    const avail=(spec.options||[]).map(o=>o.value??o).filter(v=>!excluded.has(v));
+    const el=div("w-dual"+(focused?" focus":""));
+    if(spec.label){ const l=div("w-section-label"); l.textContent=spec.label; el.appendChild(l); }
+    const cols=div("w-dual-cols");
+    const mkCol=(title,values,column,active)=>{
+      const c=div("w-dual-col"+(active?" active":""));
+      const t=div("w-dual-title"); t.textContent=title; c.appendChild(t);
+      values.forEach((v,i)=>{
+        const r=div("w-dual-row"+(active&&i===cursors[column]?" sel":"")); r.textContent=optLabel(v);
+        r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation();
+          if(spec.key) routeControl(ctx,spec.key,"dual_focus",{column,index:i}); };
+        c.appendChild(r);
+      });
+      return c;
+    };
+    cols.appendChild(mkCol("Available",avail,"available",!activeIncluded));
+    cols.appendChild(mkCol("Included",included,"included",activeIncluded));
+    el.appendChild(cols);
     return el;
   }
   if(kind==="list"){
@@ -1961,6 +2184,15 @@ function widgetEl(spec, ctx){
     return el;
   }
   if(kind==="raw"&&spec.entries){ const el=div("w-raw"); el.textContent=spec.entries.map(entryText).join("\n"); return el; }
+  if(kind==="windowEmbed"){
+    // Embedding another editor window's live cells inside a native panel
+    // needs its own scene region (the webui cell buffer carries pane
+    // interiors only) — honest placeholder until that lands.
+    const el=div("w-embed-ph");
+    el.textContent="⧉ live preview is not available in the web UI yet";
+    if(spec.rows) el.style.minHeight=(spec.rows*CH)+"px";
+    return el;
+  }
   const fb=div("w-unsupported"); fb.textContent="["+kind+"]"; return fb;
 }
 
