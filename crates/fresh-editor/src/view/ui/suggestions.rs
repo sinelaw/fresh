@@ -142,6 +142,13 @@ struct ColumnLayout {
     source_column_width: usize,
     has_keybinding: bool,
     has_source: bool,
+    /// Whether the name column holds file paths (file finder / quick open)
+    /// rather than command names. Paths truncate at the *head* so the
+    /// trailing filename stays visible; command names always keep their
+    /// head and truncate at the tail — a command palette list never hides
+    /// the start of a command name (issue: names containing `/`, like
+    /// "Toggle Compose/Preview (All Files)", were mistaken for paths).
+    names_are_paths: bool,
 }
 
 impl ColumnLayout {
@@ -172,7 +179,8 @@ impl ColumnLayout {
             .map(|s| str_width(&s.text))
             .max()
             .unwrap_or(0);
-        let name_column_width = if !has_keybinding && !has_source {
+        let names_are_paths = !has_keybinding && !has_source;
+        let name_column_width = if names_are_paths {
             // For file finders etc., use up to 60% of available width for name,
             // but also cap to actual content width so descriptions get more room.
             let max_name_width = (available_width * 60 / 100).max(base_name_width);
@@ -181,9 +189,14 @@ impl ColumnLayout {
                 .min(content_based)
                 .min(available_width.saturating_sub(reserved_for_other_columns))
         } else {
-            // Use ~30% of available width for the name, minimum 30.
-            let dynamic_width = available_width * 30 / 100;
-            dynamic_width.max(base_name_width)
+            // Command palette: size the column to the longest visible command
+            // name so names are never truncated while room remains — the
+            // description (and, at the very end, the source) column absorbs
+            // the squeeze instead. Only when the name alone exceeds the row
+            // does it truncate (at its tail; see `push_name_column`).
+            actual_max_name_width
+                .max(base_name_width.min(available_width))
+                .min(available_width.saturating_sub(reserved_for_other_columns))
         };
 
         Self {
@@ -194,6 +207,7 @@ impl ColumnLayout {
             source_column_width,
             has_keybinding,
             has_source,
+            names_are_paths,
         }
     }
 
@@ -295,8 +309,11 @@ fn push_name_column(
 ) {
     let width = layout.name_column_width;
     let name_text = if str_width(name) > width {
-        // For file paths, keep the trailing filename; otherwise keep the head.
-        if name.contains('/') || name.contains('\\') {
+        // For file paths, keep the trailing filename. A command name keeps
+        // its head even when it contains a separator ("Toggle
+        // Compose/Preview" is not a path) — only path-style lists (no
+        // keybinding/source columns) head-truncate.
+        if layout.names_are_paths && (name.contains('/') || name.contains('\\')) {
             truncate_head_ellipsis(name, width, "…")
         } else {
             truncate_tail_ellipsis(name, width, "…")
@@ -709,6 +726,110 @@ mod tests {
                 SuggestionsRenderer::render(frame, area, &prompt, &theme);
             })
             .unwrap();
+    }
+
+    /// Render `prompt` into a `width`-column terminal and return the rows as
+    /// plain text (the popup fills the full area, so row 1.. are suggestion
+    /// rows inside the border).
+    fn render_rows(prompt: &Prompt, width: u16, height: u16) -> Vec<String> {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, height);
+                SuggestionsRenderer::render(frame, area, prompt, &theme);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    fn palette_prompt(suggestions: Vec<Suggestion>) -> Prompt {
+        let mut prompt = Prompt::new(
+            "Test: ".to_string(),
+            crate::view::prompt::PromptType::QuickOpen,
+        );
+        prompt.suggestions = suggestions;
+        prompt
+    }
+
+    /// Regression test: command names are never truncated at the *start*.
+    ///
+    /// A command name containing `/` (e.g. "Markdown: Toggle Compose/Preview
+    /// (All Files)") was mistaken for a file path and head-truncated to
+    /// "…) Toggle Compose/Preview (All Files)"-style rows, hiding the start
+    /// of the name — even though the description column had spare room. The
+    /// name column must instead grow to the longest visible name and the
+    /// description absorb the squeeze.
+    #[test]
+    fn command_names_with_slashes_are_not_head_truncated() {
+        let long_name = "Markdown: Toggle Compose/Preview (All Files)";
+        let mut s1 = Suggestion::new(long_name.to_string());
+        s1.description = Some("Toggle markdown compose/preview mode for all open buffers".into());
+        s1.source = Some(CommandSource::Plugin("markdown_compose".into()));
+        let mut s2 = Suggestion::new("Go to LSP Symbol".to_string());
+        s2.description = Some("List document symbols from LSP and navigate".into());
+        s2.source = Some(CommandSource::Plugin("lsp_navigation".into()));
+
+        let prompt = palette_prompt(vec![s1, s2]);
+        // 110 columns: the old fixed ~30% name column (≈32 cols) truncated the
+        // 45-col name; there is ample room for the full name + a shortened
+        // description.
+        let rows = render_rows(&prompt, 110, 6);
+        let all = rows.join("\n");
+        assert!(
+            all.contains(long_name),
+            "the full command name must be visible when the row has room:\n{all}"
+        );
+        assert!(
+            !all.contains("…gle Compose"),
+            "command names must never be head-truncated:\n{all}"
+        );
+    }
+
+    /// When a command name alone exceeds the whole row, it truncates at its
+    /// *end* (trailing ellipsis) — still never at the start.
+    #[test]
+    fn overlong_command_names_truncate_at_the_tail() {
+        let long_name = format!("Enormous Command/With Slash {}", "x".repeat(120));
+        let mut s = Suggestion::new(long_name.clone());
+        s.description = Some("desc".into());
+        s.source = Some(CommandSource::Builtin);
+
+        let prompt = palette_prompt(vec![s]);
+        let rows = render_rows(&prompt, 60, 4);
+        let all = rows.join("\n");
+        assert!(
+            all.contains("Enormous Command/With Slash"),
+            "the head of the name must stay visible:\n{all}"
+        );
+        // The name is longer than the row, so a tail ellipsis must appear.
+        assert!(
+            all.contains('…'),
+            "an overlong name must be tail-truncated with an ellipsis:\n{all}"
+        );
+    }
+
+    /// File-path lists (no keybinding/source columns) keep the old behavior:
+    /// the trailing filename stays visible via head truncation.
+    #[test]
+    fn file_paths_still_keep_their_trailing_filename() {
+        let path = format!("{}/deeply/nested/dir/important_file.rs", "p".repeat(80));
+        let s = Suggestion::new(path);
+        let prompt = palette_prompt(vec![s]);
+        let rows = render_rows(&prompt, 60, 4);
+        let all = rows.join("\n");
+        assert!(
+            all.contains("important_file.rs"),
+            "a path must keep its trailing filename visible:\n{all}"
+        );
     }
 
     /// Test that truncation produces valid UTF-8 output
