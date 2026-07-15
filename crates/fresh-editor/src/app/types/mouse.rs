@@ -1,7 +1,7 @@
 use super::drag::TabDragState;
 use super::hover::HoverTarget;
 use crate::config::ExplorerWidth;
-use crate::model::event::{ContainerId, LeafId, SplitDirection};
+use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
 
 /// Mouse state tracking
 #[derive(Debug, Clone, Default)]
@@ -71,4 +71,11 @@ pub struct MouseState {
     /// Initial composite scroll_row when starting to drag the scrollbar thumb
     /// Used for composite buffer scrollbar drag
     pub drag_start_composite_scroll_row: Option<usize>,
+    /// A left press on a live terminal grid: (split, buffer, col, row).
+    /// Not a selection yet — a bare click keeps the terminal live
+    /// (click-to-focus-and-type). If a `Drag(Left)` follows,
+    /// `Editor::begin_terminal_grid_selection` drops that split into
+    /// read-only scrollback and starts a real text-selection drag anchored
+    /// at this origin. Cleared on mouse-up.
+    pub terminal_drag_pending: Option<(LeafId, BufferId, u16, u16)>,
 }

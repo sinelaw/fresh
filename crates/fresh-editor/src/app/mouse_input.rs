@@ -1357,11 +1357,17 @@ impl Editor {
             &split_areas
         {
             if in_rect(col, row, *content_rect) {
-                // Double-clicked on an editor split
-                if self.active_window().is_terminal_buffer(*buffer_id) {
+                // Double-clicked on an editor split. A LIVE terminal grid has
+                // no selection model — keep the terminal key context and do
+                // nothing. A terminal in read-only scrollback is an ordinary
+                // buffer view: fall through so double-click selects the word.
+                if self.active_window().is_terminal_buffer(*buffer_id)
+                    && !self
+                        .active_window()
+                        .split_terminal_scrollback(*split_id, *buffer_id)
+                {
                     self.active_window_mut().key_context =
                         crate::input::keybindings::KeyContext::Terminal;
-                    // Don't select word in terminal buffers
                     return Ok(());
                 }
 
@@ -1523,7 +1529,13 @@ impl Editor {
             &split_areas
         {
             if in_rect(col, row, *content_rect) {
-                if self.active_window().is_terminal_buffer(*buffer_id) {
+                // Live grid: no selection model (see double-click above);
+                // scrollback view: ordinary buffer, select the line.
+                if self.active_window().is_terminal_buffer(*buffer_id)
+                    && !self
+                        .active_window()
+                        .split_terminal_scrollback(*split_id, *buffer_id)
+                {
                     return Ok(());
                 }
 
@@ -3003,6 +3015,17 @@ impl Editor {
             return Ok(());
         }
 
+        // A drag whose press landed on a live terminal grid: this is
+        // selection intent (a bare click only focuses — see
+        // `handle_editor_click`). Drop the split into read-only scrollback
+        // and start a normal text-selection drag anchored at the press.
+        if let Some((split_id, buffer_id, ocol, orow)) =
+            self.active_window().mouse_state.terminal_drag_pending
+        {
+            self.begin_terminal_grid_selection(split_id, buffer_id, ocol, orow, col, row)?;
+            return Ok(());
+        }
+
         // If dragging to select text
         if self.active_window_mut().mouse_state.dragging_text_selection {
             self.handle_text_selection_drag(col, row)?;
@@ -4394,6 +4417,7 @@ impl Editor {
         ms.drag_selection_anchor = None;
         ms.drag_selection_by_words = false;
         ms.drag_selection_word_end = None;
+        ms.terminal_drag_pending = None;
         ms.dragging_popup_scrollbar = None;
         ms.drag_start_popup_scroll = None;
         ms.dragging_prompt_scrollbar = false;

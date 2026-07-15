@@ -625,6 +625,28 @@
     background:var(--accent);animation:rc-ping 1.25s cubic-bezier(0,0,.2,1) infinite}
   @keyframes rc-ping{0%{transform:scale(1);opacity:.65}80%,100%{transform:scale(2.6);opacity:0}}
 
+  /* ---- native text selection (hold Alt) ----
+     While Alt is held the browser owns the mouse (see the natsel capture
+     guards): user-select comes back on so drag/double-click build a REAL
+     browser selection over any text — buffer SVG, live terminals, file
+     explorer, every chrome panel. Line-number gutters stay unselectable so
+     a drag across a pane copies code, not line numbers (the bridge emits
+     the gutter as its own block precisely for this). */
+  body.natsel, body.natsel *{user-select:text !important;-webkit-user-select:text !important}
+  body.natsel .region{cursor:text}
+  body.natsel .pane-gutter, body.natsel .pane-gutter *{user-select:none !important;-webkit-user-select:none !important}
+  /* Theme-tinted highlight; ::selection has no effect while user-select is
+     none, and the highlight survives releasing Alt until the next click. */
+  ::selection{background:color-mix(in srgb, var(--accent) 45%, transparent)}
+  #natsel{position:fixed;left:12px;bottom:10px;z-index:98;display:none;
+    align-items:center;gap:8px;padding:5px 12px 5px 11px;border-radius:999px;
+    font-weight:600;color:var(--fg);
+    background:var(--surface);border:1px solid var(--hairline-strong);
+    box-shadow:var(--shadow)}
+  #natsel.show{display:inline-flex}
+  #natsel .rc-label{color:var(--fg);letter-spacing:.01em}
+  #natsel .rc-dot{width:9px;height:9px;flex:0 0 auto;border-radius:50%;background:var(--accent)}
+
   /* Breathing room: a touch more horizontal padding and even gaps in the
      natively-flowed lists (kept near one cell tall so the editor's row window
      still lines up). */
@@ -1010,6 +1032,7 @@
 <div id="mobile"></div>
 <div id="err"></div>
 <div id="reconnect" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Reconnecting…</span></div>
+<div id="natsel" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Select text — drag, then Ctrl+C</span></div>
 
 <script>
 "use strict";
@@ -2964,6 +2987,19 @@ document.addEventListener("keydown",e=>{
     // paste (double paste). This mirrors the terminal frontend, where paste
     // arrives as a bracketed-paste event, never as a Ctrl+V keystroke.
     if(single&&(e.ctrlKey||e.metaKey)&&!e.altKey&&e.key.toLowerCase()==="v") return;
+    // Ctrl/Cmd+C with a live NATIVE selection (Alt+drag, see natsel below):
+    // copy that selection instead of forwarding the key — the editor knows
+    // nothing about it (it may cover a terminal or chrome). Row-aware SVG
+    // extraction keeps multi-line copies multi-line. Alt is deliberately
+    // NOT excluded: the natural gesture is Ctrl+C while Alt is still held
+    // from the selection drag. With no native selection the key forwards
+    // as before (editor-internal copy + the scene clipboard sync).
+    if(single&&(e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="c"){
+      const t=natselText();
+      if(t){ e.preventDefault();
+        if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).catch(()=>{});
+        return; }
+    }
     e.preventDefault();
     const d={key:e.key,ctrl:e.ctrlKey,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey};
     // On mobile, fold in any armed sticky modifiers so e.g. tap-Ctrl then a
@@ -2981,6 +3017,91 @@ document.addEventListener("paste",e=>{
   const text=e.clipboardData&&e.clipboardData.getData("text/plain");
   if(text) sendPaste(text);
 });
+// ---- native browser text selection (hold Alt) ------------------------------
+// Every mouse event is normally preventDefault-ed and forwarded to the editor,
+// and the stylesheet sets user-select:none — the browser can never build a
+// selection of its own, so contexts the editor has no selection model for
+// (live terminals, the file explorer, popups, any chrome) had NO way to copy
+// text. Holding Alt flips ownership: capture-phase guards stop the forwarding
+// handlers (element- and document-level, without preventDefault), body.natsel
+// re-enables user-select, and the browser's own drag / double-click selection
+// works over ANY text on the page — including the SVG cell grid, i.e. buffer
+// interiors and live terminals. Ctrl+C (or right-click → Copy: the context
+// menu stays native while Alt is held) copies it; natselText() rebuilds SVG
+// selections row-aware so multi-line copies keep their newlines (grid rows
+// are separate <text> elements, which Selection.toString() concatenates).
+// Alt is free to own: the editor's menu accelerators are Alt+<letter> chords
+// (still forwarded), never bare Alt, and its mouse paths only read
+// Shift/Ctrl. The gutter stays user-select:none (see the CSS) so cross-pane
+// drags copy code, not line numbers.
+let natsel=false, natselLeftDown=false;
+function setNatsel(on){
+  if(natsel===on) return;
+  natsel=on;
+  document.body.classList.toggle("natsel",on);
+  document.getElementById("natsel").classList.toggle("show",on);
+}
+document.addEventListener("keydown",e=>{ if(e.key==="Alt"&&!e.repeat) setNatsel(true); },true);
+document.addEventListener("keyup",e=>{ if(e.key!=="Alt") return;
+  e.preventDefault();                    // keep the browser's own Alt menu-focus away
+  if(!natselLeftDown) setNatsel(false);  // mid-drag: hold the mode until mouseup
+},true);
+window.addEventListener("blur",()=>{ natselLeftDown=false; setNatsel(false); });
+// Capture-phase guards: while active, stopPropagation keeps every forwarding
+// handler blind to the mouse and the missing preventDefault lets the browser
+// select. A selection left behind after Alt is released is cleared by the
+// next ordinary mousedown, so stale highlights never sit under
+// editor-forwarded clicks.
+document.addEventListener("mousedown",e=>{
+  if(e.altKey) setNatsel(true);          // window focused with Alt already held
+  if(!natsel){
+    const g=window.getSelection&&window.getSelection();
+    if(g&&!g.isCollapsed) g.removeAllRanges();
+    return;
+  }
+  if(e.button===0) natselLeftDown=true;
+  e.stopPropagation();
+},true);
+document.addEventListener("mousemove",e=>{ if(natsel) e.stopPropagation(); },true);
+document.addEventListener("mouseup",e=>{ if(!natsel) return; e.stopPropagation();
+  if(e.button===0){ natselLeftDown=false; if(!e.altKey) setNatsel(false); }
+},true);
+document.addEventListener("click",e=>{ if(natsel) e.stopPropagation(); },true);
+document.addEventListener("dblclick",e=>{ if(natsel) e.stopPropagation(); },true);
+// Text of the current native selection. Selections inside an SVG cell grid
+// are rebuilt per row — each grid row is its own <text> element, so plain
+// Selection.toString() would run rows together — with the grid's cell padding
+// trimmed from row ends. Non-SVG (chrome) selections pass through as-is.
+function natselText(){
+  const sel=window.getSelection&&window.getSelection();
+  if(!sel||sel.isCollapsed||!sel.rangeCount) return "";
+  const rg=sel.getRangeAt(0);
+  const anc=rg.commonAncestorContainer;
+  const el=anc.nodeType===1?anc:anc.parentElement;
+  const svg=el&&el.closest&&el.closest("svg.cells");
+  if(!svg) return sel.toString();
+  const partOf=tn=>{
+    if(!rg.intersectsNode(tn)) return "";
+    const a=tn===rg.startContainer?rg.startOffset:0;
+    const b=tn===rg.endContainer?rg.endOffset:tn.length;
+    return tn.data.slice(a,b);
+  };
+  const lines=[];
+  for(const rowEl of svg.querySelectorAll("text")){
+    if(!rg.intersectsNode(rowEl)) continue;
+    let s="";
+    for(const tn of rowEl.querySelectorAll("tspan")) for(const n of tn.childNodes) if(n.nodeType===3) s+=partOf(n);
+    lines.push(s.replace(/\s+$/,""));
+  }
+  return lines.join("\n");
+}
+// Copy event (browser Edit menu, right-click → Copy while Alt is held):
+// same row-aware extraction, delivered through the event's clipboardData.
+document.addEventListener("copy",e=>{
+  const t=natselText();
+  if(t&&e.clipboardData){ e.preventDefault(); e.clipboardData.setData("text/plain",t); }
+});
+
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
 const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");

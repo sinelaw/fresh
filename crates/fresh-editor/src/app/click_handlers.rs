@@ -276,6 +276,24 @@ impl Editor {
             return self.handle_composite_click(col, row, split_id, buffer_id, content_rect);
         }
 
+        // Live terminal grid: the grid overlay covers a stale buffer view, so
+        // positioning a cursor at the click would land in invisible text — and
+        // a bare click must keep the terminal live (click-to-focus-and-type).
+        // Record the click as a potential selection origin instead: if a drag
+        // follows, `begin_terminal_grid_selection` drops this split into
+        // read-only scrollback (whose view is pixel-identical to the grid,
+        // see `sync_terminal_to_buffer`) and starts a real text selection
+        // anchored here.
+        if self.active_window().is_terminal_buffer(buffer_id)
+            && !self
+                .active_window()
+                .split_terminal_scrollback(split_id, buffer_id)
+        {
+            self.active_window_mut().mouse_state.terminal_drag_pending =
+                Some((split_id, buffer_id, col, row));
+            return Ok(());
+        }
+
         // Ensure key context is Normal for non-terminal buffers
         // This handles the edge case where split/buffer don't change but we clicked from FileExplorer
         if !self.active_window().is_terminal_buffer(buffer_id) {

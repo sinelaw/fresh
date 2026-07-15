@@ -697,6 +697,13 @@ impl TerminalState {
         )
     }
 
+    /// Check if the terminal wants ALL motion reported (DECSET 1003).
+    /// Click-only (1000) and button-drag (1002) modes must not receive
+    /// buttonless motion events.
+    pub fn wants_mouse_motion(&self) -> bool {
+        self.term.mode().contains(TermMode::MOUSE_MOTION)
+    }
+
     /// Check if SGR mouse encoding is enabled (modern mouse protocol).
     pub fn uses_sgr_mouse(&self) -> bool {
         self.term.mode().contains(TermMode::SGR_MOUSE)

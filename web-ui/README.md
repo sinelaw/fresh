@@ -38,6 +38,18 @@ the core; each frontend only renders it.
   clipboard works both ways: DOM `paste` → a `paste` message → the editor's
   bracketed-paste path, and editor copies surface in the scene
   (`clipboard: {seq, text}`) for `navigator.clipboard`.
+- **Text is selectable everywhere.** Buffer selection is the editor's own
+  (drag → real selection). Live terminals select through the core too: a
+  drag on the grid drops the split into read-only scrollback (the
+  Ctrl+Space view, pixel-identical) and starts a real editor selection —
+  Ctrl+C copies it, Ctrl+Space resumes the shell; a bare click still just
+  focuses. Programs that enabled mouse reporting (DECSET 1000/1002/1003)
+  keep receiving the mouse; Shift+drag bypasses them to select anyway.
+  And **holding Alt** suspends all forwarding and lets the *browser* own
+  the mouse: drag/double-click build a native selection over any text on
+  the page — terminals, file explorer, menus, dialogs — with Ctrl+C
+  copying it (SVG grid selections are rebuilt row-aware so multi-line
+  copies keep their newlines).
 
 ## Architecture (taps the real render pipeline)
 
@@ -113,8 +125,12 @@ WebSocket input path), and that the push transport behaves: server-pushed
 frames without page input, region diffs on typing, idle silence, and the
 single-client 409 — plus per-region DOM patching (a typing frame rebuilds
 only its pane), measured metrics + app zoom (Ctrl+= / Ctrl+0, hit-testing
-while zoomed), and touch pan/tap in a `hasTouch` mobile context.
-**127 assertions** across the chrome surfaces, plus screenshots.
+while zoomed), touch pan/tap in a `hasTouch` mobile context, and the
+selection model: a drag on a live terminal grid becomes a real editor
+selection in read-only scrollback (Ctrl+C copies it through the editor
+clipboard, Ctrl+Space resumes, a bare click only focuses), and Alt-hold
+native browser selection over the SVG grid.
+**138 assertions** across the chrome surfaces, plus screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,

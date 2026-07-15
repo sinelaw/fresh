@@ -31,13 +31,71 @@ impl Window {
         // Find terminal buffer at this position.
         let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
 
-        // Only forward if terminal is in alternate screen mode.
-        if !self.is_terminal_in_alternate_screen(buffer_id) {
+        // Button/motion events are forwarded only when the inner program
+        // actually subscribed to the mouse (DECSET 1000/1002/1003) — writing
+        // mouse escape sequences into a program that never enabled reporting
+        // just injects garbage into its stdin. Shift is the universal escape
+        // hatch (xterm convention): a shifted press/drag is never forwarded,
+        // so text can always be drag-selected even under a mouse-hungry
+        // program. Wheel events additionally keep the alternate-screen rule:
+        // alternate-scroll mode (arrow-key synthesis for pagers like `less`)
+        // lives in `forward_mouse_to_terminal` and must keep seeing them.
+        let wants_mouse = self.terminal_wants_mouse(buffer_id);
+        let is_scroll = matches!(
+            mouse_event.kind,
+            MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight
+        );
+        let shift = mouse_event
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::SHIFT);
+        let forward = if is_scroll {
+            wants_mouse || self.is_terminal_in_alternate_screen(buffer_id)
+        } else if matches!(mouse_event.kind, MouseEventKind::Moved) {
+            // Buttonless motion belongs only to all-motion tracking (1003);
+            // spamming it at click-only/button-drag programs is out of spec
+            // (and its echo can churn the PTY).
+            self.terminal_wants_mouse_motion(buffer_id)
+        } else {
+            wants_mouse && !shift
+        };
+        if !forward {
             return None;
         }
 
         // Forward the event.
         Some(self.forward_mouse_to_terminal(col, row, content_rect, mouse_event))
+    }
+
+    /// Whether the inner program of `buffer_id`'s terminal enabled any
+    /// mouse-reporting mode (DECSET 1000/1002/1003). The mouse belongs to
+    /// the program only when it asked for it; otherwise presses stay with
+    /// the editor (focus + drag-to-select).
+    pub fn terminal_wants_mouse(&self, buffer_id: BufferId) -> bool {
+        if let Some(terminal_id) = self.get_terminal_id(buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    return state.wants_mouse_events();
+                }
+            }
+        }
+        false
+    }
+
+    /// Whether the inner program enabled ALL-motion mouse tracking
+    /// (DECSET 1003) — the only mode that legitimately receives
+    /// buttonless motion reports.
+    pub fn terminal_wants_mouse_motion(&self, buffer_id: BufferId) -> bool {
+        if let Some(terminal_id) = self.get_terminal_id(buffer_id) {
+            if let Some(handle) = self.terminal_manager.get(terminal_id) {
+                if let Ok(state) = handle.state.lock() {
+                    return state.wants_mouse_motion();
+                }
+            }
+        }
+        false
     }
 
     /// Detect a clickable file-path link in the live terminal grid at the given
@@ -236,5 +294,102 @@ fn convert_button(btn: MouseButton) -> TerminalMouseButton {
         MouseButton::Left => TerminalMouseButton::Left,
         MouseButton::Right => TerminalMouseButton::Right,
         MouseButton::Middle => TerminalMouseButton::Middle,
+    }
+}
+
+impl super::Editor {
+    /// Begin a text-selection drag on a terminal split that was showing the
+    /// live PTY grid when the mouse went down (see
+    /// `MouseState::terminal_drag_pending` — a bare click only focuses).
+    ///
+    /// Live terminals have no cursor/selection model of their own, so the
+    /// split is dropped into read-only scrollback first — exactly the
+    /// Ctrl+Space / scroll-up transition. `sync_terminal_to_buffer` pins the
+    /// scrollback viewport to the first byte of the just-appended visible
+    /// screen, making the scrollback view pixel-identical to the grid the
+    /// user aimed at: grid row r is buffer line `top_line + r` and grid
+    /// columns map 1:1 (wrap off, no gutter). That lets both the press
+    /// origin and the current drag position resolve to exact byte positions
+    /// without waiting for a re-render; the standard text-selection drag
+    /// machinery then takes over (Ctrl+C copies through the editor
+    /// clipboard as usual; Ctrl+Space resumes the live terminal).
+    pub(super) fn begin_terminal_grid_selection(
+        &mut self,
+        split_id: crate::model::event::LeafId,
+        buffer_id: BufferId,
+        origin_col: u16,
+        origin_row: u16,
+        col: u16,
+        row: u16,
+    ) -> AnyhowResult<()> {
+        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+
+        // The terminal may have changed under us (mode flip, split closed).
+        if !self.active_window().is_terminal_buffer(buffer_id)
+            || self
+                .active_window()
+                .split_terminal_scrollback(split_id, buffer_id)
+        {
+            return Ok(());
+        }
+        let Some(content_rect) = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(sid, bid, _, _, _, _)| *sid == split_id && *bid == buffer_id)
+            .map(|(_, _, rect, _, _, _)| *rect)
+        else {
+            return Ok(());
+        };
+
+        // Drop into read-only scrollback. The press already focused the
+        // split, so the sync pins THIS split's viewport to the grid's row 0.
+        self.active_window_mut()
+            .set_split_terminal_scrollback(split_id, buffer_id, true);
+        self.active_window_mut().sync_terminal_mode_flags();
+        self.set_status_message(
+            "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+        );
+
+        // Resolve both grid positions to byte positions. Columns are taken
+        // as byte offsets into the line (terminal rows are overwhelmingly
+        // single-width; `snap_to_char_boundary` keeps multi-byte glyphs
+        // safe), and subsequent drag motion refines through the standard
+        // width-aware `handle_text_selection_drag` path anyway.
+        let Some((anchor, head)) = self.windows.get(&self.active_window).and_then(|win| {
+            let (_, view_states) = win.buffers.splits()?;
+            let vs = view_states.get(&split_id)?;
+            let state = win.buffers.get(&buffer_id)?;
+            let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte);
+            let to_byte = |c: u16, r: u16| {
+                let grid_row = r.saturating_sub(content_rect.y) as usize;
+                let grid_col = c.saturating_sub(content_rect.x) as usize;
+                let pos = state
+                    .buffer
+                    .line_col_to_position(top_line + grid_row, grid_col);
+                state.buffer.snap_to_char_boundary(pos)
+            };
+            Some((to_byte(origin_col, origin_row), to_byte(col, row)))
+        }) else {
+            return Ok(());
+        };
+
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.splits_mut())
+            .and_then(|(_, vs)| vs.get_mut(&split_id))
+        {
+            let cursor = view_state.cursors.primary_mut();
+            cursor.position = head;
+            cursor.anchor = Some(anchor);
+        }
+
+        // Hand off to the standard drag machinery for subsequent motion.
+        let ms = &mut self.active_window_mut().mouse_state;
+        ms.dragging_text_selection = true;
+        ms.drag_selection_split = Some(split_id);
+        ms.drag_selection_anchor = Some(anchor);
+        Ok(())
     }
 }

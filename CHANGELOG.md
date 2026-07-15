@@ -14,6 +14,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **More languages highlighted** - new grammars for gettext PO, m4, Xcode pbxproj, Metal, CUDA, HIP, Fortran, LLVM IR, and MLIR (#2593), plus fixed GLSL/HLSL/WGSL highlighting (#2553); both by @asukaminato0721.
 * **`NextPane` / `PrevPane`** - cycle through every split+tab pane as one flat list, distinct from `NextSplit`/`PrevSplit` and `NextWindow`/`PrevWindow`; landing on a terminal now also switches it into terminal mode (#2562, by @masmu).
 * **Orchestrator dock** - the session list is now a customizable folder tree (create/rename/delete folders, "Move to Folder…"); the toolbar is condensed to a "New Task…" dropdown and a "Search Tasks" field, with other filters tucked into a collapsible section.
+* **Terminal text selection with the mouse** - dragging on a live integrated terminal now selects text: the split drops into read-only scrollback (pixel-identical view; `Ctrl+Space` resumes) with a real selection that `Ctrl+C` copies, and double-click selects words in scrollback; a bare click still just focuses the terminal. Mouse events are forwarded to the program inside the terminal only when it actually enabled mouse reporting (DECSET 1000/1002/1003) instead of whenever it was on the alternate screen, and `Shift`+drag bypasses a mouse-hungry program to select anyway (xterm convention). New output no longer yanks the view away while a selection is active.
+* **Web UI: text is selectable everywhere** - holding `Alt` lets the browser own the mouse for native text selection over any surface — buffer, live terminals (without pausing them), file explorer, menus, dialogs — with `Ctrl+C` copying it; multi-line selections over the cell grid keep their newlines.
 
 ### Bug Fixes
 

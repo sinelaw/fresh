@@ -705,6 +705,89 @@ check('submenu panel left edge >= parent panel right edge (no overlap)',
 await page.screenshot({ path: `${SHOTS}/35-submenu-edge.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
+console.log('\n[terminal text selection: drag → scrollback selection → editor copy]');
+// Open a real PTY terminal, echo a marker, and drag across the echoed row.
+// A drag on the LIVE grid must drop the split into read-only scrollback
+// (pixel-identical view) and build a real editor selection there; Ctrl+C
+// then copies through the editor clipboard (scene.clipboard sync). A bare
+// click must NOT leave live mode (click-to-focus-and-type).
+await page.request.post(URL + '/action', { data: { action: 'open_terminal' } });
+await page.waitForFunction(() => window.fresh.scene.regions.statusbar.segments.some(s => /Terminal \d+ opened/.test(s.text || s.label || '')), null, { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(800);
+await page.keyboard.type('echo web-sel-MARKER-42');
+await page.keyboard.press('Enter');
+await page.waitForFunction(() => window.fresh.scene.regions.panes.some(p =>
+  p.cells.some(r => r.map(x => x.t).join('').startsWith('web-sel-MARKER-42'))), null, { timeout: 15000 }).catch(() => {});
+const tmet = await page.evaluate(() => window.fresh.metrics);
+const ts = await scene(page);
+const tpi = ts.regions.panes.findIndex(p => p.cells.some(r => r.map(x => x.t).join('').startsWith('web-sel-MARKER-42')));
+const tp = ts.regions.panes[tpi];
+check('terminal echoed the marker into the live grid', !!tp);
+const mrow = tp ? tp.cells.findIndex(r => r.map(x => x.t).join('').startsWith('web-sel-MARKER-42')) : -1;
+if (tp) {
+  const my = (tp.content.y + mrow + 0.5) * tmet.ch;
+  await page.mouse.move((tp.content.x + 0.2) * tmet.cw, my);
+  await page.mouse.down();
+  for (let i = 1; i <= 6; i++) await page.mouse.move((tp.content.x + 0.2 + i * 3) * tmet.cw, my);
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+}
+const tStatus = s => s.regions.statusbar.segments.map(x => x.text || x.label || '').join(' | ');
+let sd = await scene(page);
+check('drag on the live grid drops the split into read-only scrollback', /read only/.test(tStatus(sd)), tStatus(sd));
+const selRun = tp ? (sd.regions.panes[tpi].cells[mrow] || []).filter(c => c.bg).map(c => c.t).join('') : '';
+check('drag built a real editor selection over the terminal text', selRun.includes('web-sel-MARKER'), JSON.stringify(selRun));
+await page.screenshot({ path: `${SHOTS}/36-terminal-drag-select.png` });
+await page.keyboard.press('Control+c');
+await page.waitForFunction(() => window.fresh.scene.clipboard && /web-sel-MARKER/.test(window.fresh.scene.clipboard.text || ''), null, { timeout: 5000 }).catch(() => {});
+sd = await scene(page);
+check('Ctrl+C copies the terminal selection through the editor clipboard',
+  !!sd.clipboard && (sd.clipboard.text || '').startsWith('web-sel-MARKER-42'), JSON.stringify(sd.clipboard));
+await page.keyboard.press('Control+ ');   // resume the live terminal
+await page.waitForTimeout(400);
+sd = await scene(page);
+check('Ctrl+Space resumes the live terminal after a selection', /Terminal mode enabled/.test(tStatus(sd)), tStatus(sd));
+if (tp) {  // a bare click must keep the terminal live
+  await page.mouse.click((tp.content.x + 4) * tmet.cw, (tp.content.y + 1) * tmet.ch);
+  await page.waitForTimeout(300);
+}
+sd = await scene(page);
+check('a bare click keeps the terminal live (click-to-focus)', !/read only/.test(tStatus(sd)), tStatus(sd));
+
+console.log('\n[Alt-hold native browser selection (works on any surface)]');
+// Holding Alt suspends input forwarding (capture-phase guards) and re-enables
+// user-select, so the BROWSER builds a real selection over any text — the
+// SVG cell grid included. Ctrl+C copies it row-aware (newlines preserved).
+await page.keyboard.down('Alt');
+await page.waitForTimeout(120);
+check('holding Alt engages native-selection mode (body.natsel + pill)',
+  await page.evaluate(() => document.body.classList.contains('natsel') && document.getElementById('natsel').classList.contains('show')));
+const ap = (await scene(page)).regions.panes[0];
+const ay = (ap.content.y + (mrow >= 0 ? mrow : 1) + 0.5) * tmet.ch;
+await page.mouse.move((ap.content.x + 0.2) * tmet.cw, ay);
+await page.mouse.down();
+for (let i = 1; i <= 5; i++) await page.mouse.move((ap.content.x + 0.2 + i * 4) * tmet.cw, ay);
+await page.mouse.up();
+await page.waitForTimeout(250);
+const natText = await page.evaluate(() => window.getSelection().toString());
+check('Alt+drag builds a native browser selection over the SVG grid', natText.trim().length >= 3, JSON.stringify(natText).slice(0, 60));
+sd = await scene(page);
+check('the terminal stayed LIVE under an Alt+drag (no forwarding, no scrollback)', !/read only/.test(tStatus(sd)), tStatus(sd));
+await page.keyboard.up('Alt');
+await page.waitForTimeout(150);
+check('releasing Alt disengages native-selection mode', await page.evaluate(() => !document.body.classList.contains('natsel')));
+await page.mouse.click((ap.content.x + 2) * tmet.cw, (ap.content.y + 1) * tmet.ch);
+await page.waitForTimeout(250);
+check('an ordinary click clears the leftover native selection', (await page.evaluate(() => window.getSelection().toString())) === '');
+await page.screenshot({ path: `${SHOTS}/37-alt-native-selection.png` });
+// Restore: exit the shell and close the terminal tab so the sections below
+// (touch page) see the original file buffer in pane 0.
+await page.keyboard.type('exit');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(600);
+await page.request.post(URL + '/action', { data: { action: 'close_tab' } });
+await page.waitForTimeout(600);
+
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
