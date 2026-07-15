@@ -648,6 +648,11 @@ await page.waitForTimeout(200);
 check('New Workspace dialog is a floatingModal', ((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
 check('exactly one modal-scrim behind the floatingModal', (await page.locator('.modal-scrim').count()) === 1);
 const dockSel = async () => { const d = ((await scene(page)).regions.widgets || []).find(w => w.kind === 'dock'); return d && d.instances && d.instances.sessions ? d.instances.sessions.selectedIndex : null; };
+// A freshly (re)opened dock reports selectedIndex -1 until an async probe
+// repaint pins it to the highlighted session (refreshOpenDialog re-pins on
+// every repaint) — wait for the pin so the scrim check below isn't racing it.
+await page.waitForFunction(() => { const d = (window.fresh.scene.regions.widgets || []).find(w => w.kind === 'dock');
+  return d && d.instances && d.instances.sessions && d.instances.sessions.selectedIndex >= 0; }, { timeout: 8000 }).catch(() => {});
 const sel0 = await dockSel();
 const cardBox = await page.locator('.widget-surface.w-dock .w-tree-row').first().boundingBox();
 if (cardBox) await page.mouse.click(cardBox.x + cardBox.width / 2, cardBox.y + cardBox.height / 2);

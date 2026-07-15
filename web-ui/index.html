@@ -1818,7 +1818,14 @@ function routeWidget(ctx, node, listIndex, ev){
   }
   if(node.key){
     const hit=(ctx.hits||[]).find(h=>h.widgetKey===node.key);
-    if(hit) sendWidget({...base,widgetKey:node.key,eventType:hit.eventType,payload:hit.payload,hitIndex:hit.index});
+    if(hit){ sendWidget({...base,widgetKey:node.key,eventType:hit.eventType,payload:hit.payload,hitIndex:hit.index}); return; }
+    // No recorded hit: the TUI clipped this control below the panel's inner
+    // rect, but the DOM grew the panel to fit and rendered it anyway. Send
+    // the identity with the kind's own event — the bridge synthesizes the
+    // hit from the panel's spec (state like `checked`/`disabled` is read
+    // from the spec server-side, not trusted from here).
+    const ev=node.kind==="button"?"activate":node.kind==="toggle"?"toggle":node.kind==="text"?"focus":null;
+    if(ev) sendWidget({...base,widgetKey:node.key,eventType:ev,payload:{}});
   }
 }
 
