@@ -930,10 +930,7 @@ impl Editor {
                 .collect();
             out.push(WidgetSurfaceView {
                 kind,
-                anchored: matches!(
-                    fwp.placement,
-                    crate::app::PanelPlacement::Anchored { .. }
-                ),
+                anchored: matches!(fwp.placement, crate::app::PanelPlacement::Anchored { .. }),
                 plugin: fwp.panel_key.plugin.clone(),
                 panel_id: fwp.panel_key.id,
                 rect: RectView::from(rect),
