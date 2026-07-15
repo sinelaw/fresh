@@ -1007,11 +1007,9 @@ pub struct Editor {
     // grouped_subtrees moved onto `Window` — each window owns its
     // own buffer-group subtrees (a window with a Live Grep panel
     // open doesn't share the panel state with sibling windows).
-    /// Cancellation senders for background processes spawned via
-    /// `spawnBackgroundProcess`, keyed by process id. Firing (or dropping)
-    /// the sender makes the spawn task kill and reap the child and then
-    /// send `ProcessExit`. Entries are removed on that `ProcessExit`.
-    background_process_handles: HashMap<u64, tokio::sync::oneshot::Sender<()>>,
+    /// Control handles for long-running plugin processes, keyed by process id.
+    /// The spawn task kills and reaps the child when its kill sender fires.
+    background_process_handles: HashMap<u64, BackgroundProcessHandle>,
 
     /// Cancellation senders for host-side processes spawned via
     /// `spawnHostProcess`. Firing the sender (or dropping it) triggers
@@ -1560,6 +1558,12 @@ pub struct Editor {
     pub(crate) prose_reveal: std::cell::RefCell<
         HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::anchor::Anchor>>,
     >,
+}
+
+/// Control plane for a long-running plugin child process.
+struct BackgroundProcessHandle {
+    kill: tokio::sync::oneshot::Sender<()>,
+    stdin: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the

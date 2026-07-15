@@ -664,6 +664,8 @@ interface ProcessHandle<T> extends PromiseLike<T> {
   readonly result: Promise<T>;
   /** Id of the spawned process (the `process_id` in onProcessStdout/onProcessStderr payloads) */
   readonly processId: number;
+  /** Write UTF-8 data to a long-running background process. */
+  write?(data: string): boolean;
   /** Cancel/kill the operation. Returns true if cancelled, false if already completed */
   kill(): Promise<boolean>;
 }
