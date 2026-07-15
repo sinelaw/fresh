@@ -818,12 +818,22 @@ impl Editor {
             return;
         }
 
-        // Reject any platform path separator — `/` on all OSes plus `\` on
-        // Windows. `is_separator` is const-folded per platform so this keeps
-        // the same behavior on Linux (reject `/`) while also rejecting `\`
-        // when running on Windows.
-        if new_name.chars().any(std::path::is_separator) {
+        let requested_path = Path::new(&new_name);
+
+        // Existing items are renamed in place, so their names must remain a
+        // single path component. Newly-created items may include separators:
+        // their missing parent directories are created below before the
+        // temporary item is moved into place.
+        if !is_new_file && new_name.chars().any(std::path::is_separator) {
             self.set_status_message(t!("explorer.rename_invalid_separator").to_string());
+            return;
+        }
+        // Joining an absolute/rooted path would discard the directory in
+        // which creation started. Prefix components cover Windows drive and
+        // UNC paths; RootDir covers `/foo` and `\foo`. Tilde and environment
+        // variable syntax remain ordinary, literal relative components.
+        if is_new_file && !is_relative_creation_path(requested_path) {
+            self.set_status_message(t!("explorer.new_item_path_must_be_relative").to_string());
             return;
         }
         if new_name == "." || new_name == ".." {
@@ -837,10 +847,18 @@ impl Editor {
             .unwrap_or_else(|| original_path.clone());
 
         if self.tokio_runtime.is_some() {
-            let result = self
-                .authority()
-                .filesystem
-                .rename(&original_path, &new_path);
+            let fs = &self.authority().filesystem;
+            let result = if is_new_file {
+                // `create_dir_all` is also safe when the parent already
+                // exists. Keep both operations on the active filesystem so
+                // local, virtual, and remote workspaces behave alike.
+                new_path
+                    .parent()
+                    .map_or(Ok(()), |parent| fs.create_dir_all(parent))
+                    .and_then(|()| fs.rename(&original_path, &new_path))
+            } else {
+                fs.rename(&original_path, &new_path)
+            };
 
             match result {
                 Ok(_) => {
@@ -2105,4 +2123,44 @@ fn split_stem_ext(name: &str) -> (&str, &str) {
         }
     }
     (name, "")
+}
+
+/// Whether a user-entered creation path stays relative to the selected
+/// directory. `Path::is_absolute` is insufficient on Windows because a drive
+/// prefix can replace the base path without being absolute (for example
+/// `C:foo`), so reject both root and prefix components explicitly.
+fn is_relative_creation_path(path: &Path) -> bool {
+    !matches!(
+        path.components().next(),
+        Some(std::path::Component::RootDir | std::path::Component::Prefix(_))
+    )
+}
+
+#[cfg(test)]
+mod creation_path_tests {
+    use super::is_relative_creation_path;
+    use std::path::Path;
+
+    #[test]
+    fn nested_and_parent_relative_creation_paths_are_allowed() {
+        assert!(is_relative_creation_path(Path::new(
+            "src/components/app.rs"
+        )));
+        assert!(is_relative_creation_path(Path::new("../shared/app.rs")));
+        assert!(is_relative_creation_path(Path::new("./app.rs")));
+        assert!(is_relative_creation_path(Path::new("~/app.rs")));
+        assert!(is_relative_creation_path(Path::new("$HOME/app.rs")));
+    }
+
+    #[test]
+    fn rooted_creation_paths_are_rejected() {
+        assert!(!is_relative_creation_path(Path::new("/tmp/app.rs")));
+
+        #[cfg(windows)]
+        {
+            assert!(!is_relative_creation_path(Path::new(r"C:\tmp\app.rs")));
+            assert!(!is_relative_creation_path(Path::new(r"C:app.rs")));
+            assert!(!is_relative_creation_path(Path::new(r"\tmp\app.rs")));
+        }
+    }
 }

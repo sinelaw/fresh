@@ -972,6 +972,7 @@
   "explorer.refreshed_default": "更新しました",
   "explorer.refreshing": "%{name} を更新中...",
   "explorer.rename_cancelled": "名前変更をキャンセル",
+  "explorer.new_item_path_must_be_relative": "新しい項目のパスは相対パスである必要があります",
   "explorer.rename_invalid_dot": "名前に '.' や '..' は使えません",
   "explorer.rename_invalid_separator": "名前にパス区切り文字は使えません",
   "explorer.rename_prompt": "名前を変更: ",

@@ -2284,6 +2284,56 @@ fn test_file_explorer_new_file_opens_rename_prompt_and_buffer() {
     );
 }
 
+/// A slash in a newly-created file name is a relative path: Fresh creates
+/// any missing parent directories, moves the temporary file into place, and
+/// keeps the resulting file open in the editor.
+#[test]
+fn test_file_explorer_new_file_creates_missing_parent_directories() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    harness.type_text("src/components/app.rs").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.sleep(std::time::Duration::from_millis(100));
+    harness.render().unwrap();
+
+    let created_path = project_root.join("src/components/app.rs");
+    assert!(created_path.is_file(), "nested file should be created");
+    assert!(
+        project_root.join("src/components").is_dir(),
+        "missing parent directories should be created"
+    );
+    assert_eq!(
+        harness.editor().get_key_context(),
+        fresh::input::keybindings::KeyContext::Normal,
+        "focus should move to the newly-created file"
+    );
+    assert_eq!(
+        harness.editor().active_state().buffer.file_path(),
+        Some(created_path.as_path()),
+        "the buffer path should follow the file into the nested directory"
+    );
+
+    let untitled_files: Vec<_> = std::fs::read_dir(&project_root)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("untitled_"))
+        .collect();
+    assert!(
+        untitled_files.is_empty(),
+        "the temporary file should be moved, not copied"
+    );
+}
+
 /// Test that renaming an existing file from file explorer updates buffer metadata
 /// but keeps focus in file explorer (not switching to editor)
 #[test]
