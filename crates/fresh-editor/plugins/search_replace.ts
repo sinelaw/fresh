@@ -69,6 +69,10 @@ interface PanelState {
   fileGroups: FileGroup[];
   searchPattern: string;
   replaceText: string;
+  // Optional comma-separated file globs. Basename patterns such as `*.ts`
+  // match at any depth; path patterns such as `src/**` match paths relative
+  // to the workspace root.
+  fileGlob: string;
   // Navigation
   focusPanel: FocusPanel;
   queryField: QueryField;
@@ -627,6 +631,23 @@ function buildLine1Spec(): WidgetSpec {
   );
 }
 
+// Workspace-file filter, matching the dedicated files-to-include field in
+// VS Code's search panel. It stays on its own row so useful path globs aren't
+// squeezed by the search/replace fields and match stats.
+function buildFileGlobRowSpec(): WidgetSpec {
+  if (!panel) return col();
+  return row(
+    spacer(1),
+    textInput(panel.fileGlob, {
+      label: editor.t("panel.files_label"),
+      focused: false,
+      cursorByte: -1,
+      fieldWidth: 54,
+      key: "fileGlobField",
+    }),
+  );
+}
+
 // Stable key for a flat tree item — used as the List item key so
 // click events bounce back to the same logical match across
 // re-renders. File rows use `file:<n>`; match rows use
@@ -1016,6 +1037,7 @@ function updatePanelContent(): void {
   panel.widgetPanel.set(
     col(
       buildLine1Spec(),
+      buildFileGlobRowSpec(),
       buildOptionsRowSpec(),
       buildScopeRowSpec(),
       hintBar(buildHelpHints()),
@@ -1148,6 +1170,7 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
       caseSensitive: panel.caseSensitive,
       maxResults: MAX_RESULTS,
       wholeWords: panel.wholeWords,
+      fileGlob: panel.fileGlob,
       // Lets the host search an unnamed/unsaved source buffer in-memory;
       // it has no on-disk file the project walk could otherwise reach.
       sourceBufferId: panel.sourceBufferId,
@@ -1422,6 +1445,7 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
     fileGroups: [],
     searchPattern: prefill,
     replaceText: "",
+    fileGlob: "",
     focusPanel: "query",
     queryField: "search",
     optionIndex: 0,
@@ -2316,6 +2340,12 @@ editor.on("widget_event", (args) => {
     } else if (args.widget_key === "replaceField") {
       panel.replaceText = payload.value;
       panel.cursorPos = byteToCharOffset(payload.value, cursorByte);
+    } else if (args.widget_key === "fileGlobField") {
+      if (panel.fileGlob !== payload.value) {
+        panel.fileGlob = payload.value;
+        panel.searchPerformed = false;
+        rerunSearchDebounced();
+      }
     }
     return;
   }

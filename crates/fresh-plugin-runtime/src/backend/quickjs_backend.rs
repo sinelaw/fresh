@@ -6426,7 +6426,7 @@ impl JsEditorApi {
     /// `handle.cancel()` to abort.
     #[plugin_api(
         js_name = "beginSearch",
-        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number }): SearchHandle"
+        ts_raw = "beginSearch(pattern: string, opts?: { fixedString?: boolean; caseSensitive?: boolean; maxResults?: number; wholeWords?: boolean; sourceBufferId?: number; fileGlob?: string }): SearchHandle"
     )]
     // The argument list is the JS-facing binding (see the `ts_raw`
     // signature above): rquickjs maps each parameter positionally to the
@@ -6443,6 +6443,7 @@ impl JsEditorApi {
         max_results: u32,
         whole_words: bool,
         source_buffer_id: u32,
+        file_glob: String,
     ) -> u64 {
         let id = self.alloc_request_id();
         // Register the shared state before sending the command so the
@@ -6457,6 +6458,7 @@ impl JsEditorApi {
             case_sensitive,
             max_results: max_results as usize,
             whole_words,
+            file_glob,
             source_buffer_id: source_buffer_id as usize,
             handle_id: id,
         });
@@ -7305,8 +7307,9 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                     const maxResults = opts.maxResults || 10000;
                     const wholeWords = opts.wholeWords || false;
                     const sourceBufferId = opts.sourceBufferId || 0;
+                    const fileGlob = opts.fileGlob || "";
                     const handleId = editor._beginSearch(
-                        pattern, fixedString, caseSensitive, maxResults, wholeWords, sourceBufferId
+                        pattern, fixedString, caseSensitive, maxResults, wholeWords, sourceBufferId, fileGlob
                     );
                     return {
                         searchId: handleId,

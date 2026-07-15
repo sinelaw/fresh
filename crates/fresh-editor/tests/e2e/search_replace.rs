@@ -270,10 +270,10 @@ fn test_search_replace_arrow_from_toolbar_focuses_results() {
         move |h: &EditorTestHarness| h.get_cell_style(case_col, case_row).and_then(|s| s.bg);
     let unfocused_bg = case_bg(&harness);
 
-    // Tab onto the Case toggle: Search → Replace → All Files → Case, then
+    // Tab onto the Case toggle: Search → Replace → Files → All Files → Case, then
     // wait for it to actually gain the focus highlight (Tab is handled on
     // the async plugin thread).
-    for _ in 0..3 {
+    for _ in 0..4 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     }
     harness.wait_until(|h| case_bg(h) != unfocused_bg).unwrap();
@@ -2236,6 +2236,57 @@ fn test_search_replace_natural_sort_order() {
             }
         })
         .unwrap();
+}
+
+/// Issue #2619: the Files field accepts comma-separated basename and
+/// workspace-relative path globs, and filters before the project search runs.
+#[test]
+fn test_search_replace_file_glob() {
+    init_tracing_from_env();
+    let (_temp_dir, project_root) = setup_search_replace_project();
+    fs::create_dir_all(project_root.join("src/nested")).unwrap();
+    fs::create_dir_all(project_root.join("tests")).unwrap();
+    fs::write(project_root.join("root.rs"), "glob needle\n").unwrap();
+    fs::write(project_root.join("src/main.rs"), "glob needle\n").unwrap();
+    fs::write(project_root.join("src/nested/lib.rs"), "glob needle\n").unwrap();
+    fs::write(project_root.join("tests/test.rs"), "glob needle\n").unwrap();
+    fs::write(project_root.join("src/skip.txt"), "glob needle\n").unwrap();
+    let start_file = project_root.join("start.txt");
+    fs::write(&start_file, "nothing here\n").unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 60, Default::default(), project_root)
+            .unwrap();
+    harness.open_file(&start_file).unwrap();
+    harness.render().unwrap();
+
+    open_search_replace_via_palette(&mut harness);
+    harness.type_text("glob needle").unwrap();
+    // Search → Replace → Files.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("src/*.rs, root.rs").unwrap();
+
+    harness
+        .wait_until_stable(|h| {
+            let s = h.screen_to_string();
+            s.contains("src/main.rs")
+                && !s.contains("src/nested/lib.rs")
+                && !s.contains("tests/test.rs")
+                && !s.contains("src/skip.txt")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("src/nested/lib.rs"),
+        "single-star path glob must not cross directories. Screen:\n{}",
+        screen
+    );
+    assert!(
+        !screen.contains("tests/test.rs") && !screen.contains("src/skip.txt"),
+        "non-matching paths must be filtered from search results. Screen:\n{}",
+        screen
+    );
 }
 
 /// Shift+Right twice selects two chars; Backspace deletes the

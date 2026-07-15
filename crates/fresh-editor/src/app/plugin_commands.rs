@@ -49,8 +49,43 @@ pub(super) struct BeginSearchArgs {
     pub case_sensitive: bool,
     pub max_results: usize,
     pub whole_words: bool,
+    pub file_glob: String,
     pub source_buffer_id: usize,
     pub handle_id: u64,
+}
+
+/// Return whether a workspace-relative file path is included by a
+/// comma-separated set of globs from the search panel.
+///
+/// Patterns with a path separator match the whole relative path (`src/**`),
+/// while patterns without one match the basename at any depth (`*.rs`).
+/// Whitespace around comma-separated patterns is ignored.
+fn search_file_glob_matches(file_glob: &str, relative_path: &str) -> bool {
+    let relative_path = relative_path.trim_start_matches(['/', '\\']);
+    let file_name = relative_path
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(relative_path);
+    let mut has_pattern = false;
+
+    for pattern in file_glob
+        .split(',')
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        has_pattern = true;
+        let pattern = pattern.strip_prefix("./").unwrap_or(pattern);
+        let matches = if crate::primitives::glob_match::is_path_pattern(pattern) {
+            crate::primitives::glob_match::path_glob_matches(pattern, relative_path)
+        } else {
+            crate::primitives::glob_match::filename_glob_matches(pattern, file_name)
+        };
+        if matches {
+            return true;
+        }
+    }
+
+    !has_pattern
 }
 
 impl Editor {
@@ -2638,6 +2673,7 @@ impl Editor {
             case_sensitive,
             max_results,
             whole_words,
+            file_glob,
             source_buffer_id,
             handle_id,
         } = args;
@@ -2726,7 +2762,9 @@ impl Editor {
                 .and_then(|w| w.buffers.get_mut(&bid))
                 .filter(|state| state.buffer.file_path().is_none())
                 .and_then(|state| state.buffer.to_string());
-            if let Some(content) = content {
+            if let Some(content) =
+                content.filter(|_| search_file_glob_matches(&file_glob, "[No Name]"))
+            {
                 let bytes = content.as_bytes();
                 let mut grep_matches: Vec<GrepMatch> = Vec::new();
                 let mut running_line = 1usize;
@@ -2793,7 +2831,8 @@ impl Editor {
                     .and_then(|w| w.buffers.get(&bid))
             })
             .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()))
-            .filter(|path| !path.starts_with(&cwd));
+            .filter(|path| !path.starts_with(&cwd))
+            .filter(|path| search_file_glob_matches(&file_glob, &path.to_string_lossy()));
 
         let Some(runtime) = &self.tokio_runtime else {
             finish_with(
@@ -2810,12 +2849,19 @@ impl Editor {
 
             let walker_handle = Arc::clone(&handle_for_task);
             let walk_tx = path_tx.clone();
+            let walk_file_glob = file_glob.clone();
             tokio::task::spawn_blocking(move || {
                 if let Err(e) = filesystem_walker.walk_files(
                     &cwd,
                     IGNORED_DIRS,
                     &walker_handle.cancel,
-                    &mut |path, _rel| walk_tx.blocking_send(path.to_path_buf()).is_ok(),
+                    &mut |path, rel| {
+                        if search_file_glob_matches(&walk_file_glob, rel) {
+                            walk_tx.blocking_send(path.to_path_buf()).is_ok()
+                        } else {
+                            true
+                        }
+                    },
                 ) {
                     tracing::warn!("BeginSearch walk_files failed: {}", e);
                 }
@@ -3310,6 +3356,7 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use super::search_file_glob_matches;
     use crate::app::Editor;
     use crate::config::Config;
     use crate::config_io::DirectoryContext;
@@ -3333,6 +3380,23 @@ mod tests {
         )
         .unwrap();
         (editor, temp_dir)
+    }
+
+    #[test]
+    fn search_file_glob_supports_basenames_paths_and_lists() {
+        assert!(search_file_glob_matches("", "src/nested/lib.rs"));
+        assert!(search_file_glob_matches("*.rs", "src/nested/lib.rs"));
+        assert!(!search_file_glob_matches("*.ts", "src/nested/lib.rs"));
+
+        assert!(search_file_glob_matches("src/*.rs", "src/main.rs"));
+        assert!(!search_file_glob_matches("src/*.rs", "src/nested/lib.rs"));
+        assert!(search_file_glob_matches("src/**", "src/nested/lib.rs"));
+
+        assert!(search_file_glob_matches(" tests/*.rs, root.rs ", "root.rs"));
+        assert!(search_file_glob_matches(
+            " tests/*.rs, root.rs ",
+            "tests/search.rs"
+        ));
     }
 
     /// Plugin sends `setLayoutHints(targetBufferId, …)` for buffer X while

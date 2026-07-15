@@ -1568,6 +1568,7 @@ impl Editor {
                 case_sensitive,
                 max_results,
                 whole_words,
+                file_glob,
                 source_buffer_id,
                 handle_id,
             } => {
@@ -1577,6 +1578,7 @@ impl Editor {
                     case_sensitive,
                     max_results,
                     whole_words,
+                    file_glob,
                     source_buffer_id,
                     handle_id,
                 });

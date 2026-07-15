@@ -4154,6 +4154,10 @@ pub enum PluginCommand {
         max_results: usize,
         /// Whether to match whole words only
         whole_words: bool,
+        /// Optional comma-separated file globs. Patterns containing a path
+        /// separator match workspace-relative paths; other patterns match
+        /// file names. An empty string searches every walked file.
+        file_glob: String,
         /// Source buffer id to additionally search in-memory when it has no
         /// file path (an unnamed/unsaved buffer). The on-disk walk can't see
         /// such a buffer, so the host searches its piece-tree content directly
