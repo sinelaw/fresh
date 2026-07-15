@@ -2746,6 +2746,35 @@ impl Editor {
                     self.set_panel_focus_and_notify(&panel_key, "filter".to_string());
                     return true;
                 }
+                // The standard context-menu keys open the highlighted
+                // node's right-click menu (Visit / Move to Folder… for a
+                // session, Rename / New Subfolder / Delete for a folder).
+                // Without this the menu — and with it "move a session
+                // into an existing folder" — was reachable only with a
+                // mouse. Only fires while the session tree itself is
+                // focused, matching the Enter branch above.
+                KeyCode::Menu => {
+                    if self
+                        .widget_registry
+                        .focus_key(&panel_key)
+                        .map(|k| k == "sessions" || k.is_empty())
+                        .unwrap_or(true)
+                    {
+                        self.fire_dock_widget_event(&panel_key, "dock_context");
+                        return true;
+                    }
+                }
+                KeyCode::F(10) if modifiers.contains(KeyModifiers::SHIFT) => {
+                    if self
+                        .widget_registry
+                        .focus_key(&panel_key)
+                        .map(|k| k == "sessions" || k.is_empty())
+                        .unwrap_or(true)
+                    {
+                        self.fire_dock_widget_event(&panel_key, "dock_context");
+                        return true;
+                    }
+                }
                 KeyCode::Char('t' | 'T') if modifiers.contains(KeyModifiers::ALT) => {
                     // Alt+T toggles "show all worktrees". In the dialog this is
                     // an OPEN_MODE chord, but the dock has no editor mode (it

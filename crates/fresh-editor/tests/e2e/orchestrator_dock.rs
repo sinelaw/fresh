@@ -2087,3 +2087,163 @@ fn dock_new_folder_and_move_session_into_it() {
     })
     .unwrap();
 }
+
+/// Enter on the New Folder dialog's focused `[ Cancel ]` button cancels —
+/// it must NOT create the folder. The dialog's mode-level Enter binding
+/// ("submit from anywhere") used to win over the focused Cancel button,
+/// so Tab→Tab→Enter silently created the folder (and filed the active
+/// session under it via the organize checkbox).
+#[test]
+fn dock_new_folder_dialog_enter_on_cancel_cancels() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Open the New Folder dialog via the "New Task… ▾" dropdown.
+    let new_row = row_of(&h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+
+    // Type a name, then Tab past the organize checkbox onto [ Cancel ]
+    // and press Enter.
+    h.type_text("Zed").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The dialog closes without creating anything: no "Zed" folder row
+    // in the dock tree.
+    h.wait_until(|h| !h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.assert_screen_not_contains("Zed");
+}
+
+/// The mouse wheel scrolls the dock's session tree in the default card
+/// density. The wheel handler used to compare the *row* budget against
+/// the *node* count, so with 3-row cards `max_scroll` collapsed to 0 and
+/// the wheel was dead exactly when the card list overflowed.
+#[test]
+fn dock_card_tree_wheel_scrolls_when_overflowing() {
+    let (_tmp, root) = setup_project("aaaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Enough sessions that the 3-row cards overflow a 32-row screen
+    // (~9 visible cards): 13 nodes total.
+    for i in 1..=12 {
+        h.editor_mut()
+            .create_window_at(root.join(format!("wt-bb{i:02}")), format!("bb{i:02}"));
+    }
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("bb01"))
+        .unwrap();
+    // The tail of the list is cut off by the dock's height. ("bb12"
+    // appears nowhere else on screen — the boot session stays active, so
+    // the explorer/tab bar shows only the boot project.)
+    h.assert_screen_not_contains("bb12");
+
+    // Wheel down over the tree: the view scrolls, revealing the tail.
+    // Each notch scrolls 3 nodes; two notches move well past the head.
+    h.mouse_scroll_down(5, 15).unwrap();
+    h.mouse_scroll_down(5, 15).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("bb12"))
+        .unwrap();
+
+    // And back up: the tail scrolls back out of view.
+    h.mouse_scroll_up(5, 15).unwrap();
+    h.mouse_scroll_up(5, 15).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("bb12"))
+        .unwrap();
+}
+
+/// The Menu key opens the highlighted session's context menu (keyboard
+/// parity with right-click — previously "Move to Folder…" was
+/// mouse-only), and ↑/↓ walk the menu's entries like every other dock
+/// dropdown (previously only Tab moved focus, and ↓+Enter activated
+/// "Visit…" instead of the second entry).
+#[test]
+fn dock_menu_key_opens_context_menu_and_arrows_navigate() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Menu key on the focused tree → the highlighted node's context menu.
+    h.send_key(KeyCode::Menu, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    h.assert_screen_contains("Visit");
+
+    // ↓ moves the focus from "Visit…" to "Move to Folder…"; Enter runs
+    // it — the "move to" dropdown replaces the popup. Without arrow
+    // support Enter would have activated "Visit…" and dived instead.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+        .unwrap();
+}
+
+/// A folder's "Rename…" action opens the same centered dialog as "New
+/// Folder" — pre-filled with the current name — instead of the bottom
+/// minibuffer prompt (which also ran the label and value together).
+#[test]
+fn dock_folder_rename_uses_dialog() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Create a folder "Docs" (empty — organize checkbox off).
+    let new_row = row_of(&h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("Docs").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("Docs")
+    })
+    .unwrap();
+
+    // Right-click the folder row → "Rename…" → the centered dialog opens
+    // with the name field pre-filled ("Docs"), not a minibuffer prompt.
+    let folder_row = row_of(&h, "Docs") as u16;
+    h.mouse_right_click(4, folder_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Rename"))
+        .unwrap();
+    let (rcol, rrow) = pos_of(&h, "Rename");
+    h.mouse_click(rcol, rrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Rename Folder"))
+        .unwrap();
+    h.assert_screen_contains("Folder name");
+
+    // The cursor sits at the end of the pre-filled name; typing appends,
+    // and Enter commits the rename — the tree shows the new name.
+    h.type_text("Team").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Rename Folder") && s.contains("DocsTeam")
+    })
+    .unwrap();
+}

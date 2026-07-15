@@ -394,9 +394,21 @@ interface CreateFolderDialogState {
   // toolbar / subfolder paths, or the explicitly-moved session for the
   // "Move to → New folder…" path. null ⇒ no session to organize.
   sessionId: number | null;
+  // Rename mode: the id of an existing folder this dialog renames
+  // instead of creating a new one (title/button change, the organize
+  // checkbox is dropped, and submit renames). Sharing the dialog keeps
+  // create and rename the same UX rather than bouncing rename through
+  // the bottom minibuffer prompt. null ⇒ create mode.
+  renameId: string | null;
 }
 let createFolderDialog: CreateFolderDialogState | null = null;
 let createFolderPanel: FloatingWidgetPanel | null = null;
+// Mirror of the dialog's focused widget key, kept in sync from the
+// host's authoritative `focus` widget_events. The dialog's mode-level
+// Enter binding submits from anywhere — except when focus sits on the
+// Cancel button, where Enter must cancel (pressing Enter on a focused
+// Cancel that *creates* the folder is exactly backwards).
+let createFolderFocusKey = "folder-name";
 
 // Open dialog state. `null` ⇒ the picker isn't mounted. Lives
 // alongside the new-session form state but is independent of
@@ -464,6 +476,11 @@ interface OpenDialogState {
   // height vs. a file buffer's).
   listVisibleRows: number;
   embedRows: number;
+  // Dock-only: the screen row where the session tree starts (the rows
+  // of chrome above it — title, toolbar, filters, divider). Captured in
+  // `buildDockSpec` so keyboard-opened context menus can anchor near
+  // the highlighted node without re-deriving the chrome layout.
+  dockTreeTop: number;
   // Toggle between "compact preview" (default — buttons + live
   // embed only, no info row) and "details" (state + path metadata
   // row visible above the embed). Compact is the default because
@@ -3131,6 +3148,7 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     pendingConfirm: null,
     listVisibleRows,
     embedRows: Math.max(3, listVisibleRows + 3),
+    dockTreeTop: 0,
     showDetails: false,
     inFlight: null,
     lastError: null,
@@ -3577,6 +3595,9 @@ function buildDockSpec(): WidgetSpec {
   const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
+  // Rows of chrome above the tree (everything in chromeRows except the
+  // bottom hint row) — where the first tree row lands on screen.
+  openDialog.dockTreeTop = chromeRows - bottomRows;
 
   const expandedSeed = dockTreeExpandedKeys(dockTree);
 
@@ -3832,7 +3853,43 @@ function openCreateFolderDialog(
     organizeCurrent: true,
     parent,
     sessionId,
+    renameId: null,
   };
+  mountFolderDialog();
+}
+
+// UTF-8 byte length of a JS (UTF-16) string — text-input cursors are
+// byte offsets host-side.
+function utf8Len(s: string): number {
+  let b = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.codePointAt(i)!;
+    if (c > 0xffff) i++; // surrogate pair consumed both units
+    b += c <= 0x7f ? 1 : c <= 0x7ff ? 2 : c <= 0xffff ? 3 : 4;
+  }
+  return b;
+}
+
+// Open the folder dialog in rename mode for an existing folder — the
+// same centered dialog as "New Folder" (per-issue: rename used to drop
+// into the bottom minibuffer prompt, inconsistent with create).
+function openRenameFolderDialog(id: string): void {
+  const f = folderById(id);
+  if (!f) return;
+  createFolderDialog = {
+    // Pre-fill the current name with the cursor at its end so the user
+    // can edit it in place. (Cursor offsets are UTF-8 bytes host-side.)
+    name: { value: f.name, cursor: utf8Len(f.name) },
+    organizeCurrent: false,
+    parent: null,
+    sessionId: null,
+    renameId: id,
+  };
+  mountFolderDialog();
+}
+
+// Shared mount path for the create / rename folder dialog.
+function mountFolderDialog(): void {
   // Yield the dock's keyboard while the dialog owns it (mirrors the
   // new-session form and the context-menu confirm).
   if (openPanel && dockMode) {
@@ -3849,6 +3906,7 @@ function openCreateFolderDialog(
   editor.setEditorMode(CREATE_FOLDER_MODE);
   // Land focus in the name field so typing goes straight to it; the
   // whole value starts selected-for-overwrite feel via a full cursor.
+  createFolderFocusKey = "folder-name";
   createFolderPanel.setFocusKey("folder-name");
 }
 
@@ -3857,6 +3915,7 @@ function openCreateFolderDialog(
 // Cancel / Create Folder buttons.
 function buildCreateFolderSpec(): WidgetSpec {
   const d = createFolderDialog!;
+  const renaming = d.renameId !== null;
   const sess = d.sessionId != null ? orchestratorSessions.get(d.sessionId) : undefined;
   const children: WidgetSpec[] = [
     // Render the label inline ("Folder name: ") so the ": " separator
@@ -3887,11 +3946,18 @@ function buildCreateFolderSpec(): WidgetSpec {
     wrappingRow(
       button(editor.t("dock.new_folder_btn_cancel"), { intent: "danger", key: "folder-cancel" }),
       spacer(2),
-      button(editor.t("dock.new_folder_btn_create"), { intent: "primary", key: "folder-create" }),
+      button(
+        renaming
+          ? editor.t("dock.rename_folder_btn")
+          : editor.t("dock.new_folder_btn_create"),
+        { intent: "primary", key: "folder-create" },
+      ),
     ),
   );
   return labeledSection({
-    label: editor.t("dock.new_folder_dialog_title"),
+    label: renaming
+      ? editor.t("dock.rename_folder_dialog_title")
+      : editor.t("dock.new_folder_dialog_title"),
     child: col(...children),
   });
 }
@@ -3902,6 +3968,15 @@ function buildCreateFolderSpec(): WidgetSpec {
 function submitCreateFolder(): void {
   const d = createFolderDialog;
   if (!d) return;
+  if (d.renameId !== null) {
+    // Rename mode: an emptied-out name keeps the current one (renaming
+    // to nothing is never what the user meant).
+    const trimmed = d.name.value.trim();
+    if (trimmed) renameFolder(d.renameId, trimmed);
+    closeCreateFolderDialog();
+    if (openPanel && dockMode) refreshOpenDialog();
+    return;
+  }
   // Empty name ⇒ the default ("New Folder"), matching the placeholder.
   const name = d.name.value.trim() || editor.t("dock.new_folder_default");
   const id = createFolder(name, d.parent);
@@ -3928,38 +4003,6 @@ function closeCreateFolderDialog(): void {
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
     openPanel.setFocusKey("sessions");
     refreshOpenDialog();
-  }
-}
-
-async function promptRenameFolder(id: string): Promise<void> {
-  const f = folderById(id);
-  if (!f) return;
-  const name = await dockPrompt(editor.t("dock.rename_folder_prompt"), f.name);
-  if (name === null) return;
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  renameFolder(id, trimmed);
-  if (openPanel && dockMode) refreshOpenDialog();
-}
-
-// Run a minibuffer text prompt from the dock. The dock is a keyboard-
-// owning floating panel, so it must yield focus first or the typed name
-// is routed to the dock (the tree) instead of the prompt; focus is
-// handed back to the tree once the prompt resolves.
-async function dockPrompt(label: string, initial: string): Promise<string | null> {
-  const hadDock = !!openPanel && dockMode;
-  if (hadDock && openPanel) {
-    dockBlurred = true;
-    editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  }
-  try {
-    return await editor.prompt(label, initial);
-  } finally {
-    if (hadDock && openPanel) {
-      dockBlurred = false;
-      editor.floatingPanelControl(openPanel.id(), "focus", 0);
-      openPanel.setFocusKey("sessions");
-    }
   }
 }
 
@@ -4120,6 +4163,25 @@ function openDockContextMenu(index: number, col: number, row: number): void {
     heightPct: 44,
   });
   anchorDockMenu();
+}
+
+// Keyboard-opened context menu (Menu key / Shift+F10 on the dock tree):
+// same popup as a right-click, anchored at an estimate of the
+// highlighted node's screen cell. The estimate assumes an unscrolled
+// tree (the plugin doesn't mirror host scroll), clamped into the list
+// area — for short lists it lands exactly on the row, for scrolled ones
+// it stays inside the dock, which is all a popup anchor needs.
+function openDockContextMenuFromKeyboard(): void {
+  if (!openDialog || !dockMode) return;
+  const key = openDialog.dockSelKey;
+  const idx = key ? openDialog.dockKeys.indexOf(key) : -1;
+  if (idx < 0) return;
+  const itemHeight = dockView === "card" ? DOCK_CARD_HEIGHT : 1;
+  const maxRow = openDialog.dockTreeTop +
+    Math.max(0, openDialog.listVisibleRows - 1);
+  const row = Math.min(openDialog.dockTreeTop + idx * itemHeight, maxRow);
+  const col = Math.min(6, Math.max(2, dockDefaultWidth() - 4));
+  openDockContextMenu(idx, col, row);
 }
 
 // Switch the popup to the centered, full-screen-dimmed confirmation for a
@@ -7396,7 +7458,15 @@ const FOLDER_DIALOG_MODE_BINDINGS: [string, string][] = [
 ];
 editor.defineMode(CREATE_FOLDER_MODE, FOLDER_DIALOG_MODE_BINDINGS, true, true);
 registerHandler("orchestrator_folder_submit", () => {
-  if (createFolderDialog) submitCreateFolder();
+  if (!createFolderDialog) return;
+  // Enter submits from anywhere in the dialog — except on the Cancel
+  // button, where it must cancel. Without this check, Tab-ing onto
+  // [ Cancel ] and pressing Enter *created* the folder.
+  if (createFolderFocusKey === "folder-cancel") {
+    closeCreateFolderDialog();
+    return;
+  }
+  submitCreateFolder();
 });
 
 function dispatchFormKey(name: string): void {
@@ -7646,10 +7716,23 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
+    if (e.event_type === "focus") {
+      // Authoritative focus move (Tab / Shift+Tab / click) — mirror it
+      // so the mode-level Enter binding can tell Cancel apart from the
+      // rest of the dialog (see `orchestrator_folder_submit`).
+      if (typeof e.widget_key === "string" && e.widget_key.length > 0) {
+        createFolderFocusKey = e.widget_key;
+      }
+      return;
+    }
     if (e.event_type === "change" && e.widget_key === "folder-name") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       if (typeof payload.value === "string") d.name.value = payload.value;
       if (typeof payload.cursorByte === "number") d.name.cursor = payload.cursorByte;
+      // Typing lands in the name field even if focus drifted; the host
+      // routes printable chars to the focused TextInput only, so a
+      // change event implies the field is focused again.
+      createFolderFocusKey = "folder-name";
       return;
     }
     if (e.event_type === "toggle" && e.widget_key === "folder-organize") {
@@ -7692,8 +7775,11 @@ editor.on("widget_event", (e) => {
       // Folder organise actions.
       if (target.kind === "folder") {
         if (e.widget_key === "ctx-rename") {
+          // Same centered dialog UX as "New Folder" (was: a bottom
+          // minibuffer prompt, inconsistent and label/value ran
+          // together). The dialog blurs the dock itself.
           closeDockContextMenuAndRestoreDock();
-          void promptRenameFolder(target.id);
+          openRenameFolderDialog(target.id);
           return;
         }
         if (e.widget_key === "ctx-new-subfolder") {
@@ -8028,6 +8114,14 @@ editor.on("widget_event", (e) => {
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
       editor.setEditorMode(null);
+      return;
+    }
+    if (e.event_type === "dock_context") {
+      // Host Menu key / Shift+F10 on the dock tree — open the
+      // highlighted node's context menu, the same one a right-click
+      // anchors at the pointer. Keyboard parity for Move to Folder…
+      // and the folder organise actions.
+      if (dockMode) openDockContextMenuFromKeyboard();
       return;
     }
     if (e.event_type === "dock_toggle_worktrees") {

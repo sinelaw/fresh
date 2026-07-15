@@ -918,10 +918,23 @@ impl Editor {
                         // line Text, Button, Toggle, or no focus),
                         // route the arrow to the first scrollable
                         // widget in the panel.
+                        let on_button = matches!(
+                            widget,
+                            Some(fresh_core::api::WidgetSpec::Button { .. })
+                                | Some(fresh_core::api::WidgetSpec::Toggle { .. })
+                        );
                         let scrollable = self
                             .widget_registry
                             .get(panel_key)
                             .and_then(|p| find_scrollable_widget_key(&p.spec));
+                        if scrollable.is_none() && on_button {
+                            // Button-only popups (the dock's right-click
+                            // context menu, confirm panes): arrows walk
+                            // the controls like Tab / Shift+Tab, matching
+                            // every other menu in the dock. Previously
+                            // ↑/↓ were silently dropped here.
+                            self.handle_widget_focus_advance(panel_key, delta);
+                        }
                         if let Some(target_key) = scrollable {
                             let target_kind = self.widget_registry.get(panel_key).and_then(|p| {
                                 crate::widgets::find_widget_by_key(&p.spec, &target_key).cloned()
@@ -2307,13 +2320,19 @@ impl Editor {
             None => return false,
         };
         let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (visible_rows, nodes, item_keys) = match widget {
+        let (visible_rows, item_height, nodes, item_keys) = match widget {
             Some(fresh_core::api::WidgetSpec::Tree {
                 visible_rows,
+                item_height,
                 nodes,
                 item_keys,
                 ..
-            }) => (*visible_rows, nodes.clone(), item_keys.clone()),
+            }) => (
+                *visible_rows,
+                (*item_height).max(1),
+                nodes.clone(),
+                item_keys.clone(),
+            ),
             _ => return false,
         };
         if nodes.is_empty() {
@@ -2331,7 +2350,14 @@ impl Editor {
         if visible_indices.is_empty() {
             return false;
         }
-        let visible = visible_rows.max(1);
+        // The scroll/selection math below counts *nodes*, but
+        // `visible_rows` is a row budget: a card tree (`item_height > 1`,
+        // e.g. the Orchestrator dock's card density) fits only
+        // `visible_rows / item_height` nodes. Using raw rows here made
+        // `max_scroll` collapse to 0 whenever the node count was below the
+        // row count, so the wheel was dead exactly when cards overflowed.
+        // Mirrors the renderer's node-budget rule (`render_tree`).
+        let visible = (visible_rows / item_height).max(1);
         let total_visible = visible_indices.len() as u32;
         let max_scroll = total_visible.saturating_sub(visible);
         let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
