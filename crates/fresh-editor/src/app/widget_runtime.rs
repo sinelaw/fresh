@@ -1143,9 +1143,18 @@ impl Editor {
                     Some(fresh_core::api::WidgetSpec::Tree {
                         visible_rows,
                         item_height,
+                        card_borders,
                         ..
                     }) => {
-                        let nodes = visible_rows / (*item_height).max(1);
+                        // Bordered cards take two extra rows each; folder
+                        // headers take one. Dividing by the card height is
+                        // a conservative page estimate (never overshoots).
+                        let per_node = if *card_borders && *item_height > 1 {
+                            *item_height + 2
+                        } else {
+                            (*item_height).max(1)
+                        };
+                        let nodes = visible_rows / per_node;
                         nodes.saturating_sub(1).max(1) as i32
                     }
                     _ => 0,
@@ -2473,16 +2482,20 @@ impl Editor {
             None => return false,
         };
         let widget = crate::widgets::find_widget_by_key(&panel.spec, widget_key);
-        let (visible_rows, item_height, nodes, item_keys) = match widget {
+        let (visible_rows, item_height, card_borders, checkable, nodes, item_keys) = match widget {
             Some(fresh_core::api::WidgetSpec::Tree {
                 visible_rows,
                 item_height,
+                card_borders,
+                checkable,
                 nodes,
                 item_keys,
                 ..
             }) => (
                 *visible_rows,
                 (*item_height).max(1),
+                *card_borders,
+                *checkable,
                 nodes.clone(),
                 item_keys.clone(),
             ),
@@ -2504,20 +2517,34 @@ impl Editor {
             return false;
         }
         // The scroll/selection math below counts *nodes*, but
-        // `visible_rows` is a row budget: a card tree (`item_height > 1`,
-        // e.g. the Orchestrator dock's card density) fits only
-        // `visible_rows / item_height` nodes. Using raw rows here made
-        // `max_scroll` collapse to 0 whenever the node count was below the
-        // row count, so the wheel was dead exactly when cards overflowed.
-        // Mirrors the renderer's node-budget rule (`render_tree`).
-        let visible = (visible_rows / item_height).max(1);
-        let total_visible = visible_indices.len() as u32;
-        let max_scroll = total_visible.saturating_sub(visible);
+        // `visible_rows` is a row budget. Compute per-node heights and the
+        // clamp with the renderer's own helpers so the wheel can't
+        // disagree with what will actually be painted: fixed
+        // `item_height` bands normally, variable rows with
+        // `card_borders` (bordered cards are `item_height + 2` rows,
+        // folder headers a single row). Using raw rows here made
+        // `max_scroll` collapse to 0 (dead wheel, issue #2693); using a
+        // fixed `visible_rows / item_height` budget overshot for bordered
+        // cards, leaving the tail unreachable.
+        let heights: Vec<u32> = visible_indices
+            .iter()
+            .map(|&abs| {
+                crate::widgets::render::tree_node_rows(
+                    &nodes[abs],
+                    checkable,
+                    item_height,
+                    card_borders,
+                )
+            })
+            .collect();
+        let max_scroll = crate::widgets::render::tree_max_scroll(&heights, visible_rows);
         let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
         if new_scroll == cur_scroll {
             return false;
         }
         // Drag selection to stay inside the new viewport.
+        let visible =
+            crate::widgets::render::tree_nodes_fitting(&heights, new_scroll as usize, visible_rows);
         let cur_pos: Option<u32> = if cur_sel >= 0 {
             visible_indices
                 .iter()

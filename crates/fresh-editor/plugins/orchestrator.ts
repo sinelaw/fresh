@@ -915,9 +915,9 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
     model.push({ kind: "folder", folderId: f.id });
   };
   // "card" density (dock only) renders session leaves as fixed-height
-  // multi-row cards; "compact" keeps the single-line row. Folders stay
-  // one meaningful line either way (the host blank-pads them to the
-  // card height so the tree's rows line up).
+  // multi-row cards inside a rounded border (`cardBorders` on the
+  // tree); "compact" keeps the single-line row. Folders stay one
+  // single-row line either way.
   const card = dockMode && dockView === "card";
   const emitSession = (id: number, depth: number): void => {
     const primary = card ? sessionCardPrimary(id, activeId) : sessionNodeEntry(id, activeId);
@@ -1003,8 +1003,9 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
 }
 
 // The dock's "card" density renders each session leaf as a fixed
-// 3-row card inside the tree (the host pads/aligns the extra rows).
-// This mirrors the modal picker's pill, minus the flex right-align
+// 3-content-row card inside the tree; with `cardBorders` the host
+// wraps those rows in a rounded `╭─…─╮` border (5 screen rows total),
+// restoring the modal picker's pill look, minus the flex right-align
 // the tree can't express: line 1 = glyph · [facet] · NAME + project;
 // line 2 = branch + git summary; line 3 = PR badge (blank when none).
 const DOCK_CARD_HEIGHT = 3;
@@ -3533,26 +3534,32 @@ function buildDockSpec(): WidgetSpec {
   const showHints = !dockBlurred;
   const menuOpen = openDialog.projectMenuOpen || openDialog.dockMenu !== null;
   // While a dropdown owns the keyboard, the hints describe the dropdown
-  // (choose/select/cancel), not the session tree.
-  const hintRow = row(
-    flexSpacer(),
-    hintBar(
-      menuOpen
-        ? [
+  // (choose/select/cancel), not the session tree. The tree's own hints
+  // take two rows — the dock is too narrow for four hints on one line —
+  // so the context-menu key (Shift+F10 / the Menu key, the only keyboard
+  // route to "Move to Folder…" and the folder actions) is discoverable
+  // instead of a mouse-only secret.
+  const centered = (entries: Parameters<typeof hintBar>[0]): WidgetSpec =>
+    row(flexSpacer(), hintBar(entries), flexSpacer());
+  const bottom: WidgetSpec[] = !showHints
+    ? []
+    : menuOpen
+      ? [centered([
           { keys: "↑↓", label: editor.t("dock.hint_choose") },
           { keys: "Enter", label: editor.t("dock.hint_select") },
           { keys: "Esc", label: editor.t("dock.hint_cancel") },
-        ]
-        : [
+        ])]
+      : [
+        centered([
           { keys: "↑↓", label: editor.t("dock.hint_switch") },
           { keys: "→←", label: editor.t("dock.hint_fold") },
+        ]),
+        centered([
           { keys: "Enter", label: editor.t("dock.hint_edit") },
-        ],
-    ),
-    flexSpacer(),
-  );
-  const bottom: WidgetSpec[] = showHints ? [hintRow] : [];
-  const bottomRows = showHints ? 1 : 0;
+          { keys: "S-F10", label: editor.t("dock.hint_menu") },
+        ]),
+      ];
+  const bottomRows = bottom.length;
 
   // The collapsible Filters section: a header toggle plus, when open,
   // the density / project / worktree / trivial controls and Manage.
@@ -3633,10 +3640,12 @@ function buildDockSpec(): WidgetSpec {
       selectedIndex: selIdx,
       visibleRows: listRows,
       expandedKeys: expandedSeed,
-      // "card" density renders each node as a fixed 3-row card; "compact"
-      // keeps single-line rows. The host keeps scroll/selection in node
-      // units either way.
+      // "card" density renders each session as a 3-content-row card
+      // inside a rounded border (the pill look the pre-tree dock had);
+      // "compact" keeps single-line rows. The host keeps
+      // scroll/selection in node units either way.
       itemHeight: dockView === "card" ? DOCK_CARD_HEIGHT : 1,
+      cardBorders: dockView === "card",
       // Focusable in the dock (unlike the modal, where Up/Down forward
       // from the filter): the tree itself is the default focus so ↑↓
       // drive live-switch, →← fold, and Enter dives / toggles a folder.
@@ -4176,10 +4185,16 @@ function openDockContextMenuFromKeyboard(): void {
   const key = openDialog.dockSelKey;
   const idx = key ? openDialog.dockKeys.indexOf(key) : -1;
   if (idx < 0) return;
-  const itemHeight = dockView === "card" ? DOCK_CARD_HEIGHT : 1;
+  // Rows are variable in card density: a session card is a bordered
+  // DOCK_CARD_HEIGHT + 2 rows tall, a folder header a single row.
+  const card = dockView === "card";
+  const nodeRows = (n: DockNode | undefined): number =>
+    card && n?.kind === "session" ? DOCK_CARD_HEIGHT + 2 : 1;
+  let estRow = openDialog.dockTreeTop;
+  for (let i = 0; i < idx; i++) estRow += nodeRows(openDialog.dockNodes[i]);
   const maxRow = openDialog.dockTreeTop +
     Math.max(0, openDialog.listVisibleRows - 1);
-  const row = Math.min(openDialog.dockTreeTop + idx * itemHeight, maxRow);
+  const row = Math.min(estRow, maxRow);
   const col = Math.min(6, Math.max(2, dockDefaultWidth() - 4));
   openDockContextMenu(idx, col, row);
 }

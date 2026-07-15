@@ -685,6 +685,7 @@ fn render_collected(
             expanded_keys,
             checkable,
             item_height,
+            card_borders,
             key: tree_key,
         } => render_widget_tree(
             nodes,
@@ -694,6 +695,7 @@ fn render_collected(
             expanded_keys,
             *checkable,
             *item_height,
+            *card_borders,
             tree_key.as_deref(),
             prev,
             next_state,
@@ -2536,6 +2538,7 @@ fn render_widget_tree(
     expanded_keys: &[String],
     checkable: bool,
     item_height: u32,
+    card_borders: bool,
     tree_key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
@@ -2544,10 +2547,12 @@ fn render_widget_tree(
     let mut out = CollectedOutput::default();
     // Fixed rows per node. `1` is the classic single-line tree; a
     // larger value renders every node as a card of this many rows.
-    // Windowing/scroll stay in *node* units — the node budget is just
-    // `visible_rows / item_height` — so single-line trees (the vast
-    // majority) are wholly unaffected.
+    // Windowing/scroll stay in *node* units so single-line trees (the
+    // vast majority) are wholly unaffected. With `card_borders`, rows
+    // per node vary: card nodes take `item_height + 2` (border rows),
+    // non-card nodes a single row — see `tree_node_rows`.
     let item_height = item_height.max(1);
+    let card_borders = card_borders && item_height > 1;
     // Look up host-owned instance state (scroll, selection,
     // expanded set). Spec values are initial-only.
     let prev_state = tree_key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k));
@@ -2605,10 +2610,15 @@ fn render_widget_tree(
     // hidden (parent collapsed), find the closest visible
     // node at-or-before it. If no visible nodes, -1.
     let total_visible = visible_indices.len() as u32;
-    // Node budget: how many fixed-height cards fit in the row budget.
-    // Everything below counts *nodes*, so item_height == 1 reduces to
-    // the original single-line behaviour exactly.
-    let visible = (visible_rows / item_height).max(1);
+    // Rows each visible node occupies. Without `card_borders` every
+    // node is a fixed `item_height`-row band, so all the node-unit
+    // scroll math below reduces to the original behaviour exactly.
+    // With it, card nodes grow two border rows and non-card nodes
+    // (folder headers) shrink to one row.
+    let heights: Vec<u32> = visible_indices
+        .iter()
+        .map(|&abs| tree_node_rows(&nodes[abs], checkable, item_height, card_borders))
+        .collect();
     let clamp_to_visible = |abs: i32| -> i32 {
         if abs < 0 || nodes.is_empty() {
             return -1;
@@ -2639,19 +2649,27 @@ fn render_widget_tree(
             .unwrap_or(-1)
     };
 
-    // Compute scroll: same auto-clamp logic as List, but
-    // operating on the visible-windowed indices.
+    // Compute scroll: same auto-clamp logic as List, but operating on
+    // the visible-windowed indices, in *rows* so variable-height nodes
+    // (card_borders) window correctly. For uniform heights this is
+    // arithmetically identical to the old node-budget math.
     let mut scroll = prev_scroll;
     if sel_visible_pos >= 0 {
         let sel = sel_visible_pos as u32;
         if sel < scroll {
             scroll = sel;
         }
-        if sel >= scroll + visible {
-            scroll = sel + 1 - visible;
+        // Advance until the rows from `scroll` through the selected
+        // node fit in the viewport (the selected card is fully shown).
+        while scroll < sel {
+            let used: u32 = heights[scroll as usize..=sel as usize].iter().sum();
+            if used <= visible_rows {
+                break;
+            }
+            scroll += 1;
         }
     }
-    let max_scroll = total_visible.saturating_sub(visible);
+    let max_scroll = tree_max_scroll(&heights, visible_rows);
     if scroll > max_scroll {
         scroll = max_scroll;
     }
@@ -2668,9 +2686,11 @@ fn render_widget_tree(
         );
     }
 
-    // Render the visible window.
+    // Render the visible window: from `scroll`, as many whole nodes as
+    // fit the row budget (always at least one).
     let start = scroll as usize;
-    let end = ((scroll + visible) as usize).min(visible_indices.len());
+    let end = start + tree_nodes_fitting(&heights, start, visible_rows) as usize;
+    let rows_used: u32 = heights[start..end].iter().sum();
     for &abs_idx in &visible_indices[start..end] {
         // Apply pad/truncate hints and convert any char-unit
         // overlays to byte offsets *before* the disclosure
@@ -2684,7 +2704,14 @@ fn render_widget_tree(
         let item_key = item_keys.get(abs_idx).cloned().unwrap_or_default();
         let is_expanded =
             node.has_children && !item_key.is_empty() && prev_expanded.contains(&item_key);
-        let rendered = render_tree_row(&node, is_expanded, checkable, item_height);
+        let rendered = render_tree_row(
+            &node,
+            is_expanded,
+            checkable,
+            item_height,
+            card_borders,
+            panel_width,
+        );
         let mut entry = rendered.entry;
         let is_selected = abs_idx as i32 == effective_sel_abs;
         // The selection highlight fills the whole card (every row),
@@ -2804,8 +2831,9 @@ fn render_widget_tree(
     // Surface a scroll region so the host paints a draggable overlay
     // scrollbar when the tree overflows — mirroring the List path, so the
     // dock's session tree gets the same hover scrollbar the card list had.
-    // Totals are in visible (un-collapsed) rows.
-    if total_visible > visible {
+    // Totals are in visible (un-collapsed) nodes.
+    let emitted = (end - start) as u32;
+    if total_visible > emitted {
         if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
             out.scroll_regions.push(ScrollRegion {
                 list_key: k.to_string(),
@@ -2814,9 +2842,9 @@ fn render_widget_tree(
                 width_cols: panel_width,
                 // The thumb is sized in node units (total/visible/scroll),
                 // but the track spans the painted screen rows.
-                height_rows: visible * item_height,
+                height_rows: rows_used,
                 total: total_visible as usize,
-                visible: visible as usize,
+                visible: emitted as usize,
                 scroll: scroll as usize,
             });
         }
@@ -4426,7 +4454,20 @@ pub fn render_tree_row(
     expanded: bool,
     checkable: bool,
     item_height: u32,
+    card_borders: bool,
+    panel_width: u32,
 ) -> RenderedTreeRow {
+    // Bordered-card trees: card nodes render inside a rounded box; the
+    // other nodes (folder headers) collapse to a plain single row
+    // instead of being blank-padded to the card height.
+    let item_height = if card_borders && item_height > 1 {
+        if tree_node_is_card(node, checkable) {
+            return render_tree_card(node, item_height, panel_width);
+        }
+        1
+    } else {
+        item_height
+    };
     let indent_cols = (node.depth as usize) * 2;
     let disclosure_glyph: &str = if node.has_children {
         if expanded {
@@ -4607,6 +4648,129 @@ pub fn render_tree_row(
         entry,
         disclosure_range,
         checkbox_range,
+        extra_entries,
+    }
+}
+
+/// Whether a node renders as a bordered card when the parent Tree has
+/// `card_borders`: a leaf carrying continuation lines and no checkbox
+/// glyph. Folder headers (`has_children`) and checkable rows keep the
+/// plain row layout — the border chrome has nowhere sane to put the
+/// disclosure/checkbox hit targets.
+fn tree_node_is_card(node: &TreeNode, checkable: bool) -> bool {
+    !node.extra_lines.is_empty() && !node.has_children && (!checkable || node.checked.is_none())
+}
+
+/// Screen rows one node occupies. Fixed `item_height` bands normally;
+/// with `card_borders`, card nodes gain a top + bottom border row and
+/// non-card nodes collapse to a single row.
+pub(crate) fn tree_node_rows(
+    node: &TreeNode,
+    checkable: bool,
+    item_height: u32,
+    card_borders: bool,
+) -> u32 {
+    if item_height <= 1 {
+        return 1;
+    }
+    if !card_borders {
+        return item_height;
+    }
+    if tree_node_is_card(node, checkable) {
+        item_height + 2
+    } else {
+        1
+    }
+}
+
+/// Largest useful scroll for a tree whose visible nodes occupy
+/// `heights` rows each: the smallest start index whose suffix still
+/// fills (or is all that's left of) a `visible_rows`-row viewport.
+/// Shared by the renderer and the mouse-wheel handler so the wheel's
+/// clamp can't disagree with what the renderer will actually show.
+pub(crate) fn tree_max_scroll(heights: &[u32], visible_rows: u32) -> u32 {
+    let mut acc = 0u32;
+    let mut first_fitting = heights.len();
+    for i in (0..heights.len()).rev() {
+        if acc + heights[i] > visible_rows {
+            break;
+        }
+        acc += heights[i];
+        first_fitting = i;
+    }
+    first_fitting.min(heights.len().saturating_sub(1)) as u32
+}
+
+/// How many whole nodes fit in a `visible_rows`-row viewport starting
+/// at node position `start` (always at least one, when any remain).
+pub(crate) fn tree_nodes_fitting(heights: &[u32], start: usize, visible_rows: u32) -> u32 {
+    let mut end = start;
+    let mut rows_used = 0u32;
+    while end < heights.len() {
+        let h = heights[end];
+        if end > start && rows_used + h > visible_rows {
+            break;
+        }
+        rows_used += h;
+        end += 1;
+    }
+    (end - start) as u32
+}
+
+/// Render a card node as a rounded box spanning the panel width:
+/// a `╭─…─╮` top border (the primary row — its full-width `select`
+/// hit makes the border part of the card's click target), the
+/// `item_height` content rows wrapped in `│ … │` side borders
+/// (blank-padded so every card is the same height), and a `╰─…─╯`
+/// bottom border. All rows are indented by the node's depth so the
+/// card nests under its folder. Restores the bordered pill the dock's
+/// card density lost in the tree redesign (issue #2703).
+fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> RenderedTreeRow {
+    let indent_cols = (node.depth as usize) * 2;
+    let total_cols = (panel_width as usize).saturating_sub(indent_cols).max(6);
+    // 1 border + 1 padding column each side.
+    let inner_width = total_cols - 4;
+    let indent = " ".repeat(indent_cols);
+
+    let border_row = |left: char, right: char| -> TextPropertyEntry {
+        let mut text = String::with_capacity(indent.len() + total_cols * 3);
+        text.push_str(&indent);
+        text.push(left);
+        for _ in 0..total_cols.saturating_sub(2) {
+            text.push('─');
+        }
+        text.push(right);
+        TextPropertyEntry::text(text)
+    };
+    let content_row = |src: TextPropertyEntry| -> TextPropertyEntry {
+        let mut e = wrap_in_side_border(src, inner_width);
+        strip_trailing_newline(&mut e);
+        if !indent.is_empty() {
+            e.text.insert_str(0, &indent);
+            for o in e.inline_overlays.iter_mut() {
+                o.start += indent.len();
+                o.end += indent.len();
+            }
+        }
+        e
+    };
+
+    let mut extra_entries: Vec<TextPropertyEntry> = Vec::with_capacity(item_height as usize + 1);
+    extra_entries.push(content_row(node.text.clone()));
+    for i in 0..(item_height as usize).saturating_sub(1) {
+        let src = node
+            .extra_lines
+            .get(i)
+            .cloned()
+            .unwrap_or_else(|| TextPropertyEntry::text(String::new()));
+        extra_entries.push(content_row(src));
+    }
+    extra_entries.push(border_row('╰', '╯'));
+
+    RenderedTreeRow {
+        entry: border_row('╭', '╮'),
+        disclosure_range: None,
+        checkbox_range: None,
         extra_entries,
     }
 }
@@ -7109,13 +7273,14 @@ mod tests {
             expanded_keys: expanded.iter().map(|s| s.to_string()).collect(),
             checkable: false,
             item_height: 1,
+            card_borders: false,
             key: key.map(|s| s.to_string()),
         }
     }
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_collapsed() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), false, false, 1);
+        let r = render_tree_row(&tnode("file.txt", 0, true), false, false, 1, false, 80);
         assert!(r.entry.text.starts_with('\u{25B6}'), "starts with ▶");
         assert!(r.entry.text.contains("file.txt"));
         assert!(r.disclosure_range.is_some());
@@ -7123,13 +7288,13 @@ mod tests {
 
     #[test]
     fn tree_row_renders_disclosure_glyph_for_internal_expanded() {
-        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1);
+        let r = render_tree_row(&tnode("file.txt", 0, true), true, false, 1, false, 80);
         assert!(r.entry.text.starts_with('\u{25BC}'), "starts with ▼");
     }
 
     #[test]
     fn tree_row_leaf_uses_two_spaces_no_disclosure_hit() {
-        let r = render_tree_row(&tnode("match", 0, false), false, false, 1);
+        let r = render_tree_row(&tnode("match", 0, false), false, false, 1, false, 80);
         // No glyph, just spaces for alignment.
         assert!(r.entry.text.starts_with("  "));
         assert!(r.entry.text.contains("match"));
@@ -7138,7 +7303,7 @@ mod tests {
 
     #[test]
     fn tree_row_indents_by_depth_times_two() {
-        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1);
+        let r = render_tree_row(&tnode("nested", 2, false), false, false, 1, false, 80);
         // depth=2 → 4 leading spaces, then 2 alignment spaces, then "nested".
         assert!(r.entry.text.starts_with("      nested"));
     }
@@ -7156,7 +7321,7 @@ mod tests {
             properties: Default::default(),
             unit: OffsetUnit::Byte,
         });
-        let r = render_tree_row(&node, false, false, 1);
+        let r = render_tree_row(&node, false, false, 1, false, 80);
         // depth=1 → 2 indent + 2 alignment = 4 prefix bytes (ASCII).
         // The plugin's [0..5] becomes [4..9].
         let plugin_overlay = r
@@ -7174,7 +7339,7 @@ mod tests {
         // Even with `checked: Some(_)`, no glyph if `checkable: false`.
         let mut node = tnode("file.rs", 0, false);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, false, 1);
+        let r = render_tree_row(&node, false, false, 1, false, 80);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -7186,7 +7351,7 @@ mod tests {
         // Lets a checkable tree mix non-checkbox-bearing nodes
         // (e.g. a separator or header) with checkbox rows.
         let node = tnode("section", 0, false);
-        let r = render_tree_row(&node, false, true, 1);
+        let r = render_tree_row(&node, false, true, 1, false, 80);
         assert!(r.checkbox_range.is_none());
         assert!(!r.entry.text.contains("[v]"));
         assert!(!r.entry.text.contains("[ ]"));
@@ -7196,7 +7361,7 @@ mod tests {
     fn tree_row_renders_checked_glyph_after_disclosure() {
         let mut node = tnode("file.rs", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, true, true, 1);
+        let r = render_tree_row(&node, true, true, 1, false, 80);
         assert!(r.checkbox_range.is_some(), "checkbox range emitted");
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         // Layout: ▼(3 bytes UTF-8) + " " + [v] + " " + body
@@ -7208,7 +7373,7 @@ mod tests {
     fn tree_row_renders_unchecked_glyph_for_leaf() {
         let mut node = tnode("match-row", 1, false);
         node.checked = Some(false);
-        let r = render_tree_row(&node, false, true, 1);
+        let r = render_tree_row(&node, false, true, 1, false, 80);
         let (cb_start, cb_end) = r
             .checkbox_range
             .expect("checkbox range for leaf with checked: Some");
@@ -7223,7 +7388,7 @@ mod tests {
         // verbatim (no UTF-8 boundary issues from the disclosure).
         let mut node = tnode("path/with/é", 0, true);
         node.checked = Some(true);
-        let r = render_tree_row(&node, false, true, 1);
+        let r = render_tree_row(&node, false, true, 1, false, 80);
         let (cb_start, cb_end) = r.checkbox_range.unwrap();
         assert!(r.entry.text.is_char_boundary(cb_start));
         assert!(r.entry.text.is_char_boundary(cb_end));

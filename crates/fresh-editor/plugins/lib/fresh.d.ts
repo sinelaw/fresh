@@ -1344,6 +1344,17 @@ type WidgetSpec = {
 	* are unaffected.
 	*/
 	itemHeight: number;
+	/**
+	* When true (and `item_height > 1`), each *card* node — a
+	* leaf carrying `extra_lines` and no checkbox — renders
+	* inside a rounded border (`╭─…─╮` / `╰─…─╯` spanning the
+	* panel width), taking `item_height + 2` rows: top border,
+	* `item_height` content rows, bottom border. Non-card nodes
+	* (e.g. folder headers) render as plain single rows instead
+	* of being blank-padded to the card height. Scroll and
+	* selection stay node-based; rows per node just vary.
+	*/
+	cardBorders: boolean;
 	key?: string | null;
 } | {
 	"kind": "text";

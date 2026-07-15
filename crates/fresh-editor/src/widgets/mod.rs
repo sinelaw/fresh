@@ -16,7 +16,7 @@
 
 mod actions;
 mod registry;
-mod render;
+pub(crate) mod render;
 mod text_click;
 
 pub use actions::{

@@ -1980,6 +1980,18 @@ pub enum WidgetSpec {
         /// existing single-line trees are unaffected.
         #[serde(default = "default_tree_item_height")]
         item_height: u32,
+        /// When true (and `item_height > 1`), each *card* node — a
+        /// leaf carrying `extra_lines` and no checkbox — renders
+        /// inside a rounded border (`╭─…─╮` / `╰─…─╯` spanning the
+        /// panel width), taking `item_height + 2` rows: top border,
+        /// `item_height` content rows, bottom border. Non-card nodes
+        /// (e.g. folder headers) render as plain single rows instead
+        /// of being blank-padded to the card height. Restores the
+        /// bordered-pill look the Orchestrator dock's card density
+        /// had before it moved to a tree (issue #2703). Scroll and
+        /// selection stay node-based; rows per node just vary.
+        #[serde(default)]
+        card_borders: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

@@ -144,15 +144,17 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     h.render().unwrap();
     open_dock(&mut h); // the dock mounts with keyboard focus
 
-    // The dock's right border (`│`) is a full-height divider; sample its
-    // colour on a content row. The default width is responsive, so scan for
-    // the glyph rather than hard-coding a column.
+    // The dock's right border (`│`) is a full-height divider; find its
+    // column on the toolbar row (row 0), where no session-card `│` side
+    // border can shadow it, then sample its colour on a content row. The
+    // default width is responsive, so scan for the glyph rather than
+    // hard-coding a column.
     const ROW: u16 = 6;
     let border_col = |h: &EditorTestHarness| -> u16 {
         let cols = h.screen_row_text(0).chars().count() as u16;
         (0..cols)
-            .find(|&c| h.get_cell(c, ROW).as_deref() == Some("│"))
-            .expect("dock right border (│) should be present on a content row")
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right border (│) should be present on the toolbar row")
     };
     let divider_fg = |h: &EditorTestHarness| h.get_cell_style(border_col(h), ROW).unwrap().fg;
 
@@ -549,9 +551,13 @@ fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
     h.render().unwrap();
     open_dock(&mut h);
     // Blur the dock so the main view owns the keyboard, as it is while paging
-    // windows with next/prev-window.
+    // windows with next/prev-window. Let the blur-triggered plugin re-render
+    // (the hint rows disappear, growing the tree) land before snapshotting —
+    // otherwise the baseline is taken mid-relayout and the comparison below
+    // fails on the layout shift rather than the scrollbar.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
     h.assert_screen_contains("Orchestrator");
+    h.wait_until_stable(|_| true).unwrap();
 
     let wall_col = {
         let cols = h.screen_row_text(0).chars().count() as u16;
@@ -2136,8 +2142,8 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
             .unwrap();
-    // Enough sessions that the 3-row cards overflow a 32-row screen
-    // (~9 visible cards): 13 nodes total.
+    // Enough sessions that the bordered 5-row cards overflow a 32-row
+    // screen (~5 visible cards): 13 nodes total.
     for i in 1..=12 {
         h.editor_mut()
             .create_window_at(root.join(format!("wt-bb{i:02}")), format!("bb{i:02}"));
@@ -2152,13 +2158,17 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     h.assert_screen_not_contains("bb12");
 
     // Wheel down over the tree: the view scrolls, revealing the tail.
-    // Each notch scrolls 3 nodes; two notches move well past the head.
+    // Each notch scrolls 3 nodes; with ~5 bordered cards visible the
+    // wheel clamps at max-scroll (node 8 of 13) on the third notch,
+    // which puts the last card on screen.
+    h.mouse_scroll_down(5, 15).unwrap();
     h.mouse_scroll_down(5, 15).unwrap();
     h.mouse_scroll_down(5, 15).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("bb12"))
         .unwrap();
 
     // And back up: the tail scrolls back out of view.
+    h.mouse_scroll_up(5, 15).unwrap();
     h.mouse_scroll_up(5, 15).unwrap();
     h.mouse_scroll_up(5, 15).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("bb12"))
@@ -2192,6 +2202,80 @@ fn dock_menu_key_opens_context_menu_and_arrows_navigate() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Top level"))
         .unwrap();
+}
+
+/// Card density draws each session as a rounded bordered card — the
+/// `╭─…─╮` pill look the dock had before the folder-tree redesign, which
+/// the tree rendering dropped (cards were three flat text rows; issue
+/// #2703). Compact density stays border-free.
+#[test]
+fn dock_card_view_draws_card_borders() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The default density is "card": the session's card wears a rounded
+    // border, with the session name on the row below the top border.
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains('╭') && s.contains('╰')
+    })
+    .unwrap();
+    let screen = h.screen_to_string();
+    let top_row = screen.lines().position(|l| l.contains('╭')).unwrap();
+    let name_row = row_of(&h, "alphaproj");
+    assert!(
+        name_row > top_row,
+        "the card's top border must sit above the session name:\n{screen}"
+    );
+    // The name row is inside the card: a `│` side border precedes the
+    // name. (The dock's own right-edge wall is also a `│`, but it sits
+    // *after* the name, so the position check can't pass vacuously.)
+    let name_line = screen.lines().nth(name_row).unwrap();
+    assert!(
+        name_line.find('│').unwrap_or(usize::MAX) < name_line.find("alphaproj").unwrap(),
+        "the session row must sit inside the card's side borders:\n{screen}"
+    );
+
+    // Toggle to compact density: the borders disappear.
+    expand_filters(&mut h);
+    let vrow = row_of(&h, "view: card") as u16;
+    h.mouse_click(3, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains('╭'))
+        .unwrap();
+}
+
+/// The focused dock's hint bar advertises the context-menu key. The
+/// menu (the only keyboard route to "Move to Folder…" and the folder
+/// organise actions) opened via Menu / Shift+F10, but nothing on
+/// screen said so — the feature was undiscoverable without a mouse
+/// (issue #2703). Also pins the Shift+F10 route itself, which the
+/// Menu-key test above doesn't cover (many keyboards have no Menu key).
+#[test]
+fn dock_hint_bar_advertises_context_menu_key_and_shift_f10_opens_it() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The focused dock shows the context-menu key hint.
+    h.wait_until(|h| h.screen_to_string().contains("S-F10"))
+        .unwrap();
+    h.assert_screen_contains("menu");
+
+    // Shift+F10 opens the highlighted node's context menu, exactly like
+    // the Menu key / a right-click.
+    h.send_key(KeyCode::F(10), KeyModifiers::SHIFT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    h.assert_screen_contains("Visit");
 }
 
 /// A folder's "Rename…" action opens the same centered dialog as "New

@@ -272,6 +272,12 @@
      detail lines that select + highlight with their card's primary row. */
   .w-tree-xrow{padding:0 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px;color:var(--muted)}
   .w-tree-xrow.sel{background:var(--menuhi);color:#dfe8ff}
+  /* Bordered card node (Tree.cardBorders): the primary row + its
+     continuation rows wrap in a rounded box, mirroring the TUI's
+     `╭─…─╮` pill chrome. Selection tints the whole card. */
+  .w-tree-card{border:1px solid var(--border);border-radius:6px;padding:1px 2px;margin:1px 2px;background:rgba(255,255,255,.02)}
+  .w-tree-card.sel{border-color:var(--accent);background:var(--menuhi)}
+  .w-tree-card.sel .w-tree-xrow{color:#dfe8ff}
   .w-overlay{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
     box-shadow:0 10px 34px rgba(0,0,0,.5);padding:4px;margin:2px 0;z-index:4;position:relative}
   .w-list-cards{gap:4px;padding:2px}
@@ -2160,7 +2166,14 @@ function widgetEl(spec, ctx){
       const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
       row.appendChild(t);
       row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
-      el.appendChild(row);
+      // Bordered card node (Tree.cardBorders + extraLines): wrap the
+      // primary row and its continuation rows in a rounded box, the web
+      // twin of the TUI's `╭─…─╮` card chrome. Non-card nodes (folder
+      // headers) stay plain rows.
+      const isCard=!!spec.cardBorders&&!n.hasChildren&&(n.extraLines||[]).length>0;
+      const holder=isCard?div("w-tree-card"+(i===sel?" sel":"")):el;
+      if(isCard){ holder.style.marginLeft=(d*2)+"ch"; row.style.paddingLeft="0"; }
+      holder.appendChild(row);
       // Fixed-height card rows (Tree.itemHeight > 1): the node's
       // extraLines render as continuation rows below the primary line,
       // indented past the disclosure column. The whole card is one
@@ -2168,11 +2181,12 @@ function widgetEl(spec, ctx){
       // TUI, which emits a select hit for every continuation row.
       for(const ex of (n.extraLines||[])){
         const xr=div("w-tree-xrow"+(i===sel?" sel":""));
-        xr.style.paddingLeft=((d*2)+2)+"ch";
+        xr.style.paddingLeft=isCard?"2ch":((d*2)+2)+"ch";
         xr.textContent=entryText(ex);
         xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
-        el.appendChild(xr);
+        holder.appendChild(xr);
       }
+      if(isCard) el.appendChild(holder);
     });
     return el;
   }

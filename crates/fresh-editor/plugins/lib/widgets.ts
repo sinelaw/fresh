@@ -465,6 +465,12 @@ export function tree(options: {
    * blank-padded to this height. Scroll/selection stay node-based, so
    * single-line trees are unaffected. */
   itemHeight?: number;
+  /** When true (and `itemHeight > 1`), card nodes — leaves carrying
+   * `extraLines` — render inside a rounded `╭─…─╮` border spanning the
+   * panel width (`itemHeight + 2` rows), while non-card nodes (folder
+   * headers) render as plain single rows instead of being blank-padded
+   * to the card height. */
+  cardBorders?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -476,6 +482,7 @@ export function tree(options: {
     expandedKeys: options.expandedKeys ?? [],
     checkable: options.checkable ?? false,
     itemHeight: options.itemHeight ?? 1,
+    cardBorders: options.cardBorders ?? false,
     key: options.key,
   };
 }
