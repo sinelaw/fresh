@@ -413,6 +413,13 @@
   .widget-surface .w-list>*,.widget-surface .w-tree>*{flex:0 0 auto}
   .widget-surface.w-dock{border-right:1px solid var(--border)}
   .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
+  /* Anchored popup (right-click context menu): undimmed backdrop that still
+     catches outside-clicks (dismiss), and a snug menu card — content-sized
+     height, tighter padding, buttons as full-width menu rows. */
+  .modal-scrim.scrim-clear{background:transparent}
+  .widget-surface.w-floatingModal.anchored{padding:6px 8px;
+    box-shadow:0 10px 36px rgba(0,0,0,.45)}
+  .widget-surface.w-floatingModal.anchored .w-button{display:block;text-align:left}
   .widget-surface .w-col{gap:3px}
   /* --- Plugin dialog polish (New Folder, etc.) ---------------------------
      A floating modal whose root is a labeledSection is a small dialog. Give
@@ -1784,7 +1791,7 @@ function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>
 // list, so a row below the TUI fold has no recorded hit at all. Identity
 // delivery survives both (the bridge resolves by equality, and synthesizes
 // off-window list selects from the panel's own spec).
-function routeWidget(ctx, node, listIndex){
+function routeWidget(ctx, node, listIndex, ev){
   if(ctx.kind==="toolbar"){ if(node.key) sendWidget({surface:"toolbar",key:node.key}); return; }
   const base={surface:"panel",plugin:ctx.plugin,panelId:ctx.panelId};
   if(listIndex!=null){
@@ -1794,6 +1801,15 @@ function routeWidget(ctx, node, listIndex){
     const hit=(ctx.hits||[]).find(h=>h.widgetKind==="list" && h.payload && h.payload.index===listIndex
       && (!node.key || h.payload.list_key===node.key));
     const itemKey=(node.itemKeys&&node.itemKeys[listIndex]!=null)?node.itemKeys[listIndex]:(hit?hit.payload.key:"");
+    // Right-click fires `context` (never recorded as a hit — the bridge
+    // synthesizes it, like the TUI's right-click path) with the click cell
+    // so the plugin can anchor its context-menu popup.
+    if(ev&&ev.button===2){
+      const c=cellAt(ev);
+      sendWidget({...base,widgetKey:itemKey||"",eventType:"context",
+        payload:{index:listIndex,key:itemKey||"",list_key:node.key||null,col:c.col,row:c.row}});
+      return;
+    }
     const msg={...base,widgetKey:itemKey||"",eventType:"select",
       payload:{index:listIndex,key:itemKey||"",list_key:node.key||null}};
     if(hit) msg.hitIndex=hit.index;
@@ -1862,14 +1878,14 @@ function widgetEl(spec, ctx){
       specs.forEach((s,i)=>{
         const card=div("w-list-card"+(i===sel?" sel":""));
         card.appendChild(widgetEl(s, ctx));
-        card.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i); };
+        card.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(card);
       });
     } else {
       (spec.items||[]).forEach((it,i)=>{
         const row=div("w-list-row"+(i===sel?" sel":""));
         row.textContent=entryText(it);
-        row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i); };
+        row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec,i,e); };
         el.appendChild(row);
       });
       if(!(spec.items||[]).length){ const empty=div("w-list-empty"); empty.textContent="(empty)"; el.appendChild(empty); }
@@ -1897,19 +1913,23 @@ function widgetEl(spec, ctx){
       if(!vis) return;
       const row=div("w-tree-row"+(i===sel?" sel":""));
       row.style.paddingLeft=(d*2)+"ch";
+      // Right-click anywhere on the row (disclosure/checkbox included, like
+      // the TUI's cell hit-test) fires `context` instead of the cell's own
+      // event — the plugin raises a context menu anchored at the click cell.
+      const treeCtx=e=>{ const c=cellAt(e); routeTree(ctx,spec,"context",{index:i,key,col:c.col,row:c.row}); };
       if(n.hasChildren){
         const g=document.createElement("span"); g.className="w-tree-disc"; g.textContent=isOpen?"▼ ":"▶ ";
-        g.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"expand",{index:i,key,expanded:!isOpen}); };
+        g.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"expand",{index:i,key,expanded:!isOpen}); };
         row.appendChild(g);
       }
       if(spec.checkable&&n.checked!=null){
         const cb=document.createElement("span"); cb.className="w-tree-check"; cb.textContent=n.checked?"☑ ":"☐ ";
-        cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"toggle",{index:i,key,checked:!n.checked}); };
+        cb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"toggle",{index:i,key,checked:!n.checked}); };
         row.appendChild(cb);
       }
       const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
       row.appendChild(t);
-      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"select",{index:i,key}); };
+      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
       el.appendChild(row);
       // Fixed-height card rows (Tree.itemHeight > 1): the node's
       // extraLines render as continuation rows below the primary line,
@@ -1920,7 +1940,7 @@ function widgetEl(spec, ctx){
         const xr=div("w-tree-xrow"+(i===sel?" sel":""));
         xr.style.paddingLeft=((d*2)+2)+"ch";
         xr.textContent=entryText(ex);
-        xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeTree(ctx,spec,"select",{index:i,key}); };
+        xr.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
         el.appendChild(xr);
       }
     });
@@ -2222,18 +2242,33 @@ function contextMenuEl(cm){
 function widgetSurfaceEls(s){
   const out=[];
   if(s.kind==="floatingModal"){
-    const scrim=div("modal-scrim"); scrim.onmousedown=e=>e.stopPropagation(); out.push(scrim);
+    // An ANCHORED panel (right-click context menu) keeps the scrim as a
+    // click-catcher but undimmed — the TUI draws no background dim for it —
+    // and a press outside the popup dismisses it (standard menu behaviour;
+    // the centered modal instead swallows outside-clicks, it has explicit
+    // Cancel / Esc).
+    const scrim=div("modal-scrim"+(s.anchored?" scrim-clear":""));
+    scrim.onmousedown=s.anchored
+      ? e=>{ e.preventDefault(); e.stopPropagation(); sendKey({key:"Escape"}); }
+      : e=>e.stopPropagation();
+    out.push(scrim);
   }
-  const el=div("region widget-surface w-"+s.kind); place(el,s.rect);
+  const el=div("region widget-surface w-"+s.kind+(s.anchored?" anchored":"")); place(el,s.rect);
   if(s.kind==="floatingModal"){
     // The host sizes the panel in whole terminal cells, but the DOM adds
     // per-row gaps + padding a cell grid can't express, so a snug dialog
     // (e.g. the New Folder dialog) would overflow its fixed height and clip
     // its buttons under `overflow:auto`. Treat the host height as a minimum
     // and let the modal grow to fit its content; nudge it up by half the
-    // overflow so it stays visually centered.
+    // overflow so it stays visually centered. An anchored popup instead
+    // stays pinned at its click cell — it grows downward, no recentering.
     const want=el.style.height; el.style.minHeight=want; el.style.height="auto";
-    requestAnimationFrame(()=>{
+    if(s.anchored){
+      // Content-sized in both axes (host cells can't express DOM padding);
+      // the host-clamped rect stays as the minimum so the popup never
+      // shrinks below its TUI footprint.
+      el.style.minWidth=el.style.width; el.style.width="auto"; el.style.maxWidth="60vw";
+    } else requestAnimationFrame(()=>{
       const grew=el.offsetHeight-parseFloat(want||"0");
       if(grew>0) el.style.top=(parseFloat(el.style.top)-grew/2)+"px";
     });

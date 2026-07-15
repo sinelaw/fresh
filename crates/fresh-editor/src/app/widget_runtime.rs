@@ -432,18 +432,35 @@ impl Editor {
         }
     }
 
+    /// Copy the right-click screen cell (`col`/`row`) from a frontend
+    /// `context` payload into the synthesized one, clamped to `u16` like a
+    /// real terminal cell. The plugin uses it to anchor its popup; absent
+    /// or malformed coordinates are simply omitted (the plugin falls back
+    /// to a default anchor).
+    fn copy_context_anchor_cell(from: &serde_json::Value, into: &mut serde_json::Value) {
+        if let Some(obj) = into.as_object_mut() {
+            for cell in ["col", "row"] {
+                if let Some(v) = from.get(cell).and_then(|v| v.as_u64()) {
+                    obj.insert(cell.to_string(), serde_json::json!(v.min(u16::MAX as u64)));
+                }
+            }
+        }
+    }
+
     /// Rebuild the `HitArea` that `collect_list` would have emitted for a
     /// list row that is outside the TUI's scroll window (so no hit was
     /// recorded), from the panel's own spec: the payload's `list_key` must
     /// name a `List` in the spec and `index` must be in bounds; the item key
     /// is read from the spec's `item_keys`. Returns `None` for anything
-    /// that isn't a valid in-bounds list `select`.
+    /// that isn't a valid in-bounds list `select` or right-click `context`
+    /// (which is never recorded as a hit — the TUI synthesizes it from a
+    /// right-click as well).
     fn synthesize_list_hit(
         panel: &crate::widgets::WidgetPanelState,
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Option<crate::widgets::HitArea> {
-        if event_type != "select" {
+        if event_type != "select" && event_type != "context" {
             return None;
         }
         let list_key = payload.get("list_key")?.as_str()?;
@@ -467,18 +484,25 @@ impl Editor {
             return None;
         }
         let item_key = item_keys.get(index as usize).cloned().unwrap_or_default();
+        let mut row_payload = serde_json::json!({
+            "index": index,
+            "key": item_key,
+            "list_key": list_key,
+        });
+        let event_type = if event_type == "context" {
+            Self::copy_context_anchor_cell(payload, &mut row_payload);
+            "context"
+        } else {
+            "select"
+        };
         Some(crate::widgets::HitArea {
             widget_key: item_key.clone(),
             widget_kind: "list",
             buffer_row: 0,
             byte_start: 0,
             byte_end: 0,
-            payload: serde_json::json!({
-                "index": index,
-                "key": item_key,
-                "list_key": list_key,
-            }),
-            event_type: "select",
+            payload: row_payload,
+            event_type,
         })
     }
 
@@ -486,16 +510,18 @@ impl Editor {
     /// tree row outside the TUI's scroll window (so no hit was recorded),
     /// from the panel's own spec: `widget_key` must name a `Tree`, the
     /// payload's `index` must be in bounds, and the row's item key comes
-    /// from the spec's `item_keys`. Covers the row-body `select` and the
-    /// disclosure `expand` events (the natively-scrolled web frontend can
-    /// click any row, not just the TUI's visible window).
+    /// from the spec's `item_keys`. Covers the row-body `select`, the
+    /// disclosure `expand`, and the right-click `context` events (the
+    /// natively-scrolled web frontend can click any row, not just the
+    /// TUI's visible window; no `context` hit is ever recorded — the TUI
+    /// synthesizes those from a right-click too).
     fn synthesize_tree_hit(
         panel: &crate::widgets::WidgetPanelState,
         widget_key: &str,
         event_type: &str,
         payload: &serde_json::Value,
     ) -> Option<crate::widgets::HitArea> {
-        if (event_type != "select" && event_type != "expand") || widget_key.is_empty() {
+        if !matches!(event_type, "select" | "expand" | "context") || widget_key.is_empty() {
             return None;
         }
         let index = payload.get("index")?.as_i64()?;
@@ -510,20 +536,27 @@ impl Editor {
             return None;
         }
         let item_key = item_keys.get(index as usize).cloned().unwrap_or_default();
-        let (event_type, payload) = if event_type == "expand" {
-            (
+        let (event_type, payload) = match event_type {
+            "expand" => (
                 "expand",
                 serde_json::json!({
                     "index": index,
                     "key": item_key,
                     "expanded": payload.get("expanded").and_then(|v| v.as_bool()).unwrap_or(true),
                 }),
-            )
-        } else {
-            (
+            ),
+            // Right-click: same shape the TUI's context path fires —
+            // the row identity plus the click cell the plugin anchors
+            // its popup at (see `handle_floating_widget_context_click`).
+            "context" => {
+                let mut p = serde_json::json!({ "index": index, "key": item_key });
+                Self::copy_context_anchor_cell(payload, &mut p);
+                ("context", p)
+            }
+            _ => (
                 "select",
                 serde_json::json!({ "index": index, "key": item_key }),
-            )
+            ),
         };
         Some(crate::widgets::HitArea {
             widget_key: widget_key.to_string(),

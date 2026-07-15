@@ -220,6 +220,33 @@ check('clicking a dock workspace row selects it in the scene',
   !!dSel && dSel.instances && dSel.instances.sessions && dSel.instances.sessions.selectedIndex === 0,
   JSON.stringify(dSel && dSel.instances));
 
+console.log('\n[dock right-click = plugin context menu (anchored popup, like the TUI)]');
+// Right-click on a session row fires a `context` widget event (never in the
+// recorded hits — the bridge synthesizes it, exactly like the TUI's
+// right-click path) and the orchestrator raises its anchored Visit / Move /
+// Archive / Delete popup, undimmed, dismissed by Esc or an outside click.
+const modalSurf = async () => ((await scene(page)).regions.widgets || []).find(w => w.kind === 'floatingModal');
+await page.locator('.widget-surface.w-dock .w-tree-row').first().click({ button: 'right' });
+await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
+const ctxM = await modalSurf();
+check('right-click on a dock row opens the context-menu panel', !!ctxM);
+check('context menu is ANCHORED (popup placement, not centered)', !!ctxM && ctxM.anchored === true);
+const ctxText = ctxM ? await page.locator('.widget-surface.w-floatingModal').innerText() : '';
+check('context menu offers Visit / Move to folder / Archive / Delete',
+  /Visit/.test(ctxText) && /Move to Folder/i.test(ctxText) && /Archive/.test(ctxText) && /Delete/.test(ctxText), ctxText);
+check('anchored popup scrim is transparent (no modal dim)', (await page.locator('.modal-scrim.scrim-clear').count()) === 1);
+await page.screenshot({ path: `${SHOTS}/29-dock-context-menu.png` });
+// Esc dismisses the popup; the dock survives.
+await page.keyboard.press('Escape');
+await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
+check('Esc closes the context menu', !(await modalSurf()));
+// Reopen; a click outside the popup dismisses it (standard menu behaviour).
+await page.locator('.widget-surface.w-dock .w-tree-row').first().click({ button: 'right' });
+await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
+await page.locator('.modal-scrim.scrim-clear').click({ position: { x: 900, y: 600 } });
+await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'), { timeout: 8000 }).catch(() => {});
+check('outside-click dismisses the context menu', !(await modalSurf()));
+
 console.log('\n[keybinding editor = full native modal incl. edit dialog]');
 // Start clean: dismiss any focused dock/floating panel so keys reach the editor.
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);

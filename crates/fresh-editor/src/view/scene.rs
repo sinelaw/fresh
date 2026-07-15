@@ -855,6 +855,11 @@ pub struct WidgetInstanceView {
 pub struct WidgetSurfaceView {
     /// "dock" (left dock) or "floatingModal" (centered).
     pub kind: &'static str,
+    /// True for a `floatingModal` in the anchored (context-menu popup)
+    /// placement: content-sized, pinned near its opening click, and — unlike
+    /// the centered modal — drawn without a background dim, dismissed by a
+    /// click outside its box.
+    pub anchored: bool,
     pub plugin: String,
     pub panel_id: u64,
     pub rect: RectView,
@@ -925,6 +930,10 @@ impl Editor {
                 .collect();
             out.push(WidgetSurfaceView {
                 kind,
+                anchored: matches!(
+                    fwp.placement,
+                    crate::app::PanelPlacement::Anchored { .. }
+                ),
                 plugin: fwp.panel_key.plugin.clone(),
                 panel_id: fwp.panel_key.id,
                 rect: RectView::from(rect),
