@@ -183,10 +183,12 @@ impl Editor {
         };
         if !chrome_drag_active {
             let forwarding = self.config.terminal.mouse_forwarding;
-            if let Some(result) =
-                self.active_window_mut()
-                    .try_forward_mouse_to_terminal(col, row, mouse_event, forwarding)
-            {
+            if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
+                col,
+                row,
+                mouse_event,
+                forwarding,
+            ) {
                 return result;
             }
         }

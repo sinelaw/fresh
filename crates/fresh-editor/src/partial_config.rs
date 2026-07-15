@@ -458,7 +458,8 @@ impl Merge for PartialTerminalConfig {
         self.skip_app_execution_alias
             .merge_from(&other.skip_app_execution_alias);
         self.resume_agents.merge_from(&other.resume_agents);
-        self.mouse_drag_selects.merge_from(&other.mouse_drag_selects);
+        self.mouse_drag_selects
+            .merge_from(&other.mouse_drag_selects);
         self.mouse_forwarding.merge_from(&other.mouse_forwarding);
     }
 }
@@ -985,7 +986,9 @@ impl PartialTerminalConfig {
                 .skip_app_execution_alias
                 .unwrap_or(defaults.skip_app_execution_alias),
             resume_agents: self.resume_agents.unwrap_or(defaults.resume_agents),
-            mouse_drag_selects: self.mouse_drag_selects.unwrap_or(defaults.mouse_drag_selects),
+            mouse_drag_selects: self
+                .mouse_drag_selects
+                .unwrap_or(defaults.mouse_drag_selects),
             mouse_forwarding: self.mouse_forwarding.unwrap_or(defaults.mouse_forwarding),
         }
     }
