@@ -2310,6 +2310,40 @@ pub struct TerminalConfig {
     /// agent clean. No effect on sessions without a resume spec.
     #[serde(default = "default_true")]
     pub resume_agents: bool,
+
+    /// Dragging on a live terminal selects text: the split drops into
+    /// read-only scrollback (Ctrl+Space resumes) with a real selection
+    /// that the drag extends and Ctrl+C copies; a bare click still only
+    /// focuses the terminal. Set to `false` to make a drag on the live
+    /// grid inert again (default: true)
+    #[serde(default = "default_true")]
+    pub mouse_drag_selects: bool,
+
+    /// When to forward mouse events to the program running inside the
+    /// terminal. `requested` (default) forwards button/drag events only
+    /// to programs that enabled mouse reporting (DECSET 1000/1002/1003),
+    /// buttonless motion only under all-motion (1003), and lets
+    /// Shift+drag bypass forwarding so text can always be selected;
+    /// wheel events additionally reach alternate-screen programs
+    /// (alternate-scroll arrow synthesis for pagers). `alt_screen` is
+    /// the legacy rule: every mouse event is forwarded to any
+    /// alternate-screen program, whether or not it asked for the mouse,
+    /// with no Shift bypass.
+    #[serde(default)]
+    pub mouse_forwarding: TerminalMouseForwarding,
+}
+
+/// Mouse-forwarding policy for programs running inside the terminal
+/// (see [`TerminalConfig::mouse_forwarding`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalMouseForwarding {
+    /// Forward only to programs that subscribed to mouse reporting;
+    /// Shift+drag bypasses so selection always stays available.
+    #[default]
+    Requested,
+    /// Legacy: forward everything to any alternate-screen program.
+    AltScreen,
 }
 
 impl Default for TerminalConfig {
@@ -2319,6 +2353,8 @@ impl Default for TerminalConfig {
             shell: None,
             skip_app_execution_alias: true,
             resume_agents: true,
+            mouse_drag_selects: true,
+            mouse_forwarding: TerminalMouseForwarding::default(),
         }
     }
 }

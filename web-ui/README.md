@@ -49,7 +49,11 @@ the core; each frontend only renders it.
   the mouse: drag/double-click build a native selection over any text on
   the page — terminals, file explorer, menus, dialogs — with Ctrl+C
   copying it (SVG grid selections are rebuilt row-aware so multi-line
-  copies keep their newlines).
+  copies keep their newlines). Every piece is opt-out: **Ctrl+Alt+S**
+  toggles the Alt-selection mode (a frontend view preference, persisted
+  in localStorage like zoom), and `terminal.mouse_drag_selects` /
+  `terminal.mouse_forwarding` in the editor config govern the
+  terminal-side behavior.
 
 ## Architecture (taps the real render pipeline)
 

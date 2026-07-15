@@ -176,7 +176,9 @@
         "jump_to_end_on_output": true,
         "shell": null,
         "skip_app_execution_alias": true,
-        "resume_agents": true
+        "resume_agents": true,
+        "mouse_drag_selects": true,
+        "mouse_forwarding": "requested"
       }
     },
     "keybindings": {
@@ -1255,6 +1257,16 @@
           "description": "When restoring an Orchestrator agent session that recorded an\nagent-resume spec (e.g. `claude --session-id <id>` → resume with\n`claude --resume <id>`), rejoin the prior conversation instead of\nre-running the launch command fresh. Default `true`.\n\nSet to `false` to always re-run the launch command on restore (the\npre-resume behaviour) — useful if you'd rather a restart start each\nagent clean. No effect on sessions without a resume spec.",
           "type": "boolean",
           "default": true
+        },
+        "mouse_drag_selects": {
+          "description": "Dragging on a live terminal selects text: the split drops into\nread-only scrollback (Ctrl+Space resumes) with a real selection\nthat the drag extends and Ctrl+C copies; a bare click still only\nfocuses the terminal. Set to `false` to make a drag on the live\ngrid inert again (default: true)",
+          "type": "boolean",
+          "default": true
+        },
+        "mouse_forwarding": {
+          "description": "When to forward mouse events to the program running inside the\nterminal. `requested` (default) forwards button/drag events only\nto programs that enabled mouse reporting (DECSET 1000/1002/1003),\nbuttonless motion only under all-motion (1003), and lets\nShift+drag bypass forwarding so text can always be selected;\nwheel events additionally reach alternate-screen programs\n(alternate-scroll arrow synthesis for pagers). `alt_screen` is\nthe legacy rule: every mouse event is forwarded to any\nalternate-screen program, whether or not it asked for the mouse,\nwith no Shift bypass.",
+          "$ref": "#/$defs/TerminalMouseForwarding",
+          "default": "requested"
         }
       }
     },
@@ -1277,6 +1289,21 @@
       },
       "required": [
         "command"
+      ]
+    },
+    "TerminalMouseForwarding": {
+      "description": "Mouse-forwarding policy for programs running inside the terminal\n(see [`TerminalConfig::mouse_forwarding`]).",
+      "oneOf": [
+        {
+          "description": "Forward only to programs that subscribed to mouse reporting;\nShift+drag bypasses so selection always stays available.",
+          "type": "string",
+          "const": "requested"
+        },
+        {
+          "description": "Legacy: forward everything to any alternate-screen program.",
+          "type": "string",
+          "const": "alt_screen"
+        }
       ]
     },
     "Keybinding": {

@@ -2976,6 +2976,15 @@ document.addEventListener("keydown",e=>{
     setPaletteCentered(!paletteCentered);
     return;
   }
+  // Alt-selection toggle: Ctrl/Cmd+Alt+S is FRONTEND-OWNED (like the two
+  // above) — it enables/disables the hold-Alt native text-selection mode
+  // for users whose workflow clashes with Alt-drag, persisted in
+  // localStorage. Never reaches the editor.
+  if((e.ctrlKey||e.metaKey) && e.altKey && (e.key==="s"||e.key==="S"||e.code==="KeyS")){
+    e.preventDefault();
+    setNatselEnabled(!natselEnabled);
+    return;
+  }
   // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
   // shortcuts reach the editor) and the named navigation/edit keys.
   const single=e.key.length===1;
@@ -3035,13 +3044,34 @@ document.addEventListener("paste",e=>{
 // Shift/Ctrl. The gutter stays user-select:none (see the CSS) so cross-pane
 // drags copy code, not line numbers.
 let natsel=false, natselLeftDown=false;
+// Frontend-owned view preference (same class as `zoom`/`paletteCentered`,
+// persisted in localStorage, never editor state): whether holding Alt
+// engages native selection at all. Ctrl+Alt+S toggles it for users whose
+// workflow clashes with Alt-drag.
+let natselEnabled = true;
+try{ if(localStorage.getItem("fresh.altselect")==="0") natselEnabled=false; }catch(_){}
+let natselHintT = null;
+function setNatselEnabled(on){
+  natselEnabled=on;
+  try{ localStorage.setItem("fresh.altselect", on?"1":"0"); }catch(_){}
+  if(!on) setNatsel(false);
+  // transient feedback in the natsel pill
+  const el=document.getElementById("natsel");
+  el.querySelector(".rc-label").textContent="Alt text selection: "+(on?"on":"off");
+  el.classList.add("show");
+  clearTimeout(natselHintT);
+  natselHintT=setTimeout(()=>{
+    el.classList.toggle("show",natsel);
+    el.querySelector(".rc-label").textContent="Select text — drag, then Ctrl+C";
+  },1600);
+}
 function setNatsel(on){
   if(natsel===on) return;
   natsel=on;
   document.body.classList.toggle("natsel",on);
   document.getElementById("natsel").classList.toggle("show",on);
 }
-document.addEventListener("keydown",e=>{ if(e.key==="Alt"&&!e.repeat) setNatsel(true); },true);
+document.addEventListener("keydown",e=>{ if(e.key==="Alt"&&!e.repeat&&natselEnabled) setNatsel(true); },true);
 document.addEventListener("keyup",e=>{ if(e.key!=="Alt") return;
   e.preventDefault();                    // keep the browser's own Alt menu-focus away
   if(!natselLeftDown) setNatsel(false);  // mid-drag: hold the mode until mouseup
@@ -3053,7 +3083,7 @@ window.addEventListener("blur",()=>{ natselLeftDown=false; setNatsel(false); });
 // next ordinary mousedown, so stale highlights never sit under
 // editor-forwarded clicks.
 document.addEventListener("mousedown",e=>{
-  if(e.altKey) setNatsel(true);          // window focused with Alt already held
+  if(e.altKey&&natselEnabled) setNatsel(true);   // window focused with Alt already held
   if(!natsel){
     const g=window.getSelection&&window.getSelection();
     if(g&&!g.isCollapsed) g.removeAllRanges();
@@ -3217,11 +3247,12 @@ mqMobile.addEventListener("change", resize);
 // the region containers the last render pass actually rebuilt (per-region
 // patching); `metrics` exposes the measured grid unit + zoom factor.
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
-  setPaletteCentered,
+  setPaletteCentered, setNatselEnabled,
   get frames(){return frameCount;}, get seq(){return lastSeq;},
   get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;},
   get renderedRegions(){return renderedRegions;},
   get paletteCentered(){return paletteCentered;},
+  get natselEnabled(){return natselEnabled;},
   get metrics(){return {cw:CW, ch:CH, font:FONT, zoom};} };
 focusSink();  // desktop: arm the hidden text sink (IME/dead-key path)
 connect();    // WS: hello replaces the scene, then resize() fits the grid

@@ -17,11 +17,13 @@ use ratatui::layout::Rect;
 impl Window {
     /// Check if mouse event should be forwarded to the terminal.
     /// Returns true if the event was forwarded (and handled).
+    /// `forwarding` is the configured `terminal.mouse_forwarding` policy.
     pub(crate) fn try_forward_mouse_to_terminal(
         &mut self,
         col: u16,
         row: u16,
         mouse_event: MouseEvent,
+        forwarding: crate::config::TerminalMouseForwarding,
     ) -> Option<AnyhowResult<bool>> {
         // Only forward if the focused split is a live terminal.
         if !self.focused_terminal_live() {
@@ -31,35 +33,45 @@ impl Window {
         // Find terminal buffer at this position.
         let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
 
-        // Button/motion events are forwarded only when the inner program
-        // actually subscribed to the mouse (DECSET 1000/1002/1003) — writing
-        // mouse escape sequences into a program that never enabled reporting
-        // just injects garbage into its stdin. Shift is the universal escape
-        // hatch (xterm convention): a shifted press/drag is never forwarded,
-        // so text can always be drag-selected even under a mouse-hungry
-        // program. Wheel events additionally keep the alternate-screen rule:
-        // alternate-scroll mode (arrow-key synthesis for pagers like `less`)
-        // lives in `forward_mouse_to_terminal` and must keep seeing them.
-        let wants_mouse = self.terminal_wants_mouse(buffer_id);
-        let is_scroll = matches!(
-            mouse_event.kind,
-            MouseEventKind::ScrollUp
-                | MouseEventKind::ScrollDown
-                | MouseEventKind::ScrollLeft
-                | MouseEventKind::ScrollRight
-        );
-        let shift = mouse_event
-            .modifiers
-            .contains(crossterm::event::KeyModifiers::SHIFT);
-        let forward = if is_scroll {
-            wants_mouse || self.is_terminal_in_alternate_screen(buffer_id)
-        } else if matches!(mouse_event.kind, MouseEventKind::Moved) {
-            // Buttonless motion belongs only to all-motion tracking (1003);
-            // spamming it at click-only/button-drag programs is out of spec
-            // (and its echo can churn the PTY).
-            self.terminal_wants_mouse_motion(buffer_id)
-        } else {
-            wants_mouse && !shift
+        let forward = match forwarding {
+            // Legacy rule: forward every event to any alternate-screen
+            // program, whether or not it asked for the mouse.
+            crate::config::TerminalMouseForwarding::AltScreen => {
+                self.is_terminal_in_alternate_screen(buffer_id)
+            }
+            // Button/motion events are forwarded only when the inner program
+            // actually subscribed to the mouse (DECSET 1000/1002/1003) —
+            // writing mouse escape sequences into a program that never
+            // enabled reporting just injects garbage into its stdin. Shift is
+            // the universal escape hatch (xterm convention): a shifted
+            // press/drag is never forwarded, so text can always be
+            // drag-selected even under a mouse-hungry program. Wheel events
+            // additionally keep the alternate-screen rule: alternate-scroll
+            // mode (arrow-key synthesis for pagers like `less`) lives in
+            // `forward_mouse_to_terminal` and must keep seeing them.
+            crate::config::TerminalMouseForwarding::Requested => {
+                let wants_mouse = self.terminal_wants_mouse(buffer_id);
+                let is_scroll = matches!(
+                    mouse_event.kind,
+                    MouseEventKind::ScrollUp
+                        | MouseEventKind::ScrollDown
+                        | MouseEventKind::ScrollLeft
+                        | MouseEventKind::ScrollRight
+                );
+                let shift = mouse_event
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::SHIFT);
+                if is_scroll {
+                    wants_mouse || self.is_terminal_in_alternate_screen(buffer_id)
+                } else if matches!(mouse_event.kind, MouseEventKind::Moved) {
+                    // Buttonless motion belongs only to all-motion tracking
+                    // (1003); spamming it at click-only/button-drag programs
+                    // is out of spec (and its echo can churn the PTY).
+                    self.terminal_wants_mouse_motion(buffer_id)
+                } else {
+                    wants_mouse && !shift
+                }
+            }
         };
         if !forward {
             return None;

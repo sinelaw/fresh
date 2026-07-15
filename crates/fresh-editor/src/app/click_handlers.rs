@@ -289,8 +289,13 @@ impl Editor {
                 .active_window()
                 .split_terminal_scrollback(split_id, buffer_id)
         {
-            self.active_window_mut().mouse_state.terminal_drag_pending =
-                Some((split_id, buffer_id, col, row));
+            // `terminal.mouse_drag_selects = false` keeps the live grid
+            // inert under drags: the click still focuses (above), no
+            // selection origin is recorded.
+            if self.config.terminal.mouse_drag_selects {
+                self.active_window_mut().mouse_state.terminal_drag_pending =
+                    Some((split_id, buffer_id, col, row));
+            }
             return Ok(());
         }
 
