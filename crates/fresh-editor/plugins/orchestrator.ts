@@ -3557,7 +3557,7 @@ function buildDockSpec(): WidgetSpec {
         ]),
         centered([
           { keys: "Enter", label: editor.t("dock.hint_edit") },
-          { keys: "S-F10", label: editor.t("dock.hint_menu") },
+          { keys: "F2", label: editor.t("dock.hint_menu") },
         ]),
       ];
   const bottomRows = bottom.length;
@@ -3587,6 +3587,7 @@ function buildDockSpec(): WidgetSpec {
         flexSpacer(),
       ),
       row(
+        button(editor.t("dock.move_btn"), { key: "move-session" }),
         flexSpacer(),
         button(editor.t("dock.manage"), { key: "manage" }),
       ),
@@ -4243,6 +4244,38 @@ function openDockContextMenuFromKeyboard(): void {
   const col = Math.min(6, Math.max(2, dockDefaultWidth() - 4));
   openDockContextMenu(idx, col, row);
 }
+
+// Open the "Move to Folder…" dropdown for the current workspace — the
+// same flow the row context menu's Move option runs. Targets the dock's
+// highlighted node when it is a session, else the active window's
+// session. Shared by the palette command (which first opens the dock
+// when it isn't showing — the dropdown lives in its toolbar) and the
+// Filters panel's Move button.
+function openMoveToFolderForCurrent(): void {
+  if (!openPanel || !dockMode) {
+    if (openPanel) return; // a centered modal is up — leave it alone
+    openControlRoom({ dock: true });
+  }
+  if (!openPanel || !openDialog || !dockMode) return;
+  let id: number | null = null;
+  const selKey = openDialog.dockSelKey;
+  if (selKey?.startsWith(SESSION_NODE_PREFIX)) {
+    const sel = Number(selKey.slice(SESSION_NODE_PREFIX.length));
+    if (orchestratorSessions.has(sel)) id = sel;
+  }
+  if (id === null) {
+    const active = editor.activeWindow();
+    if (orchestratorSessions.has(active)) id = active;
+  }
+  if (id === null) return;
+  // Highlight the targeted session and give the dock the keyboard so
+  // the dropdown's ↑↓/Enter path works immediately.
+  openDialog.dockSelKey = sessionNodeKey(id);
+  dockBlurred = false;
+  editor.floatingPanelControl(openPanel.id(), "focus", 0);
+  openDockMenu({ kind: "move", sessionId: id, index: 0 });
+}
+registerHandler("orchestrator_move", openMoveToFolderForCurrent);
 
 // Switch the popup to the centered, full-screen-dimmed confirmation for a
 // destructive action. Reuses the same panel; only the placement + spec
@@ -8450,6 +8483,12 @@ editor.on("widget_event", (e) => {
       openControlRoom();
       return;
     }
+    // Filters panel "Move…" button → the same Move-to-Folder dropdown
+    // the row context menu offers, for the highlighted/current session.
+    if (e.event_type === "activate" && e.widget_key === "move-session") {
+      openMoveToFolderForCurrent();
+      return;
+    }
     // Dock "view" button → flip card ⇄ compact density and re-render.
     if (e.event_type === "activate" && e.widget_key === "view-toggle") {
       dockView = dockView === "card" ? "compact" : "card";
@@ -8766,6 +8805,13 @@ editor.registerCommand(
   "%cmd.dock_toggle",
   "%cmd.dock_toggle_desc",
   "orchestrator_dock_toggle",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "%cmd.move",
+  "%cmd.move_desc",
+  "orchestrator_move",
   null,
   { terminalBypass: true },
 );

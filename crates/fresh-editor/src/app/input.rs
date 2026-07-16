@@ -2790,7 +2790,13 @@ impl Editor {
                         return true;
                     }
                 }
-                KeyCode::F(10) if modifiers.contains(KeyModifiers::SHIFT) => {
+                // F2 — the classic TUI "user menu" key (Midnight
+                // Commander's context actions for the selected entry).
+                // Shift+F10 (the desktop-GUI convention this used to
+                // be) is unreliable in terminals: many emulators and
+                // multiplexers swallow or re-encode shifted function
+                // keys.
+                KeyCode::F(2) if modifiers.is_empty() => {
                     if self
                         .widget_registry
                         .focus_key(&panel_key)

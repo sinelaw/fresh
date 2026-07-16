@@ -495,6 +495,29 @@ impl WidgetRegistry {
         }
         None
     }
+
+    /// The row-body `select` hit of a list/tree row in `buffer_id`,
+    /// regardless of column. Row-level gestures (a right-click context
+    /// menu) target the ROW, not a byte — a compact tree row's text is
+    /// much narrower than the panel, so a click past the text end has no
+    /// byte-ranged hit to land on even though it is visually "on the
+    /// row".
+    pub fn row_select_hit(&self, buffer_id: BufferId, row: u32) -> Option<(PanelKey, HitArea)> {
+        for (key, state) in &self.panels {
+            if state.buffer_id != buffer_id {
+                continue;
+            }
+            for hit in &state.hits {
+                if hit.buffer_row == row
+                    && hit.event_type == "select"
+                    && (hit.widget_kind == "list" || hit.widget_kind == "tree")
+                {
+                    return Some((key.clone(), hit.clone()));
+                }
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

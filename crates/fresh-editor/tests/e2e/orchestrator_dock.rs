@@ -1993,6 +1993,41 @@ fn pos_of(h: &EditorTestHarness, needle: &str) -> (u16, u16) {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
+/// Right-click works in COMPACT density too: the single-line session
+/// rows must raise the same context menu the bordered cards do.
+#[test]
+fn dock_right_click_opens_context_menu_in_compact_mode() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Flip the density to compact.
+    expand_filters(&mut h);
+    let vrow = row_of(&h, "view: card") as u16;
+    h.mouse_click(3, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+
+    // Right-click the session's (single-line) row PAST the end of its
+    // short text — where most of a compact row's width is empty and
+    // where a user naturally aims. The context menu with Visit / Archive
+    // must open, exactly as in card density (whose padded rows span the
+    // panel). Regression: the context hit only covered the row's text
+    // bytes, so compact right-clicks past the name silently did nothing.
+    let session_row =
+        dock_card_name_row(&h, "alphaproj").expect("compact session row should be listed");
+    let wall = dock_wall_col(&h);
+    h.mouse_right_click(wall - 3, session_row).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Archive") && s.contains("Visit")
+    })
+    .unwrap();
+}
+
 #[test]
 fn dock_right_click_opens_context_menu() {
     let (_tmp, h) = open_dock_context_menu("alphaproj");
@@ -2359,12 +2394,14 @@ fn dock_card_view_draws_card_borders() {
 
 /// The focused dock's hint bar advertises the context-menu key. The
 /// menu (the only keyboard route to "Move to Folder…" and the folder
-/// organise actions) opened via Menu / Shift+F10, but nothing on
+/// organise actions) opened via Menu / a function key, but nothing on
 /// screen said so — the feature was undiscoverable without a mouse
-/// (issue #2703). Also pins the Shift+F10 route itself, which the
-/// Menu-key test above doesn't cover (many keyboards have no Menu key).
+/// (issue #2703). Also pins the F2 route itself, which the Menu-key
+/// test above doesn't cover (many keyboards have no Menu key). F2 is
+/// the classic TUI "user menu" key; the previous Shift+F10 (a desktop
+/// convention) is swallowed or re-encoded by many terminals.
 #[test]
-fn dock_hint_bar_advertises_context_menu_key_and_shift_f10_opens_it() {
+fn dock_hint_bar_advertises_context_menu_key_and_f2_opens_it() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -2373,16 +2410,62 @@ fn dock_hint_bar_advertises_context_menu_key_and_shift_f10_opens_it() {
     open_dock(&mut h);
 
     // The focused dock shows the context-menu key hint.
-    h.wait_until(|h| h.screen_to_string().contains("S-F10"))
+    h.wait_until(|h| h.screen_to_string().contains("F2 menu"))
         .unwrap();
-    h.assert_screen_contains("menu");
 
-    // Shift+F10 opens the highlighted node's context menu, exactly like
-    // the Menu key / a right-click.
-    h.send_key(KeyCode::F(10), KeyModifiers::SHIFT).unwrap();
+    // F2 opens the highlighted node's context menu, exactly like the
+    // Menu key / a right-click.
+    h.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
         .unwrap();
     h.assert_screen_contains("Visit");
+}
+
+/// The palette command "Orchestrator: Move to Folder…" opens the same
+/// Move-to-Folder dropdown the row context menu offers, targeting the
+/// current workspace — no mouse or dock focus required.
+#[test]
+fn palette_move_command_opens_move_dropdown() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    // Blur the dock first — the palette opens from the editor, the
+    // realistic flow for a command-driven move (a focused dock swallows
+    // Ctrl+P for its own chrome).
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+
+    run_palette_command(&mut h, "Orchestrator: Move to Folder");
+    // The dropdown lists the top-level target plus "New Folder…".
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Top level") && s.contains("New Folder")
+    })
+    .unwrap();
+}
+
+/// The expanded Filters panel carries a "Move…" button that opens the
+/// Move-to-Folder dropdown for the highlighted/current session — a
+/// mouse-first route to the same flow.
+#[test]
+fn dock_filters_move_button_opens_move_dropdown() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    expand_filters(&mut h);
+    let (mcol, mrow) = pos_of(&h, "Move…");
+    h.mouse_click(mcol + 2, mrow).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Top level") && s.contains("New Folder")
+    })
+    .unwrap();
 }
 
 /// A folder's "Rename…" action opens the same centered dialog as "New
@@ -2455,7 +2538,7 @@ fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
     open_dock(&mut h);
 
     // Both hint rows render, pinned to the dock's bottom edge (the dock
-    // column spans the full 32-row frame): "S-F10 menu" on the last row,
+    // column spans the full 32-row frame): "F2 menu" on the last row,
     // "↑↓ switch →← fold" directly above it — not directly under the
     // single session card near the top. Waiting on the final pinned
     // state directly (rather than settling and asserting) rides out any
@@ -2463,7 +2546,7 @@ fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
     h.wait_until(|h| {
         let s = h.screen_to_string();
         let row_with = |needle: &str| s.lines().position(|l| l.contains(needle));
-        row_with("S-F10") == Some(31) && row_with("fold") == Some(30)
+        row_with("F2 menu") == Some(31) && row_with("fold") == Some(30)
     })
     .unwrap();
 }
@@ -2495,7 +2578,7 @@ fn dock_hint_bar_not_padded_when_tree_overflows() {
     h.wait_until(|h| {
         h.screen_to_string()
             .lines()
-            .position(|l| l.contains("S-F10"))
+            .position(|l| l.contains("F2 menu"))
             == Some(31)
     })
     .unwrap();
@@ -2535,7 +2618,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     // Pre-collapse steady state: the card is visible (git probe landed
     // its "clean" line) AND the hint bar is pinned to the dock bottom.
     // A single semantic wait rides out interleaved probe re-renders.
-    let hint_row = |s: &str| s.lines().position(|l| l.contains("S-F10"));
+    let hint_row = |s: &str| s.lines().position(|l| l.contains("F2 menu"));
     h.wait_until(|h| {
         let s = h.screen_to_string();
         s.contains("clean") && hint_row(&s) == Some(31)

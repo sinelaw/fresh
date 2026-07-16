@@ -4250,21 +4250,20 @@ impl Editor {
             ),
             None => return false,
         };
-        let (mut payload, key, kind) =
-            match self
-                .widget_registry
-                .hit_test(slot.buffer_id(), brow, bcol as u32)
-            {
+        // Exact byte hit first; when the click lands past the row's text
+        // (a compact tree row is much narrower than the panel), fall back
+        // to the row's body `select` hit — a context menu targets the ROW,
+        // not a byte, so anywhere on the row's width should raise it (card
+        // rows already behave that way because their text spans the panel).
+        let exact = self
+            .widget_registry
+            .hit_test(slot.buffer_id(), brow, bcol as u32)
+            .filter(|(_, hit)| hit.widget_kind == "list" || hit.widget_kind == "tree");
+        let (mut payload, key, _kind) =
+            match exact.or_else(|| self.widget_registry.row_select_hit(slot.buffer_id(), brow)) {
                 Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
                 None => return false,
             };
-        // A context menu only makes sense over a real list or tree row.
-        // Trees carry the per-row key + index in the payload (like a list),
-        // so the dock's tree of sessions/folders can raise a context menu
-        // for the right-clicked node too.
-        if kind != "list" && kind != "tree" {
-            return false;
-        }
         // Carry the screen cell so the plugin can anchor its popup at the
         // click (the list `select` payload only has the row index).
         if let Some(obj) = payload.as_object_mut() {
