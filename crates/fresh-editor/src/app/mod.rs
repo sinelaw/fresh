@@ -935,6 +935,13 @@ pub struct Editor {
     /// Plugin-managed global state, isolated per plugin name.
     /// Outer key is plugin name, inner key is the state key set by the plugin.
     plugin_global_state: HashMap<String, HashMap<String, serde_json::Value>>,
+    /// Keys of `plugin_global_state` this instance changed (set or deleted)
+    /// and has not yet flushed. The on-disk `orchestrator/state/<plugin>.json`
+    /// is shared with any concurrently running editor process, so persistence
+    /// merges exactly these keys over the file's current content instead of
+    /// snapshotting the whole in-memory map — a stale instance must not
+    /// revert keys another instance wrote after this one booted.
+    plugin_global_dirty: HashMap<String, std::collections::HashSet<String>>,
     /// Warning log receiver and path (for tracking warnings)
     warning_log: Option<(std::sync::mpsc::Receiver<()>, PathBuf)>,
 

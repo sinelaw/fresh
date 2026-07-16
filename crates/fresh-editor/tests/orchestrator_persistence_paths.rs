@@ -39,7 +39,7 @@ fn save_orchestrator_state_does_not_create_dotfresh_in_working_dir() {
         ..Config::default()
     };
 
-    let editor = fresh::app::Editor::for_test(
+    let mut editor = fresh::app::Editor::for_test(
         config,
         80,
         24,

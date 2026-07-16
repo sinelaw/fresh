@@ -636,6 +636,8 @@ impl Editor {
             suppress_chrome_cells: false,
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
+            // Boot-loaded state came *from* disk — nothing is dirty yet.
+            plugin_global_dirty: HashMap::new(),
             warning_log: None,
             status_log_path: None,
             #[cfg(feature = "plugins")]

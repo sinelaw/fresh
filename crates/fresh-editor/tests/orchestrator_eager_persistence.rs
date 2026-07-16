@@ -162,6 +162,116 @@ fn setting_global_state_persists_it_without_a_quit() {
     );
 }
 
+/// Two editor processes sharing the data dir must not clobber each other's
+/// global plugin state. Each instance loads `orchestrator/state/*.json` once
+/// at boot, and the per-change flush used to rewrite the whole file from that
+/// instance's in-memory map — so an instance that booted *before* another
+/// instance organised the dock would, on its next unrelated write (a fold
+/// toggle, a history push) or on quit, silently revert every folder and
+/// session→folder assignment the other instance had saved. Reproduced
+/// interactively: organise folders in instance B, collapse a folder in
+/// instance A → B's folders vanish from disk.
+///
+/// The fix merges on write: an instance only rewrites the keys *it* changed,
+/// on top of whatever is on disk, instead of snapshotting its whole map.
+#[cfg(feature = "plugins")]
+#[test]
+fn concurrent_instances_do_not_clobber_each_others_global_state() {
+    use fresh_core::api::PluginCommand;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let proj_a = sandbox.path().join("a");
+    let proj_b = sandbox.path().join("b");
+    let data_home = sandbox.path().join("data-home");
+    std::fs::create_dir_all(&proj_a).unwrap();
+    std::fs::create_dir_all(&proj_b).unwrap();
+    std::fs::create_dir_all(&data_home).unwrap();
+    let proj_a = proj_a.canonicalize().unwrap();
+    let proj_b = proj_b.canonicalize().unwrap();
+
+    let dir_context = DirectoryContext::for_testing(&data_home);
+    // Instance A boots first — its in-memory copy of the global state is
+    // whatever was on disk now (nothing).
+    let mut a = editor_in(&proj_a, &dir_context);
+    // Instance B boots and the user organises the dock there: a folder and a
+    // session filed under it.
+    let mut b = editor_in(&proj_b, &dir_context);
+    let folders = serde_json::json!([{ "id": "df1", "name": "Keep", "parent": null }]);
+    let assignments = serde_json::json!({ proj_b.to_string_lossy(): "df1" });
+    b.handle_plugin_command(PluginCommand::SetGlobalState {
+        plugin_name: "orchestrator".into(),
+        key: "orchestrator.dock.folders".into(),
+        value: Some(folders.clone()),
+    })
+    .unwrap();
+    b.handle_plugin_command(PluginCommand::SetGlobalState {
+        plugin_name: "orchestrator".into(),
+        key: "orchestrator.dock.assignments".into(),
+        value: Some(assignments.clone()),
+    })
+    .unwrap();
+
+    // Instance A — which knows nothing of B's folders — makes an unrelated
+    // change (what a fold toggle in A's dock does). This must not wipe B's
+    // folders from disk.
+    let expanded = serde_json::json!(["folder:df1"]);
+    a.handle_plugin_command(PluginCommand::SetGlobalState {
+        plugin_name: "orchestrator".into(),
+        key: "orchestrator.dock.expanded".into(),
+        value: Some(expanded.clone()),
+    })
+    .unwrap();
+
+    let state_path = dir_context
+        .data_dir
+        .join("orchestrator")
+        .join("state")
+        .join("orchestrator.json");
+    let read_state = || -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap()
+    };
+    let map = read_state();
+    assert_eq!(
+        map["orchestrator.dock.folders"], folders,
+        "A's unrelated write must not clobber the folders B saved; got: {map}"
+    );
+    assert_eq!(
+        map["orchestrator.dock.assignments"], assignments,
+        "A's unrelated write must not clobber the assignments B saved; got: {map}"
+    );
+    assert_eq!(
+        map["orchestrator.dock.expanded"], expanded,
+        "A's own change must land alongside B's keys; got: {map}"
+    );
+
+    // A's clean quit must not resurrect its stale snapshot either — the
+    // quit-time save flushes only what A actually changed.
+    a.save_orchestrator_state();
+    let map = read_state();
+    assert_eq!(
+        map["orchestrator.dock.folders"], folders,
+        "A's quit-time save must not clobber the folders B saved; got: {map}"
+    );
+
+    // And a deletion in A merges too: it removes exactly that key from disk,
+    // not everything A never knew about.
+    a.handle_plugin_command(PluginCommand::SetGlobalState {
+        plugin_name: "orchestrator".into(),
+        key: "orchestrator.dock.expanded".into(),
+        value: None,
+    })
+    .unwrap();
+    let map = read_state();
+    assert!(
+        map.get("orchestrator.dock.expanded").is_none(),
+        "A's deletion must be flushed; got: {map}"
+    );
+    assert_eq!(
+        map["orchestrator.dock.folders"], folders,
+        "A's deletion must leave B's keys intact; got: {map}"
+    );
+}
+
 /// Setting per-session plugin state (what the Orchestrator does right after
 /// creating a session, to tag its `project_path`) checkpoints the window, so a
 /// freshly created session is in the registry the moment it is tagged — before

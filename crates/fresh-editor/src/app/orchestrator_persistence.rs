@@ -762,40 +762,57 @@ impl Editor {
     /// Persist `sessions` + `plugin_global_state` to disk. Best-
     /// effort: filesystem errors are logged at WARN and swallowed
     /// so a transient permission glitch doesn't block quit.
-    pub fn save_orchestrator_state(&self) {
-        let data_dir = self.dir_context.data_dir.clone();
-        let orch_dir = orchestrator_dir(&data_dir);
-        if let Err(e) = self.authority().filesystem.create_dir_all(&orch_dir) {
-            tracing::warn!("orchestrator persistence: failed to create {orch_dir:?}: {e}");
-            return;
-        }
-
+    pub fn save_orchestrator_state(&mut self) {
         // Sessions are no longer written to a central windows.json:
         // each window's identity (label, per-session plugin_state) is
         // persisted in its own per-dir workspace file by
         // `save_all_windows_workspaces` (called just before this on
         // quit), and the session list is rediscovered from those files
         // at boot. Only editor-global plugin state is written here.
-        for plugin in self.plugin_global_state.keys() {
-            self.persist_plugin_global_state(plugin);
+        //
+        // Every change is already flushed eagerly by `handle_set_global_state`,
+        // so this quit-time pass is a backstop for keys whose eager flush
+        // failed (they stay dirty). Plugins with no locally-changed keys are
+        // deliberately NOT written: their in-memory map is a boot-time
+        // snapshot, and rewriting it would revert anything a concurrently
+        // running editor process saved since this one started.
+        let plugins: Vec<String> = self.plugin_global_dirty.keys().cloned().collect();
+        for plugin in plugins {
+            self.persist_plugin_global_state(&plugin);
         }
     }
 
-    /// Write one plugin's global-state file (atomic tmp+rename). Called
-    /// eagerly from `handle_set_global_state` on every mutation — not just
-    /// at clean quit — so a killed or crashed editor doesn't forget
-    /// editor-global plugin state (e.g. the Orchestrator dock's folders and
-    /// session→folder assignments; issue #2703). Mirrors the eager
-    /// per-session workspace checkpointing (`checkpoint_window_workspace`).
-    /// Best-effort: errors are logged at WARN and swallowed.
+    /// Flush one plugin's locally-changed global-state keys (atomic
+    /// tmp+rename). Called eagerly from `handle_set_global_state` on every
+    /// mutation — not just at clean quit — so a killed or crashed editor
+    /// doesn't forget editor-global plugin state (e.g. the Orchestrator
+    /// dock's folders and session→folder assignments; issue #2703). Mirrors
+    /// the eager per-session workspace checkpointing
+    /// (`checkpoint_window_workspace`). Best-effort: errors are logged at
+    /// WARN and swallowed (failed keys stay dirty for the next attempt).
     ///
-    /// An empty (or absent) map is still written as `{}` so deleting a
-    /// plugin's last key survives a later crash too.
-    pub(crate) fn persist_plugin_global_state(&self, plugin: &str) {
+    /// The state file is shared with any concurrently running editor
+    /// process, and each process only loads it once at boot — so this MERGES
+    /// rather than snapshots: it re-reads the file and overlays exactly the
+    /// keys this instance changed (`plugin_global_dirty`), leaving keys other
+    /// instances wrote in the meantime intact. Writing the whole in-memory
+    /// map here used to let a stale instance's fold-toggle (or quit) silently
+    /// revert another instance's entire dock organisation.
+    ///
+    /// Same-key writes remain last-writer-wins, and a deletion still writes
+    /// the file even when the result is empty (`{}`) so clearing a plugin's
+    /// last key survives a crash too.
+    pub(crate) fn persist_plugin_global_state(&mut self, plugin: &str) {
         if !plugin_name_is_safe(plugin) {
             tracing::warn!(
                 "orchestrator persistence: skipping plugin with unsafe name: {plugin:?}"
             );
+            return;
+        }
+        let Some(dirty) = self.plugin_global_dirty.get(plugin) else {
+            return;
+        };
+        if dirty.is_empty() {
             return;
         }
         let data_dir = self.dir_context.data_dir.clone();
@@ -807,11 +824,35 @@ impl Editor {
             tracing::warn!("orchestrator persistence: failed to create {state_dir:?}: {e}");
             return;
         }
-        let empty = HashMap::new();
-        let map = self.plugin_global_state.get(plugin).unwrap_or(&empty);
-        match serde_json::to_vec_pretty(map) {
+        // Merge base: the file's current content. Absent → empty; unparseable
+        // → warn and start empty (the boot loader skips such files too).
+        let path = global_plugin_state_path(&data_dir, plugin);
+        let mut merged: HashMap<String, serde_json::Value> =
+            match self.authority().filesystem.read_file(&path) {
+                Ok(bytes) => match serde_json::from_slice(&bytes) {
+                    Ok(map) => map,
+                    Err(e) => {
+                        tracing::warn!(
+                            "orchestrator persistence: failed to parse {path:?}, rewriting: {e}"
+                        );
+                        HashMap::new()
+                    }
+                },
+                Err(_) => HashMap::new(),
+            };
+        let mem = self.plugin_global_state.get(plugin);
+        for key in dirty {
+            match mem.and_then(|m| m.get(key)) {
+                Some(v) => {
+                    merged.insert(key.clone(), v.clone());
+                }
+                None => {
+                    merged.remove(key);
+                }
+            }
+        }
+        match serde_json::to_vec_pretty(&merged) {
             Ok(bytes) => {
-                let path = global_plugin_state_path(&data_dir, plugin);
                 let tmp = path.with_extension("json.tmp");
                 if let Err(e) = self.authority().filesystem.write_file(&tmp, &bytes) {
                     tracing::warn!("orchestrator persistence: failed to write {tmp:?}: {e}");
@@ -821,7 +862,12 @@ impl Editor {
                     tracing::warn!(
                         "orchestrator persistence: failed to rename {tmp:?} → {path:?}: {e}"
                     );
+                    return;
                 }
+                // Flushed: these keys are on disk now. Clearing them keeps a
+                // later flush from re-imposing old values over a concurrent
+                // instance's newer write of the same key.
+                self.plugin_global_dirty.remove(plugin);
             }
             Err(e) => {
                 tracing::warn!(

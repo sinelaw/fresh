@@ -1795,7 +1795,7 @@ impl Editor {
                 self.plugin_global_state
                     .entry(plugin_name.clone())
                     .or_default()
-                    .insert(key, v);
+                    .insert(key.clone(), v);
             }
             None => {
                 if let Some(map) = self.plugin_global_state.get_mut(&plugin_name) {
@@ -1806,6 +1806,13 @@ impl Editor {
                 }
             }
         }
+        // Dirty-mark the key (deletions too) so persistence knows which keys
+        // THIS instance changed — the state file is shared with concurrent
+        // editor processes and only locally-changed keys may be rewritten.
+        self.plugin_global_dirty
+            .entry(plugin_name.clone())
+            .or_default()
+            .insert(key);
         // Editor-global plugin state is durable state (the Orchestrator
         // files its dock folders / session→folder assignments here), so
         // checkpoint it to disk now: without this it was flushed only by a
