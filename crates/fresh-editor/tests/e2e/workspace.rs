@@ -2418,7 +2418,9 @@ fn test_hidden_from_tabs_external_files_not_persisted() {
     // Inspect the on-disk workspace directly: only the normal external
     // should land in `external_files`, never the hidden one. Likewise
     // the open-tabs list must not reference the hidden buffer.
-    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    let workspace_path = fresh::workspace::find_workspace_file_by_root(&project_dir)
+        .unwrap()
+        .expect("workspace file exists after save");
     let raw = std::fs::read_to_string(&workspace_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let externals = parsed["external_files"].as_array().unwrap();

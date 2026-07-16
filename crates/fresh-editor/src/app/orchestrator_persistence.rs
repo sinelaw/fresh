@@ -89,6 +89,13 @@ pub(crate) struct PersistedWindow {
     /// later save doesn't clobber it back to local).
     #[serde(default, skip_serializing_if = "is_local_authority_spec")]
     pub(crate) authority_spec: crate::services::authority::SessionAuthoritySpec,
+    /// Durable workspace identity carried in the workspace file
+    /// (`Workspace::stable_id`). `None` for legacy files that predate
+    /// stable ids — the window mints one and the next save re-keys the
+    /// file. Threaded into the window shell at boot so identity survives
+    /// even before the shell materializes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) stable_id: Option<String>,
 }
 
 fn is_local_authority_spec(spec: &crate::services::authority::SessionAuthoritySpec) -> bool {
@@ -223,12 +230,15 @@ fn discover_sessions(
         count = entries.len(),
         "discover_sessions: read_dir returned"
     );
-    let mut found: Vec<(
-        PathBuf,
-        String,
-        SessionState,
-        crate::services::authority::SessionAuthoritySpec,
-    )> = Vec::new();
+    struct Candidate {
+        root: PathBuf,
+        label: String,
+        plugin_state: SessionState,
+        authority_spec: crate::services::authority::SessionAuthoritySpec,
+        stable_id: Option<String>,
+        saved_at: u64,
+    }
+    let mut found: Vec<Candidate> = Vec::new();
     for entry in entries {
         let p = &entry.path;
         // Only real workspace files. A torn `*.json.tmp` write or a
@@ -293,22 +303,57 @@ fn discover_sessions(
             .get("session_plugin_state")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
-        found.push((root, label, plugin_state, authority_spec));
+        found.push(Candidate {
+            root,
+            label,
+            plugin_state,
+            authority_spec,
+            stable_id: val
+                .get("stable_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            saved_at: val.get("saved_at").and_then(|v| v.as_u64()).unwrap_or(0),
+        });
     }
-    found.sort_by_key(|a| canonical_key(&a.0));
-    found
-        .into_iter()
+    // One session per directory. Filenames are stable-id-keyed and no
+    // longer enforce this structurally, so dedup here: when several files
+    // claim one canonical root (a legacy file plus its re-keyed successor,
+    // mid-migration), the freshest snapshot wins — highest `saved_at`,
+    // stable-id-bearing files breaking ties. Losers are skipped, not
+    // deleted; `Workspace::save` retires the legacy duplicate on the next
+    // save through the same arbitration.
+    let mut best: std::collections::BTreeMap<PathBuf, Candidate> =
+        std::collections::BTreeMap::new();
+    for c in found {
+        let key = canonical_key(&c.root);
+        match best.get(&key) {
+            Some(cur)
+                if (cur.saved_at, cur.stable_id.is_some())
+                    >= (c.saved_at, c.stable_id.is_some()) =>
+            {
+                tracing::info!(
+                    root = %c.root.display(),
+                    "discover_sessions: skipping stale duplicate workspace file"
+                );
+            }
+            _ => {
+                best.insert(key, c);
+            }
+        }
+    }
+    best.into_values()
         .enumerate()
-        .map(|(i, (root, label, plugin_state, authority_spec))| {
-            let (project_path, shared_worktree) = read_orch_session_meta(&plugin_state);
+        .map(|(i, c)| {
+            let (project_path, shared_worktree) = read_orch_session_meta(&c.plugin_state);
             PersistedWindow {
                 id: (i as u64) + 1,
-                label,
-                root,
+                label: c.label,
+                root: c.root,
                 project_path,
                 shared_worktree,
-                authority_spec,
-                plugin_state,
+                authority_spec: c.authority_spec,
+                plugin_state: c.plugin_state,
+                stable_id: c.stable_id,
             }
         })
         .collect()
@@ -951,6 +996,7 @@ mod tests {
             shared_worktree: false,
             authority_spec: Default::default(),
             plugin_state: HashMap::new(),
+            stable_id: None,
         }
     }
 

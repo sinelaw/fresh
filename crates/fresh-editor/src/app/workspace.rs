@@ -2142,9 +2142,20 @@ impl crate::app::window::Window {
             workspace.split_states.len()
         );
 
-        // Mouse capture is a single global terminal property shared by every
-        // window (see `Editor::mouse_capture`); restoring a persisted value
-        // updates that shared flag.
+        // Adopt the snapshot's durable identity: the window continues the
+        // persisted workspace rather than starting a new one, so saves keep
+        // landing in the same id-keyed file instead of minting a sibling on
+        // every boot. A legacy snapshot without an id keeps the freshly
+        // minted one — the next save re-keys the file under it.
+        if let Some(id) = &workspace.stable_id {
+            self.stable_id = id.clone();
+        }
+
+        // Window-local config override (the rest of the overrides mutate
+        // the editor-global `Config` and are applied by the caller). Mouse
+        // capture is a single global terminal property shared by every window
+        // (see `Editor::mouse_capture`); restoring a persisted value updates
+        // that shared flag.
         if let Some(mouse_enabled) = workspace.config_overrides.mouse_enabled {
             self.resources
                 .mouse_capture
@@ -2466,6 +2477,7 @@ impl crate::app::window::Window {
             session_plugin_state: self.plugin_state.clone(),
             // How to rebuild/reconnect this workspace's backend on restore.
             authority_spec: self.authority_spec.clone(),
+            stable_id: Some(self.stable_id.clone()),
         }
     }
 }

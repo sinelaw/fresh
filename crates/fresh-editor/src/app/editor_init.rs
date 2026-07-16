@@ -530,6 +530,11 @@ fn build_persisted_window_shells(
         // it back to local). Its live authority stays the local placeholder
         // until reconnect — i.e. dormant.
         shell.authority_spec = ps.authority_spec.clone();
+        // Continue the persisted workspace's durable identity rather than
+        // minting a sibling; a legacy entry without one keeps the fresh id.
+        if let Some(sid) = &ps.stable_id {
+            shell.stable_id = sid.clone();
+        }
         windows.insert(id, shell);
     }
 

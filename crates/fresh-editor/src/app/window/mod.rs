@@ -193,6 +193,16 @@ pub struct Window {
     /// required to be unique.
     pub label: String,
 
+    /// Durable workspace identity: minted once at construction, replaced
+    /// by the persisted id when a saved workspace is applied
+    /// (`apply_workspace_layout`), and stable from then on across
+    /// restarts and relabels. Keys this workspace's on-disk snapshot
+    /// (`workspaces/<stable_id>.json`) — unlike `WindowId`, which is a
+    /// per-process runtime handle re-derived from the root set at every
+    /// boot, and unlike `root`, which identifies the *directory* rather
+    /// than the workspace on it.
+    pub stable_id: String,
+
     /// Canonical absolute path of the project root. Read-only after
     /// construction; closing a window and creating a new one is the
     /// way to "rename" the root.
@@ -1879,6 +1889,7 @@ impl Window {
         Self {
             id,
             label,
+            stable_id: crate::workspace::generate_stable_id(),
             root,
             authority,
             file_explorer: None,

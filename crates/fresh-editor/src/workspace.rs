@@ -124,6 +124,35 @@ pub struct Workspace {
     /// silently local. See `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
     #[serde(default, skip_serializing_if = "is_local_authority_spec")]
     pub authority_spec: crate::services::authority::SessionAuthoritySpec,
+
+    /// Durable identity of the workspace this snapshot belongs to, minted
+    /// once when the window is created and stable across restarts and
+    /// relabels. The workspace file is named
+    /// `workspaces/<encoded-root>.<stable_id>.json` — the encoded root is
+    /// only a filename-level locator for cheap lookup; this id is what
+    /// distinguishes the workspace, and the `working_dir` recorded inside
+    /// the file stays authoritative wherever names collide. `None` only for
+    /// legacy files written before stable ids existed — the owning window
+    /// mints an id at construction, keeps it through the id-less load, and
+    /// the next save re-keys the file (then retires the root-keyed
+    /// duplicate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_id: Option<String>,
+}
+
+/// Mint a new durable workspace identity: creation-time nanoseconds plus a
+/// process-local sequence number, so two windows created in the same
+/// instant (e.g. a test spawning windows in a loop) can never collide.
+/// Deliberately dependency-free (same approach as the recovery service's
+/// `generate_buffer_id`).
+pub fn generate_stable_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("ws-{:x}-{:x}", nanos, SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
 /// Skip-serialize predicate so workspace files for ordinary local sessions
@@ -711,13 +740,142 @@ pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
     Some(PathBuf::from(result))
 }
 
-/// Get the workspace file path for a working directory
+/// Legacy (pre-stable-id) workspace file path for a working directory:
+/// the filename is the encoded canonical root. Still used as the write
+/// fallback for snapshots without a `stable_id`, and by the one-time
+/// `windows.json` migration. Reads must NOT assume this name — see
+/// [`find_workspace_file_by_root`].
 pub fn get_workspace_path(working_dir: &Path) -> io::Result<PathBuf> {
     let canonical = working_dir
         .canonicalize()
         .unwrap_or_else(|_| working_dir.to_path_buf());
     let filename = format!("{}.json", encode_path_for_filename(&canonical));
     Ok(get_workspaces_dir()?.join(filename))
+}
+
+/// Make a stable id filename-safe. The minted alphabet (`ws-<hex>-<hex>`)
+/// already is; this is a defensive net so a hand-edited file can never
+/// smuggle path separators or dots into a workspace filename (dots are the
+/// root/id delimiter — see [`workspace_path_for`]).
+fn sanitize_stable_id(stable_id: &str) -> String {
+    stable_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Workspace file path for a workspace with a durable id:
+/// `workspaces/<encoded-root>.<stable_id>.json`.
+///
+/// The encoded root is a *locator index*, not the identity — lookup
+/// prefilters on it without reading file contents, while `stable_id`
+/// is what distinguishes the workspace (and, in the future, same-root
+/// siblings). Content (`working_dir` inside the file) stays authoritative
+/// wherever names collide.
+pub fn workspace_path_for(working_dir: &Path, stable_id: &str) -> io::Result<PathBuf> {
+    let canonical = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+    let filename = format!(
+        "{}.{}.json",
+        encode_path_for_filename(&canonical),
+        sanitize_stable_id(stable_id)
+    );
+    Ok(get_workspaces_dir()?.join(filename))
+}
+
+/// Identity fields of a candidate workspace file for one directory.
+struct WorkspaceFileIdentity {
+    path: PathBuf,
+    saved_at: u64,
+    stable_id: Option<String>,
+}
+
+/// All workspace files claiming `working_dir`: the legacy root-keyed name
+/// plus every `<encoded-root>.<id>.json` sibling. Filenames are only a
+/// prefilter — an encoded root can be a prefix of another's (e.g. `/a`
+/// vs `/a.b`), so each candidate's recorded `working_dir` is verified
+/// before it counts. Unparseable files are skipped (a torn write just
+/// means "not a workspace").
+fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileIdentity>> {
+    let target = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+    let encoded = encode_path_for_filename(&target);
+    let legacy_name = format!("{encoded}.json");
+    let id_prefix = format!("{encoded}.");
+
+    let dir = get_workspaces_dir()?;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name != legacy_name && !(name.starts_with(&id_prefix) && name.ends_with(".json")) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+            continue;
+        };
+        // Authoritative check: the file must itself claim this directory.
+        let claimed = val
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
+        let Some(claimed) = claimed else {
+            continue;
+        };
+        let claimed = claimed.canonicalize().unwrap_or(claimed);
+        if claimed != target {
+            continue;
+        }
+        found.push(WorkspaceFileIdentity {
+            path,
+            saved_at: val.get("saved_at").and_then(|v| v.as_u64()).unwrap_or(0),
+            stable_id: val
+                .get("stable_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        });
+    }
+    Ok(found)
+}
+
+/// Find the workspace file for `working_dir`. When more than one file
+/// claims the directory (a legacy root-keyed file plus its re-keyed
+/// successor, mid-migration), the freshest snapshot wins: highest
+/// `saved_at`, stable-id-bearing files breaking ties (a same-second tie
+/// must not resurrect the pre-migration copy).
+pub fn find_workspace_file_by_root(working_dir: &Path) -> io::Result<Option<PathBuf>> {
+    let mut best: Option<WorkspaceFileIdentity> = None;
+    for ident in candidate_files_for_root(working_dir)? {
+        let newer = match &best {
+            None => true,
+            Some(b) => {
+                (ident.saved_at, ident.stable_id.is_some()) > (b.saved_at, b.stable_id.is_some())
+            }
+        };
+        if newer {
+            best = Some(ident);
+        }
+    }
+    Ok(best.map(|b| b.path))
 }
 
 /// Get the session-workspaces directory
@@ -807,9 +965,16 @@ impl From<serde_json::Error> for WorkspaceError {
 }
 
 impl Workspace {
-    /// Load workspace for a working directory (if exists)
+    /// Load workspace for a working directory (if exists).
+    ///
+    /// Resolution goes by the `working_dir` recorded inside each workspace
+    /// file (filenames are stable-id-keyed; legacy files are root-keyed) —
+    /// see [`find_workspace_file_by_root`].
     pub fn load(working_dir: &Path) -> Result<Option<Workspace>, WorkspaceError> {
-        let path = get_workspace_path(working_dir)?;
+        let Some(path) = find_workspace_file_by_root(working_dir)? else {
+            tracing::debug!("No workspace file found for {:?}", working_dir);
+            return Ok(None);
+        };
         tracing::debug!("Looking for workspace at {:?}", path);
 
         if !path.exists() {
@@ -900,7 +1065,14 @@ impl Workspace {
     /// 2. Sync to disk (fsync)
     /// 3. Atomically rename to the final path
     pub fn save(&self) -> Result<(), WorkspaceError> {
-        let path = get_workspace_path(&self.working_dir)?;
+        // Storage is keyed by the durable workspace id (with the encoded
+        // root as a filename-level locator); only snapshots that never
+        // passed through a `Window` (no `stable_id`) fall back to the
+        // legacy root-derived name.
+        let path = match &self.stable_id {
+            Some(id) => workspace_path_for(&self.working_dir, id)?,
+            None => get_workspace_path(&self.working_dir)?,
+        };
         tracing::debug!("Saving workspace to {:?}", path);
 
         // Ensure directory exists
@@ -925,6 +1097,24 @@ impl Workspace {
         // Atomic rename
         std::fs::rename(&temp_path, &path)?;
         tracing::info!("Workspace saved to {:?}", path);
+
+        // Migration completion: a legacy root-keyed file for this directory
+        // is superseded the moment the id-keyed snapshot lands (write-new
+        // then delete-old, so a crash in between leaves both and lookup
+        // arbitration picks the newest). Targeted check, not a dir scan —
+        // this runs on every checkpoint.
+        if self.stable_id.is_some() {
+            if let Ok(legacy) = get_workspace_path(&self.working_dir) {
+                if legacy != path && legacy.exists() {
+                    tracing::info!(
+                        "Retiring legacy workspace file {:?} (re-keyed to {:?})",
+                        legacy,
+                        path
+                    );
+                    let _ = std::fs::remove_file(&legacy);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -994,11 +1184,13 @@ impl Workspace {
         Ok(())
     }
 
-    /// Delete workspace for a working directory
+    /// Delete workspace state for a working directory. Removes *every*
+    /// file claiming the directory — the id-keyed snapshot plus any legacy
+    /// root-keyed file that survived migration — so a killed workspace
+    /// can't resurrect from a stale duplicate.
     pub fn delete(working_dir: &Path) -> Result<(), WorkspaceError> {
-        let path = get_workspace_path(working_dir)?;
-        if path.exists() {
-            std::fs::remove_file(path)?;
+        for ident in candidate_files_for_root(working_dir)? {
+            std::fs::remove_file(&ident.path)?;
         }
         Ok(())
     }
@@ -1034,6 +1226,7 @@ impl Workspace {
             label: None,
             session_plugin_state: HashMap::new(),
             authority_spec: crate::services::authority::SessionAuthoritySpec::Local,
+            stable_id: None,
         }
     }
 
