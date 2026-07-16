@@ -418,11 +418,70 @@ fn next_window_cycles_only_dock_visible_sessions() {
     }
 }
 
+/// Rows a dock card occupies below its name row in card view: the two
+/// remaining content rows (branch, PR/spacer) plus the bottom border.
+/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (3 content rows).
+const DOCK_CARD_ROWS_BELOW_NAME: u16 = 3;
+
+/// Column of the dock's right-edge divider (the "wall") on the title row.
+fn dock_wall_col(h: &EditorTestHarness) -> u16 {
+    let cols = h.screen_row_text(0).chars().count() as u16;
+    (0..cols)
+        .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+        .expect("dock right-edge divider should be present on the title row")
+}
+
+/// Screen row of `label`'s dock-card name line — the first row where the
+/// label appears left of the wall (so an editor-side occurrence of the
+/// same string never matches). `None` when the card isn't on screen.
+fn dock_card_name_row(h: &EditorTestHarness, label: &str) -> Option<u16> {
+    let wall = dock_wall_col(h);
+    h.screen_to_string().lines().enumerate().find_map(|(r, l)| {
+        let b = l.find(label)?;
+        (l[..b].chars().count() < wall as usize).then_some(r as u16)
+    })
+}
+
+/// True when `label`'s card wears the "seamless active tab": the dock
+/// wall is scooped away across the card — `╯` at the wall column on its
+/// top border row, `╮` on its bottom border row, and *no* `│` on the
+/// content rows between (the card flows into the editor).
+fn card_is_seamless_tab(h: &EditorTestHarness, label: &str) -> bool {
+    let wall = dock_wall_col(h);
+    let Some(name_row) = dock_card_name_row(h, label) else {
+        return false;
+    };
+    let top = name_row.saturating_sub(1);
+    let bot = name_row + DOCK_CARD_ROWS_BELOW_NAME;
+    h.get_cell(wall, top).as_deref() == Some("╯")
+        && h.get_cell(wall, bot).as_deref() == Some("╮")
+        && (name_row..bot).all(|r| h.get_cell(wall, r).as_deref() == Some(" "))
+}
+
+/// True when the wall stands unbroken past `label`'s card (an inactive
+/// card): every row of the card band keeps `│` at the wall column.
+fn card_keeps_wall(h: &EditorTestHarness, label: &str) -> bool {
+    let wall = dock_wall_col(h);
+    let Some(name_row) = dock_card_name_row(h, label) else {
+        return false;
+    };
+    let top = name_row.saturating_sub(1);
+    let bot = name_row + DOCK_CARD_ROWS_BELOW_NAME;
+    (top..=bot).all(|r| h.get_cell(wall, r).as_deref() == Some("│"))
+}
+
 /// The dock's session tree highlights the active window, and the
 /// highlight tracks it: arrowing the tree live-switches the active window
-/// to the highlighted session. Uses two windows + a live active-window
-/// switch (no session spawn). Drives only the keyboard and asserts on the
-/// active-window state per CONTRIBUTING §2.
+/// to the highlighted session. The active session's card must render as a
+/// *seamless tab* — its border merges into the editor by scooping away
+/// the dock's right-edge divider (`paint_dock_seamless_active_tab`) —
+/// while inactive cards keep the divider; the tab follows the
+/// live-switch. Regression: the folder-tree redesign styled tree
+/// selection as a bg fill without the heavy border glyphs the seamless
+/// painter keys on, so the active card degraded to a plain highlighted
+/// box. Uses two windows + a live active-window switch (no session
+/// spawn). Drives only the keyboard and asserts on rendered output per
+/// CONTRIBUTING §2.
 #[test]
 fn active_session_card_is_a_seamless_tab_and_follows_focus() {
     let (_tmp_a, root_a) = setup_project("aaa_project");
@@ -452,15 +511,35 @@ fn active_session_card_is_a_seamless_tab_and_follows_focus() {
     // aaa_project is the launch (active) session; the dock tree lists both.
     assert_eq!(h.editor().active_window().label, "aaa_project");
 
+    // The active card merges into the editor (scooped wall), the
+    // inactive card keeps the full divider.
+    h.wait_until(|h| card_is_seamless_tab(h, "aaa_project"))
+        .unwrap();
+    assert!(
+        card_keeps_wall(&h, "zzz_project"),
+        "inactive card must keep the dock divider:\n{}",
+        h.screen_to_string()
+    );
+
     // Arrow down live-switches the active window to zzz_project (the
-    // highlight follows the arrow through the tree's session leaves).
+    // highlight follows the arrow through the tree's session leaves) —
+    // and the seamless tab moves with it.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.editor().active_window().label == "zzz_project")
         .unwrap();
+    h.wait_until(|h| card_is_seamless_tab(h, "zzz_project"))
+        .unwrap();
+    assert!(
+        card_keeps_wall(&h, "aaa_project"),
+        "previously-active card must regain the dock divider:\n{}",
+        h.screen_to_string()
+    );
 
-    // Arrow back up returns the active window to aaa_project.
+    // Arrow back up returns the active window (and the tab) to aaa_project.
     h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.editor().active_window().label == "aaa_project")
+        .unwrap();
+    h.wait_until(|h| card_is_seamless_tab(h, "aaa_project"))
         .unwrap();
 }
 

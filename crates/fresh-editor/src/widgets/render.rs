@@ -1551,7 +1551,10 @@ fn mark_list_card_selected(entry: &mut TextPropertyEntry) {
         .replace('│', "┃");
     let mut style = entry.style.clone().unwrap_or_default();
     style.bold = true;
-    if entry.text.starts_with('┏') || entry.text.starts_with('┗') {
+    // `trim_start`: tree cards indent nested rows by depth, so the
+    // border glyph may sit after leading spaces.
+    let head = entry.text.trim_start();
+    if head.starts_with('┏') || head.starts_with('┗') {
         // Top / bottom rows are pure border, so a whole-row fg tints
         // the corner-to-corner run.
         style.fg = Some(OverlayColorSpec::theme_key("ui.popup_border_fg"));
@@ -2714,16 +2717,31 @@ fn render_widget_tree(
         );
         let mut entry = rendered.entry;
         let is_selected = abs_idx as i32 == effective_sel_abs;
-        // The selection highlight fills the whole card (every row),
-        // so a multi-row card reads as one selected block.
+        // Bordered-card nodes mark selection the way the pre-tree card
+        // list did — a heavy box frame via `mark_list_card_selected`,
+        // no background band (it reads garish over a multi-row card).
+        // The heavy glyphs double as the marker
+        // `paint_dock_seamless_active_tab` keys on to merge the active
+        // dock card into the editor, so a bg-only highlight here would
+        // (and once did — issue seen after the folder-tree redesign)
+        // silently lose that seamless-tab treatment.
+        let as_card = card_borders && tree_node_is_card(&node, checkable);
+        // Non-card rows: a highlight band filling the whole row.
         let select_style = |e: &mut TextPropertyEntry| {
             let mut style = e.style.clone().unwrap_or_default();
             style.bg = Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG));
             style.extend_to_line_end = true;
             e.style = Some(style);
         };
+        let mark_selected = |e: &mut TextPropertyEntry| {
+            if as_card {
+                mark_list_card_selected(e);
+            } else {
+                select_style(e);
+            }
+        };
         if is_selected {
-            select_style(&mut entry);
+            mark_selected(&mut entry);
         }
         let row_byte_end = entry.text.len();
         ensure_trailing_newline(&mut entry);
@@ -2742,7 +2760,7 @@ fn render_widget_tree(
         // as a block.
         for mut extra in rendered.extra_entries {
             if is_selected {
-                select_style(&mut extra);
+                mark_selected(&mut extra);
             }
             let extra_byte_end = extra.text.len();
             ensure_trailing_newline(&mut extra);

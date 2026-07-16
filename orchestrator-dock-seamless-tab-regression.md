@@ -101,19 +101,21 @@ side is open (no card border, no wall), and the bottom edge scoops down
 ╰────────────────────────────────────╯ │
 ```
 
-## Fix directions (not implemented here)
+## Fix (implemented)
 
-Either restore the marker or drop the marker protocol:
+The tree's bordered-card path now marks the selected card the way the
+pre-tree card list did: `render_widget_tree` applies
+`mark_list_card_selected` (heavy box frame, bold, no background band) to a
+selected *card* node's rows instead of the bg fill, which non-card rows
+(folder headers, plain single-line trees) keep. The heavy glyphs restore the
+marker `paint_dock_seamless_active_tab` keys on, so the active card merges
+into the editor again; `mark_list_card_selected` also learned to recognise
+border rows behind the tree's depth indent.
 
-- **Restore the marker**: have the tree's card path promote the selected
-  card's border glyphs to heavy forms (reuse `mark_list_card_selected` on the
-  rows `render_tree_card` produces), which both revives the seamless tab and
-  the theme-independent heavy selection frame; or
-- **Stop keying on glyphs**: pass the selected card's row band from the
-  widget renderer to `paint_dock_seamless_active_tab` explicitly (e.g. via a
-  scroll-region-like side channel), so the painter no longer depends on a
-  styling convention.
-
-Either way, an e2e assertion on the scooped wall (`╯`/`╮` at the wall column,
-no `│` across the active card's content rows) would keep it from regressing
-silently again.
+The e2e test `active_session_card_is_a_seamless_tab_and_follows_focus` now
+asserts the rendered scooped wall (`╯`/`╮` at the wall column, no `│` across
+the active card's content rows, inactive cards keeping the divider, the tab
+following ↑/↓ live-switches). It times out without the fix and passes with
+it. Verified interactively in tmux with the same scenario as above — the
+active card scoops into the wall and the tab follows live-switching in both
+directions.

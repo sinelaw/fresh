@@ -4939,7 +4939,7 @@ impl Editor {
 /// ```
 ///
 /// The active card is located by the heavy box glyphs that
-/// `mark_selected_card` stamps onto exactly one card's rows; its first
+/// `mark_list_card_selected` stamps onto exactly one card's rows; its first
 /// and last such rows bound the band. No-ops when no card is selected
 /// (e.g. an empty dock) so the plain wall stands.
 fn paint_dock_seamless_active_tab(
@@ -4952,7 +4952,7 @@ fn paint_dock_seamless_active_tab(
     bg: ratatui::style::Color,
 ) {
     // Rows of the (single) selected card carry the heavy box glyphs that
-    // `mark_selected_card` stamps — the corners on its border rows and the
+    // `mark_list_card_selected` stamps — the corners on its border rows and the
     // `┃` bars on its content rows. No other dock row uses them.
     fn is_active_card_row(s: &str) -> bool {
         s.chars().any(|c| matches!(c, '┏' | '┓' | '┗' | '┛' | '┃'))
