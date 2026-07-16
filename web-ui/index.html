@@ -1707,10 +1707,40 @@ const fxEnterAt={};
 // static over the screen area.
 let curWindowId=null, fxSuppressUntil=0;
 const fxReducedMotion=matchMedia("(prefers-reduced-motion: reduce)");
-function fxTv(){
+// The static overlay is a singleton that HOLDS at full noise while switch
+// frames keep landing (the server settles the new workspace's layout in a
+// follow-up frame a few hundred ms later — pane rects snap then), and fades
+// out 120ms after the last one. fxTv(true) creates it on the switch itself;
+// fxTv() merely re-arms the hold from settle frames inside the suppression
+// window, so the intermediate wrong-size layout is never visible.
+let fxTvEl=null, fxTvHold=0;
+// True when the pane layout agrees with the explorer presence (first pane
+// starts where the explorer/dock ends). The switch frame can carry the OLD
+// window's pane rects with the settle frame a few hundred ms behind — while
+// they disagree the static must keep covering the screen.
+function fxLayoutSettled(){
+  const r=scene&&scene.regions; if(!r||!r.panes||!r.panes.length) return true;
+  const xs=r.panes.filter(Boolean).map(p=>p.content.x); if(!xs.length) return true;
+  let left=0;
+  for(const s of (r.widgets||[])) if(s.kind==="dock"&&s.rect&&s.rect.x===0) left=s.rect.w;
+  if(r.fileExplorer) left=r.fileExplorer.rect.x+r.fileExplorer.rect.w;
+  return Math.abs(Math.min.apply(null,xs)-left)<=2;
+}
+function fxTv(create){
   if(isMobile()||fxReducedMotion.matches||!scene) return;
+  if(!fxTvEl&&!create) return;
   syncAppOrigin();
   const dw=dockWidthPx();
+  // Short hold when the layout is already consistent; long hold while the
+  // settle frame is still outstanding (each frame inside the suppression
+  // window re-evaluates, so the hold shortens the moment layout agrees).
+  fxTvHold=performance.now()+(fxLayoutSettled()?170:600);
+  if(fxTvEl){
+    fxTvEl.style.left=(APPX+dw)+"px"; fxTvEl.style.top=APPY+"px";
+    fxTvEl.style.width=Math.max(0,px(scene.w||0,CW)-dw)+"px";
+    fxTvEl.style.height=px(scene.h||0,CH)+"px";
+    return;
+  }
   const el=document.createElement("canvas");
   el.className="fx-tv"; el.width=192; el.height=120;
   el.style.left=(APPX+dw)+"px"; el.style.top=APPY+"px";
@@ -1722,11 +1752,18 @@ function fxTv(){
     cx.putImageData(img,0,0); };
   draw();
   document.body.appendChild(el);
-  const t0=performance.now(), DUR=180;
-  const tick=()=>{ const e=performance.now()-t0;
-    if(e>=DUR||!el.isConnected){ el.remove(); return; }
-    draw(); el.style.opacity=String(.85*(1-e/DUR));
-    requestAnimationFrame(tick); };
+  fxTvEl=el;
+  const FADE=120, MAX=1500;
+  const t0=performance.now();
+  const tick=()=>{
+    const now=performance.now();
+    if(!el.isConnected||now-t0>MAX){ el.remove(); if(fxTvEl===el) fxTvEl=null; return; }
+    const over=now-fxTvHold;
+    if(over>=FADE){ el.remove(); if(fxTvEl===el) fxTvEl=null; return; }
+    draw();
+    el.style.opacity=String(over<=0?.85:.85*(1-over/FADE));
+    requestAnimationFrame(tick);
+  };
   requestAnimationFrame(tick);
 }
 function fxExit(el, cls){
@@ -1859,11 +1896,14 @@ function render(){
   const app=document.getElementById("app");
   if(!scene){ containers=null; app.textContent="connecting to editor…"; layoutShell(); return; }
   // Dock live-switch to another workspace: hard cut + static burst, and a
-  // 300ms window during which the per-region slide/wipe animations stay off
-  // (the switch's own follow-up frames land within it).
+  // suppression window during which the per-region slide/wipe animations stay
+  // off. The window is generous (800ms) because the server settles the new
+  // workspace's layout in a follow-up frame; every full render inside the
+  // window re-arms the static's hold so the intermediate layout stays hidden.
   const switched=curWindowId!==null&&scene.windowId!==undefined&&scene.windowId!==curWindowId;
   if(scene.windowId!==undefined) curWindowId=scene.windowId;
-  if(switched){ fxSuppressUntil=performance.now()+300; fxTv(); }
+  if(switched){ fxSuppressUntil=performance.now()+800; fxTv(true); }
+  else if(performance.now()<fxSuppressUntil) fxTv();
   applyTheme(scene.theme);
   ensureContainers();
   for(const n of REGION_ORDER) renderRegion(n);
@@ -3378,6 +3418,11 @@ function applyFrame(changed){
     else renderRegion(name);
     renderedRegions.push(name);
   }
+  // A settle frame inside the switch-suppression window (pane rects landing
+  // for the new workspace) arrives on this diff path, not through render():
+  // re-arm the static so the layout snap stays covered.
+  if(performance.now()<fxSuppressUntil&&
+     (dirty.has("fileExplorer")||[...dirty].some(d=>d==="panes"||d.startsWith("panes.")))) fxTv();
   // The mobile chrome mirrors tabs + status segments; rebuilding it is cheap,
   // so any frame refreshes it (exactly what the old full rebuild always did;
   // on desktop renderMobileChrome returns immediately).
