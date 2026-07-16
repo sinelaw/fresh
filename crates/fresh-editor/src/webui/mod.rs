@@ -1050,7 +1050,7 @@ struct WsSession {
 }
 
 /// Top-level scene keys diffed as single units ("regions" is handled per key).
-const TOP_KEYS: [&str; 4] = ["w", "h", "theme", "clipboard"];
+const TOP_KEYS: [&str; 5] = ["w", "h", "theme", "clipboard", "windowId"];
 
 impl WsSession {
     fn new(stream: TcpStream) -> Self {
@@ -1531,7 +1531,11 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
         "poll": json!({ "active": poll_active(editor) }),
     });
 
-    json!({ "w": w, "h": h, "regions": regions, "theme": theme })
+    // The active window id lets the frontend tell a WORKSPACE SWITCH (dock
+    // live-switch: everything changes at once) from an in-place layout change
+    // (explorer toggle) — the former gets a hard cut, not layout motion.
+    let window_id = editor.active_window.0;
+    json!({ "w": w, "h": h, "windowId": window_id, "regions": regions, "theme": theme })
 }
 
 /// Map a browser key to a crossterm key and run the real input path.

@@ -1252,6 +1252,9 @@
   .fx-clone.fx-out-pal{animation:fxPalOut .16s ease-in forwards}
   .widget-surface.w-dock.fx-in{animation:fxSlideL .28s cubic-bezier(.2,.8,.25,1)}
   .fileexplorer.fx-in{animation:fxSlideWipe .28s cubic-bezier(.2,.8,.25,1)}
+  /* CRT static burst on workspace switch (canvas noise, JS-driven fade). */
+  .fx-tv{position:fixed;z-index:98;pointer-events:none;opacity:.85;
+    image-rendering:pixelated;border-radius:8px}
   .fx-clone{position:fixed;margin:0;pointer-events:none;z-index:99}
   .fx-clone.fx-out{animation:fxOutFade .1s ease-in forwards}
   .fx-clone.fx-out-left{animation:fxOutL .28s cubic-bezier(.2,.8,.25,1) forwards}
@@ -1697,6 +1700,35 @@ const FX={
 // and the surface looks like it popped in. The replacement re-joins the
 // animation mid-flight via a negative animation-delay.
 const fxEnterAt={};
+// Workspace switch (the dock's live-switch): everything in the screen changes
+// at once, so layout motion is a lie — an explorer that exists in one
+// workspace and not the other would appear to slide open/closed. Instead:
+// suppress all slides/wipes for a beat and cut with a quick burst of CRT
+// static over the screen area.
+let curWindowId=null, fxSuppressUntil=0;
+const fxReducedMotion=matchMedia("(prefers-reduced-motion: reduce)");
+function fxTv(){
+  if(isMobile()||fxReducedMotion.matches||!scene) return;
+  syncAppOrigin();
+  const dw=dockWidthPx();
+  const el=document.createElement("canvas");
+  el.className="fx-tv"; el.width=192; el.height=120;
+  el.style.left=(APPX+dw)+"px"; el.style.top=APPY+"px";
+  el.style.width=Math.max(0,px(scene.w||0,CW)-dw)+"px";
+  el.style.height=px(scene.h||0,CH)+"px";
+  const cx=el.getContext("2d");
+  const draw=()=>{ const img=cx.createImageData(el.width,el.height), d=img.data;
+    for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; }
+    cx.putImageData(img,0,0); };
+  draw();
+  document.body.appendChild(el);
+  const t0=performance.now(), DUR=180;
+  const tick=()=>{ const e=performance.now()-t0;
+    if(e>=DUR||!el.isConnected){ el.remove(); return; }
+    draw(); el.style.opacity=String(.85*(1-e/DUR));
+    requestAnimationFrame(tick); };
+  requestAnimationFrame(tick);
+}
 function fxExit(el, cls){
   const r=el.getBoundingClientRect();
   const c=el.cloneNode(true);
@@ -1763,7 +1795,7 @@ function fxLayoutSlides(){
   const dockDelta=(!first&&(fxDockCells===0)!==(dockC===0))?px(dockC-fxDockCells,CW):0;
   const feDelta  =(!first&&(fxFeCells===0)!==(feC===0))  ?px(feC-fxFeCells,CW):0;
   fxDockCells=dockC; fxFeCells=feC;
-  if(isMobile()||(!dockDelta&&!feDelta)) return;
+  if(isMobile()||(!dockDelta&&!feDelta)||performance.now()<fxSuppressUntil) return;
   const screenEls=[], paneEls=[];
   if(dockDelta) for(const n of ["fileExplorer","menu","statusbar"]) fxTopEls(containers[n],screenEls);
   for(const n of ["panes","separators","caret"]) fxTopEls(containers[n],paneEls);
@@ -1775,7 +1807,7 @@ function renderRegion(name){
   // Snapshot scroll positions inside this region before its rebuild, keyed by
   // document-order ordinal (stable across a same-structure re-render).
   const saved=[]; c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ saved[i]=e.scrollTop; });
-  const fx=!isMobile()&&FX[name];
+  const fx=!isMobile()&&performance.now()>=fxSuppressUntil&&FX[name];
   const hadEl=fx?c.querySelector(fx.sel):null;
   const willHave=fx?fx.present(scene.regions):false;
   if(fx&&hadEl&&!willHave){
@@ -1826,6 +1858,12 @@ function settingsEnsureSelectionVisible(c){
 function render(){
   const app=document.getElementById("app");
   if(!scene){ containers=null; app.textContent="connecting to editor…"; layoutShell(); return; }
+  // Dock live-switch to another workspace: hard cut + static burst, and a
+  // 300ms window during which the per-region slide/wipe animations stay off
+  // (the switch's own follow-up frames land within it).
+  const switched=curWindowId!==null&&scene.windowId!==undefined&&scene.windowId!==curWindowId;
+  if(scene.windowId!==undefined) curWindowId=scene.windowId;
+  if(switched){ fxSuppressUntil=performance.now()+300; fxTv(); }
   applyTheme(scene.theme);
   ensureContainers();
   for(const n of REGION_ORDER) renderRegion(n);
@@ -3320,6 +3358,7 @@ function applyFrame(changed){
     if(k==="w"){ scene.w=v; full=true; }
     else if(k==="h"){ scene.h=v; full=true; }
     else if(k==="theme"){ scene.theme=v; full=true; }   // applyTheme runs in render()
+    else if(k==="windowId"){ scene.windowId=v; full=true; }   // workspace switch → hard cut (see render)
     else if(k==="clipboard"){ scene.clipboard=v; clipChanged=true; }
     else if(k==="regions.panes.len"){ scene.regions.panes.length=v; dirty.add("panes"); dirty.add("caret"); }
     else if(k.startsWith("regions.panes.")){ scene.regions.panes[+k.slice(14)]=v;
