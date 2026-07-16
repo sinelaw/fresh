@@ -1111,11 +1111,6 @@
   #device .dv-leds .g{background:#4ade7b;box-shadow:0 0 8px rgba(74,222,123,.8),inset 0 1px 1px rgba(255,255,255,.55)}
   #device .dv-leds .y{background:#c7e05a;box-shadow:0 0 8px rgba(199,224,90,.7),inset 0 1px 1px rgba(255,255,255,.55)}
   #device .dv-leds .a{background:#e8a14e;box-shadow:0 0 8px rgba(232,161,78,.7),inset 0 1px 1px rgba(255,255,255,.55)}
-  /* silkscreened bezel buttons (decorative) */
-  #device .dv-btn{border:1px solid rgba(255,255,255,.3);border-radius:7px;padding:6px 18px;
-    color:#e2e8ef;background:linear-gradient(180deg,rgba(255,255,255,.09),rgba(0,0,0,.2));
-    box-shadow:0 2px 4px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.16);white-space:nowrap}
-  #device .dv-btn.dv-more{padding:6px 11px;letter-spacing:0}
   /* side rails: engraved vertical legends + a running LED */
   #device .dv-side{position:absolute;top:var(--bezel-top);bottom:var(--bezel-bot);
     width:var(--bezel-side);display:flex;flex-direction:column;align-items:center;
@@ -1150,11 +1145,10 @@
     box-shadow:0 50px 110px rgba(2,6,14,.6),0 12px 34px rgba(2,6,14,.4),
       inset 0 1px 0 rgba(255,255,255,.35);
     padding:20px 16px 14px;color:#e8eef5;overflow:hidden}
-  /* Big panel title (the dock's raw title row; it arrives padded to the
-     screen width, so clip instead of scrolling). */
-  body:not(.mobile) .w-dock .w-raw{font-size:1.55em;font-weight:700;line-height:1.3;
-    color:#f4f8fc;letter-spacing:.01em;padding:0 2px 12px;overflow:hidden;flex:0 0 auto;
-    text-shadow:0 1px 3px rgba(2,6,14,.4)}
+  /* The dock's raw title row is dropped — the glass card IS the panel's
+     identity, the label was dead weight. (:first-child keeps any other raw
+     rows a future dock spec might emit.) */
+  body:not(.mobile) .w-dock>.w-col>.w-raw:first-child{display:none}
   /* New Task: a full-width green pill; the search field wraps to its own row. */
   body:not(.mobile) .w-dock .w-row.wrap .w-button.primary{
     flex:1 1 100%;text-align:center;padding:9px 0;font-weight:700;font-size:1.05em;
@@ -1188,6 +1182,55 @@
   body:not(.mobile) .w-dock .w-tree-card.sel .w-tree-xrow{color:rgba(255,255,255,.75)}
   body:not(.mobile) .w-dock .w-hintbar{color:rgba(223,232,240,.5)}
   body:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
+  /* Dock dropdowns (New Task… / Move to folder…): a frosted menu card in
+     place of the flat --bg2 overlay, with plain menu rows instead of the
+     editor's filled buttons. The New-Task menu (the overlay right after the
+     toolbar row) is pinned under its button — in flow it would land below
+     the wrapped search field. */
+  body:not(.mobile) .w-dock>.w-col{position:relative}
+  body:not(.mobile) .w-dock .w-overlay{background:rgba(16,26,40,.92);
+    -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+    border:1px solid rgba(255,255,255,.22);border-radius:14px;
+    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px;margin:0;z-index:6}
+  body:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{position:absolute;left:0;right:0;top:46px}
+  body:not(.mobile) .w-dock .w-overlay .w-section{border:none;padding:2px}
+  body:not(.mobile) .w-dock .w-overlay .w-section-label{color:rgba(232,240,248,.55);
+    text-transform:uppercase;font-size:.85em;letter-spacing:.07em;margin:2px 8px 6px}
+  body:not(.mobile) .w-dock .w-overlay .w-row{gap:0}
+  body:not(.mobile) .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
+    background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px}
+  body:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.10)}
+  body:not(.mobile) .w-dock .w-overlay .w-button.primary{background:rgba(255,255,255,.16);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
+
+  /* ---- COSMOS shell motion. The editor's cell-level animations are forced
+     off by the bridge (config.editor.animations = false); the frontend owns
+     motion instead: a quick fade/pop for the palette + a uniform full-window
+     scrim, and the dock / file explorer slide in from the left while the
+     bezel (CSS-transitioned, repositioned by layoutShell) is pushed aside.
+     Exits animate a positioned clone (.fx-clone) since the region rebuild
+     removes the real node synchronously. ---- */
+  body:not(.mobile) .modal-scrim{position:fixed;inset:0}
+  body:not(.mobile) #device{transition:left .28s cubic-bezier(.2,.8,.25,1),
+    width .28s cubic-bezier(.2,.8,.25,1),top .28s cubic-bezier(.2,.8,.25,1),
+    height .28s cubic-bezier(.2,.8,.25,1)}
+  @keyframes fxFade{from{opacity:0}}
+  @keyframes fxPop{from{opacity:0;transform:translate(-50%,-50%) scale(.96)}}
+  @keyframes fxSlideL{from{transform:translateX(calc(-100% - 80px))}}
+  @keyframes fxSlideLsm{from{transform:translateX(-100%);opacity:.3}}
+  @keyframes fxOutFade{to{opacity:0}}
+  @keyframes fxOutL{to{transform:translateX(calc(-100% - 80px));opacity:.4}}
+  .modal-scrim.fx-in{animation:fxFade .12s ease-out}
+  .palette.fx-in{animation:fxFade .12s ease-out}
+  .palette.centered.fx-in{animation:fxPop .13s cubic-bezier(.2,.8,.25,1)}
+  .widget-surface.w-dock.fx-in{animation:fxSlideL .28s cubic-bezier(.2,.8,.25,1)}
+  .fileexplorer.fx-in{animation:fxSlideLsm .22s cubic-bezier(.2,.8,.25,1)}
+  .fx-clone{position:fixed;margin:0;pointer-events:none;z-index:99}
+  .fx-clone.fx-out{animation:fxOutFade .1s ease-in forwards}
+  .fx-clone.fx-out-left{animation:fxOutL .22s cubic-bezier(.4,0,.8,.4) forwards}
+  @media (prefers-reduced-motion:reduce){
+    .fx-in,.fx-clone{animation:none!important}
+    body:not(.mobile) #device{transition:none!important}}
 </style>
 </head>
 <body>
@@ -1201,8 +1244,7 @@
   <div class="dv-side dv-l"><i></i><span>SPEC: COSMOS-991</span></div>
   <div class="dv-side dv-r"><i></i><span>PROJECT: INFERNU.NIU</span></div>
   <div class="dv-bottom"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
-    <span class="dv-label">PROJECT: INFERNU CORE</span>
-    <span class="dv-btn">BUILD</span><span class="dv-btn">DEPLOY</span><span class="dv-btn dv-more">⋯</span></div>
+    <span class="dv-label">PROJECT: INFERNU CORE</span></div>
   <i class="dv-screw tl"></i><i class="dv-screw tr"></i><i class="dv-screw bl"></i><i class="dv-screw br"></i>
 </div>
 <div id="app"></div>
@@ -1612,13 +1654,43 @@ const REGION_FILL={
   trustDialog(c,reg){ if(reg.trustDialog) for(const el of trustDialogEls(reg.trustDialog)) c.appendChild(el); },
   caret(c,reg){ renderCaret(c,reg); },
 };
+// COSMOS shell motion (desktop): entrance classes are added only when a
+// surface APPEARS — not on the per-keystroke rebuilds of an already-open
+// one — and exits animate a positioned clone, since the region rebuild
+// removes the real node synchronously.
+const FX={
+  palette:      {sel:".palette",                present:r=>!!r.palette},
+  widgets:      {sel:".widget-surface.w-dock",  present:r=>(r.widgets||[]).some(w=>w.kind==="dock"), slide:true},
+  fileExplorer: {sel:".fileexplorer",           present:r=>!!r.fileExplorer, slide:true},
+};
+function fxExit(el, cls){
+  const r=el.getBoundingClientRect();
+  const c=el.cloneNode(true);
+  c.classList.remove("fx-in"); c.classList.add("fx-clone", cls);
+  c.style.left=r.left+"px"; c.style.top=r.top+"px";
+  c.style.width=r.width+"px"; c.style.height=r.height+"px";
+  document.body.appendChild(c);
+  c.addEventListener("animationend",()=>c.remove());
+  setTimeout(()=>{ if(c.isConnected) c.remove(); },500);   // reduced-motion / safety
+}
 function renderRegion(name){
   const c=containers[name];
   // Snapshot scroll positions inside this region before its rebuild, keyed by
   // document-order ordinal (stable across a same-structure re-render).
   const saved=[]; c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ saved[i]=e.scrollTop; });
+  const fx=!isMobile()&&FX[name];
+  const hadEl=fx?c.querySelector(fx.sel):null;
+  const willHave=fx?fx.present(scene.regions):false;
+  if(fx&&hadEl&&!willHave){
+    fxExit(hadEl, fx.slide?"fx-out-left":"fx-out");
+    if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) fxExit(s,"fx-out"); }
+  }
   if(name!=="caret") c.textContent="";     // the caret patches its own child in place
   REGION_FILL[name](c, scene.regions);
+  if(fx&&!hadEl&&willHave){
+    const el=c.querySelector(fx.sel); if(el) el.classList.add("fx-in");
+    if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) s.classList.add("fx-in"); }
+  }
   c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(saved[i]) e.scrollTop=saved[i]; });
   if(name==="settings") settingsEnsureSelectionVisible(c);
   // A widgets rebuild replaces any focused text input — restore DOM focus
@@ -2370,7 +2442,13 @@ function widgetEl(spec, ctx){
     const el=div("w-tree"+(focused?" focus":""));
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const sel=inst&&inst.selectedIndex!=null?inst.selectedIndex:(spec.selectedIndex!=null?spec.selectedIndex:-1);
-    const expanded=new Set(inst&&inst.expandedKeys?inst.expandedKeys:(spec.expandedKeys||[]));
+    // Host parity (first_visible_tree_index): once an INSTANCE exists its
+    // expansion set is authoritative even when EMPTY; the spec's seed applies
+    // only before any instance state. The scene skip-serializes an empty
+    // expandedKeys, so "instance present, field absent" means all-collapsed —
+    // falling back to the seed there made collapsing the last open folder a
+    // visual no-op.
+    const expanded=new Set(inst?(inst.expandedKeys||[]):(spec.expandedKeys||[]));
     const keys=spec.itemKeys||[];
     const open=[];
     (spec.nodes||[]).forEach((n,i)=>{
@@ -2398,7 +2476,13 @@ function widgetEl(spec, ctx){
       }
       const t=document.createElement("span"); t.className="w-tree-text"; t.textContent=entryText(n.text||{});
       row.appendChild(t);
-      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e); else routeTree(ctx,spec,"select",{index:i,key}); };
+      // A click anywhere on a FOLDER row both selects it and toggles its
+      // expansion — the disclosure glyph alone is a needle-thin target, and
+      // "click a folder to fold it" is what every tree UI trains people to
+      // expect. Leaf rows keep plain select.
+      row.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(e.button===2) treeCtx(e);
+        else { routeTree(ctx,spec,"select",{index:i,key});
+               if(n.hasChildren) routeTree(ctx,spec,"expand",{index:i,key,expanded:!isOpen}); } };
       // Bordered card node (Tree.cardBorders + extraLines): wrap the
       // primary row and its continuation rows in a rounded box, the web
       // twin of the TUI's `╭─…─╮` card chrome. Non-card nodes (folder

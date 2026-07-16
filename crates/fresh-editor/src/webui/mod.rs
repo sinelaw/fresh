@@ -157,7 +157,11 @@ impl ClipboardSync {
 pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
     let dir_context = DirectoryContext::from_system()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
-    let cfg = config::Config::load_with_layers(&dir_context, &working_dir);
+    let mut cfg = config::Config::load_with_layers(&dir_context, &working_dir);
+    // Cell-level (TUI) animations would stream as bursts of frame diffs over
+    // the bridge; the web frontend implements its own CSS-level motion
+    // instead, so they are forced off regardless of the user's config.
+    cfg.editor.animations = false;
     let fs: Arc<dyn FileSystem + Send + Sync> = Arc::new(StdFileSystem);
 
     let mut editor = Editor::with_working_dir(
