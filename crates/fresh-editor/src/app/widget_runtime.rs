@@ -172,12 +172,21 @@ impl Editor {
         let new_state = match panel.instance_states.get(widget_key) {
             Some(WidgetInstanceState::Tree {
                 scroll_offset,
+                selected_index,
                 expanded_keys,
-                ..
+                user_scrolled,
             }) => WidgetInstanceState::Tree {
                 scroll_offset: *scroll_offset,
-                selected_index: index,
                 expanded_keys: expanded_keys.clone(),
+                // Re-pinning the *same* index (which the orchestrator
+                // dock's `refreshOpenDialog` does on every probe-poll
+                // repaint) must preserve a user scroll — otherwise the
+                // refresh would snap the view back to the selection a
+                // beat after a mouse scroll. Only an actual selection
+                // change re-arms scroll-follows-selection. Mirrors the
+                // List branch below.
+                user_scrolled: *user_scrolled && index == *selected_index,
+                selected_index: index,
             },
             other => {
                 let (prev_scroll, prev_index, prev_item_height, prev_user_scrolled) = match other {
@@ -2306,6 +2315,7 @@ impl Editor {
                 selected_index,
                 scroll_offset,
                 expanded_keys,
+                ..
             }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
             _ => (spec_sel, 0u32, std::collections::HashSet::<String>::new()),
         };
@@ -2336,6 +2346,9 @@ impl Editor {
                     scroll_offset: cur_scroll,
                     selected_index: new_abs as i32,
                     expanded_keys: expanded,
+                    // Keyboard nav is a deliberate selection move —
+                    // re-arm scroll-follows-selection.
+                    user_scrolled: false,
                 },
             );
         }
@@ -2350,9 +2363,9 @@ impl Editor {
 
     /// Mouse-wheel scroll over a widget panel buffer. Finds the
     /// first `Tree`/`List` in any panel rendering into `buffer_id`
-    /// and shifts its viewport by `delta` rows. Drags the selection
-    /// to stay inside the new visible window so the renderer's
-    /// auto-scroll doesn't snap the offset back. No focus change,
+    /// and shifts its viewport by `delta` rows. Sets the widget's
+    /// `user_scrolled` flag so the renderer's auto-scroll doesn't
+    /// snap the offset back to the selection. No focus change,
     /// no `widget_event` fires — wheel is viewport navigation, not
     /// selection.
     ///
@@ -2509,6 +2522,7 @@ impl Editor {
                 selected_index,
                 scroll_offset,
                 expanded_keys,
+                ..
             }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
             _ => (-1, 0, std::collections::HashSet::<String>::new()),
         };
@@ -2542,31 +2556,21 @@ impl Editor {
         if new_scroll == cur_scroll {
             return false;
         }
-        // Drag selection to stay inside the new viewport.
-        let visible =
-            crate::widgets::render::tree_nodes_fitting(&heights, new_scroll as usize, visible_rows);
-        let cur_pos: Option<u32> = if cur_sel >= 0 {
-            visible_indices
-                .iter()
-                .position(|&v| v as i32 == cur_sel)
-                .map(|p| p as u32)
-        } else {
-            None
-        };
-        let new_sel_abs = match cur_pos {
-            Some(pos) if pos < new_scroll => visible_indices[new_scroll as usize] as i32,
-            Some(pos) if pos >= new_scroll + visible => {
-                visible_indices[(new_scroll + visible - 1) as usize] as i32
-            }
-            _ => cur_sel,
-        };
+        // Mouse scroll moves the *view* only — the selection stays put
+        // (and may scroll out of view). `user_scrolled` tells the
+        // renderer not to snap the offset back to the selection, and —
+        // unlike the old drag-selection-to-the-edge workaround — it
+        // survives a plugin `SetSelectedIndex` that re-pins the same
+        // selection (the orchestrator dock re-pins on every probe-poll
+        // refresh, which used to yank the scrolled view back to the top).
         if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
             panel_mut.instance_states.insert(
                 widget_key.to_string(),
                 crate::widgets::WidgetInstanceState::Tree {
                     scroll_offset: new_scroll,
-                    selected_index: new_sel_abs,
+                    selected_index: cur_sel,
                     expanded_keys: expanded,
+                    user_scrolled: true,
                 },
             );
         }
@@ -2676,14 +2680,26 @@ impl Editor {
         if nodes.is_empty() {
             return;
         }
-        let (cur_sel, cur_scroll, mut expanded) = match panel.instance_states.get(&focus_key) {
-            Some(crate::widgets::WidgetInstanceState::Tree {
-                selected_index,
-                scroll_offset,
-                expanded_keys,
-            }) => (*selected_index, *scroll_offset, expanded_keys.clone()),
-            _ => (spec_sel, 0u32, std::collections::HashSet::<String>::new()),
-        };
+        let (cur_sel, cur_scroll, mut expanded, cur_user_scrolled) =
+            match panel.instance_states.get(&focus_key) {
+                Some(crate::widgets::WidgetInstanceState::Tree {
+                    selected_index,
+                    scroll_offset,
+                    expanded_keys,
+                    user_scrolled,
+                }) => (
+                    *selected_index,
+                    *scroll_offset,
+                    expanded_keys.clone(),
+                    *user_scrolled,
+                ),
+                _ => (
+                    spec_sel,
+                    0u32,
+                    std::collections::HashSet::<String>::new(),
+                    false,
+                ),
+            };
         if cur_sel < 0 {
             return;
         }
@@ -2720,6 +2736,10 @@ impl Editor {
                     scroll_offset: cur_scroll,
                     selected_index: new_sel,
                     expanded_keys: expanded,
+                    // Jumping to the parent is a deliberate selection
+                    // move (re-arm follow); a pure expansion flip keeps
+                    // the user's scroll intact.
+                    user_scrolled: cur_user_scrolled && new_sel == cur_sel,
                 },
             );
         }
@@ -2765,14 +2785,26 @@ impl Editor {
                 Some(p) => p,
                 None => return,
             };
-            let (cur_scroll, cur_sel, mut expanded) = match panel.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::Tree {
-                    scroll_offset,
-                    selected_index,
-                    expanded_keys,
-                }) => (*scroll_offset, *selected_index, expanded_keys.clone()),
-                _ => (0u32, -1i32, std::collections::HashSet::<String>::new()),
-            };
+            let (cur_scroll, cur_sel, mut expanded, cur_user_scrolled) =
+                match panel.instance_states.get(widget_key) {
+                    Some(crate::widgets::WidgetInstanceState::Tree {
+                        scroll_offset,
+                        selected_index,
+                        expanded_keys,
+                        user_scrolled,
+                    }) => (
+                        *scroll_offset,
+                        *selected_index,
+                        expanded_keys.clone(),
+                        *user_scrolled,
+                    ),
+                    _ => (
+                        0u32,
+                        -1i32,
+                        std::collections::HashSet::<String>::new(),
+                        false,
+                    ),
+                };
             let next = if expanded.contains(item_key) {
                 expanded.remove(item_key);
                 false
@@ -2786,6 +2818,9 @@ impl Editor {
                     scroll_offset: cur_scroll,
                     selected_index: cur_sel,
                     expanded_keys: expanded,
+                    // A disclosure click doesn't move the selection —
+                    // keep the user's scroll suppression as-is.
+                    user_scrolled: cur_user_scrolled,
                 },
             );
             next

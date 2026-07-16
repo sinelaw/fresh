@@ -4819,14 +4819,16 @@ impl Editor {
             WidgetMutation::SetExpandedKeys { widget_key, keys } => {
                 // Tree expanded_keys lives in instance state.
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
-                    let (prev_scroll, prev_sel) = match panel.instance_states.get(&widget_key) {
-                        Some(crate::widgets::WidgetInstanceState::Tree {
-                            scroll_offset,
-                            selected_index,
-                            ..
-                        }) => (*scroll_offset, *selected_index),
-                        _ => (0, -1),
-                    };
+                    let (prev_scroll, prev_sel, prev_user_scrolled) =
+                        match panel.instance_states.get(&widget_key) {
+                            Some(crate::widgets::WidgetInstanceState::Tree {
+                                scroll_offset,
+                                selected_index,
+                                user_scrolled,
+                                ..
+                            }) => (*scroll_offset, *selected_index, *user_scrolled),
+                            _ => (0, -1, false),
+                        };
                     let expanded: std::collections::HashSet<String> = keys.into_iter().collect();
                     panel.instance_states.insert(
                         widget_key,
@@ -4834,6 +4836,7 @@ impl Editor {
                             scroll_offset: prev_scroll,
                             selected_index: prev_sel,
                             expanded_keys: expanded,
+                            user_scrolled: prev_user_scrolled,
                         },
                     );
                 }

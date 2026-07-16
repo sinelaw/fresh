@@ -946,6 +946,7 @@ impl Editor {
                         scroll_offset,
                         selected_index,
                         expanded_keys,
+                        ..
                     } => WidgetInstanceView {
                         selected_index: Some(*selected_index),
                         scroll_offset: Some(*scroll_offset),

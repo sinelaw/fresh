@@ -2217,6 +2217,7 @@ fn dock_new_folder_dialog_enter_on_cancel_cancels() {
 /// the wheel was dead exactly when the card list overflowed.
 #[test]
 fn dock_card_tree_wheel_scrolls_when_overflowing() {
+    init_tracing_from_env();
     let (_tmp, root) = setup_project("aaaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -2245,6 +2246,22 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     h.mouse_scroll_down(5, 15).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("bb12"))
         .unwrap();
+
+    // A dock refresh must NOT yank the scrolled view back to the
+    // selection. The plugin's `refreshOpenDialog` re-pins the tree
+    // selection on every repaint, and it runs asynchronously off the
+    // git probe poll — under CI load a probe completing *after* the
+    // wheel used to snap the view back to the top and `bb12` vanished
+    // forever (the tree had no `user_scrolled` suppression, unlike
+    // List). Settle all pending refreshes and require the tail to
+    // still be on screen.
+    h.wait_until_stable(|_| true).unwrap();
+    assert!(
+        h.screen_to_string().contains("bb12"),
+        "a dock refresh re-pinning the same selection must not snap the \
+         wheel-scrolled view back to the top:\n{}",
+        h.screen_to_string()
+    );
 
     // And back up: the tail scrolls back out of view.
     h.mouse_scroll_up(5, 15).unwrap();

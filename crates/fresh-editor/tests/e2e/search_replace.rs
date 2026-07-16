@@ -2262,6 +2262,13 @@ fn test_search_replace_file_glob() {
 
     open_search_replace_via_palette(&mut harness);
     harness.type_text("glob needle").unwrap();
+    // Gate on the rendered field value before waiting on results: if any
+    // keystroke were lost or misrouted, the stuck-wait screen dump would
+    // then show a wrong field value at THIS wait — a pinpointed diagnosis
+    // — instead of a silent, unexplained hang on the results predicate.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search: [glob needle"))
+        .unwrap();
 
     // First observe the completed unfiltered result set. This makes the
     // later disappearance assertions a real state transition rather than a

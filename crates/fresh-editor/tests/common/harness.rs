@@ -547,6 +547,13 @@ impl EditorTestHarness {
     /// )?;
     /// ```
     pub fn create(width: u16, height: u16, options: HarnessOptions) -> anyhow::Result<Self> {
+        // Always install the tracing subscriber (idempotent via `Once`):
+        // `wait_until` dumps the stuck screen through `tracing::warn!`
+        // every 10s, but that diagnostic is lost for any test that never
+        // called `init_tracing_from_env` itself — which made CI-only
+        // timeouts (a wait that never resolves killed externally by the
+        // nextest 180s slow-timeout) undebuggable from the logs alone.
+        crate::common::tracing::init_tracing_from_env();
         let mut t = crate::common::timing::Timer::start("harness::create");
         // Create temp directory if we don't have a shared dir_context
         let temp_dir = if options.dir_context.is_none() || options.create_project_root {

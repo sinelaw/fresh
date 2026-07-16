@@ -2559,16 +2559,22 @@ fn render_widget_tree(
     // Look up host-owned instance state (scroll, selection,
     // expanded set). Spec values are initial-only.
     let prev_state = tree_key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k));
-    let (prev_scroll, prev_sel, prev_expanded) = match prev_state {
+    let (prev_scroll, prev_sel, prev_expanded, user_scrolled) = match prev_state {
         Some(WidgetInstanceState::Tree {
             scroll_offset,
             selected_index,
             expanded_keys,
-        }) => (*scroll_offset, *selected_index, expanded_keys.clone()),
+            user_scrolled,
+        }) => (
+            *scroll_offset,
+            *selected_index,
+            expanded_keys.clone(),
+            *user_scrolled,
+        ),
         _ => {
             // First render: seed expanded_keys from spec.
             let seeded: HashSet<String> = expanded_keys.iter().cloned().collect();
-            (0, selected_index, seeded)
+            (0, selected_index, seeded, false)
         }
     };
 
@@ -2656,8 +2662,13 @@ fn render_widget_tree(
     // the visible-windowed indices, in *rows* so variable-height nodes
     // (card_borders) window correctly. For uniform heights this is
     // arithmetically identical to the old node-budget math.
+    //
+    // Once the user has scrolled by mouse (`user_scrolled`), respect
+    // the stored offset as-is — the selected node may sit off-screen.
+    // Selection moves (keyboard/click/plugin) clear the flag, re-arming
+    // keep-selection-visible. Same contract as the List path.
     let mut scroll = prev_scroll;
-    if sel_visible_pos >= 0 {
+    if sel_visible_pos >= 0 && !user_scrolled {
         let sel = sel_visible_pos as u32;
         if sel < scroll {
             scroll = sel;
@@ -2685,6 +2696,7 @@ fn render_widget_tree(
                 scroll_offset: scroll,
                 selected_index: effective_sel_abs,
                 expanded_keys: prev_expanded.clone(),
+                user_scrolled,
             },
         );
     }
@@ -7741,6 +7753,7 @@ mod tests {
                 scroll_offset: 0,
                 selected_index: -1,
                 expanded_keys: ["b".to_string()].iter().cloned().collect(),
+                user_scrolled: false,
             },
         );
         let spec = make_tree(
@@ -7828,6 +7841,103 @@ mod tests {
         assert_eq!(entries.len(), 3);
         match state.get("T").unwrap() {
             WidgetInstanceState::Tree { scroll_offset, .. } => assert_eq!(*scroll_offset, 2),
+            _ => unreachable!(),
+        }
+    }
+
+    /// A mouse-scrolled tree (`user_scrolled`) keeps its offset even
+    /// though the selected node is scrolled out of view. Without the
+    /// flag, any re-render — e.g. the orchestrator dock's async
+    /// probe-poll refresh re-pinning the same selection — snapped the
+    /// wheel-scrolled view back to the selected card (the flaky
+    /// `dock_card_tree_wheel_scrolls_when_overflowing` hang).
+    #[test]
+    fn tree_user_scroll_is_not_snapped_back_to_selection() {
+        let mut prev = HashMap::new();
+        prev.insert(
+            "T".to_string(),
+            WidgetInstanceState::Tree {
+                scroll_offset: 3,
+                selected_index: 0,
+                expanded_keys: HashSet::new(),
+                user_scrolled: true,
+            },
+        );
+        let spec = make_tree(
+            vec![
+                tnode("n0", 0, false),
+                tnode("n1", 0, false),
+                tnode("n2", 0, false),
+                tnode("n3", 0, false),
+                tnode("n4", 0, false),
+                tnode("n5", 0, false),
+            ],
+            vec!["k0", "k1", "k2", "k3", "k4", "k5"],
+            0,
+            2,
+            vec![],
+            Some("T"),
+        );
+        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        // Window stays at the user's offset (n3, n4) — not snapped back
+        // to the selected n0.
+        assert!(
+            entries[0].text.contains("n3"),
+            "window must start at the user's scroll offset, got: {:?}",
+            entries.iter().map(|e| e.text.trim()).collect::<Vec<_>>()
+        );
+        match state.get("T").unwrap() {
+            WidgetInstanceState::Tree {
+                scroll_offset,
+                user_scrolled,
+                ..
+            } => {
+                assert_eq!(*scroll_offset, 3);
+                assert!(*user_scrolled, "the flag must persist across renders");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// The inverse: once the flag clears (a deliberate selection move —
+    /// keyboard nav, click, or a plugin `SetSelectedIndex` to a new
+    /// index), keep-selection-visible re-engages and the window snaps
+    /// to the selection again.
+    #[test]
+    fn tree_selection_move_re_arms_scroll_follow() {
+        let mut prev = HashMap::new();
+        prev.insert(
+            "T".to_string(),
+            WidgetInstanceState::Tree {
+                scroll_offset: 3,
+                selected_index: 0,
+                expanded_keys: HashSet::new(),
+                user_scrolled: false,
+            },
+        );
+        let spec = make_tree(
+            vec![
+                tnode("n0", 0, false),
+                tnode("n1", 0, false),
+                tnode("n2", 0, false),
+                tnode("n3", 0, false),
+                tnode("n4", 0, false),
+                tnode("n5", 0, false),
+            ],
+            vec!["k0", "k1", "k2", "k3", "k4", "k5"],
+            0,
+            2,
+            vec![],
+            Some("T"),
+        );
+        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        assert!(
+            entries[0].text.contains("n0"),
+            "window must follow the selection when user_scrolled is clear, got: {:?}",
+            entries.iter().map(|e| e.text.trim()).collect::<Vec<_>>()
+        );
+        match state.get("T").unwrap() {
+            WidgetInstanceState::Tree { scroll_offset, .. } => assert_eq!(*scroll_offset, 0),
             _ => unreachable!(),
         }
     }

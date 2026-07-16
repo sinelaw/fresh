@@ -178,6 +178,18 @@ pub enum WidgetInstanceState {
         scroll_offset: u32,
         selected_index: i32,
         expanded_keys: HashSet<String>,
+        /// True once the user has scrolled the tree by mouse (wheel or
+        /// scrollbar) without moving the selection. While set, the
+        /// renderer respects `scroll_offset` as-is instead of snapping
+        /// it back to keep `selected_index` in view — so a mouse scroll
+        /// can push the selected node off-screen. Cleared whenever the
+        /// selection itself moves (keyboard nav, click, or a plugin
+        /// `SetSelectedIndex` to a *different* index), which re-arms
+        /// scroll-follows-selection. Same semantics as `List`'s flag —
+        /// without it, a background spec refresh that re-pins the same
+        /// selection (the orchestrator dock's probe poll) yanked a
+        /// wheel-scrolled dock back to the selected card.
+        user_scrolled: bool,
     },
     /// `Number` instance state: the host-owned current value. Becomes
     /// authoritative after first render — the spec's `value` is a
@@ -354,20 +366,28 @@ impl WidgetRegistry {
     ) -> Option<i32> {
         let _ = visible;
         let state = self.panels.get_mut(panel_key)?;
-        let WidgetInstanceState::List {
-            scroll_offset: so,
-            user_scrolled,
-            ..
-        } = state.instance_states.get_mut(list_key)?
-        else {
-            return None;
-        };
         // Mouse scroll moves the *view* only — the selection stays put
         // (and may scroll out of view). `user_scrolled` tells the
         // renderer not to snap the offset back to the selection. Never
         // returns a moved selection, so no `select`/live-switch fires.
-        *so = scroll_offset;
-        *user_scrolled = true;
+        // Trees get the same treatment so a scrollbar drag on a tree
+        // panel (the orchestrator dock) sticks instead of no-opping.
+        match state.instance_states.get_mut(list_key)? {
+            WidgetInstanceState::List {
+                scroll_offset: so,
+                user_scrolled,
+                ..
+            }
+            | WidgetInstanceState::Tree {
+                scroll_offset: so,
+                user_scrolled,
+                ..
+            } => {
+                *so = scroll_offset;
+                *user_scrolled = true;
+            }
+            _ => return None,
+        }
         None
     }
 
