@@ -1048,9 +1048,8 @@ impl Editor {
 
         // Check tab context menu first (it's rendered on top)
         if let Some(ref menu) = self.active_window().tab_context_menu {
-            let menu_x = menu.position.0;
-            let menu_y = menu.position.1;
-            let menu_width = 22u16;
+            let (menu_x, menu_y) = menu.clamped_position(self.terminal_width, self.terminal_height);
+            let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
             let items = super::types::TabContextMenuItem::all();
             let menu_height = items.len() as u16 + 2;
 
@@ -3376,11 +3375,10 @@ impl Editor {
         }
 
         // First check if a tab context menu is open and the click is on a menu item
-        if let Some(ref menu) = self.active_window_mut().tab_context_menu {
-            let menu_x = menu.position.0;
-            let menu_y = menu.position.1;
-            let menu_width = 22u16; // "Close to the Right" + padding
-            let menu_height = super::types::TabContextMenuItem::all().len() as u16 + 2; // items + borders
+        if let Some(ref menu) = self.active_window().tab_context_menu {
+            let (menu_x, menu_y) = menu.clamped_position(self.terminal_width, self.terminal_height);
+            let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
 
             // Check if click is inside the menu
             if col >= menu_x
@@ -3466,10 +3464,9 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<AnyhowResult<()>> {
-        let menu = self.active_window_mut().tab_context_menu.as_ref()?;
-        let menu_x = menu.position.0;
-        let menu_y = menu.position.1;
-        let menu_width = 22u16;
+        let menu = self.active_window().tab_context_menu.as_ref()?;
+        let (menu_x, menu_y) = menu.clamped_position(self.terminal_width, self.terminal_height);
+        let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
         let items = super::types::TabContextMenuItem::all();
         let menu_height = items.len() as u16 + 2; // items + borders
 
@@ -3600,6 +3597,9 @@ impl Editor {
             }
             TabContextMenuItem::CopyFullPath => {
                 self.copy_buffer_path(buffer_id, false);
+            }
+            TabContextMenuItem::ExtractToNewWorkspace => {
+                self.extract_tab_to_new_workspace(buffer_id);
             }
         }
 

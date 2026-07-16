@@ -3153,6 +3153,7 @@ pub fn action_to_events(
         | Action::PrevPane
         | Action::NextWindow
         | Action::PrevWindow
+        | Action::ExtractTabToNewWorkspace
         | Action::Copy
         | Action::CopyWithTheme(_)
         | Action::CopyFilePath

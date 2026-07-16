@@ -1815,6 +1815,10 @@ impl Editor {
             Action::PrevPane => self.prev_pane(),
             Action::NextWindow => self.next_window(),
             Action::PrevWindow => self.prev_window(),
+            Action::ExtractTabToNewWorkspace => {
+                let buffer_id = self.active_buffer();
+                self.extract_tab_to_new_workspace(buffer_id);
+            }
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleMaximizeSplit => self.toggle_maximize_split(),

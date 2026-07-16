@@ -1492,6 +1492,26 @@ impl Editor {
             }
         }
 
+        // Metadata and the undo/redo event log live next to the buffer
+        // storage they describe — carry them to the target window too, or
+        // the moved buffer renders without its metadata and loses its undo
+        // history to the window it left.
+        let sidecars = self.windows.values_mut().find_map(|w| {
+            let metadata = w.buffer_metadata.remove(&buffer_id);
+            let event_log = w.event_logs.remove(&buffer_id);
+            (metadata.is_some() || event_log.is_some()).then_some((metadata, event_log))
+        });
+        if let Some((metadata, event_log)) = sidecars {
+            if let Some(s) = self.windows.get_mut(&target) {
+                if let Some(metadata) = metadata {
+                    s.buffer_metadata.insert(buffer_id, metadata);
+                }
+                if let Some(event_log) = event_log {
+                    s.event_logs.insert(buffer_id, event_log);
+                }
+            }
+        }
+
         // Remove the buffer from the active session's split tree
         // so it doesn't surface as a stray tab — the target
         // session owns it.

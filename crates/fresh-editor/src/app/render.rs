@@ -3929,24 +3929,12 @@ impl Editor {
         use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
         let items = super::types::TabContextMenuItem::all();
-        let menu_width = 22u16; // "Close to the Right" + padding
+        let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
         let menu_height = items.len() as u16 + 2; // items + borders
 
-        // Adjust position to stay within screen bounds
-        let screen_width = frame.area().width;
-        let screen_height = frame.area().height;
-
-        let menu_x = if menu.position.0 + menu_width > screen_width {
-            screen_width.saturating_sub(menu_width)
-        } else {
-            menu.position.0
-        };
-
-        let menu_y = if menu.position.1 + menu_height > screen_height {
-            screen_height.saturating_sub(menu_height)
-        } else {
-            menu.position.1
-        };
+        // Adjust position to stay within screen bounds (same math the mouse
+        // hit-testing uses, so clicks always land on what was drawn)
+        let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
 
         let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
 

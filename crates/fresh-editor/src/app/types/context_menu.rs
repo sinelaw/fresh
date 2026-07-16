@@ -6,6 +6,10 @@ pub const FILE_EXPLORER_CONTEXT_MENU_WIDTH: u16 = 24;
 /// Width of the "+" new-tab popup menu (fits "New Terminal" + padding).
 pub const NEW_TAB_MENU_WIDTH: u16 = 18;
 
+/// Width of the tab right-click context menu (fits
+/// "Extract to New Workspace" + padding).
+pub const TAB_CONTEXT_MENU_WIDTH: u16 = 28;
+
 /// Tab context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabContextMenuItem {
@@ -23,11 +27,16 @@ pub enum TabContextMenuItem {
     CopyRelativePath,
     /// Copy the tab's absolute file path
     CopyFullPath,
+    /// Move the tab's buffer into a new orchestrator workspace rooted at
+    /// the file's parent directory
+    ExtractToNewWorkspace,
 }
 
 impl TabContextMenuItem {
     /// Get all menu items in order
     pub fn all() -> &'static [Self] {
+        // Append-only: existing e2e tests address items by their index in
+        // this list, so new entries go after the older ones.
         &[
             Self::Close,
             Self::CloseOthers,
@@ -36,6 +45,7 @@ impl TabContextMenuItem {
             Self::CloseAll,
             Self::CopyRelativePath,
             Self::CopyFullPath,
+            Self::ExtractToNewWorkspace,
         ]
     }
 
@@ -49,6 +59,7 @@ impl TabContextMenuItem {
             Self::CloseAll => t!("tab.close_all").to_string(),
             Self::CopyRelativePath => t!("tab.copy_relative_path").to_string(),
             Self::CopyFullPath => t!("tab.copy_full_path").to_string(),
+            Self::ExtractToNewWorkspace => t!("tab.extract_to_new_workspace").to_string(),
         }
     }
 }
@@ -80,6 +91,29 @@ impl TabContextMenu {
     /// Get the currently highlighted item
     pub fn highlighted_item(&self) -> TabContextMenuItem {
         TabContextMenuItem::all()[self.highlighted]
+    }
+
+    /// Menu height including the top/bottom borders.
+    pub fn height(&self) -> u16 {
+        TabContextMenuItem::all().len() as u16 + 2
+    }
+
+    /// Anchor position shifted so the menu fits on screen — the single
+    /// source of truth shared by rendering, hover, and click hit-testing
+    /// (diverging copies would let clicks land on a menu drawn elsewhere).
+    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
+        let x = if self.position.0 + TAB_CONTEXT_MENU_WIDTH > screen_width {
+            screen_width.saturating_sub(TAB_CONTEXT_MENU_WIDTH)
+        } else {
+            self.position.0
+        };
+        let h = self.height();
+        let y = if self.position.1 + h > screen_height {
+            screen_height.saturating_sub(h)
+        } else {
+            self.position.1
+        };
+        (x, y)
     }
 
     /// Move highlight down

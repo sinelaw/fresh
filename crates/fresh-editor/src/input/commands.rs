@@ -587,6 +587,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.extract_tab_to_new_workspace",
+        desc_key: "cmd.extract_tab_to_new_workspace_desc",
+        action: || Action::ExtractTabToNewWorkspace,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.next_pane",
         desc_key: "cmd.next_pane_desc",
         action: || Action::NextPane,

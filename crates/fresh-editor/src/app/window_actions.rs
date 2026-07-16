@@ -807,6 +807,133 @@ impl crate::app::Editor {
         None
     }
 
+    /// Move a tab's buffer into a new orchestrator workspace (a `Window`)
+    /// rooted at the file's parent directory, then switch to it.
+    ///
+    /// The buffer must be file-backed — an unnamed scratch buffer has no
+    /// directory to root the new workspace at, so the extraction is refused
+    /// with a status message. If a workspace already exists at that root the
+    /// buffer moves into it instead (one-session-per-directory invariant);
+    /// if that workspace is the *current* one there is nowhere to extract to
+    /// and a status message says so.
+    ///
+    /// The live `EditorState` moves — unsaved modifications and undo history
+    /// travel with the tab rather than being re-read from disk.
+    pub fn extract_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
+        use rust_i18n::t;
+
+        let path = self
+            .buffers()
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()));
+        let Some(path) = path else {
+            self.set_status_message(t!("workspace.extract_no_file_path").to_string());
+            return;
+        };
+        let root = match path.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => {
+                self.set_status_message(t!("workspace.extract_no_file_path").to_string());
+                return;
+            }
+        };
+
+        if self.find_window_by_root(&root) == Some(self.active_window) {
+            self.set_status_message(
+                t!(
+                    "workspace.extract_already_rooted",
+                    root = root.display().to_string()
+                )
+                .to_string(),
+            );
+            return;
+        }
+
+        // Re-point every visible leaf that displays this buffer at another
+        // of its tabs before the move, so the source window's split tree
+        // never dangles on a buffer it no longer owns.
+        self.retarget_leaves_off_buffer(buffer_id);
+
+        let label = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        let target = self.create_window_at(root, label);
+        self.handle_open_file_in_inactive_session(target, path.clone());
+
+        let target_label = self
+            .windows
+            .get(&target)
+            .map(|w| w.label.clone())
+            .unwrap_or_default();
+        self.set_active_window(target);
+        self.set_active_buffer(buffer_id);
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        self.set_status_message(
+            t!("workspace.extracted_tab", name = name, label = target_label).to_string(),
+        );
+    }
+
+    /// Switch every leaf of the active window that currently displays
+    /// `buffer_id` to a different tab, closing the leaf (or seeding a fresh
+    /// scratch buffer when it is the last one) when it has no other tab to
+    /// fall back to. Prepares a buffer for extraction to another window.
+    fn retarget_leaves_off_buffer(&mut self, buffer_id: fresh_core::BufferId) {
+        use crate::view::split::TabTarget;
+
+        let Some((mgr, view_states)) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+        else {
+            return;
+        };
+
+        // (leaf, fallback tab) for every leaf whose displayed buffer is the
+        // one being extracted. The rect is a probe — only ids matter here.
+        let probe = ratatui::layout::Rect::new(0, 0, 1, 1);
+        let showing: Vec<(crate::model::event::LeafId, Option<fresh_core::BufferId>)> = mgr
+            .root()
+            .get_leaves_with_rects(probe)
+            .into_iter()
+            .filter(|(_, displayed, _)| *displayed == buffer_id)
+            .map(|(leaf_id, _, _)| {
+                let replacement = view_states.get(&leaf_id).and_then(|vs| {
+                    vs.open_buffers.iter().find_map(|t| match t {
+                        TabTarget::Buffer(id) if *id != buffer_id => Some(*id),
+                        _ => None,
+                    })
+                });
+                (leaf_id, replacement)
+            })
+            .collect();
+
+        for (leaf_id, replacement) in showing {
+            if let Some(replacement) = replacement {
+                self.active_window_mut()
+                    .set_pane_buffer(leaf_id, replacement);
+                continue;
+            }
+            let leaf_count = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| mgr.root().count_leaves())
+                .unwrap_or(1);
+            if leaf_count > 1 {
+                self.handle_close_split(leaf_id.into());
+            } else {
+                // Last leaf with no other tab: seed a fresh scratch buffer so
+                // the source window keeps a renderable tab after the move.
+                self.new_buffer();
+            }
+        }
+    }
+
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
     /// to a different session first. Refuses to close the *last*

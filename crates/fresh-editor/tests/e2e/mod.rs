@@ -34,6 +34,7 @@ pub mod explorer_bugs;
 pub mod explorer_context_menu;
 pub mod explorer_menu;
 pub mod external_file_save_as_tab;
+pub mod extract_tab_to_workspace;
 pub mod file_browser;
 pub mod file_explorer;
 pub mod file_explorer_compact_chain;
