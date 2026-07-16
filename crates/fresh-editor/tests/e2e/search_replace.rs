@@ -2270,12 +2270,17 @@ fn test_search_replace_file_glob() {
         .wait_until(|h| h.screen_to_string().contains("Search: [glob needle"))
         .unwrap();
 
+    // The results tree renders paths with the native separator, so on
+    // Windows the rows read `src\main.rs`. Normalize to `/` before
+    // asserting so the path checks below are platform-independent.
+    let normalized = |h: &EditorTestHarness| h.screen_to_string().replace('\\', "/");
+
     // First observe the completed unfiltered result set. This makes the
     // later disappearance assertions a real state transition rather than a
     // predicate that can pass vacuously while results are still streaming.
     harness
         .wait_until(|h| {
-            let s = h.screen_to_string();
+            let s = normalized(h);
             s.contains("(5 matches / 5 files)")
                 && s.contains("root.rs (1/1)")
                 && s.contains("src/main.rs (1/1)")
@@ -2309,7 +2314,7 @@ fn test_search_replace_file_glob() {
 
     harness
         .wait_until(|h| {
-            let s = h.screen_to_string();
+            let s = normalized(h);
             s.contains("(2 matches / 2 files)")
                 && s.contains("root.rs (1/1)")
                 && s.contains("src/main.rs (1/1)")
@@ -2318,7 +2323,7 @@ fn test_search_replace_file_glob() {
                 && !s.contains("src/skip.txt")
         })
         .unwrap();
-    let screen = harness.screen_to_string();
+    let screen = normalized(&harness);
     assert!(
         !screen.contains("src/nested/lib.rs"),
         "single-star path glob must not cross directories. Screen:\n{}",
