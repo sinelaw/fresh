@@ -2457,25 +2457,15 @@ fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
     // Both hint rows render, pinned to the dock's bottom edge (the dock
     // column spans the full 32-row frame): "S-F10 menu" on the last row,
     // "↑↓ switch →← fold" directly above it — not directly under the
-    // single session card near the top.
-    h.wait_until(|h| h.screen_to_string().contains("S-F10"))
-        .unwrap();
-    h.wait_until_stable(|_| true).unwrap();
-    let menu_row = row_of(&h, "S-F10");
-    assert_eq!(
-        menu_row,
-        31,
-        "the hint bar's last row must sit on the dock's bottom row (31), \
-         not float under the card.\nScreen:\n{}",
-        h.screen_to_string()
-    );
-    let switch_row = row_of(&h, "fold");
-    assert_eq!(
-        switch_row,
-        30,
-        "the first hint row must sit directly above the last one.\nScreen:\n{}",
-        h.screen_to_string()
-    );
+    // single session card near the top. Waiting on the final pinned
+    // state directly (rather than settling and asserting) rides out any
+    // interleaved async re-renders (git probes, discovery sweeps).
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        let row_with = |needle: &str| s.lines().position(|l| l.contains(needle));
+        row_with("S-F10") == Some(31) && row_with("fold") == Some(30)
+    })
+    .unwrap();
 }
 
 /// When the tree overflows its row budget there must be NO padding —
@@ -2497,20 +2487,18 @@ fn dock_hint_bar_not_padded_when_tree_overflows() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // The hints are on screen (not clipped away by bogus padding) and
-    // near the bottom edge. The tree renders whole cards only, so the
-    // last row before the hints may fall a card-fraction short of the
-    // budget — allow that slack, but no more.
-    h.wait_until(|h| h.screen_to_string().contains("S-F10"))
-        .unwrap();
-    h.wait_until_stable(|_| true).unwrap();
-    let menu_row = row_of(&h, "S-F10");
-    assert!(
-        menu_row >= 27,
-        "overflowing tree: hint bar should hug the dock bottom (row >= 27), \
-         got row {menu_row}.\nScreen:\n{}",
+    // The hints are on screen (not clipped away by bogus padding) and on
+    // the dock's bottom row exactly: row-granular tree rendering fills
+    // every budgeted row when overflowing (partial cards clip at the
+    // edge), so no padding is inserted and the hints land flush at the
+    // bottom.
+    h.wait_until(|h| {
         h.screen_to_string()
-    );
+            .lines()
+            .position(|l| l.contains("S-F10"))
+            == Some(31)
+    })
+    .unwrap();
 }
 
 /// Collapsing a folder shrinks the tree by the folded cards; the hint
@@ -2544,34 +2532,27 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     })
     .unwrap();
 
-    // Wait for the git probe so the card's git line ("clean") is a
-    // stable marker for "the card is visible".
-    h.wait_until(|h| h.screen_to_string().contains("clean"))
-        .unwrap();
-    h.wait_until_stable(|_| true).unwrap();
-    assert_eq!(
-        row_of(&h, "S-F10"),
-        31,
-        "pre-collapse: hint bar pinned to the dock bottom.\nScreen:\n{}",
-        h.screen_to_string()
-    );
+    // Pre-collapse steady state: the card is visible (git probe landed
+    // its "clean" line) AND the hint bar is pinned to the dock bottom.
+    // A single semantic wait rides out interleaved probe re-renders.
+    let hint_row = |s: &str| s.lines().position(|l| l.contains("S-F10"));
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("clean") && hint_row(&s) == Some(31)
+    })
+    .unwrap();
 
     // Click the folder's disclosure glyph (col 0 of its row) to collapse
-    // it — the card disappears, shrinking the tree by 5 rows.
+    // it — the card disappears, shrinking the tree by 5 rows — and the
+    // hint bar re-pins to the bottom rather than floating up with the
+    // shorter tree.
     let folder_row = row_of(&h, "Docs") as u16;
     h.mouse_click(0, folder_row).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("clean"))
-        .unwrap();
-    h.wait_until_stable(|_| true).unwrap();
-
-    // The hint bar re-pinned to the bottom rather than floating up with
-    // the shorter tree.
-    assert_eq!(
-        row_of(&h, "S-F10"),
-        31,
-        "post-collapse: hint bar must stay pinned to the dock bottom.\nScreen:\n{}",
-        h.screen_to_string()
-    );
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("clean") && hint_row(&s) == Some(31)
+    })
+    .unwrap();
 }
 
 // ── session-row density content ────────────────────────────────────────────
@@ -2599,22 +2580,24 @@ fn dock_compact_rows_drop_branch_name() {
     expand_filters(&mut h);
     let vrow = row_of(&h, "view: card") as u16;
     h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
-    h.wait_until_stable(|_| true).unwrap();
 
-    // The compact session row (in the dock column, left of the wall)
-    // carries the name but no branch marker.
-    let name_row = dock_card_name_row(&h, "alphaproj")
-        .expect("compact session row should list the session name");
-    let wall = dock_wall_col(&h) as usize;
-    let dock_part: String = h.screen_row_text(name_row).chars().take(wall).collect();
-    assert!(
-        !dock_part.contains('▸'),
-        "compact rows must not carry the branch suffix; dock row {name_row} \
-         reads {dock_part:?}.\nScreen:\n{}",
-        h.screen_to_string()
-    );
+    // Final steady state, waited on semantically: compact density active
+    // AND the session row (dock column, left of the wall) carries the
+    // name but no branch marker — even though the git probe has already
+    // cached the branch (the "clean" gate above), which the compact row
+    // used to trail as a "▸<branch>" suffix.
+    h.wait_until(|h| {
+        if !h.screen_to_string().contains("view: compact") {
+            return false;
+        }
+        let Some(name_row) = dock_card_name_row(h, "alphaproj") else {
+            return false;
+        };
+        let wall = dock_wall_col(h) as usize;
+        let dock_part: String = h.screen_row_text(name_row).chars().take(wall).collect();
+        !dock_part.contains('▸')
+    })
+    .unwrap();
 }
 
 /// Card density right-aligns the whole branch + git-summary group on
@@ -2624,41 +2607,54 @@ fn dock_compact_rows_drop_branch_name() {
 #[test]
 fn dock_card_git_line_right_aligned_to_card_border() {
     let (_tmp, root) = setup_project("alphaproj");
+    // A second (inactive) session in its own git repo: the ACTIVE card's
+    // right border is scooped away by the seamless tab, so flushness is
+    // asserted on the inactive card, whose `│` border is intact.
+    let other = root.parent().unwrap().join("zzz_other");
+    fs::create_dir(&other).unwrap();
+    assert!(std::process::Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&other)
+        .status()
+        .unwrap()
+        .success());
+
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
             .unwrap();
+    h.editor_mut()
+        .create_window_at(other.clone(), "zzz_other".to_string());
     h.render().unwrap();
     open_dock(&mut h);
+    // alphaproj (the launch window) stays active; zzz_other is the
+    // inactive, fully-bordered card.
+    assert_eq!(h.editor().active_window().label, "alphaproj");
 
-    // Wait for the git probe to land the summary ("clean" — fresh repo,
-    // no upstream, no HEAD to diff against).
-    h.wait_until(|h| h.screen_to_string().contains("clean"))
-        .unwrap();
-    h.wait_until_stable(|_| true).unwrap();
-
-    let screen = h.screen_to_string();
-    let line = screen
-        .lines()
-        .find(|l| l.contains("clean"))
-        .expect("card git line with the summary");
-    let b = line.find("clean").unwrap();
-    // Flush right: the card's side border (rounded `│`, or heavy `┃` on
-    // the selected card) comes IMMEDIATELY after the summary — no
-    // interior padding after the group.
-    let after = &line[b + "clean".len()..];
-    assert!(
-        after.starts_with('│') || after.starts_with('┃'),
-        "the git summary must end flush against the card's right border; \
-         found {:?} after it.\nScreen:\n{screen}",
-        after.chars().next(),
-    );
-    // And the branch marker rides in the same right-aligned group, just
-    // before the summary on the same line.
-    assert!(
-        line[..b].contains('▸'),
-        "the branch marker must precede the summary in the right-aligned \
-         group.\nScreen:\n{screen}"
-    );
+    // Wait for the git probe to land zzz_other's summary line ("clean" —
+    // fresh repo, nothing to diff), rendered flush against the card's
+    // right border: the summary is IMMEDIATELY followed by the rounded
+    // `│` side border, with no interior padding after the group, and the
+    // branch marker rides in the same right-aligned group before it.
+    // Waiting for the final flush state directly (instead of asserting
+    // after a stability settle) keeps the check semantic: intermediate
+    // frames where the probe result exists but a refresh is mid-flight
+    // are simply waited through.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let zzz_row = match screen.lines().position(|l| l.contains("zzz_other")) {
+            Some(r) => r,
+            None => return false,
+        };
+        // The git line is the card row right below the name row.
+        let Some(line) = screen.lines().nth(zzz_row + 1) else {
+            return false;
+        };
+        let Some(b) = line.find("clean") else {
+            return false;
+        };
+        line[b + "clean".len()..].starts_with('│') && line[..b].contains('▸')
+    })
+    .unwrap();
 }
 
 /// Moving the dock tree selection with the keyboard must "flash" the
@@ -2704,13 +2700,19 @@ fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };
 
-    // Down moves the tree selection (live-switching the active window) with
-    // NO mouse motion. Let the live-switch relayout settle — each wait
-    // iteration advances the logical clock by only ~50ms, well inside the
-    // multi-second flash window, so the bar is still flashed when the
-    // settled frame is snapshotted.
+    // Down moves the tree selection (live-switching the active window)
+    // with NO mouse motion. Wait only for the live-switch itself — NOT a
+    // full screen settle: with 30 sessions the git probes keep repainting
+    // card text for a while, and each settle iteration advances the
+    // logical clock ~50ms, so an unbounded settle could burn through the
+    // multi-second flash window before the snapshot (expiring the bar and
+    // making the assert vacuous-flaky). Probe repaints never touch the
+    // scrollbar column, so the snapshot is comparable without settling.
+    let before_label = h.editor().active_window().label.clone();
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until_stable(|_| true).unwrap();
+    h.wait_until(|h| h.editor().active_window().label != before_label)
+        .unwrap();
+    h.tick_and_render().unwrap();
     let flashed = snapshot(&h);
 
     // Expire the flash on the harness's logical clock: no input events —

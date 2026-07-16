@@ -4816,6 +4816,31 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
         TextPropertyEntry::text(text)
     };
     let content_row = |src: TextPropertyEntry| -> TextPropertyEntry {
+        let mut src = src;
+        // A row carrying the `align: "right"` entry property is padded
+        // out to the card's *actual* inner width here, where that width
+        // is known exactly — plugin-side padding could only estimate the
+        // dock's responsive/dragged width and drifted at other widths.
+        // The pad is ASCII spaces (1 byte == 1 char each), so shifting
+        // overlay offsets by the pad length is unit-correct for both
+        // byte- and char-unit overlays.
+        let align_right = src
+            .properties
+            .get("align")
+            .and_then(|v| v.as_str())
+            .map(|v| v == "right")
+            .unwrap_or(false);
+        if align_right {
+            let width = src.text.chars().count();
+            if width < inner_width {
+                let pad = " ".repeat(inner_width - width);
+                src.text.insert_str(0, &pad);
+                for o in src.inline_overlays.iter_mut() {
+                    o.start += pad.len();
+                    o.end += pad.len();
+                }
+            }
+        }
         let mut e = wrap_entry_between(src, inner_width, "│", "│");
         strip_trailing_newline(&mut e);
         if !indent.is_empty() {
@@ -7965,7 +7990,11 @@ mod tests {
             card_borders: true,
             key: Some("T".into()),
         };
-        let (entries, hits, _state) = render_no_focus(&spec, &prev);
+        // A finite panel width: bordered cards draw `─` runs across the
+        // full width, so the `u32::MAX` no-flex width `render_no_focus`
+        // uses would try to build a 4-billion-char border string.
+        let out = render_spec(&spec, &prev, "", 40);
+        let (entries, hits) = (out.entries, out.hits);
         // Window = rows 2..8 of [A0 A1 A2 A3 A4 B0 B1 B2 B3 B4]:
         // A's l2 content row first, B's l2 row last; 6 rows exactly.
         assert_eq!(entries.len(), 6, "{:?}", texts(&entries));

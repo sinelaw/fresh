@@ -925,7 +925,7 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
       treeNode(primary, {
         depth,
         hasChildren: false,
-        extraLines: card ? sessionCardExtraLines(id, depth) : undefined,
+        extraLines: card ? sessionCardExtraLines(id) : undefined,
       }),
     );
     keys.push(sessionNodeKey(id));
@@ -1006,18 +1006,6 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
 // the card border); line 3 = PR badge (blank when none).
 const DOCK_CARD_HEIGHT = 3;
 
-// Inner content width of a bordered session card at tree `depth`,
-// mirroring the host's `render_tree_card` sizing: the panel's column
-// budget minus the `depth * 2` indent (floored at 4 total columns),
-// minus the two flush `│` border columns. Uses the same responsive
-// dock-width estimate as the rest of the dock chrome, so plugin-side
-// padding computed against it is exact at the default width; after a
-// user drag the host re-pads/truncates to the real width and the
-// alignment degrades gracefully.
-function dockCardInnerCols(depth: number): number {
-  return Math.max(4, dockContentCols(dockDefaultWidth()) - depth * 2) - 2;
-}
-
 // Card line 1 (the tree node's primary text): state glyph, optional
 // remote facet, the name (highlighted when active), then a dim project
 // tag. Distinct from the compact `sessionNodeEntry`, which trails the
@@ -1058,11 +1046,11 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
 // compact git summary, right-aligned as one group against the card's
 // right border; line 3 is the PR badge (or a blank spacer when there's
 // no PR, keeping every card the same height). Tree card rows are plain
-// text entries (no host flex spacer), so the alignment is plugin-side:
-// leading blanks pad the group out to the card's inner width
-// (`dockCardInnerCols`), which the host's `render_tree_card` then
-// borders flush — the group's last glyph lands beside the `│`.
-function sessionCardExtraLines(id: number, depth: number): TextPropertyEntry[] {
+// text entries (no host flex spacer), so the line carries the
+// `align: "right"` entry property and the host's `render_tree_card` —
+// which knows the card's *actual* inner width, responsive or dragged —
+// pads it flush against the right border.
+function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   const s = orchestratorSessions.get(id);
   if (!s) return [];
   const git = gitLineParts(s);
@@ -1071,14 +1059,11 @@ function sessionCardExtraLines(id: number, depth: number): TextPropertyEntry[] {
     gitSegs.push({ text: "   " });
     gitSegs.push(...git.right);
   }
-  // Codepoint count matches the host's padding unit (`chars().count()`);
-  // every glyph this line uses is single-width.
-  const spare = dockCardInnerCols(depth) -
-    gitSegs.reduce((n, e) => n + [...e.text].length, 0);
-  if (spare > 0) gitSegs.unshift({ text: " ".repeat(spare) });
+  const gitLine = styledRow(gitSegs as Parameters<typeof styledRow>[0]);
+  gitLine.properties = { align: "right" };
   const pr = prLineEntries(s);
   return [
-    styledRow(gitSegs as Parameters<typeof styledRow>[0]),
+    gitLine,
     styledRow((pr.length ? pr : [{ text: " " }]) as Parameters<typeof styledRow>[0]),
   ];
 }
