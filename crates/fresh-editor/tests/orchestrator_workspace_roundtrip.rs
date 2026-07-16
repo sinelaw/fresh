@@ -175,7 +175,8 @@ mod stable_id {
     }
 
     fn read_stable_id(path: &Path) -> Option<String> {
-        let val: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+        let val: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
         val.get("stable_id")
             .and_then(|v| v.as_str())
             .map(str::to_owned)
