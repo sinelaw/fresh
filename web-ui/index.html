@@ -35,7 +35,7 @@
      sizes itself in em, never px. */
   :root{
     --font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
-    --font-size-base:13px;
+    --font-size-base:15px;
     --font-size:var(--font-size-base);
     --line-height:1.4}
   :root{--bg:#10161f;--bg2:#151d29;--bg3:#0c121b;--fg:#d7e0ea;--muted:#8494a8;
@@ -53,7 +53,14 @@
     /* Frame-chrome surface (sidebar/menu/tabs/status): the buffer bg pulled
        toward deep navy so the frame reads darker than the editor, as in the
        target design. applyTheme() re-derives it from the live theme bg. */
-    --shell:color-mix(in srgb, var(--bg) 55%, #060b13)}
+    --shell:color-mix(in srgb, var(--bg) 55%, #060b13);
+    /* COSMOS shell geometry (desktop only; read back by JS as SHELL.*):
+       wallpaper margin around everything, the device bezel's bar/rail
+       thicknesses, and the gap between the floating dock card and the
+       device's left rail. resize()/layoutShell() derive the grid and the
+       bezel position from these, so this block is the single source. */
+    --shell-pad:44px;--bezel-top:48px;--bezel-bot:58px;--bezel-side:34px;
+    --dock-gap:28px}
   /* Theme-derived design tokens: elevated surfaces and soft hairlines mixed from
      the live --bg/--fg, so chrome reads as depth on ANY theme instead of piping
      the terminal palette's hard borders (e.g. high-contrast's cyan) into the UI.
@@ -76,7 +83,15 @@
   /* No element re-declares a family, and any element that needs a size states it
      in em relative to the inherited base. */
   input,button,textarea,select{font:inherit}
-  #app{position:relative;width:100vw;height:100vh}
+  /* The grid lives inset from the window: the wallpaper margin plus the
+     device bezel's bars. Children keep positioning at cell-derived offsets
+     from #app's own origin; JS (cellAt / resize / layoutShell) maps through
+     the real origin, so cell math is unchanged. Mobile restores full-bleed. */
+  #app{position:absolute;left:var(--shell-pad);
+    top:calc(var(--shell-pad) + var(--bezel-top));
+    right:calc(var(--shell-pad) + var(--bezel-side));
+    bottom:calc(var(--shell-pad) + var(--bezel-bot))}
+  body.mobile #app{left:0;top:0;right:0;bottom:0}
   .region{position:absolute;overflow:hidden}
 
   /* ---- menu bar (native) ---- */
@@ -140,7 +155,7 @@
      A preview overlay keeps its cell-derived width (set inline) so the results
      column still lines up with the framed preview beside it. */
   .palette.centered{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);
-    z-index:96;width:min(880px,94vw);max-width:94vw;max-height:84vh;
+    z-index:96;width:min(880px,94%);max-width:94%;max-height:84vh;
     /* Stained-glass: a translucent surface with a heavy backdrop blur so the
        editor behind it reads through as frosted colour, not a flat panel. */
     background:color-mix(in srgb, var(--bg2) 68%, transparent);
@@ -1031,9 +1046,160 @@
     box-shadow:0 0 0 2px color-mix(in srgb, var(--ui-accent) 55%, transparent)}
   .settings-modal .set-cats.focus,.settings-modal .set-items.focus{
     box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 55%, transparent)}
+
+  /* ======================================================================
+     COSMOS shell (target mock, 2026-07). The UI floats over an abstract
+     wallpaper: the orchestrator dock becomes a detached frosted-glass
+     sidebar on the left, and everything else sits inside a skeuomorphic
+     "COSMOS-991" hardware bezel — machined rim, corner screws, status
+     LEDs, silkscreened BUILD / DEPLOY chrome. Pure decoration: #device is
+     pointer-transparent and positioned by layoutShell(); the dock keeps
+     its cell rect (only its visual card is inset within it); every other
+     region is untouched. Desktop only — body.mobile switches it all off.
+     ====================================================================== */
+
+  /* ---- wallpaper: vivid flowing colour fields over deep blue ---- */
+  body:not(.mobile){background:
+    radial-gradient(100rem 65rem at 88% -14%, rgba(255,196,92,.75), rgba(255,170,70,.22) 40%, transparent 62%),
+    radial-gradient(60rem 45rem at 103% 38%, rgba(255,150,60,.45), transparent 60%),
+    radial-gradient(85rem 60rem at 66% 66%, rgba(168,100,235,.55), transparent 60%),
+    radial-gradient(92rem 70rem at -14% 112%, rgba(58,228,245,.60), transparent 62%),
+    radial-gradient(70rem 52rem at 6% 28%, rgba(70,150,235,.50), transparent 60%),
+    radial-gradient(55rem 42rem at 48% 118%, rgba(255,140,95,.35), transparent 60%),
+    linear-gradient(135deg,#101f38 0%,#182a48 45%,#0b1728 100%) #0e1a30}
+  /* The pipeline's menubar row spans the FULL grid width (in the TUI the dock
+     paints over its left half); with the dock card inset, that leftover strip
+     would show in the sidebar↔device gap — clip it to the screen. layoutShell
+     keeps --clip-left at the dock's pixel width (0 when no dock). */
+  body:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
+
+  /* ---- the device ---- */
+  #device{position:fixed;display:none;pointer-events:none;border-radius:24px;
+    font-family:var(--font-family);font-size:11px;letter-spacing:.14em;color:#8f98a4;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.10),rgba(255,255,255,0) 12%),
+      linear-gradient(180deg,#2c2f36,#202329 34%,#191c21 68%,#23262c);
+    box-shadow:0 60px 140px rgba(2,6,14,.65),0 18px 50px rgba(2,6,14,.5),
+      inset 0 1px 0 rgba(255,255,255,.22),inset 0 -1px 0 rgba(255,255,255,.05)}
+  #device.on{display:block}
+  body.mobile #device{display:none!important}
+  /* machined-metal rim: a 2px gradient ring masked out of a padded overlay */
+  #device::before{content:"";position:absolute;inset:0;border-radius:24px;padding:2px;
+    background:linear-gradient(180deg,#dfe3e9,#9aa1ab 16%,#4c515a 42%,#33373f 58%,#6a707a 88%,#c3c9d1);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude;opacity:.9}
+  /* screen glass: a dark well a few px larger than the grid, so the UI reads
+     as recessed behind the bezel */
+  #device .dv-screen{position:absolute;
+    top:calc(var(--bezel-top) - 7px);bottom:calc(var(--bezel-bot) - 7px);
+    left:calc(var(--bezel-side) - 7px);right:calc(var(--bezel-side) - 7px);
+    border-radius:12px;background:#070b12;
+    box-shadow:inset 0 2px 12px rgba(0,0,0,.9),inset 0 0 0 1px rgba(255,255,255,.05),
+      0 1px 0 rgba(255,255,255,.07)}
+  #device .dv-top,#device .dv-bottom{position:absolute;left:44px;right:44px;
+    display:flex;align-items:center;gap:10px}
+  #device .dv-top{top:0;height:var(--bezel-top)}
+  #device .dv-bottom{bottom:0;height:var(--bezel-bot)}
+  #device .dv-grow{flex:1}
+  #device .dv-label{white-space:nowrap;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+  /* status LEDs (the mock's traffic lights, top-right) */
+  #device .dv-leds{display:flex;gap:9px;align-items:center;margin-right:2px}
+  #device .dv-leds i{width:9px;height:9px;border-radius:50%}
+  #device .dv-leds .g{background:#4ade7b;box-shadow:0 0 8px rgba(74,222,123,.8),inset 0 1px 1px rgba(255,255,255,.55)}
+  #device .dv-leds .y{background:#c7e05a;box-shadow:0 0 8px rgba(199,224,90,.7),inset 0 1px 1px rgba(255,255,255,.55)}
+  #device .dv-leds .a{background:#e8a14e;box-shadow:0 0 8px rgba(232,161,78,.7),inset 0 1px 1px rgba(255,255,255,.55)}
+  /* silkscreened bezel buttons (decorative) */
+  #device .dv-btn{border:1px solid rgba(255,255,255,.26);border-radius:6px;padding:4px 14px;
+    color:#d6dce3;background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(0,0,0,.18));
+    box-shadow:0 1px 2px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.12);white-space:nowrap}
+  #device .dv-btn.dv-more{padding:4px 9px;letter-spacing:0}
+  /* side rails: engraved vertical legends + a running LED */
+  #device .dv-side{position:absolute;top:var(--bezel-top);bottom:var(--bezel-bot);
+    width:var(--bezel-side);display:flex;flex-direction:column;align-items:center;
+    justify-content:flex-end;gap:14px;padding:14px 0}
+  #device .dv-side.dv-l{left:0}
+  #device .dv-side.dv-r{right:0}
+  #device .dv-side span{writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;
+    color:#69707a;letter-spacing:.18em;font-size:10px}
+  #device .dv-side i{width:6px;height:6px;border-radius:50%;background:#4ade7b;
+    box-shadow:0 0 6px rgba(74,222,123,.8)}
+  /* corner screws */
+  #device .dv-screw{position:absolute;width:15px;height:15px;border-radius:50%;
+    background:radial-gradient(circle at 34% 30%,#d7dbe1,#8d939c 55%,#3f444c);
+    box-shadow:inset 0 -1px 2px rgba(0,0,0,.7),inset 0 1px 1px rgba(255,255,255,.6),0 1px 2px rgba(0,0,0,.6)}
+  #device .dv-screw::after{content:"";position:absolute;left:2px;right:2px;top:50%;height:2px;
+    transform:translateY(-50%) rotate(38deg);background:rgba(20,23,28,.85);border-radius:1px}
+  #device .dv-screw.tl{left:13px;top:13px}
+  #device .dv-screw.tr{right:13px;top:13px}
+  #device .dv-screw.tr::after{transform:translateY(-50%) rotate(-24deg)}
+  #device .dv-screw.bl{left:13px;bottom:15px}
+  #device .dv-screw.bl::after{transform:translateY(-50%) rotate(74deg)}
+  #device .dv-screw.br{right:13px;bottom:15px}
+  #device .dv-screw.br::after{transform:translateY(-50%) rotate(8deg)}
+
+  /* ---- the floating glass sidebar (orchestrator dock) ---- */
+  body:not(.mobile) .widget-surface.w-dock{
+    background:linear-gradient(165deg,rgba(173,196,219,.20),rgba(110,134,165,.10) 40%,rgba(60,80,110,.14));
+    -webkit-backdrop-filter:blur(26px) saturate(1.35);
+    backdrop-filter:blur(26px) saturate(1.35);
+    border:1px solid rgba(255,255,255,.22);
+    border-radius:20px;
+    box-shadow:0 40px 90px rgba(2,6,14,.55),inset 0 1px 0 rgba(255,255,255,.28);
+    padding:16px 14px 12px;color:#e8eef5}
+  /* Big panel title (the dock's raw title row; it arrives padded to the
+     screen width, so clip instead of scrolling). */
+  body:not(.mobile) .w-dock .w-raw{font-size:1.5em;font-weight:700;line-height:1.3;
+    color:#f2f6fa;letter-spacing:.01em;padding:0 2px 8px;overflow:hidden;flex:0 0 auto}
+  /* New Task: a full-width green pill; the search field wraps to its own row. */
+  body:not(.mobile) .w-dock .w-row.wrap .w-button.primary{
+    flex:1 1 100%;text-align:center;padding:7px 0;font-weight:700;font-size:1.05em;
+    background:linear-gradient(180deg,#4cc468,#2d9e4d);border:1px solid rgba(140,255,180,.45);
+    border-radius:10px;color:#f0fff5;
+    box-shadow:0 6px 18px rgba(46,190,101,.35),inset 0 1px 0 rgba(255,255,255,.4)}
+  body:not(.mobile) .w-dock .w-text{flex:1 1 100%;background:rgba(8,14,24,.35);
+    border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:5px 10px;margin:2px 0}
+  body:not(.mobile) .w-dock .w-text::before{content:"⌕";font-size:1.2em;line-height:1;
+    color:rgba(232,240,248,.55)}
+  body:not(.mobile) .w-dock .w-text-input::placeholder{color:rgba(232,240,248,.45)}
+  body:not(.mobile) .w-dock .w-button{border-color:rgba(255,255,255,.18);color:#dfe8f0}
+  body:not(.mobile) .w-dock .w-toggle{color:rgba(223,232,240,.75)}
+  body:not(.mobile) .w-dock .w-divider{border-color:rgba(255,255,255,.12)}
+  /* Tree rows / cards: light text on glass; the selection is a bright glass
+     pill (the mock's highlighted "infernu" card), not the teal editor pill. */
+  body:not(.mobile) .w-dock .w-tree-row,body:not(.mobile) .w-dock .w-list-row{
+    padding:3px 8px;border-radius:9px;color:#dbe5ee}
+  body:not(.mobile) .w-dock .w-tree-xrow{color:rgba(219,229,238,.55)}
+  body:not(.mobile) .w-dock .w-tree-xrow.sel{background:rgba(255,255,255,.10);color:#fff}
+  body:not(.mobile) .w-dock .w-tree-disc,body:not(.mobile) .w-dock .w-tree-check{color:rgba(223,232,240,.6)}
+  body:not(.mobile) .w-dock .w-tree-row.sel,body:not(.mobile) .w-dock .w-list-row.sel{
+    background:linear-gradient(90deg,rgba(255,255,255,.26),rgba(255,255,255,.10));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);color:#fff}
+  body:not(.mobile) .w-dock .w-tree-card{border-color:rgba(255,255,255,.10);
+    background:rgba(255,255,255,.03);border-radius:10px}
+  body:not(.mobile) .w-dock .w-tree-card.sel{
+    border-color:rgba(255,255,255,.35);
+    background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,.08));
+    box-shadow:0 6px 22px rgba(2,6,14,.35),inset 0 1px 0 rgba(255,255,255,.35)}
+  body:not(.mobile) .w-dock .w-tree-card.sel .w-tree-xrow{color:rgba(255,255,255,.75)}
+  body:not(.mobile) .w-dock .w-hintbar{color:rgba(223,232,240,.5)}
+  body:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
 </style>
 </head>
 <body>
+<!-- Decorative hardware bezel (COSMOS shell). Positioned by layoutShell()
+     to wrap the grid minus the floating dock; pointer-transparent, painted
+     behind #app by document order. -->
+<div id="device" aria-hidden="true">
+  <div class="dv-screen"></div>
+  <div class="dv-top"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
+    <span class="dv-leds"><i class="g"></i><i class="y"></i><i class="a"></i></span></div>
+  <div class="dv-side dv-l"><i></i><span>SPEC: COSMOS-991</span></div>
+  <div class="dv-side dv-r"><i></i><span>PROJECT: INFERNU.NIU</span></div>
+  <div class="dv-bottom"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
+    <span class="dv-label">PROJECT: INFERNU CORE</span>
+    <span class="dv-btn">BUILD</span><span class="dv-btn">DEPLOY</span><span class="dv-btn dv-more">⋯</span></div>
+  <i class="dv-screw tl"></i><i class="dv-screw tr"></i><i class="dv-screw bl"></i><i class="dv-screw br"></i>
+</div>
 <div id="app"></div>
 <div id="mobile"></div>
 <div id="err"></div>
@@ -1101,6 +1267,44 @@ function measureMetrics(){
   document.documentElement.style.setProperty("--cell-tracking", (Math.round((CW-advNat)*1000)/1000)+"px");
 }
 measureMetrics();
+
+// ---- COSMOS shell geometry ------------------------------------------------
+// The grid is inset from the window (wallpaper margin + device bezel, see the
+// #app rule); SHELL mirrors the CSS vars so JS can position the bezel and
+// inset the dock card. APPX/APPY is #app's live viewport origin — every
+// pixel→cell conversion (cellAt, border drags) maps through it.
+const SHELL=(()=>{ const n=k=>parseFloat(rootCss.getPropertyValue(k))||0;
+  return { pad:n("--shell-pad"), top:n("--bezel-top"), bot:n("--bezel-bot"),
+           side:n("--bezel-side"), gap:n("--dock-gap") }; })();
+let APPX=0, APPY=0;
+function syncAppOrigin(){ const r=document.getElementById("app").getBoundingClientRect(); APPX=r.left; APPY=r.top; }
+const appH=()=>document.getElementById("app").clientHeight;
+// Pixel width of a full-height LEFT dock (0 when the dock is hidden/absent):
+// the bezel's screen starts to its right, so the sidebar floats free of it.
+function dockWidthPx(){
+  if(!scene||!scene.regions) return 0;
+  for(const s of (scene.regions.widgets||[]))
+    if(s.kind==="dock"&&s.rect&&s.rect.x===0&&s.rect.w<(scene.w||0)) return px(s.rect.w,CW);
+  return 0;
+}
+// Wrap the bezel around the grid minus the dock columns. Runs after every
+// render/frame (dock width and grid size are server-driven) and on window
+// resize; on mobile (or before the first scene) the bezel is hidden.
+function layoutShell(){
+  syncAppOrigin();
+  const dev=document.getElementById("device");
+  if(!dev) return;
+  if(isMobile()||!scene){ dev.classList.remove("on"); return; }
+  dev.classList.add("on");
+  const dw=dockWidthPx();
+  // Clip full-grid-width chrome rows (menubar) to the screen — see the CSS.
+  document.documentElement.style.setProperty("--clip-left", dw+"px");
+  dev.style.left=(APPX+dw-SHELL.side)+"px";
+  dev.style.top=(APPY-SHELL.top)+"px";
+  dev.style.width=(px(scene.w||0,CW)-dw+2*SHELL.side)+"px";
+  dev.style.height=(px(scene.h||0,CH)+SHELL.top+SHELL.bot)+"px";
+}
+
 function setZoom(z){
   z = Math.round(Math.min(3,Math.max(0.5,z))*100)/100;
   if(z===zoom) return;
@@ -1440,7 +1644,7 @@ function settingsEnsureSelectionVisible(c){
 // through applyFrame's per-region patch path instead.
 function render(){
   const app=document.getElementById("app");
-  if(!scene){ containers=null; app.textContent="connecting to editor…"; return; }
+  if(!scene){ containers=null; app.textContent="connecting to editor…"; layoutShell(); return; }
   applyTheme(scene.theme);
   ensureContainers();
   for(const n of REGION_ORDER) renderRegion(n);
@@ -1448,6 +1652,7 @@ function render(){
   // Native touch shell on narrow/portrait viewports (desktop is untouched).
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(scene.regions);
+  layoutShell();
 }
 
 // ---- native menu bar ----------------------------------------------------
@@ -1655,7 +1860,7 @@ function paletteInputOnlyEl(p){
   el.style.width=px((scene&&scene.w)||0,CW)+"px";
   el.style.top="auto";
   const gridBottom=px((scene&&scene.h)||0,CH);
-  el.style.bottom=Math.max(0, window.innerHeight-gridBottom)+"px";
+  el.style.bottom=Math.max(0, appH()-gridBottom)+"px";
   const bar=div("pinput");
   bar.style.borderBottom="none";
   bar.style.borderTop="1px solid var(--hairline)";
@@ -1720,7 +1925,7 @@ function paletteCardEl(p, list){
     el.style.width=px((scene&&scene.w)||(outer.x+outer.w),CW)+"px";
     el.style.top="auto";
     const gridBottom=px((scene&&scene.h)||(outer.y+outer.h+1),CH);
-    el.style.bottom=Math.max(0, window.innerHeight-gridBottom)+"px";
+    el.style.bottom=Math.max(0, appH()-gridBottom)+"px";
   }
 
   if(centered){
@@ -2530,6 +2735,16 @@ function widgetSurfaceEls(s){
     out.push(scrim);
   }
   const el=div("region widget-surface w-"+s.kind+(s.anchored?" anchored":"")); place(el,s.rect);
+  if(s.kind==="dock" && !isMobile() && s.rect.x===0){
+    // COSMOS shell: the dock keeps its cell rect for hit-testing (widget
+    // clicks forward LOGICAL cells, never pixel-derived ones), but its
+    // visual card is inset from the device — a gap on the right where the
+    // bezel's left rail lands — and stretched to the bezel's vertical
+    // extents so it reads as its own floating glass panel.
+    el.style.width=Math.max(140, px(s.rect.w,CW)-SHELL.side-SHELL.gap)+"px";
+    el.style.top=(px(s.rect.y,CH)-SHELL.top+4)+"px";
+    el.style.height=(px(s.rect.h,CH)+SHELL.top+SHELL.bot-8)+"px";
+  }
   if(s.kind==="floatingModal"){
     // The host sizes the panel in whole terminal cells, but the DOM adds
     // per-row gaps + padding a cell grid can't express, so a snug dialog
@@ -2635,9 +2850,9 @@ function borderDragHandle(bx, by, h){
   grip.onmousedown=e=>{
     e.preventDefault(); e.stopPropagation();
     sendMouse({kind:"down",button:"left",col:bx,row:by});
-    const move=ev=>{ const col=Math.max(0,Math.floor(ev.clientX/CW));
+    const move=ev=>{ const col=Math.max(0,Math.floor((ev.clientX-APPX)/CW));
       sendMouse({kind:"drag",button:"left",col,row:by}); };
-    const up=ev=>{ const col=Math.max(0,Math.floor(ev.clientX/CW));
+    const up=ev=>{ const col=Math.max(0,Math.floor((ev.clientX-APPX)/CW));
       sendMouse({kind:"up",button:"left",col,row:by});
       window.removeEventListener("mousemove",move); window.removeEventListener("mouseup",up); };
     window.addEventListener("mousemove",move); window.addEventListener("mouseup",up);
@@ -2917,6 +3132,7 @@ function applyFrame(changed){
   // on desktop renderMobileChrome returns immediately).
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(scene.regions);
+  layoutShell();   // dock width / grid size may have moved the bezel
 }
 function connect(){
   ws=new WebSocket((location.protocol==="https:"?"wss":"ws")+"://"+location.host+"/ws");
@@ -2947,10 +3163,13 @@ function connect(){
 async function refresh(){ try{ const s=await (await fetch("/state")).json(); scene=s; render(); }catch(e){ showErr("load failed: "+e); } }
 function sendKey(d){ wsSend({type:"key",...d}); }
 function sendPaste(text){ wsSend({type:"paste",text}); }
-function resize(){ const cols=Math.max(20,Math.floor(window.innerWidth/CW));
+function resize(){ const a=document.getElementById("app");
+  // Fit the grid to #app's box (the window minus the COSMOS shell's wallpaper
+  // margin + bezel insets; full-bleed again on mobile).
+  const cols=Math.max(20,Math.floor(a.clientWidth/CW));
   // On mobile, leave room for the fixed bottom stack so no code hides behind it
   // (the header reuses the two hidden top chrome rows, so it needs no reserve).
-  const availH=window.innerHeight - (isMobile()?mBottom():0);
+  const availH=a.clientHeight - (isMobile()?mBottom():0);
   const rows=Math.max(8,Math.floor(availH/CH));
   wsSend({type:"resize",cols,rows}); }
 function sendAction(name){ mSheetOpen=false; wsSend({type:"action",action:name}); }
@@ -3147,7 +3366,7 @@ document.addEventListener("copy",e=>{
 });
 
 // Mouse + wheel: forward to the REAL Editor::handle_mouse at cell coordinates.
-const cellAt = e => ({ col: Math.max(0, Math.floor(e.clientX/CW)), row: Math.max(0, Math.floor(e.clientY/CH)) });
+const cellAt = e => ({ col: Math.max(0, Math.floor((e.clientX-APPX)/CW)), row: Math.max(0, Math.floor((e.clientY-APPY)/CH)) });
 const btn = e => (e.button===2?"right":e.button===1?"middle":"left");
 function sendMouse(o){ wsSend({type:"mouse",...o}); }
 function sendWidget(o){ wsSend({type:"widget",...o}); }
@@ -3251,7 +3470,7 @@ document.addEventListener("touchmove",e=>{
 document.addEventListener("touchend",()=>{ tpan=null; },{passive:true});
 document.addEventListener("touchcancel",()=>{ tpan=null; },{passive:true});
 
-let rt; window.addEventListener("resize",()=>{ clearTimeout(rt); rt=setTimeout(resize,150); });
+let rt; window.addEventListener("resize",()=>{ layoutShell(); clearTimeout(rt); rt=setTimeout(resize,150); });
 // Re-fit the grid when crossing the mobile/desktop breakpoint (e.g. rotation).
 mqMobile.addEventListener("change", resize);
 
@@ -3268,6 +3487,11 @@ window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   get paletteCentered(){return paletteCentered;},
   get natselEnabled(){return natselEnabled;},
   get metrics(){return {cw:CW, ch:CH, font:FONT, zoom};} };
+// Set the mobile class BEFORE the first resize()/layoutShell(): both read
+// #app's box, which the class switches between inset (COSMOS shell) and
+// full-bleed.
+document.body.classList.toggle("mobile", isMobile());
+syncAppOrigin();
 focusSink();  // desktop: arm the hidden text sink (IME/dead-key path)
 connect();    // WS: hello replaces the scene, then resize() fits the grid
 </script>
