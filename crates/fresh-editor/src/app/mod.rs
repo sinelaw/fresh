@@ -157,6 +157,12 @@ pub fn editor_tick(
     if editor.check_mouse_hover_timer() {
         needs_render = true;
     }
+    // Hide the dock's keyboard-flashed overlay scrollbar once its deadline
+    // passes: the main loop's idle poll runs this tick within ~50ms of
+    // expiry, so the bar vanishes without another input event.
+    if editor.check_dock_scrollbar_flash_expiry() {
+        needs_render = true;
+    }
     if editor.active_window().check_semantic_highlight_timer() {
         needs_render = true;
     }
@@ -1242,6 +1248,15 @@ pub(crate) struct FloatingWidgetState {
     /// Memoised so the mouse-move handler only forces a re-render on the
     /// enter/leave transition rather than on every motion event.
     pub scrollbar_zone_hovered: bool,
+    /// Deadline until which the dock's overlay scrollbar is "flashed"
+    /// visible after a keyboard selection move (Up/Down/Page in the dock
+    /// tree), so keyboard users get the same scroll-position feedback the
+    /// pointer's hover reveal gives. Read against the editor's
+    /// `time_source` at draw time; cleared (with a repaint) by
+    /// `check_dock_scrollbar_flash_expiry` on the editor tick once it
+    /// passes. `None` when no flash is pending. Only the dock sets this —
+    /// other panels keep their scrollbars always visible.
+    pub scrollbar_flash_until: Option<std::time::Instant>,
     /// When true, a `Centered` panel renders over the *entire* frame
     /// (covering the dimmed left dock) instead of being confined to the
     /// chrome area beside the dock. Set via `FloatingPanelControl{op:
@@ -1258,6 +1273,11 @@ pub(crate) struct FloatingWidgetState {
     /// Session form uses it.
     pub focus_marker: bool,
 }
+
+/// How long the dock's overlay scrollbar stays visible after a keyboard
+/// selection move before it fades back to hover-only (see
+/// `FloatingWidgetState::scrollbar_flash_until`).
+pub(crate) const DOCK_SCROLLBAR_FLASH: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// A list scrollbar's screen rect + scroll state, captured at draw
 /// time so mouse press/drag can hit-test and drive `ScrollbarMouse`.
@@ -1788,6 +1808,7 @@ mod tests {
             last_inner_rect: None,
             scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
+            scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
         }

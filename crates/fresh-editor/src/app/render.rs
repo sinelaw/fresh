@@ -4498,6 +4498,7 @@ impl Editor {
             placement,
             panel_focused,
             scrollbar_zone_hovered,
+            scrollbar_flash_until,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4510,6 +4511,7 @@ impl Editor {
                 fwp.placement,
                 fwp.focused,
                 fwp.scrollbar_zone_hovered,
+                fwp.scrollbar_flash_until,
             ),
             None => return,
         };
@@ -4710,10 +4712,11 @@ impl Editor {
         // settings dialog). Record each track's screen rect + state so
         // the mouse handlers can hit-test press/drag against it.
         let mut scrollbar_tracks: Vec<super::WidgetScrollbarTrack> = Vec::new();
-        // The dock's list scrollbars are overlay-style: shown ONLY while the
-        // pointer is over the list, and hidden otherwise — even when the list
-        // holds keyboard focus. Every other panel keeps its scrollbar always
-        // visible.
+        // The dock's list scrollbars are overlay-style: shown while the
+        // pointer is over the list OR briefly after a keyboard selection
+        // move (the "flash", see `scrollbar_flash_until`), and hidden
+        // otherwise — even when the list holds keyboard focus. Every other
+        // panel keeps its scrollbar always visible.
         //
         // Hover is read from the panel-global `scrollbar_zone_hovered` memo
         // (maintained by the mouse-move handler), NOT from a per-window
@@ -4721,7 +4724,15 @@ impl Editor {
         // through sessions with next/prev-window would swap in each window's
         // stale cursor and flicker the bar on for some sessions and off for
         // others even though the pointer never moved.
+        //
+        // The flash deadline is compared on the editor's `time_source` (the
+        // same clock that armed it), so the harness's logical clock drives
+        // expiry in tests; `check_dock_scrollbar_flash_expiry` on the editor
+        // tick repaints once it passes so the bar also vanishes on an idle
+        // UI without another input event.
         let dock_overlay_scrollbar = is_dock;
+        let scrollbar_flash_active =
+            scrollbar_flash_until.is_some_and(|until| self.time_source().now() < until);
         let mut scrollbar_hover_zones: Vec<ratatui::layout::Rect> = Vec::new();
         {
             use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
@@ -4769,7 +4780,8 @@ impl Editor {
                     height: sb_h,
                 };
                 scrollbar_hover_zones.push(zone);
-                let show = !dock_overlay_scrollbar || scrollbar_zone_hovered;
+                let show =
+                    !dock_overlay_scrollbar || scrollbar_zone_hovered || scrollbar_flash_active;
                 if !show {
                     // Hidden: skip painting and recording a draggable track —
                     // an invisible bar shouldn't be grabbable. (The pointer
@@ -4984,6 +4996,19 @@ fn paint_dock_seamless_active_tab(
     let Some(top) = top else { return };
     // Need a top border, at least one content row, and a bottom border.
     if bot < top + 2 {
+        return;
+    }
+    // Row-level tree scrolling can clip the active card at a viewport
+    // edge; only paint the tab when the card's actual border rows are
+    // both on screen — scooping over a clipped content row would draw
+    // a border through the card's text.
+    let has_corner = |row: usize, corner: char| {
+        entries
+            .get(row)
+            .map(|e| e.text.contains(corner))
+            .unwrap_or(false)
+    };
+    if !has_corner(top, '┏') || !has_corner(bot, '┗') {
         return;
     }
 

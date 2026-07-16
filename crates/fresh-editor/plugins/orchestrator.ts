@@ -925,7 +925,7 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
       treeNode(primary, {
         depth,
         hasChildren: false,
-        extraLines: card ? sessionCardExtraLines(id) : undefined,
+        extraLines: card ? sessionCardExtraLines(id, depth) : undefined,
       }),
     );
     keys.push(sessionNodeKey(id));
@@ -959,10 +959,11 @@ function folderNodeEntry(f: DockFolder, count: number): TextPropertyEntry {
 }
 
 // One tree row for a session leaf: state glyph, optional remote facet,
-// the name (highlighted when it's the active window), and a dim branch
-// suffix. A single line — the tree owns indentation and the disclosure
-// column, so the rich two-line PR pill of the modal picker is traded for
-// a compact, nestable row here.
+// and the name (highlighted when it's the active window). A single
+// line — the tree owns indentation and the disclosure column, so the
+// rich two-line PR pill of the modal picker is traded for a compact,
+// nestable row here. The branch is deliberately dropped in this density
+// (it's the "compact" trade — card view carries it on its second line).
 function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
@@ -985,11 +986,6 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
       text: "  " + s.remote.detail,
       style: { fg: remoteStateFg(s.remote.state), italic: true },
     });
-  } else if (s.branch) {
-    segs.push({
-      text: "  " + BRANCH_ICON + s.branch,
-      style: { fg: "ui.menu_disabled_fg", italic: true },
-    });
   }
   // A discovered on-disk worktree keeps its "· on-disk" tag — the "this
   // row isn't an open session yet" indicator the pill also shows.
@@ -1005,10 +1001,22 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
 // The dock's "card" density renders each session leaf as a fixed
 // 3-content-row card inside the tree; with `cardBorders` the host
 // wraps those rows in a rounded `╭─…─╮` border (5 screen rows total),
-// restoring the modal picker's pill look, minus the flex right-align
-// the tree can't express: line 1 = glyph · [facet] · NAME + project;
-// line 2 = branch + git summary; line 3 = PR badge (blank when none).
+// restoring the modal picker's pill look: line 1 = glyph · [facet] ·
+// NAME + project; line 2 = branch + git summary (right-aligned against
+// the card border); line 3 = PR badge (blank when none).
 const DOCK_CARD_HEIGHT = 3;
+
+// Inner content width of a bordered session card at tree `depth`,
+// mirroring the host's `render_tree_card` sizing: the panel's column
+// budget minus the `depth * 2` indent (floored at 4 total columns),
+// minus the two flush `│` border columns. Uses the same responsive
+// dock-width estimate as the rest of the dock chrome, so plugin-side
+// padding computed against it is exact at the default width; after a
+// user drag the host re-pads/truncates to the real width and the
+// alignment degrades gracefully.
+function dockCardInnerCols(depth: number): number {
+  return Math.max(4, dockContentCols(dockDefaultWidth()) - depth * 2) - 2;
+}
 
 // Card line 1 (the tree node's primary text): state glyph, optional
 // remote facet, the name (highlighted when active), then a dim project
@@ -1047,11 +1055,14 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
 }
 
 // Card lines 2 & 3 (continuation rows). Line 2 is the branch + a
-// compact git summary; line 3 is the PR badge (or a blank spacer when
-// there's no PR, keeping every card the same height). Right-alignment
-// isn't expressible in a single tree-row text, so the git summary sits
-// just after the branch instead of flush-right.
-function sessionCardExtraLines(id: number): TextPropertyEntry[] {
+// compact git summary, right-aligned as one group against the card's
+// right border; line 3 is the PR badge (or a blank spacer when there's
+// no PR, keeping every card the same height). Tree card rows are plain
+// text entries (no host flex spacer), so the alignment is plugin-side:
+// leading blanks pad the group out to the card's inner width
+// (`dockCardInnerCols`), which the host's `render_tree_card` then
+// borders flush — the group's last glyph lands beside the `│`.
+function sessionCardExtraLines(id: number, depth: number): TextPropertyEntry[] {
   const s = orchestratorSessions.get(id);
   if (!s) return [];
   const git = gitLineParts(s);
@@ -1060,6 +1071,11 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
     gitSegs.push({ text: "   " });
     gitSegs.push(...git.right);
   }
+  // Codepoint count matches the host's padding unit (`chars().count()`);
+  // every glyph this line uses is single-width.
+  const spare = dockCardInnerCols(depth) -
+    gitSegs.reduce((n, e) => n + [...e.text].length, 0);
+  if (spare > 0) gitSegs.unshift({ text: " ".repeat(spare) });
   const pr = prLineEntries(s);
   return [
     styledRow(gitSegs as Parameters<typeof styledRow>[0]),
@@ -3608,6 +3624,19 @@ function buildDockSpec(): WidgetSpec {
 
   const expandedSeed = dockTreeExpandedKeys(dockTree);
 
+  // Pin the hint bar to the dock's bottom edge. The host tree renders
+  // only its actual content rows (it does not pad itself out to
+  // `visibleRows`), so with few sessions the hints used to sit directly
+  // under the last card with dead space *below* them. Measure the rows
+  // the visible tree content occupies and fill the gap with blank,
+  // non-interactive rows so `bottom` always lands on the dock's last
+  // rows. Zero when the tree fills or overflows its budget.
+  const treeRows = Math.min(listRows, dockTreeContentRows(dockTree, expandedSeed));
+  const padRows = bottomRows > 0 ? Math.max(0, listRows - treeRows) : 0;
+  const bottomPad: WidgetSpec[] = padRows > 0
+    ? [raw(Array.from({ length: padRows }, () => ({ text: "" })))]
+    : [];
+
   return col(
     dockTitleRow(),
     // New-task button + search on one row; a narrow dock wraps the search
@@ -3652,8 +3681,36 @@ function buildDockSpec(): WidgetSpec {
       focusable: true,
       key: "sessions",
     }),
+    ...bottomPad,
     ...bottom,
   );
+}
+
+// Screen rows the dock tree's *visible* content occupies, mirroring the
+// host renderer's accounting: descendants of a collapsed folder are
+// skipped (same ancestor-stack walk as the host's `visible_indices`,
+// against the same expansion set the tree is seeded/reconciled with), a
+// folder header is one row, and a session leaf is a bordered card
+// (`DOCK_CARD_HEIGHT` content rows + 2 border rows) in card density or
+// a single row in compact.
+function dockTreeContentRows(t: DockTree, expandedKeys: string[]): number {
+  const card = dockView === "card";
+  const open = new Set(expandedKeys);
+  const ancestorOpen: boolean[] = [];
+  let rows = 0;
+  for (let i = 0; i < t.nodes.length; i++) {
+    const depth = t.nodes[i].depth ?? 0;
+    // Truncate the ancestor stack to this node's depth, then the node
+    // is visible iff every remaining ancestor folder is open.
+    ancestorOpen.length = Math.min(ancestorOpen.length, depth);
+    if (ancestorOpen.every((o) => o)) {
+      rows += card && t.model[i].kind === "session" ? DOCK_CARD_HEIGHT + 2 : 1;
+    }
+    // Push this node's own openness so descendants see it; leaves act
+    // as open (they have no descendants to hide).
+    ancestorOpen.push(t.model[i].kind !== "folder" || open.has(t.keys[i]));
+  }
+  return rows;
 }
 
 // The folder keys to seed the tree's expansion with. During a search
@@ -4024,6 +4081,9 @@ function toggleDockFolderExpansion(folderKey: string): void {
   else set.add(folderKey);
   saveExpanded();
   openPanel.setExpandedKeys("sessions", Array.from(set));
+  // Re-render so the hint-bar padding tracks the tree's new height
+  // (see the `expand` widget_event mirror for the host-owned fold path).
+  if (dockMode && openDialog) openPanel.update(buildDockSpec());
 }
 
 // Reconcile the tree's host-owned expansion with the plugin's intent:
@@ -8389,6 +8449,10 @@ editor.on("widget_event", (e) => {
         if (expanded === true) set.add(key);
         else set.delete(key);
         saveExpanded();
+        // A fold changes how many rows the tree occupies; re-render so
+        // the blank padding between the tree and the bottom hint bar
+        // re-balances and the hints stay pinned to the dock's bottom.
+        if (dockMode && openPanel) openPanel.update(buildDockSpec());
       }
       return;
     }

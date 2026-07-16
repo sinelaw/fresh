@@ -2352,6 +2352,13 @@ impl Editor {
                 },
             );
         }
+        // Keyboard nav in the dock: flash its overlay scrollbar so the
+        // user sees where the selection sits in the overflowing list even
+        // though the pointer (whose hover normally reveals the bar) never
+        // moved. The renderer shows the bar while this deadline is in the
+        // future; `check_dock_scrollbar_flash_expiry` (editor tick) clears
+        // it and repaints once it passes.
+        self.flash_dock_scrollbar(panel_key);
         self.rerender_widget_panel(panel_key);
         self.fire_widget_event(
             panel_key,
@@ -2359,6 +2366,38 @@ impl Editor {
             "select".into(),
             serde_json::json!({ "index": new_abs as i64, "key": new_key }),
         );
+    }
+
+    /// Arm the dock's keyboard scrollbar flash: if `panel_key` is the
+    /// mounted dock panel, record a visibility deadline
+    /// [`super::DOCK_SCROLLBAR_FLASH`] from now on the editor's
+    /// `time_source` (so tests can drive expiry on the logical clock).
+    /// No-op for the centered modal / anchored popups — their scrollbars
+    /// are always visible.
+    fn flash_dock_scrollbar(&mut self, panel_key: &crate::widgets::PanelKey) {
+        let until = self.time_source().now() + super::DOCK_SCROLLBAR_FLASH;
+        if let Some(dock) = self.dock.as_mut() {
+            if &dock.panel_key == panel_key {
+                dock.scrollbar_flash_until = Some(until);
+            }
+        }
+    }
+
+    /// Editor-tick check: clear an expired dock scrollbar flash and
+    /// request a repaint so the bar disappears without waiting for the
+    /// next input event. Returns `true` when a redraw is needed (the
+    /// deadline just passed). While the flash is still live, no work is
+    /// done here — the renderer keeps showing the bar and the main loop's
+    /// idle poll (≤50ms) guarantees a tick lands shortly after expiry.
+    pub(crate) fn check_dock_scrollbar_flash_expiry(&mut self) -> bool {
+        let now = self.time_source().now();
+        if let Some(dock) = self.dock.as_mut() {
+            if dock.scrollbar_flash_until.is_some_and(|t| now >= t) {
+                dock.scrollbar_flash_until = None;
+                return true;
+            }
+        }
+        false
     }
 
     /// Mouse-wheel scroll over a widget panel buffer. Finds the
@@ -2530,16 +2569,16 @@ impl Editor {
         if visible_indices.is_empty() {
             return false;
         }
-        // The scroll/selection math below counts *nodes*, but
-        // `visible_rows` is a row budget. Compute per-node heights and the
-        // clamp with the renderer's own helpers so the wheel can't
-        // disagree with what will actually be painted: fixed
-        // `item_height` bands normally, variable rows with
-        // `card_borders` (bordered cards are `item_height + 2` rows,
-        // folder headers a single row). Using raw rows here made
-        // `max_scroll` collapse to 0 (dead wheel, issue #2693); using a
-        // fixed `visible_rows / item_height` budget overshot for bordered
-        // cards, leaving the tail unreachable.
+        // Scroll offset and clamp are in *row* units (line-level
+        // scrolling — a bordered card can be partially clipped at the
+        // viewport edges). Compute per-node heights and the clamp with
+        // the renderer's own helpers so the wheel can't disagree with
+        // what will actually be painted: fixed `item_height` bands
+        // normally, variable rows with `card_borders` (bordered cards
+        // are `item_height + 2` rows, folder headers a single row).
+        // Mirror the renderer's normalization: bordered-card layout only
+        // engages for multi-row items.
+        let card_borders = card_borders && item_height > 1;
         let heights: Vec<u32> = visible_indices
             .iter()
             .map(|&abs| {

@@ -2618,7 +2618,6 @@ fn render_widget_tree(
     // the *absolute* `nodes` index; if that node is now
     // hidden (parent collapsed), find the closest visible
     // node at-or-before it. If no visible nodes, -1.
-    let total_visible = visible_indices.len() as u32;
     // Rows each visible node occupies. Without `card_borders` every
     // node is a fixed `item_height`-row band, so all the node-unit
     // scroll math below reduces to the original behaviour exactly.
@@ -2658,29 +2657,36 @@ fn render_widget_tree(
             .unwrap_or(-1)
     };
 
-    // Compute scroll: same auto-clamp logic as List, but operating on
-    // the visible-windowed indices, in *rows* so variable-height nodes
-    // (card_borders) window correctly. For uniform heights this is
-    // arithmetically identical to the old node-budget math.
+    // Compute scroll. The offset is in *rows* into the flattened row
+    // list of the visible (un-collapsed) nodes — not node units — so the
+    // wheel scrolls line by line and a tall bordered card can sit
+    // partially clipped at either viewport edge. For uniform single-row
+    // trees rows and nodes coincide, so the classic paths are unchanged.
     //
     // Once the user has scrolled by mouse (`user_scrolled`), respect
     // the stored offset as-is — the selected node may sit off-screen.
     // Selection moves (keyboard/click/plugin) clear the flag, re-arming
     // keep-selection-visible. Same contract as the List path.
+    let row_starts: Vec<u32> = heights
+        .iter()
+        .scan(0u32, |acc, &h| {
+            let start = *acc;
+            *acc += h;
+            Some(start)
+        })
+        .collect();
+    let total_rows: u32 = heights.iter().sum();
     let mut scroll = prev_scroll;
     if sel_visible_pos >= 0 && !user_scrolled {
-        let sel = sel_visible_pos as u32;
-        if sel < scroll {
-            scroll = sel;
-        }
-        // Advance until the rows from `scroll` through the selected
-        // node fit in the viewport (the selected card is fully shown).
-        while scroll < sel {
-            let used: u32 = heights[scroll as usize..=sel as usize].iter().sum();
-            if used <= visible_rows {
-                break;
-            }
-            scroll += 1;
+        let sel = sel_visible_pos as usize;
+        let sel_start = row_starts[sel];
+        let sel_end = sel_start + heights[sel];
+        if sel_start < scroll {
+            scroll = sel_start;
+        } else if sel_end > scroll + visible_rows {
+            // Scroll just enough that the whole selected node shows; a
+            // node taller than the viewport anchors to its top row.
+            scroll = sel_end.saturating_sub(visible_rows).min(sel_start);
         }
     }
     let max_scroll = tree_max_scroll(&heights, visible_rows);
@@ -2701,12 +2707,23 @@ fn render_widget_tree(
         );
     }
 
-    // Render the visible window: from `scroll`, as many whole nodes as
-    // fit the row budget (always at least one).
-    let start = scroll as usize;
-    let end = start + tree_nodes_fitting(&heights, start, visible_rows) as usize;
-    let rows_used: u32 = heights[start..end].iter().sum();
-    for &abs_idx in &visible_indices[start..end] {
+    // Render the visible window: rows `[scroll, scroll + budget)`.
+    // Nodes straddling either edge are emitted and then clipped to the
+    // window, so a card can be partially visible at the top and bottom.
+    let budget = visible_rows.max(1);
+    let start_node = row_starts
+        .partition_point(|&s| s <= scroll)
+        .saturating_sub(1);
+    let mut rows_emitted: u32 = 0;
+    for (vis_pos, &abs_idx) in visible_indices.iter().enumerate().skip(start_node) {
+        if rows_emitted >= budget {
+            break;
+        }
+        // Rows of this node hidden above the window (>0 only for the
+        // first node, when `scroll` lands inside it).
+        let clip_top = scroll.saturating_sub(row_starts[vis_pos]) as usize;
+        let entries_before = out.entries.len();
+        let hits_before = out.hits.len();
         // Apply pad/truncate hints and convert any char-unit
         // overlays to byte offsets *before* the disclosure
         // prefix is prepended; render_tree_row then byte-shifts
@@ -2856,25 +2873,61 @@ fn render_widget_tree(
                 event_type: "select",
             });
         }
+
+        // Clip this node's rows to the viewport window: drop `clip_top`
+        // rows hidden above it and anything past the remaining budget
+        // below, shifting the surviving rows' hits up accordingly and
+        // discarding hits whose row was clipped away (a hidden
+        // disclosure glyph must not stay clickable).
+        let node_rows = out.entries.len() - entries_before;
+        let keep_from = entries_before + clip_top.min(node_rows);
+        let remaining = (budget - rows_emitted) as usize;
+        let keep_to = (keep_from + remaining).min(out.entries.len());
+        if keep_from > entries_before || keep_to < out.entries.len() {
+            let kept: Vec<TextPropertyEntry> = out
+                .entries
+                .drain(entries_before..)
+                .enumerate()
+                .filter_map(|(i, e)| {
+                    let row = entries_before + i;
+                    (row >= keep_from && row < keep_to).then_some(e)
+                })
+                .collect();
+            out.entries.extend(kept);
+            let clip = (keep_from - entries_before) as u32;
+            let kept_hits: Vec<HitArea> = out
+                .hits
+                .drain(hits_before..)
+                .filter_map(|mut h| {
+                    let row = h.buffer_row as usize;
+                    if row >= keep_from && row < keep_to {
+                        h.buffer_row -= clip;
+                        Some(h)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            out.hits.extend(kept_hits);
+        }
+        rows_emitted += (out.entries.len() - entries_before) as u32;
     }
 
     // Surface a scroll region so the host paints a draggable overlay
     // scrollbar when the tree overflows — mirroring the List path, so the
     // dock's session tree gets the same hover scrollbar the card list had.
-    // Totals are in visible (un-collapsed) nodes.
-    let emitted = (end - start) as u32;
-    if total_visible > emitted {
+    // Totals are in rows (matching the row-based scroll offset), so the
+    // thumb size/position track line-level scrolling exactly.
+    if total_rows > rows_emitted {
         if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
             out.scroll_regions.push(ScrollRegion {
                 list_key: k.to_string(),
                 buffer_row: 0,
                 col_in_row: 0,
                 width_cols: panel_width,
-                // The thumb is sized in node units (total/visible/scroll),
-                // but the track spans the painted screen rows.
-                height_rows: rows_used,
-                total: total_visible as usize,
-                visible: emitted as usize,
+                height_rows: rows_emitted,
+                total: total_rows as usize,
+                visible: rows_emitted as usize,
                 scroll: scroll as usize,
             });
         }
@@ -4725,38 +4778,13 @@ pub(crate) fn tree_node_rows(
     }
 }
 
-/// Largest useful scroll for a tree whose visible nodes occupy
-/// `heights` rows each: the smallest start index whose suffix still
-/// fills (or is all that's left of) a `visible_rows`-row viewport.
-/// Shared by the renderer and the mouse-wheel handler so the wheel's
-/// clamp can't disagree with what the renderer will actually show.
+/// Largest useful *row* scroll for a tree whose visible nodes occupy
+/// `heights` rows each: the offset at which the last viewport-full of
+/// rows sits flush with the bottom (`0` when everything fits). Shared
+/// by the renderer and the mouse-wheel handler so the wheel's clamp
+/// can't disagree with what the renderer will actually show.
 pub(crate) fn tree_max_scroll(heights: &[u32], visible_rows: u32) -> u32 {
-    let mut acc = 0u32;
-    let mut first_fitting = heights.len();
-    for i in (0..heights.len()).rev() {
-        if acc + heights[i] > visible_rows {
-            break;
-        }
-        acc += heights[i];
-        first_fitting = i;
-    }
-    first_fitting.min(heights.len().saturating_sub(1)) as u32
-}
-
-/// How many whole nodes fit in a `visible_rows`-row viewport starting
-/// at node position `start` (always at least one, when any remain).
-pub(crate) fn tree_nodes_fitting(heights: &[u32], start: usize, visible_rows: u32) -> u32 {
-    let mut end = start;
-    let mut rows_used = 0u32;
-    while end < heights.len() {
-        let h = heights[end];
-        if end > start && rows_used + h > visible_rows {
-            break;
-        }
-        rows_used += h;
-        end += 1;
-    }
-    (end - start) as u32
+    heights.iter().sum::<u32>().saturating_sub(visible_rows)
 }
 
 /// Render a card node as a rounded box spanning the panel width:
@@ -7897,6 +7925,71 @@ mod tests {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// Row-granular scrolling: a scroll offset landing *inside* a
+    /// bordered card clips the card's top rows instead of snapping to a
+    /// node boundary, and the clipped rows' hits are dropped/shifted so
+    /// nothing hidden stays clickable.
+    #[test]
+    fn tree_row_scroll_clips_partial_cards_at_the_edges() {
+        // Two bordered cards, item_height 3 → 5 rows each (10 total).
+        let card = |name: &str| {
+            let mut n = tnode(name, 0, false);
+            n.extra_lines = vec![
+                TextPropertyEntry::text(format!("{name}-l2")),
+                TextPropertyEntry::text(format!("{name}-l3")),
+            ];
+            n
+        };
+        let mut prev = HashMap::new();
+        prev.insert(
+            "T".to_string(),
+            WidgetInstanceState::Tree {
+                // Row 2 of card A: its border + name rows are clipped
+                // off; the window (6 rows) ends inside card B.
+                scroll_offset: 2,
+                selected_index: -1,
+                expanded_keys: HashSet::new(),
+                user_scrolled: true,
+            },
+        );
+        let spec = WidgetSpec::Tree {
+            nodes: vec![card("aa"), card("bb")],
+            item_keys: vec!["ka".into(), "kb".into()],
+            selected_index: -1,
+            visible_rows: 6,
+            expanded_keys: vec![],
+            checkable: false,
+            item_height: 3,
+            card_borders: true,
+            key: Some("T".into()),
+        };
+        let (entries, hits, _state) = render_no_focus(&spec, &prev);
+        // Window = rows 2..8 of [A0 A1 A2 A3 A4 B0 B1 B2 B3 B4]:
+        // A's l2 content row first, B's l2 row last; 6 rows exactly.
+        assert_eq!(entries.len(), 6, "{:?}", texts(&entries));
+        assert!(
+            entries[0].text.contains("aa-l2"),
+            "first row must be card A clipped mid-card: {:?}",
+            texts(&entries)
+        );
+        assert!(
+            entries[5].text.contains("bb-l2"),
+            "last row must clip card B at the window bottom: {:?}",
+            texts(&entries)
+        );
+        // No hit may point outside the emitted rows, and card A's
+        // clipped-off name row must not have left a stale hit behind.
+        assert!(
+            hits.iter().all(|h| (h.buffer_row as usize) < entries.len()),
+            "hits must be clipped/shifted with the rows: {:?}",
+            hits.iter().map(|h| h.buffer_row).collect::<Vec<_>>()
+        );
+    }
+
+    fn texts(entries: &[TextPropertyEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.text.trim_end()).collect()
     }
 
     /// The inverse: once the flag clears (a deliberate selection move —

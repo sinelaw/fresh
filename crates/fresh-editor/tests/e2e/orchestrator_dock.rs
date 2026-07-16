@@ -2237,13 +2237,24 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     // the explorer/tab bar shows only the boot project.)
     h.assert_screen_not_contains("bb12");
 
-    // Wheel down over the tree: the view scrolls, revealing the tail.
-    // Each notch scrolls 3 nodes; with ~5 bordered cards visible the
-    // wheel clamps at max-scroll (node 8 of 13) on the third notch,
-    // which puts the last card on screen.
+    // Wheel down one notch: the view scrolls by 3 *rows*, not whole
+    // cards — the top card (aaaproj, 5 rows) is partially clipped, so
+    // its name row leaves the screen while the next card (bb01) is
+    // still fully visible. Node-granular scrolling (the old behaviour)
+    // would have pushed bb01 and bb02 off together.
     h.mouse_scroll_down(5, 15).unwrap();
-    h.mouse_scroll_down(5, 15).unwrap();
-    h.mouse_scroll_down(5, 15).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("aaaproj  ▣") && s.contains("bb01")
+    })
+    .unwrap();
+
+    // Keep wheeling: the offset clamps at max-scroll (rows), which puts
+    // the last card on screen. 13 nodes × 5 rows = 65 total rows, ~26
+    // visible → well under 20 notches of 3 rows each.
+    for _ in 0..20 {
+        h.mouse_scroll_down(5, 15).unwrap();
+    }
     h.wait_until(|h| h.screen_to_string().contains("bb12"))
         .unwrap();
 
@@ -2264,9 +2275,9 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     );
 
     // And back up: the tail scrolls back out of view.
-    h.mouse_scroll_up(5, 15).unwrap();
-    h.mouse_scroll_up(5, 15).unwrap();
-    h.mouse_scroll_up(5, 15).unwrap();
+    for _ in 0..21 {
+        h.mouse_scroll_up(5, 15).unwrap();
+    }
     h.wait_until(|h| !h.screen_to_string().contains("bb12"))
         .unwrap();
 }
@@ -2426,4 +2437,310 @@ fn dock_folder_rename_uses_dialog() {
         !s.contains("Rename Folder") && s.contains("DocsTeam")
     })
     .unwrap();
+}
+
+// ── hint bar pinned to the dock bottom ─────────────────────────────────────
+
+/// With few sessions the tree renders only its content rows, and the
+/// hint bar used to sit directly under the last card with dead space
+/// BELOW it. The plugin now pads the gap between the tree and the hint
+/// bar with blank rows, so the hints land on the dock's very last rows.
+#[test]
+fn dock_hint_bar_pinned_to_bottom_with_sparse_tree() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Both hint rows render, pinned to the dock's bottom edge (the dock
+    // column spans the full 32-row frame): "S-F10 menu" on the last row,
+    // "↑↓ switch →← fold" directly above it — not directly under the
+    // single session card near the top.
+    h.wait_until(|h| h.screen_to_string().contains("S-F10"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+    let menu_row = row_of(&h, "S-F10");
+    assert_eq!(
+        menu_row,
+        31,
+        "the hint bar's last row must sit on the dock's bottom row (31), \
+         not float under the card.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+    let switch_row = row_of(&h, "fold");
+    assert_eq!(
+        switch_row,
+        30,
+        "the first hint row must sit directly above the last one.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// When the tree overflows its row budget there must be NO padding —
+/// blank rows would push the hint bar off the bottom of the dock and
+/// clip it. With enough cards to overflow, the hints stay visible on
+/// the dock's last rows.
+#[test]
+fn dock_hint_bar_not_padded_when_tree_overflows() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Six extra sessions: seven 5-row cards (35 rows) overflow the
+    // ~26-row list budget of a 32-row frame.
+    for i in 1..=6 {
+        h.editor_mut()
+            .create_window_at(root.join(format!("wt-bb{i:02}")), format!("bb{i:02}"));
+    }
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The hints are on screen (not clipped away by bogus padding) and
+    // near the bottom edge. The tree renders whole cards only, so the
+    // last row before the hints may fall a card-fraction short of the
+    // budget — allow that slack, but no more.
+    h.wait_until(|h| h.screen_to_string().contains("S-F10"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+    let menu_row = row_of(&h, "S-F10");
+    assert!(
+        menu_row >= 27,
+        "overflowing tree: hint bar should hug the dock bottom (row >= 27), \
+         got row {menu_row}.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// Collapsing a folder shrinks the tree by the folded cards; the hint
+/// bar must stay pinned to the dock bottom (the padding re-balances on
+/// the fold) instead of jumping up with the shorter tree.
+#[test]
+fn dock_hint_bar_stays_pinned_after_folder_collapse() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Create a folder via "New Task… ▾" → "New Folder…", keeping the
+    // "organize under this folder" checkbox ON so the launch session is
+    // filed inside it (the folder then has a card to hide on collapse).
+    let new_row = row_of(&h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("Docs").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("Docs") && s.contains("(1)")
+    })
+    .unwrap();
+
+    // Wait for the git probe so the card's git line ("clean") is a
+    // stable marker for "the card is visible".
+    h.wait_until(|h| h.screen_to_string().contains("clean"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+    assert_eq!(
+        row_of(&h, "S-F10"),
+        31,
+        "pre-collapse: hint bar pinned to the dock bottom.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+
+    // Click the folder's disclosure glyph (col 0 of its row) to collapse
+    // it — the card disappears, shrinking the tree by 5 rows.
+    let folder_row = row_of(&h, "Docs") as u16;
+    h.mouse_click(0, folder_row).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("clean"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+
+    // The hint bar re-pinned to the bottom rather than floating up with
+    // the shorter tree.
+    assert_eq!(
+        row_of(&h, "S-F10"),
+        31,
+        "post-collapse: hint bar must stay pinned to the dock bottom.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+// ── session-row density content ────────────────────────────────────────────
+
+/// Compact density keeps each session to a lean single line — state
+/// glyph + name — with no branch suffix (the branch lives on the card
+/// density's second line).
+#[test]
+fn dock_compact_rows_drop_branch_name() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Wait for the git probe: the card's second line shows the branch
+    // marker + summary ("clean" — fresh repo, no upstream, no HEAD
+    // diff). The same probe caches the session's branch name, which the
+    // compact row used to trail as a "▸<branch>" suffix.
+    h.wait_until(|h| h.screen_to_string().contains("clean"))
+        .unwrap();
+
+    // Flip the density to compact.
+    expand_filters(&mut h);
+    let vrow = row_of(&h, "view: card") as u16;
+    h.mouse_click(3, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+
+    // The compact session row (in the dock column, left of the wall)
+    // carries the name but no branch marker.
+    let name_row = dock_card_name_row(&h, "alphaproj")
+        .expect("compact session row should list the session name");
+    let wall = dock_wall_col(&h) as usize;
+    let dock_part: String = h.screen_row_text(name_row).chars().take(wall).collect();
+    assert!(
+        !dock_part.contains('▸'),
+        "compact rows must not carry the branch suffix; dock row {name_row} \
+         reads {dock_part:?}.\nScreen:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// Card density right-aligns the whole branch + git-summary group on
+/// the card's second content line: the summary's last glyph sits flush
+/// against the card's right border instead of trailing the branch on
+/// the left.
+#[test]
+fn dock_card_git_line_right_aligned_to_card_border() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Wait for the git probe to land the summary ("clean" — fresh repo,
+    // no upstream, no HEAD to diff against).
+    h.wait_until(|h| h.screen_to_string().contains("clean"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+
+    let screen = h.screen_to_string();
+    let line = screen
+        .lines()
+        .find(|l| l.contains("clean"))
+        .expect("card git line with the summary");
+    let b = line.find("clean").unwrap();
+    // Flush right: the card's side border (rounded `│`, or heavy `┃` on
+    // the selected card) comes IMMEDIATELY after the summary — no
+    // interior padding after the group.
+    let after = &line[b + "clean".len()..];
+    assert!(
+        after.starts_with('│') || after.starts_with('┃'),
+        "the git summary must end flush against the card's right border; \
+         found {:?} after it.\nScreen:\n{screen}",
+        after.chars().next(),
+    );
+    // And the branch marker rides in the same right-aligned group, just
+    // before the summary on the same line.
+    assert!(
+        line[..b].contains('▸'),
+        "the branch marker must precede the summary in the right-aligned \
+         group.\nScreen:\n{screen}"
+    );
+}
+
+/// Moving the dock tree selection with the keyboard must "flash" the
+/// overlay scrollbar — it appears without any mouse motion and hides again
+/// a few seconds after the last Up/Down move (hover behaviour unchanged).
+/// The flash deadline lives on the editor's time source, so the harness's
+/// logical clock drives expiry: advancing past the flash window and running
+/// one editor tick (the same work the real event loop performs while idle)
+/// must hide the bar with no further input events. The bar paints
+/// background-coloured cells in the gutter column, so this asserts on cell
+/// styles there, per CONTRIBUTING §2.
+#[test]
+fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let parent = root.parent().unwrap().to_path_buf();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Enough extra sessions to overflow the dock tree (one row per session)
+    // and force a scrollbar.
+    for i in 0..30 {
+        let dir = parent.join(format!("proj{i}"));
+        fs::create_dir(&dir).unwrap();
+        h.editor_mut().create_window_at(dir, format!("proj{i}"));
+    }
+    h.render().unwrap();
+    open_dock(&mut h); // the dock mounts focused (keyboard on the tree)
+
+    // Let the mount-time plugin re-renders settle so the snapshots below
+    // compare layout-identical frames.
+    h.wait_until_stable(|_| true).unwrap();
+
+    let wall_col = {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right-edge divider should be present on the toolbar row")
+    };
+    // The dock nudges its scrollbar into the gutter, one column left of the
+    // divider (adjacent to the edge).
+    let sb_col = wall_col.saturating_sub(1);
+    let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
+        (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
+    };
+
+    // Down moves the tree selection (live-switching the active window) with
+    // NO mouse motion. Let the live-switch relayout settle — each wait
+    // iteration advances the logical clock by only ~50ms, well inside the
+    // multi-second flash window, so the bar is still flashed when the
+    // settled frame is snapshotted.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+    let flashed = snapshot(&h);
+
+    // Expire the flash on the harness's logical clock: no input events —
+    // the editor tick notices the passed deadline and the following render
+    // hides the bar (the same tick+render cadence the idle event loop runs).
+    h.advance_time(std::time::Duration::from_secs(5));
+    h.tick_and_render().unwrap();
+    let expired = snapshot(&h);
+    assert_ne!(
+        flashed, expired,
+        "pressing Down must flash the dock scrollbar without any mouse \
+         motion, and the bar must hide again once the flash window passes \
+         with no further Up/Down movement"
+    );
+    // The hidden state is stable: another idle tick repaints identically.
+    h.tick_and_render().unwrap();
+    assert_eq!(
+        expired,
+        snapshot(&h),
+        "the scrollbar column must stay unchanged on idle ticks after expiry"
+    );
+
+    // What flashed really was the overlay scrollbar: hovering the list (the
+    // established reveal, same selection/scroll state) paints the identical
+    // column.
+    h.mouse_move(2, 15).unwrap();
+    assert_eq!(
+        snapshot(&h),
+        flashed,
+        "the keyboard flash must paint the same overlay scrollbar that \
+         hover reveals"
+    );
 }

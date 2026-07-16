@@ -4977,6 +4977,7 @@ impl Editor {
             last_inner_rect: None,
             scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
+            scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker,
         });
