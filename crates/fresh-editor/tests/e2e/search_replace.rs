@@ -2275,6 +2275,14 @@ fn test_search_replace_file_glob() {
     // asserting so the path checks below are platform-independent.
     let normalized = |h: &EditorTestHarness| h.screen_to_string().replace('\\', "/");
 
+    // Result rows render workspace-relative paths with the platform
+    // separator, so expectations must too or they never match on Windows.
+    let native = |p: &str| p.replace('/', std::path::MAIN_SEPARATOR_STR);
+    let main_rs = native("src/main.rs");
+    let lib_rs = native("src/nested/lib.rs");
+    let test_rs = native("tests/test.rs");
+    let skip_txt = native("src/skip.txt");
+
     // First observe the completed unfiltered result set. This makes the
     // later disappearance assertions a real state transition rather than a
     // predicate that can pass vacuously while results are still streaming.
@@ -2283,10 +2291,10 @@ fn test_search_replace_file_glob() {
             let s = normalized(h);
             s.contains("(5 matches / 5 files)")
                 && s.contains("root.rs (1/1)")
-                && s.contains("src/main.rs (1/1)")
-                && s.contains("src/nested/lib.rs (1/1)")
-                && s.contains("tests/test.rs (1/1)")
-                && s.contains("src/skip.txt (1/1)")
+                && s.contains(&format!("{main_rs} (1/1)"))
+                && s.contains(&format!("{lib_rs} (1/1)"))
+                && s.contains(&format!("{test_rs} (1/1)"))
+                && s.contains(&format!("{skip_txt} (1/1)"))
         })
         .unwrap();
 
@@ -2317,20 +2325,20 @@ fn test_search_replace_file_glob() {
             let s = normalized(h);
             s.contains("(2 matches / 2 files)")
                 && s.contains("root.rs (1/1)")
-                && s.contains("src/main.rs (1/1)")
-                && !s.contains("src/nested/lib.rs")
-                && !s.contains("tests/test.rs")
-                && !s.contains("src/skip.txt")
+                && s.contains(&format!("{main_rs} (1/1)"))
+                && !s.contains(&lib_rs)
+                && !s.contains(&test_rs)
+                && !s.contains(&skip_txt)
         })
         .unwrap();
     let screen = normalized(&harness);
     assert!(
-        !screen.contains("src/nested/lib.rs"),
+        !screen.contains(&lib_rs),
         "single-star path glob must not cross directories. Screen:\n{}",
         screen
     );
     assert!(
-        !screen.contains("tests/test.rs") && !screen.contains("src/skip.txt"),
+        !screen.contains(&test_rs) && !screen.contains(&skip_txt),
         "non-matching paths must be filtered from search results. Screen:\n{}",
         screen
     );
