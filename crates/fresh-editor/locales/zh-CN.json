@@ -1520,6 +1520,7 @@
   "warnings.none": "无警告",
   "whitespace.already_has_newline": "文件已以换行符结尾",
   "workspace.extract_no_file_path": "无法提取:缓冲区没有文件路径",
+  "workspace.extract_terminal_dormant": "无法提取:终端没有活动会话",
   "workspace.extract_already_rooted": "已在以 %{root} 为根的工作区中",
   "workspace.extracted_tab": "已将 %{name} 提取到工作区 %{label}",
   "whitespace.newline_added": "已添加最终换行符",

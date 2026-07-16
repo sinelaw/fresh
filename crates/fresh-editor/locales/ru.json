@@ -1520,6 +1520,7 @@
   "warnings.none": "Нет предупреждений",
   "whitespace.already_has_newline": "Файл уже заканчивается переводом строки",
   "workspace.extract_no_file_path": "Невозможно извлечь: у буфера нет пути к файлу",
+  "workspace.extract_terminal_dormant": "Невозможно извлечь: у терминала нет активного сеанса",
   "workspace.extract_already_rooted": "Уже в рабочем пространстве с корнем %{root}",
   "workspace.extracted_tab": "%{name} извлечён в пространство %{label}",
   "whitespace.newline_added": "Добавлен завершающий перевод строки",

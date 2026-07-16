@@ -590,7 +590,9 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.extract_tab_to_new_workspace",
         desc_key: "cmd.extract_tab_to_new_workspace_desc",
         action: || Action::ExtractTabToNewWorkspace,
-        contexts: &[Normal],
+        // Terminal too: extracting a terminal tab (rooted at the shell's
+        // cwd) is reached from terminal mode via the palette.
+        contexts: &[Normal, Terminal],
         custom_contexts: &[],
     },
     CommandDef {

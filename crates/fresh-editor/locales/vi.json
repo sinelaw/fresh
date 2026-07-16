@@ -1520,6 +1520,7 @@
   "warnings.none": "Không có cảnh báo",
   "whitespace.already_has_newline": "Tệp đã kết thúc bằng dòng mới",
   "workspace.extract_no_file_path": "Không thể tách: bộ đệm không có đường dẫn tệp",
+  "workspace.extract_terminal_dormant": "Không thể tách: terminal không có phiên đang hoạt động",
   "workspace.extract_already_rooted": "Đã ở trong không gian làm việc có gốc tại %{root}",
   "workspace.extracted_tab": "Đã tách %{name} sang không gian %{label}",
   "whitespace.newline_added": "Đã thêm dòng mới cuối tệp",

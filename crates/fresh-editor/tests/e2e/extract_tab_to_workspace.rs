@@ -10,6 +10,8 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::{Config, TerminalShellConfig};
+use portable_pty::{native_pty_system, PtySize};
 use std::fs;
 
 /// Helper: open the command palette, type the given query, accept the first
@@ -36,7 +38,7 @@ fn wide_temp_project_harness() -> EditorTestHarness {
 /// rather than empty header space.
 fn active_tab_position(harness: &EditorTestHarness) -> (u16, u16) {
     let active = harness.editor().active_buffer();
-    for (_split_id, tab_layout) in harness.editor().get_tab_layouts() {
+    for tab_layout in harness.editor().get_tab_layouts().values() {
         for tab in &tab_layout.tabs {
             if tab.buffer_id() == Some(active) {
                 let center_col = tab.tab_area.x + tab.tab_area.width / 2;
@@ -183,6 +185,112 @@ fn extract_tab_on_unsaved_buffer_reports_no_path() {
     run_command_palette(&mut harness, "Extract Tab to New Workspace");
 
     harness.assert_screen_contains("Cannot extract: buffer has no file path");
+}
+
+// ── Terminal tab coverage ────────────────────────────────────────────────────
+
+/// True when this environment can open a PTY (containers/sandboxes may not).
+fn pty_available() -> bool {
+    native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok()
+}
+
+/// A wide temp-project harness whose terminals run a deterministic POSIX
+/// shell (no rc files, predictable `cd`/`echo`/arithmetic behavior).
+fn sh_terminal_harness() -> EditorTestHarness {
+    let mut config = Config::default();
+    config.terminal.shell = Some(TerminalShellConfig {
+        command: "/bin/sh".to_string(),
+        args: Vec::new(),
+    });
+    EditorTestHarness::with_temp_project_and_config(220, 30, config).unwrap()
+}
+
+/// Extracting a terminal tab moves the *live* PTY into a new workspace
+/// rooted at the shell's current working directory: the running shell keeps
+/// working (its output streams into the new window), and the tab disappears
+/// from the source window.
+///
+/// Linux-only: the live cwd is read from `/proc/<pid>/cwd`; elsewhere the
+/// extraction falls back to the spawn cwd, which this test's `cd` would not
+/// update.
+#[cfg(target_os = "linux")]
+#[test]
+fn extract_terminal_tab_moves_live_terminal_to_cwd_workspace() {
+    if !pty_available() {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+    let mut harness = sh_terminal_harness();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join("keep.txt"), "keep\n").unwrap();
+    let subdir = project_root.join("termproj");
+    fs::create_dir(&subdir).unwrap();
+
+    harness.open_file(&project_root.join("keep.txt")).unwrap();
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // `cd` into the subdirectory; the arithmetic marker only renders once
+    // the shell has actually run the command (the echoed *input* line says
+    // "CDMARK$((40+2))", never "CDMARK42"), so waiting on it is a race-free
+    // signal that the live cwd now points at termproj.
+    harness
+        .type_text(&format!("cd {} && echo CDMARK$((40+2))", subdir.display()))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("CDMARK42").unwrap();
+
+    // The palette is reachable from terminal mode (Ctrl+P bypasses PTY
+    // capture) and the command is available in the Terminal context.
+    run_command_palette(&mut harness, "Extract Tab to New Workspace");
+    harness
+        .wait_for_screen_contains("into workspace termproj")
+        .unwrap();
+
+    // The PTY moved live: it still runs, has terminal focus in the new
+    // workspace, and its (retagged) output streams into this window.
+    harness.type_text("echo LIVE$((2+3))").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("LIVE5").unwrap();
+
+    // Back in the source window: the terminal tab is gone, keep.txt stayed.
+    run_command_palette(&mut harness, "Next Window");
+    harness.assert_screen_contains("keep.txt");
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("*Terminal"),
+        "extracted terminal tab should no longer render in the source window, got screen:\n{screen}"
+    );
+}
+
+/// A terminal still sitting in the workspace root has nowhere to extract to.
+#[test]
+fn extract_terminal_tab_at_workspace_root_reports_status() {
+    if !pty_available() {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+    let mut harness = sh_terminal_harness();
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    run_command_palette(&mut harness, "Extract Tab to New Workspace");
+    harness.assert_screen_contains("Already in a workspace rooted at");
 }
 
 #[test]

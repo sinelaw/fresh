@@ -42,6 +42,13 @@ enum TerminalCommand {
     Shutdown,
 }
 
+/// The `(window, terminal)` identity stamped on this terminal's async
+/// messages, shared with the reader and wait threads. A `Mutex` (rather
+/// than a plain captured copy) so the tag can be rewritten when another
+/// window's manager adopts a live terminal — see
+/// [`TerminalManager::adopt`]; the threads read it at each send.
+type SharedWtId = Arc<Mutex<fresh_core::WindowTerminalId>>;
+
 /// Handle to a running terminal session
 pub struct TerminalHandle {
     /// Terminal state (grid, cursor, etc.)
@@ -69,6 +76,9 @@ pub struct TerminalHandle {
     /// expose it. Only read on Linux (the only `/proc`-backed target).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     master_fd: Option<i32>,
+    /// The identity tag shared with this terminal's reader/wait threads,
+    /// rewritten when the handle moves to another window's manager.
+    wt_id: SharedWtId,
 }
 
 impl TerminalHandle {
@@ -214,6 +224,24 @@ impl TerminalHandle {
 
     /// Get the working directory configured for the terminal
     pub fn cwd(&self) -> Option<std::path::PathBuf> {
+        self.cwd.clone()
+    }
+
+    /// The shell's *live* working directory — where the user has `cd`'d to,
+    /// not where the terminal was spawned. Read from `/proc/<pid>/cwd` on
+    /// Linux; other platforms (and dead pids) fall back to the spawn cwd.
+    pub fn current_working_dir(&self) -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(pid) = self.pid {
+                // Local OS introspection, same rationale as
+                // `foreground_process_name`: this reads the host's /proc,
+                // not the (possibly remote) editing filesystem.
+                if let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd")) {
+                    return Some(cwd);
+                }
+            }
+        }
         self.cwd.clone()
     }
 
@@ -378,8 +406,13 @@ impl TerminalManager {
 
         // Tag output/exit with the owning window so the main loop never has to
         // guess which session a `Terminal-N` belongs to (ids collide across
-        // windows). See `fresh_core::WindowTerminalId`.
-        let wt_id = fresh_core::WindowTerminalId::new(self.window_id, id);
+        // windows). See `fresh_core::WindowTerminalId`. Shared (not copied)
+        // with the reader/wait threads so `adopt` can retag a live terminal
+        // when it moves to another window's manager.
+        let wt_id: SharedWtId = Arc::new(Mutex::new(fresh_core::WindowTerminalId::new(
+            self.window_id,
+            id,
+        )));
 
         // Reader thread: drains PTY output, feeds the emulator, streams
         // scrollback / raw log to disk, and pings the main loop to redraw.
@@ -390,7 +423,7 @@ impl TerminalManager {
             backing_writer,
             log_writer,
             async_bridge: self.async_bridge.clone(),
-            wt_id,
+            wt_id: wt_id.clone(),
             terminal_id: id,
             alive: alive.clone(),
         };
@@ -398,7 +431,7 @@ impl TerminalManager {
 
         // Wait thread: blocks on `child.wait()` and fires `TerminalExited`
         // exactly once with the real exit code.
-        spawn_wait_thread(child, self.async_bridge.clone(), wt_id, id);
+        spawn_wait_thread(child, self.async_bridge.clone(), wt_id.clone(), id);
 
         // Capture the PTY master fd before the master moves into the writer
         // thread. Used later by `foreground_process_name` (tab auto-naming).
@@ -427,7 +460,32 @@ impl TerminalManager {
             shell,
             pid: child_pid,
             master_fd,
+            wt_id,
         })
+    }
+
+    /// Remove a live terminal from this manager *without* shutting it down,
+    /// so another window's manager can [`Self::adopt`] it. The PTY, its
+    /// reader/writer/wait threads, and the running process are untouched.
+    pub fn release(&mut self, id: TerminalId) -> Option<TerminalHandle> {
+        self.terminals.remove(&id)
+    }
+
+    /// Adopt a live terminal released from another window's manager.
+    ///
+    /// Assigns the handle a fresh id in this manager's namespace (ids are
+    /// per-window and would otherwise collide) and rewrites the shared
+    /// `(window, terminal)` tag, so output/exit messages the terminal's
+    /// threads send from now on are attributed to this window. Returns the
+    /// new id.
+    pub fn adopt(&mut self, handle: TerminalHandle) -> TerminalId {
+        let id = TerminalId(self.next_id);
+        self.next_id += 1;
+        if let Ok(mut wt_id) = handle.wt_id.lock() {
+            *wt_id = fresh_core::WindowTerminalId::new(self.window_id, id);
+        }
+        self.terminals.insert(id, handle);
+        id
     }
 
     /// Get a terminal handle by ID
@@ -620,7 +678,7 @@ fn open_backing_writer(
 fn spawn_wait_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     async_bridge: Option<AsyncBridge>,
-    wt_id: fresh_core::WindowTerminalId,
+    wt_id: SharedWtId,
     terminal_id: TerminalId,
 ) {
     thread::spawn(move || {
@@ -632,10 +690,15 @@ fn spawn_wait_thread(
             }
         };
         if let Some(bridge) = &async_bridge {
+            // Read the tag at exit time — the terminal may have been
+            // adopted by another window since it was spawned.
+            let Ok(terminal) = wt_id.lock().map(|id| *id) else {
+                return;
+            };
             #[allow(clippy::let_underscore_must_use)]
             let _ = bridge.sender().send(
                 crate::services::async_bridge::AsyncMessage::TerminalExited {
-                    terminal: wt_id,
+                    terminal,
                     exit_code,
                 },
             );
@@ -699,7 +762,7 @@ struct ReaderLoop {
     /// Raw byte log for session-restore replay, if a log file is set.
     log_writer: Option<std::io::BufWriter<std::fs::File>>,
     async_bridge: Option<AsyncBridge>,
-    wt_id: fresh_core::WindowTerminalId,
+    wt_id: SharedWtId,
     terminal_id: TerminalId,
     alive: Arc<AtomicBool>,
 }
@@ -819,12 +882,15 @@ impl ReaderLoop {
     /// Notify the main loop that this terminal produced output (redraw).
     fn notify_redraw(&self) {
         if let Some(bridge) = &self.async_bridge {
+            // Read the tag per send — the terminal may have been adopted by
+            // another window since it was spawned.
+            let Ok(terminal) = self.wt_id.lock().map(|id| *id) else {
+                return;
+            };
             #[allow(clippy::let_underscore_must_use)]
-            let _ = bridge.sender().send(
-                crate::services::async_bridge::AsyncMessage::TerminalOutput {
-                    terminal: self.wt_id,
-                },
-            );
+            let _ = bridge
+                .sender()
+                .send(crate::services::async_bridge::AsyncMessage::TerminalOutput { terminal });
         }
     }
 }

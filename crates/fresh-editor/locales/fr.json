@@ -1520,6 +1520,7 @@
   "warnings.none": "Aucun avertissement",
   "whitespace.already_has_newline": "Le fichier se termine déjà par un saut de ligne",
   "workspace.extract_no_file_path": "Extraction impossible : le tampon n'a pas de chemin de fichier",
+  "workspace.extract_terminal_dormant": "Extraction impossible : le terminal n'a pas de session active",
   "workspace.extract_already_rooted": "Déjà dans un espace de travail enraciné à %{root}",
   "workspace.extracted_tab": "%{name} extrait vers l'espace %{label}",
   "whitespace.newline_added": "Saut de ligne final ajouté",

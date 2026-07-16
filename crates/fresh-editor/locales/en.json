@@ -1544,6 +1544,7 @@
   "whitespace.newline_added": "Added final newline",
   "whitespace.already_has_newline": "File already ends with newline",
   "workspace.extract_no_file_path": "Cannot extract: buffer has no file path",
+  "workspace.extract_terminal_dormant": "Cannot extract: terminal has no live session",
   "workspace.extract_already_rooted": "Already in a workspace rooted at %{root}",
   "workspace.extracted_tab": "Extracted %{name} into workspace %{label}",
   "warning.lsp_title": "%{language} LSP",

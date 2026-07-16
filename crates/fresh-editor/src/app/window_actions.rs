@@ -808,19 +808,27 @@ impl crate::app::Editor {
     }
 
     /// Move a tab's buffer into a new orchestrator workspace (a `Window`)
-    /// rooted at the file's parent directory, then switch to it.
+    /// and switch to it. File-backed tabs root the new workspace at the
+    /// file's parent directory; terminal tabs root it at the shell's current
+    /// working directory (the live PTY moves along — the running process is
+    /// untouched).
     ///
-    /// The buffer must be file-backed — an unnamed scratch buffer has no
-    /// directory to root the new workspace at, so the extraction is refused
-    /// with a status message. If a workspace already exists at that root the
-    /// buffer moves into it instead (one-session-per-directory invariant);
-    /// if that workspace is the *current* one there is nowhere to extract to
-    /// and a status message says so.
+    /// A buffer that is neither file-backed nor a terminal has no directory
+    /// to root the new workspace at, so the extraction is refused with a
+    /// status message. If a workspace already exists at that root the buffer
+    /// moves into it instead (one-session-per-directory invariant); if that
+    /// workspace is the *current* one there is nowhere to extract to and a
+    /// status message says so.
     ///
     /// The live `EditorState` moves — unsaved modifications and undo history
     /// travel with the tab rather than being re-read from disk.
     pub fn extract_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
         use rust_i18n::t;
+
+        if self.active_window().is_terminal_buffer(buffer_id) {
+            self.extract_terminal_tab_to_new_workspace(buffer_id);
+            return;
+        }
 
         let path = self
             .buffers()
@@ -876,6 +884,155 @@ impl crate::app::Editor {
         self.set_status_message(
             t!("workspace.extracted_tab", name = name, label = target_label).to_string(),
         );
+    }
+
+    /// Terminal-tab body of [`Self::extract_tab_to_new_workspace`]: root the
+    /// new workspace at the shell's current working directory and move the
+    /// live terminal — PTY handle, backing/log files, launch/resume argv,
+    /// and process-group registration — to the new window alongside the
+    /// buffer. The running process is untouched; its output threads are
+    /// retagged so the stream follows it (`TerminalManager::adopt`).
+    fn extract_terminal_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
+        use rust_i18n::t;
+
+        let win = self.active_window();
+        let Some(terminal_id) = win
+            .terminal_buffers
+            .get(&buffer_id)
+            .map(|tb| tb.terminal_id)
+        else {
+            return;
+        };
+        // A binding without a PTY handle is a dormant remote shell waiting
+        // for reconnect — there is nothing live to move.
+        let Some(handle) = win.terminal_manager.get(terminal_id) else {
+            self.set_status_message(t!("workspace.extract_terminal_dormant").to_string());
+            return;
+        };
+        // Root at where the user has `cd`'d to, not where the terminal was
+        // spawned; fall back to the spawn cwd, then the window root (which
+        // the already-rooted guard below then refuses).
+        let root = handle
+            .current_working_dir()
+            .unwrap_or_else(|| win.root.clone());
+
+        if self.find_window_by_root(&root) == Some(self.active_window) {
+            self.set_status_message(
+                t!(
+                    "workspace.extract_already_rooted",
+                    root = root.display().to_string()
+                )
+                .to_string(),
+            );
+            return;
+        }
+
+        // The tab title (OSC/explicit/fg-command derived) — captured before
+        // the move while this window can still resolve it.
+        let name = self.get_buffer_display_name(buffer_id);
+
+        self.retarget_leaves_off_buffer(buffer_id);
+
+        let label = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        let target = self.create_window_at(root, label);
+
+        self.move_terminal_machinery_to_window(buffer_id, terminal_id, target);
+        self.move_buffer_membership_to_window(buffer_id, target);
+
+        let target_label = self
+            .windows
+            .get(&target)
+            .map(|w| w.label.clone())
+            .unwrap_or_default();
+        self.set_active_window(target);
+        self.set_active_buffer(buffer_id);
+        // Focus changes that bypass the usual tab-click path must restore
+        // terminal mode themselves, and the PTY must match its new split.
+        self.sync_terminal_mode_to_active_buffer();
+        self.active_window_mut().resize_visible_terminals();
+
+        self.set_status_message(
+            t!("workspace.extracted_tab", name = name, label = target_label).to_string(),
+        );
+    }
+
+    /// Move every piece of per-terminal state for `buffer_id`'s terminal
+    /// from the active window to `target`: the PTY handle (adopted under a
+    /// fresh id, since terminal ids are per-window), the backing/log file
+    /// bindings, launch/resume argv, the ephemeral flag, title/fg-name
+    /// caches, and the process-group registration. Mirrors the remap loop
+    /// in `respawn_terminals_through_authority`, which is the same
+    /// "terminal changes identity" bookkeeping within one window.
+    fn move_terminal_machinery_to_window(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+        target: WindowId,
+    ) {
+        let source = self.active_window;
+        if source == target {
+            return;
+        }
+
+        let Some(src) = self.windows.get_mut(&source) else {
+            return;
+        };
+        if src.terminal_buffers.remove(&buffer_id).is_none() {
+            return;
+        }
+        let Some(handle) = src.terminal_manager.release(terminal_id) else {
+            return;
+        };
+        let backing = src.terminal_backing_files.remove(&terminal_id);
+        let log = src.terminal_log_files.remove(&terminal_id);
+        let command = src.terminal_commands.remove(&terminal_id);
+        let resume = src.terminal_resume_commands.remove(&terminal_id);
+        let ephemeral = src.ephemeral_terminals.remove(&terminal_id);
+        let explicit_title = src.terminal_explicit_titles.remove(&buffer_id);
+        let fg_name = src.terminal_fg_cache.remove(&buffer_id);
+        let pid = handle.pid();
+        if let Some(pid) = pid {
+            src.process_groups.forget(pid);
+        }
+
+        let Some(tgt) = self.windows.get_mut(&target) else {
+            return;
+        };
+        let new_id = tgt.terminal_manager.adopt(handle);
+        // A fresh live binding: the old scrollback-split set referenced the
+        // source window's leaves, which mean nothing in the target.
+        tgt.terminal_buffers.insert(
+            buffer_id,
+            crate::app::window::TerminalBuffer::new_live(new_id),
+        );
+        if let Some(p) = backing {
+            tgt.terminal_backing_files.insert(new_id, p);
+        }
+        if let Some(p) = log {
+            tgt.terminal_log_files.insert(new_id, p);
+        }
+        if let Some(c) = command {
+            tgt.terminal_commands.insert(new_id, c);
+        }
+        if let Some(c) = resume {
+            tgt.terminal_resume_commands.insert(new_id, c);
+        }
+        if ephemeral {
+            tgt.ephemeral_terminals.insert(new_id);
+        }
+        if explicit_title {
+            tgt.terminal_explicit_titles.insert(buffer_id);
+        }
+        if let Some(n) = fg_name {
+            tgt.terminal_fg_cache.insert(buffer_id, n);
+        }
+        if let Some(pid) = pid {
+            tgt.process_groups
+                .register(pid, format!("terminal #{}", new_id.0));
+        }
     }
 
     /// Switch every leaf of the active window that currently displays

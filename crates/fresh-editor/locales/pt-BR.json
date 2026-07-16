@@ -1520,6 +1520,7 @@
   "warnings.none": "Sem avisos",
   "whitespace.already_has_newline": "O arquivo já termina com nova linha",
   "workspace.extract_no_file_path": "Não é possível extrair: o buffer não tem caminho de arquivo",
+  "workspace.extract_terminal_dormant": "Não é possível extrair: o terminal não tem uma sessão ativa",
   "workspace.extract_already_rooted": "Já está em um espaço de trabalho com raiz em %{root}",
   "workspace.extracted_tab": "%{name} extraído para o espaço %{label}",
   "whitespace.newline_added": "Nova linha final adicionada",

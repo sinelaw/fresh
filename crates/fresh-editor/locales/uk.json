@@ -1520,6 +1520,7 @@
   "warnings.none": "Немає попереджень",
   "whitespace.already_has_newline": "Файл вже закінчується переносом рядка",
   "workspace.extract_no_file_path": "Неможливо витягти: буфер не має шляху до файлу",
+  "workspace.extract_terminal_dormant": "Неможливо витягти: термінал не має активного сеансу",
   "workspace.extract_already_rooted": "Вже в робочому просторі з коренем %{root}",
   "workspace.extracted_tab": "%{name} витягнуто в простір %{label}",
   "whitespace.newline_added": "Додано завершальний перенос рядка",

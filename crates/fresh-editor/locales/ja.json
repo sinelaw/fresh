@@ -1520,6 +1520,7 @@
   "warnings.none": "警告なし",
   "whitespace.already_has_newline": "ファイルは既に改行で終わっています",
   "workspace.extract_no_file_path": "抽出できません: バッファにファイルパスがありません",
+  "workspace.extract_terminal_dormant": "抽出できません: ターミナルにアクティブなセッションがありません",
   "workspace.extract_already_rooted": "すでに %{root} をルートとするワークスペースにいます",
   "workspace.extracted_tab": "%{name} をワークスペース %{label} に抽出しました",
   "whitespace.newline_added": "最終改行を追加しました",

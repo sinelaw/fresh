@@ -1520,6 +1520,7 @@
   "warnings.none": "Žádná varování",
   "whitespace.already_has_newline": "Soubor již končí novým řádkem",
   "workspace.extract_no_file_path": "Nelze extrahovat: buffer nemá cestu k souboru",
+  "workspace.extract_terminal_dormant": "Nelze extrahovat: terminál nemá živou relaci",
   "workspace.extract_already_rooted": "Již v pracovním prostoru s kořenem %{root}",
   "workspace.extracted_tab": "%{name} extrahováno do prostoru %{label}",
   "whitespace.newline_added": "Přidán koncový nový řádek",

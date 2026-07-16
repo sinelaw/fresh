@@ -1520,6 +1520,7 @@
   "warnings.none": "Keine Warnungen",
   "whitespace.already_has_newline": "Datei endet bereits mit Zeilenumbruch",
   "workspace.extract_no_file_path": "Extrahieren nicht möglich: Puffer hat keinen Dateipfad",
+  "workspace.extract_terminal_dormant": "Extrahieren nicht möglich: Terminal hat keine aktive Sitzung",
   "workspace.extract_already_rooted": "Bereits in einem Arbeitsbereich mit Wurzel %{root}",
   "workspace.extracted_tab": "%{name} in Arbeitsbereich %{label} extrahiert",
   "whitespace.newline_added": "Abschließender Zeilenumbruch hinzugefügt",

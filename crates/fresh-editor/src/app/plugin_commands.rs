@@ -1481,11 +1481,23 @@ impl Editor {
                 return;
             }
         };
+        self.move_buffer_membership_to_window(buffer_id, target);
+    }
 
-        // Re-target buffer storage: open_file_no_focus inserted the
-        // state into the active window's buffer map. Move it to the
-        // target window's map. Step 0c: each window owns its
-        // EditorState outright.
+    /// Re-home a buffer from the active window to `target`: its
+    /// `EditorState`, metadata, and undo/redo event log move to the target
+    /// window's maps, it disappears from the active window's split
+    /// view-states, and it is added as a tab in the target's active leaf
+    /// (seeding a split tree for never-activated windows). The caller is
+    /// responsible for making sure no active-window leaf still *displays*
+    /// the buffer (see `retarget_leaves_off_buffer`).
+    pub(crate) fn move_buffer_membership_to_window(
+        &mut self,
+        buffer_id: BufferId,
+        target: fresh_core::WindowId,
+    ) {
+        // Re-target buffer storage: move the state to the target window's
+        // map. Step 0c: each window owns its EditorState outright.
         if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
             if let Some(s) = self.windows.get_mut(&target) {
                 s.buffers.insert(buffer_id, state);
