@@ -1111,7 +1111,9 @@ impl Workspace {
                         legacy,
                         path
                     );
-                    let _ = std::fs::remove_file(&legacy);
+                    // Best-effort: a failed delete just leaves a stale
+                    // duplicate that lookup arbitration already outranks.
+                    let _ = std::fs::remove_file(&legacy).ok();
                 }
             }
         }
