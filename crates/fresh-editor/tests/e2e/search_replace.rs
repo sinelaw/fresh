@@ -2262,15 +2262,50 @@ fn test_search_replace_file_glob() {
 
     open_search_replace_via_palette(&mut harness);
     harness.type_text("glob needle").unwrap();
-    // Search → Replace → Files.
+
+    // First observe the completed unfiltered result set. This makes the
+    // later disappearance assertions a real state transition rather than a
+    // predicate that can pass vacuously while results are still streaming.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("(5 matches / 5 files)")
+                && s.contains("root.rs (1/1)")
+                && s.contains("src/main.rs (1/1)")
+                && s.contains("src/nested/lib.rs (1/1)")
+                && s.contains("tests/test.rs (1/1)")
+                && s.contains("src/skip.txt (1/1)")
+        })
+        .unwrap();
+
+    // Search → Replace. Confirm the asynchronous Tab was processed by
+    // observing a sentinel in the rendered Replace field, then remove it.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.type_text("Z").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replace: [Z"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Replace: [ "))
+        .unwrap();
+
+    // Replace → Files. The rendered field value is the semantic gate that
+    // proves focus arrived before the glob was typed.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.type_text("src/*.rs, root.rs").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Files: [src/*.rs, root.rs"))
+        .unwrap();
 
     harness
-        .wait_until_stable(|h| {
+        .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("src/main.rs")
+            s.contains("(2 matches / 2 files)")
+                && s.contains("root.rs (1/1)")
+                && s.contains("src/main.rs (1/1)")
                 && !s.contains("src/nested/lib.rs")
                 && !s.contains("tests/test.rs")
                 && !s.contains("src/skip.txt")
