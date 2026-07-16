@@ -10,6 +10,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
+#[cfg(target_os = "linux")]
 use fresh::config::{Config, TerminalShellConfig};
 use portable_pty::{native_pty_system, PtySize};
 use std::fs;
@@ -202,7 +203,10 @@ fn pty_available() -> bool {
 }
 
 /// A wide temp-project harness whose terminals run a deterministic POSIX
-/// shell (no rc files, predictable `cd`/`echo`/arithmetic behavior).
+/// shell (no rc files, predictable `cd`/`echo`/arithmetic behavior). Only
+/// used by the Linux-gated live-cwd test — `/bin/sh` does not exist on
+/// Windows.
+#[cfg(target_os = "linux")]
 fn sh_terminal_harness() -> EditorTestHarness {
     let mut config = Config::default();
     config.terminal.shell = Some(TerminalShellConfig {
@@ -277,13 +281,17 @@ fn extract_terminal_tab_moves_live_terminal_to_cwd_workspace() {
 }
 
 /// A terminal still sitting in the workspace root has nowhere to extract to.
+/// Uses the platform's default shell — nothing is typed into it, so the
+/// test is shell-agnostic (on non-Linux the live-cwd read falls back to the
+/// spawn cwd, which is the workspace root here either way).
 #[test]
 fn extract_terminal_tab_at_workspace_root_reports_status() {
     if !pty_available() {
         eprintln!("Skipping terminal test: PTY not available in this environment");
         return;
     }
-    let mut harness = sh_terminal_harness();
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(220, 30, Default::default()).unwrap();
 
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
