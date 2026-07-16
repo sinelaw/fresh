@@ -867,7 +867,7 @@ impl crate::app::Editor {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
         let target = self.create_window_at(root, label);
-        self.handle_open_file_in_inactive_session(target, path.clone());
+        self.move_buffer_membership_to_window(buffer_id, target);
 
         let target_label = self
             .windows
@@ -1032,6 +1032,94 @@ impl crate::app::Editor {
         if let Some(pid) = pid {
             tgt.process_groups
                 .register(pid, format!("terminal #{}", new_id.0));
+        }
+    }
+
+    /// Re-home a buffer from the active window to `target`: its
+    /// `EditorState`, metadata, and undo/redo event log move to the target
+    /// window's maps, it disappears from the active window's split
+    /// view-states, and it is added as a tab in the target's active leaf
+    /// (seeding a split tree for never-activated windows). The caller is
+    /// responsible for making sure no active-window leaf still *displays*
+    /// the buffer (see `retarget_leaves_off_buffer`).
+    pub(crate) fn move_buffer_membership_to_window(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        target: WindowId,
+    ) {
+        // Re-target buffer storage: move the state to the target window's
+        // map. Step 0c: each window owns its EditorState outright.
+        if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
+            if let Some(s) = self.windows.get_mut(&target) {
+                s.buffers.insert(buffer_id, state);
+            }
+        }
+
+        // Metadata and the undo/redo event log live next to the buffer
+        // storage they describe — carry them to the target window too, or
+        // the moved buffer renders without its metadata and loses its undo
+        // history to the window it left.
+        let sidecars = self.windows.values_mut().find_map(|w| {
+            let metadata = w.buffer_metadata.remove(&buffer_id);
+            let event_log = w.event_logs.remove(&buffer_id);
+            (metadata.is_some() || event_log.is_some()).then_some((metadata, event_log))
+        });
+        if let Some((metadata, event_log)) = sidecars {
+            if let Some(s) = self.windows.get_mut(&target) {
+                if let Some(metadata) = metadata {
+                    s.buffer_metadata.insert(buffer_id, metadata);
+                }
+                if let Some(event_log) = event_log {
+                    s.event_logs.insert(buffer_id, event_log);
+                }
+            }
+        }
+
+        // Remove the buffer from the active session's split tree
+        // so it doesn't surface as a stray tab — the target
+        // session owns it.
+        let leaf_ids: Vec<_> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .keys()
+            .copied()
+            .collect();
+        for leaf_id in leaf_ids {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&leaf_id)
+            {
+                view_state.remove_buffer(buffer_id);
+            }
+        }
+
+        // Add it to the target session's stashed split tree as a
+        // tab in its current active leaf. If the session has no
+        // stash yet, seed one rooted at this buffer.
+        if let Some(session) = self.windows.get_mut(&target) {
+            if let Some((mgr, view_states)) = session.buffers.splits_mut() {
+                let active_leaf = mgr.active_split();
+                if let Some(vs) = view_states.get_mut(&active_leaf) {
+                    vs.add_buffer(buffer_id);
+                }
+            } else {
+                let manager = crate::view::split::SplitManager::new(buffer_id);
+                let active_leaf = manager.active_split();
+                let mut view_states = std::collections::HashMap::new();
+                let vs = crate::view::split::SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_states.insert(active_leaf, vs);
+                session.buffers.set_splits((manager, view_states));
+            }
         }
     }
 
