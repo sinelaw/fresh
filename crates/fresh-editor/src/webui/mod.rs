@@ -1448,6 +1448,22 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
             }
         }
     }
+    // The OpenFile / SaveFileAs / SwitchProject browser is painted as a cell
+    // overlay above the prompt row (FileBrowserRenderer). Its band can span
+    // chrome the frontend renders natively — with the file explorer open, the
+    // name column lands in explorer cells that pane slices never carry — so
+    // ship the whole popup band as cells; the frontend draws it as one block
+    // (clicks route through the pixel→cell path into the existing
+    // file-browser hit-test).
+    if let Some(fb) = editor.active_window().file_browser_layout.as_ref() {
+        let r = fb.popup_area;
+        if r.width > 0 && r.height > 0 {
+            if let Some(obj) = palette.as_object_mut() {
+                obj.insert("browserRect".to_string(), rect_json(r));
+                obj.insert("browserCells".to_string(), cells_json(&buf, r));
+            }
+        }
+    }
     let trust_dialog = serde_json::to_value(editor.trust_dialog_view()).unwrap_or(Value::Null);
     // Plugin-mounted floating / dock widget panels (e.g. the orchestrator dock),
     // rendered natively from their WidgetSpec.
