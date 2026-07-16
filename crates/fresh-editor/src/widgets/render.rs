@@ -3380,8 +3380,22 @@ fn completion_scrollbar_glyph(
 /// child text to fit exactly `inner_width` display columns.
 /// Inline overlays are byte-shifted by the left-prefix length so
 /// they keep aligning with the right characters.
-fn wrap_in_side_border(mut child: TextPropertyEntry, inner_width: usize) -> TextPropertyEntry {
-    let prefix_bytes = LEFT_BORDER_PREFIX.len();
+fn wrap_in_side_border(child: TextPropertyEntry, inner_width: usize) -> TextPropertyEntry {
+    wrap_entry_between(child, inner_width, LEFT_BORDER_PREFIX, RIGHT_BORDER_SUFFIX)
+}
+
+/// Pad/truncate `child` to `inner_width` display columns and sandwich it
+/// between `prefix` and `suffix` (side-border chrome), shifting the
+/// child's overlays past the prefix. `LabeledSection` uses the padded
+/// `"│ "` chrome; the tree's bordered cards use flush `"│"` borders to
+/// keep two more content columns on a narrow dock.
+fn wrap_entry_between(
+    mut child: TextPropertyEntry,
+    inner_width: usize,
+    prefix: &str,
+    suffix: &str,
+) -> TextPropertyEntry {
+    let prefix_bytes = prefix.len();
     // Pad / truncate `child.text` to `inner_width` display cols.
     let cur_cols = child.text.chars().count();
     if cur_cols < inner_width {
@@ -3422,13 +3436,11 @@ fn wrap_in_side_border(mut child: TextPropertyEntry, inner_width: usize) -> Text
         });
     }
 
-    // Compose final text: `│ ` + child + ` │\n`.
-    let mut text = String::with_capacity(
-        LEFT_BORDER_PREFIX.len() + child.text.len() + RIGHT_BORDER_SUFFIX.len() + 1,
-    );
-    text.push_str(LEFT_BORDER_PREFIX);
+    // Compose final text: `<prefix>` + child + `<suffix>\n`.
+    let mut text = String::with_capacity(prefix.len() + child.text.len() + suffix.len() + 1);
+    text.push_str(prefix);
     text.push_str(&child.text);
-    text.push_str(RIGHT_BORDER_SUFFIX);
+    text.push_str(suffix);
     text.push('\n');
 
     // Shift child overlays by the left-prefix byte count.
@@ -4727,9 +4739,12 @@ pub(crate) fn tree_nodes_fitting(heights: &[u32], start: usize, visible_rows: u3
 /// card density lost in the tree redesign (issue #2703).
 fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> RenderedTreeRow {
     let indent_cols = (node.depth as usize) * 2;
-    let total_cols = (panel_width as usize).saturating_sub(indent_cols).max(6);
-    // 1 border + 1 padding column each side.
-    let inner_width = total_cols - 4;
+    let total_cols = (panel_width as usize).saturating_sub(indent_cols).max(4);
+    // Flush borders — no inner padding column. A dock card is already
+    // narrow, and the extra two columns are what keep a remote card's
+    // `user@host` badge prefix visible (the state glyph's own trailing
+    // space provides the left breathing room).
+    let inner_width = total_cols - 2;
     let indent = " ".repeat(indent_cols);
 
     let border_row = |left: char, right: char| -> TextPropertyEntry {
@@ -4743,7 +4758,7 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
         TextPropertyEntry::text(text)
     };
     let content_row = |src: TextPropertyEntry| -> TextPropertyEntry {
-        let mut e = wrap_in_side_border(src, inner_width);
+        let mut e = wrap_entry_between(src, inner_width, "│", "│");
         strip_trailing_newline(&mut e);
         if !indent.is_empty() {
             e.text.insert_str(0, &indent);
