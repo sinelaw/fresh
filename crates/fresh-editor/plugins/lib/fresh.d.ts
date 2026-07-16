@@ -1057,8 +1057,9 @@ type TreeNode = {
 	* Continuation lines rendered below the node's primary `text`
 	* line when the parent `Tree` has `item_height > 1`. Each entry
 	* is one screen row, indented to align under the primary line's
-	* body. The host renders at most `item_height - 1` of them and
-	* blank-pads a shorter node so every row is the same height.
+	* body (past the indent + disclosure/checkbox prefix). The host
+	* renders at most `item_height - 1` of them and blank-pads a
+	* shorter node so every row in the tree is the same fixed height.
 	* Ignored when `item_height == 1`.
 	*/
 	extraLines?: Array<TextPropertyEntry>;
@@ -1351,11 +1352,11 @@ type WidgetSpec = {
 	/**
 	* Fixed number of screen rows each node occupies. `1` (the
 	* default) is the classic single-line tree. A larger value
-	* renders every node as a card of that many rows — the node's
-	* primary `text` plus its `extra_lines`, blank-padded to this
-	* height. Windowing/scroll stay node-based (the node budget
-	* becomes `visible_rows / item_height`), so single-line trees
-	* are unaffected.
+	* renders every node as a card of that many rows — the
+	* node's primary `text` plus its `extra_lines`, blank-padded
+	* to this height. Windowing/scroll stay node-based (the node
+	* budget becomes `visible_rows / item_height`), so all
+	* existing single-line trees are unaffected.
 	*/
 	itemHeight: number;
 	/**
@@ -1365,7 +1366,9 @@ type WidgetSpec = {
 	* panel width), taking `item_height + 2` rows: top border,
 	* `item_height` content rows, bottom border. Non-card nodes
 	* (e.g. folder headers) render as plain single rows instead
-	* of being blank-padded to the card height. Scroll and
+	* of being blank-padded to the card height. Restores the
+	* bordered-pill look the Orchestrator dock's card density
+	* had before it moved to a tree (issue #2703). Scroll and
 	* selection stay node-based; rows per node just vary.
 	*/
 	cardBorders: boolean;

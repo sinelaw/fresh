@@ -82,6 +82,36 @@
           50
         ],
         "indentation_guide_fg": null,
+        "indent_rainbow_1": [
+          255,
+          215,
+          0
+        ],
+        "indent_rainbow_2": [
+          218,
+          112,
+          214
+        ],
+        "indent_rainbow_3": [
+          50,
+          205,
+          50
+        ],
+        "indent_rainbow_4": [
+          30,
+          144,
+          255
+        ],
+        "indent_rainbow_5": [
+          255,
+          127,
+          80
+        ],
+        "indent_rainbow_6": [
+          147,
+          112,
+          219
+        ],
         "whitespace_indicator_fg": [
           70,
           70,
@@ -680,6 +710,60 @@
             }
           ],
           "default": null
+        },
+        "indent_rainbow_1": {
+          "description": "Rainbow indentation-guide color (nesting level 1)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            255,
+            215,
+            0
+          ]
+        },
+        "indent_rainbow_2": {
+          "description": "Rainbow indentation-guide color (nesting level 2)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            218,
+            112,
+            214
+          ]
+        },
+        "indent_rainbow_3": {
+          "description": "Rainbow indentation-guide color (nesting level 3)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            50,
+            205,
+            50
+          ]
+        },
+        "indent_rainbow_4": {
+          "description": "Rainbow indentation-guide color (nesting level 4)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            30,
+            144,
+            255
+          ]
+        },
+        "indent_rainbow_5": {
+          "description": "Rainbow indentation-guide color (nesting level 5)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            255,
+            127,
+            80
+          ]
+        },
+        "indent_rainbow_6": {
+          "description": "Rainbow indentation-guide color (nesting level 6)",
+          "$ref": "#/$defs/ColorDef",
+          "default": [
+            147,
+            112,
+            219
+          ]
         },
         "whitespace_indicator_fg": {
           "description": "Whitespace indicator foreground color (for tab arrows and space dots)",
