@@ -1217,17 +1217,34 @@
   @keyframes fxFade{from{opacity:0}}
   @keyframes fxPop{from{opacity:0;transform:translate(-50%,-50%) scale(.96)}}
   @keyframes fxSlideL{from{transform:translateX(calc(-100% - 80px))}}
-  @keyframes fxSlideLsm{from{transform:translateX(-100%);opacity:.3}}
+  /* Masked slide for the file explorer: clip-path is applied in element
+     space (before the transform moves it), so keeping inset-left == -offset
+     at every progress point pins the visible edge to the element's ORIGINAL
+     left edge — i.e. the screen boundary. Nothing ever shows over the bezel. */
+  @keyframes fxSlideWipe{from{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}
+    to{transform:none;clip-path:inset(0 0 0 0)}}
+  @keyframes fxOutWipe{to{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}}
   @keyframes fxOutFade{to{opacity:0}}
   @keyframes fxOutL{to{transform:translateX(calc(-100% - 80px));opacity:.4}}
-  .modal-scrim.fx-in{animation:fxFade .12s ease-out}
-  .palette.fx-in{animation:fxFade .12s ease-out}
-  .palette.centered.fx-in{animation:fxPop .13s cubic-bezier(.2,.8,.25,1)}
+  /* One shared duration + curve for every layout-motion piece (dock slide,
+     explorer wipe, bezel transition, content FLIP slides): mixed timings let
+     the bezel's rail cross the dock mid-flight. */
+  .modal-scrim.fx-in{animation:fxFade .14s ease-out}
+  /* Palette: slide + fade. The centered card's keyframes must restate the
+     base translate(-50%,-50%) centering or the animation would strip it. */
+  @keyframes fxPalInSheet{from{opacity:0;transform:translateY(18px)}}
+  @keyframes fxPalIn{from{opacity:0;transform:translate(-50%,-56%)}
+    to{opacity:1;transform:translate(-50%,-50%)}}
+  @keyframes fxPalOut{to{opacity:0;transform:translateY(-20px)}}
+  .palette.fx-in{animation:fxPalInSheet .18s cubic-bezier(.2,.8,.25,1)}
+  .palette.centered.fx-in{animation:fxPalIn .18s cubic-bezier(.2,.8,.25,1)}
+  .fx-clone.fx-out-pal{animation:fxPalOut .16s ease-in forwards}
   .widget-surface.w-dock.fx-in{animation:fxSlideL .28s cubic-bezier(.2,.8,.25,1)}
-  .fileexplorer.fx-in{animation:fxSlideLsm .22s cubic-bezier(.2,.8,.25,1)}
+  .fileexplorer.fx-in{animation:fxSlideWipe .28s cubic-bezier(.2,.8,.25,1)}
   .fx-clone{position:fixed;margin:0;pointer-events:none;z-index:99}
   .fx-clone.fx-out{animation:fxOutFade .1s ease-in forwards}
-  .fx-clone.fx-out-left{animation:fxOutL .22s cubic-bezier(.4,0,.8,.4) forwards}
+  .fx-clone.fx-out-left{animation:fxOutL .28s cubic-bezier(.2,.8,.25,1) forwards}
+  .fx-clone.fx-out-wipe{animation:fxOutWipe .28s cubic-bezier(.2,.8,.25,1) forwards}
   @media (prefers-reduced-motion:reduce){
     .fx-in,.fx-clone{animation:none!important}
     body:not(.mobile) #device{transition:none!important}}
@@ -1659,19 +1676,70 @@ const REGION_FILL={
 // one — and exits animate a positioned clone, since the region rebuild
 // removes the real node synchronously.
 const FX={
-  palette:      {sel:".palette",                present:r=>!!r.palette},
-  widgets:      {sel:".widget-surface.w-dock",  present:r=>(r.widgets||[]).some(w=>w.kind==="dock"), slide:true},
-  fileExplorer: {sel:".fileexplorer",           present:r=>!!r.fileExplorer, slide:true},
+  palette:      {sel:".palette",                present:r=>!!r.palette,        out:"fx-out-pal",  dur:180},
+  widgets:      {sel:".widget-surface.w-dock",  present:r=>(r.widgets||[]).some(w=>w.kind==="dock"), out:"fx-out-left", dur:280},
+  fileExplorer: {sel:".fileexplorer",           present:r=>!!r.fileExplorer,   out:"fx-out-wipe", dur:280},
 };
+// Entrance timestamps: a surface often gets a second frame right after it
+// appears (focus highlight, async list fill), and that rebuild replaces the
+// animating element — without this the enter animation dies after one frame
+// and the surface looks like it popped in. The replacement re-joins the
+// animation mid-flight via a negative animation-delay.
+const fxEnterAt={};
 function fxExit(el, cls){
   const r=el.getBoundingClientRect();
   const c=el.cloneNode(true);
   c.classList.remove("fx-in"); c.classList.add("fx-clone", cls);
   c.style.left=r.left+"px"; c.style.top=r.top+"px";
   c.style.width=r.width+"px"; c.style.height=r.height+"px";
+  // The clone is pinned at its measured viewport rect, so any transform the
+  // class carries (the centered palette's translate(-50%,-50%)) must be
+  // neutralised or the clone jumps by half its own size. The exit keyframes
+  // override this inline value while they play.
+  c.style.transform="none"; c.style.bottom="auto"; c.style.right="auto";
   document.body.appendChild(c);
   c.addEventListener("animationend",()=>c.remove());
   setTimeout(()=>{ if(c.isConnected) c.remove(); },500);   // reduced-motion / safety
+}
+// FLIP slide for server-driven layout snaps: when the dock or the file
+// explorer toggles, every affected screen region re-lands at its new cell
+// rect in ONE frame — so the elements are started at a transform that puts
+// them back at their OLD position and released to slide into place, matching
+// the bezel's own CSS transition (same duration + curve).
+function fxTopEls(c, out){
+  for(const ch of c.children){
+    if(ch.style && ch.style.display==="contents") fxTopEls(ch, out);
+    else out.push(ch);
+  }
+  return out;
+}
+function fxSlideEls(els, dx){
+  if(!dx||!els.length) return;
+  for(const el of els){ el.style.transition="none"; el.style.transform="translateX("+dx+"px)"; }
+  void els[0].offsetWidth;   // commit the start positions before releasing
+  for(const el of els){ el.style.transition="transform .28s cubic-bezier(.2,.8,.25,1)"; el.style.transform="translateX(0)"; }
+  setTimeout(()=>{ for(const el of els){ if(el.isConnected){ el.style.transition=""; el.style.transform=""; } } },320);
+}
+// Cell widths from the last frame; null until the first scene lands. Only a
+// PRESENCE change animates — width drags re-layout per pointer frame and
+// would fight a 280ms transition.
+let fxDockCells=null, fxFeCells=null;
+function fxLayoutSlides(){
+  if(!scene||!scene.regions||!containers) return;
+  let dockC=0;
+  for(const s of (scene.regions.widgets||[]))
+    if(s.kind==="dock"&&s.rect&&s.rect.x===0&&s.rect.w<(scene.w||0)) dockC=s.rect.w;
+  const feC=scene.regions.fileExplorer?scene.regions.fileExplorer.rect.w:0;
+  const first=fxDockCells===null;
+  const dockDelta=(!first&&(fxDockCells===0)!==(dockC===0))?px(dockC-fxDockCells,CW):0;
+  const feDelta  =(!first&&(fxFeCells===0)!==(feC===0))  ?px(feC-fxFeCells,CW):0;
+  fxDockCells=dockC; fxFeCells=feC;
+  if(isMobile()||(!dockDelta&&!feDelta)) return;
+  const screenEls=[], paneEls=[];
+  if(dockDelta) for(const n of ["fileExplorer","menu","statusbar"]) fxTopEls(containers[n],screenEls);
+  for(const n of ["panes","separators","caret"]) fxTopEls(containers[n],paneEls);
+  fxSlideEls(screenEls,-dockDelta);
+  fxSlideEls(paneEls,-(dockDelta+feDelta));
 }
 function renderRegion(name){
   const c=containers[name];
@@ -1682,14 +1750,21 @@ function renderRegion(name){
   const hadEl=fx?c.querySelector(fx.sel):null;
   const willHave=fx?fx.present(scene.regions):false;
   if(fx&&hadEl&&!willHave){
-    fxExit(hadEl, fx.slide?"fx-out-left":"fx-out");
+    fxExit(hadEl, fx.out);
     if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) fxExit(s,"fx-out"); }
   }
   if(name!=="caret") c.textContent="";     // the caret patches its own child in place
   REGION_FILL[name](c, scene.regions);
-  if(fx&&!hadEl&&willHave){
-    const el=c.querySelector(fx.sel); if(el) el.classList.add("fx-in");
-    if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) s.classList.add("fx-in"); }
+  if(fx&&willHave){
+    const el=c.querySelector(fx.sel);
+    if(el&&!hadEl){
+      fxEnterAt[name]=performance.now();
+      el.classList.add("fx-in");
+      if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) s.classList.add("fx-in"); }
+    } else if(el&&hadEl){
+      const elapsed=performance.now()-(fxEnterAt[name]||0);
+      if(elapsed<fx.dur){ el.classList.add("fx-in"); el.style.animationDelay=(-elapsed)+"ms"; }
+    }
   }
   c.querySelectorAll(SCROLL_KEEP).forEach((e,i)=>{ if(saved[i]) e.scrollTop=saved[i]; });
   if(name==="settings") settingsEnsureSelectionVisible(c);
@@ -1729,6 +1804,7 @@ function render(){
   // Native touch shell on narrow/portrait viewports (desktop is untouched).
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(scene.regions);
+  fxLayoutSlides();
   layoutShell();
 }
 
@@ -3221,6 +3297,7 @@ function applyFrame(changed){
   // on desktop renderMobileChrome returns immediately).
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(scene.regions);
+  fxLayoutSlides();
   layoutShell();   // dock width / grid size may have moved the bezel
 }
 function connect(){
