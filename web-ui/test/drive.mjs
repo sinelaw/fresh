@@ -28,10 +28,17 @@ mkdirSync(SHOTS, { recursive: true });
 let pass = 0, fail = 0;
 const check = (n, c, x = '') => { c ? (pass++, console.log('  PASS ' + n)) : (fail++, console.log('  FAIL ' + n + ' ' + x)); };
 const scene = p => p.evaluate(() => JSON.parse(JSON.stringify(window.fresh.scene)));
+// Grid→page pixel mapping: the COSMOS shell insets #app from the page origin,
+// so cell coordinates offset by the app origin the metrics carry (ax/ay).
+const gx = (m, col) => m.ax + col * m.cw;
+const gy = (m, row) => m.ay + row * m.ch;
 const paneText = s => s.regions.panes[0].cells.map(r => r.map(x => x.t).join('')).join('\n');
 
 const browser = await chromium.launch({ ...(EXE ? { executablePath: EXE } : {}), headless: true, args: ['--no-sandbox'] });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
+// 1280×960: the COSMOS shell (wallpaper margin + bezel) insets the cell grid
+// ~190px vertically, and the View dropdown needs the taller grid to fit all
+// its items (the TUI clips a dropdown to the grid, hiding the tail rows).
+const page = await browser.newPage({ viewport: { width: 1280, height: 960 }, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', e => errs.push(String(e)));
 // The single-client test below deliberately opens a second /ws socket that the
 // server rejects (409) — Chromium logs that handshake failure as a console
@@ -103,7 +110,8 @@ console.log('\n[edit through the real pipeline]');
 // Click the center of pane 0's content rect (robust against a file explorer
 // left open by earlier runs on the same live server shifting the pane right).
 const editRect = (await scene(page)).regions.panes[0].content;
-await page.mouse.click((editRect.x + Math.floor(editRect.w / 2)) * 8.2, (editRect.y + Math.floor(editRect.h / 2)) * 18);
+const editM = await page.evaluate(() => window.fresh.metrics);
+await page.mouse.click(gx(editM, editRect.x + Math.floor(editRect.w / 2)), gy(editM, editRect.y + Math.floor(editRect.h / 2)));
 await page.keyboard.type('QWZX');
 await page.waitForFunction(() => window.fresh.scene.regions.panes[0].cells.map(r => r.map(x => x.t).join('')).join('\n').includes('QWZX'), { timeout: 5000 }).catch(() => {});
 const s2 = await scene(page);
@@ -428,7 +436,8 @@ console.log('\n[region diffs: typing resends only what changed]');
 // Focus the buffer itself (the explorer toggles above may have left keyboard
 // focus in the tree): click the center of pane 0's content rect.
 const paneRect = (await scene(page)).regions.panes[0].content;
-await page.mouse.click((paneRect.x + Math.floor(paneRect.w / 2)) * 8.2, (paneRect.y + Math.floor(paneRect.h / 2)) * 18);
+const paneM = await page.evaluate(() => window.fresh.metrics);
+await page.mouse.click(gx(paneM, paneRect.x + Math.floor(paneRect.w / 2)), gy(paneM, paneRect.y + Math.floor(paneRect.h / 2)));
 await page.waitForTimeout(300);
 const seqT0 = await page.evaluate(() => window.fresh.seq);
 await page.keyboard.type('J');
@@ -468,7 +477,7 @@ const stamped = await page.evaluate(() => {
 });
 const mtr0 = await page.evaluate(() => window.fresh.metrics);
 const patchRect = (await scene(page)).regions.panes[0].content;
-await page.mouse.click((patchRect.x + Math.floor(patchRect.w / 2)) * mtr0.cw, (patchRect.y + Math.floor(patchRect.h / 2)) * mtr0.ch);
+await page.mouse.click(gx(mtr0, patchRect.x + Math.floor(patchRect.w / 2)), gy(mtr0, patchRect.y + Math.floor(patchRect.h / 2)));
 await page.waitForTimeout(300);
 const seqP0 = await page.evaluate(() => window.fresh.seq);
 await page.keyboard.type('R');
@@ -494,7 +503,7 @@ await page.screenshot({ path: `${SHOTS}/31-zoomed-in.png` });
 // cursor must land there (cellAt divides by the live CW/CH).
 const zp = (await scene(page)).regions.panes[0];
 const zCol = zp.content.x + (zp.gutterWidth || 0) + 1, zRow = zp.content.y + 2;
-await page.mouse.click((zCol + 0.5) * m1.cw, (zRow + 0.5) * m1.ch);
+await page.mouse.click(gx(m1, zCol + 0.5), gy(m1, zRow + 0.5));
 await page.waitForTimeout(400);
 const zc = (await scene(page)).regions.cursor;
 check('a buffer click still lands on the right cell while zoomed', !!zc && zc.y === zRow && Math.abs(zc.x - zCol) <= 2, JSON.stringify({ zc, zCol, zRow }));
@@ -542,7 +551,7 @@ await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout
 await page.waitForTimeout(200);
 check('bottom-sheet placement has no scrim', (await page.locator('.modal-scrim').count()) === 0);
 const palBox = await page.locator('.palette').boundingBox();
-const gridBottom = await page.evaluate(() => window.fresh.scene.h * window.fresh.metrics.ch);
+const gridBottom = await page.evaluate(() => { const m = window.fresh.metrics; return m.ay + window.fresh.scene.h * m.ch; });
 check('palette hugs the bottom of the cell grid (TUI placement)',
   !!palBox && Math.abs((palBox.y + palBox.height) - gridBottom) <= 2, `bottom=${palBox && (palBox.y + palBox.height)} grid=${gridBottom}`);
 check('palette input bar sits BELOW the suggestion list (terminal order)',
@@ -611,8 +620,8 @@ await page.request.post(URL + '/action', { data: { action: 'trigger_wave_animati
 await page.waitForFunction(() => window.fresh.scene.regions.poll.active, { timeout: 5000 }).catch(() => {});
 const wp = (await scene(page)).regions.panes[0].content;
 const wm = await page.evaluate(() => window.fresh.metrics);
-await page.mouse.move((wp.x + 4) * wm.cw, (wp.y + 4) * wm.ch);
-await page.mouse.move((wp.x + 8) * wm.cw, (wp.y + 6) * wm.ch);
+await page.mouse.move(gx(wm, wp.x + 4), gy(wm, wp.y + 4));
+await page.mouse.move(gx(wm, wp.x + 8), gy(wm, wp.y + 6));
 await page.waitForFunction(() => !window.fresh.scene.regions.poll.active, { timeout: 5000 }).catch(() => {});
 check('wave: a bare mouse move dismisses it', !(await page.evaluate(() => window.fresh.scene.regions.poll.active)));
 check('wave: cells restored after mouse-move dismissal', (await wavePane()) === paneBeforeWave);
@@ -623,7 +632,7 @@ console.log('\n[idle mouse motion: moved events do not spam frames]');
 // produce a frame stream.
 await page.waitForTimeout(400);
 const mf0 = await page.evaluate(() => window.fresh.frames);
-for (let i = 0; i < 12; i++) await page.mouse.move((wp.x + 10 + i) * wm.cw, (wp.y + 8 + (i % 3)) * wm.ch);
+for (let i = 0; i < 12; i++) await page.mouse.move(gx(wm, wp.x + 10 + i), gy(wm, wp.y + 8 + (i % 3)));
 await page.waitForTimeout(800);
 const mf1 = await page.evaluate(() => window.fresh.frames);
 check('idle mousemove over an unchanged buffer pushes (almost) no frames', mf1 - mf0 <= 3, `frames ${mf0}->${mf1}`);
@@ -644,7 +653,7 @@ check('Open File has NO native suggestion list (browser is in the pane cells)', 
 check('Open File renders a native input-only bar', (await page.locator('.palette.input-only .pinput').count()) >= 1);
 check('Open File does NOT render a suggestion list', (await page.locator('.palette .plist').count()) === 0);
 const opBox = await page.locator('.palette').boundingBox();
-const opGridBottom = await page.evaluate(() => window.fresh.scene.h * window.fresh.metrics.ch);
+const opGridBottom = await page.evaluate(() => { const m = window.fresh.metrics; return m.ay + window.fresh.scene.h * m.ch; });
 check('Open File input bar hugs the bottom of the cell grid (TUI prompt row)', !!opBox && Math.abs((opBox.y + opBox.height) - opGridBottom) <= 3, `bottom=${opBox && (opBox.y + opBox.height)} grid=${opGridBottom}`);
 await page.screenshot({ path: `${SHOTS}/33-openfile-prompt.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
@@ -690,6 +699,11 @@ await page.screenshot({ path: `${SHOTS}/34-new-workspace-modal.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(250);
 check('Escape closed the New Workspace dialog', !((await scene(page)).regions.widgets || []).some(w => w.kind === 'floatingModal'));
 check('scrim removed once the modal closed', (await page.locator('.modal-scrim').count()) === 0);
+// Close the dock again: the sections below assert on status-bar text, and
+// with the COSMOS bezel already costing ~13 columns the dock's width pushes
+// long status messages ("… read only (Ctrl+Space …)") into truncation.
+await page.request.post(URL + '/action', { data: { action: 'orchestrator_dock_toggle' } });
+await page.waitForFunction(() => !(window.fresh.scene.regions.widgets || []).some(w => w.kind === 'dock'), { timeout: 8000 }).catch(() => {});
 
 console.log('\n[menu submenu panel sits edge-to-edge with its parent (no overlap seam)]');
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
@@ -727,10 +741,10 @@ const tp = ts.regions.panes[tpi];
 check('terminal echoed the marker into the live grid', !!tp);
 const mrow = tp ? tp.cells.findIndex(r => r.map(x => x.t).join('').startsWith('web-sel-MARKER-42')) : -1;
 if (tp) {
-  const my = (tp.content.y + mrow + 0.5) * tmet.ch;
-  await page.mouse.move((tp.content.x + 0.2) * tmet.cw, my);
+  const my = gy(tmet, tp.content.y + mrow + 0.5);
+  await page.mouse.move(gx(tmet, tp.content.x + 0.2), my);
   await page.mouse.down();
-  for (let i = 1; i <= 6; i++) await page.mouse.move((tp.content.x + 0.2 + i * 3) * tmet.cw, my);
+  for (let i = 1; i <= 6; i++) await page.mouse.move(gx(tmet, tp.content.x + 0.2 + i * 3), my);
   await page.mouse.up();
   await page.waitForTimeout(400);
 }
@@ -756,7 +770,7 @@ await page.waitForTimeout(300);
 sd = await scene(page);
 check('Ctrl+Space resumes the live terminal from scrollback', /Terminal mode enabled/.test(tStatus(sd)), tStatus(sd));
 if (tp) {  // a bare click must keep the terminal live
-  await page.mouse.click((tp.content.x + 4) * tmet.cw, (tp.content.y + 1) * tmet.ch);
+  await page.mouse.click(gx(tmet, tp.content.x + 4), gy(tmet, tp.content.y + 1));
   await page.waitForTimeout(300);
 }
 sd = await scene(page);
@@ -771,10 +785,10 @@ await page.waitForTimeout(120);
 check('holding Alt engages native-selection mode (body.natsel + pill)',
   await page.evaluate(() => document.body.classList.contains('natsel') && document.getElementById('natsel').classList.contains('show')));
 const ap = (await scene(page)).regions.panes[0];
-const ay = (ap.content.y + (mrow >= 0 ? mrow : 1) + 0.5) * tmet.ch;
-await page.mouse.move((ap.content.x + 0.2) * tmet.cw, ay);
+const ay = gy(tmet, ap.content.y + (mrow >= 0 ? mrow : 1) + 0.5);
+await page.mouse.move(gx(tmet, ap.content.x + 0.2), ay);
 await page.mouse.down();
-for (let i = 1; i <= 5; i++) await page.mouse.move((ap.content.x + 0.2 + i * 4) * tmet.cw, ay);
+for (let i = 1; i <= 5; i++) await page.mouse.move(gx(tmet, ap.content.x + 0.2 + i * 4), ay);
 await page.mouse.up();
 await page.waitForTimeout(250);
 const natText = await page.evaluate(() => window.getSelection().toString());
@@ -784,7 +798,7 @@ check('the terminal stayed LIVE under an Alt+drag (no forwarding, no scrollback)
 await page.keyboard.up('Alt');
 await page.waitForTimeout(150);
 check('releasing Alt disengages native-selection mode', await page.evaluate(() => !document.body.classList.contains('natsel')));
-await page.mouse.click((ap.content.x + 2) * tmet.cw, (ap.content.y + 1) * tmet.ch);
+await page.mouse.click(gx(tmet, ap.content.x + 2), gy(tmet, ap.content.y + 1));
 await page.waitForTimeout(250);
 check('an ordinary click clears the leftover native selection', (await page.evaluate(() => window.getSelection().toString())) === '');
 await page.screenshot({ path: `${SHOTS}/37-alt-native-selection.png` });
@@ -805,6 +819,10 @@ await page.close();
 const tctx = await browser.newContext({ hasTouch: true, viewport: { width: 390, height: 780 }, deviceScaleFactor: 2 });
 const tpage = await tctx.newPage();
 const terrs = []; tpage.on('pageerror', e => terrs.push(String(e)));
+// Scenario isolation: the desktop sections leave scrolled/wrapped views in
+// the single server-side editor, and the swipe/tap assertions below need a
+// known top-of-buffer view. /reset rebuilds a fresh editor on the same file.
+await tpage.request.post(URL + '/reset', { data: {} });
 await tpage.goto(URL, { waitUntil: 'networkidle' });
 await tpage.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
 await tpage.waitForTimeout(400);
@@ -822,7 +840,7 @@ const t0 = await scene(tpage);
 // at the touch cell), moving the first visible line.
 await tpage.evaluate(() => {
   const m = window.fresh.metrics, p = window.fresh.scene.regions.panes[0].content;
-  const x = (p.x + Math.floor(p.w / 2)) * m.cw, y0 = (p.y + Math.floor(p.h / 2)) * m.ch;
+  const x = m.ax + (p.x + Math.floor(p.w / 2)) * m.cw, y0 = m.ay + (p.y + Math.floor(p.h / 2)) * m.ch;
   const mk = (type, cy) => {
     const t = new Touch({ identifier: 7, target: document.body, clientX: x, clientY: cy });
     document.body.dispatchEvent(new TouchEvent(type, { touches: type === 'touchend' ? [] : [t], changedTouches: [t], bubbles: true, cancelable: true }));
@@ -841,7 +859,7 @@ await tpage.screenshot({ path: `${SHOTS}/32-mobile-touch.png` });
 const tm = await tpage.evaluate(() => window.fresh.metrics);
 const tp2 = t1.regions.panes[0];
 const tRow = tp2.content.y + 3;
-await tpage.touchscreen.tap((tp2.content.x + (tp2.gutterWidth || 0) + 1.5) * tm.cw, (tRow + 0.5) * tm.ch);
+await tpage.touchscreen.tap(gx(tm, tp2.content.x + (tp2.gutterWidth || 0) + 1.5), gy(tm, tRow + 0.5));
 await tpage.waitForFunction(r => window.fresh.scene.regions.cursor && window.fresh.scene.regions.cursor.y === r, tRow, { timeout: 5000 }).catch(() => {});
 const tc = (await scene(tpage)).regions.cursor;
 check('tap still positions the cursor (click path intact)', !!tc && tc.y === tRow, JSON.stringify({ tc, tRow }));

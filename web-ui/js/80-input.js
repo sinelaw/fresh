@@ -220,7 +220,9 @@ mqMobile.addEventListener("change", resize);
 // WS hello/frames normally carry everything); `frames`/`seq`/`wsOpen`/
 // `lastFrameKeys` expose the push transport's state; `renderedRegions` names
 // the region containers the last render pass actually rebuilt (per-region
-// patching); `metrics` exposes the measured grid unit + zoom factor.
+// patching); `metrics` exposes the measured grid unit + zoom factor plus the
+// live #app page origin (ax/ay) so drivers can map grid→page pixels under the
+// COSMOS shell inset.
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   setPaletteCentered, setNatselEnabled,
   get frames(){return frameCount;}, get seq(){return lastSeq;},
@@ -228,7 +230,7 @@ window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
   get renderedRegions(){return renderedRegions;},
   get paletteCentered(){return paletteCentered;},
   get natselEnabled(){return natselEnabled;},
-  get metrics(){return {cw:CW, ch:CH, font:FONT, zoom};} };
+  get metrics(){ syncAppOrigin(); return {cw:CW, ch:CH, font:FONT, zoom, ax:APPX, ay:APPY}; } };
 // Set the mobile class BEFORE the first resize()/layoutShell(): both read
 // #app's box, which the class switches between inset (COSMOS shell) and
 // full-bleed.
