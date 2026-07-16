@@ -709,8 +709,10 @@ console.log('\n[terminal text selection: drag → scrollback selection → edito
 // Open a real PTY terminal, echo a marker, and drag across the echoed row.
 // A drag on the LIVE grid must drop the split into read-only scrollback
 // (pixel-identical view) and build a real editor selection there; Ctrl+C
-// then copies through the editor clipboard (scene.clipboard sync). A bare
-// click must NOT leave live mode (click-to-focus-and-type).
+// then copies through the editor clipboard (scene.clipboard sync) AND
+// resumes the live terminal — the copy completes the gesture, so the split
+// must not stay stuck in scrollback. A bare click must NOT leave live mode
+// (click-to-focus-and-type).
 await page.request.post(URL + '/action', { data: { action: 'open_terminal' } });
 await page.waitForFunction(() => window.fresh.scene.regions.statusbar.segments.some(s => /Terminal \d+ opened/.test(s.text || s.label || '')), null, { timeout: 15000 }).catch(() => {});
 await page.waitForTimeout(800);
@@ -743,10 +745,16 @@ await page.waitForFunction(() => window.fresh.scene.clipboard && /web-sel-MARKER
 sd = await scene(page);
 check('Ctrl+C copies the terminal selection through the editor clipboard',
   !!sd.clipboard && (sd.clipboard.text || '').startsWith('web-sel-MARKER-42'), JSON.stringify(sd.clipboard));
-await page.keyboard.press('Control+ ');   // resume the live terminal
-await page.waitForTimeout(400);
+check('copying the selection auto-resumes the live terminal', /terminal resumed/.test(tStatus(sd)), tStatus(sd));
+// Ctrl+Space still round-trips: into scrollback and back to live.
+await page.keyboard.press('Control+ ');
+await page.waitForTimeout(300);
 sd = await scene(page);
-check('Ctrl+Space resumes the live terminal after a selection', /Terminal mode enabled/.test(tStatus(sd)), tStatus(sd));
+check('Ctrl+Space still drops the live terminal into scrollback', /read only/.test(tStatus(sd)), tStatus(sd));
+await page.keyboard.press('Control+ ');
+await page.waitForTimeout(300);
+sd = await scene(page);
+check('Ctrl+Space resumes the live terminal from scrollback', /Terminal mode enabled/.test(tStatus(sd)), tStatus(sd));
 if (tp) {  // a bare click must keep the terminal live
   await page.mouse.click((tp.content.x + 4) * tmet.cw, (tp.content.y + 1) * tmet.ch);
   await page.waitForTimeout(300);

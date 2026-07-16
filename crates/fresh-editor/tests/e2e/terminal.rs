@@ -4258,3 +4258,297 @@ fn test_terminal_buffers_never_line_wrap() {
         "terminal buffers must never resolve to line-wrap even when global line wrap is on"
     );
 }
+
+// --- Drag-to-select exit conditions (implicit scrollback) -----------------
+//
+// A drag on the live grid parks the split in *implicit* scrollback so the
+// selection can exist (the grid has no selection model). Implicit scrollback
+// ends automatically: copying the selection or a bare click resumes the live
+// grid, while engaging with the scrollback as a view (scrolling) converts
+// the visit to an explicit one that only ends by the explicit rules.
+
+/// Locate the top-left screen cell of the row that contains `needle`.
+fn screen_pos_of(harness: &EditorTestHarness, needle: &str) -> Option<(u16, u16)> {
+    harness
+        .screen_to_string()
+        .lines()
+        .enumerate()
+        .find_map(|(row, line)| {
+            line.find(needle)
+                .map(|byte| (line[..byte].chars().count() as u16, row as u16))
+        })
+}
+
+/// Whether the focused split's primary cursor carries an active selection.
+fn primary_selection_active(harness: &EditorTestHarness) -> bool {
+    let win = harness.editor().active_window();
+    let Some((mgr, view_states)) = win.buffers.splits() else {
+        return false;
+    };
+    view_states
+        .get(&mgr.active_split())
+        .map(|vs| {
+            let c = vs.cursors.primary();
+            c.anchor.is_some_and(|a| a != c.position)
+        })
+        .unwrap_or(false)
+}
+
+/// Drag-select from `(from_col, row)` to `(to_col, row)` with a render after
+/// every event, like the interactive event loop (each event redraws). The
+/// harness's `mouse_drag` sends the whole gesture without intermediate
+/// renders, so drag steps after the live-grid→scrollback flip would resolve
+/// against the pre-flip cached view-line mappings.
+fn drag_select_row(
+    harness: &mut EditorTestHarness,
+    from_col: u16,
+    to_col: u16,
+    row: u16,
+) -> anyhow::Result<()> {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let ev = |kind, column| MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::empty(),
+    };
+    harness.send_mouse(ev(MouseEventKind::Down(MouseButton::Left), from_col))?;
+    harness.render()?;
+    harness.send_mouse(ev(MouseEventKind::Drag(MouseButton::Left), to_col))?;
+    harness.render()?;
+    harness.send_mouse(ev(MouseEventKind::Up(MouseButton::Left), to_col))?;
+    harness.render()?;
+    Ok(())
+}
+
+/// Open a terminal, print `output` on its own row (the shell quoting keeps
+/// the echoed *command* from containing the marker), and return the marker
+/// row's screen position.
+fn terminal_with_marker(harness: &mut EditorTestHarness, output: &str) -> (u16, u16) {
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    assert!(harness.editor().is_terminal_mode());
+
+    // Type `echo 'X'MARKER` so the typed command line on screen never
+    // contains the bare marker; only the output row does.
+    let (head, tail) = output.split_at(1);
+    let cmd = format!("echo '{}'{}\n", head, tail);
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(cmd.as_bytes());
+    harness
+        .wait_until(|h| screen_pos_of(h, output).is_some())
+        .unwrap();
+    screen_pos_of(harness, output).unwrap()
+}
+
+/// Copying a drag selection completes the gesture: the split must resume the
+/// live grid on Ctrl+C, without waiting for new output or a manual
+/// Ctrl+Space (the "stuck in scrollback after copy" complaint).
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_drag_select_copy_resumes_live() {
+    let mut harness = harness_or_return!(120, 30);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    let (col, row) = terminal_with_marker(&mut harness, "XSELECT_COPY_ME");
+
+    drag_select_row(&mut harness, col, col + 10, row).unwrap();
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "drag on the live grid should park the split in read-only scrollback"
+    );
+    assert!(
+        primary_selection_active(&harness),
+        "drag should build a real selection over the terminal text"
+    );
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    let clip = harness.editor_mut().clipboard_content_for_test();
+    assert!(
+        clip.contains("XSELECT_CO"),
+        "Ctrl+C should copy the dragged terminal text, got {clip:?}"
+    );
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "copying the selection should resume the live terminal"
+    );
+}
+
+/// A bare click on a drag-parked scrollback pane abandons the selection and
+/// resumes the live grid immediately — no new output required.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_drag_select_click_away_resumes_live() {
+    let mut harness = harness_or_return!(120, 30);
+    let (col, row) = terminal_with_marker(&mut harness, "XSELECT_CLICK_AWAY");
+
+    drag_select_row(&mut harness, col, col + 8, row).unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    harness.mouse_click(col + 20, row).unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "a bare click should abandon the drag selection and resume the live terminal"
+    );
+}
+
+/// Scrolling the drag-parked scrollback converts the visit to an explicit
+/// one: the user is reading history now, so neither copy nor click may yank
+/// the view back to the live grid.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_drag_select_scroll_converts_to_explicit() {
+    let mut harness = harness_or_return!(120, 30);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    let (col, row) = terminal_with_marker(&mut harness, "XSELECT_THEN_SCROLL");
+
+    drag_select_row(&mut harness, col, col + 8, row).unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    harness.mouse_scroll_up(col + 2, row).unwrap();
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(
+        harness
+            .editor_mut()
+            .clipboard_content_for_test()
+            .contains("XSELECT_"),
+        "copy should still work after scrolling"
+    );
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "after scrolling, the visit is explicit: copy must not yank back to the live grid"
+    );
+
+    harness.mouse_click(col + 20, row).unwrap();
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "after scrolling, a click places the cursor without resuming the live grid"
+    );
+}
+
+/// An explicit scrollback visit (Ctrl+Space) keeps the manual model: a
+/// selection copied there must NOT resume the live grid.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_explicit_scrollback_copy_does_not_resume() {
+    let mut harness = harness_or_return!(120, 30);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    let (col, row) = terminal_with_marker(&mut harness, "XSELECT_EXPLICIT");
+
+    // Let trailing shell output (prompt redraw) drain first: with no
+    // selection pinning the view, `jump_to_end_on_output` would legitimately
+    // resume the split right back out of the manual scrollback below.
+    harness.wait_for_async_quiescence(3).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    // The pinned scrollback view is pixel-identical to the grid: the marker
+    // is still at the same screen position. Select part of it.
+    drag_select_row(&mut harness, col, col + 8, row).unwrap();
+    assert!(primary_selection_active(&harness));
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(
+        harness
+            .editor_mut()
+            .clipboard_content_for_test()
+            .contains("XSELECT_"),
+        "copy should work in explicit scrollback"
+    );
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "explicit scrollback must not be resumed by a copy"
+    );
+}
+
+/// Regression: the drag's selection anchor must not outlive the visit. It
+/// used to survive the resume, re-materialize as a phantom selection on the
+/// next scrollback entry, and permanently suppress the output-driven
+/// auto-resume in `handle_terminal_output`.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_no_phantom_selection_after_drag_copy_resume() {
+    let mut harness = harness_or_return!(120, 30);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    let (col, row) = terminal_with_marker(&mut harness, "XSELECT_PHANTOM");
+
+    // Drag + copy (resumes live), then re-enter scrollback manually.
+    drag_select_row(&mut harness, col, col + 8, row).unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(harness.editor().is_terminal_mode());
+    // Drain trailing shell output before the manual scrollback entry: an
+    // output byte landing right after Ctrl+Space would auto-resume the split
+    // (with no selection, that is now the intended behavior).
+    harness.wait_for_async_quiescence(3).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+
+    assert!(
+        !primary_selection_active(&harness),
+        "no phantom selection may survive into a fresh scrollback entry"
+    );
+
+    // With no selection pinning the view, new output must auto-resume the
+    // terminal (jump_to_end_on_output defaults to true).
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"echo 'B'ACK_ALIVE\n");
+    harness
+        .wait_until(|h| h.editor().is_terminal_mode())
+        .unwrap();
+}
+
+/// Double-click on the live grid selects the word under the pointer (via the
+/// same implicit-scrollback detour as a drag); copying it resumes the grid.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_double_click_selects_word_and_copy_resumes() {
+    let mut harness = harness_or_return!(120, 30);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    let (col, row) = terminal_with_marker(&mut harness, "XWORDSEL_TARGET");
+
+    // Two clicks at the same cell within the double-click window.
+    harness.mouse_click(col + 3, row).unwrap();
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "the first (bare) click must keep the terminal live"
+    );
+    harness.mouse_click(col + 3, row).unwrap();
+
+    assert!(
+        !harness.editor().is_terminal_mode(),
+        "double-click should park the split in scrollback with the word selected"
+    );
+    assert!(
+        primary_selection_active(&harness),
+        "double-click should select the word under the pointer"
+    );
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    assert_eq!(
+        harness.editor_mut().clipboard_content_for_test(),
+        "XWORDSEL_TARGET",
+        "double-click + copy should yield exactly the word under the pointer"
+    );
+    assert!(
+        harness.editor().is_terminal_mode(),
+        "copying the double-click selection should resume the live terminal"
+    );
+}

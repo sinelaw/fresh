@@ -276,6 +276,24 @@ impl Editor {
             return self.handle_composite_click(col, row, split_id, buffer_id, content_rect);
         }
 
+        // A bare press on a terminal parked in implicit (drag-initiated)
+        // scrollback abandons the selection gesture: resume the live grid and
+        // fall through to the live-grid branch below, which re-records the
+        // press as a potential selection origin — so the pane keeps behaving
+        // like the live grid it appears to be (click focuses, click-then-drag
+        // starts a fresh selection). Shift/Ctrl-clicks extend the selection
+        // instead (the gesture continues), and explicit scrollback visits are
+        // never resumed by a click.
+        if self.active_window().is_terminal_buffer(buffer_id)
+            && self
+                .active_window()
+                .split_terminal_drag_scrollback(split_id, buffer_id)
+            && !modifiers.contains(KeyModifiers::SHIFT)
+            && !modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.enter_terminal_mode();
+        }
+
         // Live terminal grid: the grid overlay covers a stale buffer view, so
         // positioning a cursor at the click would land in invisible text — and
         // a bare click must keep the terminal live (click-to-focus-and-type).

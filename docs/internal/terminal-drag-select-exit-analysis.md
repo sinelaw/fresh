@@ -1,6 +1,8 @@
 # Terminal drag-select: why the split stays stuck in scrollback, and how it should exit
 
-Status: analysis only — no behavior change implemented yet.
+Status: **implemented** — §5's recommendation landed (see §6 for what shipped
+and the deltas discovered during implementation). §§1–4 document the state
+machine and defect as they stood before the change.
 Scope: the live↔scrollback state machine around mouse drag-to-select on the
 live terminal grid (added in PR #2701), the `jump_to_end_on_output`
 selection-suppression, and the recommended automatic exit condition.
@@ -270,7 +272,61 @@ docs. No new config knob initially; if field feedback wants one,
   regression test for the phantom selection (drag → copy → resume →
   re-enter scrollback → new output must resume; no selection rendered).
 
-## 6. Repro notes (web bridge)
+## 6. What shipped (implementation notes)
+
+The recommendation in §5 was implemented as specified, with three deltas
+discovered during implementation:
+
+- **Double/triple-click select on the live grid.** With click-away-resume in
+  place, a double-click's first press resumes an implicit-scrollback pane, so
+  its second press lands on the live grid — which used to be inert. Rather
+  than regress word-select, the live grid now supports it: double-click
+  selects the word (word-wise drag extension included) and triple-click the
+  line, through the same implicit-scrollback detour as a drag
+  (`begin_terminal_grid_word_selection` / `begin_terminal_grid_line_selection`,
+  gated on `terminal.mouse_drag_selects`). Copying those selections resumes
+  the grid like any drag selection.
+- **Render-independent drag resolution on terminal scrollback.** Drag events
+  processed after the live→scrollback flip but before the next render used to
+  resolve against view-line mappings cached from a *previous* buffer view of
+  the split, throwing the selection head far from the pointer (reproducible
+  in the web bridge, whose event bursts outrun renders, and in the test
+  harness). Terminal scrollback is unwrapped and gutter-free, so
+  `handle_text_selection_drag` now resolves those positions directly
+  (`terminal_grid_byte_at`: viewport top line + row, columns 1:1 plus
+  horizontal scroll) with no cache dependency.
+- **Scrollbar interaction also downgrades.** Grabbing the scrollback view's
+  scrollbar is scrollback *reading*, so it clears the implicit marker exactly
+  like wheel scrolling.
+
+The phantom-selection fix is the `enter_terminal_mode` clear only. An earlier
+draft also cleared selections in `sync_terminal_to_buffer`, but that path
+runs on every focus change of a scrollback split and would have destroyed
+legitimate selections on refocus; every resume goes through
+`enter_terminal_mode`, which is sufficient.
+
+The `Copy` status message reads "Copied - terminal resumed" when the copy
+resumes the grid, keeping the mode change visible.
+
+Verified by: 6 new core e2e tests (`cargo test -p fresh-editor --test
+e2e_tests terminal_drag_select` + explicit/phantom/double-click tests), the
+updated `web-ui/test/drive.mjs` terminal block (copy auto-resumes, Ctrl+Space
+round-trips, bare click stays live — 140/140 checks green), and a manual
+Playwright sweep of all five exit rules against the web bridge.
+
+**Known residual (pre-existing, out of scope):** under many repeated
+enter/exit cycles in the *web bridge*, the scrollback backing file
+accumulates stale copies of the visible screen (an un-truncated re-append per
+cycle somewhere in the web-only flow), which can momentarily corrupt a drag's
+selection extent mid-gesture and leave stale highlight cells in the pane.
+The same interleaving is clean in the core harness
+(single-cycle and 4-cycle drag/copy/click/wheel sequences show no
+accumulation: backing file stays minimal, selections exact). This reproduces
+identically on the pre-change code — the change strictly improves it (the
+output-suppression no longer wedges) — and should be chased as a separate
+web-bridge/backing-file issue.
+
+## 7. Repro notes (web bridge)
 
 Build and run `cargo build --features web -p fresh-editor --example
 webui_server`, start it on a port, then drive with Playwright (Chromium at

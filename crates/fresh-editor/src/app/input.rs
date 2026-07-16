@@ -1205,7 +1205,33 @@ impl Editor {
                         return Ok(());
                     }
                 }
-                self.copy_selection()
+                // Copying the selection completes a drag-to-select gesture on
+                // a live terminal grid: the split was only parked in implicit
+                // (drag-initiated) scrollback so the selection could exist,
+                // and the copy is the gesture's natural end — resume the live
+                // grid. Explicit scrollback visits (Ctrl+Space, Shift+PageUp,
+                // wheel) are never resumed by a copy: the user chose a stable
+                // reading view and yanking it to the bottom would lose their
+                // place.
+                let resume_terminal = {
+                    let win = self.active_window();
+                    let split = win.effective_active_split();
+                    win.split_terminal_drag_scrollback(split, buffer_id)
+                        && win
+                            .buffers
+                            .splits()
+                            .and_then(|(_, vs)| vs.get(&split))
+                            .is_some_and(|vs| {
+                                vs.cursors.iter().any(|(_, c)| {
+                                    c.selection_range().is_some() || c.has_block_selection()
+                                })
+                            })
+                };
+                self.copy_selection();
+                if resume_terminal {
+                    self.enter_terminal_mode();
+                    self.set_status_message("Copied - terminal resumed".to_string());
+                }
             }
             Action::CopyWithTheme(theme) => self.copy_selection_with_theme(&theme),
             Action::CopyFilePath => self.copy_active_buffer_path(false),

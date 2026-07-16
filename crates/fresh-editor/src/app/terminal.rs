@@ -1395,6 +1395,12 @@ impl Editor {
             let __active_split = self.split_manager().active_split();
             if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split) {
                 view_state.viewport.line_wrap_enabled = false;
+                // A selection made in the scrollback view must not outlive
+                // the visit: the anchor would otherwise re-materialize as a
+                // phantom selection on the next scrollback entry (the sync
+                // pins only the cursor *position*) and re-suppress the
+                // output-driven auto-resume in `handle_terminal_output`.
+                view_state.cursors.map(|c| c.clear_selection());
             }
 
             // Truncate backing file to remove visible screen tail and scroll to bottom

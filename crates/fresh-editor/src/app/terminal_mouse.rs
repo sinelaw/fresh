@@ -336,53 +336,21 @@ impl super::Editor {
     ) -> AnyhowResult<()> {
         self.active_window_mut().mouse_state.terminal_drag_pending = None;
 
-        // The terminal may have changed under us (mode flip, split closed).
-        if !self.active_window().is_terminal_buffer(buffer_id)
-            || self
-                .active_window()
-                .split_terminal_scrollback(split_id, buffer_id)
-        {
-            return Ok(());
-        }
-        let Some(content_rect) = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, bid, _, _, _, _)| *sid == split_id && *bid == buffer_id)
-            .map(|(_, _, rect, _, _, _)| *rect)
+        let Some(content_rect) =
+            self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
         else {
             return Ok(());
         };
-
-        // Drop into read-only scrollback. The press already focused the
-        // split, so the sync pins THIS split's viewport to the grid's row 0.
-        self.active_window_mut()
-            .set_split_terminal_scrollback(split_id, buffer_id, true);
-        self.active_window_mut().sync_terminal_mode_flags();
-        self.set_status_message(
-            "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
-        );
 
         // Resolve both grid positions to byte positions. Columns are taken
         // as byte offsets into the line (terminal rows are overwhelmingly
         // single-width; `snap_to_char_boundary` keeps multi-byte glyphs
         // safe), and subsequent drag motion refines through the standard
         // width-aware `handle_text_selection_drag` path anyway.
-        let Some((anchor, head)) = self.windows.get(&self.active_window).and_then(|win| {
-            let (_, view_states) = win.buffers.splits()?;
-            let vs = view_states.get(&split_id)?;
-            let state = win.buffers.get(&buffer_id)?;
-            let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte);
-            let to_byte = |c: u16, r: u16| {
-                let grid_row = r.saturating_sub(content_rect.y) as usize;
-                let grid_col = c.saturating_sub(content_rect.x) as usize;
-                let pos = state
-                    .buffer
-                    .line_col_to_position(top_line + grid_row, grid_col);
-                state.buffer.snap_to_char_boundary(pos)
-            };
-            Some((to_byte(origin_col, origin_row), to_byte(col, row)))
-        }) else {
+        let anchor =
+            self.terminal_grid_byte_at(split_id, buffer_id, content_rect, origin_col, origin_row);
+        let head = self.terminal_grid_byte_at(split_id, buffer_id, content_rect, col, row);
+        let (Some(anchor), Some(head)) = (anchor, head) else {
             return Ok(());
         };
 
@@ -403,5 +371,165 @@ impl super::Editor {
         ms.drag_selection_split = Some(split_id);
         ms.drag_selection_anchor = Some(anchor);
         Ok(())
+    }
+
+    /// Double-click on the live terminal grid: select the word under the
+    /// pointer. Same trick as [`Editor::begin_terminal_grid_selection`] — the
+    /// live grid has no selection model, so the split first drops into
+    /// implicit scrollback (pixel-identical view), then the standard
+    /// word-selection and word-wise drag machinery take over.
+    pub(super) fn begin_terminal_grid_word_selection(
+        &mut self,
+        split_id: crate::model::event::LeafId,
+        buffer_id: BufferId,
+        col: u16,
+        row: u16,
+    ) -> AnyhowResult<()> {
+        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+
+        let Some(content_rect) =
+            self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
+        else {
+            return Ok(());
+        };
+        let Some(pos) = self.terminal_grid_byte_at(split_id, buffer_id, content_rect, col, row)
+        else {
+            return Ok(());
+        };
+
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.splits_mut())
+            .and_then(|(_, vs)| vs.get_mut(&split_id))
+        {
+            let cursor = view_state.cursors.primary_mut();
+            cursor.position = pos;
+            cursor.anchor = None;
+        }
+        self.handle_action(crate::input::keybindings::Action::SelectWord)?;
+
+        // Mirror `handle_editor_double_click`: arm word-wise drag extension.
+        if let Some((sel_start, sel_end)) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(_, vs)| vs.get(&split_id))
+            .map(|vs| {
+                let c = vs.cursors.primary();
+                (c.selection_start(), c.selection_end())
+            })
+        {
+            let ms = &mut self.active_window_mut().mouse_state;
+            ms.dragging_text_selection = true;
+            ms.drag_selection_split = Some(split_id);
+            ms.drag_selection_anchor = Some(sel_start);
+            ms.drag_selection_by_words = true;
+            ms.drag_selection_word_end = Some(sel_end);
+        }
+        Ok(())
+    }
+
+    /// Triple-click on the live terminal grid: select the whole line under
+    /// the pointer, via the same implicit-scrollback detour.
+    pub(super) fn begin_terminal_grid_line_selection(
+        &mut self,
+        split_id: crate::model::event::LeafId,
+        buffer_id: BufferId,
+        col: u16,
+        row: u16,
+    ) -> AnyhowResult<()> {
+        self.active_window_mut().mouse_state.terminal_drag_pending = None;
+
+        let Some(content_rect) =
+            self.drop_terminal_grid_into_selection_scrollback(split_id, buffer_id)
+        else {
+            return Ok(());
+        };
+        let Some(pos) = self.terminal_grid_byte_at(split_id, buffer_id, content_rect, col, row)
+        else {
+            return Ok(());
+        };
+
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.buffers.splits_mut())
+            .and_then(|(_, vs)| vs.get_mut(&split_id))
+        {
+            let cursor = view_state.cursors.primary_mut();
+            cursor.position = pos;
+            cursor.anchor = None;
+        }
+        self.handle_action(crate::input::keybindings::Action::SelectLine)?;
+        Ok(())
+    }
+
+    /// Drop a *live* terminal grid split into read-only scrollback for a
+    /// selection gesture, pinned pixel-identical to the grid (see
+    /// [`Editor::begin_terminal_grid_selection`]), and mark the visit
+    /// implicit (drag-initiated) so completing the gesture — copying, or a
+    /// bare click abandoning the selection — resumes the live grid
+    /// automatically. Returns the split's content rect, or `None` when the
+    /// situation changed under the gesture (buffer no longer a terminal,
+    /// split already in scrollback, layout gone) and nothing was done.
+    fn drop_terminal_grid_into_selection_scrollback(
+        &mut self,
+        split_id: crate::model::event::LeafId,
+        buffer_id: BufferId,
+    ) -> Option<Rect> {
+        if !self.active_window().is_terminal_buffer(buffer_id)
+            || self
+                .active_window()
+                .split_terminal_scrollback(split_id, buffer_id)
+        {
+            return None;
+        }
+        let content_rect = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(sid, bid, _, _, _, _)| *sid == split_id && *bid == buffer_id)
+            .map(|(_, _, rect, _, _, _)| *rect)?;
+
+        // Drop into read-only scrollback. The press already focused the
+        // split, so the sync pins THIS split's viewport to the grid's row 0.
+        self.active_window_mut()
+            .set_split_terminal_scrollback(split_id, buffer_id, true);
+        self.active_window_mut()
+            .set_split_terminal_drag_scrollback(split_id, buffer_id, true);
+        self.active_window_mut().sync_terminal_mode_flags();
+        self.set_status_message(
+            "Terminal mode disabled - read only (Ctrl+Space to resume)".to_string(),
+        );
+        Some(content_rect)
+    }
+
+    /// Resolve a screen position over a terminal scrollback view to a byte
+    /// offset: grid row `r` is buffer line `top_line + r` and grid columns
+    /// map 1:1 (wrap off, no gutter). Exact for any scroll position, with no
+    /// dependency on render-cached view-line mappings.
+    pub(super) fn terminal_grid_byte_at(
+        &self,
+        split_id: crate::model::event::LeafId,
+        buffer_id: BufferId,
+        content_rect: Rect,
+        col: u16,
+        row: u16,
+    ) -> Option<usize> {
+        let win = self.windows.get(&self.active_window)?;
+        let (_, view_states) = win.buffers.splits()?;
+        let vs = view_states.get(&split_id)?;
+        let state = win.buffers.get(&buffer_id)?;
+        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte);
+        let grid_row = row.saturating_sub(content_rect.y) as usize;
+        // Account for horizontal scroll (a pinned view starts at 0, but an
+        // explicit scrollback view may have been scrolled right).
+        let grid_col =
+            col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+        let pos = state
+            .buffer
+            .line_col_to_position(top_line + grid_row, grid_col);
+        Some(state.buffer.snap_to_char_boundary(pos))
     }
 }

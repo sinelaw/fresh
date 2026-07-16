@@ -102,6 +102,22 @@ pub struct TerminalBuffer {
     /// through [`Window::set_split_terminal_scrollback`] and pruned on split
     /// close via [`Window::forget_split_terminal_modes`].
     scrollback_splits: std::collections::HashSet<LeafId>,
+
+    /// The subset of `scrollback_splits` that entered scrollback *implicitly*
+    /// — dropped there by a selection gesture on the live grid
+    /// (`begin_terminal_grid_selection`) rather than by an explicit request
+    /// (Ctrl+Space, Shift+PageUp, wheel-up, process exit).
+    ///
+    /// Implicit scrollback is an implementation detail of drag-to-select, so
+    /// it also *ends* automatically: completing the gesture (copying the
+    /// selection) or abandoning it (a bare click) resumes the live grid.
+    /// Engaging with the scrollback as a view — scrolling it — clears the
+    /// marker, converting the visit to an explicit one that only ends by the
+    /// explicit rules. Invariant: `drag_scrollback_splits ⊆
+    /// scrollback_splits`, maintained by `set_scrollback_in` (any transition
+    /// through the sole mutator clears the marker; the drag path re-marks
+    /// afterwards).
+    drag_scrollback_splits: std::collections::HashSet<LeafId>,
 }
 
 impl TerminalBuffer {
@@ -111,6 +127,7 @@ impl TerminalBuffer {
         Self {
             terminal_id,
             scrollback_splits: std::collections::HashSet::new(),
+            drag_scrollback_splits: std::collections::HashSet::new(),
         }
     }
 
@@ -119,14 +136,34 @@ impl TerminalBuffer {
         self.scrollback_splits.contains(&split)
     }
 
+    /// Whether `split`'s scrollback visit is implicit (drag-initiated).
+    pub fn is_drag_scrollback_in(&self, split: LeafId) -> bool {
+        self.drag_scrollback_splits.contains(&split)
+    }
+
     /// Record `split`'s live↔scrollback edge for this terminal: `true` adds it
     /// to the scrollback set, `false` removes it (back to live). Sole mutator,
-    /// reached via [`Window::set_split_terminal_scrollback`].
+    /// reached via [`Window::set_split_terminal_scrollback`]. Every transition
+    /// clears the implicit (drag-initiated) marker: leaving scrollback ends
+    /// the visit, and an explicit (re-)entry downgrades an implicit one —
+    /// only `begin_terminal_grid_selection` re-marks, after calling this.
     fn set_scrollback_in(&mut self, split: LeafId, scrollback: bool) {
         if scrollback {
             self.scrollback_splits.insert(split);
         } else {
             self.scrollback_splits.remove(&split);
+        }
+        self.drag_scrollback_splits.remove(&split);
+    }
+
+    /// Mark or unmark `split`'s scrollback visit as implicit (drag-initiated).
+    /// Marking a split that isn't in scrollback is a no-op, preserving the
+    /// subset invariant.
+    fn set_drag_scrollback_in(&mut self, split: LeafId, drag: bool) {
+        if drag && self.scrollback_splits.contains(&split) {
+            self.drag_scrollback_splits.insert(split);
+        } else if !drag {
+            self.drag_scrollback_splits.remove(&split);
         }
     }
 
@@ -134,6 +171,7 @@ impl TerminalBuffer {
     /// longer shows this terminal), reverting it to the live default.
     fn forget_split(&mut self, split: LeafId) {
         self.scrollback_splits.remove(&split);
+        self.drag_scrollback_splits.remove(&split);
     }
 }
 
@@ -2384,6 +2422,29 @@ impl Window {
     ) {
         if let Some(tb) = self.terminal_buffer_mut(buffer_id) {
             tb.set_scrollback_in(split, scrollback);
+        }
+    }
+
+    /// Whether `split`'s scrollback visit for terminal `buffer_id` is
+    /// implicit — entered by a selection gesture on the live grid rather than
+    /// an explicit request. `false` for live splits, explicit scrollback, and
+    /// non-terminal buffers.
+    pub fn split_terminal_drag_scrollback(&self, split: LeafId, buffer_id: BufferId) -> bool {
+        self.terminal_buffer(buffer_id)
+            .is_some_and(|tb| tb.is_drag_scrollback_in(split))
+    }
+
+    /// Mark (or unmark) `split`'s scrollback visit for terminal `buffer_id`
+    /// as implicit (drag-initiated). No-op for non-terminal buffers and, when
+    /// marking, for splits not currently in scrollback.
+    pub fn set_split_terminal_drag_scrollback(
+        &mut self,
+        split: LeafId,
+        buffer_id: BufferId,
+        drag: bool,
+    ) {
+        if let Some(tb) = self.terminal_buffer_mut(buffer_id) {
+            tb.set_drag_scrollback_in(split, drag);
         }
     }
 

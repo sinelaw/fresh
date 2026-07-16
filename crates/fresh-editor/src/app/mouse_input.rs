@@ -519,6 +519,16 @@ impl Editor {
                 // Scrolling up drops the focused split into read-only scrollback
                 // (recorded per-split, so re-focusing keeps it there).
                 self.enter_terminal_scrollback();
+            } else if let Some((split_id, buffer_id)) =
+                self.active_window().split_at_position(col, row)
+            {
+                // Scrolling a terminal split that a drag parked in implicit
+                // scrollback means the user is now *reading* the scrollback:
+                // convert the visit to an explicit one, so copy / click-away
+                // no longer auto-resume the live grid (no-op for everything
+                // else).
+                self.active_window_mut()
+                    .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
             }
             self.dismiss_transient_popups();
             self.active_window_mut()
@@ -1361,14 +1371,21 @@ impl Editor {
         {
             if in_rect(col, row, *content_rect) {
                 // Double-clicked on an editor split. A LIVE terminal grid has
-                // no selection model — keep the terminal key context and do
-                // nothing. A terminal in read-only scrollback is an ordinary
-                // buffer view: fall through so double-click selects the word.
+                // no selection model of its own — select the word through the
+                // same implicit-scrollback detour a drag uses (the first
+                // press of the pair already focused the split; with
+                // `mouse_drag_selects` off the grid stays inert). A terminal
+                // in read-only scrollback is an ordinary buffer view: fall
+                // through so double-click selects the word.
                 if self.active_window().is_terminal_buffer(*buffer_id)
                     && !self
                         .active_window()
                         .split_terminal_scrollback(*split_id, *buffer_id)
                 {
+                    if self.config.terminal.mouse_drag_selects {
+                        return self
+                            .begin_terminal_grid_word_selection(*split_id, *buffer_id, col, row);
+                    }
                     self.active_window_mut().key_context =
                         crate::input::keybindings::KeyContext::Terminal;
                     return Ok(());
@@ -1532,13 +1549,18 @@ impl Editor {
             &split_areas
         {
             if in_rect(col, row, *content_rect) {
-                // Live grid: no selection model (see double-click above);
-                // scrollback view: ordinary buffer, select the line.
+                // Live grid: select the line via the implicit-scrollback
+                // detour (see double-click above); scrollback view: ordinary
+                // buffer, select the line.
                 if self.active_window().is_terminal_buffer(*buffer_id)
                     && !self
                         .active_window()
                         .split_terminal_scrollback(*split_id, *buffer_id)
                 {
+                    if self.config.terminal.mouse_drag_selects {
+                        return self
+                            .begin_terminal_grid_line_selection(*split_id, *buffer_id, col, row);
+                    }
                     return Ok(());
                 }
 
@@ -2267,6 +2289,11 @@ impl Editor {
             )?;
 
         self.focus_split(split_id, buffer_id);
+        // Grabbing the scrollbar of a drag-parked terminal scrollback view is
+        // scrollback *reading* — convert the implicit visit to an explicit one
+        // (no-op otherwise).
+        self.active_window_mut()
+            .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
         if is_on_thumb {
             self.active_window_mut().mouse_state.dragging_scrollbar = Some(split_id);
             self.active_window_mut().mouse_state.drag_start_row = Some(row);
@@ -3104,22 +3131,42 @@ impl Editor {
         let drag_by_words = self.active_window_mut().mouse_state.drag_selection_by_words;
         let drag_word_end = self.active_window_mut().mouse_state.drag_selection_word_end;
 
+        // Terminal scrollback views are unwrapped and gutter-free, so a
+        // screen cell maps to a byte exactly (viewport top line + row).
+        // Resolve directly instead of through the render-cached view-line
+        // mappings: drag events processed after the live-grid→scrollback
+        // flip but before the next render would otherwise resolve against
+        // mappings cached from a *previous* buffer view of this split and
+        // land the selection head far from the pointer.
+        let terminal_grid_target = if self.active_window().is_terminal_buffer(buffer_id)
+            && self
+                .active_window()
+                .split_terminal_scrollback(leaf_id, buffer_id)
+        {
+            self.terminal_grid_byte_at(leaf_id, buffer_id, content_rect, col, row)
+        } else {
+            None
+        };
+
         let Some((target_position, new_position, anchor_position, new_sticky_column)) = self
             .active_window()
             .buffers
             .get(&buffer_id)
             .and_then(|state| {
                 let gutter_width = state.margins.left_total_width() as u16;
-                let target_position = super::click_geometry::screen_to_buffer_position(
-                    col,
-                    row,
-                    content_rect,
-                    gutter_width,
-                    &cached_mappings,
-                    fallback,
-                    true, // Allow gutter clicks for drag selection
-                    compose_width,
-                )?;
+                let target_position = match terminal_grid_target {
+                    Some(pos) => pos,
+                    None => super::click_geometry::screen_to_buffer_position(
+                        col,
+                        row,
+                        content_rect,
+                        gutter_width,
+                        &cached_mappings,
+                        fallback,
+                        true, // Allow gutter clicks for drag selection
+                        compose_width,
+                    )?,
+                };
                 let (new_position, anchor_pos) = if drag_by_words {
                     if target_position >= anchor_position {
                         (
