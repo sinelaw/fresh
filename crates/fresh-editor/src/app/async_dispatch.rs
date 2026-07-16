@@ -1392,6 +1392,7 @@ impl Editor {
                 if detected.highlighter.has_highlighting() || !state.highlighter.has_highlighting()
                 {
                     state.apply_language(detected);
+                    state.apply_buffer_config(&self.config);
                 }
             }
         }

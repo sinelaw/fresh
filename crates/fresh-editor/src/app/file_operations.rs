@@ -115,6 +115,7 @@ impl Editor {
                             &self.config.languages,
                         );
                     state.apply_language(detected);
+                    state.apply_buffer_config(&self.config);
                 }
             }
         }

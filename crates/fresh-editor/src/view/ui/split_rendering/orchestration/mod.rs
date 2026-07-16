@@ -452,8 +452,9 @@ pub(crate) fn render_content(
             // plugin override (`setIndentationGuide`) wins; otherwise virtual
             // buffers (grep results, *Diagnostics*, the Git Log commit list, …)
             // default off because they aren't code, while ordinary file buffers
-            // follow the buffer language's `indentation_guide` gate (plain text
-            // defaults off; every other language follows the global setting).
+            // follow the buffer's resolved `indentation_guide` gate (plain text
+            // defaults off; any language can opt out — see
+            // `BufferSettings::apply_config`) and then the global setting.
             // A file-backed tool view the virtual default can't catch — the Git
             // Log commit-detail diff — opts out via the override. This is
             // independent of the line-number gutter, so an ordinary buffer
@@ -463,13 +464,7 @@ pub(crate) fn render_content(
                 Some(true) => style.cfg.indentation_guide,
                 Some(false) => IndentationGuideMode::None,
                 None if is_virtual_buffer => IndentationGuideMode::None,
-                None if !crate::config::language_indentation_guides_enabled(
-                    style.cfg.languages,
-                    &state.language,
-                ) =>
-                {
-                    IndentationGuideMode::None
-                }
+                None if !state.buffer_settings.indentation_guide => IndentationGuideMode::None,
                 None => style.cfg.indentation_guide,
             };
 

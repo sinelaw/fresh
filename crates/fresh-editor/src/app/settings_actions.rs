@@ -282,17 +282,7 @@ impl Editor {
         let config = self.config.clone();
         for window in self.windows.values_mut() {
             for state in window.buffers.as_map_mut().values_mut() {
-                let resolved = crate::config::BufferConfig::resolve(&config, Some(&state.language));
-                state.buffer_settings.tab_size = resolved.tab_size;
-                state.buffer_settings.use_tabs = resolved.use_tabs;
-                state.buffer_settings.auto_close = resolved.auto_close;
-                state.buffer_settings.auto_surround = resolved.auto_surround;
-                state.buffer_settings.virtual_space = state
-                    .buffer_settings
-                    .virtual_space_override
-                    .unwrap_or(resolved.virtual_space);
-                state.buffer_settings.whitespace = resolved.whitespace;
-                state.buffer_settings.word_characters = resolved.word_characters;
+                state.apply_buffer_config(&config);
             }
         }
     }

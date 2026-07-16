@@ -124,6 +124,13 @@ pub struct BufferSettings {
     /// Extra characters (beyond alphanumeric + `_`) considered part of
     /// identifiers for this language. Used by completion providers.
     pub word_characters: String,
+
+    /// Whether indentation guides may render for this buffer. `false`
+    /// suppresses them regardless of the global `editor.indentation_guide`
+    /// mode (plain-text buffers default off; any language can opt out via
+    /// `languages.<id>.indentation_guide`). Set based on global + language
+    /// config.
+    pub indentation_guide: bool,
 }
 
 impl Default for BufferSettings {
@@ -137,7 +144,33 @@ impl Default for BufferSettings {
             virtual_space: crate::config::VirtualSpaceMode::default(),
             virtual_space_override: None,
             word_characters: String::new(),
+            indentation_guide: true,
         }
+    }
+}
+
+impl BufferSettings {
+    /// Stamp a resolved global + per-language configuration onto this
+    /// buffer's settings. Together with [`EditorState::apply_buffer_config`]
+    /// this is THE single place language-dependent settings land on a buffer
+    /// — when a new language-overridable flag is added, extend
+    /// [`crate::config::BufferConfig::resolve`] and this function, and every
+    /// call site (file open, new buffer, Set Language, save-time detection,
+    /// config reload) picks it up automatically.
+    ///
+    /// Explicit per-buffer user overrides are preserved: `virtual_space`
+    /// keeps following `virtual_space_override` when one is set.
+    pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
+        self.tab_size = resolved.tab_size;
+        self.use_tabs = resolved.use_tabs;
+        self.auto_close = resolved.auto_close;
+        self.auto_surround = resolved.auto_surround;
+        self.virtual_space = self
+            .virtual_space_override
+            .unwrap_or(resolved.virtual_space);
+        self.whitespace = resolved.whitespace;
+        self.word_characters = resolved.word_characters.clone();
+        self.indentation_guide = resolved.indentation_guide;
     }
 }
 
@@ -327,6 +360,20 @@ impl EditorState {
         if let Some(lang) = &detected.ts_language {
             self.reference_highlighter.set_language(lang);
         }
+    }
+
+    /// Resolve the global + per-language configuration for this buffer's
+    /// current language and stamp it onto `buffer_settings`. THE single
+    /// entry point for applying language-dependent settings to a buffer —
+    /// call it whenever the buffer's language or the config changes: file
+    /// open, new-buffer creation, **Set Language**, save-time language
+    /// detection, and config reload/save all go through here, so a new
+    /// language-overridable setting only needs to be added to
+    /// [`crate::config::BufferConfig::resolve`] and
+    /// [`BufferSettings::apply_config`].
+    pub fn apply_buffer_config(&mut self, config: &crate::config::Config) {
+        let resolved = crate::config::BufferConfig::resolve(config, Some(&self.language));
+        self.buffer_settings.apply_config(&resolved);
     }
 
     /// Create a new state with a buffer and default (plain text) language.

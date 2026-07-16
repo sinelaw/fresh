@@ -69,22 +69,15 @@ pub struct EditorRenderConfig<'a> {
     pub hide_current_line_on_selection: bool,
     pub background_fade: f32,
     pub software_cursor_only: bool,
-    /// Per-language config map, used to resolve the per-buffer
-    /// `indentation_guide` override (a buffer's language can suppress
-    /// guides even when they are enabled globally — plain text does so
-    /// by default). Looked up at render time so the resolution stays
-    /// correct across file open, Set Language, and config reload.
-    pub languages: &'a HashMap<String, crate::config::LanguageConfig>,
 }
 
 impl<'a> EditorRenderConfig<'a> {
     /// Build from the static editor config plus the two stable `Editor`
     /// flags that don't live under `config.editor`. Borrows only
-    /// `config.editor` and `config.languages`, so it composes with a
-    /// disjoint `&mut windows` borrow at the call site.
+    /// `config.editor`, so it composes with a disjoint `&mut windows`
+    /// borrow at the call site.
     pub fn new(
         editor: &'a crate::config::EditorConfig,
-        languages: &'a HashMap<String, crate::config::LanguageConfig>,
         background_fade: f32,
         software_cursor_only: bool,
     ) -> Self {
@@ -106,7 +99,6 @@ impl<'a> EditorRenderConfig<'a> {
             hide_current_line_on_selection: editor.hide_current_line_on_selection,
             background_fade,
             software_cursor_only,
-            languages,
         }
     }
 }

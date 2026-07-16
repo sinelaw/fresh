@@ -400,47 +400,11 @@ impl Editor {
         whitespace
     }
 
-    /// Reset buffer settings (tab_size, use_tabs, auto_close, whitespace visibility) to config defaults
+    /// Reset buffer settings (tab_size, use_tabs, auto_close, whitespace
+    /// visibility, indentation guides, …) to config defaults — the same
+    /// resolution a freshly opened file of this language would get.
     pub fn reset_buffer_settings(&mut self) {
-        use crate::config::WhitespaceVisibility;
         let buffer_id = self.active_buffer();
-
-        // Determine settings from config using buffer's stored language
-        let mut whitespace = WhitespaceVisibility::from_editor_config(&self.config.editor);
-        let mut auto_close = self.config.editor.auto_close;
-        let mut word_characters = String::new();
-        let (tab_size, use_tabs) = if let Some(state) = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
-            .expect("active window present")
-            .get(&buffer_id)
-        {
-            let language = &state.language;
-            if let Some(lang_config) = self.config.languages.get(language) {
-                whitespace =
-                    whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-                // Auto close: language override (only if globally enabled)
-                if auto_close {
-                    if let Some(lang_auto_close) = lang_config.auto_close {
-                        auto_close = lang_auto_close;
-                    }
-                }
-                if let Some(ref wc) = lang_config.word_characters {
-                    word_characters = wc.clone();
-                }
-                (
-                    lang_config.tab_size.unwrap_or(self.config.editor.tab_size),
-                    lang_config.use_tabs.unwrap_or(self.config.editor.use_tabs),
-                )
-            } else {
-                (self.config.editor.tab_size, self.config.editor.use_tabs)
-            }
-        } else {
-            (self.config.editor.tab_size, self.config.editor.use_tabs)
-        };
-
-        // Apply settings to buffer
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -448,11 +412,7 @@ impl Editor {
             .expect("active window present")
             .get_mut(&buffer_id)
         {
-            state.buffer_settings.tab_size = tab_size;
-            state.buffer_settings.use_tabs = use_tabs;
-            state.buffer_settings.auto_close = auto_close;
-            state.buffer_settings.whitespace = whitespace;
-            state.buffer_settings.word_characters = word_characters;
+            state.apply_buffer_config(&self.config);
         }
 
         self.set_status_message(t!("toggle.buffer_settings_reset").to_string());

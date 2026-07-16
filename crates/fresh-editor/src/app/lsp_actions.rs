@@ -1337,6 +1337,7 @@ impl Editor {
                             &self.config.languages,
                         );
                     state.apply_language(detected);
+                    state.apply_buffer_config(&self.config);
                 }
 
                 // Allow TypeScript language so LSP auto-spawns

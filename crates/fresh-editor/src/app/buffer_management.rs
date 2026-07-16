@@ -567,17 +567,12 @@ impl Editor {
             .buffer
             .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
         state.reference_highlight_overlay.enabled = self.config.editor.highlight_occurrences;
-        // Whitespace indicator visibility: resolve from the user's editor config
-        // so a brand-new buffer shows the same indicators as an opened file.
-        // Without this the buffer kept `WhitespaceVisibility::default()` (tabs on
-        // / spaces off), so configured space indicators never showed in a new
-        // file (issue #2580).
-        let mut whitespace =
-            crate::config::WhitespaceVisibility::from_editor_config(&self.config.editor);
-        if let Some(lang_config) = self.config.languages.get(&state.language) {
-            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-        }
-        state.buffer_settings.whitespace = whitespace;
+        // Buffer settings (whitespace visibility, tabs, guides, …): resolve
+        // from the user's config so a brand-new buffer behaves the same as an
+        // opened file. Without this the buffer kept `BufferSettings::default()`
+        // (e.g. tabs-on/spaces-off whitespace), so configured space indicators
+        // never showed in a new file (issue #2580).
+        state.apply_buffer_config(&self.config);
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)

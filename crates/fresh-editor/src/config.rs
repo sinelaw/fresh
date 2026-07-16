@@ -2679,26 +2679,6 @@ pub struct LanguageConfig {
     pub indentation_guide: Option<bool>,
 }
 
-/// Resolve whether indentation guides may render for a buffer of the given
-/// language. An explicit per-language `indentation_guide` setting wins;
-/// otherwise every language follows the global `editor.indentation_guide`
-/// mode except plain text (`text`), which defaults off — guides are a
-/// source-code aid, and undetected/plain-text files rarely have meaningful
-/// indentation nesting. Returns `false` to suppress guides regardless of the
-/// global mode, `true` to let the global mode apply.
-pub fn language_indentation_guides_enabled(
-    languages: &HashMap<String, LanguageConfig>,
-    language_id: &str,
-) -> bool {
-    if let Some(explicit) = languages
-        .get(language_id)
-        .and_then(|lc| lc.indentation_guide)
-    {
-        return explicit;
-    }
-    language_id != "text"
-}
-
 /// User-overridable auto-indentation rules for a language.
 ///
 /// When you press Enter, Fresh looks at the line being split (the "reference
@@ -2829,6 +2809,15 @@ pub struct BufferConfig {
     /// Extra word-constituent characters for this language (for completion).
     /// Empty string means standard alphanumeric + underscore only.
     pub word_characters: String,
+
+    /// Whether indentation guides may render for this buffer. `false`
+    /// suppresses them regardless of the global `editor.indentation_guide`
+    /// mode; `true` lets the global mode apply. An explicit per-language
+    /// `indentation_guide` setting wins; otherwise every language follows
+    /// the global mode except plain text (`text`), which defaults off —
+    /// guides are a source-code aid, and undetected/plain-text files rarely
+    /// have meaningful indentation nesting.
+    pub indentation_guide: bool,
 }
 
 impl BufferConfig {
@@ -2860,6 +2849,7 @@ impl BufferConfig {
             on_save: Vec::new(),
             textmate_grammar: None,
             word_characters: String::new(),
+            indentation_guide: language_id.is_none_or(|id| id != "text"),
         };
 
         // Apply language-specific overrides if available.
@@ -2878,6 +2868,11 @@ impl BufferConfig {
                 }
             });
         if let Some(lang_config) = lang_config_ref {
+            // Indentation guides: language override (only if explicitly set)
+            if let Some(indentation_guide) = lang_config.indentation_guide {
+                config.indentation_guide = indentation_guide;
+            }
+
             // Tab size: use language setting if specified, else global
             if let Some(ts) = lang_config.tab_size {
                 config.tab_size = ts;
@@ -8496,19 +8491,12 @@ mod tests {
     fn test_language_indentation_guides_enabled_defaults() {
         let config = Config::default();
         // Plain text defaults off; code languages follow the global mode.
-        assert!(!language_indentation_guides_enabled(
-            &config.languages,
-            "text"
-        ));
-        assert!(language_indentation_guides_enabled(
-            &config.languages,
-            "rust"
-        ));
-        // Unknown languages (no config entry) follow the global mode too.
-        assert!(language_indentation_guides_enabled(
-            &config.languages,
-            "some_unknown_lang"
-        ));
+        assert!(!BufferConfig::resolve(&config, Some("text")).indentation_guide);
+        assert!(BufferConfig::resolve(&config, Some("rust")).indentation_guide);
+        // Unknown languages (no config entry) follow the global mode too,
+        // as does a buffer with no language at all.
+        assert!(BufferConfig::resolve(&config, Some("some_unknown_lang")).indentation_guide);
+        assert!(BufferConfig::resolve(&config, None).indentation_guide);
     }
 
     #[test]
@@ -8521,20 +8509,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        config
-            .languages
-            .get_mut("rust")
-            .unwrap()
-            .indentation_guide = Some(false);
+        config.languages.get_mut("rust").unwrap().indentation_guide = Some(false);
 
-        assert!(language_indentation_guides_enabled(
-            &config.languages,
-            "text"
-        ));
-        assert!(!language_indentation_guides_enabled(
-            &config.languages,
-            "rust"
-        ));
+        assert!(BufferConfig::resolve(&config, Some("text")).indentation_guide);
+        assert!(!BufferConfig::resolve(&config, Some("rust")).indentation_guide);
     }
 
     #[test]

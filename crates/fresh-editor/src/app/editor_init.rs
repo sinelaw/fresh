@@ -957,9 +957,7 @@ impl Editor {
         state
             .margins
             .configure_for_line_numbers(config.editor.line_numbers);
-        state.buffer_settings.tab_size = config.editor.tab_size;
-        state.buffer_settings.auto_close = config.editor.auto_close;
-        state.buffer_settings.virtual_space = config.editor.virtual_space;
+        state.apply_buffer_config(&config);
         // Note: line_wrap_enabled is now stored in SplitViewState.viewport
         tracing::info!("EditorState created for buffer {:?}", buffer_id);
         buffers.insert(buffer_id, state);

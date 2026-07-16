@@ -796,23 +796,10 @@ impl Editor {
         let mut state = EditorState::from_buffer_with_language(buffer, detected);
         state.editing_disabled = true;
 
-        // Whitespace / tab settings — same shape as `open_file_no_focus`
-        // so the rendered look is consistent. Container-fetched
-        // buffers should obey the user's editor config like any other
-        // read-only buffer.
-        let mut whitespace =
-            crate::config::WhitespaceVisibility::from_editor_config(&self.config.editor);
-        if let Some(lang_config) = self.config.languages.get(&state.language) {
-            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-            state.buffer_settings.use_tabs =
-                lang_config.use_tabs.unwrap_or(self.config.editor.use_tabs);
-            state.buffer_settings.tab_size =
-                lang_config.tab_size.unwrap_or(self.config.editor.tab_size);
-        } else {
-            state.buffer_settings.tab_size = self.config.editor.tab_size;
-            state.buffer_settings.use_tabs = self.config.editor.use_tabs;
-        }
-        state.buffer_settings.whitespace = whitespace;
+        // Buffer settings — same resolution as `open_file_no_focus` so the
+        // rendered look is consistent. Container-fetched buffers should obey
+        // the user's editor config like any other read-only buffer.
+        state.apply_buffer_config(&self.config);
         state
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
@@ -1106,40 +1093,11 @@ impl crate::app::window::Window {
             state.editing_disabled = true;
         }
 
-        // Set whitespace visibility, use_tabs, and tab_size based on language config
-        // with fallback to global editor config for tab_size
-        // Use the buffer's stored language (already set by from_file_with_languages)
-        let mut whitespace =
-            crate::config::WhitespaceVisibility::from_editor_config(&self.resources.config.editor);
-        state.buffer_settings.auto_close = self.resources.config.editor.auto_close;
-        state.buffer_settings.auto_surround = self.resources.config.editor.auto_surround;
-        state.buffer_settings.virtual_space = self.resources.config.editor.virtual_space;
-        if let Some(lang_config) = self.resources.config.languages.get(&state.language) {
-            whitespace = whitespace.with_language_tab_override(lang_config.show_whitespace_tabs);
-            state.buffer_settings.use_tabs = lang_config
-                .use_tabs
-                .unwrap_or(self.resources.config.editor.use_tabs);
-            // Use language-specific tab_size if set, otherwise fall back to global
-            state.buffer_settings.tab_size = lang_config
-                .tab_size
-                .unwrap_or(self.resources.config.editor.tab_size);
-            // Auto close: language override (only if globally enabled)
-            if state.buffer_settings.auto_close {
-                if let Some(lang_auto_close) = lang_config.auto_close {
-                    state.buffer_settings.auto_close = lang_auto_close;
-                }
-            }
-            // Auto surround: language override (only if globally enabled)
-            if state.buffer_settings.auto_surround {
-                if let Some(lang_auto_surround) = lang_config.auto_surround {
-                    state.buffer_settings.auto_surround = lang_auto_surround;
-                }
-            }
-        } else {
-            state.buffer_settings.tab_size = self.resources.config.editor.tab_size;
-            state.buffer_settings.use_tabs = self.resources.config.editor.use_tabs;
-        }
-        state.buffer_settings.whitespace = whitespace;
+        // Apply the global + per-language buffer settings (whitespace
+        // visibility, tabs, auto-close/surround, guides, …).
+        // Uses the buffer's stored language (already set by
+        // from_file_with_languages).
+        state.apply_buffer_config(&self.resources.config);
 
         // Apply line_numbers default from config
         state
