@@ -4091,8 +4091,9 @@ fn test_file_explorer_applies_custom_ignore_patterns() {
 /// `Some`, so on a slow/remote backend the toggle appeared to do nothing until
 /// the build landed. A slow `read_dir` reproduces the remote latency locally:
 /// it stalls only the async build, so when we render right after the toggle the
-/// tree is still `None` — yet the panel (a "File Explorer" placeholder) must be
-/// on screen.
+/// tree is still `None` — yet the panel must already be on screen with its
+/// final chrome ("File Explorer" title) and a "Loading…" body, and the tree
+/// landing must change nothing but that body: no chrome pop, no layout shift.
 #[test]
 fn test_file_explorer_shows_placeholder_during_slow_build() {
     use fresh::services::fs::SlowFsConfig;
@@ -4107,6 +4108,9 @@ fn test_file_explorer_shows_placeholder_during_slow_build() {
     slow.read_dir_delay = Duration::from_millis(400);
 
     let mut harness = EditorTestHarness::with_slow_fs(120, 40, slow).unwrap();
+    // A file the built tree will list — proof the async build landed.
+    let workdir = harness.temp_dir_path().unwrap().to_path_buf();
+    fs::write(workdir.join("landed_marker.txt"), "hello\n").unwrap();
 
     // The explorer panel draws a bordered box whose top-left corner sits at
     // column 0; nothing else paints a `┌` at the start of a line, so it's a
@@ -4120,18 +4124,50 @@ fn test_file_explorer_shows_placeholder_during_slow_build() {
 
     // Toggle the explorer on (Ctrl+B). The async build is still running when
     // `send_key`'s bounded drain returns, so `file_explorer` is still `None` —
-    // yet the sidebar (a placeholder panel) must already be on screen rather
-    // than a blank gap.
+    // yet the sidebar must already be on screen as a loading panel carrying
+    // the final chrome, not a blank gap or an anonymous box.
     harness
         .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
 
+    let placeholder_frame = harness.screen_to_string();
     assert!(
         panel_drawn(&harness),
         "explorer panel (placeholder) must be visible while the slow build is \
-         in progress, not a blank gap; screen:\n{}",
-        harness.screen_to_string()
+         in progress, not a blank gap; screen:\n{placeholder_frame}"
+    );
+    assert!(
+        placeholder_frame.contains("File Explorer"),
+        "the loading placeholder must already carry the panel's final title; \
+         screen:\n{placeholder_frame}"
+    );
+    assert!(
+        placeholder_frame.contains("Loading"),
+        "the loading placeholder must say it is loading; \
+         screen:\n{placeholder_frame}"
+    );
+    // The chrome row (panel title + top border) is already final: record it
+    // now and compare after the build lands.
+    let chrome_row = |s: &str| {
+        s.lines()
+            .find(|l| l.starts_with('┌'))
+            .map(str::to_string)
+            .unwrap_or_default()
+    };
+    let placeholder_chrome = chrome_row(&placeholder_frame);
+
+    // The async build must still land: the "Loading…" body is replaced by
+    // the real tree...
+    harness
+        .wait_until(|h| h.screen_to_string().contains("landed_marker.txt"))
+        .unwrap();
+    // ...and that swap changed only the body — the chrome row is unchanged,
+    // so the load caused no layout shift or title pop.
+    assert_eq!(
+        chrome_row(&harness.screen_to_string()),
+        placeholder_chrome,
+        "the tree landing must not change the panel chrome/layout"
     );
 }
 

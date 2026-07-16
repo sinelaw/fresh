@@ -1699,35 +1699,25 @@ impl Editor {
             );
         } else if fe_draw {
             // The tree isn't materialised yet but the column is reserved
-            // (initial build or expand-to-path sync in progress). Paint a
-            // placeholder panel — a bordered box with the "Initializing…" line —
-            // so the explorer *visibly* appears the instant it's toggled on, even
-            // when the build is slow (e.g. a remote SSH workspace). Previously
-            // this was left blank, so a remote toggle looked like it did nothing.
-            //
-            // The placeholder is deliberately *untitled*: the real panel's title
-            // (" File Explorer " locally, " [host] " remotely) is the tree-is-ready
-            // signal that tests, the View-menu checkmark, and focus routing key
-            // on, so it must appear only once the materialised tree is on screen.
-            use ratatui::layout::Alignment;
-            use ratatui::style::Style;
-            use ratatui::widgets::{Block, Borders, Paragraph};
-
-            let theme = self.theme.read().unwrap();
-            let border_style = if is_focused {
-                Style::default().fg(theme.cursor)
-            } else {
-                Style::default().fg(theme.split_separator_fg)
-            };
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(border_style)
-                .style(Style::default().bg(theme.editor_bg));
-            let placeholder = Paragraph::new(rust_i18n::t!("explorer.initializing").to_string())
-                .style(Style::default().fg(theme.line_number_fg))
-                .alignment(Alignment::Center)
-                .block(block);
-            frame.render_widget(placeholder, area);
+            // (initial build or expand-to-path sync in progress). Paint the
+            // panel's FINAL chrome — same title, borders, and close button as
+            // the loaded panel — with a "Loading…" body, so the explorer
+            // *visibly* appears the instant its window does and the tree
+            // landing later changes nothing but the list content. The window
+            // therefore never paints in two stages around the (always async,
+            // local and remote alike) tree build: the layout and chrome of
+            // the first frame are already final.
+            let keybindings = self.keybindings.read().unwrap();
+            FileExplorerRenderer::render_loading(
+                frame,
+                area,
+                is_focused,
+                &keybindings,
+                key_context_clone,
+                &self.theme.read().unwrap(),
+                close_button_hovered,
+                remote_connection.as_deref(),
+            );
         }
         self.active_chrome_mut().apply_theme_runs(&fe_runs);
     }

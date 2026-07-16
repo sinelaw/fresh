@@ -262,6 +262,7 @@
   "cmd.open_terminal_in_dock_desc": "Open a new terminal inside the shared bottom dock (creates the dock if it doesn't exist)",
   "cmd.workspace_trust": "Workspace Trust…",
   "cmd.workspace_trust_desc": "Open the workspace-trust dialog to trust, restrict, or block this folder",
+  "explorer.loading": "Loading...",
   "trust.now_trusted": "Workspace trusted — project tooling may run processes",
   "trust.now_restricted": "Workspace restricted — repo-controlled execution is blocked",
   "trust.now_blocked": "Workspace blocked — no processes will run",

@@ -46,6 +46,131 @@ pub(crate) struct TrailingSlotBoundsCtx<'a> {
 }
 
 impl FileExplorerRenderer {
+    /// The explorer panel's title in its non-search state: `" File Explorer (kb) "`
+    /// locally, `" [host] (kb) "` on a remote connection. Shared by the
+    /// materialised panel and the loading placeholder
+    /// ([`Self::render_loading`]) so the chrome can't drift between the two
+    /// build phases — the tree landing must change nothing but the list body.
+    fn panel_title(remote_connection: Option<&str>, keybinding_suffix: &str) -> String {
+        if let Some(host) = remote_connection {
+            // Extract just the hostname from "user@host" or "user@host:port"
+            let hostname = host
+                .split('@')
+                .next_back()
+                .unwrap_or(host)
+                .split(':')
+                .next()
+                .unwrap_or(host);
+            format!(" [{}]{} ", hostname, keybinding_suffix)
+        } else {
+            format!(" File Explorer{} ", keybinding_suffix)
+        }
+    }
+
+    /// Title + border styles for the panel chrome: warning colors when the
+    /// remote is disconnected, inverted (dark on light) title when focused.
+    /// Shared with [`Self::render_loading`] for the same no-drift reason as
+    /// [`Self::panel_title`].
+    fn panel_chrome_styles(
+        remote_connection: Option<&str>,
+        is_focused: bool,
+        theme: &Theme,
+    ) -> (Style, Style) {
+        let remote_disconnected = remote_connection
+            .map(|c| c.contains("(Disconnected)"))
+            .unwrap_or(false);
+        if remote_disconnected {
+            (
+                Style::default()
+                    .fg(theme.status_error_indicator_fg)
+                    .bg(theme.status_error_indicator_bg)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.status_error_indicator_bg),
+            )
+        } else if is_focused {
+            (
+                Style::default()
+                    .fg(theme.editor_bg)
+                    .bg(theme.editor_fg)
+                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.cursor),
+            )
+        } else {
+            (
+                Style::default().fg(theme.line_number_fg),
+                Style::default().fg(theme.split_separator_fg),
+            )
+        }
+    }
+
+    /// Render the close button "×" at the right side of the title bar.
+    /// Shared by the materialised panel and the loading placeholder.
+    fn render_close_button(
+        frame: &mut Frame,
+        area: Rect,
+        theme: &Theme,
+        close_button_hovered: bool,
+    ) {
+        let close_button_x = area.x + area.width.saturating_sub(3);
+        let close_fg = if close_button_hovered {
+            theme.tab_close_hover_fg
+        } else {
+            theme.line_number_fg
+        };
+        let close_button =
+            ratatui::widgets::Paragraph::new("×").style(Style::default().fg(close_fg));
+        let close_area = Rect::new(close_button_x, area.y, 1, 1);
+        frame.render_widget(close_button, close_area);
+    }
+
+    /// Render the loading placeholder shown while the tree is still being
+    /// built (initial async build or expand-to-path sync): the panel's FINAL
+    /// chrome — same title, borders, styles, and close button as the
+    /// materialised panel — with a dimmed "Loading…" body in place of the
+    /// list. The tree landing therefore swaps only the body content; the
+    /// page layout and the panel chrome are pixel-identical before and after
+    /// the load, so a slow (e.g. remote) build never causes a two-stage
+    /// paint of the surrounding window.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_loading(
+        frame: &mut Frame,
+        area: Rect,
+        is_focused: bool,
+        keybinding_resolver: &crate::input::keybindings::KeybindingResolver,
+        current_context: crate::input::keybindings::KeyContext,
+        theme: &Theme,
+        close_button_hovered: bool,
+        remote_connection: Option<&str>,
+    ) {
+        use ratatui::layout::Alignment;
+        use ratatui::widgets::Paragraph;
+
+        let keybinding_suffix = keybinding_resolver
+            .get_keybinding_for_action(
+                &crate::input::keybindings::Action::FocusFileExplorer,
+                current_context,
+            )
+            .map(|kb| format!(" ({})", kb))
+            .unwrap_or_default();
+        let title = Self::panel_title(remote_connection, &keybinding_suffix);
+        let (title_style, border_style) =
+            Self::panel_chrome_styles(remote_connection, is_focused, theme);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .title_style(title_style)
+            .border_style(border_style)
+            .style(Style::default().bg(theme.editor_bg));
+        let placeholder = Paragraph::new(rust_i18n::t!("explorer.loading").to_string())
+            .style(Style::default().fg(theme.line_number_fg))
+            .alignment(Alignment::Center)
+            .block(block);
+        frame.render_widget(placeholder, area);
+
+        Self::render_close_button(frame, area, theme, close_button_hovered);
+    }
+
     /// Check if a directory contains any modified files
     fn folder_has_modified_files(
         folder_path: &PathBuf,
@@ -178,47 +303,12 @@ impl FileExplorerRenderer {
         // Show search query in title when search is active
         let title = if search_active {
             format!(" /{} ", view.search_query())
-        } else if let Some(host) = remote_connection {
-            // Extract just the hostname from "user@host" or "user@host:port"
-            let hostname = host
-                .split('@')
-                .next_back()
-                .unwrap_or(host)
-                .split(':')
-                .next()
-                .unwrap_or(host);
-            format!(" [{}]{} ", hostname, keybinding_suffix)
         } else {
-            format!(" File Explorer{} ", keybinding_suffix)
+            Self::panel_title(remote_connection, &keybinding_suffix)
         };
 
-        // Title style: use warning colors when remote is disconnected,
-        // otherwise inverted colors (dark on light) when focused.
-        let remote_disconnected = remote_connection
-            .map(|c| c.contains("(Disconnected)"))
-            .unwrap_or(false);
-        let (title_style, border_style) = if remote_disconnected {
-            (
-                Style::default()
-                    .fg(theme.status_error_indicator_fg)
-                    .bg(theme.status_error_indicator_bg)
-                    .add_modifier(Modifier::BOLD),
-                Style::default().fg(theme.status_error_indicator_bg),
-            )
-        } else if is_focused {
-            (
-                Style::default()
-                    .fg(theme.editor_bg)
-                    .bg(theme.editor_fg)
-                    .add_modifier(Modifier::BOLD),
-                Style::default().fg(theme.cursor),
-            )
-        } else {
-            (
-                Style::default().fg(theme.line_number_fg),
-                Style::default().fg(theme.split_separator_fg),
-            )
-        };
+        let (title_style, border_style) =
+            Self::panel_chrome_styles(remote_connection, is_focused, theme);
 
         // Create the list widget
         let list = List::new(items)
@@ -272,16 +362,7 @@ impl FileExplorerRenderer {
         }
 
         // Render close button "×" at the right side of the title bar
-        let close_button_x = area.x + area.width.saturating_sub(3);
-        let close_fg = if close_button_hovered {
-            theme.tab_close_hover_fg
-        } else {
-            theme.line_number_fg
-        };
-        let close_button =
-            ratatui::widgets::Paragraph::new("×").style(Style::default().fg(close_fg));
-        let close_area = Rect::new(close_button_x, area.y, 1, 1);
-        frame.render_widget(close_button, close_area);
+        Self::render_close_button(frame, area, theme, close_button_hovered);
 
         // When focused, show a blinking cursor indicator at the selected row
         // We render a cursor indicator character and position the hardware cursor there
