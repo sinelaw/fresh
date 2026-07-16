@@ -117,9 +117,9 @@ runtime = [
 # TLS stack (ureq + rustls + ring + webpki) is dropped from the binary.
 http = ["dep:ureq"]
 # Web UI: `fresh --web [ADDR]` serves the real editor to a browser over a
-# local HTTP + WebSocket bridge (the `webui` module). The frontend
-# (`web-ui/index.html`) is embedded into the binary so the build is
-# self-contained. Opt-in (not in `default`) because it embeds ~140 KiB of
+# local HTTP + WebSocket bridge (the `webui` module). The frontend (the page
+# build.rs assembles from web-ui/) is embedded into the binary so the build
+# is self-contained. Opt-in (not in `default`) because it embeds ~140 KiB of
 # HTML and pulls in the sha1 WebSocket-handshake dep. Requires the full
 # editor `runtime`.
 web = ["runtime", "dep:sha1"]

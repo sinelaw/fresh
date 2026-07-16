@@ -1,0 +1,116 @@
+  /* Design refresh: navy/teal orchestrator skin.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Design refresh — navy/teal "orchestrator" skin (target mock, 2026-07).
+     The frame chrome (sidebar / menubar / tabs / status bar) sits on the
+     darker --shell surface so the editor reads as the bright center pane;
+     floating chrome becomes frosted glass over the code; every selection is
+     a translucent teal pill with a hairline teal ring; keybindings render as
+     key chips. Buffer cells stay 100% theme-driven and NO geometry changes —
+     this layer only re-skins surfaces, fills and rules.
+     ====================================================================== */
+  :root{--r-lg:14px;
+    --sel:linear-gradient(90deg,
+      color-mix(in srgb, var(--ui-accent) 26%, transparent),
+      color-mix(in srgb, var(--ui-accent) 10%, transparent));
+    --sel-ring:inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 45%, transparent)}
+
+  /* Frame chrome on the shell surface. */
+  .menubar,.tabbar,.fileexplorer,.widget-surface.w-dock{background:var(--shell)}
+  .fileexplorer .fx-title{font-weight:700;letter-spacing:.08em}
+
+  /* Status bar: a quiet dark strip (no solid accent fill), muted text, and a
+     live-connection dot on the far left like the design's "connection" pill —
+     the reconnect pill takes over whenever the socket actually drops. */
+  .statusbar{background:var(--shell);color:var(--muted);border-top:1px solid var(--hairline)}
+  .statusbar .txt{color:var(--fg)}
+  .statusbar .seg:hover{background:var(--hover);color:var(--fg)}
+  .statusbar::before{content:"";align-self:center;width:7px;height:7px;flex:0 0 auto;
+    margin-right:4px;border-radius:50%;background:var(--ok);
+    box-shadow:0 0 6px color-mix(in srgb, var(--ok) 70%, transparent)}
+
+  /* Tabs on the shell; the active tab merges with the editor surface below
+     it and carries a thin teal rule on its top edge. */
+  .tab{color:var(--muted)}
+  .tab.active{background:var(--bg);color:var(--fg)}
+  .tab.active::after{top:0;bottom:auto;background:var(--ui-accent);border-radius:0 0 2px 2px}
+
+  /* Floating chrome: frosted glass over the code (the backdrop blur is what
+     makes the mock's palette read as a pane of smoked glass). */
+  .dropdown,.popup,.ctxmenu,.palette,.m-sheet{
+    background:color-mix(in srgb, var(--bg2) 74%, transparent);
+    -webkit-backdrop-filter:blur(22px) saturate(1.15);
+    backdrop-filter:blur(22px) saturate(1.15)}
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+    .dropdown,.popup,.ctxmenu,.palette,.m-sheet{background:var(--bg2)}}
+
+  /* Palette card: bold title band, transparent input row, roomier rows, and
+     key chips on the right of each row. */
+  .palette .ptitle{font-weight:700;color:var(--fg);border-bottom:none;padding:10px 16px 2px}
+  .palette .pinput{background:transparent;padding:8px 16px}
+  .palette .prow{padding:5px 14px}
+  .palette .prow .pkey{padding:1px 8px;border-radius:6px;line-height:1.25;
+    background:color-mix(in srgb, var(--fg) 6%, transparent)}
+
+  /* Search-option toggle chips (Case / Whole Word / Regex / Confirm-each). */
+  .psearchopts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 10px 5px}
+  .psopt{display:inline-flex;align-items:center;gap:7px;padding:2px 10px;
+    border:1px solid var(--hairline-strong);border-radius:999px;color:var(--muted);cursor:default}
+  .psopt:hover{background:var(--hover)}
+  .psopt .psbox{width:13px;height:13px;flex:0 0 auto;border:1px solid var(--hairline-strong);
+    border-radius:4px;display:inline-flex;align-items:center;justify-content:center;
+    font-size:.72em;line-height:1;color:transparent}
+  .psopt.on{color:var(--fg);border-color:color-mix(in srgb, var(--ui-accent) 50%, transparent);
+    background:color-mix(in srgb, var(--ui-accent) 10%, transparent)}
+  .psopt.on .psbox{background:var(--ui-accent);border-color:var(--ui-accent);color:var(--on-ui-accent)}
+  .psopt .pskey{color:var(--muted);border:1px solid var(--hairline);border-radius:5px;
+    padding:0 5px;line-height:1.25;background:color-mix(in srgb, var(--fg) 5%, transparent)}
+
+  /* Selections: one language — translucent teal pill + hairline teal ring.
+     Text on them is the plain theme foreground (--on-sel), never white-on-X. */
+  .fileexplorer .fx-row.sel,.palette .prow.sel,.popup .popup-row.sel,
+  .ctxmenu .ctxitem.sel,.settings-modal .set-cat.sel,.settings-modal .set-item.sel,
+  .kbedit .kb-row.sel,.settings-modal .set-dual-row.sel,.w-list-row.sel,
+  .auxmodal .am-line.sel,.mitem.hi,.trustdialog .td-opt.sel,
+  .settings-modal .set-sresult.sel,.kbedit .kb-field.focus{
+    background:var(--sel);box-shadow:var(--sel-ring)}
+  .menu.open{background:var(--sel);color:var(--fg)}
+  .settings-modal .set-dd-row.sel,.kbedit .kb-ac-row.sel{
+    background:var(--sel);box-shadow:var(--sel-ring);color:var(--fg)}
+
+  /* The dock's selected card is the signature moment: a soft teal glow
+     radiating from its left edge (the mock's highlighted project card). */
+  .w-list-card.sel{
+    border-color:color-mix(in srgb, var(--ui-accent) 55%, transparent);
+    background:
+      radial-gradient(120% 140% at 0% 50%,
+        color-mix(in srgb, var(--ui-accent) 22%, transparent), transparent 70%),
+      color-mix(in srgb, var(--ui-accent) 7%, transparent);
+    box-shadow:0 0 18px color-mix(in srgb, var(--ui-accent) 18%, transparent)}
+
+  /* Solid fills and accent marks speak the chrome teal (the theme's --accent
+     is the CURSOR colour — white in the stock dark theme — so it can't brand
+     the chrome). --on-ui-accent keeps their labels readable. */
+  .settings-modal .set-switch.on,.w-button.primary,.settings-modal .btn.primary,
+  .trustdialog .td-btn.primary,.m-icon.on,.m-sym.m-save,.m-mod.on{
+    background:var(--ui-accent);border-color:var(--ui-accent);color:var(--on-ui-accent)}
+  .settings-modal .set-switch.on::after{background:var(--on-ui-accent)}
+  .kbedit .kb-btn.focus{background:var(--ui-accent);border-color:var(--ui-accent);color:var(--on-ui-accent)}
+  .m-mod.on{box-shadow:0 0 0 2px color-mix(in srgb, var(--ui-accent) 45%, transparent)}
+  .w-toggle.on,.w-hint b,.m-logo .m-spark,.m-nav-item.active,
+  .settings-modal .set-section,.settings-modal .set-list-badge,
+  .settings-modal .set-list-add,.settings-modal .set-search,
+  .kbedit .kb-search b,.kbedit .kb-row.kb-section,
+  .fileexplorer .fx-icon.dir{color:var(--ui-accent)}
+  .separator:hover,.resize-grip:hover{background:var(--ui-accent)}
+  .settings-modal .set-dual-col.active{border-color:color-mix(in srgb, var(--ui-accent) 55%, transparent)}
+  #reconnect .rc-dot,#reconnect .rc-dot::after{background:var(--ui-accent)}
+
+  /* Focus rings in the same teal. */
+  .w-toggle.focus,.w-button.focus,.kbedit .kb-search.focus,.w-text.focus{
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--ui-accent) 55%, transparent)}
+  .settings-modal .set-cats.focus,.settings-modal .set-items.focus{
+    box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 55%, transparent)}
+

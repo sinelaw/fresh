@@ -1,0 +1,220 @@
+  /* COSMOS shell: wallpaper, device bezel, glass dock, motion.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     COSMOS shell (target mock, 2026-07). The UI floats over an abstract
+     wallpaper: the orchestrator dock becomes a detached frosted-glass
+     sidebar on the left, and everything else sits inside a skeuomorphic
+     "COSMOS-991" hardware bezel — machined rim, corner screws, status
+     LEDs, silkscreened BUILD / DEPLOY chrome. Pure decoration: #device is
+     pointer-transparent and positioned by layoutShell(); the dock keeps
+     its cell rect (only its visual card is inset within it); every other
+     region is untouched. Desktop only — body.mobile switches it all off.
+     ====================================================================== */
+
+  /* ---- wallpaper: vivid flowing colour fields over deep blue. The device
+     covers the middle, so the glows are pushed to the edges where the
+     wallpaper actually shows. ---- */
+  body:not(.mobile){background:
+    radial-gradient(80rem 55rem at 90% -8%, rgba(255,200,96,.80), rgba(255,160,64,.25) 45%, transparent 65%),
+    radial-gradient(50rem 40rem at 102% 62%, rgba(255,145,60,.50), transparent 60%),
+    radial-gradient(70rem 55rem at 48% -22%, rgba(160,95,235,.50), transparent 60%),
+    radial-gradient(90rem 70rem at -12% 115%, rgba(56,230,246,.70), rgba(40,160,220,.25) 45%, transparent 65%),
+    radial-gradient(60rem 45rem at -8% 22%, rgba(64,140,230,.55), transparent 60%),
+    radial-gradient(55rem 40rem at 55% 122%, rgba(255,130,90,.40), transparent 60%),
+    linear-gradient(135deg,#12233f 0%,#1a2d4e 45%,#0c1930 100%) #0f1c33}
+  /* The pipeline's menubar row spans the FULL grid width (in the TUI the dock
+     paints over its left half); with the dock card inset, that leftover strip
+     would show in the sidebar↔device gap — clip it to the screen. layoutShell
+     keeps --clip-left at the dock's pixel width (0 when no dock). */
+  body:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
+
+  /* ---- the device ---- */
+  #device{position:fixed;display:none;pointer-events:none;border-radius:28px;
+    font-family:var(--font-family);font-size:12px;letter-spacing:.16em;color:#a3adb9;
+    background:
+      linear-gradient(180deg,rgba(255,255,255,.14),rgba(255,255,255,0) 10%),
+      linear-gradient(0deg,rgba(255,255,255,.05),rgba(255,255,255,0) 8%),
+      linear-gradient(180deg,#383c44,#262931 30%,#1d2026 66%,#2b2e35);
+    box-shadow:0 70px 160px rgba(2,6,14,.7),0 24px 60px rgba(2,6,14,.55),
+      inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(255,255,255,.07)}
+  #device.on{display:block}
+  body.mobile #device{display:none!important}
+  /* machined-metal rim: a 3px gradient ring masked out of a padded overlay */
+  #device::before{content:"";position:absolute;inset:0;border-radius:28px;padding:3px;
+    background:linear-gradient(180deg,#eef1f5,#a9b0ba 14%,#565b64 40%,#3a3e46 58%,#7c828d 86%,#d6dbe2);
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude}
+  /* screen glass: a dark well a few px larger than the grid, so the UI reads
+     as recessed behind the bezel */
+  #device .dv-screen{position:absolute;
+    top:calc(var(--bezel-top) - 7px);bottom:calc(var(--bezel-bot) - 7px);
+    left:calc(var(--bezel-side) - 7px);right:calc(var(--bezel-side) - 7px);
+    border-radius:12px;background:#070b12;
+    box-shadow:inset 0 2px 12px rgba(0,0,0,.9),inset 0 0 0 1px rgba(255,255,255,.05),
+      0 1px 0 rgba(255,255,255,.07)}
+  #device .dv-top,#device .dv-bottom{position:absolute;left:50px;right:50px;
+    display:flex;align-items:center;gap:12px}
+  #device .dv-top{top:0;height:var(--bezel-top)}
+  #device .dv-bottom{bottom:0;height:var(--bezel-bot)}
+  #device .dv-grow{flex:1}
+  #device .dv-label{white-space:nowrap;text-shadow:0 1px 0 rgba(0,0,0,.6)}
+  /* status LEDs (the mock's traffic lights, top-right) */
+  #device .dv-leds{display:flex;gap:10px;align-items:center;margin-right:2px}
+  #device .dv-leds i{width:11px;height:11px;border-radius:50%}
+  #device .dv-leds .g{background:#4ade7b;box-shadow:0 0 8px rgba(74,222,123,.8),inset 0 1px 1px rgba(255,255,255,.55)}
+  #device .dv-leds .y{background:#c7e05a;box-shadow:0 0 8px rgba(199,224,90,.7),inset 0 1px 1px rgba(255,255,255,.55)}
+  #device .dv-leds .a{background:#e8a14e;box-shadow:0 0 8px rgba(232,161,78,.7),inset 0 1px 1px rgba(255,255,255,.55)}
+  /* side rails: engraved vertical legends + a running LED */
+  #device .dv-side{position:absolute;top:var(--bezel-top);bottom:var(--bezel-bot);
+    width:var(--bezel-side);display:flex;flex-direction:column;align-items:center;
+    justify-content:flex-end;gap:14px;padding:14px 0}
+  #device .dv-side.dv-l{left:0}
+  #device .dv-side.dv-r{right:0}
+  #device .dv-side span{writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;
+    color:#79818c;letter-spacing:.2em;font-size:11px}
+  #device .dv-side i{width:7px;height:7px;border-radius:50%;background:#4ade7b;
+    box-shadow:0 0 7px rgba(74,222,123,.85)}
+  /* corner screws */
+  #device .dv-screw{position:absolute;width:19px;height:19px;border-radius:50%;
+    background:radial-gradient(circle at 34% 30%,#dee2e8,#949aa4 55%,#42474f);
+    box-shadow:inset 0 -2px 3px rgba(0,0,0,.7),inset 0 1px 1px rgba(255,255,255,.65),0 1px 3px rgba(0,0,0,.65)}
+  #device .dv-screw::after{content:"";position:absolute;left:3px;right:3px;top:50%;height:2px;
+    transform:translateY(-50%) rotate(38deg);background:rgba(20,23,28,.85);border-radius:1px}
+  #device .dv-screw.tl{left:14px;top:14px}
+  #device .dv-screw.tr{right:14px;top:14px}
+  #device .dv-screw.tr::after{transform:translateY(-50%) rotate(-24deg)}
+  #device .dv-screw.bl{left:14px;bottom:17px}
+  #device .dv-screw.bl::after{transform:translateY(-50%) rotate(74deg)}
+  #device .dv-screw.br{right:14px;bottom:17px}
+  #device .dv-screw.br::after{transform:translateY(-50%) rotate(8deg)}
+
+  /* ---- the floating glass sidebar (orchestrator dock) ---- */
+  body:not(.mobile) .widget-surface.w-dock{
+    background:linear-gradient(165deg,rgba(190,211,232,.28),rgba(122,148,180,.14) 45%,rgba(70,92,124,.18));
+    -webkit-backdrop-filter:blur(30px) saturate(1.5);
+    backdrop-filter:blur(30px) saturate(1.5);
+    border:1px solid rgba(255,255,255,.30);
+    border-radius:24px;
+    box-shadow:0 50px 110px rgba(2,6,14,.6),0 12px 34px rgba(2,6,14,.4),
+      inset 0 1px 0 rgba(255,255,255,.35);
+    padding:20px 16px 14px;color:#e8eef5;overflow:hidden}
+  /* The dock's raw title row is dropped — the glass card IS the panel's
+     identity, the label was dead weight. (:first-child keeps any other raw
+     rows a future dock spec might emit.) */
+  body:not(.mobile) .w-dock>.w-col>.w-raw:first-child{display:none}
+  /* New Task: a full-width green pill; the search field wraps to its own row. */
+  body:not(.mobile) .w-dock .w-row.wrap .w-button.primary{
+    flex:1 1 100%;text-align:center;padding:9px 0;font-weight:700;font-size:1.05em;
+    background:linear-gradient(180deg,#52ca6e,#2fa04f);border:1px solid rgba(150,255,190,.5);
+    border-radius:12px;color:#f2fff6;
+    box-shadow:0 8px 22px rgba(46,190,101,.4),inset 0 1px 0 rgba(255,255,255,.45)}
+  body:not(.mobile) .w-dock .w-text{flex:1 1 100%;background:rgba(8,14,24,.35);
+    border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:7px 12px;margin:4px 0}
+  body:not(.mobile) .w-dock .w-text::before{content:"⌕";font-size:1.2em;line-height:1;
+    color:rgba(232,240,248,.55)}
+  body:not(.mobile) .w-dock .w-text-input::placeholder{color:rgba(232,240,248,.45)}
+  body:not(.mobile) .w-dock .w-button{border-color:rgba(255,255,255,.18);color:#dfe8f0}
+  body:not(.mobile) .w-dock .w-toggle{color:rgba(223,232,240,.75)}
+  body:not(.mobile) .w-dock .w-divider{border-color:rgba(255,255,255,.12)}
+  /* Tree rows / cards: light text on glass; the selection is a bright glass
+     pill (the mock's highlighted "infernu" card), not the teal editor pill. */
+  body:not(.mobile) .w-dock .w-tree-row,body:not(.mobile) .w-dock .w-list-row{
+    padding:4px 9px;border-radius:10px;color:#dbe5ee}
+  body:not(.mobile) .w-dock .w-tree-xrow{color:rgba(219,229,238,.55)}
+  body:not(.mobile) .w-dock .w-tree-xrow.sel{background:rgba(255,255,255,.10);color:#fff}
+  body:not(.mobile) .w-dock .w-tree-disc,body:not(.mobile) .w-dock .w-tree-check{color:rgba(223,232,240,.6)}
+  body:not(.mobile) .w-dock .w-tree-row.sel,body:not(.mobile) .w-dock .w-list-row.sel{
+    background:linear-gradient(90deg,rgba(255,255,255,.26),rgba(255,255,255,.10));
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);color:#fff}
+  body:not(.mobile) .w-dock .w-tree-card{border-color:rgba(255,255,255,.12);
+    background:rgba(255,255,255,.04);border-radius:12px;padding:2px 3px;margin:2px}
+  body:not(.mobile) .w-dock .w-tree-card.sel{
+    border-color:rgba(255,255,255,.35);
+    background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,.08));
+    box-shadow:0 6px 22px rgba(2,6,14,.35),inset 0 1px 0 rgba(255,255,255,.35)}
+  body:not(.mobile) .w-dock .w-tree-card.sel .w-tree-xrow{color:rgba(255,255,255,.75)}
+  body:not(.mobile) .w-dock .w-hintbar{color:rgba(223,232,240,.5)}
+  body:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
+  /* Dock dropdowns (New Task… / Move to folder…): a frosted menu card in
+     place of the flat --bg2 overlay, with plain menu rows instead of the
+     editor's filled buttons. The New-Task menu (the overlay right after the
+     toolbar row) is pinned under its button — in flow it would land below
+     the wrapped search field. */
+  body:not(.mobile) .w-dock>.w-col{position:relative}
+  body:not(.mobile) .w-dock .w-overlay{background:rgba(16,26,40,.92);
+    -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+    border:1px solid rgba(255,255,255,.22);border-radius:14px;
+    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px;margin:0;z-index:6}
+  body:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{position:absolute;left:0;right:0;top:46px}
+  body:not(.mobile) .w-dock .w-overlay .w-section{border:none;padding:2px}
+  body:not(.mobile) .w-dock .w-overlay .w-section-label{color:rgba(232,240,248,.55);
+    text-transform:uppercase;font-size:.85em;letter-spacing:.07em;margin:2px 8px 6px}
+  body:not(.mobile) .w-dock .w-overlay .w-row{gap:0}
+  body:not(.mobile) .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
+    background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px}
+  body:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.10)}
+  body:not(.mobile) .w-dock .w-overlay .w-button.primary{background:rgba(255,255,255,.16);
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
+
+  /* Cell-painted file-browser band (OpenFile / SaveFileAs / SwitchProject):
+     real pipeline cells, framed as a floating card above the panes and the
+     native explorer. */
+  .pbrowser{z-index:60;background:var(--bg);border-radius:10px;overflow:hidden;
+    box-shadow:0 18px 50px rgba(0,0,0,.55),inset 0 0 0 1px var(--hairline)}
+
+  /* ---- COSMOS shell motion. The editor's cell-level animations are forced
+     off by the bridge (config.editor.animations = false); the frontend owns
+     motion instead: a quick fade/pop for the palette + a uniform full-window
+     scrim, and the dock / file explorer slide in from the left while the
+     bezel (CSS-transitioned, repositioned by layoutShell) is pushed aside.
+     Exits animate a positioned clone (.fx-clone) since the region rebuild
+     removes the real node synchronously. ---- */
+  body:not(.mobile) .modal-scrim{position:fixed;inset:0}
+  body:not(.mobile) #device{transition:left .28s cubic-bezier(.2,.8,.25,1),
+    width .28s cubic-bezier(.2,.8,.25,1),top .28s cubic-bezier(.2,.8,.25,1),
+    height .28s cubic-bezier(.2,.8,.25,1)}
+  @keyframes fxFade{from{opacity:0}}
+  @keyframes fxPop{from{opacity:0;transform:translate(-50%,-50%) scale(.96)}}
+  @keyframes fxSlideL{from{transform:translateX(calc(-100% - 80px))}}
+  /* Masked slide for the file explorer: clip-path is applied in element
+     space (before the transform moves it), so keeping inset-left == -offset
+     at every progress point pins the visible edge to the element's ORIGINAL
+     left edge — i.e. the screen boundary. Nothing ever shows over the bezel. */
+  @keyframes fxSlideWipe{from{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}
+    to{transform:none;clip-path:inset(0 0 0 0)}}
+  /* The from-state must spell out clip-path:inset(0 0 0 0) — the default
+     `none` is NOT interpolable with inset(), so the clip would apply
+     discretely at 50% and the first half of the slide would paint unclipped
+     over the bezel. */
+  @keyframes fxOutWipe{from{transform:none;clip-path:inset(0 0 0 0)}
+    to{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}}
+  @keyframes fxOutFade{to{opacity:0}}
+  @keyframes fxOutL{to{transform:translateX(calc(-100% - 80px));opacity:.4}}
+  /* One shared duration + curve for every layout-motion piece (dock slide,
+     explorer wipe, bezel transition, content FLIP slides): mixed timings let
+     the bezel's rail cross the dock mid-flight. */
+  .modal-scrim.fx-in{animation:fxFade .14s ease-out}
+  /* Palette: slide + fade. The centered card's keyframes must restate the
+     base translate(-50%,-50%) centering or the animation would strip it. */
+  @keyframes fxPalInSheet{from{opacity:0;transform:translateY(18px)}}
+  @keyframes fxPalIn{from{opacity:0;transform:translate(-50%,-56%)}
+    to{opacity:1;transform:translate(-50%,-50%)}}
+  @keyframes fxPalOut{to{opacity:0;transform:translateY(-20px)}}
+  .palette.fx-in{animation:fxPalInSheet .18s cubic-bezier(.2,.8,.25,1)}
+  .palette.centered.fx-in{animation:fxPalIn .18s cubic-bezier(.2,.8,.25,1)}
+  .fx-clone.fx-out-pal{animation:fxPalOut .16s ease-in forwards}
+  .widget-surface.w-dock.fx-in{animation:fxSlideL .28s cubic-bezier(.2,.8,.25,1)}
+  .fileexplorer.fx-in{animation:fxSlideWipe .28s cubic-bezier(.2,.8,.25,1)}
+  /* Quick fade cut on workspace switch: a screen-toned veil fading out. */
+  @keyframes fxCutFade{from{opacity:.55}to{opacity:0}}
+  .fx-cut{position:fixed;z-index:98;pointer-events:none;background:#070b12;
+    border-radius:8px;animation:fxCutFade .16s ease-out forwards}
+  .fx-clone{position:fixed;margin:0;pointer-events:none;z-index:99}
+  .fx-clone.fx-out{animation:fxOutFade .1s ease-in forwards}
+  .fx-clone.fx-out-left{animation:fxOutL .28s cubic-bezier(.2,.8,.25,1) forwards}
+  .fx-clone.fx-out-wipe{animation:fxOutWipe .28s cubic-bezier(.2,.8,.25,1) forwards}
+  @media (prefers-reduced-motion:reduce){
+    .fx-in,.fx-clone{animation:none!important}
+    body:not(.mobile) #device{transition:none!important}}

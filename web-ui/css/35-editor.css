@@ -1,0 +1,30 @@
+  /* File explorer, pane surfaces, separators, scrollbars, caret.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* Sidebar is chrome/frame — match the menu bar's neutral surface (--bg3),
+     not the popup surface (--bg2), which in some light themes is a tinted
+     blue-grey that clashes with the neutral bar and the white buffer. */
+  .fileexplorer{background:var(--bg3);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+  .fileexplorer .fx-title{padding:2px 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 0 auto}
+  .fileexplorer .fx-list{overflow:auto;flex:1}
+  .fileexplorer .fx-row{display:flex;align-items:center;gap:4px;padding:0 6px;white-space:nowrap;cursor:default;color:var(--fg);line-height:1.5}
+  .fileexplorer .fx-row.sel{background:var(--menuhi);color:#fff}
+  .fileexplorer .fx-row .fx-chev{width:10px;flex:0 0 auto;color:var(--muted);text-align:center}
+  .fileexplorer .fx-row.sel .fx-chev{color:#fff}
+  .fileexplorer .fx-row .fx-name{overflow:hidden;text-overflow:ellipsis}
+  .fileexplorer .fx-row .fx-name.dir{font-weight:600}
+  .pane-content{background:var(--bg)}
+  /* Gutter (line numbers + separator) is its own element, kept out of the
+     buffer-text flow and non-selectable, so a future native text selection of
+     the buffer won't pick up line numbers. */
+  .pane-gutter{background:var(--bg);user-select:none;-webkit-user-select:none}
+  .separator{background:var(--border)}
+  .separator:hover{background:var(--accent)}
+  .resize-grip{position:absolute;z-index:97;cursor:col-resize}
+  .resize-grip:hover{background:var(--accent);opacity:.5}
+  .scrollbar{background:transparent}
+  .thumb{position:absolute;right:1px;width:8px;border-radius:4px;background:#5a5a5a}
+  .thumb:hover{background:#7a7a7a}
+  .caret{position:absolute;background:#aeafad;width:2px;z-index:40;animation:blink 1.05s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}

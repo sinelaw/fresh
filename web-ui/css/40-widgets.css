@@ -1,0 +1,287 @@
+  /* Trust dialog, plugin widgets, Settings, keybinding editor, aux modals, context menu, widget panels.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ---- workspace-trust dialog (native modal) ---- */
+  .modal-scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);z-index:95}
+  .trustdialog{position:absolute;z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;
+    border-radius:8px;box-shadow:0 20px 70px rgba(0,0,0,.6);overflow:auto;display:flex;flex-direction:column;padding:10px 14px;min-width:420px}
+  .trustdialog .td-title{color:#e5c07b;font-weight:700;margin-bottom:6px}
+  .trustdialog .td-path{color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .trustdialog .td-triggers{color:var(--muted);margin:2px 0 8px}
+  .trustdialog .td-opt{display:flex;gap:8px;align-items:flex-start;padding:5px 8px;border-radius:5px;cursor:default}
+  .trustdialog .td-opt.sel{background:var(--menuhi);color:#fff}
+  .trustdialog .td-opt .td-radio{flex:0 0 auto}
+  .trustdialog .td-opt .td-otext .td-olabel{font-weight:600}
+  .trustdialog .td-opt .td-otext .td-odesc{color:var(--muted)}
+  .trustdialog .td-opt.sel .td-odesc{color:#dfe8ff}
+  .trustdialog .td-buttons{display:flex;gap:10px;justify-content:flex-end;margin-top:10px}
+  .trustdialog .td-btn{padding:3px 14px;border:1px solid #5a5a5a;border-radius:5px;cursor:default;color:var(--fg)}
+  .trustdialog .td-btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+
+  /* ---- plugin widgets (WidgetSpec) ---- */
+  .ptoolbar{padding:4px 8px;border-bottom:1px solid var(--border)}
+  .w-row{display:flex;flex-direction:row;align-items:center;gap:8px;flex-wrap:nowrap}
+  .w-row.wrap{flex-wrap:wrap}
+  .w-col{display:flex;flex-direction:column;gap:4px}
+  .w-toggle{display:inline-flex;align-items:center;gap:6px;cursor:default;padding:1px 4px;border-radius:4px}
+  .w-toggle.on{color:var(--accent)}
+  /* Sliding switch, identical geometry to the Settings `.set-switch`.
+     On-state uses --ui-accent (the brandable teal), NOT --accent — that's
+     the cursor colour, which is white in the stock dark theme and would
+     render a white pill with an invisible white knob. */
+  .w-toggle .w-box{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;flex:0 0 auto;transition:background .1s}
+  .w-toggle .w-box::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
+  .w-toggle.on .w-box{background:var(--ui-accent,var(--accent))}
+  .w-toggle.on .w-box::after{left:14px;background:var(--on-ui-accent,#fff)}
+  .w-toggle.focus,.w-button.focus{outline:1px solid var(--accent)}
+    .w-button{cursor:default;padding:1px 10px;border:1px solid #5a5a5a;border-radius:4px;color:var(--fg)}
+  .w-button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .w-button.danger{border-color:#c0392b;color:#e57373}
+  .w-button.disabled{opacity:.5}
+  .w-divider{border-top:1px solid var(--border);margin:4px 0;align-self:stretch}
+  .w-hintbar{display:flex;gap:12px;color:var(--muted)}
+  .w-hint b{color:var(--accent);font-weight:600}
+  .w-section{border:1px solid var(--border);border-radius:6px;padding:6px}
+  .w-section-label{color:var(--muted);margin-bottom:4px}
+  .w-raw{white-space:pre}
+  .w-unsupported{color:var(--muted);font-style:italic}
+  .w-text{display:flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:4px;padding:1px 6px;background:var(--bg)}
+  .w-text.focus{outline:1px solid var(--accent)}
+  .w-text-label{color:var(--muted)}
+  .w-list{display:flex;flex-direction:column;overflow:auto}
+  .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
+  .w-list-row.sel{background:var(--menuhi);color:#fff}
+  .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
+  .w-tree{display:flex;flex-direction:column;overflow:auto}
+  .w-tree-row{padding:1px 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
+  .w-tree-row.sel{background:var(--menuhi);color:#fff}
+  .w-tree-disc,.w-tree-check{color:var(--muted)} .w-tree-row.sel .w-tree-disc,.w-tree-row.sel .w-tree-check{color:#dfe8ff}
+  /* Continuation rows of a fixed-height card (Tree.itemHeight > 1): muted
+     detail lines that select + highlight with their card's primary row. */
+  .w-tree-xrow{padding:0 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px;color:var(--muted)}
+  .w-tree-xrow.sel{background:var(--menuhi);color:#dfe8ff}
+  /* Bordered card node (Tree.cardBorders): the primary row + its
+     continuation rows wrap in a rounded box, mirroring the TUI's
+     `╭─…─╮` pill chrome. Selection tints the whole card. */
+  .w-tree-card{border:1px solid var(--border);border-radius:6px;padding:1px 2px;margin:1px 2px;background:rgba(255,255,255,.02)}
+  .w-tree-card.sel{border-color:var(--accent);background:var(--menuhi)}
+  .w-tree-card.sel .w-tree-xrow{color:#dfe8ff}
+  .w-overlay{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
+    box-shadow:0 10px 34px rgba(0,0,0,.5);padding:4px;margin:2px 0;z-index:4;position:relative}
+  .w-list-cards{gap:4px;padding:2px}
+  .w-list-card{border:1px solid var(--border);border-radius:6px;padding:3px 6px;cursor:default;background:rgba(255,255,255,.02)}
+  .w-list-card.sel{border-color:var(--accent);background:var(--menuhi)}
+  .w-list-card .w-section{border:none;padding:0}
+  /* native Settings (full modal) */
+  /* Use ~80% of the viewport on large screens; keep the old 960×640-capped
+     size as a floor so small windows behave exactly as before. */
+  .settings-modal{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:max(min(960px,90vw),80vw);height:max(min(640px,86vh),80vh);
+    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
+  .settings-modal .set-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
+  .settings-modal .set-body{flex:1;display:flex;overflow:hidden}
+  .settings-modal .set-cats{width:210px;flex:0 0 auto;overflow:auto;border-right:1px solid var(--border);padding:4px 0}
+  .settings-modal .set-cats.focus,.settings-modal .set-items.focus{box-shadow:inset 0 0 0 1px var(--accent)}
+  .settings-modal .set-cat{padding:2px 10px;white-space:nowrap;cursor:default} .settings-modal .set-cat.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-cat-sec{padding:1px 10px;color:var(--muted)}
+  .settings-modal .set-items{flex:1;overflow:auto;padding:4px 0}
+  .settings-modal .set-section{padding:6px 14px 2px;color:var(--accent);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+  .settings-modal .set-item{padding:4px 14px;border-bottom:1px solid rgba(255,255,255,.04)} .settings-modal .set-item.sel{background:var(--menuhi)}
+  .settings-modal .set-item.ro{opacity:.6}
+  .settings-modal .set-item-head{display:flex;align-items:center;gap:12px}
+  .settings-modal .set-name{flex:1;min-width:0} .settings-modal .set-desc{color:var(--muted);white-space:normal;margin-top:1px}
+  .settings-modal .set-ctl-wrap{flex:0 0 auto;max-width:50%;text-align:right;display:flex;justify-content:flex-end;align-items:center}
+  .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px}
+  .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
+  /* toggle switch */
+  .settings-modal .set-switch{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;transition:background .1s}
+  .settings-modal .set-switch::after{content:"";position:absolute;top:2px;left:2px;width:10px;height:10px;border-radius:50%;background:#ccc;transition:left .1s}
+  .settings-modal .set-switch.on{background:var(--accent)} .settings-modal .set-switch.on::after{left:14px;background:#fff}
+  /* number stepper */
+  .settings-modal .set-step{display:inline-block;width:18px;text-align:center;border:1px solid #5a5a5a;border-radius:3px;cursor:default}
+  .settings-modal .set-num-v{min-width:34px;text-align:center}
+  /* dropdown pill + text field */
+  .settings-modal .set-pill{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg)}
+  .settings-modal .set-field{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .settings-modal .set-dd{position:absolute;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:3}
+  .settings-modal .set-dd-row{padding:1px 10px} .settings-modal .set-dd-row.sel{background:var(--accent);color:#fff}
+  /* composite list controls */
+  .settings-modal .set-item-block .set-list{margin:4px 0 2px 8px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .settings-modal .set-list-row{display:flex;align-items:center;gap:8px;padding:2px 10px;border-bottom:1px solid rgba(255,255,255,.05)}
+  .settings-modal .set-list-row:last-child{border-bottom:none}
+  .settings-modal .set-list-badge{color:var(--accent)}
+  /* Two-column list rows mirroring the TUI's map layout: a fixed-ish key
+     column ("Name") that must never collapse, then the flexible value
+     preview. The header row reuses the same spans so columns line up. */
+  .settings-modal .set-list-label{flex:0 0 auto;min-width:16ch;max-width:24ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .settings-modal .set-list-sub{color:var(--muted);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .settings-modal .set-list-head,.settings-modal .set-list-head .set-list-sub{color:var(--muted)}
+  /* Keyboard focus inside a list control: highlight the focused entry / add
+     row and show the TUI's dim `[Enter to edit]` hint. */
+  .settings-modal .set-list-row.sel,.settings-modal .set-list-add.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-list-row.sel .set-list-sub{color:#dfe8ff}
+  .settings-modal .set-list-hint{flex:0 0 auto;margin-left:8px;color:var(--muted);font-style:italic}
+  .settings-modal .set-list-row.sel .set-list-hint{color:#cfd8ea}
+  .settings-modal .set-list-empty{padding:3px 10px;color:var(--muted);font-style:italic}
+  .settings-modal .set-list-add{padding:2px 10px;color:var(--accent);cursor:default;border-top:1px solid rgba(255,255,255,.06)}
+  .settings-modal .set-dual{display:flex;align-items:stretch;gap:6px;margin:4px 0 2px 8px}
+  .settings-modal .set-dual-col{flex:1;border:1px solid var(--border);border-radius:6px;overflow:hidden;min-width:0}
+  .settings-modal .set-dual-col.active{border-color:var(--accent)}
+  .settings-modal .set-dual-coltitle{padding:2px 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(255,255,255,.06)}
+  .settings-modal .set-dual-list{max-height:160px;overflow:auto}
+  .settings-modal .set-dual-row{padding:2px 8px;cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .settings-modal .set-dual-row:hover{background:rgba(255,255,255,.05)}
+  .settings-modal .set-dual-row.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-dual-mid{display:flex;flex-direction:column;justify-content:center;gap:4px}
+  .settings-modal .set-dual-btn{padding:1px 7px;border:1px solid #6a6a6a;border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;text-align:center}
+  .settings-modal .set-dual-btn:hover{border-color:var(--accent)}
+  .settings-modal .set-search{padding:4px 14px;color:var(--accent)}
+  .settings-modal .set-sresult{padding:2px 14px} .settings-modal .set-sresult.sel{background:var(--menuhi);color:#fff}
+  .settings-modal .set-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:6px 12px;border-top:1px solid var(--border);background:var(--bg3)}
+  .settings-modal .set-dlg-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
+  .settings-modal .btn{padding:3px 14px;border:1px solid #6a6a6a;border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;line-height:1.4}
+  .settings-modal .btn:hover{border-color:#888}
+  .settings-modal .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .settings-modal .btn.danger{border-color:#c0392b;color:#e57373}
+  .settings-modal .btn.sel{outline:2px solid var(--accent);outline-offset:1px}
+  .settings-modal .set-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:460px;max-height:70%;overflow:auto;z-index:2}
+  .settings-modal .set-entry-title{font-weight:600;margin-bottom:8px}
+  /* native keybinding editor (full modal) */
+  .kbedit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(900px,88vw);max-height:84vh;
+    background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
+  .kbedit .kb-title{padding:5px 12px;font-weight:600;background:var(--bg3);border-bottom:1px solid var(--border)}
+  .kbedit .kb-header{padding:4px 12px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:2px}
+  .kbedit .kb-cfg{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-search.focus{outline:1px solid var(--accent);border-radius:3px;padding:0 4px}
+  .kbedit .kb-search b{color:var(--accent);margin-right:4px}
+  .kbedit .kb-filters{display:flex;gap:12px;align-items:center}
+  .kbedit .kb-chip{color:var(--muted)} .kbedit .kb-chip.on{color:#fff;font-weight:600}
+  .kbedit .kb-count{margin-left:auto;color:var(--muted)}
+  .kbedit .kb-table{overflow:auto;flex:1}
+  .kbedit .kb-row{display:flex;padding:0 12px;white-space:nowrap;line-height:1.5}
+  .kbedit .kb-row.kb-head{color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:#2b2b2b}
+  .kbedit .kb-row.sel{background:var(--menuhi);color:#fff}
+  .kbedit .kb-row.kb-section{font-weight:600;color:var(--accent)}
+  .kbedit .kb-col{overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-key{width:16ch;flex:0 0 auto} .kbedit .kb-action{width:26ch;flex:0 0 auto}
+  .kbedit .kb-description{flex:1;min-width:0} .kbedit .kb-context{width:16ch;flex:0 0 auto} .kbedit .kb-source{width:8ch;flex:0 0 auto;color:var(--muted)}
+  .kbedit .kb-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .kbedit .kb-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:420px;z-index:2}
+  .kbedit .kb-dlg-title,.kbedit .kb-confirm-msg{font-weight:600;margin-bottom:8px}
+  .kbedit .kb-field{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:4px}
+  .kbedit .kb-field.focus{background:var(--menuhi);color:#fff}
+  .kbedit .kb-field-l{width:80px;color:var(--muted)} .kbedit .kb-field.focus .kb-field-l{color:#dfe8ff}
+  .kbedit .kb-field-x{margin-left:auto;color:var(--muted)}
+  .kbedit .kb-err{color:#e57373;margin-left:8px}
+  .kbedit .kb-autocomplete{margin:2px 0 2px 88px;border:1px solid var(--border);border-radius:4px;max-height:140px;overflow:auto}
+  .kbedit .kb-ac-row{padding:1px 8px} .kbedit .kb-ac-row.sel{background:var(--accent);color:#fff}
+  .kbedit .kb-conflicts{margin:6px 0;color:#e5c07b}
+  .kbedit .kb-dlg-btns{display:flex;gap:12px;justify-content:flex-end;margin-top:10px}
+  .kbedit .kb-btn{padding:2px 12px;border:1px solid #5a5a5a;border-radius:5px} .kbedit .kb-btn.focus{background:var(--accent);border-color:var(--accent);color:#fff}
+  /* native auxiliary modals (keybindings / event-debug / theme-info) */
+  .auxmodal{z-index:96;background:#2b2b2b;border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;max-height:80vh}
+  .auxmodal.centered{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:520px;max-width:80vw}
+  .auxmodal.anchored{position:absolute;min-width:240px}
+  .auxmodal .am-title{padding:5px 12px;font-weight:600;border-bottom:1px solid var(--border);background:var(--bg3)}
+  .auxmodal .am-body{overflow:auto;padding:4px 0}
+  .auxmodal .am-line{padding:1px 12px;white-space:pre;color:var(--fg)}
+  .auxmodal .am-line.sel{background:var(--menuhi);color:#fff}
+  .auxmodal .am-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted)}
+  /* native right-click / new-tab context menu */
+  .ctxmenu{position:absolute;z-index:60;background:var(--bg2);border:1px solid #5a5a5a;border-radius:5px;box-shadow:0 8px 30px rgba(0,0,0,.5);padding:3px 0;min-width:160px}
+  .ctxmenu .ctxitem{padding:2px 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .ctxmenu .ctxitem.sel{background:var(--menuhi);color:#fff}
+  /* floating / dock widget panel surfaces (native plugin UI). The surface is
+     a column flex box and the LIST inside it is the scroll container (flex:1;
+     min-height:0; overflow-y:auto) — TUI parity: wheeling over the panel
+     scrolls only the session/workspace list while the header chrome (title,
+     buttons, filter) stays put. `overflow:auto` on the surface itself is only
+     the fallback for list-less panels taller than their rect; when a list is
+     present the flex chain makes the content fit exactly, so the surface
+     never scrolls. */
+  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;padding:4px 6px;
+    display:flex;flex-direction:column}
+  .widget-surface>.w-col,.widget-surface>.w-row{flex:1 1 auto;min-height:0}
+  .widget-surface .w-list,.widget-surface .w-tree{flex:1 1 auto;min-height:0;overflow-y:auto}
+  /* rows/cards keep their natural height — the LIST scrolls, its items never
+     squash to fit the flex-constrained track */
+  .widget-surface .w-list>*,.widget-surface .w-tree>*{flex:0 0 auto}
+  .widget-surface.w-dock{border-right:1px solid var(--border)}
+  .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
+  /* Anchored popup (right-click context menu): undimmed backdrop that still
+     catches outside-clicks (dismiss), and a snug menu card — content-sized
+     height, tighter padding, buttons as full-width menu rows. */
+  .modal-scrim.scrim-clear{background:transparent}
+  .widget-surface.w-floatingModal.anchored{padding:6px 8px;
+    box-shadow:0 10px 36px rgba(0,0,0,.45)}
+  .widget-surface.w-floatingModal.anchored .w-button{display:block;text-align:left}
+  .widget-surface .w-col{gap:3px}
+  /* --- Plugin dialog polish (New Folder, etc.) ---------------------------
+     A floating modal whose root is a labeledSection is a small dialog. Give
+     it a clean card: the section owns the padding (so its border doesn't
+     double up with the modal frame), a titled header rule, roomy vertical
+     rhythm, a real input field, and right-aligned buttons. Scoped with
+     :has()/`>` so the big new-session form (root .w-col) is untouched. */
+  .widget-surface.w-floatingModal:has(> .w-section){padding:0}
+  .w-floatingModal>.w-section{border:none;padding:16px 18px}
+  /* Header rule and field border use the soft --hairline, not --border
+     (the popup frame colour — bright cyan in some themes), so the frame
+     stays the only strong edge. */
+  .w-floatingModal>.w-section>.w-section-label{font-weight:600;color:var(--fg);
+    margin:0 0 14px;padding-bottom:10px;border-bottom:1px solid var(--hairline,var(--border))}
+  .w-floatingModal>.w-section>.w-col{gap:14px}
+  .w-floatingModal>.w-section .w-row{align-items:center}
+  .w-floatingModal>.w-section .w-text{flex:1;border:1px solid var(--hairline,var(--border));
+    border-radius:6px;padding:4px 8px;background:var(--bg)}
+  /* Focus: one calm ui-accent ring (border + faint halo), replacing the
+     default cursor-colour border + heavy glow double ring. */
+  .w-floatingModal>.w-section .w-text.focus{
+    border-color:color-mix(in srgb, var(--ui-accent) 60%, transparent);
+    box-shadow:0 0 0 2px color-mix(in srgb, var(--ui-accent) 20%, transparent)}
+  /* Only the switch reflects state; the label stays normal weight/colour.
+     Strip the toggle's own padding so the switch left-aligns with the
+     field label column, and shrink it to content so a focus ring hugs the
+     control instead of striping the full dialog width. */
+  .w-floatingModal>.w-section .w-toggle{padding:1px 0;align-self:flex-start}
+  .w-floatingModal>.w-section .w-toggle.on{color:inherit}
+  .w-floatingModal>.w-section .w-row.wrap{justify-content:flex-end;gap:10px;margin-top:6px}
+  .w-floatingModal>.w-section .w-button{padding:5px 16px}
+  /* Dimmed placeholder text so an empty field doesn't read as a real value. */
+  .w-text-val.ph{color:var(--muted)}
+  /* Native input inside a .w-text field: the outer div keeps the themed box
+     (base .w-text rules above); the input is a transparent editing surface
+     whose value/caret the host drives. caret-color makes the real blinking
+     caret theme-aware; position:relative anchors the completion popup. */
+  .w-text{position:relative}
+  .w-text-input{flex:1;min-width:0;background:transparent;border:none;outline:none;
+    color:inherit;font:inherit;padding:0;caret-color:var(--accent)}
+  .w-text-input::placeholder{color:var(--muted);opacity:1}
+  textarea.w-text-input{resize:none}
+  /* Completion popup under a text field (host-owned candidates). */
+  .w-complete{position:absolute;left:0;right:0;top:100%;z-index:98;background:var(--bg2);
+    border:1px solid var(--hairline,var(--border));border-radius:4px;max-height:200px;overflow-y:auto;
+    box-shadow:0 8px 24px rgba(0,0,0,.4)}
+  .w-complete-row{padding:1px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .w-complete-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  /* number / dropdown / dual-list controls (host-state-driven) */
+  .w-number{display:flex;align-items:center;gap:4px}
+  .w-num-step{cursor:default;padding:0 6px;border:1px solid var(--hairline,var(--border));border-radius:4px}
+  .w-num-val{padding:0 6px;min-width:3ch;text-align:center}
+  .w-number.focus .w-num-val{outline:1px solid var(--accent)}
+  .w-dropdown{display:flex;align-items:center;gap:4px;position:relative}
+  .w-dd-pill{padding:0 8px;border:1px solid var(--hairline,var(--border));border-radius:4px}
+  .w-dropdown.focus .w-dd-pill{outline:1px solid var(--accent)}
+  .w-dd{position:absolute;left:0;top:100%;z-index:98;background:var(--bg2);
+    border:1px solid var(--hairline,var(--border));border-radius:4px;max-height:200px;overflow-y:auto;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);min-width:100%}
+  .w-dd-row{padding:1px 10px;white-space:nowrap}
+  .w-dd-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-dual-cols{display:flex;gap:10px}
+  .w-dual-col{flex:1;border:1px solid var(--hairline,var(--border));border-radius:4px;padding:2px;min-height:3em}
+  .w-dual-col.active{border-color:var(--accent)}
+  .w-dual-title{color:var(--muted);padding:0 4px}
+  .w-dual-row{padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .w-dual-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-embed-ph{display:flex;align-items:center;justify-content:center;color:var(--muted);
+    border:1px dashed var(--hairline,var(--border));border-radius:4px;padding:8px}
+

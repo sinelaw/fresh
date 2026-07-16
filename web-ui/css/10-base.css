@@ -1,0 +1,74 @@
+  /* Typography, design tokens, resets, #app geometry.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ---- typography: ONE family, ONE size, for every pixel of the UI --------
+     The buffer is a cell grid, so the shared family has to be the monospace
+     stack; chrome (menus, tabs, status, palette, modals, widgets) inherits the
+     exact same family and size, which also makes the native chrome's text
+     advance agree with the cell widths the editor computed server-side.
+     --font-size-base is the single source of truth and is read back by JS
+     (see BASE_FONT); --font-size is the *live* size — measureMetrics() rewrites
+     it as zoom changes so chrome scales with the buffer. Everything downstream
+     sizes itself in em, never px. */
+  :root{
+    --font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
+    --font-size-base:15px;
+    --font-size:var(--font-size-base);
+    --line-height:1.4}
+  :root{--bg:#10161f;--bg2:#151d29;--bg3:#0c121b;--fg:#d7e0ea;--muted:#8494a8;
+    --accent:#2fd6c3;--border:#233043;--menuhi:#11675c;
+    --status-bg:#0c121b;--status-fg:#8fa0b3;
+    /* Readable text/fill for anything painted ON the accent colour. Recomputed
+       per theme in applyTheme() so e.g. high-contrast's white accent gets dark
+       text instead of the white-on-white it used to render. */
+    --on-accent:#04201c;--on-sel:var(--fg);
+    /* Chrome identity tokens (independent of the buffer theme): the teal the
+       shell is branded with, its readable on-colour, and the "healthy" green
+       of the status-bar connection dot. Fixed by design — the buffer theme
+       keeps owning every cell, but the frame always speaks this accent. */
+    --ui-accent:#2fd6c3;--on-ui-accent:#04201c;--ok:#3ecf8e;
+    /* Frame-chrome surface (sidebar/menu/tabs/status): the buffer bg pulled
+       toward deep navy so the frame reads darker than the editor, as in the
+       target design. applyTheme() re-derives it from the live theme bg. */
+    --shell:color-mix(in srgb, var(--bg) 55%, #060b13);
+    /* COSMOS shell geometry (desktop only; read back by JS as SHELL.*):
+       wallpaper margin around everything, the device bezel's bar/rail
+       thicknesses, and the gap between the floating dock card and the
+       device's left rail. resize()/layoutShell() derive the grid and the
+       bezel position from these, so this block is the single source. */
+    --shell-pad:44px;--bezel-top:48px;--bezel-bot:58px;--bezel-side:34px;
+    --dock-gap:28px}
+  /* Theme-derived design tokens: elevated surfaces and soft hairlines mixed from
+     the live --bg/--fg, so chrome reads as depth on ANY theme instead of piping
+     the terminal palette's hard borders (e.g. high-contrast's cyan) into the UI.
+     color-mix re-evaluates when applyTheme() updates --bg/--fg. */
+  :root{
+    --surface:color-mix(in srgb, var(--bg) 92%, var(--fg));
+    --surface-2:color-mix(in srgb, var(--bg) 84%, var(--fg));
+    --hairline:color-mix(in srgb, var(--fg) 14%, transparent);
+    --hairline-strong:color-mix(in srgb, var(--fg) 26%, transparent);
+    --hover:color-mix(in srgb, var(--fg) 9%, transparent);
+    --shadow:0 16px 50px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.35)}
+  *{box-sizing:border-box}
+  :focus{outline:none}
+  html,body{height:100%;margin:0}
+  body{height:100vh;background:var(--bg);color:var(--fg);overflow:hidden;
+    font:var(--font-size)/var(--line-height) var(--font-family);-webkit-font-smoothing:antialiased;user-select:none;
+    /* One chrome glyph == one grid cell (see measureMetrics/--cell-tracking), so
+       native chrome text lines up with the CW-pitch SVG buffer. */
+    letter-spacing:var(--cell-tracking,0)}
+  /* No element re-declares a family, and any element that needs a size states it
+     in em relative to the inherited base. */
+  input,button,textarea,select{font:inherit}
+  /* The grid lives inset from the window: the wallpaper margin plus the
+     device bezel's bars. Children keep positioning at cell-derived offsets
+     from #app's own origin; JS (cellAt / resize / layoutShell) maps through
+     the real origin, so cell math is unchanged. Mobile restores full-bleed. */
+  #app{position:absolute;left:var(--shell-pad);
+    top:calc(var(--shell-pad) + var(--bezel-top));
+    right:calc(var(--shell-pad) + var(--bezel-side));
+    bottom:calc(var(--shell-pad) + var(--bezel-bot))}
+  body.mobile #app{left:0;top:0;right:0;bottom:0}
+  .region{position:absolute;overflow:hidden}
+

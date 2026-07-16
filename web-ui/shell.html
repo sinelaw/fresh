@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fresh</title>
+<!--
+  Non-terminal UI for Fresh. The REAL editor render pipeline decides what to draw;
+  this frontend only re-targets the final drawing:
+    - buffer interiors  -> the real syntax-highlighted CELLS the pipeline drew in
+                           each pane's content_rect (drawn here as SVG text).
+    - chrome            -> NATIVE UI elements built from the *semantic* model the
+                           pipeline already computed (menu tree, tabs, status
+                           segments). No chrome is drawn from cells.
+  The editor stays the single source of truth: every chrome interaction is
+  forwarded back through the real Editor::handle_mouse at the cell coordinates
+  the pipeline reported, so highlight / selection / open / close all match the
+  TUI and GUI exactly.
+  Transport: a WebSocket (/ws) pushes scene region diffs from the server and
+  carries all input; the HTTP routes remain for curl / the parity harness.
+  Served by the bridge that hosts a real Editor (built into `fresh` behind the
+  `web` feature, which embeds the assembled page):
+    fresh --web 127.0.0.1:8139 <files…>          # installed binary
+    cargo run --features web -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
+
+  This file is the document SKELETON only. The full self-contained page is
+  assembled at build time by crates/fresh-editor/build.rs (assemble_webui):
+  web-ui/css/*.css and web-ui/js/*.js are each concatenated in filename order
+  into the CSS/JS comment markers found in the style and script blocks below.
+  The numeric filename prefixes define that order and it is load-bearing —
+  later CSS files deliberately override earlier ones, and all JS files share
+  one scope. See web-ui/README.md.
+-->
+<style>
+/*@CSS@*/
+</style>
+</head>
+<body>
+<!-- Decorative hardware bezel (COSMOS shell). Positioned by layoutShell()
+     to wrap the grid minus the floating dock; pointer-transparent, painted
+     behind #app by document order. -->
+<div id="device" aria-hidden="true">
+  <div class="dv-screen"></div>
+  <div class="dv-top"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
+    <span class="dv-leds"><i class="g"></i><i class="y"></i><i class="a"></i></span></div>
+  <div class="dv-side dv-l"><i></i><span>SPEC: COSMOS-991</span></div>
+  <div class="dv-side dv-r"><i></i><span>PROJECT: INFERNU.NIU</span></div>
+  <div class="dv-bottom"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
+    <span class="dv-label">PROJECT: INFERNU CORE</span></div>
+  <i class="dv-screw tl"></i><i class="dv-screw tr"></i><i class="dv-screw bl"></i><i class="dv-screw br"></i>
+</div>
+<div id="app"></div>
+<div id="mobile"></div>
+<div id="err"></div>
+<div id="reconnect" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Reconnecting…</span></div>
+<div id="natsel" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Select text — drag, then Ctrl+C</span></div>
+
+<script>
+/*@JS@*/
+</script>
+</body>
+</html>

@@ -1,0 +1,252 @@
+  /* Visual polish pass: radii, hairlines, hovers, selection pills, icons, pills, theme-faithful floating chrome.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Visual polish pass — subtle craft, not a recolor. A single radius scale,
+     true hairline dividers, considered padding/gaps, and depth-from-surface
+     instead of hard outlines. Class names and geometry (cell-pinned rects)
+     are untouched; this only refines borders, corners, dividers and spacing.
+     ====================================================================== */
+  :root{--r-sm:6px;--r-md:9px;--r-lg:12px}
+
+  /* Floating surfaces: one elevation language — soft hairline edge + real
+     shadow + a consistent large radius, so menus/popups/palette/modals feel
+     like the same family of cards. */
+  .dropdown,.popup,.ctxmenu,.palette,.settings-modal .set-dd{
+    border:1px solid var(--hairline);border-radius:var(--r-md);box-shadow:var(--shadow)}
+  .settings-modal,.kbedit,.auxmodal.centered,.trustdialog,.widget-surface.w-floatingModal{
+    border:1px solid var(--hairline);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+  .popup{border-radius:var(--r-md)}
+  .palette{border-radius:var(--r-lg)}
+  .set-overlay,.kb-overlay{border:1px solid var(--hairline);border-radius:var(--r-md)!important}
+
+  /* Hairline dividers everywhere a structural line is drawn — replaces the
+     assorted hard greys and the theme border (often a harsh cyan) with one
+     low-contrast 1px rule, the single most "off" detail in the old UI. */
+  .menubar,.tabbar{border-bottom:1px solid var(--hairline)}
+  .tab{border-right:1px solid var(--hairline)}
+  .fileexplorer{border-right:1px solid var(--hairline)}
+  .separator{background:var(--hairline)}
+  .msep{background:var(--hairline);margin:5px 10px}
+  .popup .popup-title,.popup .popup-desc{border-bottom:1px solid var(--hairline)}
+  .palette .pinput,.palette .ptitle,.palette .ptoolbar,.palette .pbody .plist{border-color:var(--hairline)}
+  .w-section,.w-text,.w-list-card,.w-button,.w-divider{border-color:var(--hairline)}
+  .ptoolbar{border-bottom:1px solid var(--hairline)}
+  .settings-modal .set-title,.settings-modal .set-cats,.settings-modal .set-items.focus,
+  .settings-modal .set-section,.settings-modal .set-item,.settings-modal .set-footer,
+  .settings-modal .set-item-block .set-list,.settings-modal .set-list-row,
+  .settings-modal .set-list-add,.settings-modal .set-dual-col,.settings-modal .set-dual-coltitle,
+  .settings-modal .set-field,.settings-modal .set-pill,.settings-modal .set-step,
+  .settings-modal .set-dd-row,.settings-modal .btn{border-color:var(--hairline)}
+  .kbedit .kb-title,.kbedit .kb-header,.kbedit .kb-footer,.kbedit .kb-table .kb-row.kb-head,
+  .kbedit .kb-btn,.kbedit .kb-field,.kbedit .kb-autocomplete{border-color:var(--hairline)}
+  .auxmodal .am-title,.auxmodal .am-footer{border-color:var(--hairline)}
+  .trustdialog{border-color:var(--hairline)}
+
+  /* Header / footer strips get a faintly raised surface so they read as
+     distinct bands without a heavy rule. */
+  .settings-modal .set-title,.kbedit .kb-title,.auxmodal .am-title{background:var(--surface-2)}
+  .settings-modal .set-footer{background:var(--surface-2)}
+  .kbedit .kb-table .kb-row.kb-head{background:var(--surface)}
+  .set-overlay,.kb-overlay,.trustdialog{background:var(--surface-2)!important}
+
+  /* Consistent inner radii for the small controls — pills, fields, steppers,
+     buttons, cards — all share the small radius. */
+  .settings-modal .set-pill,.settings-modal .set-field,.settings-modal .set-step,
+  .settings-modal .btn,.kbedit .kb-btn,.w-button,.td-btn,.w-toggle,.pkey,.tab .x{border-radius:var(--r-sm)}
+  .settings-modal .set-item-block .set-list,.settings-modal .set-dual-col,
+  .w-section,.w-list-card,.settings-modal .set-dd{border-radius:var(--r-md)}
+
+  /* Readable text/fills ON accent-coloured backgrounds (fixes the white-on-white
+     primary button under high-contrast). */
+  .settings-modal .btn.primary,.w-button.primary,.trustdialog .td-btn.primary{color:var(--on-accent)}
+  .settings-modal .set-switch.on::after{background:var(--on-accent)}
+  .settings-modal .set-dd-row.sel,.kbedit .kb-btn.focus{color:var(--on-accent)}
+
+  /* Quiet, uniform hover affordance. */
+  .menu:hover{background:var(--hover)}
+  /* Hovering a non-active tab marks it (background lift + name brought up to
+     full fg), so pointing at a tab gives feedback before you click it. The
+     active tab already reads as selected, so it's left untouched. */
+  .tab:not(.active):hover{background:var(--hover)}
+  .tab:not(.active):hover .name{color:var(--fg)}
+  .tab .x:hover{background:var(--hairline-strong)}
+  .statusbar .seg:hover{background:var(--hover)}
+  .settings-modal .set-dual-row:hover{background:var(--hover)}
+  .prow:not(.sel):hover,.popup-row:not(.sel):not(.disabled):hover,
+  .fx-row:not(.sel):hover,.ctxitem:not(.sel):hover,
+  .settings-modal .set-cat:not(.sel):hover,
+  .kbedit .kb-row:not(.sel):not(.kb-head):hover{background:var(--hover)}
+
+  /* Tabs: a quiet recessed bar with the active tab lifted and marked by a thin
+     accent rule on the bottom edge — a clear indicator even when active/inactive
+     share a bg (as high-contrast does). */
+  .tabbar{background:var(--surface)}
+  .tab{background:transparent;position:relative}
+  .tab.active{background:var(--surface-2)}
+  /* Bottom accent rule (drawn as an inset element so it sits above the tabbar's
+     own bottom hairline and reads crisply on both themes). */
+  .tab.active::after{content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+    background:var(--accent);border-radius:2px 2px 0 0}
+
+  /* ---- shared inline-SVG icons (file explorer) ---- */
+  .ficon{width:14px;height:14px;display:block;flex:0 0 auto}
+  .fileexplorer .fx-icon{display:inline-flex;align-items:center;flex:0 0 auto}
+  /* Explorer icons: quietly muted; folders take the accent so the tree structure
+     reads at a glance. Selected rows flip to --on-sel via currentColor. */
+  .fileexplorer .fx-icon{color:var(--muted)}
+  .fileexplorer .fx-icon.dir{color:var(--accent)}
+  .fileexplorer .fx-row.sel .fx-icon{color:var(--on-sel)}
+  .fileexplorer .fx-row .fx-name{min-width:0}
+
+  /* ---- status bar: subtle rounded pills on the interactive segments ---- */
+  .statusbar .seg{border-radius:var(--r-sm);transition:background .12s ease}
+  .statusbar .seg:hover{background:color-mix(in srgb,var(--status-fg) 18%,transparent)}
+
+  /* ---- reconnect pill (client WS state, fixed corner) ---- */
+  #reconnect{position:fixed;right:12px;bottom:10px;z-index:98;display:none;
+    align-items:center;gap:8px;padding:5px 12px 5px 11px;border-radius:999px;
+    font-weight:600;color:var(--fg);
+    background:var(--surface);border:1px solid var(--hairline-strong);
+    box-shadow:var(--shadow)}
+  #reconnect.show{display:inline-flex}
+  #reconnect .rc-label{color:var(--fg);letter-spacing:.01em}
+  /* Pulsing status dot — a solid core plus an expanding ring, tinted with the
+     theme accent (no hardcoded warning red; stays legible on light + dark). */
+  #reconnect .rc-dot{position:relative;width:9px;height:9px;flex:0 0 auto;
+    border-radius:50%;background:var(--accent)}
+  #reconnect .rc-dot::after{content:"";position:absolute;inset:0;border-radius:50%;
+    background:var(--accent);animation:rc-ping 1.25s cubic-bezier(0,0,.2,1) infinite}
+  @keyframes rc-ping{0%{transform:scale(1);opacity:.65}80%,100%{transform:scale(2.6);opacity:0}}
+
+  /* ---- native text selection (hold Alt) ----
+     While Alt is held the browser owns the mouse (see the natsel capture
+     guards): user-select comes back on so drag/double-click build a REAL
+     browser selection over any text — buffer SVG, live terminals, file
+     explorer, every chrome panel. Line-number gutters stay unselectable so
+     a drag across a pane copies code, not line numbers (the bridge emits
+     the gutter as its own block precisely for this). */
+  body.natsel, body.natsel *{user-select:text !important;-webkit-user-select:text !important}
+  body.natsel .region{cursor:text}
+  body.natsel .pane-gutter, body.natsel .pane-gutter *{user-select:none !important;-webkit-user-select:none !important}
+  /* Theme-tinted highlight; ::selection has no effect while user-select is
+     none, and the highlight survives releasing Alt until the next click. */
+  ::selection{background:color-mix(in srgb, var(--accent) 45%, transparent)}
+  #natsel{position:fixed;left:12px;bottom:10px;z-index:98;display:none;
+    align-items:center;gap:8px;padding:5px 12px 5px 11px;border-radius:999px;
+    font-weight:600;color:var(--fg);
+    background:var(--surface);border:1px solid var(--hairline-strong);
+    box-shadow:var(--shadow)}
+  #natsel.show{display:inline-flex}
+  #natsel .rc-label{color:var(--fg);letter-spacing:.01em}
+  #natsel .rc-dot{width:9px;height:9px;flex:0 0 auto;border-radius:50%;background:var(--accent)}
+
+  /* Breathing room: a touch more horizontal padding and even gaps in the
+     natively-flowed lists (kept near one cell tall so the editor's row window
+     still lines up). */
+  .palette .prow{padding:4px 14px}
+  .palette .plist{padding:6px 0}
+  .popup .popup-body{padding:3px 0}
+  .popup .popup-row{padding:2px 12px}
+  .ctxmenu{padding:5px 0}
+  .ctxmenu .ctxitem{padding:3px 14px}
+  .fileexplorer .fx-title{padding:6px 10px 4px}
+  .settings-modal .set-cat{padding:3px 12px}
+  .settings-modal .set-item{padding:6px 16px}
+
+  .settings-modal .set-list-row{min-width:0;gap:10px}
+
+  /* Slim, rounded, low-contrast scrollbars that match the hairline language. */
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-thumb{background:var(--hairline-strong);border-radius:8px;
+    border:3px solid transparent;background-clip:padding-box}
+  *::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb,var(--fg) 38%,transparent);background-clip:padding-box}
+  *::-webkit-scrollbar-track{background:transparent}
+  .scrollbar .thumb{background:var(--hairline-strong);border-radius:8px}
+  .scrollbar .thumb:hover{background:color-mix(in srgb,var(--fg) 38%,transparent)}
+
+  /* Focus as a soft ring rather than a hard 1px outline. */
+  .w-toggle.focus,.w-button.focus,.kbedit .kb-search.focus,.w-text.focus{outline:none;
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent)}
+
+  /* ----------------------------------------------------------------------
+     Selection pills. The old edge-to-edge highlight blocks become inset,
+     rounded "pills" with a faint top-down sheen: each scrolling list gets a
+     small side gutter and every row a matching radius, so only the selected
+     row paints — floating clear of the panel edge. Rows keep the same box
+     whether selected or not, so the text never shifts as selection moves.
+     ---------------------------------------------------------------------- */
+  :root{--sel:linear-gradient(180deg, color-mix(in srgb,var(--menuhi) 86%, var(--fg)), var(--menuhi))}
+  .fileexplorer .fx-list{padding:4px 6px}
+  .palette .plist{padding:6px 6px}
+  .popup .popup-body{padding:4px 6px}
+  .ctxmenu{padding:5px 6px}
+  .settings-modal .set-cats{padding:6px 6px}
+  .settings-modal .set-items{padding:6px 8px}
+  .kbedit .kb-table{padding:0 6px}
+  .settings-modal .set-dual-list{padding:2px 4px}
+  .w-list{padding:0 2px}
+
+  .fileexplorer .fx-row,.palette .prow,.popup .popup-row,.ctxmenu .ctxitem,
+  .settings-modal .set-cat,.settings-modal .set-cat-sec,.kbedit .kb-row:not(.kb-head),
+  .settings-modal .set-dual-row,.w-list-row{border-radius:7px}
+  .fileexplorer .fx-row{margin:1px 0}
+  /* Settings rows: drop the per-row hairline divider in favour of spacing and a
+     rounded selection, the way modern settings panes read. */
+  .settings-modal .set-item{border-bottom:0;border-radius:9px;margin:1px 0}
+
+  /* The sheen + rounded fill for every selected/highlighted row. */
+  .fileexplorer .fx-row.sel,.palette .prow.sel,.popup .popup-row.sel,
+  .ctxmenu .ctxitem.sel,.settings-modal .set-cat.sel,.settings-modal .set-item.sel,
+  .kbedit .kb-row.sel,.settings-modal .set-dual-row.sel,.w-list-row.sel,
+  .auxmodal .am-line.sel{background:var(--sel)}
+  /* Menu dropdown highlight: gently rounded to match (items stay cell-pinned). */
+  .mitem{border-radius:7px}
+  .mitem.hi{background:var(--sel)}
+
+  /* ======================================================================
+     Theme-faithful floating chrome (light & dark). The base rules above were
+     authored for a dark palette: hardcoded #2b2b2b/#252526 panels, #5a5a5a
+     borders, and white text on the highlight pill. Re-point them at the live
+     theme surfaces and the luminance-picked --on-sel so a LIGHT theme reads
+     correctly instead of dark panels with invisible/white-on-light text.
+     One block, later in source order, so it wins without touching the base.
+     ====================================================================== */
+  /* Floating panel fills → theme surfaces (menu = menuBg to match the bar;
+     popups/modals = popupBg; header/overlay bands = elevated surfaces). */
+  .dropdown{background:var(--bg3)}
+  .popup{background:var(--bg2)}
+  .popup .popup-title{background:var(--surface-2)}
+  .trustdialog,.auxmodal,.kbedit,.settings-modal,
+  .widget-surface.w-floatingModal{background:var(--bg2)}
+  .settings-modal .set-overlay,.kbedit .kb-overlay{background:var(--surface-2)}
+  .kbedit .kb-row.kb-head{background:var(--surface)}
+  /* Inner-control borders (buttons, fields, steppers, pills, dropdowns, the
+     key chip) → the hairline language instead of a fixed grey. */
+  .trustdialog .td-btn,.w-button,.palette .prow .pkey,
+  .settings-modal .set-step,.settings-modal .set-pill,.settings-modal .set-field,
+  .settings-modal .set-dd,.settings-modal .set-dual-btn,.settings-modal .btn,
+  .settings-modal .set-overlay,.kbedit .kb-btn,.kbedit .kb-overlay{
+    border-color:var(--hairline-strong)}
+  /* Primary text on the menuHi / --sel highlight pill → readable in any theme. */
+  .menu.open,.mitem.hi,.mitem.hi .lab,
+  .palette .prow.sel,.palette .prow.sel .pkey,
+  .fileexplorer .fx-row.sel,.fileexplorer .fx-row.sel .fx-chev,
+  .popup .popup-row.sel,.ctxmenu .ctxitem.sel,.trustdialog .td-opt.sel,
+  .w-list-row.sel,.settings-modal .set-cat.sel,.settings-modal .set-dual-row.sel,
+  .settings-modal .set-sresult.sel,.kbedit .kb-row.sel,.kbedit .kb-field.focus,
+  .kbedit .kb-chip.on,.auxmodal .am-line.sel{color:var(--on-sel)}
+  /* Secondary text on selected rows → a muted shade of the on-sel colour
+     (the old #dfe8ff light-blue vanished on a light highlight). */
+  .mitem.hi .accel,.palette .prow.sel .pdesc,.popup .popup-row.sel .pdetail,
+  .trustdialog .td-opt.sel .td-odesc,.kbedit .kb-field.focus .kb-field-l{
+    color:color-mix(in srgb,var(--on-sel) 62%,transparent)}
+  .palette .prow.sel .pkey{border-color:color-mix(in srgb,var(--on-sel) 45%,transparent)}
+  /* Text on accent-filled controls the base still leaves white but the earlier
+     polish block didn't cover. */
+  .kbedit .kb-ac-row.sel{color:var(--on-accent)}
+  /* Tab close-button hover → a stronger fill than the tab-body hover so the ×
+     reads as its own target even while the whole tab is also hover-lifted. */
+  .tab .x:hover{background:var(--hairline-strong);color:var(--fg)}
+

@@ -47,7 +47,7 @@
 //! **HTTP routes** all keep working exactly as before (full-scene responses;
 //! curl and the parity harness depend on them). A mutation made over HTTP
 //! reaches a connected WebSocket client as a pushed diff on the next tick:
-//!   - `GET /`        → serves `web-ui/index.html`
+//!   - `GET /`        → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
 //!   - `GET /favicon.ico` → 204
 //!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
 //!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
@@ -83,15 +83,14 @@ use crate::model::filesystem::{FileSystem, StdFileSystem};
 /// so `run()` and the `/reset` route can't drift apart.
 const DEFAULT_SIZE: (u16, u16) = (140, 44);
 
-/// The web-UI frontend served at `GET /`, embedded at compile time from
-/// `web-ui/index.html`. This is the *only* source for the page — there is no
-/// on-disk fallback, so `fresh --web` (and the example bridge) is fully
-/// self-contained and behaves identically wherever the binary runs. Editing
-/// the frontend therefore requires a rebuild.
-const INDEX_HTML: &str = include_str!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../web-ui/index.html"
-));
+/// The web-UI frontend served at `GET /`, embedded at compile time from the
+/// page assembled by `build.rs` out of the split sources under `web-ui/`
+/// (`shell.html` + `css/*.css` + `js/*.js`, concatenated in filename order).
+/// The assembled page is the *only* source — there is no on-disk fallback,
+/// so `fresh --web` (and the example bridge) is fully self-contained and
+/// behaves identically wherever the binary runs. Editing the frontend
+/// therefore requires a rebuild.
+const INDEX_HTML: &str = include_str!(concat!(env!("OUT_DIR"), "/webui-index.html"));
 
 /// Cap on the clipboard text exposed in the scene (`ClipboardSync`). Anything
 /// larger is truncated at a char boundary — a copy that big is better served

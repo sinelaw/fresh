@@ -1,0 +1,62 @@
+  /* Command palette / picker.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ---- command palette / picker (native) ---- */
+  .palette{position:absolute;z-index:90;display:flex;flex-direction:column;
+    background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);overflow:hidden}
+  .palette.with-preview{overflow:hidden}
+  /* Centered-modal placement (paletteCentered): float the palette as a modal
+     panel over the whole view instead of the bottom sheet. Placement is CSS-
+     driven — the card is centered by transform and capped by max-width/height,
+     with a `.modal-scrim` behind it (emitted by the palette region filler).
+     A preview overlay keeps its cell-derived width (set inline) so the results
+     column still lines up with the framed preview beside it. */
+  .palette.centered{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);
+    z-index:96;width:min(880px,94%);max-width:94%;max-height:84vh;
+    /* Stained-glass: a translucent surface with a heavy backdrop blur so the
+       editor behind it reads through as frosted colour, not a flat panel. */
+    background:color-mix(in srgb, var(--bg2) 68%, transparent);
+    backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+    border:1px solid var(--hairline-strong);box-shadow:0 28px 90px rgba(0,0,0,.62)}
+  /* Roomier list — a min-height keeps the modal a substantial panel even when
+     only a few commands match, instead of collapsing to a tiny box. The cap is
+     a pure viewport fraction (no fixed pixel ceiling) so a tall display shows
+     more rows; the WIDTH stays capped above, which is the point of a palette. */
+  .palette.centered .plist{max-height:66vh;min-height:330px}
+  /* Let the frosted surface show through the header rows (they'd otherwise be
+     painted opaque by their own --bg / --bg2 fills). */
+  .palette.centered .pinput{background:transparent}
+  /* Title bar: label on the left, a close 'x' on the right. */
+  .palette.centered .ptitlebar{display:flex;align-items:center;justify-content:space-between;
+    gap:10px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--hairline);
+    color:var(--fg);font-weight:600;flex:0 0 auto}
+  .palette.centered .ptitlebar .ptbtext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette.centered .ptitlebar .ptbclose{cursor:pointer;color:var(--muted);flex:0 0 auto;
+    width:24px;height:24px;line-height:23px;text-align:center;border-radius:6px;font-size:15px}
+  .palette.centered .ptitlebar .ptbclose:hover{background:var(--hover);color:var(--fg)}
+  .palette .pbody{display:flex;align-items:stretch;min-height:0}
+  .palette .pbody .plist{max-height:none;border-right:1px solid var(--border)}
+  .palette .ppreview{background:var(--bg);overflow:hidden}
+  .palette .ppreview svg.cells{width:100%;height:100%}
+  .palette .pinput{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg)}
+  .palette .pinput .pmsg{color:var(--muted);white-space:pre;flex:0 0 auto}
+  /* The input line never ellipsises: the TUI already fits the prompt to the row,
+     so we show the query in full and, if it's longer than the box, scroll it to
+     the caret (scrollToCaret) — the terminal's own behaviour — instead of
+     hiding the tail behind a "…". */
+  .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:clip}
+  .palette.input-only .pinput .q{flex:1}
+  .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
+  .palette .pinput .status{color:var(--muted)}
+  .palette .pinput .count{color:var(--muted)}
+  .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}
+  .palette .prow{display:flex;align-items:center;gap:10px;padding:3px 12px;cursor:default;color:var(--fg)}
+  .palette .prow.sel{background:var(--menuhi);color:#fff}
+  .palette .prow.disabled{color:#6a6a6a}
+  .palette .prow .ptext{flex:0 0 auto}
+  .palette .prow .pdesc{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette .prow.sel .pdesc{color:#dfe8ff}
+  .palette .prow .pkey{color:var(--muted);border:1px solid #555;border-radius:3px;padding:0 5px}
+  .palette .prow.sel .pkey{color:#fff;border-color:#9bbcf0}
+  .palette .ptitle{padding:6px 12px;color:var(--muted);border-bottom:1px solid #3a3a3a}

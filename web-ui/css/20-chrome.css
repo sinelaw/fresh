@@ -1,0 +1,54 @@
+  /* Menu bar, menu dropdown, tabs, status bar.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ---- menu bar (native) ---- */
+  .menubar{display:flex;align-items:center;gap:0;background:var(--bg3);
+    border-bottom:1px solid var(--border);padding:0 4px}
+  .menu{padding:0 10px;height:100%;display:flex;align-items:center;border-radius:0;color:var(--fg);cursor:default}
+  .menu:hover{background:#454545}
+  .menu.open{background:var(--menuhi);color:#fff}
+
+  /* ---- menu dropdown (native, positioned at the pipeline's item rects) ---- */
+  /* decorative backing panel sits BEHIND the rows and never eats clicks */
+  .dropdown{position:absolute;z-index:70;pointer-events:none;background:#2b2b2b;
+    border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  /* Submenu panels sit edge-to-edge with their parent; offset the drop shadow
+     to the right so it doesn't darken the parent panel across the seam. */
+  .dropdown.submenu{box-shadow:8px 14px 40px rgba(0,0,0,.45)}
+  .mitem,.msep,.mlabel{position:absolute;z-index:81}
+  .mitem{display:flex;align-items:center;gap:18px;padding:0 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .mitem.hi{background:var(--menuhi);color:#fff}
+  .mitem.disabled{color:#6a6a6a}
+  .mitem .lab{flex:1;display:flex;align-items:center;gap:6px}
+  .mitem .accel{color:var(--muted)}
+  .mitem.hi .accel{color:#dfe8ff}
+  .mitem .arrow{color:var(--muted)}
+  .mitem .check{width:12px;display:inline-block;text-align:center}
+  .msep{height:1px;background:#4a4a4a;margin:4px 8px}
+  .mlabel{padding:0 14px;color:var(--muted);font-style:italic}
+
+  /* ---- tabs (native) ---- */
+  .tabbar{display:flex;align-items:stretch;background:var(--bg2);border-bottom:1px solid var(--border);overflow:hidden}
+  /* No max-width and no icon: a tab is as wide as the TUI already made it
+     (`tab_area` = the full " name × " it laid out — see view/ui/tabs.rs), so
+     names show in full and only the .tabbar's own overflow:hidden clips the
+     edge tab when the bar is full, exactly like the terminal. */
+  .tab{display:flex;align-items:center;gap:6px;padding:0 8px;border-right:1px solid var(--border);
+    color:var(--muted);background:var(--bg2);cursor:default}
+  .tab.active{color:var(--fg);background:var(--bg)}
+  .tab .name{overflow:hidden;text-overflow:clip;white-space:nowrap}
+  /* Modified marker only occupies space when shown (the TUI likewise spends a
+     cell on it only when dirty), so a clean tab isn't padded by a hidden dot. */
+  .tab .dot{width:8px;height:8px;border-radius:50%;background:var(--fg);flex:0 0 auto;display:none}
+  .tab.modified .dot{display:inline-block}
+  .tab .x{width:16px;height:16px;border-radius:4px;text-align:center;line-height:15px;color:var(--muted);flex:0 0 auto}
+  .tab .x:hover{background:#5a5a5a;color:#fff}
+
+  /* ---- status bar (native) ---- */
+  .statusbar{display:flex;align-items:center;background:var(--status-bg);color:var(--status-fg);
+    padding:0 10px;gap:0;white-space:pre}
+  .statusbar .txt{padding:0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60vw}
+  .statusbar .seg{padding:0 8px;border-radius:3px;cursor:default}
+  .statusbar .seg:hover{background:rgba(255,255,255,.18)}
+

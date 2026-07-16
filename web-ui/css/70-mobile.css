@@ -1,0 +1,163 @@
+  /* Mobile / portrait touch shell + show-full-text opt-outs.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Mobile / portrait touch shell. Gated entirely by body.mobile (set in JS
+     from a max-width media query), so the desktop layout is untouched. The
+     editor keeps its cell grid — JS just reports fewer rows so the pane ends
+     above the bottom stack, and a 36px header sits over the two hidden chrome
+     rows (menu+tab) so the pane lines up with no offset math. Desktop cell
+     chrome is hidden and replaced with native touch bars.
+     ====================================================================== */
+  #mobile{display:none}
+  body.mobile #mobile{display:block}
+  body.mobile .menubar,body.mobile .tabbar,body.mobile .statusbar,
+  body.mobile .scrollbar,body.mobile .thumb,body.mobile .separator,
+  body.mobile .resize-grip{display:none!important}
+
+  /* Header: logo · filename · search / run / overflow. Overlays the two hidden
+     top chrome rows (=36px), so the editor pane starts cleanly beneath it. */
+  .m-header{position:fixed;top:0;left:0;right:0;height:36px;z-index:88;display:flex;
+    align-items:center;gap:8px;padding:0 8px;background:var(--surface-2);
+    border-bottom:1px solid var(--hairline);box-shadow:0 1px 6px rgba(0,0,0,.3)}
+  .m-logo{display:flex;align-items:center;gap:5px;font-weight:700;color:var(--fg);white-space:nowrap}
+  .m-logo .m-spark{color:var(--accent)}
+  .m-file{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    color:var(--muted)}
+  .m-icon{flex:0 0 auto;width:30px;height:28px;display:flex;align-items:center;justify-content:center;
+    border-radius:var(--r-sm);color:var(--fg);font-size:1.15em}
+  .m-icon:active{background:var(--hover)}
+  .m-icon.on{color:var(--on-accent);background:var(--accent)}
+  /* Invisible capture input that raises/dismisses the native soft keyboard.
+     Kept inside the viewport (not off-screen) so focusing it doesn't scroll;
+     16px font avoids iOS zoom-on-focus. */
+  #m-kbinput{position:fixed;left:0;bottom:var(--m-bottom,124px);width:1px;height:1px;
+    opacity:0;border:0;padding:0;margin:0;font-size:16px;z-index:-1}
+
+  /* Overflow (kebab) sheet, anchored under the header on the right. */
+  .m-sheet{position:fixed;top:40px;right:6px;z-index:92;min-width:210px;background:var(--surface);
+    border:1px solid var(--hairline);border-radius:var(--r-md);box-shadow:var(--shadow);padding:5px}
+  .m-sheet .m-sheet-item{padding:9px 12px;border-radius:var(--r-sm);color:var(--fg);
+    display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .m-sheet .m-sheet-item:active{background:var(--sel)}
+  .m-sheet .m-sheet-ic{width:18px;text-align:center;color:var(--muted)}
+
+  /* Bottom stack: coding-symbol accessory row · nav · status. Fixed; the editor
+     grid is shortened by its height (--m-bottom) so no code hides behind it. */
+  .m-bottom{position:fixed;left:0;right:0;bottom:0;z-index:88;background:var(--surface-2);
+    border-top:1px solid var(--hairline)}
+  .m-syms{display:flex;gap:6px;overflow-x:auto;padding:6px 8px;
+    border-bottom:1px solid var(--hairline);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .m-syms::-webkit-scrollbar{display:none}
+  .m-sym{flex:0 0 auto;min-width:32px;height:32px;padding:0 9px;display:flex;align-items:center;
+    justify-content:center;line-height:1;
+    color:var(--fg);background:var(--surface);border:1px solid var(--hairline);border-radius:var(--r-sm)}
+  .m-sym:active{background:var(--hover)}
+  .m-sym.m-save{margin-left:auto;color:var(--on-accent);background:var(--accent);
+    border-color:var(--accent);font-weight:700;padding:0 16px}
+
+  /* Termux-style modifier / navigation row (optional; toggled from overflow). */
+  .m-mods{display:flex;gap:6px;overflow-x:auto;padding:6px 8px;
+    border-bottom:1px solid var(--hairline);-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .m-mods::-webkit-scrollbar{display:none}
+  .m-mod{flex:0 0 auto;min-width:34px;height:32px;padding:0 11px;display:flex;align-items:center;
+    justify-content:center;color:var(--fg);background:var(--surface);
+    border:1px solid var(--hairline);border-radius:var(--r-sm)}
+  .m-mod:active{background:var(--hover)}
+  /* armed sticky modifier (Ctrl/Alt/Shift held for the next key) */
+  .m-mod.m-modkey{font-weight:600}
+  .m-mod.on{color:var(--on-accent);background:var(--accent);border-color:var(--accent);
+    box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 45%,transparent)}
+
+  .m-nav{display:flex;align-items:stretch}
+  .m-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:2px;padding:7px 0 6px;color:var(--muted);border-radius:var(--r-sm)}
+  .m-nav-item:active{background:var(--hover)}
+  .m-nav-item .m-nav-ic{font-size:1.3em;line-height:1}
+  .m-nav-item .m-nav-lb{letter-spacing:.02em}
+  .m-nav-item.active{color:var(--accent)}
+
+  .m-status{display:flex;align-items:center;gap:0;height:22px;padding:0 6px;
+    border-top:1px solid var(--hairline);background:var(--surface);overflow-x:auto;
+    scrollbar-width:none;white-space:nowrap}
+  .m-status::-webkit-scrollbar{display:none}
+  .m-status .m-seg{flex:0 0 auto;padding:0 7px;color:var(--muted)}
+  .m-status .m-seg.trust{color:var(--accent)}
+
+  /* Panels/overlays become full-width sheets between the header and bottom stack. */
+  body.mobile .fileexplorer{position:fixed!important;left:0!important;top:36px!important;
+    width:100vw!important;height:auto!important;bottom:var(--m-bottom,124px)!important;z-index:80;
+    border-right:none;border-bottom:1px solid var(--hairline)}
+  /* On mobile the palette is always a top-floating panel (never a true bottom
+     sheet). Neutralise the centered-mode transform / caps so the explicit
+     anchor here wins for both placement modes. */
+  body.mobile .palette{left:3vw!important;width:94vw!important;top:7vh!important;
+    bottom:auto!important;transform:none!important;max-width:none!important}
+  /* Small-screen palette: grow into a near-full-height sheet as results fill
+     it, sized in dvh so the browser toolbars (and, where the browser reports
+     it, the on-screen keyboard) are accounted for — never overflowing a short
+     viewport. Drop the desktop list-height floor (it would overflow a phone),
+     WRAP long command rows instead of hard-clipping the description, give rows
+     finger-sized padding, and hide the keyboard-shortcut pills (dead weight on
+     a touch device). */
+  body.mobile .palette.centered{top:3dvh!important;max-height:92dvh!important}
+  body.mobile .palette.centered .plist{min-height:0!important;max-height:78dvh!important}
+  /* width:auto cancels the desktop `width:max-content` (which makes rows scroll
+     horizontally) so the row instead fills the viewport width and WRAPS. */
+  body.mobile .palette .prow{flex-wrap:wrap;align-items:flex-start;padding:8px 14px;row-gap:1px;width:auto}
+  body.mobile .palette .prow .ptext{flex:1 1 100%}
+  body.mobile .palette .prow .pdesc{flex:1 1 100%;white-space:normal;overflow:visible;text-overflow:clip}
+  body.mobile .palette .prow .pkey{display:none}
+  body.mobile .settings-modal,body.mobile .kbedit{left:2vw!important;right:2vw!important;
+    width:96vw!important;top:42px!important;bottom:calc(var(--m-bottom,124px) + 6px)!important;
+    height:auto!important;max-height:none!important;transform:none!important}
+  body.mobile .settings-modal .set-cats{width:128px}
+  body.mobile .kbedit .kb-context,body.mobile .kbedit .kb-source{display:none}
+  body.mobile .kbedit .kb-key{width:11ch}
+  body.mobile .kbedit .kb-action{width:18ch}
+
+  /* ---- show full text: opt out of the remaining chrome truncation ----
+     Tabs and the prompt input line are fixed at the source now (they honour the
+     TUI's own cell geometry). The elements below have no distinct server rect to
+     size to, so we simply turn off the `text-overflow:ellipsis` the layout used
+     as a space-saver — WITHOUT disturbing hit-testing or layout:
+       - Hit-testing is unaffected either way. Every overlay row forwards its own
+         precomputed LOGICAL cell (col/row from the server rect), never a
+         pixel-derived one, and onChrome() keeps the grid's pixel->cell handler
+         off these elements. Nothing here reads element geometry.
+       - So the only thing to protect is visual layout: overflowing text must
+         never push a sibling or spill past a non-clipping parent. Two safe
+         shapes are used. (A) grow inside a parent that already clips/scrolls;
+         (B) stay flex-shrinkable and clip (no ellipsis) when the box is truly
+         too small. Nothing wraps — every row stays a single line so it keeps
+         mapping 1:1 to the editor's row model. */
+
+  /* (A) File-tree and palette rows size to their content; the panel — which
+     already scrolls vertically — now also scrolls horizontally to reveal it,
+     so the full text is reachable and stays inside the panel box. */
+  .fileexplorer .fx-list{overflow:auto}
+  .fileexplorer .fx-row{width:max-content;min-width:100%}
+  .fileexplorer .fx-row .fx-name{overflow:visible;text-overflow:clip}
+  .palette .plist{overflow:auto}
+  .palette .prow{width:max-content;min-width:100%}
+  .palette .prow .pdesc{overflow:visible;text-overflow:clip}
+
+  /* (B) Everything else: drop the ellipsis and any hard width cap, but keep the
+     element flex-shrinkable and clipped, so a long value shows in full when the
+     box has room yet can never push its neighbours (status-bar segments, the
+     palette count, dialog controls) or spill out of its box when it doesn't. */
+  .statusbar .txt,
+  .fileexplorer .fx-title,
+  .trustdialog .td-path,
+  .w-list-row,
+  .settings-modal .set-field,
+  .settings-modal .set-dual-row,
+  .kbedit .kb-cfg,
+  .kbedit .kb-col,
+  .kbedit .kb-footer,
+  .popup .popup-title,
+  .popup .popup-desc,
+  .popup .popup-row .pdetail,
+  .m-file{min-width:0;overflow:hidden;text-overflow:clip;max-width:none}
+

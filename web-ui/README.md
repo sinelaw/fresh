@@ -55,10 +55,66 @@ the core; each frontend only renders it.
   `terminal.mouse_forwarding` in the editor config govern the
   terminal-side behavior.
 
+## Source layout — one page, split by concern
+
+The served page is **one fully self-contained HTML file**, but it is
+*authored* here as separate sources:
+
+```
+web-ui/
+  shell.html    document skeleton: <head>, body markup, style/script markers
+  css/          NN-name.css — concatenated (in filename order) into <style>
+  js/           NN-name.js  — concatenated (in filename order) into <script>
+```
+
+`crates/fresh-editor/build.rs` (`assemble_webui`) concatenates each directory
+in **filename order** and splices the results into `shell.html`'s marker
+comments, writing `$OUT_DIR/webui-index.html`; `webui/mod.rs` embeds that via
+`include_str!`.
+
+**Order is load-bearing.**
+
+- **CSS**: later files deliberately override earlier ones (the polish pass,
+  the navy/teal skin, and the COSMOS shell each re-skin rules that precede
+  them). Renaming a file so it sorts differently *changes the cascade*.
+- **JS**: all files are concatenated into a single classic `<script>` and
+  share one top-level scope; `function` declarations hoist across file
+  boundaries, but `const`/`let` bindings must be declared in a file that
+  sorts before their first top-level *use*.
+
+Pick a numeric prefix that places a new file where its concern belongs; gaps
+(10, 20, 35…) are left so insertions don't require renames.
+
+| CSS | concern |
+|---|---|
+| `10-base.css` | typography, design tokens, resets, `#app` geometry |
+| `20-chrome.css` | menu bar/dropdowns, tabs, status bar |
+| `30-palette.css` | command palette / picker |
+| `35-editor.css` | file explorer, pane surfaces, separators, scrollbars, caret |
+| `40-widgets.css` | trust dialog, plugin widgets, Settings, keybinding editor, aux modals |
+| `50-popups.css` | completion/hover/action popups, cell SVG, `#err` |
+| `60-polish.css` | visual polish pass: radii, hairlines, hovers, selection pills |
+| `70-mobile.css` | mobile / portrait touch shell |
+| `80-skin.css` | navy/teal orchestrator skin |
+| `90-cosmos.css` | COSMOS shell: wallpaper, device bezel, glass dock, motion |
+
+| JS | concern |
+|---|---|
+| `10-core.js` | cell↔px metrics, zoom, shell geometry, DOM helpers |
+| `20-cells.js` | icon set, cell-grid SVG renderer, theme → CSS variables |
+| `30-render.js` | per-region DOM patching, motion (FX), `render()` |
+| `40-menu.js` / `45-tabs.js` / `55-status.js` | native chrome builders |
+| `50-palette.js` | palette / picker / prompts + file-browser band |
+| `60-popups.js` | native popups |
+| `65-widgets.js` | plugin widget tree + Settings / keybinding editor / aux modals |
+| `70-panels.js` | trust dialog, file explorer, border drag handles |
+| `75-app.js` | mobile shell + transport (WS frames, resize, clipboard) |
+| `80-input.js` | keyboard/mouse/touch input, native selection, boot |
+
 ## Architecture (taps the real render pipeline)
 
 ```
-browser (web-ui/index.html)  ══WS /ws══►  fresh::webui bridge  ──►  real Editor
+browser (assembled web-ui page) ══WS /ws══► fresh::webui bridge ──► real Editor
   chrome  = native HTML from  ◄══ push:     runs Editor::render    (piece tree,
   scene.rs projections          hello (full scene)  into a cell     highlighter,
   buffer  = real highlighted    frame (region diffs) buffer, reads   handle_key, …)
@@ -94,7 +150,7 @@ HTTP-side mutation is pushed to the connected browser as a diff immediately.
 ## Run it
 
 The bridge ships in the main `fresh` binary behind the opt-in `web` feature,
-which also embeds this `index.html` so the build is self-contained. Build with
+which embeds the assembled page so the build is self-contained. Build with
 that feature and launch with `--web [ADDR]` (address optional, default
 `127.0.0.1:8137`); any files given are opened in the served editor:
 
@@ -112,8 +168,8 @@ debug vs release numbers). A debug build works for development iteration too
 The `webui_server` example is the equivalent entry point for the parity harness
 and headless suite (`cargo run --features web -p fresh-editor --example
 webui_server -- [ADDR] [FILES…]`). Both it and `fresh --web` serve the same
-compile-time-embedded `index.html` — there is no on-disk fallback, so editing
-the frontend requires a rebuild.
+compile-time-embedded page — there is no on-disk fallback, so editing the
+frontend requires a rebuild.
 
 > ⚠️ The bridge binds plain localhost HTTP and hosts a live editor with
 > filesystem access. It's a local-development prototype, **not** for exposure on

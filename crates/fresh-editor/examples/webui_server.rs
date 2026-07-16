@@ -1,4 +1,4 @@
-//! Launches the real-editor web bridge for `web-ui/index.html` (no mocks).
+//! Launches the real-editor web bridge for the assembled `web-ui/` page (no mocks).
 //!
 //!   cargo run -p fresh-editor --example webui_server -- [ADDR] [FILES...]
 //!
