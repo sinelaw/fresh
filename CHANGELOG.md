@@ -58,6 +58,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Slang shader support** - syntax highlighting and [slangd](https://github.com/shader-slang/slang) LSP integration, with **Go to Definition** into read-only builtin modules (#2536, #2539, requested by @batoripX in #2517).
 * **NetBSD builds** - Fresh now compiles on NetBSD (#2534, by @ci4ic4).
+* **Per-language indentation guides** - plain-text buffers (language `text`) no longer draw indentation guides even when guides are enabled globally; any language can opt out (or plain text back in) with the new `languages.<id>.indentation_guide` setting.
 
 ### Bug Fixes
 

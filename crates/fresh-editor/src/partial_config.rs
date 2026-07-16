@@ -556,6 +556,7 @@ pub struct PartialLanguageConfig {
     pub on_save: Option<Vec<OnSaveAction>>,
     pub word_characters: Option<Option<String>>,
     pub indent: Option<crate::config::IndentRulesConfig>,
+    pub indentation_guide: Option<bool>,
 }
 
 impl Merge for PartialLanguageConfig {
@@ -581,6 +582,7 @@ impl Merge for PartialLanguageConfig {
         self.on_save.merge_from(&other.on_save);
         self.word_characters.merge_from(&other.word_characters);
         self.indent.merge_from(&other.indent);
+        self.indentation_guide.merge_from(&other.indentation_guide);
     }
 }
 
@@ -1078,6 +1080,7 @@ impl From<&LanguageConfig> for PartialLanguageConfig {
             on_save: Some(cfg.on_save.clone()),
             word_characters: Some(cfg.word_characters.clone()),
             indent: cfg.indent.clone(),
+            indentation_guide: cfg.indentation_guide,
         }
     }
 }
@@ -1115,6 +1118,7 @@ impl PartialLanguageConfig {
                 .word_characters
                 .unwrap_or_else(|| defaults.word_characters.clone()),
             indent: self.indent.or_else(|| defaults.indent.clone()),
+            indentation_guide: self.indentation_guide.or(defaults.indentation_guide),
         }
     }
 }
@@ -1397,6 +1401,7 @@ impl Default for LanguageConfig {
             on_save: Vec::new(),
             word_characters: None,
             indent: None,
+            indentation_guide: None,
         }
     }
 }

@@ -540,6 +540,7 @@ impl Editor {
         // so the two coexist.
         let cfg = crate::view::ui::EditorRenderConfig::new(
             &self.config.editor,
+            &self.config.languages,
             self.background_fade,
             self.software_cursor_only,
         );
@@ -2636,6 +2637,7 @@ impl Editor {
             show_tilde: false,
             ..crate::view::ui::EditorRenderConfig::new(
                 &self.config.editor,
+                &self.config.languages,
                 self.background_fade,
                 self.software_cursor_only,
             )
@@ -3744,6 +3746,7 @@ impl Editor {
                     ansi_background: self.ansi_background.as_ref(),
                     cfg: crate::view::ui::EditorRenderConfig::new(
                         &self.config.editor,
+                        &self.config.languages,
                         self.background_fade,
                         self.software_cursor_only,
                     ),

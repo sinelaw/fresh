@@ -430,3 +430,106 @@ fn indentation_guide_active_mode_continues_through_wrapped_line() {
         "active indent guide should continue through the wrapped continuation row\ncont row: {cont_row:?}\n{screen}"
     );
 }
+
+#[test]
+fn plain_text_files_suppress_indentation_guides_by_default() {
+    // Guides are a source-code aid: a plain-text buffer (language "text")
+    // must not render them even when `editor.indentation_guide = "all"` is
+    // enabled globally.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.txt");
+    std::fs::write(
+        &file_path,
+        "shopping list\n    milk\n        whole, not skim\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("    milk"),
+        "indented plain-text line should render with plain spaces\n{screen}"
+    );
+    assert!(
+        !screen.contains("┊"),
+        "plain-text buffers should not render indentation guides by default\n{screen}"
+    );
+}
+
+#[test]
+fn languages_text_indentation_guide_true_reenables_guides_for_plain_text() {
+    // `[languages.text] indentation_guide = true` opts plain text back in,
+    // restoring the global mode.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.txt");
+    std::fs::write(
+        &file_path,
+        "shopping list\n    milk\n        whole, not skim\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+    config.languages.insert(
+        "text".to_string(),
+        fresh::config::LanguageConfig {
+            indentation_guide: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("┊   milk"),
+        "explicit [languages.text] indentation_guide = true should re-enable guides\n{screen}"
+    );
+}
+
+#[test]
+fn per_language_indentation_guide_false_suppresses_guides() {
+    // Any language can opt out of guides even when they are enabled
+    // globally, e.g. `[languages.rust] indentation_guide = false`.
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("guides.rs");
+    std::fs::write(
+        &file_path,
+        "fn main() {\n    let child = 1;\n        let grand = child + 1;\n}\n",
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    config.editor.indentation_guide_glyph = "┊".to_string();
+    if let Some(rust) = config.languages.get_mut("rust") {
+        rust.indentation_guide = Some(false);
+    }
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("    let child = 1;"),
+        "indented code should still render\n{screen}"
+    );
+    assert!(
+        !screen.contains("┊"),
+        "a language with indentation_guide = false should suppress guides\n{screen}"
+    );
+}

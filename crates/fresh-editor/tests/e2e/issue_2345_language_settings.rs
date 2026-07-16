@@ -186,7 +186,9 @@ fn issue_2345_inherited_auto_surround_shows_neutral_chip() {
 /// that one field to inherited, without touching its siblings.
 #[test]
 fn issue_2345_per_field_inherit_button_reverts_single_field() {
-    let mut harness = EditorTestHarness::with_config(120, 30, html_only_config()).unwrap();
+    // 32 rows: the dialog lists fields alphabetically and the assertion below
+    // needs the "Line Wrap" row on screen ("Indentation Guide" sits above it).
+    let mut harness = EditorTestHarness::with_config(120, 32, html_only_config()).unwrap();
     harness.render().unwrap();
 
     open_html_language_dialog(&mut harness);

@@ -1571,6 +1571,14 @@
             }
           ],
           "default": null
+        },
+        "indentation_guide": {
+          "description": "Whether to render indentation guides for this language.\nIf not specified (`null`), follows the global `editor.indentation_guide`\nsetting — except for plain text (`text`), where guides default off:\nthey are a source-code aid and plain-text indentation rarely nests\nmeaningfully. Set `false` to suppress guides for a language even when\nthey are enabled globally, or `true` under `[languages.text]` to bring\nthem back for plain text.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
         }
       },
       "x-display-field": "/grammar"

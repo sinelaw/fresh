@@ -26,6 +26,17 @@ Guides are visual-only: they replace rendered leading whitespace cells without c
 
 Turn on `editor.rainbow_indentation` to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
 
+Guides are a source-code aid, so plain-text buffers (language `text` — undetected files, `.txt`, and buffers manually set to Plain Text) never draw them, even when guides are enabled globally. Any language can opt out (or plain text back in) with the per-language `indentation_guide` setting:
+
+```jsonc
+{
+  "languages": {
+    "text": { "indentation_guide": true },  // bring guides back for plain text
+    "yaml": { "indentation_guide": false }  // suppress guides for a language
+  }
+}
+```
+
 ## Current-Line Highlight
 
 The row the cursor is on is highlighted for quick visual tracking. Enabled by default; toggle via the command palette ("Toggle Current Line Highlight") or in the Settings UI. A matching **Toggle Current Column Highlight** highlights the cursor's column too — useful for visually aligning code with rulers. The Settings UI also has an option to drop the line highlight while text is selected.
