@@ -973,6 +973,7 @@
   "explorer.refreshing": "Actualisation de %{name}...",
   "explorer.rename_cancelled": "Renommage annulé",
   "explorer.new_item_path_must_be_relative": "Le chemin du nouvel élément doit être relatif",
+  "explorer.new_item_path_outside_project": "Le chemin du nouvel élément doit rester dans le répertoire du projet",
   "explorer.rename_invalid_dot": "Le nom ne peut pas être '.' ou '..'",
   "explorer.rename_invalid_separator": "Le nom ne peut pas contenir de séparateur de chemin",
   "explorer.rename_prompt": "Renommer en : ",

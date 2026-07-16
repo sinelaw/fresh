@@ -973,6 +973,7 @@
   "explorer.refreshing": "Обновление %{name}...",
   "explorer.rename_cancelled": "Переименование отменено",
   "explorer.new_item_path_must_be_relative": "Путь нового элемента должен быть относительным",
+  "explorer.new_item_path_outside_project": "Путь нового элемента должен оставаться в каталоге проекта",
   "explorer.rename_invalid_dot": "Имя не может быть '.' или '..'",
   "explorer.rename_invalid_separator": "Имя не может содержать разделитель пути",
   "explorer.rename_prompt": "Переименовать в: ",

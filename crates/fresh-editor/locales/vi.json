@@ -973,6 +973,7 @@
   "explorer.refreshing": "Đang làm mới %{name}...",
   "explorer.rename_cancelled": "Đã hủy đổi tên",
   "explorer.new_item_path_must_be_relative": "Đường dẫn của mục mới phải là đường dẫn tương đối",
+  "explorer.new_item_path_outside_project": "Đường dẫn của mục mới phải nằm trong thư mục dự án",
   "explorer.rename_invalid_dot": "Tên không thể là '.' hoặc '..'",
   "explorer.rename_invalid_separator": "Tên không được chứa dấu phân cách đường dẫn",
   "explorer.rename_prompt": "Đổi tên thành: ",

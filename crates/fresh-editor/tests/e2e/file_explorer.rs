@@ -2334,6 +2334,36 @@ fn test_file_explorer_new_file_creates_missing_parent_directories() {
     );
 }
 
+#[test]
+fn test_file_explorer_new_file_cannot_escape_project_directory() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let escaped_path = project_root.parent().unwrap().join("escaped.rs");
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("../escaped.rs").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !escaped_path.exists(),
+        "a relative creation path must not escape the project"
+    );
+    assert!(
+        harness
+            .screen_to_string()
+            .contains("New item path must stay within the project directory"),
+        "the rejected path should produce a clear status message"
+    );
+}
+
 /// Test that renaming an existing file from file explorer updates buffer metadata
 /// but keeps focus in file explorer (not switching to editor)
 #[test]

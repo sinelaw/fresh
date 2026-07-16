@@ -847,7 +847,24 @@ impl Editor {
             .unwrap_or_else(|| original_path.clone());
 
         if self.tokio_runtime.is_some() {
-            let fs = &self.authority().filesystem;
+            let fs = std::sync::Arc::clone(&self.authority().filesystem);
+            if is_new_file {
+                match creation_path_is_within_project(fs.as_ref(), self.working_dir(), &new_path) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        self.set_status_message(
+                            t!("explorer.new_item_path_outside_project").to_string(),
+                        );
+                        return;
+                    }
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("explorer.error_renaming", error = e.to_string()).to_string(),
+                        );
+                        return;
+                    }
+                }
+            }
             let result = if is_new_file {
                 // `create_dir_all` is also safe when the parent already
                 // exists. Keep both operations on the active filesystem so
@@ -2136,9 +2153,66 @@ fn is_relative_creation_path(path: &Path) -> bool {
     )
 }
 
+/// Check a not-yet-created target against the project root without creating
+/// any of its missing parents first.
+///
+/// The lexical check catches `..` escaping through missing directories. The
+/// canonical check resolves the deepest existing ancestor, catching paths
+/// that leave the project through a symlink. Reattaching the missing tail is
+/// safe because none of those components exist yet and therefore none can be
+/// symlinks at the time of this check.
+fn creation_path_is_within_project(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    project_root: &Path,
+    target: &Path,
+) -> std::io::Result<bool> {
+    let lexical_root = crate::app::normalize_path(project_root);
+    let lexical_target = crate::app::normalize_path(target);
+    if !lexical_target.starts_with(&lexical_root) {
+        return Ok(false);
+    }
+
+    let canonical_root = fs.canonicalize(project_root)?;
+    let canonical_target = canonicalize_deepest_existing(fs, target)?;
+    Ok(canonical_target.starts_with(canonical_root))
+}
+
+/// Canonicalize the deepest existing ancestor and append its missing path
+/// components. Unlike `Path::canonicalize`, this also works for a target file
+/// and parent directories that have not been created yet.
+fn canonicalize_deepest_existing(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    path: &Path,
+) -> std::io::Result<PathBuf> {
+    let mut ancestor = path;
+    let mut missing_tail = Vec::new();
+
+    loop {
+        match fs.canonicalize(ancestor) {
+            Ok(mut canonical) => {
+                for component in missing_tail.iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(crate::app::normalize_path(&canonical));
+            }
+            Err(error) => {
+                let Some(parent) = ancestor.parent() else {
+                    return Err(error);
+                };
+                let Ok(component) = ancestor.strip_prefix(parent) else {
+                    return Err(error);
+                };
+                missing_tail.push(component.to_path_buf());
+                ancestor = parent;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod creation_path_tests {
-    use super::is_relative_creation_path;
+    use super::{creation_path_is_within_project, is_relative_creation_path};
+    use crate::model::filesystem::StdFileSystem;
     use std::path::Path;
 
     #[test]
@@ -2162,5 +2236,41 @@ mod creation_path_tests {
             assert!(!is_relative_creation_path(Path::new(r"C:app.rs")));
             assert!(!is_relative_creation_path(Path::new(r"\tmp\app.rs")));
         }
+    }
+
+    #[test]
+    fn creation_path_cannot_escape_project_with_parent_components() {
+        let project = tempfile::tempdir().unwrap();
+        let fs = StdFileSystem;
+
+        assert!(creation_path_is_within_project(
+            &fs,
+            project.path(),
+            &project.path().join("src/../app.rs")
+        )
+        .unwrap());
+        assert!(!creation_path_is_within_project(
+            &fs,
+            project.path(),
+            &project.path().join("../escaped.rs")
+        )
+        .unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creation_path_cannot_escape_project_through_symlink() {
+        let container = tempfile::tempdir().unwrap();
+        let project = container.path().join("project");
+        let outside = container.path().join("outside");
+        std::fs::create_dir(&project).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, project.join("link")).unwrap();
+        let fs = StdFileSystem;
+
+        assert!(
+            !creation_path_is_within_project(&fs, &project, &project.join("link/escaped.rs"))
+                .unwrap()
+        );
     }
 }

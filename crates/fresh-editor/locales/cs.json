@@ -973,6 +973,7 @@
   "explorer.refreshing": "Obnovuji %{name}...",
   "explorer.rename_cancelled": "Přejmenování zrušeno",
   "explorer.new_item_path_must_be_relative": "Cesta nové položky musí být relativní",
+  "explorer.new_item_path_outside_project": "Cesta nové položky musí zůstat v adresáři projektu",
   "explorer.rename_invalid_dot": "Název nemůže být '.' ani '..'",
   "explorer.rename_invalid_separator": "Název nemůže obsahovat oddělovač cesty",
   "explorer.rename_prompt": "Přejmenovat na: ",

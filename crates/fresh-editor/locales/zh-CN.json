@@ -973,6 +973,7 @@
   "explorer.refreshing": "正在刷新 %{name}...",
   "explorer.rename_cancelled": "重命名已取消",
   "explorer.new_item_path_must_be_relative": "新项目路径必须是相对路径",
+  "explorer.new_item_path_outside_project": "新项目路径必须位于项目目录内",
   "explorer.rename_invalid_dot": "名称不能为 '.' 或 '..'",
   "explorer.rename_invalid_separator": "名称不能包含路径分隔符",
   "explorer.rename_prompt": "重命名为：",
