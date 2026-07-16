@@ -1223,7 +1223,12 @@
      left edge — i.e. the screen boundary. Nothing ever shows over the bezel. */
   @keyframes fxSlideWipe{from{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}
     to{transform:none;clip-path:inset(0 0 0 0)}}
-  @keyframes fxOutWipe{to{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}}
+  /* The from-state must spell out clip-path:inset(0 0 0 0) — the default
+     `none` is NOT interpolable with inset(), so the clip would apply
+     discretely at 50% and the first half of the slide would paint unclipped
+     over the bezel. */
+  @keyframes fxOutWipe{from{transform:none;clip-path:inset(0 0 0 0)}
+    to{transform:translateX(-100%);clip-path:inset(0 0 0 100%)}}
   @keyframes fxOutFade{to{opacity:0}}
   @keyframes fxOutL{to{transform:translateX(calc(-100% - 80px));opacity:.4}}
   /* One shared duration + curve for every layout-motion piece (dock slide,
@@ -1715,10 +1720,28 @@ function fxTopEls(c, out){
 }
 function fxSlideEls(els, dx){
   if(!dx||!els.length) return;
-  for(const el of els){ el.style.transition="none"; el.style.transform="translateX("+dx+"px)"; }
+  const screenR=px((scene&&scene.w)||0,CW);   // grid right edge, #app coords
+  const clipped=[];
+  for(const el of els){
+    el.style.transition="none"; el.style.transform="translateX("+dx+"px)";
+    // A rightward start position pokes past the grid's right edge — over the
+    // bezel's right rail. Clip the overhang in element space; the inset
+    // transitions back to 0 on the same curve as the transform, so the
+    // visible boundary eases from the screen edge to the element's own edge
+    // and never leaves the screen. (Leftward starts need no clip: the bezel
+    // itself is travelling on the same curve, so content stays flush with
+    // its moving interior.)
+    const l=parseFloat(el.style.left)||0, w=parseFloat(el.style.width)||el.offsetWidth;
+    const r0=l+w+dx-screenR;
+    if(r0>0){ el.style.clipPath="inset(0 "+r0.toFixed(1)+"px 0 0)"; clipped.push(el); }
+  }
   void els[0].offsetWidth;   // commit the start positions before releasing
-  for(const el of els){ el.style.transition="transform .28s cubic-bezier(.2,.8,.25,1)"; el.style.transform="translateX(0)"; }
-  setTimeout(()=>{ for(const el of els){ if(el.isConnected){ el.style.transition=""; el.style.transform=""; } } },320);
+  for(const el of els){
+    el.style.transition="transform .28s cubic-bezier(.2,.8,.25,1), clip-path .28s cubic-bezier(.2,.8,.25,1)";
+    el.style.transform="translateX(0)";
+  }
+  for(const el of clipped) el.style.clipPath="inset(0 0px 0 0)";
+  setTimeout(()=>{ for(const el of els){ if(el.isConnected){ el.style.transition=""; el.style.transform=""; el.style.clipPath=""; } } },320);
 }
 // Cell widths from the last frame; null until the first scene lands. Only a
 // PRESENCE change animates — width drags re-layout per pointer frame and
