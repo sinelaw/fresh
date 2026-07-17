@@ -73,6 +73,14 @@ impl Editor {
 
                 self.open_file_with_jump(resolved_path, line, column);
             }
+            PromptType::OpenRecent => {
+                // The suggestion value is the absolute path recorded at
+                // open time; confirm_prompt resolved it for us.
+                let path = std::path::PathBuf::from(input.trim());
+                if !path.as_os_str().is_empty() {
+                    self.open_file_with_jump(path, None, None);
+                }
+            }
             PromptType::OpenFileWithEncoding { path } => {
                 self.handle_open_file_with_encoding(&path, &input);
             }

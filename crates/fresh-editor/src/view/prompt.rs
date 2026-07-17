@@ -11,6 +11,8 @@ use crate::primitives::word_navigation::{
 pub enum PromptType {
     /// Open a file
     OpenFile,
+    /// Open a recently opened file (select from list)
+    OpenRecent,
     /// Open a file with a specific encoding (used when detect_encoding is disabled)
     /// Contains the path to open after encoding selection
     OpenFileWithEncoding { path: std::path::PathBuf },

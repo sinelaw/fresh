@@ -223,6 +223,21 @@ impl Editor {
                 Some(t!("buffer.opened", name = display_name).to_string());
         }
 
+        // Record the open in the recent-files list (issue #926). Only
+        // real file buffers count — virtual/hidden buffers (panels,
+        // plugin UIs) never belong in "Open Recent".
+        let recent_path = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
+            .filter(|meta| !meta.is_virtual() && !meta.hidden_from_tabs)
+            .and_then(|meta| meta.file_path())
+            .filter(|p| !p.as_os_str().is_empty())
+            .cloned();
+        if let Some(recent_path) = recent_path {
+            self.active_window_mut().record_recent_file(recent_path);
+        }
+
         Ok(buffer_id)
     }
 
@@ -250,6 +265,52 @@ impl Editor {
             .unmaximize_split()
             .expect("a split is maximized (checked above)");
         self.relayout();
+    }
+
+    /// Open the "Open Recent" picker: a prompt listing this window's
+    /// recently opened files, most recent first (issue #926).
+    /// Entries whose file no longer exists on disk are skipped.
+    /// Selecting an entry opens it via the normal open-file path.
+    pub(crate) fn start_open_recent_prompt(&mut self) {
+        let root = self.active_window().root.clone();
+        let recent: Vec<std::path::PathBuf> = self
+            .active_window()
+            .recent_files
+            .iter()
+            .filter(|p| p.exists())
+            .cloned()
+            .collect();
+
+        if recent.is_empty() {
+            self.set_status_message(t!("file.no_recent_files").to_string());
+            return;
+        }
+
+        let suggestions: Vec<crate::input::commands::Suggestion> = recent
+            .iter()
+            .map(|path| {
+                let display = path
+                    .strip_prefix(&root)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string();
+                crate::input::commands::Suggestion {
+                    text: display,
+                    description: None,
+                    description_spans: None,
+                    value: Some(path.display().to_string()),
+                    disabled: false,
+                    keybinding: None,
+                    source: None,
+                }
+            })
+            .collect();
+
+        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+            t!("file.open_recent_prompt").to_string(),
+            crate::view::prompt::PromptType::OpenRecent,
+            suggestions,
+        ));
     }
 
     // If the active split leaf carries `SplitRole::UtilityDock`,

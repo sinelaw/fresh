@@ -88,6 +88,11 @@ pub struct Workspace {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub read_only_files: Vec<PathBuf>,
 
+    /// Recently opened files, most recent first (issue #926).
+    /// Relative to `working_dir` when possible, otherwise absolute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_files: Vec<PathBuf>,
+
     /// Unnamed buffers that should be restored from recovery files
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unnamed_buffers: Vec<UnnamedBufferRef>,
@@ -1025,6 +1030,7 @@ impl Workspace {
             terminals: Vec::new(),
             external_files: Vec::new(),
             read_only_files: Vec::new(),
+            recent_files: Vec::new(),
             unnamed_buffers: Vec::new(),
             plugin_global_state: HashMap::new(),
             saved_at: SystemTime::now()
