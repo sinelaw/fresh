@@ -189,6 +189,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.open_recent_project",
+        desc_key: "cmd.open_recent_project_desc",
+        action: || Action::OpenRecentProject,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_pin_project",
+        desc_key: "cmd.toggle_pin_project_desc",
+        action: || Action::TogglePinProject,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.save_file",
         desc_key: "cmd.save_file_desc",
         action: || Action::Save,

@@ -3151,6 +3151,13 @@ impl MenuConfig {
                         when: None,
                         checkbox: None,
                     },
+                    MenuItem::Action {
+                        label: t!("menu.file.open_recent_project").to_string(),
+                        action: "open_recent_project".to_string(),
+                        args: HashMap::new(),
+                        when: None,
+                        checkbox: None,
+                    },
                     MenuItem::Separator { separator: true },
                     MenuItem::Action {
                         label: t!("menu.file.detach").to_string(),
@@ -8659,6 +8666,27 @@ mod tests {
             }
             _ => panic!("Expected Submenu after expansion"),
         }
+    }
+
+    #[test]
+    fn test_file_menu_has_open_recent_project() {
+        // The File menu exposes the "Open Recent Project" picker (issue #1895).
+        let menus = MenuConfig::translated_menus();
+        let file_menu = menus
+            .iter()
+            .find(|m| m.id.as_deref() == Some("File"))
+            .expect("File menu should exist");
+
+        let has_entry = file_menu.items.iter().any(|item| {
+            matches!(
+                item,
+                MenuItem::Action { action, .. } if action == "open_recent_project"
+            )
+        });
+        assert!(
+            has_entry,
+            "File menu should contain an open_recent_project action"
+        );
     }
 
     #[test]
