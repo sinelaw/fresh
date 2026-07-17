@@ -47,21 +47,24 @@ fn test_remote_file_explorer_anchored_at_working_dir() {
         .send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
 
-    // Wait for file explorer to initialize (it's async)
+    // The file explorer root should show "my_test_project" (the working dir name)
+    // as the first directory entry, NOT the home directory name.
+    let home_dir_name = home_dir.file_name().unwrap().to_string_lossy().to_string();
+
+    // Wait for the async tree build to land — the panel chrome (remote
+    // "[hostname]" title) appears immediately with a "Loading…" body, so
+    // the title is not the ready signal; a rendered directory entry is.
+    // Either name resolves the wait: the assert below decides which one
+    // (project = fixed, home = the regression) actually anchored the root.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            // Remote mode shows [hostname] instead of "File Explorer"
-            screen.contains("[localhost]") || screen.contains("File Explorer")
+            screen.contains("my_test_project") || screen.contains(&home_dir_name)
         })
         .unwrap();
 
     let screen = harness.screen_to_string();
     println!("File explorer screen:\n{screen}");
-
-    // The file explorer root should show "my_test_project" (the working dir name)
-    // as the first directory entry, NOT the home directory name.
-    let home_dir_name = home_dir.file_name().unwrap().to_string_lossy().to_string();
 
     // Find the first line in the explorer that contains a directory name.
     // The root node appears first; if the bug is present it will be the

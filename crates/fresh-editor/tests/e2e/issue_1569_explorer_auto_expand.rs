@@ -60,23 +60,39 @@ fn test_file_explorer_auto_expands_to_current_file_on_first_open() {
     // panel (the buffer/tabs area is off to the right). Each panel line
     // starts with `┌`/`└`/`│` and ends at the right border (`┐`, `┘`, or
     // a closing `│` followed by whitespace/tab content).
+    fn explorer_panel_text(screen: &str) -> String {
+        screen
+            .lines()
+            .filter(|line| line.starts_with('┌') || line.starts_with('└') || line.starts_with('│'))
+            .map(|line| {
+                // Find the first "right border" character after the initial
+                // border char — this is the end of the explorer panel.
+                let mut it = line.char_indices();
+                let _left = it.next(); // skip leading border
+                let end = it
+                    .find(|(_, c)| matches!(c, '┐' | '┘' | '│'))
+                    .map(|(i, c)| i + c.len_utf8())
+                    .unwrap_or(line.len());
+                line[..end].to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    // The panel title appears immediately (the placeholder carries the
+    // final chrome while the tree builds asynchronously with a "Loading…"
+    // body), so the title alone doesn't mean the tree is on screen yet.
+    // Wait for the auto-expanded tree itself: the revealed file inside the
+    // panel is the semantic ready signal. If auto-expand regresses, this
+    // wait never resolves and the test times out externally (per
+    // CONTRIBUTING §3 — no in-test timeouts). The tab bar also shows
+    // `deep.rs`, which is why the wait reads only the panel's own columns.
+    harness
+        .wait_until(|h| explorer_panel_text(&h.screen_to_string()).contains("deep.rs"))
+        .unwrap();
+
     let screen = harness.screen_to_string();
-    let explorer_text: String = screen
-        .lines()
-        .filter(|line| line.starts_with('┌') || line.starts_with('└') || line.starts_with('│'))
-        .map(|line| {
-            // Find the first "right border" character after the initial
-            // border char — this is the end of the explorer panel.
-            let mut it = line.char_indices();
-            let _left = it.next(); // skip leading border
-            let end = it
-                .find(|(_, c)| matches!(c, '┐' | '┘' | '│'))
-                .map(|(i, c)| i + c.len_utf8())
-                .unwrap_or(line.len());
-            line[..end].to_string()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
+    let explorer_text: String = explorer_panel_text(&screen);
 
     // Sanity: the explorer panel actually rendered.
     assert!(

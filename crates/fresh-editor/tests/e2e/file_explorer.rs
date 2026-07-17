@@ -2416,9 +2416,10 @@ fn test_file_explorer_search_basic() {
     harness.editor_mut().toggle_file_explorer();
     harness.wait_for_screen_contains("File Explorer").unwrap();
 
-    // Wait for file explorer to be fully initialized
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
+    // The panel chrome (title) shows immediately with a "Loading…" body;
+    // wait for the async tree build itself to land before driving the
+    // search — an item on screen is the semantic ready signal.
+    harness.wait_for_file_explorer_item("main.rs").unwrap();
     harness.render().unwrap();
 
     let screen_before = harness.screen_to_string();
@@ -2512,8 +2513,9 @@ fn test_file_explorer_search_highlight_positions() {
     harness.editor_mut().toggle_file_explorer();
     harness.wait_for_screen_contains("File Explorer").unwrap();
 
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
+    // The panel title shows immediately over a "Loading…" body; wait for
+    // the async tree build itself to land before driving the search.
+    harness.wait_for_file_explorer_item("main.rs").unwrap();
     harness.render().unwrap();
 
     // Type "main" to search
@@ -2602,8 +2604,9 @@ fn test_file_explorer_search_navigation() {
     harness.editor_mut().toggle_file_explorer();
     harness.wait_for_screen_contains("File Explorer").unwrap();
 
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
+    // The panel title shows immediately over a "Loading…" body; wait for
+    // the async tree build itself to land before driving the search.
+    harness.wait_for_file_explorer_item("test1.rs").unwrap();
     harness.render().unwrap();
 
     // Type "test" to filter to only test files
@@ -2653,8 +2656,9 @@ fn test_file_explorer_escape_clears_search() {
     harness.editor_mut().toggle_file_explorer();
     harness.wait_for_screen_contains("File Explorer").unwrap();
 
-    harness.sleep(std::time::Duration::from_millis(100));
-    let _ = harness.editor_mut().process_async_messages();
+    // The panel title shows immediately over a "Loading…" body; wait for
+    // the async tree build itself to land before driving the search.
+    harness.wait_for_file_explorer_item("file.txt").unwrap();
     harness.render().unwrap();
 
     // Verify we're in file explorer context
