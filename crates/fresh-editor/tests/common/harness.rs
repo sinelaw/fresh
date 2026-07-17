@@ -2586,10 +2586,18 @@ impl EditorTestHarness {
             let now = std::time::Instant::now();
             if now.duration_since(last_dump) >= SCREEN_DUMP_INTERVAL {
                 let elapsed = now.duration_since(start);
-                tracing::warn!(
+                // stderr as well as tracing: CI runs with tracing disabled,
+                // and nextest surfaces captured stderr when it terminates a
+                // hung test, so this is the only diagnostic that survives a
+                // slow-timeout kill.
+                eprintln!(
                     "wait_until still pending after {:.1}s — screen:\n{}",
                     elapsed.as_secs_f64(),
                     self.screen_to_string()
+                );
+                tracing::warn!(
+                    "wait_until still pending after {:.1}s",
+                    elapsed.as_secs_f64()
                 );
                 last_dump = now;
             }
