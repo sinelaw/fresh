@@ -272,6 +272,10 @@ pub struct TextMateEngine {
     last_buffer_len: usize,
     ts_language: Option<Language>,
     stats: HighlightStats,
+    // Markdown's bundled TextMate grammar marks fenced code uniformly as
+    // `markup.raw`. Cache a second, language-aware pass for recognized fences
+    // so ordinary viewport cache hits do not re-parse their contents.
+    markdown_fence_cache: Option<MarkdownFenceCache>,
     // Scope→Category memo. Syntect Scope atoms are append-only-interned
     // globally, so entries never need invalidation.
     scope_category_cache: HashMap<syntect::parsing::Scope, Option<HighlightCategory>>,
@@ -305,6 +309,20 @@ struct TextMateCache {
 struct CachedSpan {
     range: Range<usize>,
     category: crate::primitives::highlighter::HighlightCategory,
+}
+
+#[derive(Debug, Clone)]
+struct MarkdownFenceCache {
+    buffer_version: u64,
+    buffer_len: usize,
+    recognized_ranges: Vec<Range<usize>>,
+    spans: Vec<CachedSpan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkdownFence {
+    content_range: Range<usize>,
+    language: String,
 }
 
 /// Small/large file threshold (whole-file cache vs viewport window).
@@ -379,6 +397,98 @@ fn prepare_line_at(content_bytes: &[u8], pos: usize) -> (usize, usize, Option<Pr
     (line_end, line_byte_len, prepared)
 }
 
+/// Parse CommonMark-style fenced code blocks and retain the first info-string
+/// token as the language hint. Both backtick and tilde fences are supported;
+/// fences may be indented by up to three spaces and may be left open at EOF.
+fn markdown_fences(text: &str) -> Vec<MarkdownFence> {
+    struct OpenFence {
+        marker: u8,
+        marker_len: usize,
+        content_start: usize,
+        language: String,
+    }
+
+    fn fence_prefix(line: &str) -> Option<(u8, usize, &str)> {
+        let bytes = line.as_bytes();
+        let indent = bytes.iter().take_while(|&&byte| byte == b' ').count();
+        if indent > 3 || indent == bytes.len() {
+            return None;
+        }
+        let marker = bytes[indent];
+        if marker != b'`' && marker != b'~' {
+            return None;
+        }
+        let marker_len = bytes[indent..]
+            .iter()
+            .take_while(|&&byte| byte == marker)
+            .count();
+        if marker_len < 3 {
+            return None;
+        }
+        Some((marker, marker_len, &line[indent + marker_len..]))
+    }
+
+    fn language_from_info(info: &str) -> String {
+        let token = info.split_ascii_whitespace().next().unwrap_or_default();
+        // Accommodate the two common attribute spellings in addition to the
+        // plain CommonMark info token: `{.rust}` and `language-rust`.
+        let token = token
+            .strip_prefix("{.")
+            .and_then(|token| token.strip_suffix('}'))
+            .unwrap_or(token);
+        token
+            .strip_prefix("language-")
+            .unwrap_or(token)
+            .split(',')
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    let mut blocks = Vec::new();
+    let mut open: Option<OpenFence> = None;
+    let mut line_start = 0;
+
+    for line_with_ending in text.split_inclusive('\n') {
+        let line = line_with_ending.trim_end_matches(&['\r', '\n'][..]);
+        if let Some(fence) = &open {
+            let is_closing = fence_prefix(line).is_some_and(|(marker, marker_len, rest)| {
+                marker == fence.marker
+                    && marker_len >= fence.marker_len
+                    && rest.bytes().all(|byte| byte == b' ' || byte == b'\t')
+            });
+            if is_closing {
+                let fence = open.take().expect("open fence must exist");
+                blocks.push(MarkdownFence {
+                    content_range: fence.content_start..line_start,
+                    language: fence.language,
+                });
+            }
+        } else if let Some((marker, marker_len, info)) = fence_prefix(line) {
+            // Backtick fence info strings may not themselves contain a
+            // backtick. A tilde fence has no analogous restriction.
+            if marker != b'`' || !info.contains('`') {
+                open = Some(OpenFence {
+                    marker,
+                    marker_len,
+                    content_start: line_start + line_with_ending.len(),
+                    language: language_from_info(info.trim()),
+                });
+            }
+        }
+        line_start += line_with_ending.len();
+    }
+
+    if let Some(fence) = open {
+        blocks.push(MarkdownFence {
+            content_range: fence.content_start..text.len(),
+            language: fence.language,
+        });
+    }
+
+    blocks
+}
+
 impl TextMateEngine {
     /// Create a new TextMate engine for the given syntax
     pub fn new(syntax_set: Arc<SyntaxSet>, syntax_index: usize) -> Self {
@@ -392,6 +502,7 @@ impl TextMateEngine {
             last_buffer_len: 0,
             ts_language: None,
             stats: HighlightStats::default(),
+            markdown_fence_cache: None,
             scope_category_cache: HashMap::new(),
         }
     }
@@ -412,6 +523,7 @@ impl TextMateEngine {
             last_buffer_len: 0,
             ts_language,
             stats: HighlightStats::default(),
+            markdown_fence_cache: None,
             scope_category_cache: HashMap::new(),
         }
     }
@@ -434,6 +546,7 @@ impl TextMateEngine {
     /// Buffer-insert notification. Shifts span offsets in place and marks
     /// the cache dirty so the partial-update path runs on next render.
     pub fn notify_insert(&mut self, position: usize, length: usize) {
+        self.markdown_fence_cache = None;
         self.checkpoint_markers.adjust_for_insert(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
@@ -456,6 +569,7 @@ impl TextMateEngine {
 
     /// Buffer-delete notification. Mirror of `notify_insert`.
     pub fn notify_delete(&mut self, position: usize, length: usize) {
+        self.markdown_fence_cache = None;
         self.checkpoint_markers.adjust_for_delete(position, length);
         self.dirty_from = Some(self.dirty_from.map_or(position, |d| d.min(position)));
         if let Some(cache) = &mut self.cache {
@@ -589,6 +703,29 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
+        let spans = self.highlight_viewport_base(
+            buffer,
+            viewport_start,
+            viewport_end,
+            theme,
+            context_bytes,
+        );
+        if self.syntax_name() != "Markdown" {
+            return spans;
+        }
+
+        self.ensure_markdown_fence_cache(buffer, theme);
+        self.apply_markdown_fence_highlights(spans, viewport_start, viewport_end, theme)
+    }
+
+    fn highlight_viewport_base(
+        &mut self,
+        buffer: &Buffer,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+        context_bytes: usize,
+    ) -> Vec<HighlightSpan> {
         let buf_len = buffer.len();
         let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
             (0, buf_len)
@@ -691,6 +828,110 @@ impl TextMateEngine {
                 category: Some(span.category),
             })
             .collect()
+    }
+
+    fn ensure_markdown_fence_cache(&mut self, buffer: &Buffer, theme: &Theme) {
+        let cache_is_current = self.markdown_fence_cache.as_ref().is_some_and(|cache| {
+            cache.buffer_version == buffer.version() && cache.buffer_len == buffer.len()
+        });
+        if cache_is_current {
+            return;
+        }
+
+        let Some(text) = buffer.to_string() else {
+            self.markdown_fence_cache = None;
+            return;
+        };
+        let mut recognized_ranges = Vec::new();
+        let mut spans = Vec::new();
+
+        for fence in markdown_fences(&text) {
+            if fence.language.is_empty()
+                || self
+                    .syntax_set
+                    .find_syntax_by_token(&fence.language)
+                    .is_none()
+            {
+                continue;
+            }
+
+            let code = &text[fence.content_range.clone()];
+            let block_start = fence.content_range.start;
+            recognized_ranges.push(fence.content_range);
+            spans.extend(
+                highlight_string_with_syntax_set(code, &fence.language, &self.syntax_set, theme)
+                    .into_iter()
+                    .filter_map(|span| {
+                        span.category.map(|category| CachedSpan {
+                            range: block_start + span.range.start..block_start + span.range.end,
+                            category,
+                        })
+                    }),
+            );
+        }
+
+        self.markdown_fence_cache = Some(MarkdownFenceCache {
+            buffer_version: buffer.version(),
+            buffer_len: buffer.len(),
+            recognized_ranges,
+            spans,
+        });
+    }
+
+    fn apply_markdown_fence_highlights(
+        &self,
+        mut base_spans: Vec<HighlightSpan>,
+        viewport_start: usize,
+        viewport_end: usize,
+        theme: &Theme,
+    ) -> Vec<HighlightSpan> {
+        let Some(cache) = &self.markdown_fence_cache else {
+            return base_spans;
+        };
+
+        // Remove Markdown's uniform `markup.raw` spans from recognized code
+        // ranges. Preserve any portion that lies before/after a fence; bytes
+        // not assigned a nested-language scope intentionally inherit the
+        // editor foreground instead of the raw-code string color.
+        for code_range in cache
+            .recognized_ranges
+            .iter()
+            .filter(|range| range.start < viewport_end && range.end > viewport_start)
+        {
+            let mut remaining = Vec::with_capacity(base_spans.len());
+            for span in base_spans {
+                if span.range.end <= code_range.start || span.range.start >= code_range.end {
+                    remaining.push(span);
+                    continue;
+                }
+                if span.range.start < code_range.start {
+                    let mut left = span.clone();
+                    left.range.end = code_range.start;
+                    remaining.push(left);
+                }
+                if span.range.end > code_range.end {
+                    let mut right = span;
+                    right.range.start = code_range.end;
+                    remaining.push(right);
+                }
+            }
+            base_spans = remaining;
+        }
+
+        base_spans.extend(
+            cache
+                .spans
+                .iter()
+                .filter(|span| span.range.start < viewport_end && span.range.end > viewport_start)
+                .map(|span| HighlightSpan {
+                    range: span.range.clone(),
+                    color: highlight_color(span.category, theme),
+                    bg: highlight_bg(span.category, theme),
+                    category: Some(span.category),
+                }),
+        );
+        base_spans.sort_by_key(|span| (span.range.start, span.range.end));
+        base_spans
     }
 
     /// Partial update path. Returns `Some` whenever an anchor was available,
@@ -1240,6 +1481,7 @@ impl TextMateEngine {
     /// Invalidate all cache and checkpoints (file reload, language change, etc.)
     pub fn invalidate_all(&mut self) {
         self.cache = None;
+        self.markdown_fence_cache = None;
         let ids: Vec<MarkerId> = self.checkpoint_states.keys().copied().collect();
         for id in ids {
             self.checkpoint_markers.delete(id);
@@ -1253,6 +1495,22 @@ impl TextMateEngine {
     /// Returns the category if the position falls within a cached highlight span.
     /// The position must be within the last highlighted viewport range for a result.
     pub fn category_at_position(&self, position: usize) -> Option<HighlightCategory> {
+        if let Some(markdown) = &self.markdown_fence_cache {
+            if let Some(span) = markdown
+                .spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+            {
+                return Some(span.category);
+            }
+            if markdown
+                .recognized_ranges
+                .iter()
+                .any(|range| range.start <= position && position < range.end)
+            {
+                return None;
+            }
+        }
         let cache = self.cache.as_ref()?;
         cache
             .spans
@@ -1472,15 +1730,23 @@ pub fn highlight_string(
     registry: &GrammarRegistry,
     theme: &Theme,
 ) -> Vec<HighlightSpan> {
+    highlight_string_with_syntax_set(code, lang_hint, registry.syntax_set(), theme)
+}
+
+fn highlight_string_with_syntax_set(
+    code: &str,
+    lang_hint: &str,
+    syntax_set: &SyntaxSet,
+    theme: &Theme,
+) -> Vec<HighlightSpan> {
     use syntect::parsing::{ParseState, ScopeStack};
 
     // Find syntax by language token (handles aliases like "py" -> Python)
-    let syntax = match registry.syntax_set().find_syntax_by_token(lang_hint) {
+    let syntax = match syntax_set.find_syntax_by_token(lang_hint) {
         Some(s) => s,
         None => return Vec::new(),
     };
 
-    let syntax_set = registry.syntax_set();
     let mut state = ParseState::new(syntax);
     let mut spans = Vec::new();
     let mut current_scopes = ScopeStack::new();
@@ -1551,7 +1817,9 @@ pub fn highlight_string(
         current_offset += line_len;
     }
 
-    // Merge adjacent spans with same color
+    // Merge adjacent spans with the same resolved style and semantic category.
+    // Keeping the category boundary matters when callers cache these spans and
+    // later resolve them against a different theme.
     merge_adjacent_highlight_spans(&mut spans);
 
     spans
@@ -1577,6 +1845,8 @@ fn merge_adjacent_highlight_spans(spans: &mut Vec<HighlightSpan>) {
     let mut write_idx = 0;
     for read_idx in 1..spans.len() {
         if spans[write_idx].color == spans[read_idx].color
+            && spans[write_idx].bg == spans[read_idx].bg
+            && spans[write_idx].category == spans[read_idx].category
             && spans[write_idx].range.end == spans[read_idx].range.start
         {
             spans[write_idx].range.end = spans[read_idx].range.end;
@@ -1668,6 +1938,73 @@ mod tests {
         assert_eq!(
             engine.category_at_position(column_zero_end),
             Some(HighlightCategory::Keyword)
+        );
+    }
+
+    #[test]
+    fn test_markdown_fenced_code_uses_language_hint() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = "# Example\n\n```rust\nfn answer() -> u32 { 42 }\n```\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let category_at = |needle: &str| {
+            let position = content.find(needle).unwrap();
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category)
+        };
+
+        assert_eq!(category_at("fn answer"), Some(HighlightCategory::Keyword));
+        assert_eq!(category_at("42"), Some(HighlightCategory::Number));
+        assert_eq!(
+            engine.category_at_position(content.find("fn answer").unwrap()),
+            Some(HighlightCategory::Keyword),
+            "category lookups should agree with rendered embedded highlights"
+        );
+    }
+
+    #[test]
+    fn test_markdown_unknown_fence_language_keeps_raw_code_style() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let content = "```definitely-not-a-language\nfn answer() { 42 }\n```\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let position = content.find("fn answer").unwrap();
+
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::String)
+        );
+    }
+
+    #[test]
+    fn test_markdown_fence_parser_supports_common_fence_forms() {
+        let text = "before\r\n  ~~~~{.python}\r\nprint(1)\r\n  ~~~~~  \r\nafter\n";
+        let fences = markdown_fences(text);
+        assert_eq!(fences.len(), 1);
+        assert_eq!(fences[0].language, "python");
+        assert_eq!(&text[fences[0].content_range.clone()], "print(1)\r\n");
+
+        let unclosed = "```language-rust\nfn main() {}\n``\n";
+        let fences = markdown_fences(unclosed);
+        assert_eq!(fences.len(), 1);
+        assert_eq!(fences[0].language, "rust");
+        assert_eq!(
+            &unclosed[fences[0].content_range.clone()],
+            "fn main() {}\n``\n"
         );
     }
 
