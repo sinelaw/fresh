@@ -77,6 +77,17 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
             value: Some(pending),
         });
 
+    // Push the just-set global state into the shared snapshot the plugin thread
+    // reads before firing `ready`. In production this ordering is guaranteed —
+    // startup runs `update_plugin_state_snapshot` (with the disk-loaded state)
+    // several times before `fire_ready_hook` (main.rs), so the `ready` handler
+    // always sees the persisted pending specs. Skipping it here left the plugin
+    // reading a stale, empty snapshot whenever the fire-and-forget `ready`
+    // request beat the test's first `wait_until`/render to the shared lock —
+    // `recoverPendingWorkspaces` then found nothing and rendered no dock,
+    // hanging the wait (a flaky timeout under load, not a product bug).
+    h.editor_mut().update_plugin_state_snapshot();
+
     // The `ready` lifecycle hook replays persisted pending specs (this is the
     // "editor just launched" signal).
     h.editor_mut().fire_ready_hook();
