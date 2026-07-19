@@ -51,6 +51,55 @@ pub fn git_command(path: &Path) -> Command {
     cmd
 }
 
+/// Run a repository-mutating git command, tolerating transient
+/// `.git/index.lock` contention.
+///
+/// Why this is needed: the editor under test polls `git status --porcelain`
+/// in the same repo (the `git_explorer` / `git_gutter` plugins refresh file
+/// decorations on a timer). `git status` refreshes the on-disk index and, to
+/// do so, briefly takes `.git/index.lock`. When a test's *own* external
+/// `git add` / `git commit` — simulating a user running git in another
+/// terminal — lands inside that window, git aborts with:
+///
+///   fatal: Unable to create '.../.git/index.lock': File exists.
+///   Another git process seems to be running in this repository ...
+///
+/// That is not a real error: it is transient lock contention between two
+/// legitimate git processes. A user would simply re-run the command, and so
+/// do we. On *that specific* failure we wait (semantically, by watching the
+/// lock file) for the competing process to release the lock, then retry — no
+/// wall-clock timeout, matching CONTRIBUTING's "wait indefinitely / semantic
+/// waiting" rule. Any *other* failure panics immediately, so a genuine git
+/// error is never masked (narrow recovery path).
+fn run_git_mutation(path: &Path, args: &[&str], what: &str) {
+    let lock_path = path.join(".git").join("index.lock");
+    loop {
+        let output = git_command(path)
+            .args(args)
+            .output()
+            .unwrap_or_else(|e| panic!("Failed to run git {what}: {e}"));
+
+        if output.status.success() {
+            return;
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Narrow: only the index.lock contention error is retryable.
+        let lock_contention = stderr.contains("index.lock")
+            && (stderr.contains("File exists") || stderr.contains("Another git process"));
+        if !lock_contention {
+            panic!("git {what} failed: {stderr}");
+        }
+
+        // Semantic wait: spin (yielding) until the competing git process
+        // releases the lock, then retry. The poll-driven `git status` is
+        // short-lived, so this resolves almost immediately.
+        while lock_path.exists() {
+            std::thread::yield_now();
+        }
+    }
+}
+
 /// A hermetic git repository for testing
 pub struct GitTestRepo {
     /// Temporary directory containing the git repository
@@ -105,48 +154,18 @@ impl GitTestRepo {
     /// Add files to git staging area
     pub fn git_add(&self, paths: &[&str]) {
         for path in paths {
-            let output = git_command(&self.path)
-                .args(["add", path])
-                .output()
-                .expect("Failed to run git add");
-
-            if !output.status.success() {
-                panic!(
-                    "git add failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+            run_git_mutation(&self.path, &["add", path], "add");
         }
     }
 
     /// Add all files to git
     pub fn git_add_all(&self) {
-        let output = git_command(&self.path)
-            .args(["add", "."])
-            .output()
-            .expect("Failed to run git add .");
-
-        if !output.status.success() {
-            panic!(
-                "git add . failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        run_git_mutation(&self.path, &["add", "."], "add .");
     }
 
     /// Commit staged changes
     pub fn git_commit(&self, message: &str) {
-        let output = git_command(&self.path)
-            .args(["commit", "-m", message])
-            .output()
-            .expect("Failed to run git commit");
-
-        if !output.status.success() {
-            panic!(
-                "git commit failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        run_git_mutation(&self.path, &["commit", "-m", message], "commit");
     }
 
     /// Set up a typical project structure for testing
