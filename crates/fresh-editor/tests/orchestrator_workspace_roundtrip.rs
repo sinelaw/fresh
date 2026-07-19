@@ -355,12 +355,12 @@ mod stable_id {
         assert_eq!(loaded.label.as_deref(), Some("long-root"));
     }
 
-    /// `save` garbage-collects every other file claiming the same root — a
-    /// stale id-keyed sibling left by a prior window, plus the legacy
-    /// root-keyed file — so shadowed snapshots don't accumulate on disk. Reads
-    /// only arbitrate the winner; without this GC the losers would linger.
+    /// `save` retires the legacy root-keyed file it re-keys away from, but
+    /// leaves id-keyed **co-tenant** siblings alone — several workspaces may
+    /// now share one root (a tab extracted into its own window), each its own
+    /// durable identity, so a sibling id-file is a live peer, not a duplicate.
     #[test]
-    fn save_retires_stale_duplicate_siblings() {
+    fn save_retires_legacy_but_keeps_co_tenant_siblings() {
         let sandbox = tempfile::tempdir().unwrap();
         let project = sandbox.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
@@ -370,17 +370,17 @@ mod stable_id {
         std::fs::create_dir_all(&dir).unwrap();
         let encoded = encode_path_for_filename(&project);
 
-        // A stale id-keyed file from a prior window at this root...
-        let mut stale = Workspace::new(project.clone());
-        stale.label = Some("stale".to_string());
-        stale.saved_at = 100;
-        stale.stable_id = Some("ws-stale".to_string());
+        // A live co-tenant workspace at this root (its own durable id)...
+        let mut peer = Workspace::new(project.clone());
+        peer.label = Some("peer".to_string());
+        peer.saved_at = 100;
+        peer.stable_id = Some("ws-peer".to_string());
         std::fs::write(
-            dir.join(format!("{encoded}.ws-stale.json")),
-            serde_json::to_vec(&stale).unwrap(),
+            dir.join(format!("{encoded}.ws-peer.json")),
+            serde_json::to_vec(&peer).unwrap(),
         )
         .unwrap();
-        // ...and a legacy root-keyed file for the same root.
+        // ...plus a legacy root-keyed file this saver will re-key away from.
         let mut legacy = Workspace::new(project.clone());
         legacy.label = Some("legacy".to_string());
         legacy.saved_at = 50;
@@ -391,21 +391,71 @@ mod stable_id {
         .unwrap();
         assert_eq!(files_for_root(&project).len(), 2);
 
-        // A newer window saves under its own id.
+        // A second window saves under its own id.
         let mut current = Workspace::new(project.clone());
         current.label = Some("current".to_string());
         current.saved_at = 200;
         current.stable_id = Some("ws-current".to_string());
         current.save().unwrap();
 
-        // Only the just-saved id-keyed file survives; the duplicates are gone.
-        let files = files_for_root(&project);
+        // The legacy file is retired; both co-tenant id-files survive.
+        let ids: std::collections::BTreeSet<String> = files_for_root(&project)
+            .iter()
+            .filter_map(|p| read_stable_id(p))
+            .collect();
         assert_eq!(
-            files.len(),
-            1,
-            "stale duplicates must be retired on save: {files:?}"
+            ids,
+            ["ws-current".to_string(), "ws-peer".to_string()]
+                .into_iter()
+                .collect(),
+            "co-tenant siblings must survive a save; only legacy is retired"
         );
-        assert_eq!(read_stable_id(&files[0]).as_deref(), Some("ws-current"));
+        assert!(
+            !dir.join(format!("{encoded}.json")).exists(),
+            "the legacy root-keyed file must be retired"
+        );
+
+        Workspace::delete(&project).unwrap();
+    }
+
+    /// `delete_by_id` removes only the named identity's file; co-tenant
+    /// workspaces sharing the root survive (closing one session must not kill
+    /// its peers).
+    #[test]
+    fn delete_by_id_keeps_co_tenant_siblings() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let project = project.canonicalize().unwrap();
+
+        let dir = get_workspaces_dir().unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let encoded = encode_path_for_filename(&project);
+
+        for id in ["ws-a", "ws-b"] {
+            let mut ws = Workspace::new(project.clone());
+            ws.stable_id = Some(id.to_string());
+            std::fs::write(
+                dir.join(format!("{encoded}.{id}.json")),
+                serde_json::to_vec(&ws).unwrap(),
+            )
+            .unwrap();
+        }
+        assert_eq!(files_for_root(&project).len(), 2);
+
+        Workspace::delete_by_id(&project, "ws-a").unwrap();
+
+        let survivors: Vec<Option<String>> = files_for_root(&project)
+            .iter()
+            .map(|p| read_stable_id(p))
+            .collect();
+        assert_eq!(
+            survivors,
+            vec![Some("ws-b".to_string())],
+            "only the named identity is deleted; the co-tenant survives"
+        );
+        // Deleting an already-absent identity is a no-op success.
+        Workspace::delete_by_id(&project, "ws-a").unwrap();
 
         Workspace::delete(&project).unwrap();
     }
@@ -443,5 +493,57 @@ mod stable_id {
             "delete must remove every variant claiming the root"
         );
         assert!(find_workspace_file_by_root(&project).unwrap().is_none());
+    }
+
+    /// `load_by_id` targets one exact co-tenant, unlike `load`, which returns
+    /// the freshest file for the root. Each window restores its own identity.
+    #[test]
+    fn load_by_id_targets_the_specific_co_tenant() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let project = project.canonicalize().unwrap();
+
+        let dir = get_workspaces_dir().unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let encoded = encode_path_for_filename(&project);
+
+        // Two co-tenants; ws-b is fresher, so plain `load` would pick it.
+        for (id, at, label) in [("ws-a", 100u64, "alpha"), ("ws-b", 200, "beta")] {
+            let mut ws = Workspace::new(project.clone());
+            ws.stable_id = Some(id.to_string());
+            ws.saved_at = at;
+            ws.label = Some(label.to_string());
+            std::fs::write(
+                dir.join(format!("{encoded}.{id}.json")),
+                serde_json::to_vec(&ws).unwrap(),
+            )
+            .unwrap();
+        }
+
+        // `load` returns the freshest (ws-b / "beta")...
+        assert_eq!(
+            Workspace::load(&project).unwrap().unwrap().label.as_deref(),
+            Some("beta")
+        );
+        // ...but `load_by_id` returns each specific identity.
+        assert_eq!(
+            Workspace::load_by_id(&project, "ws-a")
+                .unwrap()
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("alpha")
+        );
+        assert_eq!(
+            Workspace::load_by_id(&project, "ws-b")
+                .unwrap()
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("beta")
+        );
+
+        Workspace::delete(&project).unwrap();
     }
 }

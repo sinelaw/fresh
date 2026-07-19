@@ -315,39 +315,65 @@ fn discover_sessions(
             saved_at: val.get("saved_at").and_then(|v| v.as_u64()).unwrap_or(0),
         });
     }
-    // One session per directory. Filenames are stable-id-keyed and no
-    // longer enforce this structurally, so dedup here: when several files
-    // claim one canonical root (a legacy file plus its re-keyed successor,
-    // mid-migration), the freshest snapshot wins. The ranking rule lives in
-    // `workspace::workspace_freshness_rank` — shared with the per-root read
-    // chokepoint so boot discovery and materialize can't disagree on which
-    // file is authoritative for a root. Losers are skipped here, not
-    // deleted; `Workspace::save` retires the duplicates on the next save.
-    let mut best: std::collections::BTreeMap<PathBuf, Candidate> =
+    // Session identity is the durable `stable_id`, not the directory: several
+    // workspaces may co-tenant one root (a tab extracted into its own window
+    // over the same project), each its own on-disk `<root>.<id>.json`. So dedup
+    // by `stable_id` — each id is one session — with two files sharing an id
+    // (a mid-rekey window) resolved to the freshest. Id-less *legacy* files map
+    // to their root instead; a legacy file is the pre-migration copy a window
+    // adopts and re-keys, so it is suppressed once ANY id-keyed file claims the
+    // same root, while an un-migrated root keeps its single legacy session.
+    let mut by_id: std::collections::BTreeMap<String, Candidate> =
         std::collections::BTreeMap::new();
+    let mut legacy_by_root: std::collections::BTreeMap<PathBuf, Candidate> =
+        std::collections::BTreeMap::new();
+    let mut roots_with_id: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for c in found {
-        let key = canonical_key(&c.root);
-        match best.get(&key) {
-            Some(cur)
-                if crate::workspace::workspace_freshness_rank(
-                    cur.saved_at,
-                    cur.stable_id.is_some(),
-                ) >= crate::workspace::workspace_freshness_rank(
-                    c.saved_at,
-                    c.stable_id.is_some(),
-                ) =>
-            {
-                tracing::info!(
-                    root = %c.root.display(),
-                    "discover_sessions: skipping stale duplicate workspace file"
-                );
+        match c.stable_id.clone() {
+            Some(id) => {
+                roots_with_id.insert(canonical_key(&c.root));
+                match by_id.get(&id) {
+                    Some(cur) if cur.saved_at >= c.saved_at => {
+                        tracing::info!(
+                            root = %c.root.display(),
+                            "discover_sessions: skipping stale same-id duplicate"
+                        );
+                    }
+                    _ => {
+                        by_id.insert(id, c);
+                    }
+                }
             }
-            _ => {
-                best.insert(key, c);
+            None => {
+                let key = canonical_key(&c.root);
+                match legacy_by_root.get(&key) {
+                    Some(cur) if cur.saved_at >= c.saved_at => {}
+                    _ => {
+                        legacy_by_root.insert(key, c);
+                    }
+                }
             }
         }
     }
-    best.into_values()
+    // Emit id-bearing sessions plus legacy sessions whose root has not been
+    // migrated. Sort by (canonical root, stable id) so window ids are stable
+    // across boots and co-tenants stay grouped by their shared root.
+    let mut sessions: Vec<Candidate> = by_id
+        .into_values()
+        .chain(
+            legacy_by_root
+                .into_iter()
+                .filter(|(root, _)| !roots_with_id.contains(root))
+                .map(|(_, c)| c),
+        )
+        .collect();
+    sessions.sort_by(|a, b| {
+        canonical_key(&a.root)
+            .cmp(&canonical_key(&b.root))
+            .then_with(|| a.stable_id.cmp(&b.stable_id))
+    });
+    sessions
+        .into_iter()
         .enumerate()
         .map(|(i, c)| {
             let (project_path, shared_worktree) = read_orch_session_meta(&c.plugin_state);

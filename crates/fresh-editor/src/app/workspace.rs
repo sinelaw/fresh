@@ -478,14 +478,24 @@ impl Editor {
         &mut self,
         id: fresh_core::WindowId,
     ) -> Result<bool, WorkspaceError> {
-        let Some(root) = self.windows.get(&id).map(|w| w.root.clone()) else {
+        let Some((root, stable_id)) = self
+            .windows
+            .get(&id)
+            .map(|w| (w.root.clone(), w.stable_id.clone()))
+        else {
             return Ok(false);
         };
 
         let workspace = if let Some(ref session_name) = self.session_name {
             Workspace::load_session(session_name, &root)?
-        } else {
+        } else if stable_id.is_empty() {
+            // No durable id yet (a brand-new window): fall back to the
+            // freshest file for the root.
             Workspace::load(&root)?
+        } else {
+            // Restore THIS window's own identity, not merely the freshest file
+            // for the root — several co-tenant workspaces may share the root.
+            Workspace::load_by_id(&root, &stable_id)?
         };
         let Some(workspace) = workspace else {
             tracing::debug!("No workspace found for {:?}", root);
