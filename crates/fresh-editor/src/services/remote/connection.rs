@@ -620,7 +620,8 @@ fn kill_carrier_and_group(child: &mut Child) {
     }
     // Also reap the direct child (covers non-unix and the race where the group
     // signal raced a just-exec'd child that hadn't set up its group yet).
-    let _ = child.start_kill();
+    // Best-effort: nothing actionable if it already exited.
+    if let Ok(()) = child.start_kill() {}
 }
 
 /// This is the lower-level function used by both `SshConnection::connect` and
