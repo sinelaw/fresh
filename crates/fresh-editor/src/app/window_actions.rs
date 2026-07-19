@@ -115,6 +115,47 @@ impl crate::app::Editor {
         self.create_window_with_authority(root, label, local_authority)
     }
 
+    /// Create (or reuse) the window a tab is being **extracted** into, giving a
+    /// freshly-created one an authority with the **same configuration** as the
+    /// `from` window the tab is leaving — never silently downgrading a
+    /// remote/container session to local. `Authority` is one-per-window and
+    /// non-`Clone` (issue #2280) and `from` stays open, so this carries the
+    /// backend *spec* (the configuration), not the instance:
+    ///
+    /// - a **local** source yields a fresh local authority scoped to the new
+    ///   root (a local backend rebuilt is the same backend);
+    /// - a **remote** source's `authority_spec` is carried onto the new window,
+    ///   so the reconnect-on-activate in [`Self::set_active_window`] (fired by
+    ///   the extract right after) rebuilds the same backend and re-points this
+    ///   window's authority onto a fresh connection with the same config.
+    ///
+    /// An existing window at `root` is reused unchanged (one-session-per-
+    /// directory); it already carries its own authority.
+    fn create_extraction_target_window(
+        &mut self,
+        root: PathBuf,
+        label: String,
+        from: WindowId,
+    ) -> WindowId {
+        if let Some(existing) = self.find_window_by_root(&root) {
+            return existing;
+        }
+        let spec = self
+            .windows
+            .get(&from)
+            .map(|w| w.authority_spec.clone())
+            .unwrap_or_default();
+        // Born under a fresh local authority scoped to the new root (its own
+        // per-session trust/env). For a local source that IS the final backend;
+        // for a remote source it is a placeholder the reconnect re-points.
+        let authority = self.local_session_authority(&root);
+        let id = self.create_window_with_authority(root, label, authority);
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.authority_spec = spec;
+        }
+        id
+    }
+
     /// Create a new window rooted at `root` under an explicit `authority`,
     /// seeded with an empty scratch buffer + minimal split layout (so it is
     /// renderable immediately) and announced via `window_created`.
@@ -866,7 +907,7 @@ impl crate::app::Editor {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
-        let target = self.create_window_at(root, label);
+        let target = self.create_extraction_target_window(root, label, self.active_window);
         // If `target` is an existing but not-yet-materialized session (its
         // root already had a persisted, dormant workspace), materialize it NOW
         // — before the move — so the buffer lands on the session's final
@@ -946,7 +987,7 @@ impl crate::app::Editor {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
-        let target = self.create_window_at(root, label);
+        let target = self.create_extraction_target_window(root, label, self.active_window);
         // Materialize a reused dormant session BEFORE adopting the terminal, so
         // the move lands on the session's final restored layout rather than one
         // `set_active_window`'s lazy materialize is about to rebuild. For an

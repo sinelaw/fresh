@@ -188,6 +188,64 @@ fn extract_tab_on_unsaved_buffer_reports_no_path() {
     harness.assert_screen_contains("Cannot extract: buffer has no file path");
 }
 
+/// The extracted workspace inherits the source workspace's authority
+/// *configuration* (its backend spec) rather than being silently downgraded
+/// to a plain local backend. A `Plugin` (devcontainer/docker) spec is used as
+/// the non-local marker: it makes `authority_spec.is_remote()` true, and its
+/// reconnect is the owning plugin's job so core's reconnect-on-activate is a
+/// no-op — no live connection is attempted in the test.
+#[test]
+fn extract_inherits_source_workspace_authority_spec() {
+    use fresh::services::authority::{
+        AuthorityPayload, FilesystemSpec, SessionAuthoritySpec, SpawnerSpec, TerminalWrapperSpec,
+    };
+
+    let mut harness = harness_with_subproject_file();
+
+    // Give the source window a non-local backend spec (its live authority
+    // stays the local placeholder — only the persisted config is remote).
+    let source_spec = SessionAuthoritySpec::Plugin(AuthorityPayload {
+        filesystem: FilesystemSpec::Local,
+        spawner: SpawnerSpec::Local,
+        terminal_wrapper: TerminalWrapperSpec::HostShell,
+        display_label: "test-container".to_string(),
+        path_translation: None,
+    });
+    let source_id = harness.editor().active_window_id();
+    harness
+        .editor_mut()
+        .set_session_authority_spec(source_id, source_spec.clone());
+
+    // Extract the focused tab (notes.txt → a new workspace rooted at subproj).
+    let bid = harness.editor().active_buffer();
+    harness.editor_mut().extract_tab_to_new_workspace(bid);
+    harness.render().unwrap();
+    harness.assert_screen_contains("into workspace subproj");
+
+    // The extraction landed in a new window whose authority config matches the
+    // source — not a downgraded `Local`.
+    let target_id = harness.editor().active_window_id();
+    assert_ne!(
+        target_id, source_id,
+        "extraction should land in a distinct new window"
+    );
+    let target_spec = harness
+        .editor()
+        .session(target_id)
+        .expect("target window exists")
+        .authority_spec
+        .clone();
+    assert_eq!(
+        target_spec, source_spec,
+        "extracted workspace must inherit the source's authority configuration, \
+         not downgrade to Local"
+    );
+    assert!(
+        target_spec.is_remote(),
+        "sanity: the inherited spec must be the non-local one we set"
+    );
+}
+
 // ── Terminal tab coverage ────────────────────────────────────────────────────
 
 /// True when this environment can open a PTY (containers/sandboxes may not).
