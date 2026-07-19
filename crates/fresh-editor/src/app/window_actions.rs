@@ -169,6 +169,38 @@ impl crate::app::Editor {
         id
     }
 
+    /// Drop the throwaway `[No Name]` seed a freshly created window is born
+    /// with (via [`Self::build_fresh_layout_if_needed`], so it is renderable
+    /// the instant `window_created` fires). Extraction is about to move the
+    /// real tab in as the window's sole content, so clearing the seed first
+    /// lets [`Self::move_buffer_membership_to_window`] re-seed the split
+    /// rooted at the extracted buffer — otherwise the co-tenant opens showing
+    /// the extracted tab *and* a stray empty `[No Name]`.
+    ///
+    /// Guarded to only ever touch that birth seed: exactly one buffer, unnamed
+    /// and unmodified. Anything else is real content and is left untouched.
+    /// Safe to call only before any render of `target` (the extract flow runs
+    /// synchronously, so no render intervenes).
+    fn discard_fresh_window_seed(&mut self, target: WindowId) {
+        let Some(w) = self.windows.get_mut(&target) else {
+            return;
+        };
+        let is_birth_seed = w.buffers.len() == 1
+            && w.buffers
+                .iter()
+                .next()
+                .is_some_and(|(_, s)| s.buffer.file_path().is_none() && !s.buffer.is_modified());
+        if !is_birth_seed {
+            return;
+        }
+        for id in w.buffers.ids() {
+            w.buffers.remove(&id);
+            w.buffer_metadata.remove(&id);
+            w.event_logs.remove(&id);
+        }
+        w.buffers.clear_splits();
+    }
+
     /// Create a new window rooted at `root` under an explicit `authority`,
     /// seeded with an empty scratch buffer + minimal split layout (so it is
     /// renderable immediately) and announced via `window_created`.
@@ -904,6 +936,9 @@ impl crate::app::Editor {
         self.retarget_leaves_off_buffer(buffer_id);
 
         let target = self.create_co_tenant_window(root, self.active_window);
+        // Drop the co-tenant's birth `[No Name]` seed so the extracted tab is
+        // its only tab, not a sibling of a stray empty buffer.
+        self.discard_fresh_window_seed(target);
         self.move_buffer_membership_to_window(buffer_id, target);
 
         let target_label = self
@@ -956,6 +991,9 @@ impl crate::app::Editor {
         self.retarget_leaves_off_buffer(buffer_id);
 
         let target = self.create_co_tenant_window(root, self.active_window);
+        // Drop the co-tenant's birth `[No Name]` seed so the moved terminal is
+        // its only tab, not a sibling of a stray empty buffer.
+        self.discard_fresh_window_seed(target);
 
         self.move_terminal_machinery_to_window(buffer_id, terminal_id, target);
         self.move_buffer_membership_to_window(buffer_id, target);

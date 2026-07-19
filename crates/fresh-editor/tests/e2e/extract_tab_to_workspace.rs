@@ -105,6 +105,29 @@ fn extract_tab_via_command_palette_moves_buffer_to_new_workspace() {
 }
 
 #[test]
+fn extract_tab_new_workspace_has_only_the_moved_tab() {
+    let mut harness = harness_with_subproject_file();
+
+    run_command_palette(&mut harness, "Extract Tab to New Workspace");
+    harness.assert_screen_contains("Extracted notes.txt into workspace project_root (2)");
+
+    // The co-tenant must open showing *only* the extracted tab — not the
+    // throwaway `[No Name]` seed the window is born with for renderability.
+    harness.assert_screen_contains("notes.txt");
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("[No Name]"),
+        "the extracted co-tenant should not carry a stray '[No Name]' seed tab, \
+         got screen:\n{screen}"
+    );
+    assert_eq!(
+        harness.editor().active_window().buffers.len(),
+        1,
+        "the co-tenant should own exactly the moved buffer"
+    );
+}
+
+#[test]
 fn extract_tab_preserves_unsaved_edits_and_undo_history() {
     let mut harness = harness_with_subproject_file();
 
