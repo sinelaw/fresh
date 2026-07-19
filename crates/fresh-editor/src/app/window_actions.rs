@@ -115,37 +115,50 @@ impl crate::app::Editor {
         self.create_window_with_authority(root, label, local_authority)
     }
 
-    /// Create (or reuse) the window a tab is being **extracted** into, giving a
-    /// freshly-created one an authority with the **same configuration** as the
-    /// `from` window the tab is leaving — never silently downgrading a
-    /// remote/container session to local. `Authority` is one-per-window and
-    /// non-`Clone` (issue #2280) and `from` stays open, so this carries the
-    /// backend *spec* (the configuration), not the instance:
+    /// Number of live windows whose canonical root matches `root` — the size
+    /// of a root's co-tenant session group.
+    pub(crate) fn windows_at_root_count(&self, root: &std::path::Path) -> usize {
+        let key = crate::app::orchestrator_persistence::canonical_key(root);
+        self.windows
+            .values()
+            .filter(|w| crate::app::orchestrator_persistence::canonical_key(&w.root) == key)
+            .count()
+    }
+
+    /// Create a **new** window co-tenanting `root` — a tab extracted into its
+    /// own workspace over the same project. Unlike [`Self::create_window_at`]
+    /// this deliberately does **not** dedup onto an existing window at the root
+    /// (multiple workspaces per root is the whole point). It:
     ///
-    /// - a **local** source yields a fresh local authority scoped to the new
-    ///   root (a local backend rebuilt is the same backend);
-    /// - a **remote** source's `authority_spec` is carried onto the new window,
-    ///   so the reconnect-on-activate in [`Self::set_active_window`] (fired by
-    ///   the extract right after) rebuilds the same backend and re-points this
-    ///   window's authority onto a fresh connection with the same config.
-    ///
-    /// An existing window at `root` is reused unchanged (one-session-per-
-    /// directory); it already carries its own authority.
-    fn create_extraction_target_window(
-        &mut self,
-        root: PathBuf,
-        label: String,
-        from: WindowId,
-    ) -> WindowId {
-        if let Some(existing) = self.find_window_by_root(&root) {
-            return existing;
-        }
+    /// - carries the `from` window's authority **configuration** (its backend
+    ///   spec) so a remote/container session is never silently downgraded to
+    ///   local. `Authority` is one-per-window and non-`Clone` (issue #2280) and
+    ///   `from` stays open, so the *spec* is carried, not the instance: a local
+    ///   source rebuilds a fresh local backend (the same backend), while a
+    ///   remote source's spec routes the reconnect-on-activate in
+    ///   [`Self::set_active_window`] to rebuild the same backend on a fresh
+    ///   connection;
+    /// - takes a **numbered** label (`proj`, `proj (2)`, …) so co-tenants are
+    ///   distinguishable in the dock — the source already holds the root, so a
+    ///   new co-tenant is at least the 2nd window there.
+    fn create_co_tenant_window(&mut self, root: PathBuf, from: WindowId) -> WindowId {
+        let base = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        let n = self.windows_at_root_count(&root);
+        let label = if n == 0 {
+            base
+        } else {
+            format!("{base} ({})", n + 1)
+        };
+
         let spec = self
             .windows
             .get(&from)
             .map(|w| w.authority_spec.clone())
             .unwrap_or_default();
-        // Born under a fresh local authority scoped to the new root (its own
+        // Born under a fresh local authority scoped to the root (its own
         // per-session trust/env). For a local source that IS the final backend;
         // for a remote source it is a placeholder the reconnect re-points.
         let authority = self.local_session_authority(&root);
@@ -848,18 +861,16 @@ impl crate::app::Editor {
         None
     }
 
-    /// Move a tab's buffer into a new orchestrator workspace (a `Window`)
-    /// and switch to it. File-backed tabs root the new workspace at the
-    /// file's parent directory; terminal tabs root it at the shell's current
-    /// working directory (the live PTY moves along — the running process is
-    /// untouched).
+    /// Move a tab into a **new workspace co-tenanting the same project root** —
+    /// you're peeling the tab into its own independent window over the same
+    /// project (multiple workspaces per root, distinguished by a durable id and
+    /// a numbered label). File tabs and terminal tabs (the live PTY moves
+    /// along, the running process untouched) both root the new window at the
+    /// source window's root.
     ///
-    /// A buffer that is neither file-backed nor a terminal has no directory
-    /// to root the new workspace at, so the extraction is refused with a
-    /// status message. If a workspace already exists at that root the buffer
-    /// moves into it instead (one-session-per-directory invariant); if that
-    /// workspace is the *current* one there is nowhere to extract to and a
-    /// status message says so.
+    /// A file-backed buffer is required for a file extraction — an unnamed
+    /// scratch buffer has no durable file identity to carry and is refused with
+    /// a status message.
     ///
     /// The live `EditorState` moves — unsaved modifications and undo history
     /// travel with the tab rather than being re-read from disk.
@@ -871,6 +882,8 @@ impl crate::app::Editor {
             return;
         }
 
+        // Only file-backed tabs for now: an unnamed scratch buffer has no
+        // durable file identity to carry into its own workspace.
         let path = self
             .buffers()
             .get(&buffer_id)
@@ -879,44 +892,18 @@ impl crate::app::Editor {
             self.set_status_message(t!("workspace.extract_no_file_path").to_string());
             return;
         };
-        let root = match path.parent() {
-            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
-            _ => {
-                self.set_status_message(t!("workspace.extract_no_file_path").to_string());
-                return;
-            }
-        };
 
-        if self.find_window_by_root(&root) == Some(self.active_window) {
-            self.set_status_message(
-                t!(
-                    "workspace.extract_already_rooted",
-                    root = root.display().to_string()
-                )
-                .to_string(),
-            );
-            return;
-        }
+        // The tab lands in a NEW workspace co-tenanting the SAME project root,
+        // not a directory guessed from the file path — you're peeling the tab
+        // into its own window over the same project.
+        let root = self.active_window().root.clone();
 
         // Re-point every visible leaf that displays this buffer at another
         // of its tabs before the move, so the source window's split tree
         // never dangles on a buffer it no longer owns.
         self.retarget_leaves_off_buffer(buffer_id);
 
-        let label = root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.to_string_lossy().into_owned());
-        let target = self.create_extraction_target_window(root, label, self.active_window);
-        // If `target` is an existing but not-yet-materialized session (its
-        // root already had a persisted, dormant workspace), materialize it NOW
-        // — before the move — so the buffer lands on the session's final
-        // restored layout rather than one `set_active_window`'s lazy
-        // materialize is about to rebuild from the snapshot. Idempotent and a
-        // no-op for a freshly created window (not pending). See the terminal
-        // sibling for the case this most matters (an unseeded pending session,
-        // restored via the wholesale `Window::from_workspace` rebuild).
-        self.materialize_window(target);
+        let target = self.create_co_tenant_window(root, self.active_window);
         self.move_buffer_membership_to_window(buffer_id, target);
 
         let target_label = self
@@ -936,12 +923,13 @@ impl crate::app::Editor {
         );
     }
 
-    /// Terminal-tab body of [`Self::extract_tab_to_new_workspace`]: root the
-    /// new workspace at the shell's current working directory and move the
-    /// live terminal — PTY handle, backing/log files, launch/resume argv,
-    /// and process-group registration — to the new window alongside the
-    /// buffer. The running process is untouched; its output threads are
-    /// retagged so the stream follows it (`TerminalManager::adopt`).
+    /// Terminal-tab body of [`Self::extract_tab_to_new_workspace`]: move the
+    /// live terminal — PTY handle, backing/log files, launch/resume argv, and
+    /// process-group registration — into a new workspace co-tenanting the same
+    /// project root. The running process is untouched; its output threads are
+    /// retagged so the stream follows it (`TerminalManager::adopt`). The
+    /// shell's own cwd is irrelevant to the workspace root now — the co-tenant
+    /// is rooted at the source project, same as the file path.
     fn extract_terminal_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
         use rust_i18n::t;
 
@@ -955,27 +943,11 @@ impl crate::app::Editor {
         };
         // A binding without a PTY handle is a dormant remote shell waiting
         // for reconnect — there is nothing live to move.
-        let Some(handle) = win.terminal_manager.get(terminal_id) else {
+        if win.terminal_manager.get(terminal_id).is_none() {
             self.set_status_message(t!("workspace.extract_terminal_dormant").to_string());
             return;
-        };
-        // Root at where the user has `cd`'d to, not where the terminal was
-        // spawned; fall back to the spawn cwd, then the window root (which
-        // the already-rooted guard below then refuses).
-        let root = handle
-            .current_working_dir()
-            .unwrap_or_else(|| win.root.clone());
-
-        if self.find_window_by_root(&root) == Some(self.active_window) {
-            self.set_status_message(
-                t!(
-                    "workspace.extract_already_rooted",
-                    root = root.display().to_string()
-                )
-                .to_string(),
-            );
-            return;
         }
+        let root = self.active_window().root.clone();
 
         // The tab title (OSC/explicit/fg-command derived) — captured before
         // the move while this window can still resolve it.
@@ -983,19 +955,7 @@ impl crate::app::Editor {
 
         self.retarget_leaves_off_buffer(buffer_id);
 
-        let label = root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.to_string_lossy().into_owned());
-        let target = self.create_extraction_target_window(root, label, self.active_window);
-        // Materialize a reused dormant session BEFORE adopting the terminal, so
-        // the move lands on the session's final restored layout rather than one
-        // `set_active_window`'s lazy materialize is about to rebuild. For an
-        // unseeded pending session that restore goes through the
-        // `Window::from_workspace` factory, which replaces the window wholesale
-        // and would drop the just-adopted PTY along with the old shell.
-        // Idempotent; a no-op for a freshly created window.
-        self.materialize_window(target);
+        let target = self.create_co_tenant_window(root, self.active_window);
 
         self.move_terminal_machinery_to_window(buffer_id, terminal_id, target);
         self.move_buffer_membership_to_window(buffer_id, target);
