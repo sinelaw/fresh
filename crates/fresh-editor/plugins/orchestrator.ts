@@ -1043,6 +1043,36 @@ function folderNodeEntry(f: DockFolder, count: number): TextPropertyEntry {
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
 
+// ── Pending placeholder row presentation (single source of truth) ─────────
+//
+// A being-created placeholder is drawn on four surfaces with different
+// shapes: the compact tree line (`sessionNodeEntry`), the card continuation
+// lines (`sessionCardExtraLines`), the modal pill (`renderPendingPillSpec`),
+// and the preview pane (`buildPreviewEntries`). The *shape* differs per
+// surface, but the phase → colour / affordance mapping must not: these
+// helpers own it so the surfaces can't drift (they had — creating rows
+// disagreed on the hint and on whether the message italicised).
+
+// Message colour: red once the create has failed, amber while it is still
+// creating or is paused (interrupted, awaiting resume).
+function pendingMsgFg(p: PendingCreate): string {
+  return p.phase === "error" ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+}
+
+// `error` and `paused` are actionable — Enter retries / resumes them — while
+// `creating` is passive (the create is running; the only action is Dismiss).
+function pendingActionable(p: PendingCreate): boolean {
+  return p.phase !== "creating";
+}
+
+// The one-line action hint for a pending row's phase: retry/resume when
+// actionable, otherwise the "you can still dismiss this" affordance.
+function pendingHintText(p: PendingCreate): string {
+  return pendingActionable(p)
+    ? editor.t("dock.pending_retry_hint")
+    : editor.t("dock.pending_dismiss_hint");
+}
+
 // One tree row for a session leaf: state glyph, optional remote facet,
 // and the name (highlighted when it's the active window). A single
 // line — the tree owns indentation and the disclosure column, so the
@@ -1085,10 +1115,7 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
   if (s.pending) {
     segs.push({
       text: "  " + s.pending.message,
-      style: {
-        fg: s.pending.phase === "error" ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg",
-        italic: true,
-      },
+      style: { fg: pendingMsgFg(s.pending), italic: true },
     });
   }
   return styledRow(segs as Parameters<typeof styledRow>[0]);
@@ -1154,14 +1181,12 @@ function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   // retry/resume hint (blank while still creating).
   if (s.pending) {
     const p = s.pending;
-    const isError = p.phase === "error";
-    const actionable = p.phase !== "creating";
-    const msgFg = isError ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+    const actionable = pendingActionable(p);
     return [
-      styledRow([{ text: p.message, style: { fg: msgFg, italic: actionable } }]),
+      styledRow([{ text: p.message, style: { fg: pendingMsgFg(p), italic: actionable } }]),
       styledRow([
         actionable
-          ? { text: editor.t("dock.pending_retry_hint"), style: { fg: "ui.menu_disabled_fg", italic: true } }
+          ? { text: pendingHintText(p), style: { fg: "ui.menu_disabled_fg", italic: true } }
           : { text: " " },
       ] as Parameters<typeof styledRow>[0]),
     ];
@@ -1922,10 +1947,10 @@ function flexLine(l: Entry[], r: Entry[]): WidgetSpec {
 function stateGlyphEntry(s: AgentSession): Entry {
   if (s.pending) {
     // A being-created row: amber `*` while creating (reads as busy/spinner,
-    // same glyph as a working session), red `!` once it has failed.
-    return s.pending.phase === "error"
-      ? { text: "! ", style: { fg: "ui.status_error_indicator_fg", bold: true } }
-      : { text: "* ", style: { fg: "diagnostic.warning_fg", bold: true } };
+    // same glyph as a working session), red `!` once it has failed. Colour
+    // comes from the shared helper so glyph and message always agree.
+    const glyph = s.pending.phase === "error" ? "! " : "* ";
+    return { text: glyph, style: { fg: pendingMsgFg(s.pending), bold: true } };
   }
   if (s.discovered) {
     return { text: ON_DISK_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } };
@@ -2032,11 +2057,8 @@ function renderPillSpec(
 // the card keeps the uniform three-line height).
 function renderPendingPillSpec(s: AgentSession): WidgetSpec {
   const p = s.pending!;
-  const isError = p.phase === "error";
-  // `error` and `paused` are both actionable (Enter to retry / resume);
-  // `creating` is passive.
-  const actionable = p.phase !== "creating";
-  const msgFg = isError ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+  const actionable = pendingActionable(p);
+  const msgFg = pendingMsgFg(p);
   const remoteGlyph: Entry[] = s.remote
     ? [{ text: REMOTE_GLYPH[s.remote.kind] + " ", style: { fg: msgFg, bold: true } }]
     : [];
@@ -2060,7 +2082,7 @@ function renderPendingPillSpec(s: AgentSession): WidgetSpec {
     raw([styledRow([{ text: p.message, style: { fg: msgFg, italic: actionable } }])]),
   ];
   const hint: Entry[] = actionable
-    ? [{ text: editor.t("dock.pending_retry_hint"), style: { fg: "ui.menu_disabled_fg", italic: true } }]
+    ? [{ text: pendingHintText(p), style: { fg: "ui.menu_disabled_fg", italic: true } }]
     : [{ text: " " }];
   children.push(raw([styledRow(hint as Parameters<typeof styledRow>[0])]));
   return labeledSection({ label: "", child: col(...children) });
@@ -2086,25 +2108,11 @@ function buildPreviewEntries(
   // the failure reason) rather than live-session detail it doesn't have.
   if (s.pending) {
     const p = s.pending;
-    const isError = p.phase === "error";
     return [
       styledRow([{ text: s.label, style: { bold: true } }]),
+      styledRow([{ text: p.message, style: { fg: pendingMsgFg(p), italic: true } }]),
       styledRow([
-        {
-          text: p.message,
-          style: {
-            fg: isError ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg",
-            italic: true,
-          },
-        },
-      ]),
-      styledRow([
-        {
-          text: p.phase === "creating"
-            ? editor.t("dock.pending_dismiss_hint")
-            : editor.t("dock.pending_retry_hint"),
-          style: { fg: "ui.menu_disabled_fg", italic: true },
-        },
+        { text: pendingHintText(p), style: { fg: "ui.menu_disabled_fg", italic: true } },
       ]),
     ];
   }
@@ -3099,6 +3107,14 @@ const prProbesInFlight = new Set<number>();
 // Git is local + cheap, so refresh it more often than the PR (network) probe.
 const GIT_PROBE_TTL_MS = 15_000;
 const gitProbesInFlight = new Set<number>();
+// Ceiling on git probes running at once. Each probe spawns two subprocesses
+// (`git status` + `git diff`), and the poll loop kicks one per *filtered*
+// session every tick — so a dock listing many worktrees would otherwise fan
+// out dozens of concurrent spawns on the same tick (a spawn storm that spiked
+// render latency). A session skipped because the cap is full is retried on the
+// next poll (~5s), comfortably inside the 15s freshness TTL, so nothing goes
+// stale — the bursts just get spread across a few ticks.
+const MAX_CONCURRENT_GIT_PROBES = 6;
 
 // Resolve (and cache) a session's branch. Live sessions don't carry
 // `branch` up front, so ask git in the worktree once.
@@ -3235,12 +3251,33 @@ function parsePorcelainV2(stdout: string): GitStat {
 
 // Opportunistic local-git summary for the pill's second line. Two cheap
 // git calls (status + diffstat), throttled like the PR probe.
+// Kick git probes for the open dialog's filtered sessions up to the
+// concurrency cap. `probeGit` self-skips fresh / in-flight sessions, so this
+// only spends slots on sessions that would actually spawn. Called from the
+// poll tick and re-invoked as each probe completes, giving a continuously
+// draining bounded pool: at most MAX_CONCURRENT_GIT_PROBES spawn at once, but
+// freed slots refill immediately, so a large dock still refreshes promptly
+// without a same-tick storm.
+function drainGitProbes(): void {
+  if (!openDialog) return;
+  for (const id of openDialog.filteredIds) {
+    if (gitProbesInFlight.size >= MAX_CONCURRENT_GIT_PROBES) break;
+    const s = orchestratorSessions.get(id);
+    if (s) void probeGit(s);
+  }
+}
+
 async function probeGit(s: AgentSession): Promise<void> {
   if (gitProbesInFlight.has(s.id)) return;
   const now = Date.now();
   if (s.git && s.git.status === "ok" && now - s.git.fetchedAt < GIT_PROBE_TTL_MS) {
     return;
   }
+  // Bound concurrent git spawns (see MAX_CONCURRENT_GIT_PROBES). Check this
+  // *after* the freshness gate so an up-to-date session is still a free no-op;
+  // only sessions that would actually spawn count against the cap. `drainGitProbes`
+  // refills the slot this holds as soon as the probe finishes.
+  if (gitProbesInFlight.size >= MAX_CONCURRENT_GIT_PROBES) return;
   gitProbesInFlight.add(s.id);
   s.git = { status: "loading", fetchedAt: s.git?.fetchedAt ?? 0, info: s.git?.info };
   try {
@@ -3269,6 +3306,9 @@ async function probeGit(s: AgentSession): Promise<void> {
   } finally {
     gitProbesInFlight.delete(s.id);
     scheduleProbeRefresh();
+    // Refill the slot this probe just freed so the pool keeps draining
+    // between polls (preserves throughput under the concurrency cap).
+    drainGitProbes();
   }
 }
 
@@ -3294,8 +3334,11 @@ function startProbePolling(): void {
       const s = orchestratorSessions.get(id);
       if (!s) continue;
       void probePr(s);
-      void probeGit(s);
     }
+    // Git probes drain at bounded concurrency (see `drainGitProbes`) rather
+    // than all firing on this tick — each completion refills the freed slot,
+    // so throughput is preserved without the same-tick spawn burst.
+    drainGitProbes();
     void editor.delay(PROBE_POLL_INTERVAL_MS).then(tick);
   };
   tick();
@@ -4359,7 +4402,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
     const items: WidgetSpec[] = [
       { kind: "raw", entries: [styledRow([{ text: `${label}`, style: { bold: true } }])] },
     ];
-    if (s.pending.phase !== "creating") {
+    if (pendingActionable(s.pending)) {
       items.push(button(editor.t("dock.ctx_retry"), { intent: "primary", key: "ctx-retry" }));
     }
     items.push(button(editor.t("dock.ctx_dismiss"), { intent: "danger", key: "ctx-dismiss" }));
@@ -4604,7 +4647,7 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   // resumes a paused/failed one (Enter = retry); a still-creating one has
   // nothing to do but keep showing its progress.
   if (sess?.pending) {
-    if (sess.pending.phase !== "creating") retryPending(id);
+    if (pendingActionable(sess.pending)) retryPending(id);
     return;
   }
   // A discovered (on-disk) worktree has no live window — attach a fresh
@@ -8667,7 +8710,7 @@ editor.on("widget_event", (e) => {
       // window to dive into). Never blur to the editor — that would drop
       // focus onto whatever buffer sits behind the phantom row.
       if (sel && sel.pending) {
-        if (sel.pending.phase !== "creating") retryPending(id as number);
+        if (pendingActionable(sel.pending)) retryPending(id as number);
         return;
       }
       if (sel && sel.discovered) {
@@ -8903,7 +8946,7 @@ editor.on("widget_event", (e) => {
       if (sel && sel.pending) {
         // A being-created placeholder has no window to open — resume a
         // paused/failed one (retry); a still-creating one is a no-op.
-        if (sel.pending.phase !== "creating") retryPending(id as number);
+        if (pendingActionable(sel.pending)) retryPending(id as number);
         return;
       }
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
