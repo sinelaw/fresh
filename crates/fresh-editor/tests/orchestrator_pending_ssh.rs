@@ -53,14 +53,18 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
     .unwrap();
 
     // Open the form.
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     h.wait_for_prompt().unwrap();
     h.type_text("Orchestrator: New Workspace").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
-        .unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("ORCHESTRATOR :: New Workspace")
+    })
+    .unwrap();
 
     // Switch "Run in:" from Local to SSH (Shift+Tab wraps focus onto the
     // selector, → advances to SSH and swaps the body), then Tab into the SSH

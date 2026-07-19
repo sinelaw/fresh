@@ -48,14 +48,18 @@ fn local_submit_closes_form_and_shows_dock_row() {
     .unwrap();
 
     // Open the New Workspace form.
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL).unwrap();
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
     h.wait_for_prompt().unwrap();
     h.type_text("Orchestrator: New Workspace").unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: New Workspace"))
-        .unwrap();
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("ORCHESTRATOR :: New Workspace")
+    })
+    .unwrap();
 
     // Submit with the default project path (the workspace itself). Ctrl+Enter
     // submits from the initial text field.

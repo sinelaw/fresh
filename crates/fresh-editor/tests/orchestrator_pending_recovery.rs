@@ -70,11 +70,12 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
         },
         "label": "recovered-ws",
     }]);
-    h.editor_mut().handle_plugin_command(PluginCommand::SetGlobalState {
-        plugin_name: "orchestrator".to_string(),
-        key: "orchestrator.pending".to_string(),
-        value: Some(pending),
-    });
+    h.editor_mut()
+        .handle_plugin_command(PluginCommand::SetGlobalState {
+            plugin_name: "orchestrator".to_string(),
+            key: "orchestrator.pending".to_string(),
+            value: Some(pending),
+        });
 
     // The `ready` lifecycle hook replays persisted pending specs (this is the
     // "editor just launched" signal).
