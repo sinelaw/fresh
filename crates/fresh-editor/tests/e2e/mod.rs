@@ -28,6 +28,7 @@ pub mod dabbrev_completion;
 pub mod dock_focus_stuck_born_attached;
 pub mod dock_panel_routing;
 pub mod document_model;
+pub mod editor_context_menu;
 pub mod emacs_actions;
 pub mod encoding;
 pub mod explorer_bugs;

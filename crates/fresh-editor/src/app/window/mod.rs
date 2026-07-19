@@ -875,6 +875,10 @@ pub struct Window {
     /// File-explorer context menu state (right-click in the explorer).
     pub file_explorer_context_menu: Option<crate::app::types::FileExplorerContextMenu>,
 
+    /// Editor (buffer) context menu state (right-click over a text-buffer
+    /// split). Offers Cut / Copy / Paste / Select All.
+    pub editor_context_menu: Option<crate::app::types::EditorContextMenu>,
+
     /// Theme inspector popup (Ctrl+Right-Click) anchored in this window.
     pub theme_info_popup: Option<crate::app::types::ThemeInfoPopup>,
 
@@ -2026,6 +2030,7 @@ impl Window {
             tab_context_menu: None,
             new_tab_menu: None,
             file_explorer_context_menu: None,
+            editor_context_menu: None,
             theme_info_popup: None,
             event_debug: None,
             file_open_state: None,

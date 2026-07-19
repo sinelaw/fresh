@@ -719,6 +719,15 @@ impl Editor {
             }
         }
 
+        if let Some(&HoverTarget::EditorContextMenuItem(item_idx)) = new_target.as_ref() {
+            if let Some(ref mut menu) = self.active_window_mut().editor_context_menu {
+                if menu.highlighted != item_idx {
+                    menu.highlighted = item_idx;
+                    return true;
+                }
+            }
+        }
+
         // Handle "+" new-tab popup menu hover - update highlighted item
         if let Some(HoverTarget::NewTabMenuItem(item_idx)) = new_target.clone() {
             if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
@@ -772,6 +781,7 @@ impl Editor {
                 .active_window_mut()
                 .file_explorer_context_menu
                 .is_some()
+            || self.active_window_mut().editor_context_menu.is_some()
             || self.is_lsp_status_popup_open()
         {
             if self
@@ -1062,6 +1072,27 @@ impl Editor {
                 let item_idx = (row - menu_y - 1) as usize;
                 if item_idx < items.len() {
                     return Some(HoverTarget::TabContextMenuItem(item_idx));
+                }
+            }
+        }
+
+        // Check the editor (buffer) context menu (rendered on top).
+        if let Some(ref menu) = self.active_window().editor_context_menu {
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.active_chrome().last_frame_width,
+                self.active_chrome().last_frame_height,
+            );
+            let menu_width = super::types::EDITOR_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
+
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row > menu_y
+                && row < menu_y + menu_height - 1
+            {
+                let item_idx = (row - menu_y - 1) as usize;
+                if item_idx < menu.items().len() {
+                    return Some(HoverTarget::EditorContextMenuItem(item_idx));
                 }
             }
         }
@@ -1891,6 +1922,11 @@ impl Editor {
         }
         if self.active_window_mut().new_tab_menu.is_some() {
             if let Some(result) = self.handle_new_tab_menu_click(col, row) {
+                return Some(result);
+            }
+        }
+        if self.active_window_mut().editor_context_menu.is_some() {
+            if let Some(result) = self.handle_editor_context_menu_click(col, row) {
                 return Some(result);
             }
         }
@@ -3393,6 +3429,22 @@ impl Editor {
             }
         }
 
+        // If the editor context menu is open and the right-click lands inside
+        // it, swallow the event so we don't dismiss-and-reopen under the
+        // cursor. The left-click handler activates items.
+        if let Some(ref menu) = self.active_window().editor_context_menu {
+            let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
+            let menu_width = super::types::EDITOR_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
+            if col >= menu_x
+                && col < menu_x + menu_width
+                && row >= menu_y
+                && row < menu_y + menu_height
+            {
+                return Ok(());
+            }
+        }
+
         if let Some(explorer_area) = self.active_layout().file_explorer_area {
             if col >= explorer_area.x
                 && col < explorer_area.x + explorer_area.width
@@ -3419,6 +3471,7 @@ impl Editor {
                 self.active_window_mut().key_context =
                     crate::input::keybindings::KeyContext::FileExplorer;
                 self.active_window_mut().tab_context_menu = None;
+                self.active_window_mut().editor_context_menu = None;
                 self.active_window_mut().file_explorer_context_menu =
                     Some(super::types::FileExplorerContextMenu::new(
                         col,
@@ -3452,10 +3505,45 @@ impl Editor {
             // Open tab context menu
             self.active_window_mut().tab_context_menu =
                 Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
-        } else {
-            // Click outside tab - close context menu if open
-            self.active_window_mut().tab_context_menu = None;
+            self.active_window_mut().editor_context_menu = None;
+            return Ok(());
         }
+
+        // Not a tab — close the tab menu and, if the click landed inside a
+        // text-buffer split's content area, open the editor context menu
+        // there. Terminal splits are left alone so the terminal keeps its
+        // own mouse semantics (e.g. Shift+Right-Click paste passthrough).
+        self.active_window_mut().tab_context_menu = None;
+
+        let buffer_split_hit = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(_, _, content_rect, _, _, _)| {
+                col >= content_rect.x
+                    && col < content_rect.x + content_rect.width
+                    && row >= content_rect.y
+                    && row < content_rect.y + content_rect.height
+            })
+            .map(|(split_id, buffer_id, _, _, _, _)| (*split_id, *buffer_id));
+
+        if let Some((split_id, buffer_id)) = buffer_split_hit {
+            let is_terminal = self
+                .active_window()
+                .terminal_buffers
+                .contains_key(&buffer_id);
+            if !is_terminal {
+                // Focus the clicked split first so Cut/Copy/Paste/Select All
+                // act on the buffer the user right-clicked.
+                self.focus_split(split_id, buffer_id);
+                self.active_window_mut().editor_context_menu =
+                    Some(super::types::EditorContextMenu::new(col, row + 1));
+                return Ok(());
+            }
+        }
+
+        // Click outside any buffer split (or on a terminal) — dismiss.
+        self.active_window_mut().editor_context_menu = None;
 
         Ok(())
     }
@@ -3819,6 +3907,114 @@ impl Editor {
             FileExplorerContextMenuItem::CopyFullPath => self.file_explorer_copy_path(false),
             FileExplorerContextMenuItem::CopyRelativePath => self.file_explorer_copy_path(true),
         }
+    }
+
+    /// Handle a key press while the editor (buffer) context menu is open.
+    /// Up/Down move the highlight, Enter activates, Esc dismisses. Any other
+    /// key dismisses the menu and falls through to normal handling so the
+    /// keystroke isn't swallowed.
+    pub(super) fn handle_editor_context_menu_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> Option<AnyhowResult<()>> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        if modifiers != KeyModifiers::NONE {
+            // Let modified keys (e.g. Ctrl+C) fall through, dismissing the menu.
+            self.active_window_mut().editor_context_menu = None;
+            return None;
+        }
+
+        match code {
+            KeyCode::Up => {
+                if let Some(ref mut menu) = self.active_window_mut().editor_context_menu {
+                    menu.prev_item();
+                }
+                Some(Ok(()))
+            }
+            KeyCode::Down => {
+                if let Some(ref mut menu) = self.active_window_mut().editor_context_menu {
+                    menu.next_item();
+                }
+                Some(Ok(()))
+            }
+            KeyCode::Enter => {
+                let item = {
+                    let menu = self.active_window().editor_context_menu.as_ref()?;
+                    menu.highlighted_item()
+                };
+                self.active_window_mut().editor_context_menu = None;
+                Some(self.execute_editor_context_menu_action(item))
+            }
+            KeyCode::Esc => {
+                self.active_window_mut().editor_context_menu = None;
+                Some(Ok(()))
+            }
+            _ => {
+                // Any other key closes the menu and is processed normally.
+                self.active_window_mut().editor_context_menu = None;
+                None
+            }
+        }
+    }
+
+    /// Handle a left-click while the editor (buffer) context menu is open.
+    pub(super) fn handle_editor_context_menu_click(
+        &mut self,
+        col: u16,
+        row: u16,
+    ) -> Option<AnyhowResult<()>> {
+        let frame_w = self.active_chrome().last_frame_width;
+        let frame_h = self.active_chrome().last_frame_height;
+        let clicked_item: Option<super::types::EditorContextMenuItem> = {
+            let menu = self.active_window().editor_context_menu.as_ref()?;
+            let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
+            let menu_width = super::types::EDITOR_CONTEXT_MENU_WIDTH;
+            let menu_height = menu.height();
+
+            if col < menu_x
+                || col >= menu_x + menu_width
+                || row < menu_y
+                || row >= menu_y + menu_height
+            {
+                // Click outside the menu dismisses it.
+                self.active_window_mut().editor_context_menu = None;
+                return Some(Ok(()));
+            }
+
+            // Border rows (first/last) are inert.
+            if row == menu_y || row == menu_y + menu_height - 1 {
+                return Some(Ok(()));
+            }
+
+            let item_idx = (row - menu_y - 1) as usize;
+            menu.items().get(item_idx).copied()
+        };
+
+        self.active_window_mut().editor_context_menu = None;
+        if let Some(item) = clicked_item {
+            return Some(self.execute_editor_context_menu_action(item));
+        }
+        Some(Ok(()))
+    }
+
+    /// Run an editor context menu action by dispatching the corresponding
+    /// editor [`Action`], reusing all the existing routing (read-only
+    /// buffers, focused widgets, composite buffers, …).
+    fn execute_editor_context_menu_action(
+        &mut self,
+        item: super::types::EditorContextMenuItem,
+    ) -> AnyhowResult<()> {
+        use super::types::EditorContextMenuItem;
+        use crate::input::keybindings::Action;
+        let action = match item {
+            EditorContextMenuItem::Cut => Action::Cut,
+            EditorContextMenuItem::Copy => Action::Copy,
+            EditorContextMenuItem::Paste => Action::Paste,
+            EditorContextMenuItem::SelectAll => Action::SelectAll,
+        };
+        self.handle_action(action)
     }
 
     /// Show a tooltip for a file explorer status indicator
