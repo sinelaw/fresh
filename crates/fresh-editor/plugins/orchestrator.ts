@@ -4567,18 +4567,15 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     }
     if (id <= 0) return;
     if (id === editor.activeWindow()) return;
-    // A remote (SSH / Kubernetes) session that isn't connected yet — dormant
-    // rows restored from a previous run, or a live one whose link dropped —
-    // must NOT be auto-activated by arrow-nav. Switching to it starts a
-    // backend connect (ensure the disconnected shell + `bring_online`) and
-    // re-points the editor's active authority at that backend; for an
-    // unreachable host the connect can stall for a long time, so merely
-    // scrolling the selection past such a row would freeze the dock. Leave the
-    // highlight on it and let an explicit dive (Enter / click) do the connect —
-    // that lands in the "Connecting…" shell, the deliberate #2570 path. A
-    // connected remote (state "running") switches instantly like a local one.
-    const remote = sess?.remote;
-    if (remote && remote.state !== "running") return;
+    // Switching to a not-yet-connected remote (a dormant row restored from a
+    // previous run, or one whose link dropped) is non-blocking: the host
+    // commits into a placeholder "Connecting…" page and connects in the
+    // background (`ensure_dormant_shell` + `bring_dormant_remote_online`, the
+    // #2570 path). So arrow-nav is free to open it — the 30 ms debounce above
+    // already means only *pausing* on a row (not scrolling past it) triggers
+    // the switch, so a held ↑/↓ never fans out connects to every remote in the
+    // list. The dock keeps the row highlighted and the user can arrow away at
+    // any time while it connects.
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
   })();

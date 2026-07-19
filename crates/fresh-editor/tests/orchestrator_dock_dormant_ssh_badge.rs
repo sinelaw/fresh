@@ -95,16 +95,14 @@ fn dock_lists_dormant_ssh_session_with_backend_badge_and_dive_commits() {
     })
     .unwrap();
 
-    // Highlight the SSH row (arrow-nav no longer auto-connects a disconnected
-    // remote — see `orchestrator_dock_ssh_navigation_no_connect`), then dive
-    // with Enter: the connect fails and the switch still commits — the editor
-    // lands in the (empty) SSH workspace instead of silently staying on the
-    // local one.
+    // Arrow onto the SSH row: the dock live-switches into the session's
+    // (empty) placeholder shell, the connect fails, and the switch still
+    // commits — the editor lands there instead of silently staying on the
+    // local workspace. The switch is non-blocking (see
+    // `orchestrator_dock_ssh_navigation_no_connect` for the hanging-host
+    // variant that proves arrow-nav never freezes on it).
     let local_root = h.editor().active_window().root.clone();
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("ssh-dead"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.editor().active_window().root != local_root)
         .unwrap();
     h.wait_until(|h| {
