@@ -317,3 +317,125 @@ fn extract_tab_already_at_workspace_root_reports_status() {
     // nowhere to extract to, and the status line says so.
     harness.assert_screen_contains("Already in a workspace rooted at");
 }
+
+/// Extracting a *terminal* tab into a session whose root matches an existing
+/// **dormant** (persisted-but-not-yet-materialized) window keeps the PTY live:
+/// `create_window_at` dedups by root against dormant windows too, so the
+/// extract reuses that session, and the moved terminal must still run and
+/// render once the session is materialized. This pins the interaction between
+/// terminal extraction and the lazy dormant-window restore (the extract now
+/// materializes the reused session *before* the move — see
+/// `extract_terminal_tab_to_new_workspace`).
+///
+/// Linux-only for two reasons that happen to coincide: the live cwd read
+/// (`/proc/<pid>/cwd`) and `dirs::data_dir()` honoring `XDG_DATA_HOME` (used
+/// here to align the global save/load dir with the discovery `DirectoryContext`
+/// so the seeded dormant workspace is both found and loadable). nextest's
+/// process-per-test isolation makes the env mutation safe.
+#[cfg(target_os = "linux")]
+#[test]
+fn extract_terminal_into_dormant_session_keeps_live_pty() {
+    use fresh::config_io::DirectoryContext;
+    use fresh::workspace::Workspace;
+    use fresh_core::WindowId;
+
+    if !pty_available() {
+        eprintln!("Skipping terminal test: PTY not available in this environment");
+        return;
+    }
+
+    let sandbox = tempfile::tempdir().unwrap();
+    // Align the global (XDG) data dir with the DirectoryContext so the seeded
+    // workspace is both discoverable (context path) and loadable (global path);
+    // `for_testing` would split them and the dormant window would come back
+    // empty regardless of the bug.
+    let xdg = sandbox.path().join("xdg");
+    std::fs::create_dir_all(&xdg).unwrap();
+    std::env::set_var("XDG_DATA_HOME", &xdg);
+    let data_dir = xdg.join("fresh");
+
+    let project = sandbox.path().join("project");
+    let subproj = project.join("termproj");
+    std::fs::create_dir_all(&subproj).unwrap();
+    let project = project.canonicalize().unwrap();
+    let subproj = subproj.canonicalize().unwrap();
+    fs::write(project.join("keep.txt"), "keep\n").unwrap();
+
+    // Seed a dormant session at `subproj`: a persisted (empty) workspace file
+    // boot-time discovery surfaces as a not-yet-materialized window.
+    let mut ws = Workspace::new(subproj.clone());
+    ws.stable_id = Some("ws-dormant-terminal-regression".to_string());
+    ws.save().unwrap();
+
+    let dir_context = DirectoryContext {
+        data_dir,
+        config_dir: sandbox.path().join("config"),
+        home_dir: Some(sandbox.path().join("home")),
+        documents_dir: None,
+        downloads_dir: None,
+    };
+    let mut config = Config {
+        check_for_updates: false,
+        ..Default::default()
+    };
+    // Deterministic POSIX shell (no rc files) so `cd`/`echo`/arithmetic behave.
+    config.terminal.shell = Some(TerminalShellConfig {
+        command: "/bin/sh".to_string(),
+        args: Vec::new(),
+    });
+    let mut harness = EditorTestHarness::create(
+        220,
+        30,
+        crate::common::harness::HarnessOptions::new()
+            .with_working_dir(project.clone())
+            .with_shared_dir_context(dir_context)
+            .with_config(config)
+            .with_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.startup(true, &[]).unwrap();
+
+    // Guard against a false negative: if discovery didn't surface the dormant
+    // session, the extract would create a *fresh* window (materialize is a
+    // no-op) and the terminal would survive regardless of the fix.
+    let subproj_discovered = (1..=16u64).map(WindowId).any(|id| {
+        harness
+            .editor()
+            .session(id)
+            .map(|w| w.root.canonicalize().ok().as_deref() == Some(subproj.as_path()))
+            .unwrap_or(false)
+    });
+    assert!(
+        subproj_discovered,
+        "test setup: the dormant subproj session was not discovered at boot"
+    );
+
+    // Open a terminal in the foreground (project) window and `cd` it into the
+    // dormant session's root, so the extract dedups onto that session. The
+    // echoed arithmetic marker only resolves once the shell has actually run
+    // the command, making it a race-free signal the live cwd now points there.
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+    harness
+        .type_text(&format!("cd {} && echo CDMARK$((40+2))", subproj.display()))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("CDMARK42").unwrap();
+
+    let term_bid = harness.editor().active_buffer();
+    harness.editor_mut().extract_tab_to_new_workspace(term_bid);
+    harness
+        .wait_for_screen_contains("into workspace termproj")
+        .unwrap();
+
+    // The PTY moved live into the reused dormant session: it still runs and
+    // has terminal focus, so a fresh command's output streams into this window.
+    harness.type_text("echo LIVE$((2+3))").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("LIVE5").unwrap();
+}

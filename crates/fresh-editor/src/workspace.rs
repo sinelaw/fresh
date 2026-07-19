@@ -831,6 +831,17 @@ fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileI
             continue;
         };
         let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+            // A name-matching file that won't parse is a corrupt (or
+            // foreign) workspace snapshot. It's dropped from the candidate
+            // set — `load` then reports "no session" and the editor starts
+            // fresh rather than erroring — but surface it, or a damaged sole
+            // workspace file vanishes into a silent empty start with no clue
+            // why the layout was lost.
+            tracing::warn!(
+                "Ignoring unparseable workspace file {:?} while resolving {:?}",
+                path,
+                working_dir
+            );
             continue;
         };
         // Authoritative check: the file must itself claim this directory.
@@ -841,8 +852,14 @@ fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileI
         let Some(claimed) = claimed else {
             continue;
         };
-        let claimed = claimed.canonicalize().unwrap_or(claimed);
-        if claimed != target {
+        // Compare canonical-to-canonical, but accept a verbatim raw match
+        // too. A one-sided `canonicalize` failure (a symlink that resolves
+        // for the lookup path but not for the stored string, or vice versa)
+        // would otherwise leave one side canonical and the other raw and
+        // drop a file whose recorded `working_dir` equals the lookup path
+        // exactly — losing a valid saved session.
+        let claimed_canonical = claimed.canonicalize().unwrap_or_else(|_| claimed.clone());
+        if claimed_canonical != target && claimed != working_dir {
             continue;
         }
         found.push(WorkspaceFileIdentity {
@@ -857,18 +874,35 @@ fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileI
     Ok(found)
 }
 
+/// Ranking key used to arbitrate between multiple workspace files that
+/// claim the same canonical root (a legacy root-keyed file plus its
+/// re-keyed successor, mid-migration): the freshest snapshot wins —
+/// highest `saved_at`, with a stable-id-bearing file breaking a
+/// same-timestamp tie so a same-second migration can't resurrect the
+/// pre-migration id-less copy.
+///
+/// This is the single source of truth for that rule. Boot-time session
+/// discovery (`orchestrator_persistence::discover_sessions`) and the
+/// per-root read chokepoint ([`find_workspace_file_by_root`]) feed the two
+/// separate `stable_id` adoption sites, and MUST rank identically — if they
+/// disagreed on which file is authoritative for a root, a window could adopt
+/// one identity at boot and a different one at materialize. Keep both callers
+/// routed through here.
+pub fn workspace_freshness_rank(saved_at: u64, has_stable_id: bool) -> (u64, bool) {
+    (saved_at, has_stable_id)
+}
+
 /// Find the workspace file for `working_dir`. When more than one file
-/// claims the directory (a legacy root-keyed file plus its re-keyed
-/// successor, mid-migration), the freshest snapshot wins: highest
-/// `saved_at`, stable-id-bearing files breaking ties (a same-second tie
-/// must not resurrect the pre-migration copy).
+/// claims the directory the freshest snapshot wins — see
+/// [`workspace_freshness_rank`].
 pub fn find_workspace_file_by_root(working_dir: &Path) -> io::Result<Option<PathBuf>> {
     let mut best: Option<WorkspaceFileIdentity> = None;
     for ident in candidate_files_for_root(working_dir)? {
         let newer = match &best {
             None => true,
             Some(b) => {
-                (ident.saved_at, ident.stable_id.is_some()) > (b.saved_at, b.stable_id.is_some())
+                workspace_freshness_rank(ident.saved_at, ident.stable_id.is_some())
+                    > workspace_freshness_rank(b.saved_at, b.stable_id.is_some())
             }
         };
         if newer {
@@ -1098,22 +1132,46 @@ impl Workspace {
         std::fs::rename(&temp_path, &path)?;
         tracing::info!("Workspace saved to {:?}", path);
 
-        // Migration completion: a legacy root-keyed file for this directory
-        // is superseded the moment the id-keyed snapshot lands (write-new
-        // then delete-old, so a crash in between leaves both and lookup
-        // arbitration picks the newest). Targeted check, not a dir scan —
-        // this runs on every checkpoint.
+        // Migration + duplicate GC: once the id-keyed snapshot lands, every
+        // OTHER file claiming this directory is a superseded duplicate — the
+        // legacy root-keyed file, or a rival `<root>.<otherid>.json` left by a
+        // window that was previously created at this root and then dropped
+        // (its file outlives its window). Reads only arbitrate the winner and
+        // never delete losers, so without this those duplicates accumulate on
+        // disk forever and the shadowed session's state lingers. Retire them
+        // all here, after the write (write-new then delete-old, so a crash in
+        // between leaves duplicates that lookup arbitration still resolves to
+        // this newest file). Safe under one-session-per-canonical-directory:
+        // no other live window shares this root, so any sibling is stale. A
+        // scan, not a targeted stat — but only when we actually hold an id,
+        // and `save` already does an fsync + rename, so one `read_dir` is
+        // noise next to that.
         if self.stable_id.is_some() {
-            if let Ok(legacy) = get_workspace_path(&self.working_dir) {
-                if legacy != path && legacy.exists() {
-                    tracing::info!(
-                        "Retiring legacy workspace file {:?} (re-keyed to {:?})",
-                        legacy,
-                        path
-                    );
-                    // Best-effort: a failed delete just leaves a stale
-                    // duplicate that lookup arbitration already outranks.
-                    let _ = std::fs::remove_file(&legacy).ok();
+            match candidate_files_for_root(&self.working_dir) {
+                Ok(candidates) => {
+                    for ident in candidates {
+                        if ident.path == path {
+                            continue;
+                        }
+                        tracing::info!(
+                            "Retiring superseded workspace file {:?} (re-keyed to {:?})",
+                            ident.path,
+                            path
+                        );
+                        // Best-effort: a failed delete just leaves a stale
+                        // duplicate that lookup arbitration already outranks.
+                        if let Err(e) = std::fs::remove_file(&ident.path) {
+                            if e.kind() != io::ErrorKind::NotFound {
+                                tracing::debug!(
+                                    "Could not retire superseded workspace file {:?}: {e}",
+                                    ident.path
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("Could not scan for superseded workspace files: {e}");
                 }
             }
         }
@@ -1190,11 +1248,32 @@ impl Workspace {
     /// file claiming the directory — the id-keyed snapshot plus any legacy
     /// root-keyed file that survived migration — so a killed workspace
     /// can't resurrect from a stale duplicate.
+    ///
+    /// Best-effort per file: a `NotFound` (another process — e.g. a
+    /// concurrent checkpoint retiring the legacy file — unlinked it between
+    /// our scan and our `remove_file`) is not an error, and any other
+    /// per-file failure is recorded but does not abort the loop. Aborting on
+    /// the first error was the resurrection bug this guards against: it could
+    /// leave the id-keyed snapshot behind for the next boot to rediscover.
+    /// The first hard error (if any) is returned after every candidate has
+    /// been attempted.
     pub fn delete(working_dir: &Path) -> Result<(), WorkspaceError> {
+        let mut first_err: Option<io::Error> = None;
         for ident in candidate_files_for_root(working_dir)? {
-            std::fs::remove_file(&ident.path)?;
+            if let Err(e) = std::fs::remove_file(&ident.path) {
+                if e.kind() == io::ErrorKind::NotFound {
+                    continue;
+                }
+                tracing::warn!("Failed to delete workspace file {:?}: {e}", ident.path);
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
         }
-        Ok(())
+        match first_err {
+            Some(e) => Err(e.into()),
+            None => Ok(()),
+        }
     }
 
     /// Create a new workspace with current timestamp

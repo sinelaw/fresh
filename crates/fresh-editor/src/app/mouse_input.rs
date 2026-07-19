@@ -1048,7 +1048,17 @@ impl Editor {
 
         // Check tab context menu first (it's rendered on top)
         if let Some(ref menu) = self.active_window().tab_context_menu {
-            let (menu_x, menu_y) = menu.clamped_position(self.terminal_width, self.terminal_height);
+            // Clamp against the last rendered frame size, not `terminal_width/
+            // height`: the tab menu's render clamps to `frame.area()` (mirrored
+            // into `last_frame` each draw), while `terminal_width/height` only
+            // catches up when a crossterm `Resize` event is dequeued. During a
+            // resize those two disagree, so hit-testing against `last_frame`
+            // (as the file-explorer menu already does) keeps clicks landing on
+            // exactly what was drawn.
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
+            );
             let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
             let items = super::types::TabContextMenuItem::all();
             let menu_height = items.len() as u16 + 2;
@@ -3376,7 +3386,17 @@ impl Editor {
 
         // First check if a tab context menu is open and the click is on a menu item
         if let Some(ref menu) = self.active_window().tab_context_menu {
-            let (menu_x, menu_y) = menu.clamped_position(self.terminal_width, self.terminal_height);
+            // Clamp against the last rendered frame size, not `terminal_width/
+            // height`: the tab menu's render clamps to `frame.area()` (mirrored
+            // into `last_frame` each draw), while `terminal_width/height` only
+            // catches up when a crossterm `Resize` event is dequeued. During a
+            // resize those two disagree, so hit-testing against `last_frame`
+            // (as the file-explorer menu already does) keeps clicks landing on
+            // exactly what was drawn.
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
+            );
             let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
             let menu_height = menu.height();
 

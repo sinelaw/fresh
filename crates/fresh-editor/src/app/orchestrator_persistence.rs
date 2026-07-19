@@ -318,18 +318,24 @@ fn discover_sessions(
     // One session per directory. Filenames are stable-id-keyed and no
     // longer enforce this structurally, so dedup here: when several files
     // claim one canonical root (a legacy file plus its re-keyed successor,
-    // mid-migration), the freshest snapshot wins — highest `saved_at`,
-    // stable-id-bearing files breaking ties. Losers are skipped, not
-    // deleted; `Workspace::save` retires the legacy duplicate on the next
-    // save through the same arbitration.
+    // mid-migration), the freshest snapshot wins. The ranking rule lives in
+    // `workspace::workspace_freshness_rank` — shared with the per-root read
+    // chokepoint so boot discovery and materialize can't disagree on which
+    // file is authoritative for a root. Losers are skipped here, not
+    // deleted; `Workspace::save` retires the duplicates on the next save.
     let mut best: std::collections::BTreeMap<PathBuf, Candidate> =
         std::collections::BTreeMap::new();
     for c in found {
         let key = canonical_key(&c.root);
         match best.get(&key) {
             Some(cur)
-                if (cur.saved_at, cur.stable_id.is_some())
-                    >= (c.saved_at, c.stable_id.is_some()) =>
+                if crate::workspace::workspace_freshness_rank(
+                    cur.saved_at,
+                    cur.stable_id.is_some(),
+                ) >= crate::workspace::workspace_freshness_rank(
+                    c.saved_at,
+                    c.stable_id.is_some(),
+                ) =>
             {
                 tracing::info!(
                     root = %c.root.display(),

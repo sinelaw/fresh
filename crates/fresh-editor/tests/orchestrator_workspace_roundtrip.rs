@@ -354,4 +354,94 @@ mod stable_id {
         let loaded = Workspace::load(&long).unwrap().expect("long root loads");
         assert_eq!(loaded.label.as_deref(), Some("long-root"));
     }
+
+    /// `save` garbage-collects every other file claiming the same root — a
+    /// stale id-keyed sibling left by a prior window, plus the legacy
+    /// root-keyed file — so shadowed snapshots don't accumulate on disk. Reads
+    /// only arbitrate the winner; without this GC the losers would linger.
+    #[test]
+    fn save_retires_stale_duplicate_siblings() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let project = project.canonicalize().unwrap();
+
+        let dir = get_workspaces_dir().unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let encoded = encode_path_for_filename(&project);
+
+        // A stale id-keyed file from a prior window at this root...
+        let mut stale = Workspace::new(project.clone());
+        stale.label = Some("stale".to_string());
+        stale.saved_at = 100;
+        stale.stable_id = Some("ws-stale".to_string());
+        std::fs::write(
+            dir.join(format!("{encoded}.ws-stale.json")),
+            serde_json::to_vec(&stale).unwrap(),
+        )
+        .unwrap();
+        // ...and a legacy root-keyed file for the same root.
+        let mut legacy = Workspace::new(project.clone());
+        legacy.label = Some("legacy".to_string());
+        legacy.saved_at = 50;
+        std::fs::write(
+            dir.join(format!("{encoded}.json")),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(files_for_root(&project).len(), 2);
+
+        // A newer window saves under its own id.
+        let mut current = Workspace::new(project.clone());
+        current.label = Some("current".to_string());
+        current.saved_at = 200;
+        current.stable_id = Some("ws-current".to_string());
+        current.save().unwrap();
+
+        // Only the just-saved id-keyed file survives; the duplicates are gone.
+        let files = files_for_root(&project);
+        assert_eq!(
+            files.len(),
+            1,
+            "stale duplicates must be retired on save: {files:?}"
+        );
+        assert_eq!(read_stable_id(&files[0]).as_deref(), Some("ws-current"));
+
+        Workspace::delete(&project).unwrap();
+    }
+
+    /// `delete` removes *every* file claiming the root — id-keyed and legacy —
+    /// so a killed workspace can't resurrect from a surviving duplicate.
+    #[test]
+    fn delete_removes_every_variant() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let project = sandbox.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let project = project.canonicalize().unwrap();
+
+        let dir = get_workspaces_dir().unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        let encoded = encode_path_for_filename(&project);
+
+        let variants: [(String, Option<&str>, u64); 3] = [
+            (format!("{encoded}.json"), None, 50),
+            (format!("{encoded}.ws-a.json"), Some("ws-a"), 100),
+            (format!("{encoded}.ws-b.json"), Some("ws-b"), 200),
+        ];
+        for (name, id, at) in &variants {
+            let mut ws = Workspace::new(project.clone());
+            ws.saved_at = *at;
+            ws.stable_id = id.map(str::to_string);
+            std::fs::write(dir.join(name), serde_json::to_vec(&ws).unwrap()).unwrap();
+        }
+        assert_eq!(files_for_root(&project).len(), 3);
+
+        Workspace::delete(&project).unwrap();
+
+        assert!(
+            files_for_root(&project).is_empty(),
+            "delete must remove every variant claiming the root"
+        );
+        assert!(find_workspace_file_by_root(&project).unwrap().is_none());
+    }
 }

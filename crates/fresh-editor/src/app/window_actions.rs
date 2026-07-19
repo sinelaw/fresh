@@ -867,6 +867,15 @@ impl crate::app::Editor {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
         let target = self.create_window_at(root, label);
+        // If `target` is an existing but not-yet-materialized session (its
+        // root already had a persisted, dormant workspace), materialize it NOW
+        // — before the move — so the buffer lands on the session's final
+        // restored layout rather than one `set_active_window`'s lazy
+        // materialize is about to rebuild from the snapshot. Idempotent and a
+        // no-op for a freshly created window (not pending). See the terminal
+        // sibling for the case this most matters (an unseeded pending session,
+        // restored via the wholesale `Window::from_workspace` rebuild).
+        self.materialize_window(target);
         self.move_buffer_membership_to_window(buffer_id, target);
 
         let target_label = self
@@ -938,6 +947,14 @@ impl crate::app::Editor {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
         let target = self.create_window_at(root, label);
+        // Materialize a reused dormant session BEFORE adopting the terminal, so
+        // the move lands on the session's final restored layout rather than one
+        // `set_active_window`'s lazy materialize is about to rebuild. For an
+        // unseeded pending session that restore goes through the
+        // `Window::from_workspace` factory, which replaces the window wholesale
+        // and would drop the just-adopted PTY along with the old shell.
+        // Idempotent; a no-op for a freshly created window.
+        self.materialize_window(target);
 
         self.move_terminal_machinery_to_window(buffer_id, terminal_id, target);
         self.move_buffer_membership_to_window(buffer_id, target);
@@ -1138,26 +1155,51 @@ impl crate::app::Editor {
             return;
         };
 
-        // (leaf, fallback tab) for every leaf whose displayed buffer is the
-        // one being extracted. The rect is a probe — only ids matter here.
+        // For every leaf that displays the extracted buffer, snapshot its
+        // replacement candidates in focus-history (LRU) order — most-recently
+        // focused first, then any other open tab — mirroring the real
+        // close-tab path (`resolve_close_replacement`) rather than raw tab
+        // order. The rect is a probe; only ids matter here. Owned Vecs so the
+        // `self.windows` borrow is released before the mutating loop.
         let probe = ratatui::layout::Rect::new(0, 0, 1, 1);
-        let showing: Vec<(crate::model::event::LeafId, Option<fresh_core::BufferId>)> = mgr
+        let showing: Vec<(crate::model::event::LeafId, Vec<fresh_core::BufferId>)> = mgr
             .root()
             .get_leaves_with_rects(probe)
             .into_iter()
             .filter(|(_, displayed, _)| *displayed == buffer_id)
             .map(|(leaf_id, _, _)| {
-                let replacement = view_states.get(&leaf_id).and_then(|vs| {
-                    vs.open_buffers.iter().find_map(|t| match t {
-                        TabTarget::Buffer(id) if *id != buffer_id => Some(*id),
-                        _ => None,
+                let candidates = view_states
+                    .get(&leaf_id)
+                    .map(|vs| {
+                        vs.focus_history
+                            .iter()
+                            .rev()
+                            .chain(vs.open_buffers.iter())
+                            .filter_map(|t| match t {
+                                TabTarget::Buffer(id) if *id != buffer_id => Some(*id),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
                     })
-                });
-                (leaf_id, replacement)
+                    .unwrap_or_default();
+                (leaf_id, candidates)
             })
             .collect();
 
-        for (leaf_id, replacement) in showing {
+        for (leaf_id, candidates) in showing {
+            // First candidate that still exists and isn't a hidden helper
+            // buffer — the close path excludes `hidden_from_tabs` on both its
+            // LRU and fallback branches, so a leaf is never re-pointed onto a
+            // panel/helper buffer.
+            let replacement = candidates.into_iter().find(|bid| {
+                self.active_window().buffers.contains_key(bid)
+                    && !self
+                        .active_window()
+                        .buffer_metadata
+                        .get(bid)
+                        .map(|m| m.hidden_from_tabs)
+                        .unwrap_or(false)
+            });
             if let Some(replacement) = replacement {
                 self.active_window_mut()
                     .set_pane_buffer(leaf_id, replacement);
@@ -1173,8 +1215,23 @@ impl crate::app::Editor {
                 self.handle_close_split(leaf_id.into());
             } else {
                 // Last leaf with no other tab: seed a fresh scratch buffer so
-                // the source window keeps a renderable tab after the move.
-                self.new_buffer();
+                // the source window keeps a renderable tab after the move —
+                // but honor the same opt-out the close path does. When the
+                // user disabled auto-creating an empty buffer on last close,
+                // mark the seed a hidden synthetic placeholder so the emptied
+                // source window genuinely looks blank instead of forcing a
+                // visible `[No Name]`.
+                let new_id = self.new_buffer();
+                if !self
+                    .config
+                    .editor
+                    .auto_create_empty_buffer_on_last_buffer_close
+                {
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
+                        meta.hidden_from_tabs = true;
+                        meta.synthetic_placeholder = true;
+                    }
+                }
             }
         }
     }
