@@ -165,22 +165,20 @@ pub(crate) fn read_persisted_windows_env(
     }
     migrate_windows_json_into_workspaces(filesystem, data_dir);
 
-    // The per-dir workspace cache is the session registry now: one
-    // session per directory, discovered from disk. GC dead entries and
-    // build a window per survivor.
+    // The workspace cache is the session registry now: sessions discovered
+    // from disk, keyed by durable identity. A directory may host several
+    // co-tenant workspaces (a tab extracted into its own window over the same
+    // project), so discovery yields one window per `stable_id`, not one per
+    // directory. GC dead entries and build a window per survivor.
     let windows = discover_sessions(filesystem, data_dir);
     if windows.is_empty() {
         return None;
     }
     let next_id = windows.iter().map(|w| w.id).max().unwrap_or(0) + 1;
-    // One session per directory is enforced upstream by the workspace
-    // cache itself: `get_workspace_path` keys each file on the
-    // canonical root, so discovery yields at most one window per
-    // canonical dir. No post-hoc dedup is needed.
-    //
     // `active` is decided downstream by the launch cwd
     // (`pick_active_window_for_cwd`); 0 means "no stored hint", so the
-    // cwd-match branch governs which session is foregrounded.
+    // cwd-match branch governs which session is foregrounded (the first
+    // co-tenant at the cwd root when several share it).
     Some(PersistedWindows {
         version: CURRENT_VERSION,
         active: 0,
