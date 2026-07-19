@@ -4567,6 +4567,18 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     }
     if (id <= 0) return;
     if (id === editor.activeWindow()) return;
+    // A remote (SSH / Kubernetes) session that isn't connected yet — dormant
+    // rows restored from a previous run, or a live one whose link dropped —
+    // must NOT be auto-activated by arrow-nav. Switching to it starts a
+    // backend connect (ensure the disconnected shell + `bring_online`) and
+    // re-points the editor's active authority at that backend; for an
+    // unreachable host the connect can stall for a long time, so merely
+    // scrolling the selection past such a row would freeze the dock. Leave the
+    // highlight on it and let an explicit dive (Enter / click) do the connect —
+    // that lands in the "Connecting…" shell, the deliberate #2570 path. A
+    // connected remote (state "running") switches instantly like a local one.
+    const remote = sess?.remote;
+    if (remote && remote.state !== "running") return;
     if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
     else editor.setActiveWindow(id);
   })();
@@ -8633,6 +8645,15 @@ editor.on("widget_event", (e) => {
           dive: true,
         });
         return;
+      }
+      // Enter is the deliberate dive: if the highlighted session isn't the
+      // active window yet — a disconnected remote that `scheduleDockSwitch`
+      // intentionally did NOT auto-connect on arrow-nav — commit the switch
+      // now. For a dormant remote this lands in its "Connecting…" shell (the
+      // #2570 dive path); for a live/local row it's the switch arrow-nav would
+      // otherwise have made before the debounce landed.
+      if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
+        editor.setActiveWindow(id);
       }
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
