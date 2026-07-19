@@ -1235,8 +1235,12 @@ fn new_session_form_buttons_wrap_on_narrow_form() {
 #[test]
 fn new_session_form_swallows_doubleclick_no_buffer_leak() {
     let (_tmp, root) = setup_project("alphaproj");
+    // Tall enough that the vertically-centered form clears the top-of-buffer
+    // "hello world" line — the form grows a row when its button pair wraps
+    // ("Create & Visit" + "Create in Background"), and on a short terminal its
+    // top edge would otherwise overlap that click target.
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(80, 30, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(80, 40, Default::default(), root.clone())
             .unwrap();
     h.render().unwrap();
     // Selectable text in the editor buffer underneath, cursor left at end.
