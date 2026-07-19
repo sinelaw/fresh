@@ -1877,17 +1877,13 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
         .unwrap();
 }
 
-/// Regression: creating a session while the dock is open moves the dock's
-/// highlight onto the new session. It becomes the active window, and the
-/// dock — a passive mirror once focus dives into the new terminal — must
-/// re-point at it instead of stranding the highlight on the previously
-/// active row. We read this off the *seamless tab*: the active session's
-/// card scoops the dock's right-edge divider away (its rows have no `│`
-/// wall — they flow into the editor), while inactive cards keep the wall.
-/// After creation the new session's card must be the seamless one and the
-/// old session's must keep its divider.
+/// Non-blocking create: submitting the New-Workspace form adds the new
+/// workspace to the dock and runs the create in the background, WITHOUT
+/// diving into it. The editor stays on the launch session ("stay put, mark
+/// ready") — creating a workspace no longer steals focus. Both sessions end
+/// up listed; the active window never leaves the launch one.
 #[test]
-fn creating_session_moves_dock_highlight_to_new_session() {
+fn creating_workspace_lists_it_without_stealing_focus() {
     let (_tmp, root) = setup_project("alphaproj");
     // A non-git directory for the new session: the worktree toggle
     // auto-disables there, so it spawns a plain terminal session with no
@@ -1901,8 +1897,9 @@ fn creating_session_moves_dock_highlight_to_new_session() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // The launch session (alphaproj) is the only row, and it's selected.
+    // The launch session (alphaproj) is the only row, and it's active.
     h.assert_screen_contains("alphaproj");
+    let launch_root = h.editor().active_window().root.clone();
 
     // Open the new-session form and point it at the non-git dir.
     h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
@@ -1927,28 +1924,27 @@ fn creating_session_moves_dock_highlight_to_new_session() {
         .expect("Create Workspace button should be visible");
     h.mouse_click(col, btn_row).unwrap();
 
-    // The new session becomes the active window; the dock — a passive
-    // mirror once focus dives into the new terminal — re-points its
-    // highlight at it (`syncDockSelectionToActive`) instead of stranding it
-    // on the previously-active alphaproj row. The spawn + active-window
-    // switch + dock refresh are async, so wait for the active window to
-    // become the new (plain) session.
+    // The form closes and the workspace shows up in the dock while the create
+    // runs in the background. Wait for it to finish — its transient
+    // "Creating…/Starting…" status clears once the real session is tracked —
+    // with both sessions listed.
     h.wait_until(|h| {
-        h.editor()
-            .active_window()
-            .root
-            .to_string_lossy()
-            .contains("plainwork")
+        let s = h.screen_to_string();
+        s.contains("plainwork")
+            && s.contains("alphaproj")
+            && !s.contains("ORCHESTRATOR :: New Workspace")
+            && !s.contains("Creating")
+            && !s.contains("Starting")
     })
     .unwrap();
 
-    // Both sessions remain listed in the dock tree — the highlight moved,
-    // the old row wasn't dropped.
-    h.wait_until(|h| {
-        let s = h.screen_to_string();
-        s.contains("plainwork") && s.contains("alphaproj")
-    })
-    .unwrap();
+    // Stay put: creating a workspace must not dive into it — the launch
+    // session is still the active window.
+    assert_eq!(
+        h.editor().active_window().root,
+        launch_root,
+        "creating a workspace must not steal focus from the launch session"
+    );
 }
 
 // ── right-click session context menu ──────────────────────────────────────
