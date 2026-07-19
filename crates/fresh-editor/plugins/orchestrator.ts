@@ -1075,6 +1075,17 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
       style: { fg: "ui.menu_disabled_fg", italic: true },
     });
   }
+  // A being-created placeholder trails its status on the single compact line
+  // (there's no second row to put it on).
+  if (s.pending) {
+    segs.push({
+      text: "  " + s.pending.message,
+      style: {
+        fg: s.pending.phase === "error" ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg",
+        italic: true,
+      },
+    });
+  }
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
 
@@ -1133,6 +1144,23 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
 function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   const s = orchestratorSessions.get(id);
   if (!s) return [];
+  // A being-created placeholder shows its status in place of the git / PR
+  // lines: line 2 is the creating/connecting/error message, line 3 is a
+  // retry/resume hint (blank while still creating).
+  if (s.pending) {
+    const p = s.pending;
+    const isError = p.phase === "error";
+    const actionable = p.phase !== "creating";
+    const msgFg = isError ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+    return [
+      styledRow([{ text: p.message, style: { fg: msgFg, italic: actionable } }]),
+      styledRow([
+        actionable
+          ? { text: editor.t("dock.pending_retry_hint"), style: { fg: "ui.menu_disabled_fg", italic: true } }
+          : { text: " " },
+      ] as Parameters<typeof styledRow>[0]),
+    ];
+  }
   const git = gitLineParts(s);
   const gitSegs: Entry[] = [...git.left];
   if (git.right.length) {

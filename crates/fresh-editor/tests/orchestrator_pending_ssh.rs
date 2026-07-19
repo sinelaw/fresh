@@ -20,10 +20,6 @@ use common::dormant_ssh::{ensure_hanging_fake_ssh_on_path, isolated_dir_context}
 use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
-// TODO: temporarily ignored alongside the recovery test — the dock card
-// render path does not yet route through the pending-row renderer, so the
-// "Connecting…" status is not guaranteed on the card. Un-ignore once fixed.
-#[ignore]
 #[test]
 fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
     ensure_hanging_fake_ssh_on_path();

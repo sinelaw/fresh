@@ -21,12 +21,6 @@ use common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOp
 use fresh_core::api::PluginCommand;
 use serde_json::json;
 
-// TODO: temporarily ignored — the dock *card* render path
-// (`sessionCardPrimary`/`sessionCardExtraLines`) does not yet route through
-// the pending-row renderer, so a recovered placeholder shows as a normal card
-// instead of a paused "Interrupted…" row. Un-ignore once that render path is
-// fixed.
-#[ignore]
 #[test]
 fn interrupted_local_workspace_is_restored_paused_on_launch() {
     fresh::i18n::set_locale("en");
