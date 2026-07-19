@@ -3428,10 +3428,10 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     snap(&mut h, &mut s, None, 75);
     hold(&mut h, &mut s, 2, 60);
 
-    // --- Submit: click "Create Workspace". ------------------------------------
+    // --- Submit: click "Create & Visit" (focus follows into the remote). ------
     let (create_col, create_row) = h
-        .find_text_on_screen("Create Workspace")
-        .expect("the form should offer a 'Create Workspace' button");
+        .find_text_on_screen("Create & Visit")
+        .expect("the form should offer a 'Create & Visit' button");
     snap_mouse(&mut h, &mut s, None, (create_col, create_row), 80);
     h.mouse_click(create_col, create_row).unwrap();
     h.render().unwrap();

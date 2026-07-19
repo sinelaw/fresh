@@ -191,6 +191,11 @@ interface PendingCreate {
   // attach makes its born window active on success; restoring this keeps
   // the user where they were ("stay put, mark ready").
   originActive: number;
+  // `true` when the user chose "Create & Visit": once the workspace is real,
+  // focus follows into it (dive) instead of staying put. `false` for "Create
+  // in Background" (and for restored/resumed rows — a relaunch never yanks
+  // focus). Either way the create itself is non-blocking.
+  visit: boolean;
 }
 
 // Local git summary + freshness bookkeeping (mirrors `PrProbe`).
@@ -5559,7 +5564,7 @@ function rebuildFormFocusCycle(): void {
   if (cmdIdx >= 0) {
     cycle.splice(cmdIdx, 0, activeAgentPresetKey());
   }
-  cycle.push("cancel", "create");
+  cycle.push("cancel", "create-visit", "create-bg");
   formFocusCycle = cycle;
   if (formFocusIndex >= cycle.length) formFocusIndex = 0;
 }
@@ -6724,7 +6729,9 @@ function buildFormSpec(): WidgetSpec {
     wrappingRow(
       button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
       spacer(2),
-      button(editor.t("form.btn_create"), { intent: "primary", key: "create" }),
+      button(editor.t("form.btn_create_visit"), { intent: "primary", key: "create-visit" }),
+      spacer(2),
+      button(editor.t("form.btn_create_bg"), { key: "create-bg" }),
     ),
     spacer(0),
     // === Footer: keybinding helper, centered. ====================
@@ -7437,7 +7444,7 @@ function pendingCreatingMessage(spec: CreateSpec): string {
 // background worker. Returns the placeholder's synthetic id.
 function startPendingWorkspace(
   spec: CreateSpec,
-  opts?: { restored?: boolean },
+  opts?: { restored?: boolean; visit?: boolean },
 ): number {
   const id = allocPendingId();
   const restored = opts?.restored === true;
@@ -7461,6 +7468,8 @@ function startPendingWorkspace(
       message: restored ? editor.t("dock.pending_interrupted") : pendingCreatingMessage(spec),
       spec,
       originActive: editor.activeWindow(),
+      // A restored/resumed row never yanks focus on relaunch.
+      visit: !restored && opts?.visit === true,
     },
   });
   savePendingSpecs();
@@ -7666,7 +7675,9 @@ async function runLocalCreate(id: number): Promise<void> {
   const sharedWorktree = !createWorktree && !isLinkedAttach;
 
   // Capture the user's current window so focus can return to it after
-  // `createWindowWithTerminal` dives into the new one.
+  // `createWindowWithTerminal` dives into the new one — unless the user chose
+  // "Create & Visit", in which case focus stays in the new workspace.
+  const visit = orchestratorSessions.get(id)?.pending?.visit ?? false;
   const restoreTo = editor.activeWindow();
   setPendingMessage(id, editor.t("dock.pending_starting"));
   try {
@@ -7700,8 +7711,18 @@ async function runLocalCreate(id: number): Promise<void> {
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
     });
-    // Stay put: `createWindowWithTerminal` dove into the new window.
-    restoreActiveWindow(restoreTo);
+    if (visit) {
+      // Create & Visit: `createWindowWithTerminal` already dove into the new
+      // window; hand it the keyboard (blur the dock) so the user lands in it.
+      if (openPanel && dockMode) {
+        dockBlurred = true;
+        editor.floatingPanelControl(openPanel.id(), "blur", 0);
+        editor.setEditorMode(null);
+      }
+    } else {
+      // Stay put: undo the dive `createWindowWithTerminal` performed.
+      restoreActiveWindow(restoreTo);
+    }
     if (openPanel) {
       refreshOpenDialog();
       syncDockSelectionToActive();
@@ -7761,6 +7782,7 @@ async function runRemoteCreate(id: number): Promise<void> {
   s.pending.message = editor.t("dock.pending_connecting");
   if (s.remote) s.remote.state = "starting";
   const restoreTo = s.pending.originActive;
+  const visit = s.pending.visit;
   // The born window adopts this facet via the `window_created` hook.
   pendingRemoteFacet = { ...spec.facet };
   if (openPanel) refreshOpenDialog();
@@ -7771,8 +7793,19 @@ async function runRemoteCreate(id: number): Promise<void> {
     orchestratorSessions.delete(id);
     savePendingSpecs();
     if (spec.persistCmd) editor.setGlobalState("orchestrator.last_cmd", spec.persistCmd);
-    // Stay put: the attach activated the born window.
-    restoreActiveWindow(restoreTo);
+    if (visit) {
+      // Create & Visit: the attach already made the born window active; hand
+      // it the keyboard so the user lands in the connected session.
+      if (openPanel && dockMode) {
+        dockBlurred = true;
+        editor.floatingPanelControl(openPanel.id(), "blur", 0);
+        editor.setEditorMode(null);
+      }
+    } else {
+      // Stay put: the attach activated the born window — return to where the
+      // user was.
+      restoreActiveWindow(restoreTo);
+    }
     if (openPanel) {
       refreshOpenDialog();
       syncDockSelectionToActive();
@@ -7829,7 +7862,9 @@ function recoverPendingWorkspaces(): void {
   if (restored > 0) showDockForPending();
 }
 
-async function submitForm(): Promise<void> {
+// `visit`: "Create & Visit" — focus follows into the workspace once it's real.
+// `!visit`: "Create in Background" — stay put. Both are non-blocking.
+async function submitForm(visit: boolean): Promise<void> {
   if (!form) return;
   // Resolve the form's inputs into a self-contained spec. A validation
   // failure (bad ssh host, missing pod) keeps the form open with the error;
@@ -7841,7 +7876,7 @@ async function submitForm(): Promise<void> {
     renderForm();
     return;
   }
-  startPendingWorkspace(captured.spec);
+  startPendingWorkspace(captured.spec, { visit });
 }
 
 /// Open a session in an existing worktree without creating one —
@@ -8012,11 +8047,12 @@ registerHandler("orchestrator_form_key_tab", () => {
   }
   dispatchFormKey("Tab");
 });
-// Ctrl+Enter: submit from anywhere, no matter which field is focused
-// or whether a completion popup is open.
+// Ctrl+Enter: submit from anywhere, no matter which field is focused or
+// whether a completion popup is open. Runs the primary action, "Create &
+// Visit" (the "In Background" alternative is an explicit button / Enter on it).
 registerHandler("orchestrator_form_submit", () => {
   if (!form) return;
-  void submitForm();
+  void submitForm(true);
 });
 registerHandler("orchestrator_form_key_enter", () => {
   // When the popup is open, the host's smart-key fires
@@ -8504,8 +8540,10 @@ editor.on("widget_event", (e) => {
         applyAgentPreset(preset);
         return;
       }
-      if (e.widget_key === "create") {
-        void submitForm();
+      if (e.widget_key === "create-visit") {
+        void submitForm(true);
+      } else if (e.widget_key === "create-bg") {
+        void submitForm(false);
       } else if (e.widget_key === "cancel") {
         cancelForm();
       }

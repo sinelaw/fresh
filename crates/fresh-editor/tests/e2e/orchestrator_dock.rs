@@ -1181,10 +1181,10 @@ fn control_room_preview_buttons_wrap_on_narrow_pane() {
     );
 }
 
-/// The New-Session form's Cancel / Create Workspace buttons must wrap onto
-/// separate lines on a narrow form rather than "Create Workspace" being
+/// The New-Session form's Cancel / Create buttons must wrap onto
+/// separate lines on a narrow form rather than "Create in Background" being
 /// clipped off the right edge (a plain row truncates the merged button line
-/// to the form width). `wrappingRow` reflows the pair instead.
+/// to the form width). `wrappingRow` reflows the buttons instead.
 #[test]
 fn new_session_form_buttons_wrap_on_narrow_form() {
     // Narrow terminal so the 60%-width form can't fit both buttons on one
@@ -1209,17 +1209,17 @@ fn new_session_form_buttons_wrap_on_narrow_form() {
     h.wait_until(|h| h.screen_to_string().contains("Workspace Name"))
         .unwrap();
 
-    // Both buttons stay on screen — "Create Workspace" would be clipped off a
-    // non-wrapping row at this width — and they land on different rows.
-    h.wait_until(|h| h.screen_to_string().contains("Create Workspace"))
+    // All buttons stay on screen — "Create in Background" would be clipped off
+    // a non-wrapping row at this width — and they wrap onto different rows.
+    h.wait_until(|h| h.screen_to_string().contains("Create in Background"))
         .unwrap();
     let cancel_row = row_of(&h, "Cancel");
-    let create_row = row_of(&h, "Create Workspace");
+    let create_row = row_of(&h, "Create in Background");
     assert_ne!(
         cancel_row,
         create_row,
         "New-Session form buttons must wrap onto separate rows on a narrow \
-         form (Cancel at row {cancel_row}, Create Workspace at {create_row}).\n\
+         form (Cancel at row {cancel_row}, Create in Background at {create_row}).\n\
          Screen:\n{}",
         h.screen_to_string()
     );
@@ -1632,21 +1632,21 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
 
-    // Tab forward until the "Create Workspace" button is the focused
-    // control — its line carries the `▸` focus marker right before it
-    // (the form reserves the marker gutter). Walking to the button by
-    // its marker keeps this robust to the focus-cycle length: each radio
-    // group ("Run in:", "Agent:") is a single Tab stop, so the number of
-    // stops depends on the active backend's field count. Tab also closes
-    // any open path-completion popup along the way. Enter then submits.
+    // Tab forward until the "Create & Visit" button is the focused control —
+    // its line carries the `▸` focus marker right before it (the form reserves
+    // the marker gutter). Walking to the button by its marker keeps this robust
+    // to the focus-cycle length: each radio group ("Run in:", "Agent:") is a
+    // single Tab stop, so the number of stops depends on the active backend's
+    // field count. Tab also closes any open path-completion popup along the
+    // way. Enter then submits (create + visit).
     let mut guard = 0;
-    while !h.screen_to_string().contains("▸ [ Create Workspace ]") {
+    while !h.screen_to_string().contains("▸ [ Create & Visit ]") {
         h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
         guard += 1;
         assert!(
             guard < 30,
-            "Tab never focused the Create Workspace button.\n{}",
+            "Tab never focused the Create & Visit button.\n{}",
             h.screen_to_string(),
         );
     }
@@ -1912,16 +1912,17 @@ fn creating_workspace_lists_it_without_stealing_focus() {
     // Accept the path completion with Tab so the popup closes and the
     // Create button is no longer obscured by it.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Create Workspace"))
+    h.wait_until(|h| h.screen_to_string().contains("Create in Background"))
         .unwrap();
 
-    // Submit by clicking "Create Workspace".
+    // Submit by clicking "Create in Background" — the stay-put action, which
+    // adds the workspace without diving into it.
     let screen = h.screen_to_string();
     let (col, btn_row) = screen
         .lines()
         .enumerate()
-        .find_map(|(r, l)| l.find("Create Workspace").map(|c| (c as u16, r as u16)))
-        .expect("Create Workspace button should be visible");
+        .find_map(|(r, l)| l.find("Create in Background").map(|c| (c as u16, r as u16)))
+        .expect("Create in Background button should be visible");
     h.mouse_click(col, btn_row).unwrap();
 
     // The form closes and the workspace shows up in the dock while the create
@@ -1944,6 +1945,59 @@ fn creating_workspace_lists_it_without_stealing_focus() {
         h.editor().active_window().root,
         launch_root,
         "creating a workspace must not steal focus from the launch session"
+    );
+}
+
+/// "Create & Visit" is the focus-following counterpart to "Create in
+/// Background": submitting the form with it still runs the create in the
+/// background (non-blocking), but once the new workspace is ready the editor
+/// dives into it — the active window moves off the launch session.
+#[test]
+fn create_and_visit_dives_into_the_new_workspace() {
+    let (_tmp, root) = setup_project("alphaproj");
+    // A non-git directory: the worktree toggle auto-disables there, so this
+    // spawns a plain terminal session with no git worktree to create.
+    let plain = root.parent().unwrap().join("plainwork");
+    fs::create_dir(&plain).unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.assert_screen_contains("alphaproj");
+    let launch_root = h.editor().active_window().root.clone();
+
+    // Open the new-session form and point it at the non-git dir.
+    h.send_key(KeyCode::Char('n'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+        .unwrap();
+    h.type_text(&plain.display().to_string()).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("plainwork"))
+        .unwrap();
+    // Accept the path completion with Tab so the popup closes and the
+    // buttons are no longer obscured by it.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Create & Visit"))
+        .unwrap();
+
+    // Submit by clicking "Create & Visit" — the focus-following action.
+    let screen = h.screen_to_string();
+    let (col, btn_row) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| l.find("Create & Visit").map(|c| (c as u16, r as u16)))
+        .expect("Create & Visit button should be visible");
+    h.mouse_click(col, btn_row).unwrap();
+
+    // Once the create resolves, focus follows into the new workspace — the
+    // active window is no longer the launch session.
+    h.wait_until(|h| h.editor().active_window().root != launch_root)
+        .unwrap();
+    assert_ne!(
+        h.editor().active_window().root,
+        launch_root,
+        "Create & Visit must dive into the new workspace once it is ready"
     );
 }
 

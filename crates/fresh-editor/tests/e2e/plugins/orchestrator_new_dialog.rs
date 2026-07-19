@@ -898,7 +898,7 @@ fn open_form_on(workspace: &PathBuf) -> EditorTestHarness {
 /// Tab moves linearly between *fields* — one stop per radio group, not
 /// one per option. Walking a full cycle lands the marker on the active
 /// "Run in:" tab exactly once and the active "Agent:" preset exactly
-/// once (never on an inactive option), and reaches `[ Create Workspace ]`.
+/// once (never on an inactive option), and reaches `[ Create & Visit ]`.
 #[test]
 fn tab_is_linear_one_stop_per_radio_group() {
     let (_temp, workspace) = set_up_workspace();
@@ -966,7 +966,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
                 saw_inactive_option = true;
             }
         }
-        if line.contains("Create Workspace") {
+        if line.contains("Create & Visit") {
             saw_create = true;
         }
     }
@@ -985,7 +985,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
         agent_stops, 1,
         "the 'Agent:' group is a single Tab stop per cycle (got {agent_stops})",
     );
-    assert!(saw_create, "Tab must reach the [ Create Workspace ] button");
+    assert!(saw_create, "Tab must reach the [ Create & Visit ] button");
 }
 
 /// ←/→ changes the option *within* the "Run in:" selector (and swaps
