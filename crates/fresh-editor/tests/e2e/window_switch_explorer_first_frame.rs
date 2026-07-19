@@ -107,7 +107,14 @@ fn switched_to_window_paints_explorer_chrome_on_first_frame() {
     // in production both are `<data_dir>/fresh`, but the test harness keeps
     // them apart for isolation, so bridge the two by hand. (The global copy
     // must stay: `materialize_window` loads the workspace content from it.)
-    let saved = fresh::workspace::get_workspace_path(&beta).unwrap();
+    //
+    // Resolve the actual saved file rather than assuming the legacy
+    // root-keyed name: a workspace that passed through a `Window` carries a
+    // durable `stable_id`, so it lands at `<encoded-root>.<id>.json`, not
+    // `<encoded-root>.json`.
+    let saved = fresh::workspace::find_workspace_file_by_root(&beta)
+        .unwrap()
+        .expect("beta's workspace was saved to the global data dir");
     let discovery_dir = dir_context.data_dir.join("workspaces");
     fs::create_dir_all(&discovery_dir).unwrap();
     fs::copy(&saved, discovery_dir.join(saved.file_name().unwrap())).unwrap();
