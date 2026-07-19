@@ -35,6 +35,7 @@ const FILE_MENU_GOLDEN: &[&str] = &[
     "┌──────────────────────────────────────┐",
     "│ New File                       Ctrl+N│",
     "│ Open File...                   Ctrl+O│",
+    "│ Open Recent...                       │",
     "│ ─────────────────────────────────────│",
     "│ Save                           Ctrl+S│",
     "│ Save As...                           │",
