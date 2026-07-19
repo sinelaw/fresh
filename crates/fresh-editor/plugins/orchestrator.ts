@@ -133,6 +133,64 @@ interface AgentSession {
     detail: string;
     state: "starting" | "running" | "stopped" | "error";
   };
+  // Present only on a synthetic placeholder row that stands in for a
+  // workspace still being created in the background (the non-blocking
+  // New-Workspace flow — see `startPendingWorkspace`). While set, the row
+  // has no live window (synthetic negative `id`, `terminalId` null) and
+  // renders its `pending` status in place of a live pill. On success the
+  // placeholder is dropped and the real live window takes its place; on
+  // failure `phase` flips to `"error"` and the row offers retry / dismiss.
+  pending?: PendingCreate;
+}
+
+// A workspace-create request captured off the (now-closing) New-Workspace
+// form so the background worker — and any later retry — never has to read
+// form state that no longer exists. One variant per submit path.
+type RemoteFacet = NonNullable<AgentSession["remote"]>;
+type CreateSpec =
+  | {
+      backend: "local";
+      // Directory the session roots at (typed value or resolved default).
+      projectPath: string;
+      // Explicit workspace name; "" ⇒ auto-generate at create time.
+      name: string;
+      // Agent command; "" ⇒ a bare terminal.
+      cmd: string;
+      // Fork point for `git worktree add`; "" ⇒ the detected default branch.
+      branch: string;
+      // Create a fresh worktree (only honoured when the path is a git tree).
+      createWorktree: boolean;
+      // Row label + project shown on the pending dock row.
+      displayLabel: string;
+      displayProject: string;
+    }
+  | {
+      backend: "ssh" | "kubernetes";
+      // The host payload handed to `attachRemoteAgent`.
+      spec: RemoteAgentSpec;
+      // Facet stamped on both the born window and the pending placeholder.
+      facet: RemoteFacet;
+      displayLabel: string;
+      displayProject: string;
+      // The command to persist as `orchestrator.last_cmd` on success (ssh
+      // remembers it), or "" to persist nothing.
+      persistCmd: string;
+    };
+
+interface PendingCreate {
+  // `"creating"` while the background create/connect runs; `"error"` once it
+  // has failed; `"paused"` for a row restored from a previous session that
+  // hasn't been resumed yet. Both `error` and `paused` offer retry / dismiss.
+  phase: "creating" | "error" | "paused";
+  // Human status shown on the row while creating, or the failure reason
+  // when `phase === "error"`.
+  message: string;
+  // Everything the worker needs to (re-)run the create.
+  spec: CreateSpec;
+  // The window that was active when the create was launched. A remote
+  // attach makes its born window active on success; restoring this keeps
+  // the user where they were ("stay put, mark ready").
+  originActive: number;
 }
 
 // Local git summary + freshness bookkeeping (mirrors `PrProbe`).
@@ -237,6 +295,28 @@ function discoveredIdFor(path: string): number {
   }
   return id;
 }
+
+// Pending (being-created) placeholder rows take ids from a range well
+// below the discovered-worktree ids (which count down from `-2`), so the
+// two synthetic id spaces can never collide in `orchestratorSessions`.
+let nextPendingId = -1_000_000;
+function allocPendingId(): number {
+  return nextPendingId--;
+}
+
+// Only one remote attach may be in flight at a time. The host's
+// `cancelRemoteAgent()` cancels *every* in-flight connect, so
+// backgrounding two concurrent remote creates would let cancelling one
+// tear down the other. Remote pending rows therefore run one at a time:
+// `remoteAttachBusy` gates the in-flight connect and `remoteCreateQueue`
+// holds the pending ids waiting their turn. Local creates have no such
+// constraint and run immediately, in parallel.
+let remoteAttachBusy = false;
+const remoteCreateQueue: number[] = [];
+// The pending id whose remote connect is currently in flight (null when
+// none). Dismissing exactly this row must tear the connect down via
+// `cancelRemoteAgent`; a queued row hasn't started one.
+let remoteInFlightId: number | null = null;
 
 // New-session form state. `null` ⇒ the floating form isn't
 // open. Each field's `value` + `cursor` mirrors what the host
@@ -1526,7 +1606,12 @@ function filterSessions(needle: string): number[] {
   // projects, the default.
   if (dockMode && openDialog?.projectFilter) {
     const want = openDialog.projectFilter;
-    allIds = allIds.filter((id) => projectKeyOf(orchestratorSessions.get(id)!) === want);
+    // A being-created placeholder is always shown (its project isn't
+    // meaningful until it resolves) so the user sees it appear.
+    allIds = allIds.filter((id) => {
+      const s = orchestratorSessions.get(id)!;
+      return !!s.pending || projectKeyOf(s) === want;
+    });
   }
 
   // Sort by (current-project-first, project, then a stable identity key)
@@ -1586,7 +1671,12 @@ function filterSessions(needle: string): number[] {
       : byProjectThenStable;
     const ids = allIds.slice().sort(comparator);
     if (scope === "current") {
-      return ids.filter((id) => projectKeyOf(orchestratorSessions.get(id)!) === cur);
+      // Keep being-created placeholders visible regardless of scope — they
+      // were just launched and must show up in the list right away.
+      return ids.filter((id) => {
+        const s = orchestratorSessions.get(id)!;
+        return !!s.pending || projectKeyOf(s) === cur;
+      });
     }
     return ids;
   }
@@ -1797,6 +1887,13 @@ function flexLine(l: Entry[], r: Entry[]): WidgetSpec {
 // The leading status glyph for a session row: the on-disk ring for a
 // discovered worktree, otherwise the live working/idle state symbol.
 function stateGlyphEntry(s: AgentSession): Entry {
+  if (s.pending) {
+    // A being-created row: amber `*` while creating (reads as busy/spinner,
+    // same glyph as a working session), red `!` once it has failed.
+    return s.pending.phase === "error"
+      ? { text: "! ", style: { fg: "ui.status_error_indicator_fg", bold: true } }
+      : { text: "* ", style: { fg: "diagnostic.warning_fg", bold: true } };
+  }
   if (s.discovered) {
     return { text: ON_DISK_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } };
   }
@@ -1824,6 +1921,11 @@ function renderPillSpec(
 ): WidgetSpec {
   const s = orchestratorSessions.get(id);
   if (!s) return labeledSection({ label: "", child: styledRow([{ text: editor.t("pill.unknown") }]) });
+  // A being-created placeholder renders its status in place of the live
+  // pill body: name on line 1, the creating/connecting/error message on
+  // line 2 (amber while creating, red on failure), and a retry hint on the
+  // error card's line 3.
+  if (s.pending) return renderPendingPillSpec(s);
   const isActive = id === activeId;
   const nameEntry: Entry = {
     text: s.label,
@@ -1889,6 +1991,48 @@ function renderPillSpec(
   return labeledSection({ label: "", child: col(...children) });
 }
 
+// Row for a being-created placeholder. The dialog scope the user asked
+// for lives *here*: instead of blocking the whole editor behind a modal,
+// the progress/failure of this one workspace is confined to its own dock
+// row. Line 1 is the state glyph + (facet) + name; line 2 is the pending
+// message; line 3 is a retry/dismiss hint on failure (blank otherwise, so
+// the card keeps the uniform three-line height).
+function renderPendingPillSpec(s: AgentSession): WidgetSpec {
+  const p = s.pending!;
+  const isError = p.phase === "error";
+  // `error` and `paused` are both actionable (Enter to retry / resume);
+  // `creating` is passive.
+  const actionable = p.phase !== "creating";
+  const msgFg = isError ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+  const remoteGlyph: Entry[] = s.remote
+    ? [{ text: REMOTE_GLYPH[s.remote.kind] + " ", style: { fg: msgFg, bold: true } }]
+    : [];
+  const nameEntry: Entry = { text: s.label, style: { bold: true } };
+  const proj = editor.pathBasename(projectKeyOf(s));
+  const projEntries: Entry[] = [
+    { text: PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } },
+    { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
+  ];
+
+  // Compact: glyph + name on the left, the short status on the right.
+  if (dockMode && dockView === "compact") {
+    return flexLine(
+      [stateGlyphEntry(s), ...remoteGlyph, nameEntry],
+      [{ text: p.message, style: { fg: msgFg, italic: true } }],
+    );
+  }
+
+  const children: WidgetSpec[] = [
+    flexLine([stateGlyphEntry(s), ...remoteGlyph, nameEntry], projEntries),
+    raw([styledRow([{ text: p.message, style: { fg: msgFg, italic: actionable } }])]),
+  ];
+  const hint: Entry[] = actionable
+    ? [{ text: editor.t("dock.pending_retry_hint"), style: { fg: "ui.menu_disabled_fg", italic: true } }]
+    : [{ text: " " }];
+  children.push(raw([styledRow(hint as Parameters<typeof styledRow>[0])]));
+  return labeledSection({ label: "", child: col(...children) });
+}
+
 // Preview-pane content for the currently selected session.
 // Plain info for Phase 1; later phases append pgid/pids + the
 // last terminal lines.
@@ -1901,6 +2045,32 @@ function buildPreviewEntries(
         {
           text: editor.t("preview.no_workspace_selected"),
           style: { fg: "editor.whitespace_indicator_fg", italic: true },
+        },
+      ]),
+    ];
+  }
+  // A being-created placeholder: show its status (creating/connecting or
+  // the failure reason) rather than live-session detail it doesn't have.
+  if (s.pending) {
+    const p = s.pending;
+    const isError = p.phase === "error";
+    return [
+      styledRow([{ text: s.label, style: { bold: true } }]),
+      styledRow([
+        {
+          text: p.message,
+          style: {
+            fg: isError ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg",
+            italic: true,
+          },
+        },
+      ]),
+      styledRow([
+        {
+          text: p.phase === "creating"
+            ? editor.t("dock.pending_dismiss_hint")
+            : editor.t("dock.pending_retry_hint"),
+          style: { fg: "ui.menu_disabled_fg", italic: true },
         },
       ]),
     ];
@@ -4150,6 +4320,22 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   const sid = state.target.id;
   const s = orchestratorSessions.get(sid);
   const label = s?.label ?? `[${sid}]`;
+  // A being-created placeholder isn't a real session: no Visit / Move /
+  // Archive. It offers Retry (when failed or paused) and Dismiss.
+  if (s?.pending) {
+    const items: WidgetSpec[] = [
+      { kind: "raw", entries: [styledRow([{ text: `${label}`, style: { bold: true } }])] },
+    ];
+    if (s.pending.phase !== "creating") {
+      items.push(button(editor.t("dock.ctx_retry"), { intent: "primary", key: "ctx-retry" }));
+    }
+    items.push(button(editor.t("dock.ctx_dismiss"), { intent: "danger", key: "ctx-dismiss" }));
+    items.push({
+      kind: "raw",
+      entries: [styledRow([{ text: editor.t("dock.ctx_esc_close"), style: { fg: "ui.menu_disabled_fg" } }])],
+    });
+    return col(...items);
+  }
   const canArchive = bulkEligible("archive", sid);
   const canDelete = bulkEligible("delete", sid);
   // Intentionally intrinsic-width content only: NO `labeledSection`,
@@ -4329,6 +4515,10 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
     const id = dockSelectedSessionId();
     if (typeof id !== "number") return;
     const sess = orchestratorSessions.get(id);
+    // A being-created placeholder has no window to switch to. Arrow-nav
+    // must never spawn/retry from it (that would fire on every scroll-past
+    // during the debounce); it just sits highlighted, showing its status.
+    if (sess?.pending) return;
     // A discovered (on-disk) worktree has no window to switch to — in the
     // dock's live-switch model the highlighted row *is* the active
     // session, so opening it means attaching a fresh session at the
@@ -4368,6 +4558,13 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   const id = dockSelectedSessionId();
   if (typeof id !== "number") return;
   const sess = orchestratorSessions.get(id);
+  // A being-created placeholder has no window to dive into. A click/Enter
+  // resumes a paused/failed one (Enter = retry); a still-creating one has
+  // nothing to do but keep showing its progress.
+  if (sess?.pending) {
+    if (sess.pending.phase !== "creating") retryPending(id);
+    return;
+  }
   // A discovered (on-disk) worktree has no live window — attach a fresh
   // session and dive in (attachToWorktree hands focus to the editor).
   if (sess?.discovered) {
@@ -7034,134 +7231,121 @@ function cancelForm(): void {
   }
 }
 
-// Submit path for the non-local backends.
-//   ssh          → a new window whose agent terminal lives on the remote host
-//                  (`ssh -t … user@host`); the editor side stays local.
-//   kubernetes   → attaches the editor into the pod via `kubectl exec` (the
-//                  existing global `attachRemoteAgent`; reconnects on restart).
-//   devcontainer → routed to its dedicated command.
-// Warm per-window remote sessions that sit *beside* local ones (rather than
-// retargeting the whole editor) are the follow-up — see Gap B in
-// docs/internal/NEW_SESSION_DIALOG_WIREFRAMES.md.
-// Submit a remote (SSH / Kubernetes) attach and keep the New-Session dialog
-// open until the session is actually real. `attachRemoteAgent` now resolves
-// only once the editor has built the authority AND the born-attached window,
-// and rejects (with the reason — e.g. ssh "Could not resolve hostname") if the
-// connect or window creation fails, creating no window. So we drive the dialog
-// off that promise: show the failure inline and stay open to retry, instead of
-// closing optimistically and leaving the user with a half-built/empty window.
-async function runRemoteAttach(
-  spec: RemoteAgentSpec,
-  facet: AgentSession["remote"],
-): Promise<void> {
-  if (!form) return;
-  form.submitting = true;
-  form.lastError = null;
-  // The `window_created` hook (fired mid-attach on success) tags the new
-  // session row with this facet; cleared on failure since no window appears.
-  pendingRemoteFacet = facet;
-  renderForm();
-  // The disabled/connecting view exposes only Cancel — land focus there so
-  // Enter/Esc act on it.
-  formPanel?.setFocusKey("cancel");
-  try {
-    await editor.attachRemoteAgent(spec);
-    // Authority + window are live and the hook has adopted the facet — only
-    // now is it safe to dismiss the dialog. (Guard against the user having
-    // cancelled / reopened the form while the connect was in flight.)
-    if (form && form.submitting) closeForm();
-  } catch (e) {
-    pendingRemoteFacet = null;
-    if (!form) return;
-    form.submitting = false;
-    form.lastError = remoteAttachErrorText(e);
-    renderForm();
+// =============================================================================
+// Non-blocking workspace creation
+//
+// Submitting the New-Workspace form no longer blocks the editor behind a
+// modal "Creating…/Connecting…" view. Instead the form's inputs are captured
+// into a self-contained `CreateSpec`, the form closes, and a synthetic
+// placeholder row appears in the dock — "Creating…" for a local worktree,
+// "Connecting…" for a remote host that may not even be reachable yet. The
+// real work runs in the background; the user is free to switch to any other
+// workspace meanwhile. On success the placeholder is dropped and the real
+// live window takes its place; on failure the row flips to an error state
+// offering retry / dismiss.
+//
+// Remote attaches are *serialised*: the host's `cancelRemoteAgent()` cancels
+// EVERY in-flight connect, so two concurrent background attaches could not be
+// cancelled independently. Remote placeholders therefore run one at a time
+// through `remoteCreateQueue` / `remoteInFlightId`. Local creates have no such
+// constraint and run immediately, in parallel.
+//
+// Still-creating specs are persisted (`savePendingSpecs`) so a quit + restart
+// re-surfaces them as resumable ("paused") rows via `recoverPendingWorkspaces`
+// on the `ready` hook.
+// =============================================================================
+
+type CaptureResult = { ok: true; spec: CreateSpec } | { ok: false; error: string };
+
+// Resolve the (about-to-close) form into a `CreateSpec`, or return the
+// validation error that keeps the form open. Reads field values only — no
+// async work, no side effects — so the background worker never touches form
+// state that no longer exists.
+function captureCreateSpec(f: NewSessionForm): CaptureResult {
+  const cmd = f.cmd.value.trim();
+  const sessionName = f.name.value.trim();
+
+  if (f.backend === "local") {
+    // Project Path: typed value wins; otherwise the resolved canonical-root
+    // placeholder (or, if that probe never completed, a local default).
+    // `localProjectDefault()` keeps the fallback on the local filesystem even
+    // when the active window is a remote session.
+    const projectPath = f.projectPath.value.trim() ||
+      f.defaultProjectPath ||
+      localProjectDefault();
+    const displayLabel = sessionName ||
+      f.defaultSessionName ||
+      editor.pathBasename(projectPath) ||
+      editor.t("dock.pending_default_name");
+    return {
+      ok: true,
+      spec: {
+        backend: "local",
+        projectPath,
+        name: sessionName,
+        cmd,
+        branch: f.branch.value.trim(),
+        createWorktree: f.createWorktree,
+        displayLabel,
+        displayProject: projectPath,
+      },
+    };
   }
-}
 
-// `attachRemoteAgent` rejects with an Error whose message is the host's
-// reason (ssh diagnostic, a window-creation failure, a bad spec, …).
-function remoteAttachErrorText(e: unknown): string {
-  const msg = e instanceof Error ? e.message : String(e ?? "");
-  return msg.trim() || editor.t("err.connection_failed");
-}
-
-async function submitRemoteForm(backend: SessionBackend): Promise<void> {
-  if (!form) return;
-  const fail = (msg: string): void => {
-    if (!form) return;
-    form.submitting = false;
-    form.lastError = msg;
-    editor.setStatus(editor.t("status.prefix", { msg }));
-    renderForm();
-  };
-  const sessionName = form.name.value.trim();
-  // The field value is authoritative: empty means "use the backend default"
-  // (a bare remote/login shell), not "silently reuse the last command".
-  const cmd = form.cmd.value.trim();
-
-  if (backend === "kubernetes") {
-    const target = form.k8sTarget.value.trim();
-    const namespace = form.k8sNamespace.value.trim();
-    const pod = form.k8sPod.value.trim();
-    if (target && !pod) {
-      fail(editor.t("err.k8s_named_target"));
-      return;
-    }
-    if (!namespace || !pod) {
-      fail(editor.t("err.k8s_ns_pod_required"));
-      return;
-    }
+  if (f.backend === "kubernetes") {
+    const target = f.k8sTarget.value.trim();
+    const namespace = f.k8sNamespace.value.trim();
+    const pod = f.k8sPod.value.trim();
+    if (target && !pod) return { ok: false, error: editor.t("err.k8s_named_target") };
+    if (!namespace || !pod) return { ok: false, error: editor.t("err.k8s_ns_pod_required") };
     const agentArgv = splitAgentCmd(cmd);
+    const detail = `${namespace}/${pod}`;
+    const label = sessionName || `k8s:${namespace}/${pod}`;
     const spec: RemoteAgentSpec = {
       transport: {
         kind: "kubectl-exec",
-        context: form.k8sContext.value.trim() || null,
+        context: f.k8sContext.value.trim() || null,
         namespace,
         pod,
         container: null,
-        workspace: form.k8sWorkspace.value.trim() || null,
+        workspace: f.k8sWorkspace.value.trim() || null,
       },
       base_env: [],
       // Born-attached: a new window beside the local ones (not a global
       // restart). Core records nothing about us — the orchestrator tracks the
-      // session via the `window_created` hook below.
+      // session via the `window_created` hook once the connect succeeds.
       window: true,
-      label: sessionName || `k8s:${namespace}/${pod}`,
+      label,
       command: agentArgv.length > 0 ? agentArgv : undefined,
     };
-    await runRemoteAttach(spec, {
-      kind: "kubernetes",
-      detail: `${namespace}/${pod}`,
-      state: "running",
-    });
-    return;
+    return {
+      ok: true,
+      spec: {
+        backend: "kubernetes",
+        spec,
+        facet: { kind: "kubernetes", detail, state: "starting" },
+        displayLabel: label,
+        displayProject: detail,
+        persistCmd: "",
+      },
+    };
   }
 
-  if (backend === "ssh") {
+  if (f.backend === "ssh") {
     // Parse `[user@]host[:port]` (also tolerates a pasted `ssh://…`). The user
-    // is optional — a bare `host` lets ssh resolve the user from its own
-    // config / the current user. The full remote-agent stack attaches over SSH
-    // (remote filesystem + LSP + an in-host terminal) as a born-attached
-    // window, not just a local `ssh` terminal.
-    const raw = form.sshHost.value.trim().replace(/^ssh:\/\//, "");
-    // Split an optional `:port` suffix, then an optional `user@` prefix —
-    // computed up front so there are no half-parsed intermediate values.
+    // is optional — a bare `host` lets ssh resolve it from its own config.
+    const raw = f.sshHost.value.trim().replace(/^ssh:\/\//, "");
     const portMatch = raw.match(/^(.+):(\d+)$/);
     const port = portMatch ? parseInt(portMatch[2], 10) : null;
     const hostPart = portMatch ? portMatch[1] : raw;
     const at = hostPart.indexOf("@");
     const user = at > 0 ? hostPart.slice(0, at) : undefined;
     const host = at >= 0 ? hostPart.slice(at + 1) : hostPart;
-    if (!host) {
-      fail(editor.t("err.ssh_host_required"));
-      return;
-    }
-    const identity = form.sshIdentity.value.trim();
-    const remotePath = form.sshPath.value.trim();
-    // Free-form extra ssh args, whitespace-split (e.g. `-J jump -o Foo=bar`).
-    const extraArgs = form.sshOptions.value.trim()
-      ? form.sshOptions.value.trim().split(/\s+/)
+    if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
+    const identity = f.sshIdentity.value.trim();
+    const remotePath = f.sshPath.value.trim();
+    const extraArgs = f.sshOptions.value.trim()
+      ? f.sshOptions.value.trim().split(/\s+/)
       : [];
     const agentArgv = splitAgentCmd(cmd);
     const target = user ? `${user}@${host}` : host;
@@ -7180,108 +7364,225 @@ async function submitRemoteForm(backend: SessionBackend): Promise<void> {
       label: sessionName || `ssh:${target}`,
       command: agentArgv.length > 0 ? agentArgv : undefined,
     };
-    if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
-    await runRemoteAttach(spec, {
-      kind: "ssh",
-      detail: target,
-      state: "running",
-    });
-    return;
+    return {
+      ok: true,
+      spec: {
+        backend: "ssh",
+        spec,
+        facet: { kind: "ssh", detail: target, state: "starting" },
+        displayLabel: sessionName || `ssh:${target}`,
+        displayProject: target,
+        persistCmd: cmd,
+      },
+    };
   }
 
-  // devcontainer — no runtime plugin-to-plugin attach yet; point at the
-  // dedicated command (the devcontainer plugin owns `devcontainer up` + the
-  // docker-exec authority).
-  fail(editor.t("err.devcontainer_unsupported"));
+  // devcontainer — no runtime plugin-to-plugin attach yet.
+  return { ok: false, error: editor.t("err.devcontainer_unsupported") };
 }
 
-async function submitForm(): Promise<void> {
-  if (!form || form.submitting) return;
-  // Remote/cloud backends take their own submit path (they attach through the
-  // Authority seam instead of forking a local worktree). Local stays the
-  // original flow below.
-  if (form.backend !== "local") {
-    await submitRemoteForm(form.backend);
-    return;
+// `attachRemoteAgent` rejects with an Error whose message is the host's
+// reason (ssh diagnostic, a window-creation failure, a bad spec, …).
+function remoteAttachErrorText(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return msg.trim() || editor.t("err.connection_failed");
+}
+
+// The "Creating…" / "Connecting…" line shown on a freshly-launched row.
+function pendingCreatingMessage(spec: CreateSpec): string {
+  return spec.backend === "local"
+    ? editor.t("dock.pending_creating")
+    : editor.t("dock.pending_connecting");
+}
+
+// Insert a placeholder row for a workspace to create and — unless it is a
+// restored (paused) row — close the form, surface the dock, and launch the
+// background worker. Returns the placeholder's synthetic id.
+function startPendingWorkspace(
+  spec: CreateSpec,
+  opts?: { restored?: boolean },
+): number {
+  const id = allocPendingId();
+  const restored = opts?.restored === true;
+  const remoteFacet: RemoteFacet | undefined =
+    spec.backend === "local" ? undefined : { ...spec.facet };
+  orchestratorSessions.set(id, {
+    id,
+    label: spec.displayLabel,
+    // Synthetic root — a placeholder owns no real directory yet, and a unique
+    // key keeps it in its own stable dock-order slot.
+    root: `pending:${id}`,
+    projectPath: spec.displayProject,
+    sharedWorktree: false,
+    terminalId: null,
+    state: "idle",
+    lastOutputAt: null,
+    createdAt: Date.now(),
+    remote: remoteFacet,
+    pending: {
+      phase: restored ? "paused" : "creating",
+      message: restored ? editor.t("dock.pending_interrupted") : pendingCreatingMessage(spec),
+      spec,
+      originActive: editor.activeWindow(),
+    },
+  });
+  savePendingSpecs();
+  if (!restored) {
+    closeForm();
+    showDockForPending();
+    launchPendingCreate(id);
   }
-  form.submitting = true;
-  form.lastError = null;
-  renderForm();
-  // Disabled/connecting view exposes only Cancel — focus it.
-  formPanel?.setFocusKey("cancel");
+  return id;
+}
 
-  // The Agent Command field is prefilled with the last-used command as actual
-  // text (see `openForm`), so its value is authoritative: a cleared field means
-  // "spawn a bare terminal", not "silently reuse the last command".
-  const cmd = form.cmd.value.trim();
-  const branchInput = form.branch.value.trim();
+// Ensure the dock is visible so a just-created placeholder is seen, without
+// stealing keyboard focus — the user asked to keep working ("stay put").
+function showDockForPending(): void {
+  // Open the dock if nothing is up yet. (Structured so the module-level
+  // `openPanel`'s narrowing survives the `openControlRoom` reassignment —
+  // mirrors `openMoveToFolderForCurrent`.)
+  if (!openPanel) {
+    openControlRoom({ dock: true });
+  }
+  if (!openPanel) return;
+  // Keep keyboard focus in the editor ("stay put") — only the dock is shown.
+  // A centered modal picker (dockMode false) is left focused as-is.
+  if (dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+    syncDockSelectionToActive();
+  }
+  refreshOpenDialog();
+}
 
-  // Project Path: typed value wins; otherwise the resolved
-  // canonical-root placeholder (or, if that probe never
-  // completed, a local default). The picked value drives the
-  // entire submission flow. `localProjectDefault()` (not a raw
-  // `editor.getCwd()`) keeps the fallback on the local filesystem
-  // when the active window is a remote session.
-  const projectPath = form.projectPath.value.trim() ||
-    form.defaultProjectPath ||
-    localProjectDefault();
+// Dispatch the background worker for a placeholder (local runs immediately;
+// remote queues behind any in-flight connect).
+function launchPendingCreate(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (!s || !s.pending) return;
+  if (s.pending.spec.backend === "local") void runLocalCreate(id);
+  else enqueueRemoteCreate(id);
+}
 
-  // Re-probe is-git so we trust the latest filesystem state
-  // rather than a possibly-stale UI flag (race: user pressed
-  // Enter while the debounced probe was still in flight).
+// Update a placeholder's status line (a no-op once the row is gone).
+function setPendingMessage(id: number, msg: string): void {
+  const s = orchestratorSessions.get(id);
+  if (!s || !s.pending) return;
+  s.pending.message = msg;
+  if (openPanel) refreshOpenDialog();
+}
+
+// Keep the placeholder's label in step with the resolved session name (local
+// auto-generates it only inside the worker).
+function relabelPending(id: number, label: string): void {
+  const s = orchestratorSessions.get(id);
+  if (!s || !s.pending || !label || s.label === label) return;
+  s.label = label;
+  savePendingSpecs();
+  if (openPanel) refreshOpenDialog();
+}
+
+// Flip a placeholder into its error state with `reason`, surfacing it on the
+// row (and the status bar) and dropping it from the persisted set.
+function failPending(id: number, reason: string): void {
+  const s = orchestratorSessions.get(id);
+  if (!s || !s.pending) return;
+  s.pending.phase = "error";
+  s.pending.message = reason.trim() || editor.t("err.connection_failed");
+  if (s.remote) s.remote.state = "error";
+  editor.setStatus(editor.t("status.prefix", { msg: s.pending.message }));
+  savePendingSpecs();
+  if (openPanel) refreshOpenDialog();
+}
+
+// Return keyboard focus to the window that was active before a spawn/attach
+// dove into its new window — the "stay put, mark ready" contract. Safe if the
+// target window has since closed.
+function restoreActiveWindow(id: number): void {
+  if (id <= 0 || editor.activeWindow() === id) return;
+  if (!editor.listWindows().some((w) => w.id === id)) return;
+  editor.setActiveWindow(id);
+}
+
+// Re-run a failed or paused (restored) placeholder from scratch.
+function retryPending(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (!s || !s.pending) return;
+  s.pending.phase = "creating";
+  s.pending.message = pendingCreatingMessage(s.pending.spec);
+  if (s.remote) s.remote.state = "starting";
+  savePendingSpecs();
+  if (openPanel) refreshOpenDialog();
+  launchPendingCreate(id);
+}
+
+// Drop a placeholder for good. If it is the remote connect currently in
+// flight, tear that connect down first (the host's `cancelRemoteAgent`
+// cancels the single in-flight attach); a queued one is just removed.
+function dismissPending(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (!s || !s.pending) return;
+  if (remoteInFlightId === id) {
+    pendingRemoteFacet = null;
+    editor.cancelRemoteAgent();
+    remoteInFlightId = null;
+  }
+  const qi = remoteCreateQueue.indexOf(id);
+  if (qi >= 0) remoteCreateQueue.splice(qi, 1);
+  orchestratorSessions.delete(id);
+  savePendingSpecs();
+  if (openPanel) {
+    refreshOpenDialog();
+    syncDockSelectionToActive();
+  }
+}
+
+// Background worker: create a local worktree (when requested) and spawn the
+// session window, swapping the placeholder for the real row. Idempotent on a
+// resume — if the target worktree already exists (a prior run made it before
+// the editor quit) the add is skipped and the session opens in place.
+async function runLocalCreate(id: number): Promise<void> {
+  const s0 = orchestratorSessions.get(id);
+  if (!s0 || !s0.pending || s0.pending.spec.backend !== "local") return;
+  const spec = s0.pending.spec;
+  const cmd = spec.cmd;
+  const branchInput = spec.branch;
+  const projectPath = spec.projectPath;
+
+  // Re-probe is-git so we trust the latest filesystem state, not a UI flag.
   const isGit = await pathIsInsideGitWorkTree(projectPath);
-  if (!form) return;
-  const createWorktree = isGit === true && form.createWorktree;
+  if (!orchestratorSessions.get(id)?.pending) return; // dismissed mid-probe
+  const createWorktree = isGit === true && spec.createWorktree;
 
-  // Resolve the repo's main worktree root when we're in a
-  // worktree-create flow — same logic as before, but rooted at
-  // `projectPath` instead of cwd so the user can target a repo
-  // other than the one the editor was launched in.
   let repoRoot = projectPath;
   if (createWorktree) {
     const canonical = await resolveCanonicalRepoRoot(projectPath);
     if (canonical) repoRoot = canonical;
   }
 
-  // Session name resolution: explicit value wins. Otherwise
-  // auto-generate by scanning `refs/heads/session-N` for the
-  // next free index (the same probe that filled the
-  // placeholder).
-  const sessionName = form.name.value.trim() ||
+  const sessionName = spec.name ||
     (await nextAutoSessionName(repoRoot, { persist: true }));
-  if (!form) return;
+  if (!orchestratorSessions.get(id)?.pending) return;
+  relabelPending(id, sessionName);
 
-  // Session root resolution:
-  // - createWorktree=true  → fresh worktree under
-  //   `<XDG>/orchestrator/<slug>/<session>/`.
-  // - createWorktree=false → run inside `projectPath` itself
-  //   (shared worktree / non-git path / multiple sessions on
-  //   the same root).
   const root = createWorktree
-    ? editor.pathJoin(
-        editor.getDataDir(),
-        "orchestrator",
-        slugify(repoRoot),
-        sessionName,
-      )
+    ? editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(repoRoot), sessionName)
     : projectPath;
 
-  if (createWorktree) {
+  // Recovery idempotency: a worktree left on disk by an interrupted run is
+  // reused rather than re-added (a re-add would fail and error the row).
+  const rootExists = createWorktree && editor.fileExists(root);
+  if (createWorktree && !rootExists) {
+    setPendingMessage(id, editor.t("dock.pending_adding_worktree"));
     const parent = editor.pathDirname(root);
     if (!editor.createDir(parent)) {
-      if (!form) return;
-      form.submitting = false;
-      form.lastError = editor.t("err.mkdir_failed", { path: parent });
-      editor.setStatus(editor.t("status.prefix", { msg: form.lastError }));
-      renderForm();
+      failPending(id, editor.t("err.mkdir_failed", { path: parent }));
       return;
     }
-
     const defaultBranch = await detectDefaultBranch(repoRoot);
     const branchName = branchInput || sessionName;
-    // Try `-b <new>` first; if it fails because the branch
-    // already exists, fall back to checking out the existing
-    // branch into a new worktree.
+    // Try `-b <new>` first; if the branch already exists, fall back to
+    // checking out the existing branch into a new worktree.
     let addRes = await spawnCollect(
       "git",
       ["-C", repoRoot, "worktree", "add", root, "-b", branchName, defaultBranch],
@@ -7294,82 +7595,43 @@ async function submitForm(): Promise<void> {
         repoRoot,
       );
       if (fallback.exit_code !== 0) {
-        if (!form) return;
-        form.submitting = false;
-        // Prefer the fallback's stderr: when both attempts
-        // fail, the `-b` branch's error is usually "branch
-        // already exists" (which is *why* we tried the
-        // fallback), and the fallback's error is the more
-        // informative one.
-        form.lastError = lastNonEmptyLine(fallback.stderr) ||
-          lastNonEmptyLine(addRes.stderr) ||
-          editor.t("err.worktree_add_failed");
-        editor.setStatus(editor.t("status.prefix", { msg: form.lastError }));
-        renderForm();
+        failPending(
+          id,
+          lastNonEmptyLine(fallback.stderr) ||
+            lastNonEmptyLine(addRes.stderr) ||
+            editor.t("err.worktree_add_failed"),
+        );
         return;
       }
       addRes = fallback;
     }
   }
+  if (!orchestratorSessions.get(id)?.pending) return; // dismissed mid-add
 
-  if (cmd) {
-    editor.setGlobalState("orchestrator.last_cmd", cmd);
-  }
+  if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
 
-  // Attach-to-existing-worktree: when the user opted out of
-  // creating a worktree but pointed Project Path at an *existing
-  // linked worktree* (one created by `git worktree add`, possibly
-  // for a repo Fresh has never opened before), treat it as the
-  // dedicated worktree it is rather than a shared root. That means
-  // `shared_worktree = false` (so Archive / Delete can
-  // `git worktree move` / `remove` it) and a `project_path` of the
-  // owning repo so the session groups with its siblings. A path
-  // that's the repo's *main* worktree, or a non-git directory, stays
-  // shared — you can't `git worktree remove` either of those.
+  // Attach-to-existing-worktree classification for the no-worktree path
+  // (a linked worktree the user pointed at directly).
   const attachInfo = !createWorktree ? await classifyWorktree(root) : null;
-  if (!form) return;
   const isLinkedAttach = attachInfo?.isLinked === true;
   const effectiveProjectPath = isLinkedAttach ? attachInfo!.mainRoot : projectPath;
-
-  // Branch / cmd values used for the per-window state record —
-  // `branchName` only exists in the worktree-create flow above; for
-  // an attached linked worktree we report its checked-out branch;
-  // for the shared-worktree / non-git case we leave it blank.
   const reportedBranch = createWorktree
     ? (branchInput || sessionName)
     : (isLinkedAttach ? attachInfo!.branch : "");
 
-  // Append the user-effective values to per-field input
-  // history so ↑/↓ can recall them on the next form open.
   appendHistory("project_path", projectPath);
   appendHistory("name", sessionName);
   if (cmd) appendHistory("cmd", cmd);
   if (createWorktree) appendHistory("branch", reportedBranch);
 
-  closeForm();
-  // When the form was opened over the dock, the new session dives in
-  // below — hand keyboard focus to the dived-into terminal by blurring
-  // the dock (it stays visible and refreshes to show the new row).
-  if (openPanel && dockMode) {
-    dockBlurred = true;
-    editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  }
-
-  // Spawn the new window + agent terminal atomically. Compared to
-  // the legacy `createWindow → window_created hook → createTerminal`
-  // chain this avoids the transient `[No Name]` tab the host's
-  // eager seed used to leave alongside the agent terminal: the
-  // terminal IS the new window's seed buffer, so the window is
-  // born with a single tab.
   const argv = splitAgentCmd(cmd);
-  // If this is a known coding agent, provision it so a restart rejoins the
-  // conversation: `launch` may carry a minted `--session-id`, and `resume` is
-  // what restore runs instead of re-launching (see the agent registry). The
-  // host persists `resume` on the terminal; `terminal.resume_agents` gates it.
   const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv);
-  // Shared only when we neither created a worktree nor attached to an
-  // existing linked one (i.e. a non-git dir or the repo's main tree).
   const sharedWorktree = !createWorktree && !isLinkedAttach;
+
+  // Capture the user's current window so focus can return to it after
+  // `createWindowWithTerminal` dives into the new one.
+  const restoreTo = editor.activeWindow();
+  setPendingMessage(id, editor.t("dock.pending_starting"));
   try {
     const result = await editor.createWindowWithTerminal({
       root,
@@ -7379,21 +7641,19 @@ async function submitForm(): Promise<void> {
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
     });
-    const id = result.windowId;
-    // `createWindowWithTerminal` already dove into the new window,
-    // so `setWindowState` writes to it.
+    const winId = result.windowId;
     editor.setWindowState("project_path", effectiveProjectPath);
     editor.setWindowState("shared_worktree", sharedWorktree);
-    // If we attached to a worktree that was sitting in the picker as
-    // a discovered row, drop that placeholder — this live window
-    // supersedes it.
     const discId = discoveredIdByPath.get(root);
     if (discId !== undefined) {
       orchestratorSessions.delete(discId);
       discoveredIdByPath.delete(root);
     }
-    const tracked: AgentSession = {
-      id,
+    // The real window supersedes the placeholder.
+    orchestratorSessions.delete(id);
+    savePendingSpecs();
+    orchestratorSessions.set(winId, {
+      id: winId,
       label: sessionName,
       root,
       projectPath: effectiveProjectPath,
@@ -7402,25 +7662,149 @@ async function submitForm(): Promise<void> {
       state: "running",
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
-    };
-    orchestratorSessions.set(id, tracked);
-    // Refresh the dock so the freshly-created session shows up, then move
-    // the highlight onto it: it's now the active window, so the dock
-    // (blurred to hand focus to the new terminal) should point at it
-    // rather than leave the highlight on the previously-active row. The
-    // `active_window_changed` that fired mid-`createWindowWithTerminal`
-    // ran before this session was tracked, so it couldn't select it.
-    if (openPanel && dockMode) {
+    });
+    // Stay put: `createWindowWithTerminal` dove into the new window.
+    restoreActiveWindow(restoreTo);
+    if (openPanel) {
       refreshOpenDialog();
       syncDockSelectionToActive();
     }
   } catch (e) {
-    editor.setStatus(
-      editor.t("status.start_failed", {
-        error: e instanceof Error ? e.message : String(e),
-      }),
-    );
+    failPending(id, e instanceof Error ? e.message : String(e));
   }
+}
+
+// Queue a remote placeholder and pump the (serialised) remote worker.
+function enqueueRemoteCreate(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (s?.pending && remoteInFlightId !== null) {
+    // Something is already connecting — show that this one is waiting.
+    setPendingMessage(id, editor.t("dock.pending_queued"));
+  }
+  remoteCreateQueue.push(id);
+  pumpRemoteQueue();
+}
+
+// Start the next queued remote connect when none is in flight, skipping
+// placeholders that were dismissed or errored while waiting.
+function pumpRemoteQueue(): void {
+  if (remoteAttachBusy) return;
+  let next: number | undefined;
+  for (;;) {
+    next = remoteCreateQueue.shift();
+    if (next === undefined) return;
+    const s = orchestratorSessions.get(next);
+    if (s?.pending && s.pending.phase !== "error") break;
+  }
+  remoteAttachBusy = true;
+  remoteInFlightId = next;
+  void runRemoteCreate(next).finally(() => {
+    remoteAttachBusy = false;
+    remoteInFlightId = null;
+    pumpRemoteQueue();
+  });
+}
+
+// Background worker for a remote (SSH / Kubernetes) placeholder. The connect
+// may take seconds and can fail (unreachable host, bad pod); until it
+// resolves the row sits in its "Connecting…" state, switchable-away-from like
+// any other. `attachRemoteAgent` resolves only once the authority AND the
+// born-attached window exist, so the placeholder is dropped only when the
+// session is truly real.
+async function runRemoteCreate(id: number): Promise<void> {
+  const s = orchestratorSessions.get(id);
+  if (
+    !s || !s.pending ||
+    (s.pending.spec.backend !== "ssh" && s.pending.spec.backend !== "kubernetes")
+  ) {
+    return;
+  }
+  const spec = s.pending.spec;
+  s.pending.phase = "creating";
+  s.pending.message = editor.t("dock.pending_connecting");
+  if (s.remote) s.remote.state = "starting";
+  const restoreTo = s.pending.originActive;
+  // The born window adopts this facet via the `window_created` hook.
+  pendingRemoteFacet = { ...spec.facet };
+  if (openPanel) refreshOpenDialog();
+  try {
+    await editor.attachRemoteAgent(spec.spec);
+    // Success: the born-attached window is live and already tracked (the
+    // hook adopted the facet). Drop the placeholder.
+    orchestratorSessions.delete(id);
+    savePendingSpecs();
+    if (spec.persistCmd) editor.setGlobalState("orchestrator.last_cmd", spec.persistCmd);
+    // Stay put: the attach activated the born window.
+    restoreActiveWindow(restoreTo);
+    if (openPanel) {
+      refreshOpenDialog();
+      syncDockSelectionToActive();
+    }
+  } catch (e) {
+    pendingRemoteFacet = null;
+    failPending(id, remoteAttachErrorText(e));
+  }
+}
+
+// ---------------------------------------------------------------------
+// Restart recovery — persist still-creating LOCAL placeholders so a quit +
+// relaunch re-surfaces them (paused) instead of silently losing an
+// in-progress workspace whose worktree may not have been created yet.
+//
+// Remote (SSH / Kubernetes) placeholders are deliberately NOT persisted
+// here: a born-attached remote session that actually connected is already
+// restored across restarts by the host's own dormant-session persistence
+// (it comes back as a reconnectable remote row), and re-surfacing a connect
+// that never completed would either duplicate that row or silently re-open a
+// network connection on launch. Local worktree creation has no such host-side
+// record, so it is the case this recovery exists for.
+// ---------------------------------------------------------------------
+
+const PENDING_KEY = "orchestrator.pending";
+
+// Persist every LOCAL placeholder that is still creating or paused (never the
+// errored ones — those are a completed, surfaced outcome; nor remote ones —
+// see the section note). Called on every mutation of the pending set.
+function savePendingSpecs(): void {
+  const out: { spec: CreateSpec; label: string }[] = [];
+  for (const s of orchestratorSessions.values()) {
+    if (s.pending && s.pending.phase !== "error" && s.pending.spec.backend === "local") {
+      out.push({ spec: s.pending.spec, label: s.label });
+    }
+  }
+  editor.setGlobalState(PENDING_KEY, out as unknown as object);
+}
+
+// Rehydrate persisted local placeholders on startup as paused rows the user
+// resumes (Enter) or dismisses. Nothing auto-runs — resuming is a deliberate
+// keystroke, never an automatic filesystem touch on launch.
+function recoverPendingWorkspaces(): void {
+  const raw = editor.getGlobalState(PENDING_KEY);
+  if (!Array.isArray(raw) || raw.length === 0) return;
+  let restored = 0;
+  for (const e of raw) {
+    if (!e || typeof e !== "object") continue;
+    const spec = (e as Record<string, unknown>).spec as CreateSpec | undefined;
+    if (!spec || spec.backend !== "local") continue;
+    startPendingWorkspace(spec, { restored: true });
+    restored++;
+  }
+  if (restored > 0) showDockForPending();
+}
+
+async function submitForm(): Promise<void> {
+  if (!form) return;
+  // Resolve the form's inputs into a self-contained spec. A validation
+  // failure (bad ssh host, missing pod) keeps the form open with the error;
+  // otherwise the form closes and the create runs in the background.
+  const captured = captureCreateSpec(form);
+  if (!captured.ok) {
+    form.lastError = captured.error;
+    editor.setStatus(editor.t("status.prefix", { msg: captured.error }));
+    renderForm();
+    return;
+  }
+  startPendingWorkspace(captured.spec);
 }
 
 /// Open a session in an existing worktree without creating one —
@@ -7888,6 +8272,16 @@ editor.on("widget_event", (e) => {
         return;
       }
       const id = target.id;
+      if (e.widget_key === "ctx-retry") {
+        closeDockContextMenuAndRestoreDock();
+        retryPending(id);
+        return;
+      }
+      if (e.widget_key === "ctx-dismiss") {
+        closeDockContextMenuAndRestoreDock();
+        dismissPending(id);
+        return;
+      }
       if (e.widget_key === "ctx-visit") {
         // Visit dives into the editor — no dock refocus.
         closeDockContextMenu();
@@ -8193,6 +8587,14 @@ editor.on("widget_event", (e) => {
       }
       const id = dockSelectedSessionId();
       const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
+      // Enter on a being-created placeholder: resume a paused/failed one
+      // (retry), or do nothing while it is still creating (there is no
+      // window to dive into). Never blur to the editor — that would drop
+      // focus onto whatever buffer sits behind the phantom row.
+      if (sel && sel.pending) {
+        if (sel.pending.phase !== "creating") retryPending(id as number);
+        return;
+      }
       if (sel && sel.discovered) {
         void attachToWorktree({
           root: sel.root,
@@ -8412,6 +8814,12 @@ editor.on("widget_event", (e) => {
           branch: sel.branch,
           discoveredId: sel.id,
         });
+        return;
+      }
+      if (sel && sel.pending) {
+        // A being-created placeholder has no window to open — resume a
+        // paused/failed one (retry); a still-creating one is a no-op.
+        if (sel.pending.phase !== "creating") retryPending(id as number);
         return;
       }
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
@@ -8650,6 +9058,13 @@ editor.on("window_created", () => {
 
 editor.on("window_closed", () => {
   refreshOpenDialog();
+});
+
+// Startup: re-surface any workspaces that were still being created when the
+// editor last quit. They come back as paused placeholder rows the user
+// resumes (Enter) or dismisses — nothing auto-runs (§ recoverPendingWorkspaces).
+editor.on("ready", () => {
+  recoverPendingWorkspaces();
 });
 
 // Grace window after a session becomes active during which terminal
