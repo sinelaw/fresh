@@ -1028,11 +1028,16 @@ impl Editor {
 
         // Check the "+" new-tab popup menu (rendered on top)
         if let Some(ref menu) = self.active_window().new_tab_menu {
-            let menu_x = menu.position.0;
-            let menu_y = menu.position.1;
+            // Clamp against the last rendered frame size (mirrored from
+            // `frame.area()` each draw), matching the popup's render clamp — so
+            // a menu near the right/bottom edge hovers exactly where it draws.
+            let (menu_x, menu_y) = menu.clamped_position(
+                self.active_chrome().last_frame.width,
+                self.active_chrome().last_frame.height,
+            );
             let menu_width = super::types::NEW_TAB_MENU_WIDTH;
             let items = super::types::NewTabMenuItem::all();
-            let menu_height = items.len() as u16 + 2;
+            let menu_height = menu.height();
 
             if col >= menu_x
                 && col < menu_x + menu_width
@@ -3527,11 +3532,16 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<AnyhowResult<()>> {
-        let menu = self.active_window_mut().new_tab_menu.as_ref()?;
-        let (menu_x, menu_y) = menu.position;
+        // Clamp against the last rendered frame size, matching the popup's
+        // render and hover hit-test — during a resize `terminal_width/height`
+        // can lag `frame.area()`, drifting clicks off the drawn menu.
+        let frame_w = self.active_chrome().last_frame.width;
+        let frame_h = self.active_chrome().last_frame.height;
+        let menu = self.active_window().new_tab_menu.as_ref()?;
+        let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
         let items = super::types::NewTabMenuItem::all();
         let menu_width = super::types::NEW_TAB_MENU_WIDTH;
-        let menu_height = items.len() as u16 + 2; // items + borders
+        let menu_height = menu.height();
 
         // Click outside the menu closes it.
         if col < menu_x || col >= menu_x + menu_width || row < menu_y || row >= menu_y + menu_height

@@ -180,6 +180,31 @@ impl NewTabMenu {
         }
     }
 
+    /// Menu height including the top/bottom borders.
+    pub fn height(&self) -> u16 {
+        NewTabMenuItem::all().len() as u16 + 2
+    }
+
+    /// Anchor position shifted so the menu fits on screen — the single source
+    /// of truth shared by rendering, hover, and click hit-testing, exactly as
+    /// [`TabContextMenu::clamped_position`]. Diverging copies would let the
+    /// popup draw shifted onto screen while its clickable region stayed
+    /// anchored offscreen.
+    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
+        let x = if self.position.0 + NEW_TAB_MENU_WIDTH > screen_width {
+            screen_width.saturating_sub(NEW_TAB_MENU_WIDTH)
+        } else {
+            self.position.0
+        };
+        let h = self.height();
+        let y = if self.position.1 + h > screen_height {
+            screen_height.saturating_sub(h)
+        } else {
+            self.position.1
+        };
+        (x, y)
+    }
+
     /// Move highlight down.
     pub fn next_item(&mut self) {
         let items = NewTabMenuItem::all();

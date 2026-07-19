@@ -3981,21 +3981,11 @@ impl Editor {
 
         let items = super::types::NewTabMenuItem::all();
         let menu_width = super::types::NEW_TAB_MENU_WIDTH;
-        let menu_height = items.len() as u16 + 2; // items + borders
+        let menu_height = menu.height();
 
-        let screen_width = frame.area().width;
-        let screen_height = frame.area().height;
-
-        let menu_x = if menu.position.0 + menu_width > screen_width {
-            screen_width.saturating_sub(menu_width)
-        } else {
-            menu.position.0
-        };
-        let menu_y = if menu.position.1 + menu_height > screen_height {
-            screen_height.saturating_sub(menu_height)
-        } else {
-            menu.position.1
-        };
+        // Shared clamp — the same helper hover and click hit-testing use, so
+        // the popup accepts input exactly where it draws.
+        let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
 
         let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
 
