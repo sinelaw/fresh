@@ -1538,7 +1538,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "trash",
  "ts-rs",
 ]
 

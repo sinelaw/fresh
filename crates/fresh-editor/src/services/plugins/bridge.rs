@@ -1,23 +1,172 @@
 use crate::config_io::DirectoryContext;
 use crate::i18n;
 use crate::input::command_registry::CommandRegistry;
+use crate::model::filesystem::FileSystem;
 use crate::services::signal_handler;
 use crate::view::theme;
-use fresh_core::services::PluginServiceBridge;
+use fresh_core::api::DirEntry as PluginDirEntry;
+use fresh_core::services::{PluginFileStat, PluginFilesystem, PluginServiceBridge};
 use std::any::Any;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+/// Shared, live handle to the active window's filesystem backend.
+///
+/// The editor updates this whenever the active window (and therefore its
+/// authority) changes, so plugin file I/O always follows the currently focused
+/// session — the local host for a local window, the remote host for an
+/// SSH/container window — with no snapshotting and no local fallback.
+pub struct ActiveFilesystem(RwLock<Arc<dyn FileSystem + Send + Sync>>);
+
+impl ActiveFilesystem {
+    pub fn new(fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
+        Self(RwLock::new(fs))
+    }
+
+    /// The filesystem backend currently in effect.
+    pub fn get(&self) -> Arc<dyn FileSystem + Send + Sync> {
+        self.0.read().unwrap().clone()
+    }
+
+    /// Point plugin file I/O at a new backend (called on active-window change).
+    pub fn set(&self, fs: Arc<dyn FileSystem + Send + Sync>) {
+        *self.0.write().unwrap() = fs;
+    }
+}
+
+/// [`PluginFilesystem`] that routes every operation to the active window's
+/// authority filesystem via [`ActiveFilesystem`]. This is the *only* filesystem
+/// plugins touch, so their file access follows remote/SSH backends exactly like
+/// the editor core does.
+pub struct AuthorityPluginFilesystem {
+    active: Arc<ActiveFilesystem>,
+}
+
+impl AuthorityPluginFilesystem {
+    pub fn new(active: Arc<ActiveFilesystem>) -> Self {
+        Self { active }
+    }
+
+    /// Ensure `path`'s parent directory exists, creating it if necessary.
+    /// Returns false only when creation was required and failed.
+    fn ensure_parent(fs: &dyn FileSystem, path: &Path) -> bool {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty()
+                && !fs.exists(parent)
+                && fs.create_dir_all(parent).is_err()
+            {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl PluginFilesystem for AuthorityPluginFilesystem {
+    fn read_file(&self, path: &Path) -> Option<Vec<u8>> {
+        self.active.get().read_file(path).ok()
+    }
+
+    fn write_file(&self, path: &Path, contents: &[u8]) -> bool {
+        let fs = self.active.get();
+        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
+    }
+
+    fn exists(&self, path: &Path) -> bool {
+        self.active.get().exists(path)
+    }
+
+    fn read_dir(&self, path: &Path) -> Vec<PluginDirEntry> {
+        match self.active.get().read_dir(path) {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|e| PluginDirEntry {
+                    name: e.name.clone(),
+                    is_file: e.is_file(),
+                    is_dir: e.is_dir(),
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn create_dir_all(&self, path: &Path) -> bool {
+        let fs = self.active.get();
+        fs.is_dir(path).unwrap_or(false) || fs.create_dir_all(path).is_ok()
+    }
+
+    fn remove_path(&self, path: &Path) -> bool {
+        let fs = self.active.get();
+        if fs.is_dir(path).unwrap_or(false) {
+            fs.remove_dir_all(path).is_ok()
+        } else {
+            fs.remove_file(path).is_ok()
+        }
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> bool {
+        let fs = self.active.get();
+        if fs.rename(from, to).is_ok() {
+            return true;
+        }
+        // Same-backend cross-device fallback: copy then remove the source.
+        let is_dir = fs.is_dir(from).unwrap_or(false);
+        let copied = if is_dir {
+            fs.copy_dir_all(from, to).is_ok()
+        } else {
+            fs.copy(from, to).is_ok()
+        };
+        if !copied {
+            return false;
+        }
+        if is_dir {
+            fs.remove_dir_all(from).is_ok()
+        } else {
+            fs.remove_file(from).is_ok()
+        }
+    }
+
+    fn copy(&self, from: &Path, to: &Path) -> bool {
+        let fs = self.active.get();
+        if fs.is_dir(from).unwrap_or(false) {
+            fs.copy_dir_all(from, to).is_ok()
+        } else {
+            Self::ensure_parent(fs.as_ref(), to) && fs.copy(from, to).is_ok()
+        }
+    }
+
+    fn stat(&self, path: &Path) -> Option<PluginFileStat> {
+        let fs = self.active.get();
+        let md = fs.metadata(path).ok()?;
+        Some(PluginFileStat {
+            is_file: fs.is_file(path).unwrap_or(false),
+            is_dir: fs.is_dir(path).unwrap_or(false),
+            size: md.size,
+            readonly: md.is_readonly,
+        })
+    }
+
+    fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
+        self.active.get().canonicalize(path).ok()
+    }
+}
 
 pub struct EditorServiceBridge {
     pub command_registry: Arc<RwLock<CommandRegistry>>,
     pub dir_context: DirectoryContext,
     pub theme_cache: Arc<RwLock<std::collections::HashMap<String, serde_json::Value>>>,
+    /// The plugin filesystem, routing to the active window's authority.
+    pub plugin_fs: Arc<dyn PluginFilesystem>,
 }
 
 impl PluginServiceBridge for EditorServiceBridge {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn filesystem(&self) -> Arc<dyn PluginFilesystem> {
+        Arc::clone(&self.plugin_fs)
     }
 
     fn translate(&self, plugin_name: &str, key: &str, args: &HashMap<String, String>) -> String {

@@ -1251,6 +1251,7 @@ impl Editor {
             Arc::clone(&command_registry),
             dir_context.clone(),
             Arc::clone(&theme_cache),
+            Arc::clone(&filesystem),
         );
 
         // Update the plugin state snapshot with working_dir BEFORE loading plugins

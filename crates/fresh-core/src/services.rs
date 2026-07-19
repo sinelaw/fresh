@@ -1,10 +1,101 @@
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// Filesystem operations exposed to plugins.
+///
+/// Plugins must perform *all* file I/O through this handle rather than touching
+/// `std::fs` directly, so their reads and writes follow the active window's
+/// authority — the local host for a local session, the remote host for an
+/// SSH/container session. There is no local fallback: an implementation routes
+/// every call to exactly one filesystem backend and nothing else.
+pub trait PluginFilesystem: Send + Sync {
+    /// Read a file's raw bytes. `None` if it can't be read.
+    fn read_file(&self, path: &Path) -> Option<Vec<u8>>;
+    /// Write bytes to a file, creating parent directories as needed. Returns
+    /// whether the write succeeded.
+    fn write_file(&self, path: &Path, contents: &[u8]) -> bool;
+    /// Whether a path exists.
+    fn exists(&self, path: &Path) -> bool;
+    /// List a directory's entries (empty on error).
+    fn read_dir(&self, path: &Path) -> Vec<crate::api::DirEntry>;
+    /// Create a directory and all parents. Returns whether it exists afterwards.
+    fn create_dir_all(&self, path: &Path) -> bool;
+    /// Remove a file or directory (recursively for directories).
+    fn remove_path(&self, path: &Path) -> bool;
+    /// Rename/move a path. Returns whether it succeeded.
+    fn rename(&self, from: &Path, to: &Path) -> bool;
+    /// Copy a file or directory (recursively for directories).
+    fn copy(&self, from: &Path, to: &Path) -> bool;
+    /// Stat a path.
+    fn stat(&self, path: &Path) -> Option<PluginFileStat>;
+    /// Canonicalize a path (resolve symlinks / `..`). `None` if it can't be
+    /// resolved (e.g. the path does not exist on the backend).
+    fn canonicalize(&self, path: &Path) -> Option<PathBuf>;
+}
+
+/// Metadata about a path, as surfaced to plugins via `fileStat`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginFileStat {
+    /// Whether the path is a regular file.
+    pub is_file: bool,
+    /// Whether the path is a directory.
+    pub is_dir: bool,
+    /// Size in bytes.
+    pub size: u64,
+    /// Whether the path is read-only.
+    pub readonly: bool,
+}
+
+/// A [`PluginFilesystem`] that does nothing — every read fails and every
+/// mutation is a no-op. Used by the no-op service bridge in headless/test
+/// contexts. It never touches any real filesystem.
+pub struct NoopPluginFilesystem;
+
+impl PluginFilesystem for NoopPluginFilesystem {
+    fn read_file(&self, _path: &Path) -> Option<Vec<u8>> {
+        None
+    }
+    fn write_file(&self, _path: &Path, _contents: &[u8]) -> bool {
+        false
+    }
+    fn exists(&self, _path: &Path) -> bool {
+        false
+    }
+    fn read_dir(&self, _path: &Path) -> Vec<crate::api::DirEntry> {
+        Vec::new()
+    }
+    fn create_dir_all(&self, _path: &Path) -> bool {
+        false
+    }
+    fn remove_path(&self, _path: &Path) -> bool {
+        false
+    }
+    fn rename(&self, _from: &Path, _to: &Path) -> bool {
+        false
+    }
+    fn copy(&self, _from: &Path, _to: &Path) -> bool {
+        false
+    }
+    fn stat(&self, _path: &Path) -> Option<PluginFileStat> {
+        None
+    }
+    fn canonicalize(&self, _path: &Path) -> Option<PathBuf> {
+        None
+    }
+}
 
 /// Trait for the editor to provide services to the plugin runtime
 /// without the runtime depending directly on UI or complex system logic.
 pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Support downcasting for tests
     fn as_any(&self) -> &dyn std::any::Any;
+
+    /// The filesystem plugins must use for all file I/O. Implementations MUST
+    /// route through the active window's authority so plugin file access follows
+    /// remote/SSH backends exactly like the editor core does — never a bare
+    /// `std::fs` fallback.
+    fn filesystem(&self) -> Arc<dyn PluginFilesystem>;
 
     /// Translate a string for a plugin
     fn translate(&self, plugin_name: &str, key: &str, args: &HashMap<String, String>) -> String;
@@ -106,6 +197,9 @@ pub struct NoopServiceBridge;
 impl PluginServiceBridge for NoopServiceBridge {
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+    fn filesystem(&self) -> Arc<dyn PluginFilesystem> {
+        Arc::new(NoopPluginFilesystem)
     }
     fn translate(&self, _plugin_name: &str, key: &str, _args: &HashMap<String, String>) -> String {
         key.to_string()

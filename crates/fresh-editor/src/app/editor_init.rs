@@ -554,7 +554,7 @@ impl Editor {
     /// than capturing a new clock — so two editors built from the
     /// same parts agree on "now".
     pub(super) fn from_parts(parts: EditorParts) -> Self {
-        Editor {
+        let editor = Editor {
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,
@@ -665,7 +665,13 @@ impl Editor {
             dock: None,
             dock_width: None,
             dock_resizing: false,
-        }
+        };
+
+        // Seed plugin file I/O with the initial active window's authority, so
+        // it is correct even for sessions launched directly against a remote
+        // backend (before any window switch occurs).
+        editor.publish_active_filesystem_to_plugins();
+        editor
     }
 
     /// Create a new editor with the given configuration and terminal dimensions
@@ -1121,6 +1127,7 @@ impl Editor {
             Arc::clone(&command_registry),
             dir_context.clone(),
             Arc::clone(&theme_cache),
+            Arc::clone(&filesystem),
         )));
         t.phase("PluginManager::new");
 

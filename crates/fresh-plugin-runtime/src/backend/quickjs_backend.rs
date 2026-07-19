@@ -115,23 +115,6 @@ use std::sync::{mpsc, Arc, RwLock};
 type PluginApiExports =
     Rc<RefCell<HashMap<String, (String, rquickjs::Persistent<rquickjs::Object<'static>>)>>>;
 
-/// Recursively copy a directory and all its contents.
-fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
-}
-
 /// Convert a QuickJS Value to serde_json::Value
 #[allow(clippy::only_used_in_recursion)]
 fn js_to_json(ctx: &rquickjs::Ctx<'_>, val: Value<'_>) -> serde_json::Value {
@@ -2331,25 +2314,25 @@ impl JsEditorApi {
 
     // === File System ===
 
-    /// Check if file exists
+    /// Check if file exists (via the active window's authority filesystem).
     pub fn file_exists(&self, path: String) -> bool {
-        Path::new(&path).exists()
+        self.services.filesystem().exists(Path::new(&path))
     }
 
-    /// Read file contents
+    /// Read file contents (via the active window's authority filesystem).
     pub fn read_file(&self, path: String) -> Option<String> {
-        std::fs::read_to_string(&path).ok()
+        self.services
+            .filesystem()
+            .read_file(Path::new(&path))
+            .and_then(|bytes| String::from_utf8(bytes).ok())
     }
 
-    /// Write file contents
+    /// Write file contents (via the active window's authority filesystem).
+    /// Parent directories are created as needed.
     pub fn write_file(&self, path: String, content: String) -> bool {
-        let p = Path::new(&path);
-        if let Some(parent) = p.parent() {
-            if !parent.exists() && std::fs::create_dir_all(parent).is_err() {
-                return false;
-            }
-        }
-        std::fs::write(p, content).is_ok()
+        self.services
+            .filesystem()
+            .write_file(Path::new(&path), content.as_bytes())
     }
 
     /// Read directory contents (returns array of {name, is_file, is_dir})
@@ -2359,78 +2342,37 @@ impl JsEditorApi {
         ctx: rquickjs::Ctx<'js>,
         path: String,
     ) -> rquickjs::Result<Value<'js>> {
-        use fresh_core::api::DirEntry;
-
-        let entries: Vec<DirEntry> = match std::fs::read_dir(&path) {
-            Ok(entries) => entries
-                .filter_map(|e| e.ok())
-                .map(|entry| {
-                    let file_type = entry.file_type().ok();
-                    let is_symlink = file_type
-                        .as_ref()
-                        .map(|ft| ft.is_symlink())
-                        .unwrap_or(false);
-                    let (is_file, is_dir) = if is_symlink {
-                        let meta = std::fs::metadata(entry.path());
-                        (
-                            meta.as_ref().map(|m| m.is_file()).unwrap_or(false),
-                            meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
-                        )
-                    } else {
-                        (
-                            file_type.as_ref().map(|ft| ft.is_file()).unwrap_or(false),
-                            file_type.as_ref().map(|ft| ft.is_dir()).unwrap_or(false),
-                        )
-                    };
-                    DirEntry {
-                        name: entry.file_name().to_string_lossy().to_string(),
-                        is_file,
-                        is_dir,
-                    }
-                })
-                .collect(),
-            Err(e) => {
-                tracing::warn!("readDir failed for '{}': {}", path, e);
-                Vec::new()
-            }
-        };
-
+        let entries = self.services.filesystem().read_dir(Path::new(&path));
         rquickjs_serde::to_value(ctx, &entries)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
-    /// Create a directory (and all parent directories) recursively.
-    /// Returns true if the directory was created or already exists.
+    /// Create a directory (and all parent directories) recursively, via the
+    /// active window's authority filesystem. Returns true if the directory was
+    /// created or already exists.
     pub fn create_dir(&self, path: String) -> bool {
-        let p = Path::new(&path);
-        if p.is_dir() {
-            return true;
-        }
-        std::fs::create_dir_all(p).is_ok()
+        self.services.filesystem().create_dir_all(Path::new(&path))
     }
 
-    /// Remove a file or directory by moving it to the OS trash/recycle bin.
-    /// For safety, the path must be under the OS temp directory or the Fresh
-    /// config directory. Returns true on success.
+    /// Permanently remove a file or directory via the active window's authority
+    /// filesystem (recursively for directories). For safety, the path must be
+    /// under the OS temp directory or the Fresh config directory. Returns true
+    /// on success.
     pub fn remove_path(&self, path: String) -> bool {
-        let target = match Path::new(&path).canonicalize() {
-            Ok(p) => p,
-            Err(_) => return false, // path doesn't exist or can't be resolved
+        let fs = self.services.filesystem();
+        let target = match fs.canonicalize(Path::new(&path)) {
+            Some(p) => p,
+            None => return false, // path doesn't exist or can't be resolved
         };
 
-        // Canonicalize allowed roots too, so that path prefix comparisons are
-        // consistent.  On Windows, `Path::canonicalize` returns extended-length
-        // UNC paths (e.g. `\\?\C:\...`) while `std::env::temp_dir()` and the
-        // config dir may use regular paths.  Without canonicalizing the roots
-        // the `starts_with` check would always fail on Windows.
-        let temp_dir = std::env::temp_dir()
-            .canonicalize()
-            .unwrap_or_else(|_| std::env::temp_dir());
-        let config_dir = self
-            .services
-            .config_dir()
-            .canonicalize()
-            .unwrap_or_else(|_| self.services.config_dir());
+        // Canonicalize allowed roots through the same backend so path prefix
+        // comparisons are consistent (e.g. Windows extended-length paths).
+        let temp_dir = fs
+            .canonicalize(&std::env::temp_dir())
+            .unwrap_or_else(std::env::temp_dir);
+        let config_dir = fs
+            .canonicalize(&self.services.config_dir())
+            .unwrap_or_else(|| self.services.config_dir());
 
         // Verify the path is under an allowed root (temp or config dir)
         let allowed = target.starts_with(&temp_dir) || target.starts_with(&config_dir);
@@ -2453,51 +2395,23 @@ impl JsEditorApi {
             return false;
         }
 
-        match trash::delete(&target) {
-            Ok(()) => true,
-            Err(e) => {
-                tracing::warn!("removePath trash failed for {:?}: {}", target, e);
-                false
-            }
-        }
+        fs.remove_path(&target)
     }
 
-    /// Rename/move a file or directory. Returns true on success.
-    /// Falls back to copy then trash for cross-filesystem moves.
+    /// Rename/move a file or directory via the active window's authority
+    /// filesystem. Returns true on success.
     pub fn rename_path(&self, from: String, to: String) -> bool {
-        // Try direct rename first (works for same-filesystem moves)
-        if std::fs::rename(&from, &to).is_ok() {
-            return true;
-        }
-        // Cross-filesystem fallback: copy then trash the original
-        let from_path = Path::new(&from);
-        let copied = if from_path.is_dir() {
-            copy_dir_recursive(from_path, Path::new(&to)).is_ok()
-        } else {
-            std::fs::copy(&from, &to).is_ok()
-        };
-        if copied {
-            return trash::delete(from_path).is_ok();
-        }
-        false
+        self.services
+            .filesystem()
+            .rename(Path::new(&from), Path::new(&to))
     }
 
-    /// Copy a file or directory recursively to a new location.
-    /// Returns true on success.
+    /// Copy a file or directory recursively to a new location via the active
+    /// window's authority filesystem. Returns true on success.
     pub fn copy_path(&self, from: String, to: String) -> bool {
-        let from_path = Path::new(&from);
-        let to_path = Path::new(&to);
-        if from_path.is_dir() {
-            copy_dir_recursive(from_path, to_path).is_ok()
-        } else {
-            // Ensure parent directory exists
-            if let Some(parent) = to_path.parent() {
-                if !parent.exists() && std::fs::create_dir_all(parent).is_err() {
-                    return false;
-                }
-            }
-            std::fs::copy(from_path, to_path).is_ok()
-        }
+        self.services
+            .filesystem()
+            .copy(Path::new(&from), Path::new(&to))
     }
 
     /// Get the OS temporary directory path.
@@ -3297,13 +3211,12 @@ impl JsEditorApi {
         ctx: rquickjs::Ctx<'js>,
         path: String,
     ) -> rquickjs::Result<Value<'js>> {
-        let metadata = std::fs::metadata(&path).ok();
-        let stat = metadata.map(|m| {
+        let stat = self.services.filesystem().stat(Path::new(&path)).map(|s| {
             serde_json::json!({
-                "isFile": m.is_file(),
-                "isDir": m.is_dir(),
-                "size": m.len(),
-                "readonly": m.permissions().readonly(),
+                "isFile": s.is_file,
+                "isDir": s.is_dir,
+                "size": s.size,
+                "readonly": s.readonly,
             })
         });
         rquickjs_serde::to_value(ctx, &stat)
@@ -8392,19 +8305,103 @@ mod tests {
 
     struct TestServiceBridge {
         en_strings: std::sync::Mutex<HashMap<String, String>>,
+        fs: Arc<dyn fresh_core::services::PluginFilesystem>,
     }
 
     impl TestServiceBridge {
         fn new() -> Self {
             Self {
                 en_strings: std::sync::Mutex::new(HashMap::new()),
+                fs: Arc::new(StdTestFilesystem),
             }
+        }
+
+        /// Build a bridge whose plugin filesystem is `fs`, to assert that the
+        /// file-I/O plugin APIs route through the bridge rather than `std::fs`.
+        fn with_fs(fs: Arc<dyn fresh_core::services::PluginFilesystem>) -> Self {
+            Self {
+                en_strings: std::sync::Mutex::new(HashMap::new()),
+                fs,
+            }
+        }
+    }
+
+    /// A `std::fs`-backed [`PluginFilesystem`](fresh_core::services::PluginFilesystem)
+    /// used only by these unit tests. It stands in for the editor's authority
+    /// filesystem so the file-I/O plugin APIs can be exercised against real
+    /// temp paths without an `Editor`.
+    struct StdTestFilesystem;
+
+    impl fresh_core::services::PluginFilesystem for StdTestFilesystem {
+        fn read_file(&self, path: &Path) -> Option<Vec<u8>> {
+            std::fs::read(path).ok()
+        }
+        fn write_file(&self, path: &Path, contents: &[u8]) -> bool {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty()
+                    && !parent.exists()
+                    && std::fs::create_dir_all(parent).is_err()
+                {
+                    return false;
+                }
+            }
+            std::fs::write(path, contents).is_ok()
+        }
+        fn exists(&self, path: &Path) -> bool {
+            path.exists()
+        }
+        fn read_dir(&self, path: &Path) -> Vec<fresh_core::api::DirEntry> {
+            match std::fs::read_dir(path) {
+                Ok(entries) => entries
+                    .filter_map(|e| e.ok())
+                    .map(|entry| {
+                        let meta = entry.metadata().ok();
+                        fresh_core::api::DirEntry {
+                            name: entry.file_name().to_string_lossy().to_string(),
+                            is_file: meta.as_ref().map(|m| m.is_file()).unwrap_or(false),
+                            is_dir: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                        }
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        }
+        fn create_dir_all(&self, path: &Path) -> bool {
+            path.is_dir() || std::fs::create_dir_all(path).is_ok()
+        }
+        fn remove_path(&self, path: &Path) -> bool {
+            if path.is_dir() {
+                std::fs::remove_dir_all(path).is_ok()
+            } else {
+                std::fs::remove_file(path).is_ok()
+            }
+        }
+        fn rename(&self, from: &Path, to: &Path) -> bool {
+            std::fs::rename(from, to).is_ok()
+        }
+        fn copy(&self, from: &Path, to: &Path) -> bool {
+            !from.is_dir() && std::fs::copy(from, to).is_ok()
+        }
+        fn stat(&self, path: &Path) -> Option<fresh_core::services::PluginFileStat> {
+            let m = std::fs::metadata(path).ok()?;
+            Some(fresh_core::services::PluginFileStat {
+                is_file: m.is_file(),
+                is_dir: m.is_dir(),
+                size: m.len(),
+                readonly: m.permissions().readonly(),
+            })
+        }
+        fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
+            std::fs::canonicalize(path).ok()
         }
     }
 
     impl fresh_core::services::PluginServiceBridge for TestServiceBridge {
         fn as_any(&self) -> &dyn std::any::Any {
             self
+        }
+        fn filesystem(&self) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+            Arc::clone(&self.fs)
         }
         fn translate(
             &self,
@@ -10235,6 +10232,9 @@ mod tests {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
+        fn filesystem(&self) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+            self.inner.filesystem()
+        }
         fn translate(
             &self,
             plugin_name: &str,
@@ -10901,6 +10901,83 @@ mod tests {
     }
 
     // ==================== Read Dir Test ====================
+
+    /// The file-I/O plugin APIs must route through the service bridge's
+    /// filesystem (the active window's authority), never `std::fs` directly.
+    /// A sentinel filesystem returns data for paths that do not exist on disk;
+    /// if the backend still touched `std::fs` these reads would come back empty.
+    #[test]
+    fn fs_apis_route_through_bridge_filesystem() {
+        struct SentinelFs;
+        impl fresh_core::services::PluginFilesystem for SentinelFs {
+            fn read_file(&self, _path: &Path) -> Option<Vec<u8>> {
+                Some(b"SENTINEL".to_vec())
+            }
+            fn write_file(&self, _path: &Path, _contents: &[u8]) -> bool {
+                true
+            }
+            fn exists(&self, _path: &Path) -> bool {
+                true
+            }
+            fn read_dir(&self, _path: &Path) -> Vec<fresh_core::api::DirEntry> {
+                vec![fresh_core::api::DirEntry {
+                    name: "only.txt".to_string(),
+                    is_file: true,
+                    is_dir: false,
+                }]
+            }
+            fn create_dir_all(&self, _path: &Path) -> bool {
+                true
+            }
+            fn remove_path(&self, _path: &Path) -> bool {
+                true
+            }
+            fn rename(&self, _from: &Path, _to: &Path) -> bool {
+                true
+            }
+            fn copy(&self, _from: &Path, _to: &Path) -> bool {
+                true
+            }
+            fn stat(&self, _path: &Path) -> Option<fresh_core::services::PluginFileStat> {
+                None
+            }
+            fn canonicalize(&self, _path: &Path) -> Option<PathBuf> {
+                None
+            }
+        }
+
+        let (tx, _rx) = mpsc::channel();
+        let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        let services = Arc::new(TestServiceBridge::with_fs(Arc::new(SentinelFs)));
+        let mut backend = QuickJsBackend::with_state(state_snapshot, tx, services).unwrap();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            // A path that does not exist on the real disk — the sentinel
+            // filesystem still returns content, proving the read is routed.
+            globalThis._read = editor.readFile("/definitely/not/on/disk/xyz");
+            globalThis._exists = editor.fileExists("/definitely/not/on/disk/xyz");
+            globalThis._entries = editor.readDir("/whatever").map(e => e.name).join(",");
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        backend
+            .plugin_contexts
+            .borrow()
+            .get("test")
+            .unwrap()
+            .clone()
+            .with(|ctx| {
+                let global = ctx.globals();
+                assert_eq!(global.get::<_, String>("_read").unwrap(), "SENTINEL");
+                assert!(global.get::<_, bool>("_exists").unwrap());
+                assert_eq!(global.get::<_, String>("_entries").unwrap(), "only.txt");
+            });
+    }
 
     #[test]
     fn test_api_read_dir() {
