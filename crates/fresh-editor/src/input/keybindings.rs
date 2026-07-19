@@ -602,8 +602,8 @@ pub enum Action {
     PrevSplit,
     NextWindow,
     PrevWindow,
-    /// Move the focused tab's buffer into a new orchestrator workspace
-    /// rooted at the file's parent directory.
+    /// Move the focused tab into its own new orchestrator workspace over the
+    /// same project root (a co-tenant window).
     ExtractTabToNewWorkspace,
     NextPane,
     PrevPane,

@@ -443,7 +443,6 @@ fn build_persisted_window_shells(
     persisted_env: Option<&crate::app::orchestrator_persistence::PersistedWindows>,
     active_came_from_pick: bool,
     active_window_id: fresh_core::WindowId,
-    active_root: &std::path::Path,
     width: u16,
     height: u16,
     dir_context: &DirectoryContext,
@@ -465,7 +464,6 @@ fn build_persisted_window_shells(
     // project's id-1 base, which would collide. Re-id that collider onto a
     // fresh id so it survives as an inactive shell instead of being
     // shadowed/dropped (issue #2056 cross-project case).
-    let active_root_key = crate::app::orchestrator_persistence::canonical_key(active_root);
     let mut next_fresh_id = env
         .next_id
         .max(env.windows.iter().map(|w| w.id).max().unwrap_or(0) + 1)
@@ -475,12 +473,13 @@ fn build_persisted_window_shells(
         if active_came_from_pick && ps.id == active_window_id.0 {
             continue;
         }
-        // One session per directory: never seed a shell that resolves to the
-        // active window's own directory (the clean-base case where the cwd has
-        // a stale persisted window the pick didn't claim).
-        if crate::app::orchestrator_persistence::canonical_key(&ps.root) == active_root_key {
-            continue;
-        }
+        // NOTE: co-tenants — several sessions may share one root (a tab
+        // extracted into its own window over the same project). Every
+        // persisted entry other than the active pick becomes its own shell,
+        // *including* siblings rooted at the active window's directory. The
+        // old "one session per directory" guard that dropped same-root
+        // entries here is gone: it silently discarded a co-tenant on reboot
+        // whenever the launch cwd hosted more than one window.
         let id = if ps.id == active_window_id.0 {
             let fresh = fresh_core::WindowId(next_fresh_id);
             next_fresh_id += 1;
@@ -1345,6 +1344,16 @@ impl Editor {
         active_win.event_logs = event_logs;
         active_win.plugin_state = active_plugin_state;
         active_win.authority_spec = active_authority_spec;
+        // Continue the picked session's durable identity so ITS own on-disk
+        // workspace (keyed by `stable_id`) restores into this window. Several
+        // co-tenants may share the root, so a window that kept the fresh id
+        // `Window::new` mints would miss its own file in `load_by_id` and fall
+        // back to the freshest sibling's snapshot — loading the wrong file.
+        // A clean-base launch (no pick) keeps that fresh id. Mirrors the
+        // background-shell adoption in `build_persisted_window_shells`.
+        if let Some(sid) = picked_active.and_then(|w| w.stable_id.clone()) {
+            active_win.stable_id = sid;
+        }
         // Load prompt histories from disk for the active window.
         // Each window has its own prompt-history rings.
         active_win
@@ -1368,7 +1377,6 @@ impl Editor {
             persisted_env.as_ref(),
             picked_active.is_some(),
             active_window_id,
-            &active_win.root,
             width,
             height,
             &dir_context,

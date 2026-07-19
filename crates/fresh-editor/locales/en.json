@@ -569,7 +569,7 @@
   "cmd.explorer_rename": "File Explorer: Rename",
   "cmd.explorer_rename_desc": "Rename the selected file or directory",
   "cmd.extract_tab_to_new_workspace": "Extract Tab to New Workspace",
-  "cmd.extract_tab_to_new_workspace_desc": "Move the current tab's buffer into a new orchestrator workspace rooted at its parent directory",
+  "cmd.extract_tab_to_new_workspace_desc": "Move the current tab into its own new workspace over the same project (a co-tenant window)",
   "cmd.find_in_selection": "Find in Selection",
   "cmd.find_in_selection_desc": "Search only within the current selection",
   "cmd.find_next": "Find Next",

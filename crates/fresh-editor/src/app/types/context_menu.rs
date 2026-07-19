@@ -27,8 +27,8 @@ pub enum TabContextMenuItem {
     CopyRelativePath,
     /// Copy the tab's absolute file path
     CopyFullPath,
-    /// Move the tab's buffer into a new orchestrator workspace rooted at
-    /// the file's parent directory
+    /// Move the tab into its own new orchestrator workspace over the same
+    /// project root (a co-tenant window)
     ExtractToNewWorkspace,
 }
 

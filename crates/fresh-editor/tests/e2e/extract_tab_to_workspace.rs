@@ -369,3 +369,9 @@ fn extract_root_level_file_creates_co_tenant() {
         "the extracted co-tenant shares the source project root"
     );
 }
+
+// NOTE: the load-bearing cold-reboot round-trip for co-tenants — two windows
+// over one root each restoring their OWN file — lives in the dedicated
+// `orchestrator_co_tenant_restore` integration binary. It mutates the
+// process-global `XDG_DATA_HOME` to isolate persistence, so it must NOT share
+// this binary's process with the thousands of other e2e tests.
