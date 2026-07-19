@@ -259,11 +259,11 @@ impl SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
-        // Best-effort kill of the SSH process during cleanup.
-        // If it fails (process already exited, permission error, etc.)
-        // there's nothing we can do in a Drop impl — the OS will clean
-        // up the zombie when our process exits.
-        if let Ok(()) = self.process.start_kill() {}
+        // Best-effort teardown of the SSH carrier *and its process group* so a
+        // ProxyCommand / jump helper doesn't outlive the connection. If it
+        // fails (already exited, permission, etc.) there's nothing more a Drop
+        // impl can do — the OS reaps the zombie when our process exits.
+        kill_carrier_and_group(&mut self.process);
     }
 }
 
@@ -494,10 +494,9 @@ async fn ssh_eof_error(
         }
         Ok(Err(e)) => format!("failed to get SSH exit status: {}", e),
         Err(_) => {
-            // Timed out waiting for exit — kill it so we don't leak.
-            if let Err(e) = child.start_kill() {
-                tracing::warn!("Failed to kill timed-out SSH process: {}", e);
-            }
+            // Timed out waiting for exit — kill it (and its group) so we don't
+            // leak ssh or any ProxyCommand helpers it spawned.
+            kill_carrier_and_group(child);
             format!(
                 "SSH process did not exit in time while connecting to {}",
                 params
@@ -599,6 +598,30 @@ fn detach_from_controlling_terminal(cmd: &mut Command) {
 
 #[cfg(not(unix))]
 fn detach_from_controlling_terminal(_cmd: &mut Command) {}
+
+/// Best-effort teardown of a carrier `ssh` child **and its process group**.
+///
+/// The carrier is spawned as a session leader (see
+/// `detach_from_controlling_terminal`), so its pid doubles as its
+/// process-group id. Signalling the group (`kill(-pid)`) reaps not just ssh
+/// but any `ProxyCommand` / jump helpers it forked — which a plain `start_kill`
+/// (SIGKILL to ssh alone) would orphan, leaking `nc`/`pv`/… grandchildren for
+/// the life of the editor. Safe if the child already exited: the group signal
+/// then finds nothing (ESRCH) and is ignored. Non-unix has no such fork tree
+/// and no `setsid`, so it just kills the child.
+fn kill_carrier_and_group(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // SAFETY: a bare `kill(2)` syscall — no memory or locks involved. A
+        // negative pid targets the process group led by `pid`.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    // Also reap the direct child (covers non-unix and the race where the group
+    // signal raced a just-exec'd child that hadn't set up its group yet).
+    let _ = child.start_kill();
+}
 
 /// This is the lower-level function used by both `SshConnection::connect` and
 /// the reconnect task. It spawns an SSH process, bootstraps the Python agent,
