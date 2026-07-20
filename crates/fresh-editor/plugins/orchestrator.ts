@@ -5655,7 +5655,7 @@ function rebuildFormFocusCycle(): void {
   const cycle: string[] = activeBackend ? [activeBackend.key] : [];
   if (form.backend === "local") {
     const worktreeEnabled = form.projectPathIsGit !== false;
-    const branchInert = !(worktreeEnabled && form.createWorktree);
+    const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
     cycle.push("project_path", "name", "cmd");
     // Agent-specific controls sit between the command and the Advanced fold,
     // matching `agentOptionsFields`' render order (Auto mode, then Start prompt).
@@ -5664,12 +5664,14 @@ function rebuildFormFocusCycle(): void {
     if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
     if (agent?.prompt) cycle.push("start_prompt");
     // The "Advanced…" header is always a Tab stop; its worktree + branch
-    // fields join the cycle only while the section is expanded.
+    // fields join the cycle only while the section is expanded. "Checkout
+    // branch" is a stop on any git path (it drives the in-place checkout when
+    // no worktree is created); "New branch name" only when cutting a worktree.
     cycle.push("advanced_toggle");
     if (form.advancedExpanded) {
       if (worktreeEnabled) cycle.push("worktree");
-      if (!branchInert) cycle.push("branch");
-      cycle.push("new_branch");
+      if (worktreeEnabled) cycle.push("branch");
+      if (effectiveCreateWorktree) cycle.push("new_branch");
     }
   } else if (form.backend === "devcontainer") {
     cycle.push("project_path", "name", "cmd");
@@ -6666,18 +6668,17 @@ function advancedSection(): WidgetSpec[] {
         },
   );
 
-  // "Checkout branch" — the fork point for `git worktree add` (or the target
-  // of an in-place checkout). Inert (no key ⇒ dropped from the Tab cycle)
-  // unless a worktree is actually being created, with the same placeholder
-  // logic the standalone branch section used.
-  const branchInert = !effectiveCreateWorktree;
+  // "Checkout branch" — an existing branch to check out. Editable for ANY git
+  // path (inert only on a non-git path): with a worktree it's the base the
+  // worktree is cut from / checked out to; without one it drives an in-place
+  // `git checkout` in the project dir. The placeholder reflects which.
+  const branchInert = !worktreeEnabled;
   let branchPlaceholder: string;
-  if (branchInert) {
-    branchPlaceholder = !worktreeEnabled
-      ? editor.t("form.branch_no_git")
-      : form.projectPathIsLinkedWorktree === true
-      ? editor.t("form.branch_existing_worktree")
-      : editor.t("form.branch_shared_worktree");
+  if (!worktreeEnabled) {
+    branchPlaceholder = editor.t("form.branch_no_git");
+  } else if (!effectiveCreateWorktree) {
+    // In-place checkout: blank keeps the current branch.
+    branchPlaceholder = editor.t("form.branch_checkout_inplace");
   } else if (!form.defaultBranch) {
     branchPlaceholder = editor.t("form.detecting_default_branch");
   } else if (form.defaultBranchIsHeadFallback) {
@@ -6698,17 +6699,20 @@ function advancedSection(): WidgetSpec[] {
     }),
   );
 
-  // "New branch name" — when set, the worktree is created on a freshly-cut
-  // branch. Ignored in the in-place (non-worktree) checkout path.
+  // "New branch name" — creates the worktree on a freshly-cut branch. Only
+  // meaningful when a worktree is being created (there's no isolated tree to
+  // safely branch into in-place), so it's inert otherwise.
   fields.push(
     labeledSection({
       label: editor.t("form.new_branch"),
       child: text({
         value: form.newBranch.value,
         cursorByte: form.newBranch.cursor,
-        placeholder: "",
+        placeholder: effectiveCreateWorktree
+          ? ""
+          : editor.t("form.new_branch_worktree_only"),
         fullWidth: true,
-        key: "new_branch",
+        key: effectiveCreateWorktree ? "new_branch" : undefined,
       }),
     }),
   );

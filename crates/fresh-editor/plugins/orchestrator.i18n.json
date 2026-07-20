@@ -272,7 +272,9 @@
     "err.k8s_named_target": "Named .fresh/k8s.json targets — use “K8s: Connect Workspace” (full provider support). Inline attach needs an explicit Pod.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace and Pod are required (or use “K8s: Connect Workspace”).",
     "err.ssh_host_required": "SSH: a host is required (host, user@host, or ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer workspaces are coming next.)"
+    "err.devcontainer_unsupported": "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer workspaces are coming next.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -547,7 +549,9 @@
     "err.k8s_named_target": "Pojmenované cíle .fresh/k8s.json — použijte „K8s: Connect Workspace“ (plná podpora poskytovatele). Inline připojení vyžaduje explicitní Pod.",
     "err.k8s_ns_pod_required": "Kubernetes: Jmenný prostor a Pod jsou povinné (nebo použijte „K8s: Connect Workspace“).",
     "err.ssh_host_required": "SSH: hostitel je povinný (host, user@host, nebo ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: otevřete projekt a spusťte „Dev Containers: Reopen in Container“. (Pracovní prostory devcontaineru spravované Orchestratorem budou následovat.)"
+    "err.devcontainer_unsupported": "Devcontainer: otevřete projekt a spusťte „Dev Containers: Reopen in Container“. (Pracovní prostory devcontaineru spravované Orchestratorem budou následovat.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -822,7 +826,9 @@
     "err.k8s_named_target": "Benannte .fresh/k8s.json-Ziele — verwende „K8s: Connect Workspace“ (volle Provider-Unterstützung). Inline-Anhängen benötigt einen expliziten Pod.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace und Pod sind erforderlich (oder verwende „K8s: Connect Workspace“).",
     "err.ssh_host_required": "SSH: ein Host ist erforderlich (host, user@host oder ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: öffne das Projekt und führe „Dev Containers: Reopen in Container“ aus. (Orchestrator-verwaltete Devcontainer-Arbeitsbereiche folgen als Nächstes.)"
+    "err.devcontainer_unsupported": "Devcontainer: öffne das Projekt und führe „Dev Containers: Reopen in Container“ aus. (Orchestrator-verwaltete Devcontainer-Arbeitsbereiche folgen als Nächstes.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1097,7 +1103,9 @@
     "err.k8s_named_target": "Destinos con nombre de .fresh/k8s.json — usa “K8s: Connect Workspace” (soporte completo del proveedor). El adjuntado en línea necesita un Pod explícito.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace y Pod son obligatorios (o usa “K8s: Connect Workspace”).",
     "err.ssh_host_required": "SSH: se requiere un host (host, user@host o ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: abre el proyecto y ejecuta “Dev Containers: Reopen in Container”. (Los espacios de trabajo devcontainer gestionados por Orchestrator llegarán próximamente.)"
+    "err.devcontainer_unsupported": "Devcontainer: abre el proyecto y ejecuta “Dev Containers: Reopen in Container”. (Los espacios de trabajo devcontainer gestionados por Orchestrator llegarán próximamente.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -1372,7 +1380,9 @@
     "err.k8s_named_target": "Cibles .fresh/k8s.json nommées — utilisez « K8s: Connect Workspace » (prise en charge complète du fournisseur). L'attachement en ligne nécessite un Pod explicite.",
     "err.k8s_ns_pod_required": "Kubernetes : Namespace et Pod sont requis (ou utilisez « K8s: Connect Workspace »).",
     "err.ssh_host_required": "SSH : un hôte est requis (host, user@host, ou ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer : ouvrez le projet et exécutez « Dev Containers: Reopen in Container ». (Les espaces de travail devcontainer gérés par Orchestrator arrivent bientôt.)"
+    "err.devcontainer_unsupported": "Devcontainer : ouvrez le projet et exécutez « Dev Containers: Reopen in Container ». (Les espaces de travail devcontainer gérés par Orchestrator arrivent bientôt.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -1647,7 +1657,9 @@
     "err.k8s_named_target": "Destinazioni .fresh/k8s.json con nome — usa “K8s: Connect Workspace” (supporto completo del provider). Il collegamento inline richiede un Pod esplicito.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace e Pod sono obbligatori (oppure usa “K8s: Connect Workspace”).",
     "err.ssh_host_required": "SSH: è obbligatorio un host (host, user@host, oppure ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: apri il progetto ed esegui “Dev Containers: Reopen in Container”. (Gli spazi di lavoro devcontainer gestiti da Orchestrator arriveranno presto.)"
+    "err.devcontainer_unsupported": "Devcontainer: apri il progetto ed esegui “Dev Containers: Reopen in Container”. (Gli spazi di lavoro devcontainer gestiti da Orchestrator arriveranno presto.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -1922,7 +1934,9 @@
     "err.k8s_named_target": "名前付き .fresh/k8s.json ターゲット — “K8s: Connect Workspace” を使用してください（完全なプロバイダサポート）。インライン接続には明示的な Pod が必要です。",
     "err.k8s_ns_pod_required": "Kubernetes: ネームスペースと Pod は必須です（または “K8s: Connect Workspace” を使用）。",
     "err.ssh_host_required": "SSH: ホストが必要です (host、user@host、または ssh://host)。",
-    "err.devcontainer_unsupported": "Devcontainer: プロジェクトを開いて “Dev Containers: Reopen in Container” を実行してください。（Orchestrator 管理の devcontainer ワークスペースは近日対応予定です。）"
+    "err.devcontainer_unsupported": "Devcontainer: プロジェクトを開いて “Dev Containers: Reopen in Container” を実行してください。（Orchestrator 管理の devcontainer ワークスペースは近日対応予定です。）",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -2197,7 +2211,9 @@
     "err.k8s_named_target": "이름이 지정된 .fresh/k8s.json target — “K8s: Connect Workspace”를 사용하세요 (전체 프로바이더 지원). 인라인 연결에는 명시적인 Pod가 필요합니다.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace와 Pod가 필요합니다 (또는 “K8s: Connect Workspace” 사용).",
     "err.ssh_host_required": "SSH: host가 필요합니다 (host, user@host, 또는 ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: 프로젝트를 열고 “Dev Containers: Reopen in Container”를 실행하세요. (Orchestrator가 관리하는 devcontainer 워크스페이스는 곧 추가됩니다.)"
+    "err.devcontainer_unsupported": "Devcontainer: 프로젝트를 열고 “Dev Containers: Reopen in Container”를 실행하세요. (Orchestrator가 관리하는 devcontainer 워크스페이스는 곧 추가됩니다.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -2472,7 +2488,9 @@
     "err.k8s_named_target": "Alvos nomeados em .fresh/k8s.json — use “K8s: Connect Workspace” (suporte completo ao provedor). O anexo inline precisa de um Pod explícito.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace e Pod são obrigatórios (ou use “K8s: Connect Workspace”).",
     "err.ssh_host_required": "SSH: um host é obrigatório (host, user@host ou ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: abra o projeto e execute “Dev Containers: Reopen in Container”. (Espaços de trabalho devcontainer gerenciados pelo Orchestrator chegam em breve.)"
+    "err.devcontainer_unsupported": "Devcontainer: abra o projeto e execute “Dev Containers: Reopen in Container”. (Espaços de trabalho devcontainer gerenciados pelo Orchestrator chegam em breve.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -2747,7 +2765,9 @@
     "err.k8s_named_target": "Именованные цели .fresh/k8s.json — используйте «K8s: Connect Workspace» (полная поддержка провайдера). Для встроенного подключения нужен явный Pod.",
     "err.k8s_ns_pod_required": "Kubernetes: требуются Namespace и Pod (или используйте «K8s: Connect Workspace»).",
     "err.ssh_host_required": "SSH: требуется хост (host, user@host или ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: откройте проект и выполните «Dev Containers: Reopen in Container». (Рабочие области devcontainer под управлением Orchestrator появятся в следующих версиях.)"
+    "err.devcontainer_unsupported": "Devcontainer: откройте проект и выполните «Dev Containers: Reopen in Container». (Рабочие области devcontainer под управлением Orchestrator появятся в следующих версиях.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -3022,7 +3042,9 @@
     "err.k8s_named_target": "เป้าหมายที่ตั้งชื่อใน .fresh/k8s.json — ใช้ “K8s: Connect Workspace” (รองรับผู้ให้บริการเต็มรูปแบบ) การแนบแบบอินไลน์ต้องระบุ Pod อย่างชัดเจน",
     "err.k8s_ns_pod_required": "Kubernetes: ต้องระบุ Namespace และ Pod (หรือใช้ “K8s: Connect Workspace”)",
     "err.ssh_host_required": "SSH: ต้องระบุ host (host, user@host หรือ ssh://host)",
-    "err.devcontainer_unsupported": "Devcontainer: เปิดโปรเจกต์แล้วรัน “Dev Containers: Reopen in Container” (พื้นที่ทำงาน devcontainer ที่จัดการโดย Orchestrator กำลังจะมาในเร็ว ๆ นี้)"
+    "err.devcontainer_unsupported": "Devcontainer: เปิดโปรเจกต์แล้วรัน “Dev Containers: Reopen in Container” (พื้นที่ทำงาน devcontainer ที่จัดการโดย Orchestrator กำลังจะมาในเร็ว ๆ นี้)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -3297,7 +3319,9 @@
     "err.k8s_named_target": "Іменовані цілі .fresh/k8s.json — використовуйте “K8s: Connect Workspace” (повна підтримка провайдера). Вбудоване приєднання потребує явного Pod.",
     "err.k8s_ns_pod_required": "Kubernetes: Простір імен і Pod є обов’язковими (або використовуйте “K8s: Connect Workspace”).",
     "err.ssh_host_required": "SSH: потрібен хост (host, user@host, або ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: відкрийте проєкт і виконайте “Dev Containers: Reopen in Container”. (Робочі області devcontainer, керовані Orchestrator, з’являться згодом.)"
+    "err.devcontainer_unsupported": "Devcontainer: відкрийте проєкт і виконайте “Dev Containers: Reopen in Container”. (Робочі області devcontainer, керовані Orchestrator, з’являться згодом.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -3572,7 +3596,9 @@
     "err.k8s_named_target": "Các target .fresh/k8s.json có tên — dùng “K8s: Connect Workspace” (hỗ trợ đầy đủ provider). Gắn nội tuyến cần một Pod tường minh.",
     "err.k8s_ns_pod_required": "Kubernetes: Namespace và Pod là bắt buộc (hoặc dùng “K8s: Connect Workspace”).",
     "err.ssh_host_required": "SSH: cần một host (host, user@host, hoặc ssh://host).",
-    "err.devcontainer_unsupported": "Devcontainer: mở dự án và chạy “Dev Containers: Reopen in Container”. (Không gian làm việc devcontainer do Orchestrator quản lý sẽ có ở bản tiếp theo.)"
+    "err.devcontainer_unsupported": "Devcontainer: mở dự án và chạy “Dev Containers: Reopen in Container”. (Không gian làm việc devcontainer do Orchestrator quản lý sẽ có ở bản tiếp theo.)",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -3847,6 +3873,8 @@
     "err.k8s_named_target": "命名的 .fresh/k8s.json 目标 — 请使用 “K8s: Connect Workspace”（完整的提供商支持）。内联附加需要显式指定 Pod。",
     "err.k8s_ns_pod_required": "Kubernetes：Namespace 和 Pod 为必填项（或使用 “K8s: Connect Workspace”）。",
     "err.ssh_host_required": "SSH：必须指定主机（host、user@host 或 ssh://host）。",
-    "err.devcontainer_unsupported": "Devcontainer：请打开项目并运行 “Dev Containers: Reopen in Container”。（由 Orchestrator 管理的 devcontainer 工作区即将推出。）"
+    "err.devcontainer_unsupported": "Devcontainer：请打开项目并运行 “Dev Containers: Reopen in Container”。（由 Orchestrator 管理的 devcontainer 工作区即将推出。）",
+    "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
+    "form.new_branch_worktree_only": "worktree only"
   }
 }
