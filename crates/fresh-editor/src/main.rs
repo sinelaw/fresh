@@ -4426,10 +4426,16 @@ where
         // Run shared per-tick housekeeping (async messages, timers, auto-save, etc.)
         {
             let _span = tracing::info_span!("editor_tick").entered();
-            if fresh::app::editor_tick(editor, || {
-                terminal.clear()?;
-                Ok(())
-            })? {
+            // Clear is deferred to the synchronized draw below (#2723).
+            if fresh::app::editor_tick(editor, || Ok(()))? {
+                needs_render = true;
+            }
+        }
+
+        // Catch missed SIGWINCH / DPI cell-count changes the event stream
+        // never delivered (#2723).
+        if let Ok((cols, rows)) = crossterm::terminal::size() {
+            if editor.sync_host_terminal_size(cols, rows) {
                 needs_render = true;
             }
         }
@@ -4507,6 +4513,12 @@ where
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
                 stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
+                // Clear inside the synchronized update, immediately before
+                // paint, so the host never shows CSI 2J's solid fill alone
+                // (#2723 nostalgia purple after monitor drag).
+                if editor.take_full_redraw_request() {
+                    terminal.clear()?;
+                }
                 terminal.draw(|frame| editor.render(frame))?;
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
             }

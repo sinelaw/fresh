@@ -8,7 +8,7 @@
 
 ### Bug Fixes
 
-* **Full redraw on terminal resize** - dragging a terminal window between monitors (notably Windows Terminal over SSH, where a DPI change can wipe the alt-screen without changing cell count) no longer leaves a solid purple/blue fill; resize now clears and repaints like **Redraw Screen** (#2723).
+* **Full redraw on terminal resize / focus** - dragging a terminal window between monitors (notably Windows Terminal over SSH, where a DPI change can wipe the alt-screen without changing cell count) no longer leaves a solid purple/blue fill. Resize and FocusGained request a clear+repaint (with short deferred retries for late host wipes), focus events are enabled in direct mode, and missed SIGWINCH is detected by polling host size (#2723).
 
 ## 0.4.4
 

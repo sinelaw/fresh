@@ -465,6 +465,10 @@ impl EditorServer {
                 if editor.process_pending_file_opens() {
                     needs_render = true;
                 }
+                // Deferred host-screen-recovery retries after resize/focus (#2723).
+                if editor.poll_deferred_full_redraw() || editor.full_redraw_pending() {
+                    needs_render = true;
+                }
 
                 // Process completed --wait operations
                 for wait_id in editor.take_completed_waits() {

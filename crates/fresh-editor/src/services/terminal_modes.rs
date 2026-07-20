@@ -17,8 +17,9 @@ use anyhow::Result;
 use crossterm::{
     cursor::SetCursorStyle,
     event::{
-        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+        DisableBracketedPaste, DisableFocusChange, DisableMouseCapture, EnableBracketedPaste,
+        EnableFocusChange, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
@@ -125,6 +126,7 @@ pub struct TerminalModes {
     mouse_capture: bool,
     keyboard_enhancement: bool,
     bracketed_paste: bool,
+    focus_change: bool,
 }
 
 impl TerminalModes {
@@ -236,6 +238,16 @@ impl TerminalModes {
             tracing::debug!("Enabled bracketed paste mode");
         }
 
+        // Focus in/out reports (?1004h). Needed so a host DPI / monitor
+        // drag that never emits SIGWINCH still triggers a full redraw
+        // via FocusGained (#2723).
+        if let Err(e) = stdout().execute(EnableFocusChange) {
+            tracing::warn!("Failed to enable focus change events: {}", e);
+        } else {
+            modes.focus_change = true;
+            tracing::debug!("Enabled focus change events");
+        }
+
         Ok(modes)
     }
 
@@ -262,6 +274,13 @@ impl TerminalModes {
             let _ = stdout().execute(DisableBracketedPaste);
             self.bracketed_paste = false;
             tracing::debug!("Disabled bracketed paste");
+        }
+
+        // Disable focus change events
+        if self.focus_change {
+            let _ = stdout().execute(DisableFocusChange);
+            self.focus_change = false;
+            tracing::debug!("Disabled focus change events");
         }
 
         // Reset cursor style to default

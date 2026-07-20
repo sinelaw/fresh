@@ -114,11 +114,65 @@ impl Editor {
         self.full_redraw_requested = true;
     }
 
+    /// Request an immediate full redraw **and** schedule follow-up redraws.
+    ///
+    /// Hosts like Windows Terminal can wipe the alt-screen *after* our first
+    /// clear+paint during a DPI / monitor drag (#2723). A couple of delayed
+    /// clear+paints catch that late wipe even when no further Resize arrives.
+    pub fn request_host_screen_recovery(&mut self) {
+        self.full_redraw_requested = true;
+        self.full_redraw_retries_remaining = 2;
+        self.full_redraw_again_at =
+            Some(self.time_source.now() + std::time::Duration::from_millis(100));
+    }
+
+    /// Whether a full redraw was requested and has not yet been consumed.
+    pub fn full_redraw_pending(&self) -> bool {
+        self.full_redraw_requested
+    }
+
     /// Check if a full redraw was requested, and clear the flag.
     pub fn take_full_redraw_request(&mut self) -> bool {
         let requested = self.full_redraw_requested;
         self.full_redraw_requested = false;
         requested
+    }
+
+    /// Fire any deferred host-screen-recovery redraw whose deadline has
+    /// passed. Returns true when a full redraw was (re)armed.
+    pub fn poll_deferred_full_redraw(&mut self) -> bool {
+        let Some(at) = self.full_redraw_again_at else {
+            return false;
+        };
+        if self.time_source.now() < at {
+            return false;
+        }
+        self.full_redraw_requested = true;
+        if self.full_redraw_retries_remaining > 0 {
+            self.full_redraw_retries_remaining -= 1;
+        }
+        if self.full_redraw_retries_remaining > 0 {
+            self.full_redraw_again_at =
+                Some(self.time_source.now() + std::time::Duration::from_millis(150));
+        } else {
+            self.full_redraw_again_at = None;
+        }
+        true
+    }
+
+    /// Deadline for the next deferred full redraw, if any.
+    pub fn deferred_full_redraw_deadline(&self) -> Option<std::time::Instant> {
+        self.full_redraw_again_at
+    }
+
+    /// Adopt `width`×`height` from the host if it differs from our cached
+    /// size (missed SIGWINCH / DPI change). Returns true when size changed.
+    pub fn sync_host_terminal_size(&mut self, width: u16, height: u16) -> bool {
+        if width == self.terminal_width && height == self.terminal_height {
+            return false;
+        }
+        self.resize(width, height);
+        true
     }
 
     /// Request the event loop to suspend the editor process (SIGTSTP on Unix).
@@ -264,6 +318,8 @@ impl Editor {
             "focus_gained",
             crate::services::plugins::hooks::HookArgs::FocusGained {},
         );
+        // A DPI / monitor drag may FocusGained without a Resize (#2723).
+        self.request_host_screen_recovery();
     }
 
     /// Dispatch a raw terminal event into the editor.
@@ -323,6 +379,7 @@ impl Editor {
                 self.focus_gained();
                 Ok(true)
             }
+            Ev::FocusLost => Ok(false),
             _ => Ok(false),
         }
     }
@@ -332,18 +389,19 @@ impl Editor {
     /// records the new screen size and defers everything else to the
     /// single layout funnel, [`Editor::relayout`].
     ///
-    /// Also requests a full hardware clear + repaint. Host terminals
-    /// (notably Windows Terminal during a DPI / monitor drag) often
-    /// wipe or repaint the alt-screen out from under us while cell
-    /// count stays the same — ratatui's incremental front↔back diff
-    /// then emits nothing and the screen stays filled with whatever
-    /// the host left behind (#2723). Same path as **Redraw Screen**.
+    /// Also requests a full hardware clear + repaint (with deferred
+    /// follow-ups). Host terminals (notably Windows Terminal during a
+    /// DPI / monitor drag) often wipe or repaint the alt-screen out from
+    /// under us while cell count stays the same — ratatui's incremental
+    /// front↔back diff then emits nothing and the screen stays filled
+    /// with whatever the host left behind (#2723). Same path as
+    /// **Redraw Screen**, plus delayed retries for late host wipes.
     pub fn resize(&mut self, width: u16, height: u16) {
         // Editor's canonical screen dimensions (used to seed new windows).
         self.terminal_width = width;
         self.terminal_height = height;
         self.relayout();
-        self.request_full_redraw();
+        self.request_host_screen_recovery();
     }
 
     /// The single layout funnel. Every event that can change the on-screen

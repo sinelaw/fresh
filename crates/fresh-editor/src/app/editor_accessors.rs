@@ -323,12 +323,18 @@ impl Editor {
         // exactly when the timeout needs to fire, so a hung clipboard
         // owner can't block the UI past `PASTE_ASYNC_DEADLINE`.
         let paste_deadline = self.next_paste_deadline();
+        let deferred_redraw_deadline = self.deferred_full_redraw_deadline();
         // Note: the terminal-title poll deadline is intentionally NOT folded
         // in here. This deadline path caps the loop's wait to one frame
         // (~16ms) for smooth animation, which would turn the ~1s title poll
         // into a 60Hz busy loop. The loop's existing 50ms idle poll is fine
         // granularity to notice `terminal_titles_need_poll` going true.
-        [lsp_progress_deadline, anim_deadline, paste_deadline]
+        [
+            lsp_progress_deadline,
+            anim_deadline,
+            paste_deadline,
+            deferred_redraw_deadline,
+        ]
             .into_iter()
             .flatten()
             .min()

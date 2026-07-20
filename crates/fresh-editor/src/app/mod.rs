@@ -101,12 +101,14 @@ use anyhow::Result as AnyhowResult;
 use rust_i18n::t;
 
 /// Shared per-tick housekeeping: process async messages, check timers, auto-save, etc.
-/// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
-/// requests (terminal clears the screen; GUI can ignore or handle differently).
+/// Returns true if a render is needed. The `clear_terminal` callback is retained for
+/// API compatibility with the GUI/web paths; the terminal event loop clears inside
+/// its synchronized draw instead (see #2723) so a host never observes a blank fill
+/// without the following paint.
 /// Used by both the terminal event loop and the GUI event loop.
 pub fn editor_tick(
     editor: &mut Editor,
-    mut clear_terminal: impl FnMut() -> AnyhowResult<()>,
+    mut _clear_terminal: impl FnMut() -> AnyhowResult<()>,
 ) -> AnyhowResult<bool> {
     let mut needs_render = false;
 
@@ -184,8 +186,14 @@ pub fn editor_tick(
         tracing::debug!("Auto-save (disk) error: {}", e);
     }
 
-    if editor.take_full_redraw_request() {
-        clear_terminal()?;
+    // Deferred host-screen-recovery retries (DPI / monitor drag — #2723).
+    if editor.poll_deferred_full_redraw() {
+        needs_render = true;
+    }
+    // Do not clear here: the terminal loop clears immediately before
+    // `terminal.draw` inside BeginSynchronizedUpdate so the host never
+    // sees CSI 2J's nostalgia-blue fill without our paint.
+    if editor.full_redraw_pending() {
         needs_render = true;
     }
 
@@ -926,6 +934,14 @@ pub struct Editor {
 
     /// Request a full terminal clear and redraw on the next frame
     full_redraw_requested: bool,
+
+    /// When set, [`Editor::poll_deferred_full_redraw`] will re-arm
+    /// `full_redraw_requested` at this instant (host-screen recovery
+    /// retries after DPI / monitor drag — #2723).
+    full_redraw_again_at: Option<std::time::Instant>,
+
+    /// Remaining deferred full-redraw retries after `full_redraw_again_at`.
+    full_redraw_retries_remaining: u8,
 
     /// When true, the render pipeline computes chrome *layout* (menu, dropdown,
     /// command palette / suggestions) and records it on the layout caches as

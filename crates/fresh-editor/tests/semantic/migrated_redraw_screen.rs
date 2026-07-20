@@ -22,13 +22,16 @@
 //! same-size re-notify from a DPI / monitor drag) must request the
 //! same full-redraw flag, so the next frame clears whatever the
 //! host left on the alt-screen instead of emitting an empty
-//! incremental diff.
+//! incremental diff. FocusGained and deferred recovery retries
+//! cover hosts that wipe after the first paint or never send Resize.
 //!
 //! Anti-tests drop the load-bearing step (the `RedrawScreen`
 //! dispatch / the "redraw" filter) and assert the inverse.
 //!
 //! Source: `tests/e2e/redraw_screen.rs` (2 positive tests + 2
 //! anti-tests; no tests deferred).
+
+use std::time::Duration;
 
 use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::layout_scenario::{
@@ -154,4 +157,70 @@ fn same_size_resize_event_requests_full_redraw() {
         harness.api_mut().take_full_redraw_request_for_tests(),
         "same-size Resize must still request a full redraw (#2723)"
     );
+}
+
+/// Issue #2723: FocusGained (e.g. after a monitor drag that never
+/// sends SIGWINCH) must request a full redraw.
+#[test]
+fn focus_gained_requests_full_redraw() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _ = harness.api_mut().take_full_redraw_request_for_tests();
+
+    harness
+        .editor_mut()
+        .handle_input_event(CrosstermEvent::FocusGained)
+        .unwrap();
+
+    assert!(
+        harness.api_mut().take_full_redraw_request_for_tests(),
+        "FocusGained must request a full redraw (#2723)"
+    );
+}
+
+/// Issue #2723: after resize, deferred recovery retries re-arm the
+/// full-redraw flag so a late host wipe is still cleared.
+#[test]
+fn resize_schedules_deferred_full_redraw_retries() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _ = harness.api_mut().take_full_redraw_request_for_tests();
+
+    harness.resize(100, 30).unwrap();
+    assert!(harness.api_mut().take_full_redraw_request_for_tests());
+
+    // Advance past the first deferred deadline (100ms) and poll.
+    harness.advance_time(Duration::from_millis(120));
+    assert!(
+        harness.editor_mut().poll_deferred_full_redraw(),
+        "first deferred recovery retry must fire after ~100ms"
+    );
+    assert!(harness.api_mut().take_full_redraw_request_for_tests());
+
+    // Second retry (~150ms later).
+    harness.advance_time(Duration::from_millis(160));
+    assert!(
+        harness.editor_mut().poll_deferred_full_redraw(),
+        "second deferred recovery retry must fire"
+    );
+    assert!(harness.api_mut().take_full_redraw_request_for_tests());
+
+    // No further retries.
+    harness.advance_time(Duration::from_millis(200));
+    assert!(
+        !harness.editor_mut().poll_deferred_full_redraw(),
+        "deferred recovery must stop after the scheduled retries"
+    );
+}
+
+/// Issue #2723: syncing a changed host size (missed SIGWINCH) resizes
+/// and requests recovery redraws.
+#[test]
+fn sync_host_terminal_size_detects_missed_resize() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _ = harness.api_mut().take_full_redraw_request_for_tests();
+
+    assert!(!harness.editor_mut().sync_host_terminal_size(80, 24));
+    assert!(!harness.api_mut().take_full_redraw_request_for_tests());
+
+    assert!(harness.editor_mut().sync_host_terminal_size(120, 40));
+    assert!(harness.api_mut().take_full_redraw_request_for_tests());
 }
