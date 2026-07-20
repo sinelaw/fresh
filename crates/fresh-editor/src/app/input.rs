@@ -357,9 +357,9 @@ impl Editor {
         }
         // The tab-bar popups (the "+" new-tab menu and the tab right-click
         // context menu) are modal chrome: while one is open it owns the
-        // keyboard via a custom dispatcher (`handle_new_tab_menu_key` /
-        // `handle_tab_context_menu_key`, run from `handle_key` ahead of
-        // `KeyContext` resolution), so they expose no `KeyContext` here.
+        // keyboard via a custom dispatcher (`handle_context_menu_key`, run
+        // from `handle_key` ahead of `KeyContext` resolution), so they expose
+        // no `KeyContext` here.
         // Like any covering overlay they block PTY routing — otherwise keys
         // would leak into an active terminal buffer underneath instead of
         // driving the menu. Ranked below `Popup` so the unfocused-popup
@@ -375,6 +375,19 @@ impl Editor {
         if self.active_window().tab_context_menu.is_some() {
             layers.push(Layer {
                 kind: LayerKind::TabContextMenu,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        // The file-explorer right-click context menu gets the same treatment
+        // as the tab-bar menus: a custom key dispatcher owns the keyboard
+        // while it's open (transparent to `KeyContext`), and it blocks PTY
+        // routing so keys drive the menu rather than leaking into a terminal
+        // buffer underneath.
+        if self.active_window().file_explorer_context_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::FileExplorerContextMenu,
                 owns_keyboard: true,
                 key_context: None,
                 blocks_terminal_input: true,
@@ -571,24 +584,12 @@ impl Editor {
             self.active_window_mut().theme_info_popup = None;
         }
 
-        if self
-            .active_window_mut()
-            .file_explorer_context_menu
-            .is_some()
-        {
-            if let Some(result) = self.handle_file_explorer_context_menu_key(code, modifiers) {
-                return result;
-            }
-        }
-
-        // The tab-bar popups (the "+" new-tab menu and the tab right-click
-        // context menu) are modal: while one is open it owns the keyboard so
-        // navigation/selection work and every other key is filtered out
-        // instead of leaking into the active buffer underneath.
-        if let Some(result) = self.handle_new_tab_menu_key(code) {
-            return result;
-        }
-        if let Some(result) = self.handle_tab_context_menu_key(code) {
+        // The native context menus (file-explorer / tab / "+" new-tab) are
+        // modal: while one is open it owns the keyboard so navigation and
+        // selection work and every other key is filtered out instead of
+        // leaking into the active buffer or the explorer's type-ahead find
+        // underneath. One handler covers all three.
+        if let Some(result) = self.handle_context_menu_key(code, modifiers) {
             return result;
         }
 

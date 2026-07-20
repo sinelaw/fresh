@@ -181,7 +181,21 @@ impl Editor {
             let ms = &self.active_window().mouse_state;
             ms.dragging_separator.is_some() || ms.drag_start_explorer_width.is_some()
         };
-        if !chrome_drag_active {
+        // An open native context menu (tab / "+" new-tab / file-explorer)
+        // takes mouse precedence over terminal forwarding. These menus render
+        // on top of — and frequently overlap — an alternate-screen terminal
+        // that has captured the mouse (e.g. right-clicking a terminal's tab
+        // opens the tab menu directly over the terminal's content). Without
+        // this gate the terminal-forward path below would swallow clicks/moves
+        // aimed at the menu, so menu items couldn't be selected (they'd inject
+        // mouse escape codes into the PTY instead). Skipping forwarding lets
+        // the event fall through to the normal pipeline, where
+        // `handle_click_context_menus` (select / dismiss) and the hover
+        // hit-test (highlight-follows-pointer) already handle it. Centralizing
+        // the precedence at this single fork mirrors the modal-capture ladder
+        // in `dispatch_modal_mouse`.
+        let context_menu_open = self.active_window().context_menu_core().is_some();
+        if !chrome_drag_active && !context_menu_open {
             let forwarding = self.config.terminal.mouse_forwarding;
             if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
                 col,
@@ -700,30 +714,12 @@ impl Editor {
             }
         }
 
-        // Handle tab context menu hover - update highlighted item
-        if let Some(HoverTarget::TabContextMenuItem(item_idx)) = new_target.clone() {
-            if let Some(ref mut menu) = self.active_window_mut().tab_context_menu {
-                if menu.highlighted != item_idx {
-                    menu.highlighted = item_idx;
-                    return true;
-                }
-            }
-        }
-
-        if let Some(&HoverTarget::FileExplorerContextMenuItem(item_idx)) = new_target.as_ref() {
-            if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu {
-                if menu.highlighted != item_idx {
-                    menu.highlighted = item_idx;
-                    return true;
-                }
-            }
-        }
-
-        // Handle "+" new-tab popup menu hover - update highlighted item
-        if let Some(HoverTarget::NewTabMenuItem(item_idx)) = new_target.clone() {
-            if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
-                if menu.highlighted != item_idx {
-                    menu.highlighted = item_idx;
+        // Hovering an item in whichever native context menu is open moves its
+        // highlight. One handler covers all three menus via the shared core.
+        if let Some(HoverTarget::ContextMenuItem(item_idx)) = new_target {
+            if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                if core.highlighted != item_idx {
+                    core.highlighted = item_idx;
                     return true;
                 }
             }
@@ -766,12 +762,7 @@ impl Editor {
         // tab context menu, or the status-bar LSP status popup) to avoid hover
         // tooltips overlapping other popups.
         if self.active_window_mut().theme_info_popup.is_some()
-            || self.active_window_mut().tab_context_menu.is_some()
-            || self.active_window_mut().new_tab_menu.is_some()
-            || self
-                .active_window_mut()
-                .file_explorer_context_menu
-                .is_some()
+            || self.active_window().context_menu_core().is_some()
             || self.is_lsp_status_popup_open()
         {
             if self
@@ -1006,77 +997,19 @@ impl Editor {
     /// popup lists, and the file-browser dialog. These always render on
     /// top of the chrome and must be checked first.
     fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        if let Some(ref menu) = self.active_window().file_explorer_context_menu {
-            let (menu_x, menu_y) = menu.clamped_position(
+        // The native context menus (tab / "+" new-tab / file-explorer) all
+        // render on top and share one geometry core, so a single hit-test
+        // over the open menu covers all three. An interior (item) row yields
+        // a hover target; border rows and outside positions fall through to
+        // the chrome below.
+        if let Some(core) = self.active_window().context_menu_core() {
+            if let super::types::ContextMenuHit::Item(item_idx) = core.hit(
+                col,
+                row,
                 self.active_chrome().last_frame.width,
                 self.active_chrome().last_frame.height,
-            );
-            let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
-            let menu_height = menu.height();
-
-            if col >= menu_x
-                && col < menu_x + menu_width
-                && row > menu_y
-                && row < menu_y + menu_height - 1
-            {
-                let item_idx = (row - menu_y - 1) as usize;
-                if item_idx < menu.items().len() {
-                    return Some(HoverTarget::FileExplorerContextMenuItem(item_idx));
-                }
-            }
-        }
-
-        // Check the "+" new-tab popup menu (rendered on top)
-        if let Some(ref menu) = self.active_window().new_tab_menu {
-            // Clamp against the last rendered frame size (mirrored from
-            // `frame.area()` each draw), matching the popup's render clamp — so
-            // a menu near the right/bottom edge hovers exactly where it draws.
-            let (menu_x, menu_y) = menu.clamped_position(
-                self.active_chrome().last_frame.width,
-                self.active_chrome().last_frame.height,
-            );
-            let menu_width = super::types::NEW_TAB_MENU_WIDTH;
-            let items = super::types::NewTabMenuItem::all();
-            let menu_height = menu.height();
-
-            if col >= menu_x
-                && col < menu_x + menu_width
-                && row > menu_y
-                && row < menu_y + menu_height - 1
-            {
-                let item_idx = (row - menu_y - 1) as usize;
-                if item_idx < items.len() {
-                    return Some(HoverTarget::NewTabMenuItem(item_idx));
-                }
-            }
-        }
-
-        // Check tab context menu first (it's rendered on top)
-        if let Some(ref menu) = self.active_window().tab_context_menu {
-            // Clamp against the last rendered frame size, not `terminal_width/
-            // height`: the tab menu's render clamps to `frame.area()` (mirrored
-            // into `last_frame` each draw), while `terminal_width/height` only
-            // catches up when a crossterm `Resize` event is dequeued. During a
-            // resize those two disagree, so hit-testing against `last_frame`
-            // (as the file-explorer menu already does) keeps clicks landing on
-            // exactly what was drawn.
-            let (menu_x, menu_y) = menu.clamped_position(
-                self.active_chrome().last_frame.width,
-                self.active_chrome().last_frame.height,
-            );
-            let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
-            let items = super::types::TabContextMenuItem::all();
-            let menu_height = items.len() as u16 + 2;
-
-            if col >= menu_x
-                && col < menu_x + menu_width
-                && row > menu_y
-                && row < menu_y + menu_height - 1
-            {
-                let item_idx = (row - menu_y - 1) as usize;
-                if item_idx < items.len() {
-                    return Some(HoverTarget::TabContextMenuItem(item_idx));
-                }
+            ) {
+                return Some(HoverTarget::ContextMenuItem(item_idx));
             }
         }
 
@@ -1888,27 +1821,41 @@ impl Editor {
     // ── handle_mouse_click helpers ──────────────────────────────────────────
     // Each returns Some(result) if the click was consumed, None to fall through.
 
+    /// Route a left-click to whichever native context menu is open (tab /
+    /// "+" new-tab / file-explorer). Returns `None` when no menu is open so
+    /// the caller continues the normal click pipeline.
+    ///
+    /// The shared geometry core does the hit-test; only the *activation* of a
+    /// selected item differs per menu, so that is the one part that branches
+    /// on [`ContextMenuKind`]. Click-outside dismisses; border rows are inert;
+    /// an item click closes the menu and runs its `execute_*` action.
     fn handle_click_context_menus(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        if self
-            .active_window_mut()
-            .file_explorer_context_menu
-            .is_some()
-        {
-            if let Some(result) = self.handle_file_explorer_context_menu_click(col, row) {
-                return Some(result);
+        use super::types::ContextMenuHit;
+
+        let (kind, core) = self.active_window().open_context_menu()?;
+        let hit = core.hit(
+            col,
+            row,
+            self.active_chrome().last_frame.width,
+            self.active_chrome().last_frame.height,
+        );
+        match hit {
+            // Click outside the box dismisses the menu.
+            ContextMenuHit::Outside => {
+                self.active_window_mut().close_context_menus();
+                Some(Ok(()))
+            }
+            // Border rows are inert — swallow without acting or closing.
+            ContextMenuHit::Border => Some(Ok(())),
+            // An item click moves the highlight to it and activates through
+            // the same path as a keyboard Enter.
+            ContextMenuHit::Item(idx) => {
+                if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                    core.highlighted = idx;
+                }
+                Some(self.activate_highlighted_context_menu(kind))
             }
         }
-        if self.active_window_mut().tab_context_menu.is_some() {
-            if let Some(result) = self.handle_tab_context_menu_click(col, row) {
-                return Some(result);
-            }
-        }
-        if self.active_window_mut().new_tab_menu.is_some() {
-            if let Some(result) = self.handle_new_tab_menu_click(col, row) {
-                return Some(result);
-            }
-        }
-        None
     }
 
     /// Hit-test (col, row) against the suggestions popup. Returns the index
@@ -3374,44 +3321,17 @@ impl Editor {
             }
         }
 
+        // A right-click landing inside an already-open native context menu
+        // (file-explorer or tab — the "+" popup was dismissed above) is
+        // swallowed so the menu stays put rather than being re-opened /
+        // re-targeted. One shared hit-test covers both.
         let frame_w = self.active_chrome().last_frame.width;
         let frame_h = self.active_chrome().last_frame.height;
-        if let Some(ref menu) = self.active_window().file_explorer_context_menu {
-            let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
-            let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
-            let menu_height = menu.height();
-            if col >= menu_x
-                && col < menu_x + menu_width
-                && row >= menu_y
-                && row < menu_y + menu_height
-            {
-                return Ok(());
-            }
-        }
-
-        // First check if a tab context menu is open and the click is on a menu item
-        if let Some(ref menu) = self.active_window().tab_context_menu {
-            // Clamp against the last rendered frame size, not `terminal_width/
-            // height`: the tab menu's render clamps to `frame.area()` (mirrored
-            // into `last_frame` each draw), while `terminal_width/height` only
-            // catches up when a crossterm `Resize` event is dequeued. During a
-            // resize those two disagree, so hit-testing against `last_frame`
-            // (as the file-explorer menu already does) keeps clicks landing on
-            // exactly what was drawn.
-            let (menu_x, menu_y) = menu.clamped_position(
-                self.active_chrome().last_frame.width,
-                self.active_chrome().last_frame.height,
-            );
-            let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
-            let menu_height = menu.height();
-
-            // Check if click is inside the menu
-            if col >= menu_x
-                && col < menu_x + menu_width
-                && row >= menu_y
-                && row < menu_y + menu_height
-            {
-                // Click inside menu - let left-click handler deal with it
+        if let Some(core) = self.active_window().context_menu_core() {
+            if !matches!(
+                core.hit(col, row, frame_w, frame_h),
+                super::types::ContextMenuHit::Outside
+            ) {
                 return Ok(());
             }
         }
@@ -3483,92 +3403,6 @@ impl Editor {
         Ok(())
     }
 
-    /// Handle left-click on tab context menu
-    pub(super) fn handle_tab_context_menu_click(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let menu = self.active_window().tab_context_menu.as_ref()?;
-        let (menu_x, menu_y) = menu.clamped_position(self.terminal_width, self.terminal_height);
-        let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
-        let items = super::types::TabContextMenuItem::all();
-        let menu_height = items.len() as u16 + 2; // items + borders
-
-        // Check if click is inside the menu area
-        if col < menu_x || col >= menu_x + menu_width || row < menu_y || row >= menu_y + menu_height
-        {
-            // Click outside menu - close it
-            self.active_window_mut().tab_context_menu = None;
-            return Some(Ok(()));
-        }
-
-        // Check if click is on the border (first or last row)
-        if row == menu_y || row == menu_y + menu_height - 1 {
-            return Some(Ok(()));
-        }
-
-        // Calculate which item was clicked (accounting for border)
-        let item_idx = (row - menu_y - 1) as usize;
-        if item_idx >= items.len() {
-            return Some(Ok(()));
-        }
-
-        // Get the menu state before closing it
-        let buffer_id = menu.buffer_id;
-        let split_id = menu.split_id;
-        let item = items[item_idx];
-
-        // Close the menu
-        self.active_window_mut().tab_context_menu = None;
-
-        // Execute the action
-        Some(self.execute_tab_context_menu_action(item, buffer_id, split_id))
-    }
-
-    /// Handle left-click on the "+" new-tab popup menu.
-    pub(super) fn handle_new_tab_menu_click(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        // Clamp against the last rendered frame size, matching the popup's
-        // render and hover hit-test — during a resize `terminal_width/height`
-        // can lag `frame.area()`, drifting clicks off the drawn menu.
-        let frame_w = self.active_chrome().last_frame.width;
-        let frame_h = self.active_chrome().last_frame.height;
-        let menu = self.active_window().new_tab_menu.as_ref()?;
-        let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
-        let items = super::types::NewTabMenuItem::all();
-        let menu_width = super::types::NEW_TAB_MENU_WIDTH;
-        let menu_height = menu.height();
-
-        // Click outside the menu closes it.
-        if col < menu_x || col >= menu_x + menu_width || row < menu_y || row >= menu_y + menu_height
-        {
-            self.active_window_mut().new_tab_menu = None;
-            return Some(Ok(()));
-        }
-
-        // Border rows (first/last) are inert.
-        if row == menu_y || row == menu_y + menu_height - 1 {
-            return Some(Ok(()));
-        }
-
-        let item_idx = (row - menu_y - 1) as usize;
-        if item_idx >= items.len() {
-            return Some(Ok(()));
-        }
-
-        let split_id = menu.split_id;
-        let item = items[item_idx];
-
-        // Close the menu before running the action.
-        self.active_window_mut().new_tab_menu = None;
-
-        Some(self.execute_new_tab_menu_action(item, split_id))
-    }
-
     /// Execute a "+" new-tab popup menu action.
     fn execute_new_tab_menu_action(
         &mut self,
@@ -3636,200 +3470,102 @@ impl Editor {
         Ok(())
     }
 
-    /// Handle keyboard input for the "+" new-tab popup menu.
+    /// Handle a key event while a native context menu (tab / "+" new-tab /
+    /// file-explorer) is open — the one keyboard handler for all three.
     ///
-    /// While the popup is open it owns the keyboard: Up/Down move the
-    /// highlight, Enter activates the highlighted item, Esc dismisses it,
-    /// and *every other key is swallowed* so nothing leaks into the buffer
-    /// underneath. Returns `Some` when a popup is open (the key is always
-    /// consumed in that case), `None` when there is no popup.
-    pub(super) fn handle_new_tab_menu_key(
-        &mut self,
-        code: crossterm::event::KeyCode,
-    ) -> Option<AnyhowResult<()>> {
-        use crossterm::event::KeyCode;
-
-        self.active_window().new_tab_menu.as_ref()?;
-
-        match code {
-            KeyCode::Up => {
-                if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
-                    menu.prev_item();
-                }
-            }
-            KeyCode::Down => {
-                if let Some(ref mut menu) = self.active_window_mut().new_tab_menu {
-                    menu.next_item();
-                }
-            }
-            KeyCode::Enter => {
-                let selected = self.active_window().new_tab_menu.as_ref().map(|menu| {
-                    (
-                        super::types::NewTabMenuItem::all()[menu.highlighted],
-                        menu.split_id,
-                    )
-                });
-                self.active_window_mut().new_tab_menu = None;
-                if let Some((item, split_id)) = selected {
-                    return Some(self.execute_new_tab_menu_action(item, split_id));
-                }
-            }
-            KeyCode::Esc => {
-                self.active_window_mut().new_tab_menu = None;
-            }
-            // Filter out everything else while the popup is focused.
-            _ => {}
-        }
-        Some(Ok(()))
-    }
-
-    /// Handle keyboard input for the tab right-click context menu.
+    /// The open menu **grabs the keyboard**: Up/Down move the highlight,
+    /// Enter activates the highlighted item, Esc dismisses, and every other
+    /// key — printable characters, Backspace, modified chords — is swallowed
+    /// so it can't leak into the buffer or the explorer's type-ahead find
+    /// underneath and silently retarget the selection the menu acts on
+    /// (#2587). Navigation/activation act only on *unmodified* keys; a
+    /// modified chord is swallowed like any other non-menu key.
     ///
-    /// Modal like [`handle_new_tab_menu_key`]: Up/Down navigate, Enter
-    /// activates the highlighted item, Esc dismisses, and all other keys are
-    /// swallowed so they can't reach the buffer underneath.
-    pub(super) fn handle_tab_context_menu_key(
-        &mut self,
-        code: crossterm::event::KeyCode,
-    ) -> Option<AnyhowResult<()>> {
-        use crossterm::event::KeyCode;
-
-        self.active_window().tab_context_menu.as_ref()?;
-
-        match code {
-            KeyCode::Up => {
-                if let Some(ref mut menu) = self.active_window_mut().tab_context_menu {
-                    menu.prev_item();
-                }
-            }
-            KeyCode::Down => {
-                if let Some(ref mut menu) = self.active_window_mut().tab_context_menu {
-                    menu.next_item();
-                }
-            }
-            KeyCode::Enter => {
-                let selected = self
-                    .active_window()
-                    .tab_context_menu
-                    .as_ref()
-                    .map(|menu| (menu.highlighted_item(), menu.buffer_id, menu.split_id));
-                self.active_window_mut().tab_context_menu = None;
-                if let Some((item, buffer_id, split_id)) = selected {
-                    return Some(self.execute_tab_context_menu_action(item, buffer_id, split_id));
-                }
-            }
-            KeyCode::Esc => {
-                self.active_window_mut().tab_context_menu = None;
-            }
-            // Filter out everything else while the popup is focused.
-            _ => {}
-        }
-        Some(Ok(()))
-    }
-
-    /// Handle keyboard input for the file explorer right-click context menu.
-    ///
-    /// Modal like [`handle_tab_context_menu_key`]: while the menu is open it
-    /// **grabs the keyboard**. Up/Down navigate, Enter activates the
-    /// highlighted item, Esc dismisses, and every other key — printable
-    /// characters, Backspace, modified chords — is swallowed so it can't leak
-    /// into the tree's type-ahead find underneath and silently retarget the
-    /// selection the menu acts on (#2587). This mirrors the 0.4.2 keyboard
-    /// grab already applied to the tab context menu and the "+" new-tab popup.
-    ///
-    /// Returns `Some` whenever the menu is open, `None` only when there is no
-    /// menu so normal dispatch continues.
-    pub(super) fn handle_file_explorer_context_menu_key(
+    /// Returns `Some` whenever a menu is open (the key is always consumed),
+    /// `None` when no menu is open so normal dispatch continues.
+    pub(super) fn handle_context_menu_key(
         &mut self,
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     ) -> Option<AnyhowResult<()>> {
-        use crossterm::event::KeyCode;
-        use crossterm::event::KeyModifiers;
+        use crossterm::event::{KeyCode, KeyModifiers};
 
-        // Only act while the menu is actually open; otherwise fall through to
-        // normal dispatch.
-        self.active_window().file_explorer_context_menu.as_ref()?;
+        let kind = self.active_window().open_context_menu().map(|(k, _)| k)?;
 
-        // Navigation/activation keys act only when unmodified.
         if modifiers == KeyModifiers::NONE {
             match code {
                 KeyCode::Up => {
-                    if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu
-                    {
-                        menu.prev_item();
+                    if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                        core.prev_item();
                     }
                     return Some(Ok(()));
                 }
                 KeyCode::Down => {
-                    if let Some(ref mut menu) = self.active_window_mut().file_explorer_context_menu
-                    {
-                        menu.next_item();
+                    if let Some(core) = self.active_window_mut().context_menu_core_mut() {
+                        core.next_item();
                     }
                     return Some(Ok(()));
                 }
                 KeyCode::Enter => {
-                    let item = {
-                        let menu = self
-                            .active_window_mut()
-                            .file_explorer_context_menu
-                            .as_ref()?;
-                        menu.items()[menu.highlighted]
-                    };
-                    self.active_window_mut().file_explorer_context_menu = None;
-                    self.execute_file_explorer_context_menu_action(item);
-                    return Some(Ok(()));
+                    return Some(self.activate_highlighted_context_menu(kind));
                 }
                 KeyCode::Esc => {
-                    self.active_window_mut().file_explorer_context_menu = None;
+                    self.active_window_mut().close_context_menus();
                     return Some(Ok(()));
                 }
                 _ => {}
             }
         }
 
-        // Modal: swallow every other key while the menu is open so nothing
-        // leaks into the type-ahead find beneath it.
+        // Modal: swallow every other key while a menu is open.
         Some(Ok(()))
     }
 
-    /// Handle left-click on the file explorer context menu
-    pub(super) fn handle_file_explorer_context_menu_click(
+    /// Activate the highlighted item of the open context menu: resolve the
+    /// item + its payload from the concrete menu, dismiss the menu, then run
+    /// the matching `execute_*` action. Shared by both the keyboard (Enter)
+    /// and mouse (click) paths so activation lives in exactly one place.
+    fn activate_highlighted_context_menu(
         &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        // Extract all needed values while the immutable borrow is live, then mutate.
-        let frame_w = self.active_chrome().last_frame.width;
-        let frame_h = self.active_chrome().last_frame.height;
-        let clicked_item: Option<super::types::FileExplorerContextMenuItem> = {
-            let menu = self.active_window().file_explorer_context_menu.as_ref()?;
-            let (menu_x, menu_y) = menu.clamped_position(frame_w, frame_h);
-            let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
-            let menu_height = menu.height();
-
-            if col < menu_x
-                || col >= menu_x + menu_width
-                || row < menu_y
-                || row >= menu_y + menu_height
-            {
-                self.active_window_mut().file_explorer_context_menu = None;
-                return Some(Ok(()));
+        kind: super::types::ContextMenuKind,
+    ) -> AnyhowResult<()> {
+        use super::types::ContextMenuKind;
+        match kind {
+            ContextMenuKind::Tab => {
+                let selected = self
+                    .active_window()
+                    .tab_context_menu
+                    .as_ref()
+                    .map(|m| (m.highlighted_item(), m.buffer_id, m.split_id));
+                self.active_window_mut().close_context_menus();
+                if let Some((item, buffer_id, split_id)) = selected {
+                    return self.execute_tab_context_menu_action(item, buffer_id, split_id);
+                }
             }
-
-            if row == menu_y || row == menu_y + menu_height - 1 {
-                return Some(Ok(()));
+            ContextMenuKind::NewTab => {
+                let selected = self
+                    .active_window()
+                    .new_tab_menu
+                    .as_ref()
+                    .map(|m| (m.highlighted_item(), m.split_id));
+                self.active_window_mut().close_context_menus();
+                if let Some((item, split_id)) = selected {
+                    return self.execute_new_tab_menu_action(item, split_id);
+                }
             }
-
-            let item_idx = (row - menu_y - 1) as usize;
-            menu.items().get(item_idx).copied()
-        };
-
-        self.active_window_mut().file_explorer_context_menu = None;
-        if let Some(item) = clicked_item {
-            self.execute_file_explorer_context_menu_action(item);
+            ContextMenuKind::FileExplorer => {
+                let selected = self
+                    .active_window()
+                    .file_explorer_context_menu
+                    .as_ref()
+                    .map(|m| m.highlighted_item());
+                self.active_window_mut().close_context_menus();
+                if let Some(item) = selected {
+                    self.execute_file_explorer_context_menu_action(item);
+                }
+            }
         }
-        Some(Ok(()))
+        Ok(())
     }
 
     fn execute_file_explorer_context_menu_action(

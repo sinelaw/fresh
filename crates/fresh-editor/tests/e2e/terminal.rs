@@ -135,6 +135,81 @@ fn tab_context_menu_grabs_keyboard_from_active_terminal() {
     );
 }
 
+/// Regression (mouse-capture bug): right-clicking the tab of a terminal that
+/// has *captured the mouse* (alternate screen + mouse reporting, like vim /
+/// htop) opens the tab context menu directly over the terminal's content —
+/// and clicking a menu item must actually run that item, not be forwarded to
+/// the terminal underneath.
+///
+/// Before the fix, `try_forward_mouse_to_terminal` ran ahead of the native
+/// context-menu click handler, so the left-click on the "Close" item was
+/// swallowed by the PTY (injected as a mouse escape sequence): the menu
+/// stayed open and the terminal tab was never closed. The fix makes an open
+/// native context menu take mouse precedence over terminal forwarding.
+///
+/// Observes rendered output only: the terminal tab label and the menu text.
+#[test]
+fn tab_context_menu_click_beats_mouse_capturing_terminal() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Focus an active (live) terminal buffer.
+    harness.editor_mut().open_terminal();
+    assert!(harness.editor().is_terminal_mode());
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    // Make the terminal capture the mouse: enter the alternate screen and
+    // enable X10/normal mouse reporting (DECSET 1049 + 1000), exactly what a
+    // full-screen mouse-driven program does. With `mouse_forwarding` at its
+    // default (`Requested`), a plain left-press over the terminal content is
+    // now eligible for forwarding to the PTY.
+    let buffer_id = harness.editor().active_buffer_id();
+    let terminal_id = harness
+        .editor()
+        .active_window()
+        .get_terminal_id(buffer_id)
+        .expect("active buffer should be a terminal");
+    if let Some(handle) = harness.editor().terminal_manager().get(terminal_id) {
+        if let Ok(mut state) = handle.state.lock() {
+            state.process_output(b"\x1b[?1049h\x1b[?1000h");
+        }
+    }
+    harness.render().unwrap();
+
+    // Right-click the terminal's own tab (row 1 = tab bar, above the terminal
+    // content) so the terminal stays the focused, live buffer. The tab context
+    // menu opens just below, overlapping the terminal's content rows.
+    let screen = harness.screen_to_string();
+    let term_col = tab_row_col_of_str(&screen, "Terminal").unwrap_or_else(|| {
+        panic!("expected the '*Terminal 0*' tab on the tab row. Screen:\n{screen}")
+    });
+    harness.mouse_right_click(term_col, 1).unwrap();
+    harness.assert_screen_contains("Close Others");
+
+    // The menu's first item is "Close". It renders on a terminal-content row
+    // (row 3: tab bar row 1, menu top border row 2, first item row 3). Locate
+    // it on screen and left-click it. The first "Close" on screen is this
+    // item (the other entries read "Close Others", "Close to the Right", …).
+    let (close_col, close_row) = harness
+        .find_text_on_screen("Close")
+        .expect("the 'Close' menu item should be visible");
+    harness.mouse_click(close_col, close_row).unwrap();
+    harness.render().unwrap();
+
+    // With the fix, the click selected "Close": the menu is gone and the
+    // terminal tab was closed. Without it, the click was forwarded to the PTY,
+    // the menu stayed open, and the tab survived.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Close Others"),
+        "clicking a menu item should close the menu, not forward to the terminal. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("*Terminal 0*"),
+        "clicking 'Close' should have closed the terminal tab. Screen:\n{screen}"
+    );
+}
+
 /// Test opening a terminal creates a buffer and switches to it
 #[test]
 fn test_open_terminal() {

@@ -10,6 +10,138 @@ pub const NEW_TAB_MENU_WIDTH: u16 = 18;
 /// "Extract to New Workspace" + padding).
 pub const TAB_CONTEXT_MENU_WIDTH: u16 = 28;
 
+/// Shared geometry + navigation + hit-testing core for the native context
+/// menus.
+///
+/// `fresh` has three native right-click / popup menus — the tab context
+/// menu, the "+" new-tab popup, and the file-explorer context menu. They
+/// are visually and behaviourally identical bordered item lists; only their
+/// fixed width and their item source differ. This core owns everything that
+/// was previously hand-copied across all three (box height, edge-clamping,
+/// highlight navigation, and the "which item is at (col,row)?" hit-test), so
+/// each concrete menu is just this core plus its own payload (which
+/// buffer/split it acts on, which selection mode it was opened in).
+///
+/// The `item_count` is captured when the menu opens and is fixed for its
+/// lifetime — the item source never changes while a menu is on screen — so
+/// navigation and hit-testing need no access to the concrete item slice.
+#[derive(Debug, Clone)]
+pub struct ContextMenu {
+    /// Screen position where the menu's top-left corner is anchored (x, y),
+    /// before edge-clamping.
+    pub position: (u16, u16),
+    /// Currently highlighted item index (0-based).
+    pub highlighted: usize,
+    /// Menu box width in cells (fixed per menu kind).
+    pub width: u16,
+    /// Number of selectable items (fixed while the menu is open).
+    pub item_count: usize,
+}
+
+/// Result of hit-testing a screen position against a [`ContextMenu`] box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuHit {
+    /// The position is outside the (clamped) menu box entirely.
+    Outside,
+    /// The position is on the top or bottom border row — inert.
+    Border,
+    /// The position is on item row `idx` (0-based).
+    Item(usize),
+}
+
+impl ContextMenu {
+    /// Anchor a fresh menu of `item_count` items at the given screen
+    /// position, highlight cleared to the first item.
+    pub fn new(x: u16, y: u16, width: u16, item_count: usize) -> Self {
+        Self {
+            position: (x, y),
+            highlighted: 0,
+            width,
+            item_count,
+        }
+    }
+
+    /// Total box height: one row per item plus the top and bottom borders.
+    pub fn height(&self) -> u16 {
+        self.item_count as u16 + 2
+    }
+
+    /// The anchor position clamped so the whole box stays on screen.
+    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
+        let x = if self.position.0 + self.width > screen_width {
+            screen_width.saturating_sub(self.width)
+        } else {
+            self.position.0
+        };
+        let h = self.height();
+        let y = if self.position.1 + h > screen_height {
+            screen_height.saturating_sub(h)
+        } else {
+            self.position.1
+        };
+        (x, y)
+    }
+
+    /// Move the highlight down one item, wrapping at the end.
+    pub fn next_item(&mut self) {
+        if self.item_count == 0 {
+            return;
+        }
+        self.highlighted = (self.highlighted + 1) % self.item_count;
+    }
+
+    /// Move the highlight up one item, wrapping at the start.
+    pub fn prev_item(&mut self) {
+        if self.item_count == 0 {
+            return;
+        }
+        self.highlighted = if self.highlighted == 0 {
+            self.item_count - 1
+        } else {
+            self.highlighted - 1
+        };
+    }
+
+    /// Classify a screen position against the (edge-clamped) menu box: an
+    /// item row, a border row, or outside. This is the single hit-test both
+    /// mouse hover and click routing consult, so the drawn box and the
+    /// clickable box can never disagree.
+    pub fn hit(&self, col: u16, row: u16, screen_width: u16, screen_height: u16) -> ContextMenuHit {
+        let (menu_x, menu_y) = self.clamped_position(screen_width, screen_height);
+        let menu_height = self.height();
+        if col < menu_x || col >= menu_x + self.width || row < menu_y || row >= menu_y + menu_height
+        {
+            return ContextMenuHit::Outside;
+        }
+        // The first and last rows are the borders — inert.
+        if row == menu_y || row == menu_y + menu_height - 1 {
+            return ContextMenuHit::Border;
+        }
+        let idx = (row - menu_y - 1) as usize;
+        if idx < self.item_count {
+            ContextMenuHit::Item(idx)
+        } else {
+            // Unreachable given the bounds above (an interior row always maps
+            // to a valid item), but treat any gap as inert rather than
+            // fabricating an out-of-range index.
+            ContextMenuHit::Border
+        }
+    }
+}
+
+/// Discriminates which concrete native context menu is currently open, so a
+/// single generic handler can route activation to the right `execute_*`
+/// dispatch after the shared geometry/navigation has done its work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuKind {
+    /// The tab right-click context menu.
+    Tab,
+    /// The "+" new-tab popup menu.
+    NewTab,
+    /// The file-explorer right-click context menu.
+    FileExplorer,
+}
+
 /// Tab context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabContextMenuItem {
@@ -71,10 +203,8 @@ pub struct TabContextMenu {
     pub buffer_id: BufferId,
     /// The split ID where the tab is located
     pub split_id: LeafId,
-    /// Screen position where the menu should appear (x, y)
-    pub position: (u16, u16),
-    /// Currently highlighted menu item index
-    pub highlighted: usize,
+    /// Shared geometry + navigation core (position, highlight, width, items).
+    pub menu: ContextMenu,
 }
 
 impl TabContextMenu {
@@ -83,53 +213,23 @@ impl TabContextMenu {
         Self {
             buffer_id,
             split_id,
-            position: (x, y),
-            highlighted: 0,
+            menu: ContextMenu::new(
+                x,
+                y,
+                TAB_CONTEXT_MENU_WIDTH,
+                TabContextMenuItem::all().len(),
+            ),
         }
+    }
+
+    /// The items this menu presents, in display order.
+    pub fn items(&self) -> &'static [TabContextMenuItem] {
+        TabContextMenuItem::all()
     }
 
     /// Get the currently highlighted item
     pub fn highlighted_item(&self) -> TabContextMenuItem {
-        TabContextMenuItem::all()[self.highlighted]
-    }
-
-    /// Menu height including the top/bottom borders.
-    pub fn height(&self) -> u16 {
-        TabContextMenuItem::all().len() as u16 + 2
-    }
-
-    /// Anchor position shifted so the menu fits on screen — the single
-    /// source of truth shared by rendering, hover, and click hit-testing
-    /// (diverging copies would let clicks land on a menu drawn elsewhere).
-    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
-        let x = if self.position.0 + TAB_CONTEXT_MENU_WIDTH > screen_width {
-            screen_width.saturating_sub(TAB_CONTEXT_MENU_WIDTH)
-        } else {
-            self.position.0
-        };
-        let h = self.height();
-        let y = if self.position.1 + h > screen_height {
-            screen_height.saturating_sub(h)
-        } else {
-            self.position.1
-        };
-        (x, y)
-    }
-
-    /// Move highlight down
-    pub fn next_item(&mut self) {
-        let items = TabContextMenuItem::all();
-        self.highlighted = (self.highlighted + 1) % items.len();
-    }
-
-    /// Move highlight up
-    pub fn prev_item(&mut self) {
-        let items = TabContextMenuItem::all();
-        self.highlighted = if self.highlighted == 0 {
-            items.len() - 1
-        } else {
-            self.highlighted - 1
-        };
+        TabContextMenuItem::all()[self.menu.highlighted]
     }
 }
 
@@ -164,10 +264,8 @@ impl NewTabMenuItem {
 pub struct NewTabMenu {
     /// The split whose tab bar's `+` button was clicked.
     pub split_id: LeafId,
-    /// Screen position where the menu should appear (x, y).
-    pub position: (u16, u16),
-    /// Currently highlighted menu item index.
-    pub highlighted: usize,
+    /// Shared geometry + navigation core (position, highlight, width, items).
+    pub menu: ContextMenu,
 }
 
 impl NewTabMenu {
@@ -175,50 +273,18 @@ impl NewTabMenu {
     pub fn new(split_id: LeafId, x: u16, y: u16) -> Self {
         Self {
             split_id,
-            position: (x, y),
-            highlighted: 0,
+            menu: ContextMenu::new(x, y, NEW_TAB_MENU_WIDTH, NewTabMenuItem::all().len()),
         }
     }
 
-    /// Menu height including the top/bottom borders.
-    pub fn height(&self) -> u16 {
-        NewTabMenuItem::all().len() as u16 + 2
+    /// The items this menu presents, in display order.
+    pub fn items(&self) -> &'static [NewTabMenuItem] {
+        NewTabMenuItem::all()
     }
 
-    /// Anchor position shifted so the menu fits on screen — the single source
-    /// of truth shared by rendering, hover, and click hit-testing, exactly as
-    /// [`TabContextMenu::clamped_position`]. Diverging copies would let the
-    /// popup draw shifted onto screen while its clickable region stayed
-    /// anchored offscreen.
-    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
-        let x = if self.position.0 + NEW_TAB_MENU_WIDTH > screen_width {
-            screen_width.saturating_sub(NEW_TAB_MENU_WIDTH)
-        } else {
-            self.position.0
-        };
-        let h = self.height();
-        let y = if self.position.1 + h > screen_height {
-            screen_height.saturating_sub(h)
-        } else {
-            self.position.1
-        };
-        (x, y)
-    }
-
-    /// Move highlight down.
-    pub fn next_item(&mut self) {
-        let items = NewTabMenuItem::all();
-        self.highlighted = (self.highlighted + 1) % items.len();
-    }
-
-    /// Move highlight up.
-    pub fn prev_item(&mut self) {
-        let items = NewTabMenuItem::all();
-        self.highlighted = if self.highlighted == 0 {
-            items.len() - 1
-        } else {
-            self.highlighted - 1
-        };
+    /// Get the currently highlighted item.
+    pub fn highlighted_item(&self) -> NewTabMenuItem {
+        NewTabMenuItem::all()[self.menu.highlighted]
     }
 }
 
@@ -298,66 +364,45 @@ impl FileExplorerContextMenuItem {
 /// State for file explorer context menu (right-click popup in the file explorer)
 #[derive(Debug, Clone)]
 pub struct FileExplorerContextMenu {
-    /// Screen position where the menu should appear (x, y)
-    pub position: (u16, u16),
-    /// Currently highlighted menu item index
-    pub highlighted: usize,
     /// Whether the menu was opened with multiple items selected
     pub is_multi_selection: bool,
     /// Whether the sole selected node is the project root
     pub is_root_selected: bool,
+    /// Shared geometry + navigation core (position, highlight, width, items).
+    pub menu: ContextMenu,
 }
 
 impl FileExplorerContextMenu {
     pub fn new(x: u16, y: u16, is_multi_selection: bool, is_root_selected: bool) -> Self {
+        let item_count = Self::items_for(is_multi_selection, is_root_selected).len();
         Self {
-            position: (x, y),
-            highlighted: 0,
             is_multi_selection,
             is_root_selected,
+            menu: ContextMenu::new(x, y, FILE_EXPLORER_CONTEXT_MENU_WIDTH, item_count),
         }
     }
 
-    pub fn items(&self) -> &'static [FileExplorerContextMenuItem] {
-        if self.is_multi_selection {
+    /// The item set for a given selection mode. The menu's item source is
+    /// fixed at open time (see [`ContextMenu`]), so this is pure.
+    fn items_for(
+        is_multi_selection: bool,
+        is_root_selected: bool,
+    ) -> &'static [FileExplorerContextMenuItem] {
+        if is_multi_selection {
             FileExplorerContextMenuItem::multi_selection()
-        } else if self.is_root_selected {
+        } else if is_root_selected {
             FileExplorerContextMenuItem::root_single_selection()
         } else {
             FileExplorerContextMenuItem::all()
         }
     }
 
-    pub fn height(&self) -> u16 {
-        self.items().len() as u16 + 2
+    pub fn items(&self) -> &'static [FileExplorerContextMenuItem] {
+        Self::items_for(self.is_multi_selection, self.is_root_selected)
     }
 
-    pub fn clamped_position(&self, screen_width: u16, screen_height: u16) -> (u16, u16) {
-        let x = if self.position.0 + FILE_EXPLORER_CONTEXT_MENU_WIDTH > screen_width {
-            screen_width.saturating_sub(FILE_EXPLORER_CONTEXT_MENU_WIDTH)
-        } else {
-            self.position.0
-        };
-        let h = self.height();
-        let y = if self.position.1 + h > screen_height {
-            screen_height.saturating_sub(h)
-        } else {
-            self.position.1
-        };
-        (x, y)
-    }
-
-    pub fn next_item(&mut self) {
-        let len = self.items().len();
-        self.highlighted = (self.highlighted + 1) % len;
-    }
-
-    pub fn prev_item(&mut self) {
-        let len = self.items().len();
-        self.highlighted = if self.highlighted == 0 {
-            len - 1
-        } else {
-            self.highlighted - 1
-        };
+    /// Get the currently highlighted item.
+    pub fn highlighted_item(&self) -> FileExplorerContextMenuItem {
+        self.items()[self.menu.highlighted]
     }
 }

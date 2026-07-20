@@ -60,10 +60,10 @@ pub enum HoverTarget {
     SearchOptionRegex,
     /// Hovering over the search options "Confirm Each" checkbox
     SearchOptionConfirmEach,
-    /// Hovering over a tab context menu item (item_index)
-    TabContextMenuItem(usize),
-    /// Hovering over a file explorer context menu item (item_index)
-    FileExplorerContextMenuItem(usize),
-    /// Hovering over a "+" new-tab popup menu item (item_index)
-    NewTabMenuItem(usize),
+    /// Hovering over an item (by index) in whichever native context menu is
+    /// open — the tab context menu, the "+" new-tab popup, or the
+    /// file-explorer context menu. Only one is ever open at a time, so a
+    /// single variant suffices; the hover handler updates the open menu's
+    /// shared highlight via `Window::context_menu_core_mut`.
+    ContextMenuItem(usize),
 }

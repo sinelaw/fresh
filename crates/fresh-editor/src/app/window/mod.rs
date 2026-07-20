@@ -1064,6 +1064,94 @@ pub(crate) fn build_window_lsp(
 }
 
 impl Window {
+    /// The currently-open native context menu's shared geometry core, if
+    /// any, together with a discriminant identifying which concrete menu it
+    /// belongs to.
+    ///
+    /// Only one native context menu is ever on screen at a time (opening one
+    /// dismisses the others), so this is unambiguous. The precedence order
+    /// here — file-explorer, then new-tab, then tab — is the single source of
+    /// truth for the generic hover / click / key / render paths, replacing
+    /// the three hand-copied per-menu blocks that used to drift apart.
+    pub(crate) fn open_context_menu(
+        &self,
+    ) -> Option<(
+        crate::app::types::ContextMenuKind,
+        &crate::app::types::ContextMenu,
+    )> {
+        use crate::app::types::ContextMenuKind;
+        if let Some(m) = &self.file_explorer_context_menu {
+            return Some((ContextMenuKind::FileExplorer, &m.menu));
+        }
+        if let Some(m) = &self.new_tab_menu {
+            return Some((ContextMenuKind::NewTab, &m.menu));
+        }
+        if let Some(m) = &self.tab_context_menu {
+            return Some((ContextMenuKind::Tab, &m.menu));
+        }
+        None
+    }
+
+    /// The shared geometry core of the currently-open native context menu.
+    pub(crate) fn context_menu_core(&self) -> Option<&crate::app::types::ContextMenu> {
+        self.open_context_menu().map(|(_, core)| core)
+    }
+
+    /// Mutable access to the currently-open native context menu's shared
+    /// geometry core (for highlight navigation from hover / keyboard). Uses
+    /// the same precedence order as [`Window::open_context_menu`].
+    pub(crate) fn context_menu_core_mut(&mut self) -> Option<&mut crate::app::types::ContextMenu> {
+        if let Some(m) = self.file_explorer_context_menu.as_mut() {
+            return Some(&mut m.menu);
+        }
+        if let Some(m) = self.new_tab_menu.as_mut() {
+            return Some(&mut m.menu);
+        }
+        if let Some(m) = self.tab_context_menu.as_mut() {
+            return Some(&mut m.menu);
+        }
+        None
+    }
+
+    /// Item labels of the currently-open native context menu, in display
+    /// order — the single label source for both the TUI renderer and the
+    /// web `context_menu_view` projection.
+    pub(crate) fn context_menu_labels(&self) -> Option<Vec<String>> {
+        use crate::app::types::ContextMenuKind;
+        let (kind, _) = self.open_context_menu()?;
+        Some(match kind {
+            ContextMenuKind::FileExplorer => self
+                .file_explorer_context_menu
+                .as_ref()?
+                .items()
+                .iter()
+                .map(|i| i.label())
+                .collect(),
+            ContextMenuKind::NewTab => self
+                .new_tab_menu
+                .as_ref()?
+                .items()
+                .iter()
+                .map(|i| i.label())
+                .collect(),
+            ContextMenuKind::Tab => self
+                .tab_context_menu
+                .as_ref()?
+                .items()
+                .iter()
+                .map(|i| i.label())
+                .collect(),
+        })
+    }
+
+    /// Dismiss whichever native context menu is open (all three fields are
+    /// cleared unconditionally — only one is ever set).
+    pub(crate) fn close_context_menus(&mut self) {
+        self.tab_context_menu = None;
+        self.new_tab_menu = None;
+        self.file_explorer_context_menu = None;
+    }
+
     /// Apply LSP folding ranges to the named buffer's `folding_ranges`
     /// store. Pure window mutation — no editor-global state touched.
     /// Used by the LSP folding-ranges response dispatcher after the

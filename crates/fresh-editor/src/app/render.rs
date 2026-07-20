@@ -2075,24 +2075,19 @@ impl Editor {
     /// Render the tab, file-explorer, and new-tab context menus. TUI-only
     /// cell drawing; the web projects these natively from `context_menu_view`.
     fn render_context_menus(&mut self, frame: &mut Frame) {
-        if !self.suppress_chrome_cells {
-            // Render tab context menu if open
-            let tab_ctx_menu = self.active_window().tab_context_menu.clone();
-            if let Some(menu) = tab_ctx_menu {
-                self.render_tab_context_menu(frame, &menu);
-            }
-
-            let fe_ctx_menu = self.active_window().file_explorer_context_menu.clone();
-            if let Some(menu) = fe_ctx_menu {
-                self.render_file_explorer_context_menu(frame, &menu);
-            }
-
-            // Render the "+" new-tab popup menu if open
-            let new_tab_menu = self.active_window().new_tab_menu.clone();
-            if let Some(menu) = new_tab_menu {
-                self.render_new_tab_menu(frame, &menu);
-            }
+        if self.suppress_chrome_cells {
+            return;
         }
+        // Only one native context menu is ever open at a time; the shared
+        // core + item labels drive a single generic renderer.
+        let Some((_, core)) = self.active_window().open_context_menu() else {
+            return;
+        };
+        let core = core.clone();
+        let Some(items) = self.active_window().context_menu_labels() else {
+            return;
+        };
+        self.render_context_menu(frame, &core, &items);
     }
 
     /// Drain plugin commands enqueued before this frame's layout pass.
@@ -3922,139 +3917,54 @@ impl Editor {
         }
     }
 
-    /// Render the tab context menu
-    fn render_tab_context_menu(&self, frame: &mut Frame, menu: &TabContextMenu) {
-        use ratatui::style::Style;
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-
-        let items = super::types::TabContextMenuItem::all();
-        let menu_width = super::types::TAB_CONTEXT_MENU_WIDTH;
-        let menu_height = items.len() as u16 + 2; // items + borders
-
-        // Adjust position to stay within screen bounds (same math the mouse
-        // hit-testing uses, so clicks always land on what was drawn)
-        let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
-
-        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
-
-        // Clear the area first
-        frame.render_widget(Clear, area);
-
-        // Build the menu lines
-        let mut lines = Vec::new();
-        for (idx, item) in items.iter().enumerate() {
-            let is_highlighted = idx == menu.highlighted;
-
-            let style = if is_highlighted {
-                Style::default()
-                    .fg(self.theme.read().unwrap().menu_highlight_fg)
-                    .bg(self.theme.read().unwrap().menu_highlight_bg)
-            } else {
-                Style::default()
-                    .fg(self.theme.read().unwrap().menu_dropdown_fg)
-                    .bg(self.theme.read().unwrap().menu_dropdown_bg)
-            };
-
-            // Pad the label to fill the menu width
-            let label = item.label();
-            let content_width = (menu_width as usize).saturating_sub(2); // -2 for borders
-            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
-
-            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
-        }
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.read().unwrap().menu_border_fg))
-            .style(Style::default().bg(self.theme.read().unwrap().menu_dropdown_bg));
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, area);
-    }
-
-    /// Render the "+" new-tab popup menu (New Terminal / New File).
-    fn render_new_tab_menu(&self, frame: &mut Frame, menu: &super::types::NewTabMenu) {
-        use ratatui::style::Style;
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-
-        let items = super::types::NewTabMenuItem::all();
-        let menu_width = super::types::NEW_TAB_MENU_WIDTH;
-        let menu_height = menu.height();
-
-        // Shared clamp — the same helper hover and click hit-testing use, so
-        // the popup accepts input exactly where it draws.
-        let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
-
-        let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
-
-        frame.render_widget(Clear, area);
-
-        let mut lines = Vec::new();
-        for (idx, item) in items.iter().enumerate() {
-            let is_highlighted = idx == menu.highlighted;
-
-            let style = if is_highlighted {
-                Style::default()
-                    .fg(self.theme.read().unwrap().menu_highlight_fg)
-                    .bg(self.theme.read().unwrap().menu_highlight_bg)
-            } else {
-                Style::default()
-                    .fg(self.theme.read().unwrap().menu_dropdown_fg)
-                    .bg(self.theme.read().unwrap().menu_dropdown_bg)
-            };
-
-            let label = item.label();
-            let content_width = (menu_width as usize).saturating_sub(2);
-            let padded_label = format!(" {:<width$}", label, width = content_width - 1);
-
-            lines.push(Line::from(vec![Span::styled(padded_label, style)]));
-        }
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.read().unwrap().menu_border_fg))
-            .style(Style::default().bg(self.theme.read().unwrap().menu_dropdown_bg));
-
-        let paragraph = Paragraph::new(lines).block(block);
-        frame.render_widget(paragraph, area);
-    }
-
-    /// Render the file explorer context menu
-    fn render_file_explorer_context_menu(
+    /// Render a native context menu (tab / "+" new-tab / file-explorer) from
+    /// its shared geometry core and pre-resolved item labels.
+    ///
+    /// All three menus draw an identical bordered list — a `Clear`ed box, one
+    /// padded row per item, the highlighted row in the highlight colours — so
+    /// this is the single renderer for every one of them. The `ContextMenu`
+    /// core supplies the fixed width and the edge-clamped position, keeping
+    /// the drawn box aligned with the hover/click hit-test that reads the same
+    /// core.
+    fn render_context_menu(
         &self,
         frame: &mut Frame,
-        menu: &super::types::FileExplorerContextMenu,
+        core: &super::types::ContextMenu,
+        items: &[String],
     ) {
         use ratatui::style::Style;
         use ratatui::text::{Line, Span};
         use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-        let items = menu.items();
-        let menu_width = super::types::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
-        let menu_height = menu.height();
-        let (menu_x, menu_y) = menu.clamped_position(frame.area().width, frame.area().height);
+        let menu_width = core.width;
+        let menu_height = core.height();
+        let (menu_x, menu_y) = core.clamped_position(frame.area().width, frame.area().height);
 
         let area = ratatui::layout::Rect::new(menu_x, menu_y, menu_width, menu_height);
 
+        // Clear the area first so the menu box paints over the content beneath.
         frame.render_widget(Clear, area);
 
-        let mut lines = Vec::new();
-        for (idx, item) in items.iter().enumerate() {
-            let is_highlighted = idx == menu.highlighted;
+        let (highlight_fg, highlight_bg, dropdown_fg, dropdown_bg, border_fg) = {
+            let theme = self.theme.read().unwrap();
+            (
+                theme.menu_highlight_fg,
+                theme.menu_highlight_bg,
+                theme.menu_dropdown_fg,
+                theme.menu_dropdown_bg,
+                theme.menu_border_fg,
+            )
+        };
 
-            let style = if is_highlighted {
-                Style::default()
-                    .fg(self.theme.read().unwrap().menu_highlight_fg)
-                    .bg(self.theme.read().unwrap().menu_highlight_bg)
+        let mut lines = Vec::new();
+        for (idx, label) in items.iter().enumerate() {
+            let style = if idx == core.highlighted {
+                Style::default().fg(highlight_fg).bg(highlight_bg)
             } else {
-                Style::default()
-                    .fg(self.theme.read().unwrap().menu_dropdown_fg)
-                    .bg(self.theme.read().unwrap().menu_dropdown_bg)
+                Style::default().fg(dropdown_fg).bg(dropdown_bg)
             };
 
-            let label = item.label();
+            // Pad the label to fill the menu width (minus the two border cells).
             let content_width = (menu_width as usize).saturating_sub(2);
             let padded_label = format!(" {:<width$}", label, width = content_width - 1);
 
@@ -4063,8 +3973,8 @@ impl Editor {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.read().unwrap().menu_border_fg))
-            .style(Style::default().bg(self.theme.read().unwrap().menu_dropdown_bg));
+            .border_style(Style::default().fg(border_fg))
+            .style(Style::default().bg(dropdown_bg));
 
         let paragraph = Paragraph::new(lines).block(block);
         frame.render_widget(paragraph, area);
