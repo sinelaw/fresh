@@ -6633,8 +6633,12 @@ function localBodyFields(): WidgetSpec[] {
 function advancedSection(): WidgetSpec[] {
   if (!form) return [];
   const expanded = form.advancedExpanded;
+  // Disclosure triangles (▶ collapsed / ▼ expanded), deliberately NOT the
+  // focus caret `▸`: reusing that glyph would make the fold header read as a
+  // second focused control (both to a user scanning for the caret and to the
+  // e2e focus-model assertions that require exactly one `▸` on screen).
   const header = button(
-    `${expanded ? "▾" : "▸"} ${editor.t("form.advanced")}`,
+    `${expanded ? "▼" : "▶"} ${editor.t("form.advanced")}`,
     { key: "advanced_toggle" },
   );
   if (!expanded) return [header];

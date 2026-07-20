@@ -966,7 +966,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
                 saw_inactive_option = true;
             }
         }
-        if line.contains("Create & Visit") {
+        if line.contains("Create Workspace") {
             saw_create = true;
         }
     }
@@ -985,7 +985,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
         agent_stops, 1,
         "the 'Agent:' group is a single Tab stop per cycle (got {agent_stops})",
     );
-    assert!(saw_create, "Tab must reach the [ Create & Visit ] button");
+    assert!(saw_create, "Tab must reach the [ Create Workspace ] button");
 }
 
 /// ←/→ changes the option *within* the "Run in:" selector (and swaps
@@ -1124,36 +1124,77 @@ fn focus_agent_preset_stop(harness: &mut EditorTestHarness) {
     }
 }
 
-/// The launcher prioritises the four coding-CLI presets — a bare
-/// `terminal`, `claude code cli`, `codex cli`, and `opencode` — ahead of
-/// the long-standing `aider` and the `custom…` escape hatch. All four
-/// appear in the "Agent:" preset row, and claude/codex/opencode keep that
-/// priority order.
+/// Tab to the collapsed "Advanced…" fold header and activate it, so the
+/// folded controls (worktree, branch fields, and the "Teach Fresh CLI"
+/// toggle) render. The header glyph flips `▶` → `▼` when expanded.
+fn expand_advanced(harness: &mut EditorTestHarness) {
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("Advanced") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the 'Advanced…' fold. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▼ Advanced"))
+        .unwrap();
+}
+
+/// The launcher prioritises the coding-CLI presets — a bare `terminal`,
+/// then `claude`, `codex`, `opencode` — ahead of the long-standing `aider`
+/// and the `custom…` escape hatch. The agent selector is a single dropdown
+/// (`Agent: [<selected> ▼]`); ←/→ cycles it through the presets in that
+/// priority order. We prove the ordering by adjacency — from `claude`, one
+/// `→` lands on `codex`, the next on `opencode` — which is independent of
+/// whichever preset the dropdown happens to open on.
 #[test]
 fn preset_row_lists_prioritised_agents_in_order() {
     let (_temp, workspace) = set_up_workspace();
-    let harness = open_form_on(&workspace);
-    let screen = harness.screen_to_string();
+    let mut harness = open_form_on(&workspace);
 
-    for label in ["terminal", "claude code cli", "codex cli", "opencode"] {
+    focus_agent_preset_stop(&mut harness);
+
+    // Step ←/→ until `claude` is the selected (focused) preset.
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("claude") {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
         assert!(
-            screen.contains(label),
-            "preset row must list `{label}`. Screen:\n{screen}",
+            guard < 8,
+            "cycling the agent dropdown never reached `claude`. Screen:\n{}",
+            harness.screen_to_string(),
         );
     }
 
-    let idx = |needle: &str| {
-        screen
-            .find(needle)
-            .unwrap_or_else(|| panic!("`{needle}` must appear. Screen:\n{screen}"))
-    };
+    // From claude, → advances to codex, then to opencode — the priority order.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
     assert!(
-        idx("claude code cli") < idx("codex cli"),
-        "claude must precede codex in the preset row. Screen:\n{screen}",
+        focused_line(&harness.screen_to_string()).contains("codex"),
+        "`→` from claude must select codex next. Screen:\n{}",
+        harness.screen_to_string(),
     );
+
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
     assert!(
-        idx("codex cli") < idx("opencode"),
-        "codex must precede opencode in the preset row. Screen:\n{screen}",
+        focused_line(&harness.screen_to_string()).contains("opencode"),
+        "`→` from codex must select opencode next. Screen:\n{}",
+        harness.screen_to_string(),
     );
 }
 
@@ -1207,11 +1248,11 @@ fn opencode_shows_start_prompt_without_auto_mode() {
 
     focus_agent_preset_stop(&mut harness);
 
-    // Step ←/→ until opencode is the active (focused) preset. The whole
-    // preset row is one line (so it always *contains* "opencode"); the
-    // load-bearing signal is the `▸` marker sitting on the opencode button.
+    // Step ←/→ until opencode is the selected value in the focused Agent
+    // dropdown (`▸ Agent: [opencode ▼]`). The dropdown shows only the
+    // selected preset, so the focused line naming opencode is the signal.
     let mut guard = 0;
-    while !focused_line(&harness.screen_to_string()).contains("▸ [ opencode") {
+    while !focused_line(&harness.screen_to_string()).contains("opencode") {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
             .unwrap();
@@ -1235,31 +1276,42 @@ fn opencode_shows_start_prompt_without_auto_mode() {
     );
 }
 
-/// The "Teach agent the Fresh CLI" toggle is an agent-only control: it's
-/// hidden for the bare `terminal` preset and revealed once a supporting agent
-/// (claude) is selected. Stepping ←/→ off `terminal` onto the first agent
-/// surfaces it.
+/// The "Teach agent the Fresh CLI" toggle lives under the "Advanced…" fold
+/// (enabled by default, but folded away so it doesn't clutter the common
+/// case). It's an agent-only control: even with Advanced expanded it stays
+/// hidden for the bare `terminal` preset (nothing to teach), and appears once
+/// a supporting agent (claude) is selected.
 #[test]
 fn teach_fresh_cli_toggle_shown_for_agent_hidden_for_terminal() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = open_form_on(&workspace);
 
-    // The bare-terminal default (the active preset) carries no Fresh CLI toggle.
-    let screen = harness.screen_to_string();
+    // Collapsed Advanced: the toggle is folded away regardless of agent.
     assert!(
-        !screen.contains("Teach agent the Fresh CLI"),
-        "the terminal preset must not show the Teach Fresh CLI toggle. Screen:\n{screen}",
+        !harness
+            .screen_to_string()
+            .contains("Teach agent the Fresh CLI"),
+        "the Teach Fresh CLI toggle must be hidden while Advanced is collapsed. Screen:\n{}",
+        harness.screen_to_string(),
     );
 
-    focus_agent_preset_stop(&mut harness);
+    // Expand Advanced. With the bare-terminal default still active, the toggle
+    // stays hidden — a terminal has no system prompt to inject into.
+    expand_advanced(&mut harness);
+    assert!(
+        !harness
+            .screen_to_string()
+            .contains("Teach agent the Fresh CLI"),
+        "the terminal preset must not show the Teach Fresh CLI toggle even under \
+         an expanded Advanced fold. Screen:\n{}",
+        harness.screen_to_string(),
+    );
 
-    // ←/→ steps off `terminal` onto the first agent (claude, which supports the
-    // system-prompt injection), revealing the toggle.
+    // Select the first agent (claude) via the dropdown; the toggle now renders
+    // under the (still-expanded) Advanced fold.
+    focus_agent_preset_stop(&mut harness);
     let mut guard = 0;
-    while !harness
-        .screen_to_string()
-        .contains("Teach agent the Fresh CLI")
-    {
+    while !focused_line(&harness.screen_to_string()).contains("claude") {
         harness
             .send_key(KeyCode::Right, KeyModifiers::NONE)
             .unwrap();
@@ -1267,13 +1319,16 @@ fn teach_fresh_cli_toggle_shown_for_agent_hidden_for_terminal() {
         guard += 1;
         assert!(
             guard < 8,
-            "stepping the preset selector never surfaced the Teach Fresh CLI toggle. Screen:\n{}",
+            "cycling the agent dropdown never reached `claude`. Screen:\n{}",
             harness.screen_to_string(),
         );
     }
     assert!(
-        focused_line(&harness.screen_to_string()).contains("▸ [ claude code cli"),
-        "the revealed toggle must belong to the active claude preset. Screen:\n{}",
+        harness
+            .screen_to_string()
+            .contains("Teach agent the Fresh CLI"),
+        "selecting a supporting agent must reveal the Teach Fresh CLI toggle under \
+         the expanded Advanced fold. Screen:\n{}",
         harness.screen_to_string(),
     );
 }

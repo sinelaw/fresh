@@ -1644,13 +1644,13 @@ fn dock_new_session_in_uncommitted_repo_surfaces_real_git_error() {
     // field count. Tab also closes any open path-completion popup along the
     // way. Enter then submits (create + visit).
     let mut guard = 0;
-    while !h.screen_to_string().contains("▸ [ Create & Visit ]") {
+    while !h.screen_to_string().contains("▸ [ Create Workspace ]") {
         h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
         guard += 1;
         assert!(
             guard < 30,
-            "Tab never focused the Create & Visit button.\n{}",
+            "Tab never focused the Create Workspace button.\n{}",
             h.screen_to_string(),
         );
     }
@@ -1982,16 +1982,17 @@ fn create_and_visit_dives_into_the_new_workspace() {
     // Accept the path completion with Tab so the popup closes and the
     // buttons are no longer obscured by it.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Create & Visit"))
+    h.wait_until(|h| h.screen_to_string().contains("Create Workspace"))
         .unwrap();
 
-    // Submit by clicking "Create & Visit" — the focus-following action.
+    // Submit by clicking "Create Workspace" — the focus-following action (its
+    // background-only counterpart is "Create in Background").
     let screen = h.screen_to_string();
     let (col, btn_row) = screen
         .lines()
         .enumerate()
-        .find_map(|(r, l)| l.find("Create & Visit").map(|c| (c as u16, r as u16)))
-        .expect("Create & Visit button should be visible");
+        .find_map(|(r, l)| l.find("Create Workspace").map(|c| (c as u16, r as u16)))
+        .expect("Create Workspace button should be visible");
     h.mouse_click(col, btn_row).unwrap();
 
     // Once the create resolves, focus follows into the new workspace — the
@@ -2001,7 +2002,7 @@ fn create_and_visit_dives_into_the_new_workspace() {
     assert_ne!(
         h.editor().active_window().root,
         launch_root,
-        "Create & Visit must dive into the new workspace once it is ready"
+        "Create Workspace must dive into the new workspace once it is ready"
     );
 }
 

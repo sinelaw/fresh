@@ -382,6 +382,14 @@ fn new_session_form_hints_existing_worktree() {
     // debounced probe classifies it as a linked worktree and renders
     // the attach hint.
     harness.type_text(wt.to_str().unwrap()).unwrap();
+
+    // Typing an existing directory opens the path-completion popup, whose
+    // candidate rows overlay the lines directly under Project Path — where the
+    // attach hint now sits. Close the transient popup (Esc; the form stays
+    // open) so the persistent hint below the field is visible, matching what
+    // the user sees once they stop typing.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+
     harness
         .wait_until(|h| h.screen_to_string().contains("existing worktree"))
         .unwrap_or_else(|_| {
