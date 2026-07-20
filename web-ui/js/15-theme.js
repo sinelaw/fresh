@@ -22,43 +22,76 @@
 //     window chrome and the wallpaper/bezel opt-out off that class. Cosmos needs
 //     no rules of its own: it IS the base look, so its class only marks the
 //     switcher's active row and gates the hardware bezel in layoutShell().
-const WEB_THEMES = ["cosmos", "macos", "compact"];
-const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS", compact: "Compact" };
+const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact"];
+const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact" };
 const WEB_THEME_DESC = {
   cosmos: "Wallpaper, glass & hardware bezel",
-  macos: "Native macOS — light, vibrant",
+  macos: "Native macOS — light & vibrant",
+  "macos-dark": "Native macOS — dark & vibrant",
   compact: "Dense, chrome-light IDE",
 };
+// The macOS variants share one structural stylesheet (title bar, traffic
+// lights, system font, control shapes); only their colour tokens differ.
+const MACOS_THEMES = ["macos", "macos-dark"];
 // The inline custom properties applyTheme() (js/20-cells.js) owns. applyWebTheme
 // must NOT clear these when a theme leaves them unset — applyTheme just re-wrote
 // them from the live TUI theme, and that is exactly what Cosmos wants.
 const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--bg2", "--bg3",
   "--menuhi", "--border", "--status-bg", "--status-fg", "--on-accent", "--on-sel", "--shell"];
 // Density multiplier per theme (layered under user zoom in measureMetrics).
-const WEB_THEME_SCALE = { cosmos: 1, macos: 1, compact: 0.92 };
+const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92 };
 
 // Per-theme chrome palettes. Cosmos = {} (identity — inherit the TUI theme).
-// macOS is a fixed light "System" palette; Compact a flat, quiet dark. Any key
-// here is applied inline (winning over applyTheme + the :root defaults); any key
-// a theme omits that is NOT a THEME_KEYS member is reset to its stylesheet
-// default when that theme is active, so nothing leaks between themes.
+// The macOS variants are fixed "System" palettes (light / dark) built from the
+// real macOS system colours; Compact a flat, quiet dark. Any key here is
+// applied inline (winning over applyTheme + the :root defaults); any key a
+// theme omits that is NOT a THEME_KEYS member is reset to its stylesheet
+// default when that theme is active, so nothing leaks between themes. The
+// --mac-* keys are consumed only by css/92-theme-macos.css.
 const WEB_THEME_VARS = {
   cosmos: {},
+  // macOS Light — systemGray6 window, labelColor text, controlAccent blue,
+  // selectedContentBackground for list selection.
   macos: {
-    "--fg": "#1d1d1f", "--muted": "#8e8e93",
-    "--bg2": "#ffffff", "--bg3": "#f5f5f7",
-    "--menuhi": "#0a63e6", "--border": "#d9d9de",
-    "--status-bg": "#eaeaed", "--status-fg": "#6e6e73",
+    "--fg": "#1d1d1f", "--muted": "#86868b",
+    "--bg2": "#ffffff", "--bg3": "#f0f0f3",
+    "--menuhi": "#0a66ff", "--border": "#d6d6db",
+    "--status-bg": "#ececef", "--status-fg": "#6e6e73",
     "--shell": "#ececef",
-    "--accent": "#0a63e6", "--ui-accent": "#0a63e6",
+    "--accent": "#0a66ff", "--ui-accent": "#0a66ff",
     "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#ffffff",
     "--ok": "#34c759",
     "--surface": "#f6f6f8", "--surface-2": "#ececef",
-    "--hairline": "rgba(0,0,0,.10)", "--hairline-strong": "rgba(0,0,0,.17)",
-    "--hover": "rgba(0,0,0,.055)",
-    "--sel": "#0a63e6", "--sel-ring": "none",
-    "--shadow": "0 14px 44px rgba(0,0,0,.20), 0 3px 10px rgba(0,0,0,.12)",
-    "--r-sm": "5px", "--r-md": "8px", "--r-lg": "11px",
+    "--hairline": "rgba(0,0,0,.09)", "--hairline-strong": "rgba(0,0,0,.14)",
+    "--hover": "rgba(0,0,0,.05)",
+    "--sel": "#0a66ff", "--sel-ring": "none",
+    "--shadow": "0 12px 40px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.12)",
+    "--r-sm": "6px", "--r-md": "8px", "--r-lg": "10px",
+    "--mac-titlebar": "linear-gradient(180deg,#f6f6f8,#e9e9ec)",
+    "--mac-title-fg": "#4b4b51", "--mac-panel": "rgba(246,246,248,.78)",
+    "--mac-btn": "linear-gradient(180deg,#ffffff,#f4f4f6)", "--mac-btn-fg": "#1d1d1f",
+    "--mac-sidebar": "#eeeef1",
+  },
+  // macOS Dark — windowBackground ~#28282a, dark controlAccent #0a84ff.
+  "macos-dark": {
+    "--fg": "#e4e4e7", "--muted": "#8d8d93",
+    "--bg2": "#2c2c2e", "--bg3": "#232325",
+    "--menuhi": "#0a84ff", "--border": "#3a3a3d",
+    "--status-bg": "#232325", "--status-fg": "#98989d",
+    "--shell": "#28282a",
+    "--accent": "#0a84ff", "--ui-accent": "#0a84ff",
+    "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#ffffff",
+    "--ok": "#30d158",
+    "--surface": "#2c2c2e", "--surface-2": "#242426",
+    "--hairline": "rgba(255,255,255,.08)", "--hairline-strong": "rgba(255,255,255,.15)",
+    "--hover": "rgba(255,255,255,.06)",
+    "--sel": "#0a84ff", "--sel-ring": "none",
+    "--shadow": "0 16px 48px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.45)",
+    "--r-sm": "6px", "--r-md": "8px", "--r-lg": "10px",
+    "--mac-titlebar": "linear-gradient(180deg,#303032,#28282a)",
+    "--mac-title-fg": "#c7c7cc", "--mac-panel": "rgba(42,42,45,.72)",
+    "--mac-btn": "linear-gradient(180deg,#3a3a3d,#333336)", "--mac-btn-fg": "#e4e4e7",
+    "--mac-sidebar": "#1f1f22",
   },
   compact: {
     "--fg": "#c9d1d9", "--muted": "#7d8590",
@@ -95,6 +128,8 @@ try { const t = localStorage.getItem("fresh.webtheme"); if (WEB_THEMES.includes(
 function applyWebTheme() {
   const b = document.body;
   for (const n of WEB_THEMES) b.classList.toggle("theme-" + n, n === webTheme);
+  // Family marker so the two macOS variants share one structural stylesheet.
+  b.classList.toggle("macfam", MACOS_THEMES.includes(webTheme));
   const r = document.documentElement.style;
   const vars = WEB_THEME_VARS[webTheme] || {};
   for (const k of WEB_THEME_ALL_KEYS) {
@@ -133,7 +168,7 @@ function syncMacTitle() {
   const el = document.getElementById("mactitle");
   if (!el) return;
   const name = el.querySelector(".mt-name");
-  if (!name || webTheme !== "macos") return;
+  if (!name || !MACOS_THEMES.includes(webTheme)) return;
   let label = "Fresh";
   try {
     const tabs = (scene && scene.regions && scene.regions.panes[0] && scene.regions.panes[0].tabs) || [];

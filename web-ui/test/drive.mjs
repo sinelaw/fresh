@@ -815,7 +815,7 @@ console.log('\n[web-UI theme system: switch chrome look without touching the buf
 // it re-skins the native chrome and never reaches the editor. Default is Cosmos
 // (the hardware-bezel shell); macOS and Compact are the added looks.
 check('theme API is exposed (setWebTheme / webTheme / webThemes)', await page.evaluate(() =>
-  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 3));
+  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 4));
 check('default theme is Cosmos with the hardware bezel on', await page.evaluate(() =>
   window.fresh.webTheme === 'cosmos' && document.body.classList.contains('theme-cosmos') && document.getElementById('device').classList.contains('on')));
 // The buffer stays the TUI monospace stack regardless of the chrome font.
@@ -830,6 +830,18 @@ check('macOS: body theme class set, bezel off, title bar shown', await page.eval
 check('macOS: chrome font is proportional but the BUFFER stays monospace',
   await page.evaluate(() => /apple-system|sans-serif/i.test(getComputedStyle(document.body).fontFamily)) &&
   (await svgFamily()) === cosmosBufFont && /mono/i.test(cosmosBufFont));
+// → macOS Dark: same structural chrome (title bar + traffic lights, macfam
+// class), but a dark System palette (dark toolbar surface).
+await page.evaluate(() => window.fresh.setWebTheme('macos-dark'));
+await page.waitForTimeout(300);
+check('macOS Dark: shares the macOS title bar but swaps to a dark palette', await page.evaluate(() => {
+  const dark = document.body.classList.contains('theme-macos-dark') && document.body.classList.contains('macfam') &&
+    getComputedStyle(document.getElementById('mactitle')).display !== 'none';
+  // toolbar surface (--shell) is dark, not the light macOS value
+  const shell = getComputedStyle(document.documentElement).getPropertyValue('--shell').trim();
+  const m = /rgb\((\d+)/.exec(shell) || (shell[0] === '#' ? [null, parseInt(shell.slice(1, 3), 16)] : null);
+  return dark && m && Number(m[1]) < 80;
+}));
 // → Compact: dense, no bezel, a smaller measured grid (webThemeScale < 1).
 const cwCosmos = (await page.evaluate(() => window.fresh.metrics)).cw;
 await page.evaluate(() => window.fresh.setWebTheme('compact'));
@@ -842,7 +854,7 @@ check('theme choice persists in localStorage', await page.evaluate(() => localSt
 // The floating switcher: clicking the pill opens a 3-row menu; a row switches.
 await page.locator('#themebtn').click();
 await page.waitForTimeout(150);
-check('theme switcher menu opens with the three themes', (await page.locator('#thememenu.open .ts-row').count()) === 3);
+check('theme switcher menu opens with all four themes', (await page.locator('#thememenu.open .ts-row').count()) === 4);
 await page.locator('#thememenu .ts-row', { hasText: 'Cosmos' }).first().click();
 await page.waitForTimeout(400);
 check('picking Cosmos from the menu restores the bezel shell', await page.evaluate(() =>
