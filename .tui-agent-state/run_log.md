@@ -2,6 +2,20 @@
 
 ---
 
+## Run #59b — 2026-07-20 — CONCURRENT supplementary run (parallel instance also ran Run #59; merged additively)
+
+**Context:** A second agent instance ran in parallel on the same v0.4.4 build and pushed the canonical Run #59 (5 fixed-issue confirmations + 3 new-feature PASSes). This entry captures the *complementary, non-overlapping* work of the other instance. Both instances independently discovered that the container can reclaim mid-run / a stale local tracking ref can hide 20+ runs of history — **STATE-SYNC directive** (now permanent in test_plan): after `git checkout <state-branch>`, always `git fetch origin <state-branch>` and compare `git log -1 origin/<state-branch>` before trusting a "pull → Already up to date". This instance wasted its first half re-deriving Run #33's `lsp_enabled` test from a stale Run #32 snapshot (identical PASS, IMP-020 nit — NO new value, not recorded as coverage per R1) before catching the divergence.
+
+**Build:** user-directed "rebase on latest master and rebuild" → built `fresh 0.4.4` from `origin/master @ f545a75` (past Run #58's v0.4.3) in a `/home/user/fresh-build-master` worktree (exit 0).
+
+**Deliverable 1 — #2197 (pyright timeout) STILL REPRODUCES on v0.4.4; dated comment posted.** Real pyright-langserver 1.1.408, small Python project, auto-Trusted, `LSP (python) ready`/`LSP (on)`, 2 procs. Every request times out after 30s (warnings log: `textDocument/diagnostic` id=1, `hover` id=2, `definition` id=3) → `Alt+K` nothing, `F12` "No definition found", `[⚠ 3]`. `position_encoding=None` still logged; pyright now registers pull diagnostics and even that stalls → Fresh-side request/response stall. First pyright recheck on 0.4.x (Run #55 hit the request family only via rust-analyzer). Comment 5019301875 on #2197. The batch Run #59 did NOT touch #2197 (open, not fixed) — no overlap.
+
+**Deliverable 2 — `next_pane`/`prev_pane` (#2562, new v0.4.4) black-box characterized; runtime cycling harness-blocked.** Builtin actions "Next pane"/"Previous pane"; **NO default keybinding, NO palette command** → keybinding-only (**IMP-032**, R3, not a bug; mirrors #2122). Editor bindings now **947** (was 866). `F6/F7/F8→next_pane/prev_pane/next_split` custom bindings load fine; F-keys deliver (F10/F12 fire). Could NOT conclusively observe cycling (flat split+tab list; terminal-mode-on-land): tmux split-focus detection is ambiguous (yellow `226` bg = preview tab not focus; hardware cursor doesn't track focus; vertical Split shares the buffer defeating a type-marker oracle unless splits hold distinct files; `Alt[`/`M-[` = CSI introducer, uninjectable and corrupts following keystrokes). `[~]` in test_plan → advances Run #60 candidate (d): discoverability half done, runtime needs IMP-009 `--test-mode`.
+
+**Filed/commented:** commented #2197; no new issue (next_pane discoverability → IMP-032 per R3). Cleaned up tmux + temp files + pyright procs + config. Merged onto the concurrent Run #59 (`e5a33275f`) without clobbering it.
+
+---
+
 ## Run #53 — 2026-07-07 — 0.4.2 quick wins triple-header: JSONC config (#2497), macros save/promote (#2487), per-buffer view toggles — ALL COMPREHENSIVE PASS, no bug
 
 **Preflight:** Synced state branch (up to date). Master UNCHANGED at **v0.4.3** (`4e945b494`) since Run #50 → per R1 skipped fixed-bug rechecks (18 open agent issues; no new fix landed since Run #50; no maintainer action observed on watched #2594/#2591/#2592/#2587/#2583/#2582/#2577). Lessons continuity OK (run_log refs Lesson 44–50; learning_db uses prose section headings since ~Run #35 — consistent, not clobbered). Auth live (`issue_read` #2497/#2487 OK). Built `fresh` 0.4.3 from `/tmp/fresh-master` worktree @ `4e945b494` (release, exit 0). Per R2 advanced the top-3 Run #53 backlog targets (a)/(b)/(c) — three previously-untested 0.4.2 headline features.
