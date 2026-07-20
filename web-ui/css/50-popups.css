@@ -16,6 +16,9 @@
   .popup .popup-row.sel .pdetail{color:#dfe8ff}
   .popup .popup-row .picon{width:14px;text-align:center;flex:0 0 auto}
   .popup .popup-line{padding:0 10px;white-space:pre;color:var(--fg)}
-  svg.cells{display:block;width:100%;height:100%;font-family:var(--font-family);letter-spacing:0}
+  /* The cell grid is ALWAYS the monospace stack, even when a web theme gives the
+     chrome a proportional --font-family (macOS). Glyphs are x-pinned per column,
+     so the family only sets glyph shape, never advance. */
+  svg.cells{display:block;width:100%;height:100%;font-family:var(--mono-family);letter-spacing:0}
   #err{position:fixed;left:0;bottom:0;right:0;background:#5a1d1d;color:#fff;padding:6px 12px;display:none;z-index:99}
 

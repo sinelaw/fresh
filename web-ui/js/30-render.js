@@ -291,12 +291,14 @@ function render(){
   if(scene.windowId!==undefined) curWindowId=scene.windowId;
   if(switched){ fxSuppressUntil=performance.now()+800; fxCut(); }
   applyTheme(scene.theme);
+  applyWebTheme();   // layer the frontend web-theme chrome tokens over the TUI theme
   ensureContainers();
   for(const n of REGION_ORDER) renderRegion(n);
   renderedRegions=REGION_ORDER.slice();
   // Native touch shell on narrow/portrait viewports (desktop is untouched).
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(scene.regions);
+  syncMacTitle();
   fxLayoutSlides();
   layoutShell();
 }

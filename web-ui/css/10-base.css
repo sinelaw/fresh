@@ -12,6 +12,12 @@
      it as zoom changes so chrome scales with the buffer. Everything downstream
      sizes itself in em, never px. */
   :root{
+    /* --mono-family is the buffer's monospace stack (the cell grid measures and
+       renders with it, always); --font-family is the CHROME font, defaulting to
+       the same stack. A web theme may repoint --font-family at a proportional
+       system stack (macOS) without disturbing the buffer, because svg.cells is
+       pinned to --mono-family below and JS measures against the monospace stack. */
+    --mono-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
     --font-family:ui-monospace,SFMono-Regular,JetBrains Mono,Menlo,Consolas,monospace;
     --font-size-base:15px;
     --font-size:var(--font-size-base);

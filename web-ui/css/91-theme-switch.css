@@ -1,0 +1,41 @@
+  /* Web-UI theme switcher (the frontend-owned floating pill + drop menu).
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones. This is the shared base;
+     the per-theme files (92/94) that follow re-skin it to match.) */
+  /* All token-driven, so the pill re-colours itself with whichever web theme is
+     active (dark glass on Cosmos, light on macOS, flat on Compact). Fixed in the
+     top-right corner, above every surface, hidden on the mobile shell (which
+     offers the switch in its ⋮ sheet instead). */
+  #themeswitch{position:fixed;top:11px;right:15px;z-index:120;
+    font:var(--font-size)/1 var(--font-family);letter-spacing:normal}
+  /* Hidden on the mobile touch shell (which offers the switch in its ⋮ sheet).
+     body.mobile is (re)toggled every frame, so this tracks orientation changes;
+     the JS-set .mobile-hidden is a belt-and-braces fallback. */
+  body.mobile #themeswitch,#themeswitch.mobile-hidden{display:none}
+  #themebtn{display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    padding:6px 12px 6px 10px;border-radius:999px;font-size:.86em;line-height:1;
+    color:var(--fg);background:var(--surface);
+    border:1px solid var(--hairline-strong);box-shadow:var(--shadow)}
+  #themebtn:hover{border-color:color-mix(in srgb,var(--fg) 32%,transparent)}
+  #themebtn .ts-name{font-weight:600;letter-spacing:.01em}
+  /* A little tri-tone swatch that reads as a "theme" chip. */
+  #themebtn .ts-dot{width:11px;height:11px;flex:0 0 auto;border-radius:50%;
+    background:conic-gradient(from 210deg,var(--ui-accent),var(--accent) 40%,var(--ok) 72%,var(--ui-accent));
+    box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fg) 20%,transparent)}
+
+  #thememenu{position:absolute;top:calc(100% + 8px);right:0;min-width:248px;display:none;
+    background:var(--bg2);border:1px solid var(--hairline-strong);border-radius:var(--r-md);
+    box-shadow:var(--shadow);padding:6px;overflow:hidden}
+  #thememenu.open{display:block}
+  .ts-head{padding:5px 10px 7px;color:var(--muted);font-size:.76em;font-weight:600;
+    text-transform:uppercase;letter-spacing:.08em}
+  .ts-row{display:flex;align-items:flex-start;gap:8px;padding:7px 10px;border-radius:var(--r-sm);
+    cursor:pointer;color:var(--fg)}
+  .ts-row:hover{background:var(--hover)}
+  .ts-row.on{background:color-mix(in srgb,var(--ui-accent) 12%,transparent)}
+  .ts-check{width:14px;flex:0 0 auto;text-align:center;color:var(--ui-accent);font-weight:700;
+    line-height:1.35}
+  .ts-rows{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .ts-label{font-weight:600;line-height:1.25}
+  .ts-desc{color:var(--muted);font-size:.82em;line-height:1.2}

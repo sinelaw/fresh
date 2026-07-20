@@ -810,6 +810,45 @@ await page.waitForTimeout(600);
 await page.request.post(URL + '/action', { data: { action: 'close_tab' } });
 await page.waitForTimeout(600);
 
+console.log('\n[web-UI theme system: switch chrome look without touching the buffer/editor]');
+// The web theme is a FRONTEND view preference (like zoom / palette placement):
+// it re-skins the native chrome and never reaches the editor. Default is Cosmos
+// (the hardware-bezel shell); macOS and Compact are the added looks.
+check('theme API is exposed (setWebTheme / webTheme / webThemes)', await page.evaluate(() =>
+  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 3));
+check('default theme is Cosmos with the hardware bezel on', await page.evaluate(() =>
+  window.fresh.webTheme === 'cosmos' && document.body.classList.contains('theme-cosmos') && document.getElementById('device').classList.contains('on')));
+// The buffer stays the TUI monospace stack regardless of the chrome font.
+const svgFamily = () => page.evaluate(() => { const t = document.querySelector('.pane-content svg.cells'); return t ? getComputedStyle(t).fontFamily : ''; });
+const cosmosBufFont = await svgFamily();
+// → macOS: light title bar with traffic lights, system chrome font, no bezel.
+await page.evaluate(() => window.fresh.setWebTheme('macos'));
+await page.waitForTimeout(300);
+check('macOS: body theme class set, bezel off, title bar shown', await page.evaluate(() =>
+  document.body.classList.contains('theme-macos') && !document.getElementById('device').classList.contains('on') &&
+  getComputedStyle(document.getElementById('mactitle')).display !== 'none'));
+check('macOS: chrome font is proportional but the BUFFER stays monospace',
+  await page.evaluate(() => /apple-system|sans-serif/i.test(getComputedStyle(document.body).fontFamily)) &&
+  (await svgFamily()) === cosmosBufFont && /mono/i.test(cosmosBufFont));
+// → Compact: dense, no bezel, a smaller measured grid (webThemeScale < 1).
+const cwCosmos = (await page.evaluate(() => window.fresh.metrics)).cw;
+await page.evaluate(() => window.fresh.setWebTheme('compact'));
+await page.waitForTimeout(400);
+check('Compact: theme class set, bezel off, denser grid (cell width shrank)', await page.evaluate(() =>
+  document.body.classList.contains('theme-compact') && !document.getElementById('device').classList.contains('on')) &&
+  (await page.evaluate(() => window.fresh.metrics)).cw < cwCosmos);
+// The switch is persisted as a pure view preference in localStorage.
+check('theme choice persists in localStorage', await page.evaluate(() => localStorage.getItem('fresh.webtheme') === 'compact'));
+// The floating switcher: clicking the pill opens a 3-row menu; a row switches.
+await page.locator('#themebtn').click();
+await page.waitForTimeout(150);
+check('theme switcher menu opens with the three themes', (await page.locator('#thememenu.open .ts-row').count()) === 3);
+await page.locator('#thememenu .ts-row', { hasText: 'Cosmos' }).first().click();
+await page.waitForTimeout(400);
+check('picking Cosmos from the menu restores the bezel shell', await page.evaluate(() =>
+  window.fresh.webTheme === 'cosmos' && document.getElementById('device').classList.contains('on')));
+await page.screenshot({ path: `${SHOTS}/34-theme-cosmos.png` });
+
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');

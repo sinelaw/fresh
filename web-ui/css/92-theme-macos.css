@@ -1,0 +1,118 @@
+  /* Web theme: macOS — a light, native-feeling desktop app.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Gated on body.theme-macos (set by js/15-theme.js). The chrome COLOURS are
+     supplied as inline tokens by applyWebTheme() — a fixed light "System"
+     palette independent of the editor's TUI theme; this file owns the STRUCTURE:
+     the wallpaper/bezel opt-out, the full-bleed window, the system font, the
+     traffic-light title bar, and the macOS control shapes. The buffer keeps the
+     TUI theme's colours (it reads as the app's dark content canvas).
+     ====================================================================== */
+
+  /* The app IS the window: no Cosmos wallpaper margin, no hardware bezel (the
+     bezel is also hidden in layoutShell()). #app is inset below a 30px title
+     bar; APPY tracks that inset, so cell hit-testing stays exact. */
+  body.theme-macos{background:#e6e6ea}
+  body.theme-macos:not(.mobile) #app{left:0;top:30px;right:0;bottom:0}
+  body.theme-macos:not(.mobile) .menubar{clip-path:none}
+
+  /* ---- macOS title bar: traffic lights + centered document title ---- */
+  #mactitle{display:none}
+  body.theme-macos:not(.mobile) #mactitle{display:flex;position:fixed;left:0;right:0;top:0;
+    height:30px;z-index:60;align-items:center;pointer-events:none;
+    font:12.5px/1 var(--font-family);color:#5a5a60;
+    background:linear-gradient(180deg,#f4f4f6,#e6e6ea);border-bottom:1px solid rgba(0,0,0,.13)}
+  body.theme-macos #mactitle .mt-lights{position:absolute;left:19px;top:50%;margin-top:-6px;
+    width:12px;height:12px;border-radius:50%;background:#ff5f57;
+    box-shadow:20px 0 0 #febc2e,40px 0 0 #28c840,inset 0 0 0 .5px rgba(0,0,0,.16)}
+  body.theme-macos #mactitle .mt-name{margin:0 auto;font-weight:600;color:#4a4a50;letter-spacing:.01em;
+    max-width:60%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* System font for all chrome; the buffer stays monospace (svg.cells is pinned
+     to --mono-family). letter-spacing:normal drops the cell-tracking the grid
+     needs but proportional text does not. */
+  body.theme-macos{
+    --font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;
+    letter-spacing:normal}
+
+  /* ---- menu bar: a light unified toolbar beneath the title bar ---- */
+  body.theme-macos .menubar{
+    background:linear-gradient(180deg,#ececef,#e4e4e8);
+    border-bottom:1px solid rgba(0,0,0,.12)}
+  body.theme-macos .menu{color:#33333a;font-weight:500}
+  body.theme-macos .menu:hover{background:rgba(0,0,0,.06)}
+  body.theme-macos .menu.open{background:var(--ui-accent);color:#fff}
+
+  /* ---- tabs: light, quiet, with a blue active underline ---- */
+  body.theme-macos .tabbar{background:#e7e7ec;border-bottom:1px solid rgba(0,0,0,.12)}
+  body.theme-macos .tab{color:#6b6b70}
+  body.theme-macos .tab.active{background:#f6f6f8;color:#1d1d1f}
+  body.theme-macos .tab:not(.active):hover{background:rgba(0,0,0,.05)}
+
+  /* ---- sidebar (file explorer): a translucent light source-list ---- */
+  body.theme-macos .fileexplorer{background:#eeeef1;border-right:1px solid rgba(0,0,0,.12)}
+  body.theme-macos .fileexplorer .fx-title{color:#8e8e93;font-weight:600}
+  /* Finder-style rounded blue selection with white text. */
+  body.theme-macos .fileexplorer .fx-row.sel{
+    background:var(--ui-accent);color:#fff;box-shadow:none}
+  body.theme-macos .fileexplorer .fx-row.sel .fx-icon,
+  body.theme-macos .fileexplorer .fx-row.sel .fx-chev{color:#fff}
+
+  /* ---- status bar: quiet light strip ---- */
+  body.theme-macos .statusbar{background:#e7e7ec;color:#6e6e73;
+    border-top:1px solid rgba(0,0,0,.12)}
+  body.theme-macos .statusbar .txt{color:#33333a}
+
+  /* ---- floating chrome: white vibrancy cards, soft macOS shadow, blue
+     selection. Dropdowns/menus/popovers/palette all share the family. ---- */
+  body.theme-macos .dropdown,body.theme-macos .popup,body.theme-macos .ctxmenu,
+  body.theme-macos .palette,body.theme-macos .settings-modal,body.theme-macos .kbedit,
+  body.theme-macos .trustdialog,body.theme-macos .auxmodal,
+  body.theme-macos .widget-surface.w-floatingModal{
+    background:rgba(255,255,255,.86);
+    -webkit-backdrop-filter:blur(30px) saturate(1.6);backdrop-filter:blur(30px) saturate(1.6);
+    border:1px solid rgba(0,0,0,.10);color:#1d1d1f}
+  body.theme-macos .palette.centered{background:rgba(255,255,255,.80)}
+  /* Selected rows across every list = flat macOS blue + white text (the base
+     skin's translucent-teal pill is replaced wholesale). */
+  body.theme-macos .mitem.hi,body.theme-macos .palette .prow.sel,
+  body.theme-macos .popup .popup-row.sel,body.theme-macos .ctxmenu .ctxitem.sel,
+  body.theme-macos .settings-modal .set-cat.sel,body.theme-macos .settings-modal .set-item.sel,
+  body.theme-macos .settings-modal .set-dual-row.sel,body.theme-macos .kbedit .kb-row.sel,
+  body.theme-macos .w-list-row.sel,body.theme-macos .auxmodal .am-line.sel,
+  body.theme-macos .settings-modal .set-sresult.sel,body.theme-macos .menu.open{
+    background:var(--ui-accent);color:#fff;box-shadow:none}
+  body.theme-macos .mitem.hi .accel,body.theme-macos .mitem.hi .arrow,
+  body.theme-macos .palette .prow.sel .pdesc{color:rgba(255,255,255,.82)}
+
+  /* Buttons: a subtle light macOS push button; primary is a filled blue. */
+  body.theme-macos .settings-modal .btn,body.theme-macos .trustdialog .td-btn,
+  body.theme-macos .kbedit .kb-btn{background:#fdfdfe;border:1px solid rgba(0,0,0,.16);color:#1d1d1f}
+  body.theme-macos .settings-modal .btn.primary,body.theme-macos .trustdialog .td-btn.primary,
+  body.theme-macos .w-button.primary{
+    background:linear-gradient(180deg,#3a86f0,#0a63e6);
+    border:1px solid rgba(0,0,0,.10);color:#fff;
+    box-shadow:0 1px 2px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.28)}
+
+  /* Editor pane reads as a recessed content well under the light chrome. */
+  body.theme-macos .pane-content,body.theme-macos .pane-gutter{
+    box-shadow:inset 0 1px 0 rgba(0,0,0,.22)}
+
+  /* ---- orchestrator dock: a flush light source-list (Cosmos glass is off) ---- */
+  body.theme-macos:not(.mobile) .widget-surface.w-dock{
+    background:#edeef1;border-right:1px solid rgba(0,0,0,.12);color:#1d1d1f;padding:12px 10px 8px}
+  body.theme-macos .w-dock .w-tree-row.sel,body.theme-macos .w-dock .w-list-row.sel,
+  body.theme-macos .w-dock .w-tree-card.sel,body.theme-macos .w-dock .w-list-card.sel{
+    background:var(--ui-accent);border-color:transparent;color:#fff;box-shadow:none}
+  body.theme-macos .w-dock .w-tree-card.sel .w-tree-xrow,
+  body.theme-macos .w-dock .w-list-card.sel .w-tree-xrow{color:rgba(255,255,255,.82)}
+  body.theme-macos .w-dock .w-button.primary{
+    background:linear-gradient(180deg,#3a86f0,#0a63e6);border:1px solid rgba(0,0,0,.10);color:#fff}
+  /* Search field + secondary buttons: light, not the dark buffer surface (--bg). */
+  body.theme-macos .w-dock .w-text{background:#fff;border:1px solid rgba(0,0,0,.15);color:#1d1d1f}
+  body.theme-macos .w-dock .w-button{background:#fdfdfe;border:1px solid rgba(0,0,0,.16);color:#1d1d1f}
+  body.theme-macos .w-dock .w-toggle{color:#33333a}
+  body.theme-macos .w-dock .w-divider{border-color:rgba(0,0,0,.10)}
+  body.theme-macos .w-dock .w-hintbar,body.theme-macos .w-dock .fx-title{color:#8e8e93}

@@ -39,10 +39,16 @@ const BASE_FONT = parseFloat(rootCss.getPropertyValue("--font-size-base")) || 13
 const CELL_AIR = 1.0477;          // cell width / glyph advance (see above)
 let zoom = 1;
 try{ const z=parseFloat(localStorage.getItem("fresh.zoom")); if(z>=0.5&&z<=3) zoom=z; }catch(_){}
+// Web-theme density multiplier (see js/15-theme.js). A pure view scale layered
+// UNDER the user's own zoom: the Compact theme renders the whole grid a notch
+// smaller for more code on screen, Cosmos/macOS keep it at 1.0. Declared here
+// (not in 15-theme) so measureMetrics can read it at first boot without a TDZ;
+// applyWebTheme() rewrites it and re-measures whenever the theme changes.
+let webThemeScale = 1;
 let FONT = BASE_FONT, CW = 8.2, CH = 18;   // refined by measureMetrics()
 const measureCtx = document.createElement("canvas").getContext("2d");
 function measureMetrics(){
-  FONT = Math.round(BASE_FONT*zoom*100)/100;
+  FONT = Math.round(BASE_FONT*zoom*webThemeScale*100)/100;
   measureCtx.font = FONT+"px "+FONT_STACK;
   const adv = measureCtx.measureText("M0".repeat(60)).width/120;  // per-cell advance
   CW = adv>0 ? Math.round(adv*CELL_AIR*100)/100 : 8.2*zoom;       // canvas-less fallback
@@ -88,7 +94,14 @@ function layoutShell(){
   syncAppOrigin();
   const dev=document.getElementById("device");
   if(!dev) return;
-  if(isMobile()||!scene){ dev.classList.remove("on"); return; }
+  // The COSMOS hardware bezel is a cosmos-theme decoration; the macOS / compact
+  // web themes run full-bleed, so the device is hidden and the menubar clip
+  // (which carves out the dock↔bezel gap) is neutralised for them.
+  if(isMobile()||!scene||webTheme!=="cosmos"){
+    dev.classList.remove("on");
+    document.documentElement.style.setProperty("--clip-left","0px");
+    return;
+  }
   dev.classList.add("on");
   const dw=dockWidthPx();
   // Clip full-grid-width chrome rows (menubar) to the screen — see the CSS.

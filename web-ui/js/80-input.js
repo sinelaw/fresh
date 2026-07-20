@@ -224,7 +224,8 @@ mqMobile.addEventListener("change", resize);
 // live #app page origin (ax/ay) so drivers can map grid→page pixels under the
 // COSMOS shell inset.
 window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
-  setPaletteCentered, setNatselEnabled,
+  setPaletteCentered, setNatselEnabled, setWebTheme, cycleWebTheme,
+  get webTheme(){return webTheme;}, get webThemes(){return WEB_THEMES.slice();},
   get frames(){return frameCount;}, get seq(){return lastSeq;},
   get wsOpen(){return wsIsOpen();}, get lastFrameKeys(){return lastFrameKeys;},
   get renderedRegions(){return renderedRegions;},
@@ -235,6 +236,12 @@ window.fresh = { get scene(){return scene;}, refresh, sendKey, resize, setZoom,
 // #app's box, which the class switches between inset (COSMOS shell) and
 // full-bleed.
 document.body.classList.toggle("mobile", isMobile());
+// Web theme BEFORE the first resize()/layoutShell(): the theme's body class and
+// density scale change #app's geometry (full-bleed vs the bezel-inset grid), so
+// they must be in place before the grid is first fitted.
+applyWebTheme();
+measureMetrics();
+initThemeSwitch();
 syncAppOrigin();
 focusSink();  // desktop: arm the hidden text sink (IME/dead-key path)
 connect();    // WS: hello replaces the scene, then resize() fits the grid

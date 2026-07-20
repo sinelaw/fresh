@@ -96,12 +96,16 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `60-polish.css` | visual polish pass: radii, hairlines, hovers, selection pills |
 | `70-mobile.css` | mobile / portrait touch shell |
 | `80-skin.css` | navy/teal orchestrator skin |
-| `90-cosmos.css` | COSMOS shell: wallpaper, device bezel, glass dock, motion |
+| `90-cosmos.css` | COSMOS shell (the Cosmos web theme): wallpaper, device bezel, glass dock, motion |
+| `91-theme-switch.css` | the web-theme switcher pill + drop menu (token-driven, re-skinned per theme) |
+| `92-theme-macos.css` | macOS web theme: title bar + traffic lights, light vibrancy, system font |
+| `94-theme-compact.css` | Compact web theme: full-bleed, dense spacing, flat surfaces |
 
 | JS | concern |
 |---|---|
-| `10-core.js` | cell↔px metrics, zoom, shell geometry, DOM helpers |
-| `20-cells.js` | icon set, cell-grid SVG renderer, theme → CSS variables |
+| `10-core.js` | cell↔px metrics, zoom, web-theme density scale, shell geometry, DOM helpers |
+| `15-theme.js` | web-theme system: registry, `applyWebTheme`, `setWebTheme`, the switcher |
+| `20-cells.js` | icon set, cell-grid SVG renderer, TUI theme → CSS variables |
 | `30-render.js` | per-region DOM patching, motion (FX), `render()` |
 | `40-menu.js` / `45-tabs.js` / `55-status.js` | native chrome builders |
 | `50-palette.js` | palette / picker / prompts + file-browser band |
@@ -110,6 +114,41 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `70-panels.js` | trust dialog, file explorer, border drag handles |
 | `75-app.js` | mobile shell + transport (WS frames, resize, clipboard) |
 | `80-input.js` | keyboard/mouse/touch input, native selection, boot |
+
+## Web themes (chrome look) vs the TUI colour theme
+
+The editor's **TUI colour theme** owns every *buffer* cell (syntax colours,
+selection, cursor) and is piped into the chrome's CSS variables by
+`applyTheme()` (js/20-cells.js) — it is editor state, shared with the TUI.
+
+Layered on top is a **web theme**: a purely frontend choice of *chrome* look,
+in the same class as zoom / palette placement / Alt-selection — a view
+preference persisted in `localStorage` (`fresh.webtheme`), never sent to the
+editor. Three ship:
+
+- **Cosmos** (default) — the abstract wallpaper, `COSMOS-991` hardware bezel and
+  frosted-glass dock (`90-cosmos.css`). Unchanged from before the theme system.
+- **macOS** — a light, native-feeling desktop app: a title bar with traffic
+  lights + the document name, a system (proportional) chrome font, light
+  vibrancy panels, a blue accent and a Finder-style source-list dock.
+- **Compact** — a dense, chrome-light IDE: no wallpaper/bezel, a ~8% smaller
+  measured grid, tight paddings, hairline rules and flat surfaces.
+
+`js/15-theme.js` is the whole mechanism. `applyWebTheme()` (called from
+`render()` right after `applyTheme()`) does two things: it toggles the
+`theme-<name>` class on `<body>` — which drives all *structural* CSS
+(`92/94-theme-*.css`, plus the Cosmos-gated wallpaper/bezel/dock rules in
+`90-cosmos.css`) — and it layers the theme's *chrome colour tokens* inline over
+`applyTheme()`'s TUI-derived values (`--bg` is never overridden, so the buffer
+stays the TUI theme's). The buffer's `svg.cells` are pinned to `--mono-family`,
+so a theme may repoint the chrome's `--font-family` at a proportional stack
+without disturbing the monospace grid.
+
+Users switch it three ways, all frontend-owned: the floating **theme pill** in
+the top-right corner (a menu of the three), the **Ctrl/Cmd+Alt+T** chord
+(Shift reverses), and the mobile **⋮** sheet's "Theme:" row. The choice is
+exposed on `window.fresh` (`setWebTheme` / `cycleWebTheme` / `webTheme` /
+`webThemes`) for drivers and tests.
 
 ## Architecture (taps the real render pipeline)
 
@@ -189,8 +228,11 @@ while zoomed), touch pan/tap in a `hasTouch` mobile context, and the
 selection model: a drag on a live terminal grid becomes a real editor
 selection in read-only scrollback (Ctrl+C copies it through the editor
 clipboard, Ctrl+Space resumes, a bare click only focuses), and Alt-hold
-native browser selection over the SVG grid.
-**138 assertions** across the chrome surfaces, plus screenshots.
+native browser selection over the SVG grid. It also drives the **web-theme
+switch** (Cosmos ↔ macOS ↔ Compact): the body class, the bezel/title-bar swap,
+the buffer staying monospace under a proportional chrome font, the denser
+Compact grid, `localStorage` persistence, and the switcher menu.
+**148 assertions** across the chrome surfaces, plus screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,

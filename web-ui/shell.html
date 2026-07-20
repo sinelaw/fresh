@@ -50,10 +50,21 @@
   <i class="dv-screw tl"></i><i class="dv-screw tr"></i><i class="dv-screw bl"></i><i class="dv-screw br"></i>
 </div>
 <div id="app"></div>
+<!-- macOS theme title bar (window controls + document title). Shown only under
+     body.theme-macos; #app is inset below it. Decorative — pointer-transparent. -->
+<div id="mactitle" aria-hidden="true"><span class="mt-lights"></span><span class="mt-name"></span></div>
 <div id="mobile"></div>
 <div id="err"></div>
 <div id="reconnect" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Reconnecting…</span></div>
 <div id="natsel" role="status" aria-live="polite"><span class="rc-dot"></span><span class="rc-label">Select text — drag, then Ctrl+C</span></div>
+
+<!-- Frontend-owned web-theme switcher (js/15-theme.js). A floating pill in the
+     top-right corner + a drop menu of the web themes; independent of the
+     server-driven chrome, hidden on the mobile shell. -->
+<div id="themeswitch">
+  <button id="themebtn" type="button" title="Web UI theme (Ctrl+Alt+T)" aria-haspopup="menu"></button>
+  <div id="thememenu" role="menu"></div>
+</div>
 
 <script>
 /*@JS@*/

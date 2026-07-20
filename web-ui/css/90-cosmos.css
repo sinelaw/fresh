@@ -16,7 +16,7 @@
   /* ---- wallpaper: vivid flowing colour fields over deep blue. The device
      covers the middle, so the glows are pushed to the edges where the
      wallpaper actually shows. ---- */
-  body:not(.mobile){background:
+  body.theme-cosmos:not(.mobile){background:
     radial-gradient(80rem 55rem at 90% -8%, rgba(255,200,96,.80), rgba(255,160,64,.25) 45%, transparent 65%),
     radial-gradient(50rem 40rem at 102% 62%, rgba(255,145,60,.50), transparent 60%),
     radial-gradient(70rem 55rem at 48% -22%, rgba(160,95,235,.50), transparent 60%),
@@ -28,7 +28,7 @@
      paints over its left half); with the dock card inset, that leftover strip
      would show in the sidebar↔device gap — clip it to the screen. layoutShell
      keeps --clip-left at the dock's pixel width (0 when no dock). */
-  body:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
+  body.theme-cosmos:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
   /* ---- the device ---- */
   #device{position:fixed;display:none;pointer-events:none;border-radius:28px;
@@ -91,7 +91,7 @@
   #device .dv-screw.br::after{transform:translateY(-50%) rotate(8deg)}
 
   /* ---- the floating glass sidebar (orchestrator dock) ---- */
-  body:not(.mobile) .widget-surface.w-dock{
+  body.theme-cosmos:not(.mobile) .widget-surface.w-dock{
     background:linear-gradient(165deg,rgba(190,211,232,.28),rgba(122,148,180,.14) 45%,rgba(70,92,124,.18));
     -webkit-backdrop-filter:blur(30px) saturate(1.5);
     backdrop-filter:blur(30px) saturate(1.5);
@@ -103,59 +103,59 @@
   /* The dock's raw title row is dropped — the glass card IS the panel's
      identity, the label was dead weight. (:first-child keeps any other raw
      rows a future dock spec might emit.) */
-  body:not(.mobile) .w-dock>.w-col>.w-raw:first-child{display:none}
+  body.theme-cosmos:not(.mobile) .w-dock>.w-col>.w-raw:first-child{display:none}
   /* New Task: a full-width green pill; the search field wraps to its own row. */
-  body:not(.mobile) .w-dock .w-row.wrap .w-button.primary{
+  body.theme-cosmos:not(.mobile) .w-dock .w-row.wrap .w-button.primary{
     flex:1 1 100%;text-align:center;padding:9px 0;font-weight:700;font-size:1.05em;
     background:linear-gradient(180deg,#52ca6e,#2fa04f);border:1px solid rgba(150,255,190,.5);
     border-radius:12px;color:#f2fff6;
     box-shadow:0 8px 22px rgba(46,190,101,.4),inset 0 1px 0 rgba(255,255,255,.45)}
-  body:not(.mobile) .w-dock .w-text{flex:1 1 100%;background:rgba(8,14,24,.35);
+  body.theme-cosmos:not(.mobile) .w-dock .w-text{flex:1 1 100%;background:rgba(8,14,24,.35);
     border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:7px 12px;margin:4px 0}
-  body:not(.mobile) .w-dock .w-text::before{content:"⌕";font-size:1.2em;line-height:1;
+  body.theme-cosmos:not(.mobile) .w-dock .w-text::before{content:"⌕";font-size:1.2em;line-height:1;
     color:rgba(232,240,248,.55)}
-  body:not(.mobile) .w-dock .w-text-input::placeholder{color:rgba(232,240,248,.45)}
-  body:not(.mobile) .w-dock .w-button{border-color:rgba(255,255,255,.18);color:#dfe8f0}
-  body:not(.mobile) .w-dock .w-toggle{color:rgba(223,232,240,.75)}
-  body:not(.mobile) .w-dock .w-divider{border-color:rgba(255,255,255,.12)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-text-input::placeholder{color:rgba(232,240,248,.45)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-button{border-color:rgba(255,255,255,.18);color:#dfe8f0}
+  body.theme-cosmos:not(.mobile) .w-dock .w-toggle{color:rgba(223,232,240,.75)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-divider{border-color:rgba(255,255,255,.12)}
   /* Tree rows / cards: light text on glass; the selection is a bright glass
      pill (the mock's highlighted "infernu" card), not the teal editor pill. */
-  body:not(.mobile) .w-dock .w-tree-row,body:not(.mobile) .w-dock .w-list-row{
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-row,body.theme-cosmos:not(.mobile) .w-dock .w-list-row{
     padding:4px 9px;border-radius:10px;color:#dbe5ee}
-  body:not(.mobile) .w-dock .w-tree-xrow{color:rgba(219,229,238,.55)}
-  body:not(.mobile) .w-dock .w-tree-xrow.sel{background:rgba(255,255,255,.10);color:#fff}
-  body:not(.mobile) .w-dock .w-tree-disc,body:not(.mobile) .w-dock .w-tree-check{color:rgba(223,232,240,.6)}
-  body:not(.mobile) .w-dock .w-tree-row.sel,body:not(.mobile) .w-dock .w-list-row.sel{
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-xrow{color:rgba(219,229,238,.55)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-xrow.sel{background:rgba(255,255,255,.10);color:#fff}
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-disc,body.theme-cosmos:not(.mobile) .w-dock .w-tree-check{color:rgba(223,232,240,.6)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-row.sel,body.theme-cosmos:not(.mobile) .w-dock .w-list-row.sel{
     background:linear-gradient(90deg,rgba(255,255,255,.26),rgba(255,255,255,.10));
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.35);color:#fff}
-  body:not(.mobile) .w-dock .w-tree-card{border-color:rgba(255,255,255,.12);
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-card{border-color:rgba(255,255,255,.12);
     background:rgba(255,255,255,.04);border-radius:12px;padding:2px 3px;margin:2px}
-  body:not(.mobile) .w-dock .w-tree-card.sel{
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-card.sel{
     border-color:rgba(255,255,255,.35);
     background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,.08));
     box-shadow:0 6px 22px rgba(2,6,14,.35),inset 0 1px 0 rgba(255,255,255,.35)}
-  body:not(.mobile) .w-dock .w-tree-card.sel .w-tree-xrow{color:rgba(255,255,255,.75)}
-  body:not(.mobile) .w-dock .w-hintbar{color:rgba(223,232,240,.5)}
-  body:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-tree-card.sel .w-tree-xrow{color:rgba(255,255,255,.75)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-hintbar{color:rgba(223,232,240,.5)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
   /* Dock dropdowns (New Task… / Move to folder…): a frosted menu card in
      place of the flat --bg2 overlay, with plain menu rows instead of the
      editor's filled buttons. The New-Task menu (the overlay right after the
      toolbar row) is pinned under its button — in flow it would land below
      the wrapped search field. */
-  body:not(.mobile) .w-dock>.w-col{position:relative}
-  body:not(.mobile) .w-dock .w-overlay{background:rgba(16,26,40,.92);
+  body.theme-cosmos:not(.mobile) .w-dock>.w-col{position:relative}
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay{background:rgba(16,26,40,.92);
     -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
     border:1px solid rgba(255,255,255,.22);border-radius:14px;
     box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px;margin:0;z-index:6}
-  body:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{position:absolute;left:0;right:0;top:46px}
-  body:not(.mobile) .w-dock .w-overlay .w-section{border:none;padding:2px}
-  body:not(.mobile) .w-dock .w-overlay .w-section-label{color:rgba(232,240,248,.55);
+  body.theme-cosmos:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{position:absolute;left:0;right:0;top:46px}
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-section{border:none;padding:2px}
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-section-label{color:rgba(232,240,248,.55);
     text-transform:uppercase;font-size:.85em;letter-spacing:.07em;margin:2px 8px 6px}
-  body:not(.mobile) .w-dock .w-overlay .w-row{gap:0}
-  body:not(.mobile) .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-row{gap:0}
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
     background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px}
-  body:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.10)}
-  body:not(.mobile) .w-dock .w-overlay .w-button.primary{background:rgba(255,255,255,.16);
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.10)}
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button.primary{background:rgba(255,255,255,.16);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
 
   /* Cell-painted file-browser band (OpenFile / SaveFileAs / SwitchProject):

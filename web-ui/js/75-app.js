@@ -156,6 +156,9 @@ function renderMobileChrome(reg){
     // centered-modal vs bottom-sheet command palette (local view preference)
     const pct=div("m-sheet-item"); pct.innerHTML='<span class="m-sheet-ic">'+(paletteCentered?"☑":"☐")+'</span>Centered palette';
     pct.onclick=e=>{ e.stopPropagation(); mSheetOpen=false; setPaletteCentered(!paletteCentered); }; sh.appendChild(pct);
+    // web-ui theme cycle (local view preference; the desktop pill is hidden on mobile)
+    const thm=div("m-sheet-item"); thm.innerHTML='<span class="m-sheet-ic">◐</span>Theme: '+esc(WEB_THEME_LABELS[webTheme]);
+    thm.onclick=e=>{ e.stopPropagation(); mSheetOpen=false; cycleWebTheme(1); }; sh.appendChild(thm);
     host.appendChild(sh);
   }
 
@@ -274,6 +277,7 @@ function applyFrame(changed){
   // on desktop renderMobileChrome returns immediately).
   document.body.classList.toggle("mobile", isMobile());
   renderMobileChrome(scene.regions);
+  syncMacTitle();
   fxLayoutSlides();
   layoutShell();   // dock width / grid size may have moved the bezel
 }
@@ -359,6 +363,14 @@ document.addEventListener("keydown",e=>{
   if((e.ctrlKey||e.metaKey) && e.altKey && (e.key==="s"||e.key==="S"||e.code==="KeyS")){
     e.preventDefault();
     setNatselEnabled(!natselEnabled);
+    return;
+  }
+  // Web-theme cycle: Ctrl/Cmd+Alt+T is FRONTEND-OWNED (like the three above) —
+  // it steps the web UI theme (Cosmos → macOS → Compact) and never reaches the
+  // editor. Shift reverses the direction.
+  if((e.ctrlKey||e.metaKey) && e.altKey && (e.key==="t"||e.key==="T"||e.code==="KeyT")){
+    e.preventDefault();
+    cycleWebTheme(e.shiftKey?-1:1);
     return;
   }
   // forward single characters (with or without modifiers, so Ctrl+P / Ctrl+S
