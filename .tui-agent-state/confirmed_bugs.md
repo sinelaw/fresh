@@ -532,3 +532,29 @@ Each bug entry:
 - **Reproduction:** vi mode on, cursor col 1 line 2, Ctrl+V, `j`, `>` → nothing, mode stays VISUAL BLOCK (2/2; `<` on an indented line 1/1). Keys sent individually with ≥0.4s gaps, buffer verified between steps, re-polled at 1.2s+ (render-lag guard).
 - **Controls:** `V`+`>` indents 4sp + returns NORMAL (#2438 fix works for visual-line); `x` in VISUAL BLOCK deletes the selected rect + returns NORMAL (block mode + other operators fine).
 - **First Seen:** Run #58, 2026-07-07 (v0.4.3, master @ 6ab255709).
+
+---
+
+## BUG-038: Extract Tab to New Workspace — the extracted co-tenant workspace is not persisted (lost on restart)
+- **ID:** BUG-038
+- **Severity:** Medium-high (silent loss of the co-tenant workspace arrangement the feature exists to create; an unsaved extracted buffer would be data loss).
+- **Status:** Open — GitHub #2735 filed (Run #59).
+- **GitHub Issue:** [#2735](https://github.com/sinelaw/fresh/issues/2735)
+- **Version:** v0.4.4 @ f545a75ad.
+- **Feature:** 0.4.4 co-tenant workspaces — palette "Extract Tab to New Workspace" (builtin) moves the current tab into a NEW workspace over the same project root (a co-tenant window). Backed by the commit "Restore each co-tenant window to its own file on reboot."
+- **Reproduction (2/2 clean):** clear state (`rm -rf ~/.local/share/fresh/workspaces/* orchestrator/*`); `cd proj && fresh --no-restore main.rs lib.rs` (2 tabs); Ctrl+P → Extract Tab to New Workspace (on lib.rs) → 2 co-tenant windows `proj` + `proj (2)` (verify via Orchestrator: Open + **Alt+I** "show empty/1-file workspaces" — both hold 1 file). Quit. → only ONE `workspaces/<root>.ws-<stable_id>-N.json` on disk, containing main.rs (the SOURCE). Relaunch `fresh` → only main.rs window; Alt+I shows no 2nd.
+- **Expected:** both co-tenant windows restore, each with its own tab (Fresh's own "restore each co-tenant window" commit; VS Code restores both windows after moving an editor to a new window + reload).
+- **Actual:** only the source workspace is written on quit; the newly-extracted co-tenant (and its tab) is dropped. Both windows are 1-file, so it is NOT the Alt+I filter (source survives).
+- **Workaround:** none across a restart; reopen + re-extract each launch (underlying files untouched on disk).
+- **First Seen:** Run #59, 2026-07-20.
+
+---
+
+## PENDING CANDIDATES (Run #59) — NOT filed; escalate only with clearer intent/repro
+
+### PC-59a: Ctrl+] does not exit terminal mode (documented alias for Ctrl+Space)
+- docs/features/terminal.md lists `Ctrl+]` under "Switching Between Modes: Exit terminal mode (same as Ctrl+Space)". In plain tmux (220×50, no Kitty/CSI-u), a single Ctrl+] (raw 0x1D via `send-keys -H 1d`) does NOT change the mode — status stays "Terminal mode enabled"; the byte is forwarded to the shell (non-printing). Ctrl+Space toggles correctly.
+- Likely a terminal-encoding limitation (Ctrl+]=0x1D, analogous to Ctrl+H=0x08 = #2109) rather than a Fresh logic bug; Ctrl+Space is the working primary. Low impact. Retest in a KKP terminal before filing. → also logged in potential_improvements.
+
+### PC-59b: Terminal scrollback reloads under `--no-restore`
+- Terminal scrollback persists per-workspace at `~/.local/share/fresh/terminals/<enc-root>/fresh-terminal-N.txt`. Launching `fresh --no-restore` and opening a brand-new terminal reloads the PREVIOUS session's scrollback (deterministic). `--no-restore` is documented only as "Don't restore the previous **workspace**"; scrollback persistence is a separate documented feature (like shell history), so surprising-but-plausibly-intended. Escalate only if a user-facing contradiction is confirmed.
