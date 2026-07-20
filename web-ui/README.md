@@ -169,7 +169,7 @@ browser (assembled web-ui page) ══WS /ws══► fresh::webui bridge ──
   scene.rs projections          hello (full scene)  into a cell     highlighter,
   buffer  = real highlighted    frame (region diffs) buffer, reads   handle_key, …)
   CELLS (SVG)                 input ══► {type:key|mouse|action|…}
-                              ──HTTP──►  GET /state (read-only; curl + readiness poll)
+                              ──HTTP──►  GET /state, POST /action … (curl + harness; origin-gated)
 ```
 
 The bridge (`crates/fresh-editor/src/webui/mod.rs`) runs the **actual**
@@ -192,16 +192,15 @@ and the frontend rebuilds only the DOM region containers whose paths changed
 (per-region patching, docs §3.4).
 One client at a time (a second `/ws` gets `409`; foreign `Origin` gets `403`);
 on disconnect the page retries with backoff and resyncs from the next hello.
-All input (keys, mouse, paste, actions, widget/settings/kbedit hits, resize)
-rides the WebSocket. The HTTP surface is **read-only**: `GET /` serves the
-page, `GET /state` returns the full scene (used by the frontend's manual
-`refresh()` resync and `run.sh`'s readiness poll, and curl-inspectable), and
-`GET /favicon.ico` → `204`. The mutating `POST` routes that predated the
-WebSocket (`/key` `/mouse` `/action` `/widget` `/settings` `/kbedit` `/paste`
-`/resize` `/step` `/reset`) were removed — nothing used them (the parity test
-drives the editor in-process, not over HTTP), and because the same-origin
-check only guarded the `/ws` upgrade, they had let any web page POST input
-into the editor cross-origin.
+The frontend's input rides the WebSocket, but every HTTP route still answers as
+before (full scene): `GET /` (page), `GET /state` (used by the frontend's manual
+`refresh()` resync, `run.sh`'s readiness poll, and curl), and the `POST` input
+routes (`/key` `/mouse` `/action` `/widget` `/settings` `/kbedit` `/paste`
+`/resize`) plus the parity-harness `/step` `/reset` — the Playwright suite and
+curl drive the editor through these. State-mutating `POST`s are gated by the
+**same** same-origin/Host check as the `/ws` upgrade, so a cross-origin browser
+page can't drive the editor over HTTP; non-browser callers send no `Origin` and
+pass. An HTTP-side mutation is pushed to the connected browser as a diff.
 
 ## Run it
 
