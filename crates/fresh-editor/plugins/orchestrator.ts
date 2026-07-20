@@ -17,8 +17,10 @@
 //     terminal_exit code: RUNNING / AWAITING / READY / ERRORED.
 
 import {
+  activate,
   button,
   col,
+  dropdown,
   flexSpacer,
   FloatingWidgetPanel,
   hintBar,
@@ -169,8 +171,13 @@ type CreateSpec =
       // agent can drive the editor from the shell. Only honoured for a command
       // that resolves to an agent with a `systemPrompt` strategy.
       teachFreshCli: boolean;
-      // Fork point for `git worktree add`; "" ⇒ the detected default branch.
+      // "Checkout branch": an existing branch/ref to check out (worktree) or
+      // switch to (in-place). "" ⇒ the detected default branch (worktree only).
       branch: string;
+      // "New branch name": when set, create the worktree on a freshly-cut
+      // branch off the checkout branch (or default). "" ⇒ no new branch.
+      // Ignored in the non-worktree (in-place checkout) path.
+      newBranch: string;
       // Create a fresh worktree (only honoured when the path is a git tree).
       createWorktree: boolean;
       // Row label + project shown on the pending dock row.
@@ -394,6 +401,13 @@ interface NewSessionForm {
   // checkbox is hidden otherwise.
   teachFreshCli: boolean;
   branch: { value: string; cursor: number };
+  // "New branch name" field (Advanced): when set, the new worktree is
+  // created on a freshly-cut branch (`git worktree add -b <newBranch>`).
+  // Empty ⇒ use the "Checkout branch" value (or the default) instead.
+  newBranch: { value: string; cursor: number };
+  // Whether the collapsible "Advanced…" section (worktree toggle +
+  // branch fields) is expanded. Starts collapsed on every open.
+  advancedExpanded: boolean;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
   // session directly inside `projectPath` (false). Enabled
@@ -5642,16 +5656,21 @@ function rebuildFormFocusCycle(): void {
   if (form.backend === "local") {
     const worktreeEnabled = form.projectPathIsGit !== false;
     const branchInert = !(worktreeEnabled && form.createWorktree);
-    cycle.push("project_path");
-    if (worktreeEnabled) cycle.push("worktree");
-    cycle.push("name", "cmd");
-    // Agent-specific controls sit between the command and the branch, matching
-    // `agentOptionsFields`' render order (Auto mode, then Start prompt).
+    cycle.push("project_path", "name", "cmd");
+    // Agent-specific controls sit between the command and the Advanced fold,
+    // matching `agentOptionsFields`' render order (Auto mode, then Start prompt).
     const agent = activeAgentEntry();
     if (agent?.auto) cycle.push("auto_mode");
     if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
     if (agent?.prompt) cycle.push("start_prompt");
-    if (!branchInert) cycle.push("branch");
+    // The "Advanced…" header is always a Tab stop; its worktree + branch
+    // fields join the cycle only while the section is expanded.
+    cycle.push("advanced_toggle");
+    if (form.advancedExpanded) {
+      if (worktreeEnabled) cycle.push("worktree");
+      if (!branchInert) cycle.push("branch");
+      cycle.push("new_branch");
+    }
   } else if (form.backend === "devcontainer") {
     cycle.push("project_path", "name", "cmd");
   } else if (form.backend === "ssh") {
@@ -5663,15 +5682,13 @@ function rebuildFormFocusCycle(): void {
     }
     cycle.push("name", "cmd");
   }
-  // Make the agent presets keyboard-reachable: the *active* preset is a
-  // single Tab stop just before the Agent Command field (←/→ chooses
-  // within the group), mirroring how the "Run in:" tab precedes its
-  // fields.
+  // The agent selector is a single dropdown Tab stop just before the Agent
+  // Command field (←/→ or ↑/↓ cycles the options), present for every backend.
   const cmdIdx = cycle.indexOf("cmd");
   if (cmdIdx >= 0) {
-    cycle.splice(cmdIdx, 0, activeAgentPresetKey());
+    cycle.splice(cmdIdx, 0, "agent_dropdown");
   }
-  cycle.push("cancel", "create-visit", "create-bg");
+  cycle.push("create-visit", "create-bg", "cancel");
   formFocusCycle = cycle;
   if (formFocusIndex >= cycle.length) formFocusIndex = 0;
 }
@@ -5896,7 +5913,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     // Claude Code CLI: `--session-id <uuid>` pins the session at launch;
     // `--resume <uuid>` rejoins it; `--continue` resumes the latest in cwd.
     id: "claude",
-    label: "claude code cli",
+    label: "claude",
     match: /^claude$/,
     spec: {
       provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
@@ -5918,7 +5935,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     // `--dangerously-bypass-approvals-and-sandbox` full bypass; the initial
     // prompt is a trailing positional (`codex "…"`).
     id: "codex",
-    label: "codex cli",
+    label: "codex",
     match: /^codex$/,
     spec: { continue: { resumeArgs: ["resume", "--last"] } },
     auto: ["--full-auto"],
@@ -6076,25 +6093,6 @@ function applyAgentPreset(p: AgentPreset): void {
   // it (re-rendering the spec alone won't change an already-mounted input).
   formPanel?.setValue("cmd", form.cmd.value, form.cmd.cursor);
   renderForm();
-}
-
-// ←/→ over the agent dropdown (mirrors the "Run in:" tabs' switchTabIfFocused):
-// when focus sits on a preset button, arrows move the selection and apply it.
-// Returns true if it consumed the key.
-function switchAgentIfFocused(delta: 1 | -1): boolean {
-  if (!form) return false;
-  const presets = agentPresets();
-  const idx = presets.findIndex((p) => p.key === formFocusedKey());
-  if (idx < 0) return false;
-  const next = (idx + delta + presets.length) % presets.length;
-  const target = presets[next];
-  applyAgentPreset(target);
-  // Keep focus on the row (unless the choice moved it to the text field).
-  if (!target.custom) {
-    formPanel?.setFocusKey(target.key);
-    snapFormFocusTo(target.key);
-  }
-  return true;
 }
 
 // A v4-style unique id for an agent session handle. Not security-sensitive
@@ -6528,33 +6526,18 @@ function backendTabsRow(): WidgetSpec {
 // that out — so a user discovers both that `claude` is an option and that it
 // gets special session handling. The resume tag only shows for the local
 // backend, the one where resume is wired today.
+// Agent selector: a single dropdown of the preset labels (terminal, the
+// known agents, custom…). ←/→ or ↑/↓ over it cycles; the change event maps
+// the chosen index back to a preset and applies it (fills the command field).
 function agentPresetRow(): WidgetSpec {
-  const showsResume = !form || form.backend === "local";
+  const presets = agentPresets();
   const activeKey = activeAgentPresetKey();
-  const parts: WidgetSpec[] = [
-    {
-      kind: "raw",
-      entries: [styledRow([{ text: editor.t("form.agent"), style: { fg: "ui.menu_disabled_fg" } }])],
-    },
-  ];
-  for (const p of agentPresets()) {
-    parts.push(spacer(1));
-    const label = p.resumes && showsResume ? editor.t("form.agent_resume_tag", { label: p.label }) : p.label;
-    // Only the active preset is a Tab stop; ←/→ chooses within the
-    // group (matches the "Run in:" tabs).
-    parts.push(button(label, {
-      key: p.key,
-      intent: p.key === activeKey ? "primary" : undefined,
-      focusable: p.key === activeKey,
-    }));
-  }
-  parts.push(flexSpacer());
-  const hint = showsResume ? editor.t("form.agent_hint_resume") : editor.t("form.agent_hint");
-  parts.push({
-    kind: "raw",
-    entries: [styledRow([{ text: hint, style: { fg: "ui.menu_disabled_fg", italic: true } }])],
+  const selectedIndex = Math.max(0, presets.findIndex((p) => p.key === activeKey));
+  return dropdown(presets.map((p) => p.label), {
+    selectedIndex,
+    label: editor.t("form.agent"),
+    key: "agent_dropdown",
   });
-  return row(...parts);
 }
 
 // Agent-specific controls shown below the Agent Command field: a "Start
@@ -6600,11 +6583,10 @@ function agentOptionsFields(): WidgetSpec[] {
   return fields;
 }
 
-// Local backend: Project Path + worktree toggle + linked-worktree hint.
+// Local backend: Project Path + linked-worktree hint. The worktree toggle
+// and branch fields moved into the collapsible `advancedSection()`.
 function localBodyFields(): WidgetSpec[] {
   if (!form) return [];
-  const worktreeEnabled = form.projectPathIsGit !== false;
-  const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
   const fields: WidgetSpec[] = [
     labeledSection({
       label: editor.t("form.project_path"),
@@ -6622,25 +6604,6 @@ function localBodyFields(): WidgetSpec[] {
         key: "project_path",
       }),
     }),
-    worktreeEnabled
-      ? toggle(effectiveCreateWorktree, editor.t("form.create_worktree"), {
-          key: "worktree",
-        })
-      : {
-          kind: "raw",
-          entries: [
-            styledRow([
-              {
-                text: editor.t("form.create_worktree_disabled"),
-                style: { fg: "editor.whitespace_indicator_fg" },
-              },
-              {
-                text: editor.t("form.disabled_non_git"),
-                style: { fg: "editor.whitespace_indicator_fg", italic: true },
-              },
-            ]),
-          ],
-        },
   ];
   if (form.projectPathIsLinkedWorktree === true) {
     fields.push({
@@ -6660,15 +6623,54 @@ function localBodyFields(): WidgetSpec[] {
   return fields;
 }
 
-// Local-only Branch field — the fork point for `git worktree add`.
-function localBranchSection(): WidgetSpec {
-  const worktreeEnabled = !!form && form.projectPathIsGit !== false;
-  const effectiveCreateWorktree = !!form && worktreeEnabled && form.createWorktree;
+// Collapsible "Advanced…" section (local backend). Collapsed → just the
+// clickable header. Expanded → header + the worktree toggle (moved out of the
+// always-visible body) + the "Checkout branch" and "New branch name" fields.
+// Keeping these behind a fold keeps the common case (accept the defaults)
+// compact while still exposing full git control.
+function advancedSection(): WidgetSpec[] {
+  if (!form) return [];
+  const expanded = form.advancedExpanded;
+  const header = button(
+    `${expanded ? "▾" : "▸"} ${editor.t("form.advanced")}`,
+    { key: "advanced_toggle" },
+  );
+  if (!expanded) return [header];
+
+  const worktreeEnabled = form.projectPathIsGit !== false;
+  const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
+  const fields: WidgetSpec[] = [header];
+
+  // Worktree toggle: a checkbox on a git path, else a disabled hint.
+  fields.push(
+    worktreeEnabled
+      ? toggle(effectiveCreateWorktree, editor.t("form.create_worktree"), {
+          key: "worktree",
+        })
+      : {
+          kind: "raw",
+          entries: [
+            styledRow([
+              {
+                text: editor.t("form.create_worktree_disabled"),
+                style: { fg: "editor.whitespace_indicator_fg" },
+              },
+              {
+                text: editor.t("form.disabled_non_git"),
+                style: { fg: "editor.whitespace_indicator_fg", italic: true },
+              },
+            ]),
+          ],
+        },
+  );
+
+  // "Checkout branch" — the fork point for `git worktree add` (or the target
+  // of an in-place checkout). Inert (no key ⇒ dropped from the Tab cycle)
+  // unless a worktree is actually being created, with the same placeholder
+  // logic the standalone branch section used.
   const branchInert = !effectiveCreateWorktree;
   let branchPlaceholder: string;
-  if (!form) {
-    branchPlaceholder = "";
-  } else if (branchInert) {
+  if (branchInert) {
     branchPlaceholder = !worktreeEnabled
       ? editor.t("form.branch_no_git")
       : form.projectPathIsLinkedWorktree === true
@@ -6681,16 +6683,35 @@ function localBranchSection(): WidgetSpec {
   } else {
     branchPlaceholder = form.defaultBranch;
   }
-  return labeledSection({
-    label: editor.t("form.branch"),
-    child: text({
-      value: form ? form.branch.value : "",
-      cursorByte: form ? form.branch.cursor : 0,
-      placeholder: branchPlaceholder,
-      fullWidth: true,
-      key: branchInert ? undefined : "branch",
+  fields.push(
+    labeledSection({
+      label: editor.t("form.checkout_branch"),
+      child: text({
+        value: form.branch.value,
+        cursorByte: form.branch.cursor,
+        placeholder: branchPlaceholder,
+        fullWidth: true,
+        key: branchInert ? undefined : "branch",
+      }),
     }),
-  });
+  );
+
+  // "New branch name" — when set, the worktree is created on a freshly-cut
+  // branch. Ignored in the in-place (non-worktree) checkout path.
+  fields.push(
+    labeledSection({
+      label: editor.t("form.new_branch"),
+      child: text({
+        value: form.newBranch.value,
+        cursorByte: form.newBranch.cursor,
+        placeholder: "",
+        fullWidth: true,
+        key: "new_branch",
+      }),
+    }),
+  );
+
+  return fields;
 }
 
 // Devcontainer backend: a Project Path that contains a `.devcontainer/`.
@@ -6925,6 +6946,25 @@ function buildConnectingView(): WidgetSpec {
   );
 }
 
+// Whether the form has enough input to create: the per-backend minimum
+// required field. Gates the Create buttons (rendered disabled otherwise) and
+// guards the submit paths so an empty form can't be submitted via Enter.
+function formIsSubmittable(): boolean {
+  if (!form) return false;
+  switch (form.backend) {
+    case "local":
+    case "devcontainer":
+      return !!(form.projectPath.value.trim() || form.defaultProjectPath);
+    case "ssh":
+      return form.sshHost.value.trim().length > 0;
+    case "kubernetes":
+      return (
+        form.k8sTarget.value.trim().length > 0 ||
+        form.k8sPod.value.trim().length > 0
+      );
+  }
+}
+
 function buildFormSpec(): WidgetSpec {
   if (!form) return col();
   // Disabled/connecting state: read-only summary + Cancel-only (item 3).
@@ -6977,9 +7017,10 @@ function buildFormSpec(): WidgetSpec {
     // resolved agent. Empty for a bare terminal / unknown command.
     ...agentOptionsFields(),
   ];
-  // Branch is local-only (the fork point for `git worktree add`).
+  // Worktree + branch controls are local-only and live behind the
+  // collapsible "Advanced…" fold.
   if (form.backend === "local") {
-    children.push(localBranchSection());
+    children.push(...advancedSection());
   }
   // Remote backends connect asynchronously and the dialog stays open until the
   // session is real (see `runRemoteAttach`). The in-flight "connecting" state
@@ -7008,11 +7049,20 @@ function buildFormSpec(): WidgetSpec {
     // right edge. The wrap path ignores the leading flex spacer (and
     // trims a blank that would lead a line), so the pair left-packs.
     wrappingRow(
+      button(editor.t("form.btn_create"), {
+        intent: "primary",
+        key: "create-visit",
+        disabled: !formIsSubmittable(),
+        focusable: true,
+      }),
+      spacer(2),
+      button(editor.t("form.btn_create_bg"), {
+        key: "create-bg",
+        disabled: !formIsSubmittable(),
+        focusable: true,
+      }),
+      spacer(2),
       button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
-      spacer(2),
-      button(editor.t("form.btn_create_visit"), { intent: "primary", key: "create-visit" }),
-      spacer(2),
-      button(editor.t("form.btn_create_bg"), { key: "create-bg" }),
     ),
     spacer(0),
     // === Footer: keybinding helper, centered. ====================
@@ -7084,6 +7134,8 @@ function openForm(options?: { fromPicker?: boolean }): void {
     autoMode: false,
     teachFreshCli: false,
     branch: { value: "", cursor: 0 },
+    newBranch: { value: "", cursor: 0 },
+    advancedExpanded: false,
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
     // to `false` automatically when the resolved Project Path is
@@ -7625,6 +7677,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
         startPrompt: agentEntryForCmd(cmd)?.prompt ? f.startPrompt.value.trim() : "",
         teachFreshCli: !!agentEntryForCmd(cmd)?.systemPrompt && f.teachFreshCli,
         branch: f.branch.value.trim(),
+        newBranch: f.newBranch.value.trim(),
         createWorktree: f.createWorktree,
         displayLabel,
         displayProject: projectPath,
@@ -7909,7 +7962,8 @@ async function runLocalCreate(id: number): Promise<void> {
   if (!s0 || !s0.pending || s0.pending.spec.backend !== "local") return;
   const spec = s0.pending.spec;
   const cmd = spec.cmd;
-  const branchInput = spec.branch;
+  const checkoutBranch = spec.branch;
+  const newBranch = spec.newBranch;
   const projectPath = spec.projectPath;
 
   // Re-probe is-git so we trust the latest filesystem state, not a UI flag.
@@ -7954,32 +8008,120 @@ async function runLocalCreate(id: number): Promise<void> {
       return;
     }
     const defaultBranch = await detectDefaultBranch(repoRoot);
-    const branchName = branchInput || sessionName;
-    // Try `-b <new>` first; if the branch already exists, fall back to
-    // checking out the existing branch into a new worktree.
-    let addRes = await spawnCollect(
-      "git",
-      ["-C", repoRoot, "worktree", "add", root, "-b", branchName, defaultBranch],
-      repoRoot,
-    );
-    if (addRes.exit_code !== 0) {
-      const fallback = await spawnCollect(
+    // Fork point for the new worktree: the explicit checkout branch, or the
+    // detected default when the user left it blank.
+    const base = checkoutBranch || defaultBranch;
+    if (newBranch) {
+      // "New branch name" set: cut a fresh branch off `base`. A pre-existing
+      // branch of that name is a hard error — NO silent fallback to checking
+      // it out (that would put the user on someone else's history).
+      const addRes = await spawnCollect(
         "git",
-        ["-C", repoRoot, "worktree", "add", root, branchName],
+        ["-C", repoRoot, "worktree", "add", root, "-b", newBranch, base],
         repoRoot,
       );
-      if (fallback.exit_code !== 0) {
+      if (addRes.exit_code !== 0) {
+        if (/already exists/i.test(addRes.stderr || "")) {
+          failPending(id, editor.t("err.branch_exists", { branch: newBranch }));
+        } else {
+          failPending(
+            id,
+            lastNonEmptyLine(addRes.stderr) || editor.t("err.worktree_add_failed"),
+          );
+        }
+        return;
+      }
+    } else if (checkoutBranch) {
+      // "Checkout branch" set (no new branch): check that existing branch/ref
+      // out into the new worktree.
+      const addRes = await spawnCollect(
+        "git",
+        ["-C", repoRoot, "worktree", "add", root, checkoutBranch],
+        repoRoot,
+      );
+      if (addRes.exit_code !== 0) {
         failPending(
           id,
-          lastNonEmptyLine(fallback.stderr) ||
-            lastNonEmptyLine(addRes.stderr) ||
-            editor.t("err.worktree_add_failed"),
+          lastNonEmptyLine(addRes.stderr) || editor.t("err.worktree_add_failed"),
         );
         return;
       }
-      addRes = fallback;
+    } else {
+      // Neither field set — today's behaviour: cut `<sessionName>` off the
+      // default branch, falling back to checking out an existing branch of
+      // that name (only for this default case).
+      let addRes = await spawnCollect(
+        "git",
+        ["-C", repoRoot, "worktree", "add", root, "-b", sessionName, defaultBranch],
+        repoRoot,
+      );
+      if (addRes.exit_code !== 0) {
+        const fallback = await spawnCollect(
+          "git",
+          ["-C", repoRoot, "worktree", "add", root, sessionName],
+          repoRoot,
+        );
+        if (fallback.exit_code !== 0) {
+          failPending(
+            id,
+            lastNonEmptyLine(fallback.stderr) ||
+              lastNonEmptyLine(addRes.stderr) ||
+              editor.t("err.worktree_add_failed"),
+          );
+          return;
+        }
+        addRes = fallback;
+      }
     }
     addedWorktree = true;
+  }
+
+  // Non-worktree (in-place) checkout: switch the project's own working tree
+  // to `checkoutBranch`. Refuse unless the tree is clean AND fully pushed —
+  // a checkout here mutates the user's real repo, so we never risk stranding
+  // uncommitted or unpushed work (and never use `-f`). `newBranch` is ignored
+  // in this path.
+  if (!createWorktree && checkoutBranch) {
+    setPendingMessage(id, editor.t("dock.pending_adding_worktree"));
+    const statusRes = await spawnCollect(
+      "git",
+      ["-C", projectPath, "status", "--porcelain"],
+      projectPath,
+    );
+    if ((statusRes.stdout || "").trim().length > 0) {
+      failPending(id, editor.t("err.checkout_unclean"));
+      return;
+    }
+    const upstreamRes = await spawnCollect(
+      "git",
+      ["-C", projectPath, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+      projectPath,
+    );
+    if (upstreamRes.exit_code !== 0) {
+      failPending(id, editor.t("err.checkout_no_upstream"));
+      return;
+    }
+    const unpushedRes = await spawnCollect(
+      "git",
+      ["-C", projectPath, "rev-list", "--count", "@{u}..HEAD"],
+      projectPath,
+    );
+    if (parseInt((unpushedRes.stdout || "0").trim(), 10) > 0) {
+      failPending(id, editor.t("err.checkout_unpushed"));
+      return;
+    }
+    const coRes = await spawnCollect(
+      "git",
+      ["-C", projectPath, "checkout", checkoutBranch],
+      projectPath,
+    );
+    if (coRes.exit_code !== 0) {
+      failPending(
+        id,
+        lastNonEmptyLine(coRes.stderr) || editor.t("err.worktree_add_failed"),
+      );
+      return;
+    }
   }
   if (!orchestratorSessions.get(id)?.pending) {
     // Dismissed while the worktree was being added — remove what we just
@@ -7996,8 +8138,8 @@ async function runLocalCreate(id: number): Promise<void> {
   const isLinkedAttach = attachInfo?.isLinked === true;
   const effectiveProjectPath = isLinkedAttach ? attachInfo!.mainRoot : projectPath;
   const reportedBranch = createWorktree
-    ? (branchInput || sessionName)
-    : (isLinkedAttach ? attachInfo!.branch : "");
+    ? (newBranch || checkoutBranch || sessionName)
+    : (checkoutBranch || (isLinkedAttach ? attachInfo!.branch : ""));
 
   appendHistory("project_path", projectPath);
   appendHistory("name", sessionName);
@@ -8431,21 +8573,24 @@ registerHandler("orchestrator_form_key_tab", () => {
 // Visit" (the "In Background" alternative is an explicit button / Enter on it).
 registerHandler("orchestrator_form_submit", () => {
   if (!form) return;
+  // Same gating as the Create buttons: no required input ⇒ no submit.
+  if (!formIsSubmittable()) return;
   void submitForm(true);
 });
 registerHandler("orchestrator_form_key_enter", () => {
-  // When the popup is open, the host's smart-key fires
-  // `completion_dismiss` (plugin syncs local state via that
-  // event) without firing the form's picker-Enter or focus
-  // advance — Enter is "dismiss the popup, stay focused on
-  // the text input". When the popup is closed, Enter falls
-  // through to the host's normal Text-widget Enter (picker
-  // activate or focus advance). On a focus advance, the host
-  // fires a `widget_event { event_type: "focus" }` and the
-  // plugin snaps `formFocusIndex` from that authoritative
-  // signal — see the `focus` branch in the widget_event
-  // handler below.
-  dispatchFormKey("Enter");
+  if (!form || !formPanel) return;
+  // Popup open: keep the existing behaviour — the host's smart-key
+  // dismisses the completion popup and fires `completion_dismiss` (the
+  // plugin syncs local state via that event), staying on the text input.
+  if (completionVisibleForFocused()) {
+    dispatchFormKey("Enter");
+    return;
+  }
+  // Popup closed: Enter must NOT advance focus (Tab / Shift-Tab are the only
+  // field movers). Activate the focused control instead — `activate()` fires
+  // a Button's "activate" event (Create / Cancel / Advanced / the type tabs)
+  // or a Toggle's "toggle", and is a no-op on text inputs and the dropdown.
+  formPanel.command(activate());
 });
 registerHandler(
   "orchestrator_form_key_shift_tab",
@@ -8489,12 +8634,10 @@ function switchTabIfFocused(delta: 1 | -1): boolean {
 }
 registerHandler("orchestrator_form_key_left", () => {
   if (switchTabIfFocused(-1)) return;
-  if (switchAgentIfFocused(-1)) return;
   dispatchFormKey("Left");
 });
 registerHandler("orchestrator_form_key_right", () => {
   if (switchTabIfFocused(1)) return;
-  if (switchAgentIfFocused(1)) return;
   dispatchFormKey("Right");
 });
 registerHandler("orchestrator_form_key_up", () => {
@@ -8799,6 +8942,23 @@ editor.on("widget_event", (e) => {
       snapFormFocusTo(e.widget_key);
       return;
     }
+    if (e.event_type === "change" && e.widget_key === "agent_dropdown") {
+      // Agent selector: the host reports the newly-selected option index
+      // (`payload.index`, verified against `handle_widget_dropdown_cycle`).
+      // Map it back to a preset and apply it (fills the command field / hands
+      // focus to it for "custom…"), then relay out the Tab cycle.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const index = payload.index;
+      if (typeof index === "number") {
+        const presets = agentPresets();
+        const preset = presets[index];
+        if (preset) {
+          applyAgentPreset(preset);
+          rebuildFormFocusCycle();
+        }
+      }
+      return;
+    }
     if (e.event_type === "change") {
       const field = e.widget_key;
       const payload = (e.payload ?? {}) as Record<string, unknown>;
@@ -8815,6 +8975,8 @@ editor.on("widget_event", (e) => {
         ? form.startPrompt
         : field === "branch"
         ? form.branch
+        : field === "new_branch"
+        ? form.newBranch
         : field === "ssh_host"
         ? form.sshHost
         : field === "ssh_path"
@@ -8849,6 +9011,9 @@ editor.on("widget_event", (e) => {
       if (field === "project_path") {
         scheduleProjectPathReprobe();
         scheduleCompletionRefresh("project_path");
+        // Re-render so the Create gating (which keys off the project path)
+        // updates the disabled state as the user types.
+        renderForm();
       } else if (field === "branch") {
         scheduleCompletionRefresh("branch");
       } else {
@@ -8866,6 +9031,11 @@ editor.on("widget_event", (e) => {
         // whether the Auto mode / Start prompt controls appear — re-lay-out.
         if (field === "cmd") {
           rebuildFormFocusCycle();
+          renderForm();
+        }
+        // The remaining Create-gating fields: re-render so the disabled
+        // state on the Create buttons tracks what the user has typed.
+        if (field === "ssh_host" || field === "k8s_pod") {
           renderForm();
         }
       }
@@ -8941,17 +9111,20 @@ editor.on("widget_event", (e) => {
         }
         return;
       }
-      const preset = agentPresets().find((p) => p.key === e.widget_key);
-      if (preset && form) {
-        // Click on a dropdown choice: fill the command (or, for "custom…",
-        // hand focus to the free-text field). The field stays editable for
-        // arguments / custom agents either way.
-        applyAgentPreset(preset);
+      if (e.widget_key === "advanced_toggle") {
+        // Fold / unfold the Advanced section (worktree + branch fields).
+        form.advancedExpanded = !form.advancedExpanded;
+        rebuildFormFocusCycle();
+        renderForm();
         return;
       }
       if (e.widget_key === "create-visit") {
+        // Gate: a Create with no required input is a no-op (the button is
+        // also rendered disabled, but Enter-on-button could still reach here).
+        if (!formIsSubmittable()) return;
         void submitForm(true);
       } else if (e.widget_key === "create-bg") {
+        if (!formIsSubmittable()) return;
         void submitForm(false);
       } else if (e.widget_key === "cancel") {
         cancelForm();
