@@ -38,13 +38,17 @@
     height:28px;z-index:100;align-items:center;pointer-events:none;
     font:13px/1 var(--font-family);color:var(--mac-title-fg);
     background:var(--mac-titlebar);border-bottom:1px solid var(--hairline-strong)}
-  /* Three window-control dots at x-centres 26/46/66 (12px wide, 20px apart),
-     each a crisp circle with a soft top sheen and a hairline rim. */
+  /* Three window-control DOTS: 12px circles on 20px centres (Sonoma metrics).
+     Each is one radial gradient per 12px tile — a soft top-lit fill that fades
+     to transparent AT the 6px radius, so the shape is a crisp anti-aliased
+     circle (an earlier version without the transparent stop filled the whole
+     tile and rendered squares). Colours: modern close/min/max reds/ambers/
+     greens with a lighter centre sheen and a darker rim. */
   body.macfam #mactitle .mt-lights{width:52px;height:12px;margin-left:20px;
     background:
-      radial-gradient(circle 6px at 5px 4.5px,#ff8078,#f9564d 72%,#e0463d 100%) 0 0/12px 12px no-repeat,
-      radial-gradient(circle 6px at 5px 4.5px,#ffd775,#fdb827 72%,#e79f18 100%) 20px 0/12px 12px no-repeat,
-      radial-gradient(circle 6px at 5px 4.5px,#5fe08a,#28c840 72%,#1eb036 100%) 40px 0/12px 12px no-repeat}
+      radial-gradient(circle 6px at 6px 5px,#ff8b83 0%,#fb5b52 52%,#e5473d 82%,transparent 100%) 0 0/12px 12px no-repeat,
+      radial-gradient(circle 6px at 6px 5px,#ffd977 0%,#fdbb2c 52%,#e0a024 82%,transparent 100%) 20px 0/12px 12px no-repeat,
+      radial-gradient(circle 6px at 6px 5px,#63e18b 0%,#29c841 52%,#1eae38 82%,transparent 100%) 40px 0/12px 12px no-repeat}
   body.macfam #mactitle .mt-name{margin:0 auto;font-weight:590;color:var(--mac-title-fg);
     letter-spacing:.01em;max-width:56%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -60,6 +64,9 @@
   body.macfam .tab.active{background:var(--surface);color:var(--fg)}
   body.macfam .tab:not(.active):hover{background:var(--hover)}
   body.macfam .tab.active::after{height:2px;background:var(--ui-accent)}
+  /* Close button: a circular hover target (macOS document tabs), not a square. */
+  body.macfam .tab .x{border-radius:50%;width:15px;height:15px;line-height:14px}
+  body.macfam .tab .x:hover{background:color-mix(in srgb,var(--fg) 16%,transparent);color:var(--fg)}
 
   /* ---- sidebar (file explorer): a source list with an inset rounded
      selection pill in the system accent (Finder "prominent" selection) ---- */
@@ -122,6 +129,22 @@
   /* Focused Settings row: subtle tint, dark label kept. */
   body.macfam .settings-modal .set-item.sel{
     background:color-mix(in srgb,var(--ui-accent) 13%,transparent);color:var(--fg);box-shadow:none}
+
+  /* Plugin context menu (an anchored floating modal) → a real macOS menu:
+     near-opaque menu material and BORDERLESS rows with an inset highlight,
+     instead of a stack of bordered push-buttons. */
+  body.macfam .widget-surface.w-floatingModal.anchored{
+    background:color-mix(in srgb,var(--bg2) 97%,transparent);border:1px solid var(--hairline-strong)}
+  body.macfam .w-floatingModal.anchored .w-button{
+    background:transparent;border:none;border-radius:5px;padding:4px 12px;
+    position:relative;z-index:0;color:var(--fg)}
+  body.macfam .w-floatingModal.anchored .w-button.primary,
+  body.macfam .w-floatingModal.anchored .w-button.sel,
+  body.macfam .w-floatingModal.anchored .w-button:hover{color:#fff}
+  body.macfam .w-floatingModal.anchored .w-button.primary::before,
+  body.macfam .w-floatingModal.anchored .w-button.sel::before,
+  body.macfam .w-floatingModal.anchored .w-button:hover::before{
+    content:"";position:absolute;inset:1px 4px;border-radius:5px;background:var(--ui-accent);z-index:-1}
 
   /* Controls. The value pop-ups / fields default to var(--bg) (the dark buffer
      colour) — repoint them at the light/dark chrome so they read as macOS
