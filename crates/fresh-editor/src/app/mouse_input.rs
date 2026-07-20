@@ -4280,20 +4280,20 @@ impl Editor {
             ),
             None => return false,
         };
-        // Exact byte hit first; when the click lands past the row's text
-        // (a compact tree row is much narrower than the panel), fall back
-        // to the row's body `select` hit — a context menu targets the ROW,
-        // not a byte, so anywhere on the row's width should raise it (card
-        // rows already behave that way because their text spans the panel).
-        let exact = self
+        // Resolve row-aware (exact byte hit, else the row's body `select`
+        // when the click lands past a compact row's text — a context menu
+        // targets the ROW, not a byte), then keep only list/tree hits: a
+        // right-click raises a menu for a session row, not for a button or
+        // empty padding. Shares `hit_test_row_aware` with the left-click
+        // path so the row-width rule lives in exactly one place.
+        let (mut payload, key, _kind) = match self
             .widget_registry
-            .hit_test(slot.buffer_id(), brow, bcol as u32)
-            .filter(|(_, hit)| hit.widget_kind == "list" || hit.widget_kind == "tree");
-        let (mut payload, key, _kind) =
-            match exact.or_else(|| self.widget_registry.row_select_hit(slot.buffer_id(), brow)) {
-                Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
-                None => return false,
-            };
+            .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
+            .filter(|(_, hit)| hit.widget_kind == "list" || hit.widget_kind == "tree")
+        {
+            Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
+            None => return false,
+        };
         // Carry the screen cell so the plugin can anchor its popup at the
         // click (the list `select` payload only has the row index).
         if let Some(obj) = payload.as_object_mut() {
@@ -4391,9 +4391,15 @@ impl Editor {
             ),
             None => return,
         };
+        // Row-aware resolution: an exact byte hit wins, but a click past a
+        // compact list/tree row's text still lands on the row (its body
+        // `select`) instead of being dropped — the same rule the
+        // right-click context path uses, kept in one place so the two can't
+        // drift (they did once: right-click was row-wide, left-click was
+        // byte-exact, so compact dock rows ignored left-clicks past the label).
         let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match self
             .widget_registry
-            .hit_test(slot.buffer_id(), brow, bcol as u32)
+            .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
         {
             Some((_, hit)) => (
                 hit.payload.clone(),

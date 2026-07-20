@@ -221,7 +221,14 @@ impl Editor {
         // driven, it stops listening to `mouse_click` for its panel
         // and the duplicate dispatch becomes a no-op.
         if let (Some(brow), Some(bcol)) = (mc_buffer_row, mc_buffer_col) {
-            if let Some((panel_key, hit)) = self.widget_registry.hit_test(buffer_id, brow, bcol) {
+            // Row-aware so a click past a list/tree row's text still lands on
+            // the row (see `hit_test_row_aware`) — the mounted panels
+            // (Settings, Search & Replace) get the same full-width rows the
+            // floating dock does, from the one shared resolver.
+            if let Some((panel_key, hit)) = self
+                .widget_registry
+                .hit_test_row_aware(buffer_id, brow, bcol)
+            {
                 self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
             }
         }

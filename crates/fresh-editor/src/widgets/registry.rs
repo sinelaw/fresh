@@ -496,12 +496,42 @@ impl WidgetRegistry {
         None
     }
 
+    /// Resolve a click at `(row, col_byte)` to the hit that should
+    /// receive it, making list/tree rows clickable across their *full
+    /// width* rather than only where their text happens to reach.
+    ///
+    /// Prefers an exact byte-ranged hit (button, toggle, text field,
+    /// tree disclosure/checkbox, or an in-text row body). When the click
+    /// lands *past* a list/tree row's text — a compact row is far
+    /// narrower than its panel — it falls back to that row's body
+    /// `select` hit ([`row_select_hit`](Self::row_select_hit)), so the
+    /// whole row is a target.
+    ///
+    /// Every click path — left-click, right-click, and the mounted-panel
+    /// buffer-cell handler — resolves through this one method, so the "a
+    /// row is clickable across its width" invariant lives in a single
+    /// place. It regressed once precisely because it did not: the
+    /// right-click context path grew a `row_select_hit` fallback while
+    /// the left-click path stayed byte-exact, so compact dock rows
+    /// silently ignored left-clicks past their label. Route new click
+    /// surfaces through here rather than calling `hit_test` directly.
+    pub fn hit_test_row_aware(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        col_byte: u32,
+    ) -> Option<(PanelKey, HitArea)> {
+        self.hit_test(buffer_id, row, col_byte)
+            .or_else(|| self.row_select_hit(buffer_id, row))
+    }
+
     /// The row-body `select` hit of a list/tree row in `buffer_id`,
     /// regardless of column. Row-level gestures (a right-click context
     /// menu) target the ROW, not a byte — a compact tree row's text is
     /// much narrower than the panel, so a click past the text end has no
     /// byte-ranged hit to land on even though it is visually "on the
-    /// row".
+    /// row". Prefer [`hit_test_row_aware`](Self::hit_test_row_aware),
+    /// which tries an exact hit first and only falls back to this.
     pub fn row_select_hit(&self, buffer_id: BufferId, row: u32) -> Option<(PanelKey, HitArea)> {
         for (key, state) in &self.panels {
             if state.buffer_id != buffer_id {
@@ -584,6 +614,82 @@ mod tests {
         assert!(reg.hit_test(BufferId(0), 0, 100).is_none());
         assert!(reg.hit_test(BufferId(0), 1, 0).is_none(), "wrong row");
         assert!(reg.hit_test(BufferId(99), 0, 0).is_none(), "wrong buffer");
+    }
+
+    fn make_row_select_hit(row: u32, byte_end: usize, key: &str) -> HitArea {
+        HitArea {
+            widget_key: key.into(),
+            widget_kind: "tree",
+            buffer_row: row,
+            byte_start: 0,
+            byte_end,
+            payload: json!({ "index": row as i64 }),
+            event_type: "select",
+        }
+    }
+
+    #[test]
+    fn hit_test_row_aware_falls_back_to_row_body_past_text() {
+        // A compact tree row's `select` hit only spans its (narrow) text.
+        // A click *past* the text has no exact byte hit, but must still land
+        // on the row — the regression this guards: left-clicks past a dock
+        // row's label were dropped while right-clicks worked.
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(3),
+            BufferId(2),
+            empty_spec(),
+            vec![make_row_select_hit(0, 10, "session-a")],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+        );
+        // Byte 10 is the exclusive end, so `hit_test` alone misses...
+        assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
+        // ...but the row-aware resolver falls back to the row's body select.
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(2), 0, 40)
+            .expect("click past text still lands on the row");
+        assert_eq!(hit.widget_key, "session-a");
+        assert_eq!(hit.event_type, "select");
+    }
+
+    #[test]
+    fn hit_test_row_aware_prefers_exact_hit_over_row_fallback() {
+        // An exact hit (e.g. a button embedded on the row) wins over the
+        // row-body fallback so it isn't swallowed by the whole-row target.
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(4),
+            BufferId(3),
+            empty_spec(),
+            vec![make_hit(0, 0, 5, "btn"), make_row_select_hit(0, 12, "row")],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+        );
+        let (_, hit) = reg
+            .hit_test_row_aware(BufferId(3), 0, 2)
+            .expect("on button");
+        assert_eq!(hit.widget_key, "btn");
+        assert_eq!(hit.event_type, "activate");
+    }
+
+    #[test]
+    fn hit_test_row_aware_none_on_empty_row() {
+        // A row with no hits at all (blank padding below the last item)
+        // stays a no-op — the fallback must not invent a target.
+        let mut reg = WidgetRegistry::new();
+        reg.mount(
+            pk(5),
+            BufferId(4),
+            empty_spec(),
+            vec![make_row_select_hit(0, 8, "only-row")],
+            HashMap::new(),
+            String::new(),
+            Vec::new(),
+        );
+        assert!(reg.hit_test_row_aware(BufferId(4), 3, 0).is_none());
     }
 
     fn mount_with_list(reg: &mut WidgetRegistry, scroll: u32, sel: i32) {

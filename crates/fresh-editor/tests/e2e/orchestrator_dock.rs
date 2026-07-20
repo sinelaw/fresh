@@ -2028,6 +2028,56 @@ fn dock_right_click_opens_context_menu_in_compact_mode() {
     .unwrap();
 }
 
+/// Left-click works in COMPACT density too, across the full row width: a
+/// single-line session row must select+dive when clicked PAST its short
+/// text, exactly like a click on the text. Regression companion to
+/// `dock_right_click_opens_context_menu_in_compact_mode`: the left-click
+/// path stayed byte-exact after the right-click path grew its row-wide
+/// fallback, so compact left-clicks past the label were silently dropped.
+/// Both now share `hit_test_row_aware`, so the two paths can't drift.
+#[test]
+fn dock_left_click_past_text_dives_in_compact_mode() {
+    init_tracing_from_env();
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("alphaproj") && s.contains("beta")
+    })
+    .unwrap();
+
+    // Flip the density to compact.
+    expand_filters(&mut h);
+    let vrow = row_of(&h, "view: card") as u16;
+    h.mouse_click(3, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    assert!(
+        h.editor().is_dock_focused(),
+        "precondition: the dock holds keyboard focus"
+    );
+
+    // Click beta's compact row PAST the end of its short text — most of a
+    // compact row's width is empty, and that's where a user naturally aims.
+    // The click must select+dive just like a click on the text: the dock
+    // blurs and beta becomes the active window.
+    let beta_row = dock_card_name_row(&h, "beta").expect("compact session row should be listed");
+    let wall = dock_wall_col(&h);
+    h.mouse_click(wall - 3, beta_row).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    assert_eq!(
+        h.editor().active_window().root,
+        root.join("wt-beta"),
+        "clicking past beta's label must still make it the active window"
+    );
+}
+
 #[test]
 fn dock_right_click_opens_context_menu() {
     let (_tmp, h) = open_dock_context_menu("alphaproj");
