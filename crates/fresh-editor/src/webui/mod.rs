@@ -37,12 +37,14 @@
 //! session; interleaving two browsers' input would be an accident, not a
 //! feature — multi-session is §3.7, PLANNED). The `Origin` header, when
 //! present, must have the same host as the request's `Host` header (i.e. the
-//! request is same-origin) or the upgrade is rejected with `403 Forbidden` —
-//! a malicious page on another origin can open WebSockets cross-origin, so
-//! this is the browser-facing guard. Comparing against `Host` (rather than
-//! the bind address) is what lets a wildcard bind like `--web 0.0.0.0:8137`
-//! work when reached as `127.0.0.1:8137`; non-browser tools send no Origin
-//! and are accepted.
+//! request is same-origin) AND that host must be a loopback/LAN literal or our
+//! bind address, or the upgrade is rejected with `403 Forbidden`. The
+//! same-origin half blocks a plain cross-origin page; the Host-allowlist half
+//! blocks DNS rebinding, where an attacker-controlled name resolves to us so
+//! `Origin` and `Host` agree (see `origin_host_matches` / `host_is_allowed`).
+//! Comparing against `Host` (rather than the bind address) is what lets a
+//! wildcard bind like `--web 0.0.0.0:8137` work when reached as
+//! `127.0.0.1:8137`; non-browser tools send no Origin and are accepted.
 //!
 //! **HTTP routes** are now **read-only**. The mutating `POST` routes
 //! (`/key`, `/paste`, `/mouse`, `/action`, `/widget`, `/settings`, `/kbedit`,
@@ -417,6 +419,18 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
             next_tick = Instant::now() + interval;
         }
 
+        // 5b) Drain any buffered outbound bytes the socket couldn't take yet —
+        //     leftover frame bytes for a slow-but-alive peer, and pongs queued
+        //     while draining input. `flush` is nonblocking; a peer whose
+        //     backlog blows past the cap is dropped here rather than allowed to
+        //     stall the loop (the old per-write 5s spin is gone).
+        if let Some(client) = ws.as_mut() {
+            if let Err(e) = client.flush() {
+                eprintln!("[webui] ws flush failed, dropping client: {e}");
+                ws = None;
+            }
+        }
+
         // 6) Pace the loop without a busy spin. Stay snappy while a WS client
         //    is connected (input latency) or an HTTP request is mid-assembly
         //    (its bytes usually land one iteration after the accept); idle
@@ -433,12 +447,14 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
 // HTTP request assembly (nonblocking) + routing
 // ---------------------------------------------------------------------------
 
-/// A parsed HTTP request (head + full body). Header names are lowercased.
+/// A parsed HTTP request. Header names are lowercased. The body is *consumed
+/// for framing* (a declared `Content-Length` must fully arrive before the
+/// request is considered complete) but not retained: the routes are read-only
+/// GETs that never inspect a body.
 struct HttpRequest {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
-    body: Vec<u8>,
 }
 
 impl HttpRequest {
@@ -519,14 +535,12 @@ fn try_parse_request(buf: &[u8]) -> Option<HttpRequest> {
     }
     let end = head_end.checked_add(content_length)?;
     if buf.len() < end {
-        return None;
+        return None; // body still arriving (or never will — dropped on deadline)
     }
-    let body = buf[head_end..end].to_vec();
     Some(HttpRequest {
         method,
         path,
         headers,
-        body,
     })
 }
 
@@ -550,8 +564,15 @@ fn serve_request(
     ws_busy: bool,
     bind_host: &str,
 ) -> Result<Served> {
-    // The response write is short and local — do it blocking for simplicity.
+    // Serve the response blocking for simplicity — but bound the write. `GET /`
+    // returns the whole embedded page (~200 KB), so a client that stops reading
+    // (or advertises a tiny/zero window) would otherwise wedge `write_all` on
+    // this one editor thread forever. A write deadline drops such a peer instead
+    // (the WS handshake's own small write below is well under it, and `/ws` then
+    // switches back to nonblocking). The read side is already bounded by the
+    // pending-pool `HTTP_READ_DEADLINE`.
     stream.set_nonblocking(false)?;
+    stream.set_write_timeout(Some(HTTP_READ_DEADLINE))?;
     let wants_ws = req.method == "GET"
         && req.path == "/ws"
         && req
@@ -808,10 +829,27 @@ fn host_only(s: &str) -> &str {
     }
 }
 
-/// True when the WebSocket upgrade is same-origin: the `Origin` header's host
-/// matches the host the browser actually connected to, taken from the `Host`
-/// header. This is the real cross-origin guard — a page on another origin
-/// sends its own `Origin` while still connecting to our `Host`, so the two
+/// A `Host` value we'll accept for a WebSocket upgrade. Matching `Origin`
+/// against `Host` alone is not enough: DNS rebinding makes a name the attacker
+/// controls (`attacker.com`, its record flipped to `127.0.0.1` after first
+/// load) resolve to us, so the browser sends `Host: attacker.com` *and*
+/// `Origin: http://attacker.com` — the two agree and the same-origin check
+/// passes. Requiring the host to be a literal IP, `localhost`, or the exact
+/// address we bound to closes that hole: a rebound *name* is refused, while
+/// every legitimate localhost/LAN reach (an IP, or `localhost`, including the
+/// wildcard-bind case) still passes. A deployment that needs a real hostname is
+/// the §3.7 story (real auth), not this dev-bridge guard.
+fn host_is_allowed(host: &str, bind_host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host.parse::<std::net::IpAddr>().is_ok()
+        || host.eq_ignore_ascii_case(bind_host)
+}
+
+/// True when the WebSocket upgrade is same-origin AND reached under a Host we
+/// trust: the `Origin` header's host matches the host the browser connected to
+/// (the `Host` header), and that host is a loopback/LAN literal or our bind
+/// address (see `host_is_allowed` — the DNS-rebinding guard). A page on another
+/// origin sends its own `Origin` while connecting to our `Host`, so the two
 /// disagree and it's rejected.
 ///
 /// Comparing against `Host` (not the bind address) is what makes wildcard
@@ -821,8 +859,9 @@ fn host_only(s: &str) -> &str {
 /// header is present we fall back to the bind host. Non-browser tools send no
 /// `Origin` and never reach this check.
 fn origin_host_matches(origin: &str, host_header: Option<&str>, bind_host: &str) -> bool {
+    let bind = host_only(bind_host);
     let target = host_only(host_header.unwrap_or(bind_host));
-    host_only(origin).eq_ignore_ascii_case(target)
+    host_is_allowed(target, bind) && host_only(origin).eq_ignore_ascii_case(target)
 }
 
 /// Handle a `/ws` upgrade request: enforce the single-client model (409) and
@@ -970,45 +1009,61 @@ fn ws_encode(opcode: u8, payload: &[u8]) -> Vec<u8> {
     f
 }
 
-/// `write_all` on a nonblocking socket: retry briefly on `WouldBlock` (the
-/// loopback send buffer holds megabytes, so this practically never waits).
-fn write_all_nb(stream: &mut TcpStream, mut buf: &[u8]) -> std::io::Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !buf.is_empty() {
-        match stream.write(buf) {
-            Ok(0) => return Err(std::io::Error::from(ErrorKind::WriteZero)),
-            Ok(n) => buf = &buf[n..],
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                if Instant::now() > deadline {
-                    return Err(std::io::Error::from(ErrorKind::TimedOut));
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(e),
-        }
-    }
-    Ok(())
-}
+/// Cap on a session's buffered-but-unsent outbound bytes. A peer that stops
+/// draining its socket makes `outbuf` grow (frames are queued, never blocked
+/// on); past this the client is behind beyond recovery and is dropped rather
+/// than buffered without bound. Sized well above a single max frame so a brief
+/// stall is absorbed, not a real one.
+const WS_OUTBUF_CAP: usize = 8 << 20; // 8 MiB
 
 /// THE WebSocket client, plus the diff cache backing the region-diff protocol
-/// (see the module docs). The cache holds the serialized JSON of every unit
+/// (see the module docs). The cache holds an 8-byte fingerprint of every unit
 /// last sent — top-level scalars, each `regions.<key>` except panes, and each
-/// pane by index; comparing serialized strings is the cheap,
-/// obviously-correct change test. It is written ONLY by this session's
-/// hello/push path — HTTP routes build their own full scenes independently
-/// and never touch it.
+/// pane by index (see `value_fingerprint`) — so change detection costs one
+/// streaming hash per unit and no persistent per-frame allocation, rather than
+/// keeping a full serialized copy (panes are tens of KB each). It is written
+/// ONLY by this session's hello/push path — HTTP routes build their own full
+/// scenes independently and never touch it.
 struct WsSession {
     stream: TcpStream,
     /// Inbound bytes not yet parsed into complete frames.
     inbuf: Vec<u8>,
+    /// Encoded outbound frames the socket hasn't accepted yet. Writes are
+    /// always nonblocking (`flush`); a slow peer's backlog lands here instead
+    /// of stalling the single editor loop.
+    outbuf: Vec<u8>,
     /// Accumulated payload of an in-flight fragmented message.
     frag: Vec<u8>,
     frag_text: bool,
     seq: u64,
-    top: HashMap<&'static str, String>,
-    regions: HashMap<String, String>,
-    panes: Vec<String>,
+    top: HashMap<&'static str, u64>,
+    regions: HashMap<String, u64>,
+    panes: Vec<u64>,
+}
+
+/// Fingerprint a JSON value for change detection by streaming its serialization
+/// through a hasher — no `String` is allocated, and the cache stores 8 bytes
+/// instead of a full serialized copy. Serialization is deterministic here
+/// (scene objects are built key-by-key), so an unchanged unit hashes the same.
+/// A 64-bit SipHash collision (a changed unit that hashes identically, so its
+/// frame is skipped) is astronomically unlikely and would self-correct on the
+/// next real change or reconnect — an acceptable trade for a pure render cache.
+fn value_fingerprint(v: &Value) -> u64 {
+    use std::hash::Hasher;
+    struct HashWriter(std::collections::hash_map::DefaultHasher);
+    impl std::io::Write for HashWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.write(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut hw = HashWriter(std::collections::hash_map::DefaultHasher::new());
+    // Writing to a hasher never fails, and Value serialization is infallible.
+    let _ = serde_json::to_writer(&mut hw, v);
+    hw.0.finish()
 }
 
 /// Top-level scene keys diffed as single units ("regions" is handled per key).
@@ -1019,6 +1074,7 @@ impl WsSession {
         Self {
             stream,
             inbuf: Vec::new(),
+            outbuf: Vec::new(),
             frag: Vec::new(),
             frag_text: false,
             seq: 0,
@@ -1034,7 +1090,8 @@ impl WsSession {
         self.seq = 0;
         self.diff(scene); // seed the cache; the hello carries the full scene
         let msg = json!({ "type": "hello", "seq": 0, "scene": scene }).to_string();
-        self.send_text(&msg)
+        self.enqueue(0x1, msg.as_bytes());
+        self.flush()
     }
 
     /// Diff `scene` against the last-sent one and push a
@@ -1042,12 +1099,13 @@ impl WsSession {
     fn push_diff(&mut self, scene: &Value) -> std::io::Result<()> {
         let changed = self.diff(scene);
         if changed.is_empty() {
-            return Ok(());
+            return self.flush(); // still drain any backlog from earlier frames
         }
         self.seq += 1;
         let msg = json!({ "type": "frame", "seq": self.seq, "changed": Value::Object(changed) })
             .to_string();
-        self.send_text(&msg)
+        self.enqueue(0x1, msg.as_bytes());
+        self.flush()
     }
 
     /// Compute the changed-paths map and update the cache. A changed value
@@ -1057,9 +1115,9 @@ impl WsSession {
         let mut changed = serde_json::Map::new();
         for k in TOP_KEYS {
             let v = scene.get(k).cloned().unwrap_or(Value::Null);
-            let s = v.to_string();
-            if self.top.get(k) != Some(&s) {
-                self.top.insert(k, s);
+            let h = value_fingerprint(&v);
+            if self.top.get(k) != Some(&h) {
+                self.top.insert(k, h);
                 changed.insert(k.to_string(), v);
             }
         }
@@ -1072,9 +1130,9 @@ impl WsSession {
             if k == "panes" {
                 continue; // diffed one level deeper below
             }
-            let s = v.to_string();
-            if self.regions.get(k) != Some(&s) {
-                self.regions.insert(k.clone(), s);
+            let h = value_fingerprint(v);
+            if self.regions.get(k) != Some(&h) {
+                self.regions.insert(k.clone(), h);
                 changed.insert(format!("regions.{k}"), v.clone());
             }
         }
@@ -1085,22 +1143,52 @@ impl WsSession {
             .and_then(|p| p.as_array())
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
-        let new_strs: Vec<String> = panes.iter().map(|p| p.to_string()).collect();
-        for (i, (p, s)) in panes.iter().zip(&new_strs).enumerate() {
-            if self.panes.get(i) != Some(s) {
+        let new_hashes: Vec<u64> = panes.iter().map(value_fingerprint).collect();
+        for (i, (p, h)) in panes.iter().zip(&new_hashes).enumerate() {
+            if self.panes.get(i) != Some(h) {
                 changed.insert(format!("regions.panes.{i}"), p.clone());
             }
         }
-        if new_strs.len() != self.panes.len() {
-            changed.insert("regions.panes.len".to_string(), json!(new_strs.len()));
+        if new_hashes.len() != self.panes.len() {
+            changed.insert("regions.panes.len".to_string(), json!(new_hashes.len()));
         }
-        self.panes = new_strs;
+        self.panes = new_hashes;
         changed
     }
 
-    fn send_text(&mut self, s: &str) -> std::io::Result<()> {
-        let frame = ws_encode(0x1, s.as_bytes());
-        write_all_nb(&mut self.stream, &frame)
+    /// Queue one encoded frame for sending. Never touches the socket — `flush`
+    /// does, nonblocking — so enqueuing can't stall the editor loop.
+    fn enqueue(&mut self, opcode: u8, payload: &[u8]) {
+        self.outbuf.extend_from_slice(&ws_encode(opcode, payload));
+    }
+
+    /// Write as much of `outbuf` as the kernel will take right now (nonblocking)
+    /// and keep the rest for the next loop pass. This is the only place the
+    /// socket is written, and it never blocks: a slow/stalled peer just leaves
+    /// bytes queued. A backlog past `WS_OUTBUF_CAP` means the peer isn't
+    /// draining at all — error out so the caller drops the client instead of
+    /// buffering unboundedly.
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.outbuf.len() > WS_OUTBUF_CAP {
+            return Err(std::io::Error::new(
+                ErrorKind::Other,
+                "ws outbound backlog exceeded cap; peer not draining",
+            ));
+        }
+        let mut sent = 0;
+        while sent < self.outbuf.len() {
+            match self.stream.write(&self.outbuf[sent..]) {
+                Ok(0) => return Err(std::io::Error::from(ErrorKind::WriteZero)),
+                Ok(n) => sent += n,
+                Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        if sent > 0 {
+            self.outbuf.drain(..sent);
+        }
+        Ok(())
     }
 
     /// Drain ALL pending inbound frames (nonblocking; `WouldBlock` ends the
@@ -1159,18 +1247,16 @@ impl WsSession {
                     // Close: echo it (best effort — the peer may already be
                     // gone, and we're dropping the client either way) and
                     // report the disconnect.
-                    drop(write_all_nb(
-                        &mut self.stream,
-                        &ws_encode(0x8, &frame.payload),
-                    ));
+                    self.enqueue(0x8, &frame.payload);
+                    let _ = self.flush();
                     return Err(std::io::Error::new(
                         ErrorKind::ConnectionAborted,
                         "client sent close",
                     ));
                 }
-                0x9 => write_all_nb(&mut self.stream, &ws_encode(0xA, &frame.payload))?,
-                0xA => {} // pong: ignore
-                _ => {}   // unknown opcode: ignore
+                0x9 => self.enqueue(0xA, &frame.payload), // ping → queue a pong
+                0xA => {}                                 // pong: ignore
+                _ => {}                                   // unknown opcode: ignore
             }
         }
         Ok(out)
@@ -1508,7 +1594,7 @@ fn apply_key(editor: &mut Editor, v: &Value) {
     let meta = v.get("meta").and_then(|b| b.as_bool()).unwrap_or(false);
     let shift = v.get("shift").and_then(|b| b.as_bool()).unwrap_or(false);
 
-    let code = match key {
+    let mut code = match key {
         "Enter" => KeyCode::Enter,
         "Backspace" => KeyCode::Backspace,
         "Delete" => KeyCode::Delete,
@@ -1535,8 +1621,29 @@ fn apply_key(editor: &mut Editor, v: &Value) {
     if meta {
         mods |= KeyModifiers::SUPER;
     }
-    if shift && !matches!(code, KeyCode::Char(_)) {
+    // SHIFT handling mirrors what crossterm delivers to the TUI. Keep it on
+    // named keys (Tab, arrows, …) and on ASCII *letters*: the browser sends the
+    // uppercase form for a shifted letter, and `normalize_key` reconciles the
+    // redundant SHIFT — which is exactly what makes Ctrl+Shift+<letter> bindings
+    // fire (dropping SHIFT there left `Ctrl+Shift+N` resolving as plain
+    // `Ctrl+N`). Do NOT add it for a shifted *symbol* like '!': the shift is
+    // already baked into the character, so a bare symbol is what the terminal
+    // sends (a spurious SHIFT would diverge and could break symbol input).
+    let shift_is_meaningful = match code {
+        KeyCode::Char(c) => c.is_ascii_alphabetic(),
+        _ => true,
+    };
+    if shift && shift_is_meaningful {
         mods |= KeyModifiers::SHIFT;
+    }
+    // A browser reports Shift+Tab as `{key:"Tab", shift:true}`, but crossterm
+    // delivers real-terminal Shift+Tab as `KeyCode::BackTab` (carrying SHIFT),
+    // and the editor's reverse-navigation paths (Settings dialog focus, popup
+    // `select_prev`, `SwitchPane(Prev)`) match on `BackTab`. Fold so the web
+    // event is identical to the terminal one — without it, Shift+Tab moved the
+    // wrong way (or was a no-op) on the web.
+    if code == KeyCode::Tab && mods.contains(KeyModifiers::SHIFT) {
+        code = KeyCode::BackTab;
     }
     // Wave-animation dismissal parity with the TUI event loops (main.rs and
     // the daemon server loop): ANY key press dismisses the interactive wave
@@ -1729,11 +1836,15 @@ mod tests {
 
     #[test]
     fn well_formed_request_with_body_still_parses() {
+        // A request whose declared body has fully arrived parses (the fix must
+        // reject only absurd/oversize lengths, not normal ones).
         let raw = b"POST /state HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
         let req = try_parse_request(raw).expect("complete request parses");
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/state");
-        assert_eq!(req.body, b"hello");
+        // A request whose body hasn't fully arrived yet is "incomplete", not an error.
+        let partial = b"POST /state HTTP/1.1\r\nContent-Length: 5\r\n\r\nhel";
+        assert!(try_parse_request(partial).is_none());
     }
 
     #[test]
@@ -1788,6 +1899,31 @@ mod tests {
             "https://attacker.test:443",
             Some("127.0.0.1:8137"),
             "127.0.0.1",
+        ));
+    }
+
+    #[test]
+    fn dns_rebinding_upgrade_is_rejected() {
+        // Rebinding: the attacker's page is served from `attacker.com`, whose
+        // DNS record is flipped to 127.0.0.1 after first load. The browser then
+        // connects to us sending Host AND Origin both `attacker.com`, so the
+        // Origin-equals-Host check passes — but the Host is an untrusted name,
+        // not a loopback/LAN literal, so the allowlist must reject it.
+        assert!(!origin_host_matches(
+            "http://attacker.com",
+            Some("attacker.com:8137"),
+            "0.0.0.0",
+        ));
+        assert!(!origin_host_matches(
+            "http://attacker.com:8137",
+            Some("attacker.com:8137"),
+            "127.0.0.1",
+        ));
+        // A bare IP / localhost Host is still fine (the legitimate reach).
+        assert!(origin_host_matches(
+            "http://127.0.0.1:8137",
+            Some("127.0.0.1:8137"),
+            "0.0.0.0",
         ));
     }
 
