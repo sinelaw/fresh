@@ -165,6 +165,10 @@ type CreateSpec =
       // agent's prompt flag). "" ⇒ no prompt. Only applied to a resolved agent
       // that documents a prompt argument; never replayed on resume.
       startPrompt: string;
+      // Inject the Fresh CLI system prompt + mint a capability token so the
+      // agent can drive the editor from the shell. Only honoured for a command
+      // that resolves to an agent with a `systemPrompt` strategy.
+      teachFreshCli: boolean;
       // Fork point for `git worktree add`; "" ⇒ the detected default branch.
       branch: string;
       // Create a fresh worktree (only honoured when the path is a git tree).
@@ -384,6 +388,11 @@ interface NewSessionForm {
   // the launch (and resume) argv. Only meaningful for an agent that documents
   // such a flag; the checkbox is hidden otherwise.
   autoMode: boolean;
+  // "Teach Fresh CLI" toggle — injects a system prompt teaching the agent the
+  // `fresh` CLI and mints a capability token so it can drive the editor. Only
+  // meaningful for an agent with a `systemPrompt` injection strategy; the
+  // checkbox is hidden otherwise.
+  teachFreshCli: boolean;
   branch: { value: string; cursor: number };
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
@@ -5638,6 +5647,7 @@ function rebuildFormFocusCycle(): void {
     // `agentOptionsFields`' render order (Auto mode, then Start prompt).
     const agent = activeAgentEntry();
     if (agent?.auto) cycle.push("auto_mode");
+    if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
     if (agent?.prompt) cycle.push("start_prompt");
     if (!branchInert) cycle.push("branch");
   } else if (form.backend === "devcontainer") {
@@ -5848,6 +5858,14 @@ interface AgentResumeSpec {
 type AgentPromptArg =
   | { style: "positional" }
   | { style: "flag"; flag: string };
+// How to hand an agent the "drive the Fresh editor from the shell" system
+// prompt when "Teach Fresh CLI" is on: either appended to launch argv behind a
+// flag (`claude --append-system-prompt "…"`), or written into a file the agent
+// reads at startup (`AGENTS.md` for codex/opencode). Absent ⇒ the agent has no
+// autonomous shell to drive the editor with, so the checkbox stays hidden.
+type AgentSystemPrompt =
+  | { via: "flag"; flag: string }
+  | { via: "file"; path: string };
 interface AgentEntry {
   // The command the New Session dropdown fills in and the basename the matcher
   // keys on.
@@ -5864,6 +5882,10 @@ interface AgentEntry {
   auto?: string[];
   // How the agent accepts an initial prompt at launch. Absent ⇒ no prompt box.
   prompt?: AgentPromptArg;
+  // How to inject the "drive the Fresh editor" system prompt when the user
+  // enables "Teach Fresh CLI". Absent ⇒ the agent has no autonomous shell to
+  // drive the editor (aider), so the checkbox stays hidden for it.
+  systemPrompt?: AgentSystemPrompt;
 }
 // The four launcher-priority agents come first (claude, codex, opencode), then
 // the long-standing aider entry. Order here drives the preset-row order.
@@ -5880,6 +5902,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     },
     auto: ["--dangerously-skip-permissions"],
     prompt: { style: "positional" },
+    systemPrompt: { via: "flag", flag: "--append-system-prompt" },
   },
   {
     // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
@@ -5892,6 +5915,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     spec: { continue: { resumeArgs: ["resume", "--last"] } },
     auto: ["--full-auto"],
     prompt: { style: "positional" },
+    systemPrompt: { via: "file", path: "AGENTS.md" },
   },
   {
     // opencode (SST): `--continue` resumes the latest session in the cwd.
@@ -5902,6 +5926,7 @@ const AGENT_REGISTRY: AgentEntry[] = [
     match: /^opencode$/,
     spec: { continue: { resumeArgs: ["--continue"] } },
     prompt: { style: "flag", flag: "--prompt" },
+    systemPrompt: { via: "file", path: "AGENTS.md" },
   },
   {
     // aider keeps its conversation in the repo and reloads it with
@@ -5916,6 +5941,47 @@ const AGENT_REGISTRY: AgentEntry[] = [
     prompt: { style: "flag", flag: "-m" },
   },
 ];
+
+// Command ids the "Teach Fresh CLI" token is minted for. Conservative and
+// safe: these two back the `fresh --cmd split` alias, letting an agent split
+// its own workspace without exposing the full command surface. Passed to the
+// host as `commandAllowlist`, which binds the minted `FRESH_CMD_TOKEN` to
+// exactly these ids on the new window.
+const FRESH_CLI_DEFAULT_ALLOWLIST = ["split_vertical", "split_horizontal"];
+
+// System prompt injected (via flag or AGENTS.md) when "Teach Fresh CLI" is on.
+// Teaches the agent the verbatim `fresh` CLI verbs it can drive the editor
+// with. Keep the command strings exact — they're the agent's only reference.
+const FRESH_CLI_SYSTEM_PROMPT = [
+  "You are running inside a Fresh editor workspace and can control it from the shell via the `fresh` CLI.",
+  "Discover what you can do: `fresh --cmd cmd list --json` (lists the commands you're allowed to run in this workspace).",
+  "Run one: `fresh --cmd cmd run <id>` (e.g. `fresh --cmd cmd run split_vertical`), or the shortcut `fresh --cmd split --vertical`.",
+  "Open a file in this workspace: `fresh <path>` (this blocks until you close the file, so use it for hand-offs, not quick peeks).",
+  "Open another project as a new workspace: `fresh --cmd workspace new <dir>`.",
+  "These commands act only on the current workspace.",
+].join("\n");
+
+// Marker wrapping the injected block so an existing user file (codex/opencode
+// `AGENTS.md`) is amended, never clobbered, and a retry/recovery run stays
+// idempotent (the block is added at most once).
+const FRESH_CLI_BLOCK_START = "<!-- fresh-cli:start -->";
+const FRESH_CLI_BLOCK_END = "<!-- fresh-cli:end -->";
+
+// Write (or append) the Fresh CLI system prompt into an agent-read file
+// (`AGENTS.md`). If the file already exists, append a clearly-marked block
+// rather than overwriting the user's content; otherwise create it fresh.
+function writeFreshCliPromptFile(path: string): void {
+  const block = `${FRESH_CLI_BLOCK_START}\n${FRESH_CLI_SYSTEM_PROMPT}\n${FRESH_CLI_BLOCK_END}\n`;
+  if (editor.fileExists(path)) {
+    const existing = editor.readFile(path) ?? "";
+    // Idempotent on retry / restart-recovery: never stack duplicate blocks.
+    if (existing.includes(FRESH_CLI_BLOCK_START)) return;
+    const sep = existing.length === 0 || existing.endsWith("\n") ? "\n" : "\n\n";
+    editor.writeFile(path, existing + sep + block);
+  } else {
+    editor.writeFile(path, block);
+  }
+}
 
 // The registry entry a typed command resolves to (by argv0 basename), or null
 // for a bare terminal / unknown command. Drives which agent-only controls
@@ -6045,7 +6111,7 @@ function agentSessionUuid(): string {
 // agents) pass through unchanged with no resume — i.e. today's behaviour.
 function resolveAgentLaunch(
   argv: string[],
-  opts?: { auto?: boolean; prompt?: string },
+  opts?: { auto?: boolean; prompt?: string; systemPrompt?: string },
 ): { launch: string[]; resume?: string[] } {
   if (argv.length === 0) return { launch: argv };
   const argv0 = argv[0];
@@ -6064,8 +6130,17 @@ function resolveAgentLaunch(
   const promptArgs = prompt && entry.prompt
     ? agentPromptArgs(entry.prompt, prompt)
     : [];
-  // Flags first, then the (trailing) prompt so a positional prompt stays last.
-  const withAuto = [...argv, ...autoArgs];
+  // "Teach Fresh CLI" for a flag-style agent (claude) rides launch only —
+  // like the start prompt, it seeds the first turn and must not replay on
+  // resume. File-style agents (codex/opencode) get the text written into a
+  // file instead, so they never reach here.
+  const sysPrompt = (opts?.systemPrompt ?? "").trim();
+  const sysPromptArgs = sysPrompt && entry.systemPrompt?.via === "flag"
+    ? [entry.systemPrompt.flag, sysPrompt]
+    : [];
+  // Flags first (auto + system prompt), then the (trailing) positional prompt
+  // so a positional start-prompt stays last.
+  const withAuto = [...argv, ...autoArgs, ...sysPromptArgs];
 
   if (entry.spec.provision) {
     const id = agentSessionUuid();
@@ -6486,6 +6561,13 @@ function agentOptionsFields(): WidgetSpec[] {
   if (entry.auto) {
     fields.push(
       toggle(form.autoMode, editor.t("form.auto_mode"), { key: "auto_mode" }),
+    );
+  }
+  if (entry.systemPrompt) {
+    fields.push(
+      toggle(form.teachFreshCli, editor.t("form.teach_fresh_cli"), {
+        key: "teach_fresh_cli",
+      }),
     );
   }
   if (entry.prompt) {
@@ -6990,6 +7072,7 @@ function openForm(options?: { fromPicker?: boolean }): void {
     cmd: { value: lastCmd, cursor: lastCmd.length },
     startPrompt: { value: "", cursor: 0 },
     autoMode: false,
+    teachFreshCli: false,
     branch: { value: "", cursor: 0 },
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
@@ -7530,6 +7613,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
         // stray flags or a prompt appended.
         auto: !!agentEntryForCmd(cmd)?.auto && f.autoMode,
         startPrompt: agentEntryForCmd(cmd)?.prompt ? f.startPrompt.value.trim() : "",
+        teachFreshCli: !!agentEntryForCmd(cmd)?.systemPrompt && f.teachFreshCli,
         branch: f.branch.value.trim(),
         createWorktree: f.createWorktree,
         displayLabel,
@@ -7910,10 +7994,20 @@ async function runLocalCreate(id: number): Promise<void> {
   if (cmd) appendHistory("cmd", cmd);
   if (createWorktree) appendHistory("branch", reportedBranch);
 
+  // "Teach Fresh CLI": inject the CLI system prompt and (below) mint a
+  // capability token. `via: "file"` writes an AGENTS.md the agent reads at
+  // startup; `via: "flag"` rides the launch argv (resolved just below).
+  const teachEntry = spec.teachFreshCli ? agentEntryForCmd(cmd) : null;
+  const teach = teachEntry?.systemPrompt ?? null;
+  if (teach?.via === "file") {
+    writeFreshCliPromptFile(editor.pathJoin(root, teach.path));
+  }
+
   const argv = splitAgentCmd(cmd);
   const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv, {
     auto: spec.auto,
     prompt: spec.startPrompt,
+    systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
   });
   const sharedWorktree = !createWorktree && !isLinkedAttach;
 
@@ -7931,6 +8025,9 @@ async function runLocalCreate(id: number): Promise<void> {
       command: launchArgv.length > 0 ? launchArgv : undefined,
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
+      // Mint the capability token bound to this window + allowlist so the
+      // agent's `fresh --cmd cmd ...` calls are authorised.
+      commandAllowlist: teach ? FRESH_CLI_DEFAULT_ALLOWLIST : undefined,
     });
     const winId = result.windowId;
     // Dismissed during the (awaited) spawn: the window was born and dove in,
@@ -8779,6 +8876,17 @@ editor.on("widget_event", (e) => {
         form.autoMode = checked;
       } else {
         form.autoMode = !form.autoMode;
+      }
+      renderForm();
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "teach_fresh_cli") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const checked = payload.checked;
+      if (typeof checked === "boolean") {
+        form.teachFreshCli = checked;
+      } else {
+        form.teachFreshCli = !form.teachFreshCli;
       }
       renderForm();
       return;

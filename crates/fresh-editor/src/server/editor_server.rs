@@ -1155,9 +1155,8 @@ impl EditorServer {
                         _ => Vec::new(),
                     };
                     if let Some(client) = self.clients.get_mut(idx) {
-                        let json =
-                            serde_json::to_string(&ServerControl::CommandList { commands })
-                                .unwrap_or_default();
+                        let json = serde_json::to_string(&ServerControl::CommandList { commands })
+                            .unwrap_or_default();
                         // Best-effort reply
                         #[allow(clippy::let_underscore_must_use)]
                         let _ = client.conn.write_control(&json);

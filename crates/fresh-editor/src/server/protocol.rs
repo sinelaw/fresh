@@ -67,7 +67,9 @@ impl ClientHello {
             env,
             // Populated from `$FRESH_CMD_TOKEN` when present so a client that
             // was spawned inside a Fresh workspace can drive it.
-            cmd_token: std::env::var("FRESH_CMD_TOKEN").ok().filter(|t| !t.is_empty()),
+            cmd_token: std::env::var("FRESH_CMD_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty()),
         }
     }
 

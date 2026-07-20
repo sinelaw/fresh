@@ -198,6 +198,8 @@ fn new_session_atomic_api_seeds_terminal_as_only_tab() {
             Some("agent".into()),
             born_authority,
             None,
+            None,
+            None,
         )
         .expect("create_window_with_terminal should succeed");
 

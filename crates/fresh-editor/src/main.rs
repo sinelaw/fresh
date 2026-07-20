@@ -3264,9 +3264,7 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
 }
 
 /// Connect to the resolved socket and complete the client handshake.
-fn connect_cmd(
-    socket_paths: &SocketPaths,
-) -> AnyhowResult<fresh::server::ipc::ClientConnection> {
+fn connect_cmd(socket_paths: &SocketPaths) -> AnyhowResult<fresh::server::ipc::ClientConnection> {
     let conn = fresh::server::ipc::ClientConnection::connect(socket_paths)?;
     if !client_handshake(&conn)? {
         // client_handshake already printed the mismatch reason.
@@ -3301,7 +3299,9 @@ fn read_command_result(
     loop {
         match conn.read_control()? {
             Some(line) => match serde_json::from_str::<ServerControl>(&line)? {
-                ServerControl::CommandResult { ok, error, output } => return Ok((ok, error, output)),
+                ServerControl::CommandResult { ok, error, output } => {
+                    return Ok((ok, error, output))
+                }
                 ServerControl::Error { message } => anyhow::bail!("server error: {}", message),
                 _ => continue,
             },
@@ -3395,7 +3395,10 @@ fn cmd_describe(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult
     let info = match commands.iter().find(|c| c.id == id) {
         Some(info) => info,
         None => {
-            eprintln!("Command not found (not on this workspace's allowlist): {}", id);
+            eprintln!(
+                "Command not found (not on this workspace's allowlist): {}",
+                id
+            );
             std::process::exit(1);
         }
     };
@@ -3462,7 +3465,10 @@ fn run_command_id(
         }
     }
     if !ok {
-        eprintln!("{}", error.unwrap_or_else(|| format!("command '{}' failed", id)));
+        eprintln!(
+            "{}",
+            error.unwrap_or_else(|| format!("command '{}' failed", id))
+        );
         std::process::exit(1);
     }
     Ok(())

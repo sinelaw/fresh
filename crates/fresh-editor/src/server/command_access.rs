@@ -104,7 +104,11 @@ pub fn is_allowed(token: &str, command_id: &str) -> bool {
 /// `include_args` is accepted for protocol symmetry but currently has no
 /// effect: the command registry carries no argument schema, so every entry's
 /// `args` is empty. TODO: populate once commands declare an arg schema.
-pub fn list_allowed_commands(editor: &Editor, grant: &Grant, _include_args: bool) -> Vec<CommandInfo> {
+pub fn list_allowed_commands(
+    editor: &Editor,
+    grant: &Grant,
+    _include_args: bool,
+) -> Vec<CommandInfo> {
     let Ok(registry) = editor.command_registry().read() else {
         return Vec::new();
     };
@@ -149,7 +153,10 @@ pub fn run_command_by_id(
         );
     };
     let Some(grant) = lookup(token) else {
-        return (false, Some("unknown or expired capability token".to_string()));
+        return (
+            false,
+            Some("unknown or expired capability token".to_string()),
+        );
     };
     if !grant.allows(id) {
         return (false, Some(format!("command not allowed: {}", id)));
@@ -238,8 +245,12 @@ mod tests {
 
     #[test]
     fn run_command_unknown_token_is_refused() {
-        let (ok, error) =
-            run_command_by_id(None, Some("not-a-real-token"), "split_vertical", &HashMap::new());
+        let (ok, error) = run_command_by_id(
+            None,
+            Some("not-a-real-token"),
+            "split_vertical",
+            &HashMap::new(),
+        );
         assert!(!ok);
         assert!(error.is_some());
     }
@@ -250,10 +261,12 @@ mod tests {
         // rejected before the editor is ever touched (so `None` editor is
         // fine here — the allowlist check returns first).
         let token = mint(Grant::new(Some(1), ["save".to_string()]));
-        let (ok, error) =
-            run_command_by_id(None, Some(&token), "split_vertical", &HashMap::new());
+        let (ok, error) = run_command_by_id(None, Some(&token), "split_vertical", &HashMap::new());
         assert!(!ok);
-        assert_eq!(error.as_deref(), Some("command not allowed: split_vertical"));
+        assert_eq!(
+            error.as_deref(),
+            Some("command not allowed: split_vertical")
+        );
         revoke(&token);
     }
 }

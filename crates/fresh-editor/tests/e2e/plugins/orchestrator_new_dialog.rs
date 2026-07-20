@@ -1179,7 +1179,9 @@ fn selecting_an_agent_reveals_auto_mode_and_start_prompt() {
     // command fills the field and whose controls appear.
     let mut guard = 0;
     while !harness.screen_to_string().contains("Auto mode") {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
         harness.tick_and_render().unwrap();
         guard += 1;
         assert!(
@@ -1210,7 +1212,9 @@ fn opencode_shows_start_prompt_without_auto_mode() {
     // load-bearing signal is the `▸` marker sitting on the opencode button.
     let mut guard = 0;
     while !focused_line(&harness.screen_to_string()).contains("▸ [ opencode") {
-        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
         harness.tick_and_render().unwrap();
         guard += 1;
         assert!(
@@ -1228,5 +1232,48 @@ fn opencode_shows_start_prompt_without_auto_mode() {
     assert!(
         !screen.contains("Auto mode"),
         "opencode has no launch auto-mode flag, so no Auto mode checkbox. Screen:\n{screen}",
+    );
+}
+
+/// The "Teach agent the Fresh CLI" toggle is an agent-only control: it's
+/// hidden for the bare `terminal` preset and revealed once a supporting agent
+/// (claude) is selected. Stepping ←/→ off `terminal` onto the first agent
+/// surfaces it.
+#[test]
+fn teach_fresh_cli_toggle_shown_for_agent_hidden_for_terminal() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // The bare-terminal default (the active preset) carries no Fresh CLI toggle.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Teach agent the Fresh CLI"),
+        "the terminal preset must not show the Teach Fresh CLI toggle. Screen:\n{screen}",
+    );
+
+    focus_agent_preset_stop(&mut harness);
+
+    // ←/→ steps off `terminal` onto the first agent (claude, which supports the
+    // system-prompt injection), revealing the toggle.
+    let mut guard = 0;
+    while !harness
+        .screen_to_string()
+        .contains("Teach agent the Fresh CLI")
+    {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::NONE)
+            .unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 8,
+            "stepping the preset selector never surfaced the Teach Fresh CLI toggle. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("▸ [ claude code cli"),
+        "the revealed toggle must belong to the active claude preset. Screen:\n{}",
+        harness.screen_to_string(),
     );
 }

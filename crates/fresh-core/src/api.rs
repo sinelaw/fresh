@@ -7146,7 +7146,10 @@ mod create_window_with_terminal_options_tests {
         let opts: CreateWindowWithTerminalOptions =
             serde_json::from_str(json).expect("payload with new fields should decode");
         assert_eq!(
-            opts.env.as_ref().and_then(|e| e.get("FOO")).map(String::as_str),
+            opts.env
+                .as_ref()
+                .and_then(|e| e.get("FOO"))
+                .map(String::as_str),
             Some("bar")
         );
         assert_eq!(
