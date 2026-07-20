@@ -157,17 +157,32 @@
   body.macfam:not(.mobile) .widget-surface.w-dock{
     background:var(--mac-sidebar);border-right:1px solid var(--hairline-strong);
     color:var(--fg);padding:12px 10px 8px}
-  body.macfam .w-dock .w-tree-row.sel,body.macfam .w-dock .w-list-row.sel,
+  /* Roomier source-list rows (macOS spacing). */
+  body.macfam .w-dock .w-tree-row,body.macfam .w-dock .w-list-row{padding:3px 8px}
+  /* Selection semantics: a thin session ROW gets the focused-list blue; a
+     multi-line project CARD gets a SOFT tinted selection with a coloured edge —
+     never a saturated block. */
+  body.macfam .w-dock .w-tree-row.sel,body.macfam .w-dock .w-list-row.sel{
+    background:var(--ui-accent);color:#fff;box-shadow:none}
+  body.macfam .w-dock .w-tree-card,body.macfam .w-dock .w-list-card{
+    border-color:var(--hairline-strong);background:transparent;padding:3px 4px;margin:2px 1px}
   body.macfam .w-dock .w-tree-card.sel,body.macfam .w-dock .w-list-card.sel{
-    background:var(--ui-accent);border-color:transparent;color:#fff;box-shadow:none}
-  body.macfam .w-dock .w-tree-card.sel .w-tree-xrow,
-  body.macfam .w-dock .w-list-card.sel .w-tree-xrow{color:rgba(255,255,255,.82)}
+    background:color-mix(in srgb,var(--ui-accent) 15%,transparent);
+    border-color:color-mix(in srgb,var(--ui-accent) 50%,transparent);color:var(--fg);box-shadow:none}
+  /* Inside a selected card the whole card IS the selection — don't re-fill the
+     primary row blue; keep the detail line muted. */
+  body.macfam .w-dock .w-tree-card.sel .w-tree-row.sel,
+  body.macfam .w-dock .w-tree-card.sel .w-tree-row{background:transparent;color:var(--fg)}
+  body.macfam .w-dock .w-tree-card.sel .w-tree-xrow{background:transparent;color:var(--muted)}
   body.macfam .w-dock .w-button.primary{
     background:linear-gradient(180deg,color-mix(in srgb,var(--ui-accent) 88%,#fff),var(--ui-accent));
     border:1px solid color-mix(in srgb,var(--ui-accent) 70%,#000);color:#fff}
-  /* Search field + secondary buttons: chrome surfaces, not the buffer-dark --bg. */
-  body.macfam .w-dock .w-text{background:var(--surface);border:1px solid var(--hairline-strong);color:var(--fg)}
+  /* Search field: a macOS rounded search field with a leading magnifier. */
+  body.macfam .w-dock .w-text{background:var(--surface);border:1px solid var(--hairline-strong);
+    color:var(--fg);border-radius:7px;padding:2px 8px}
+  body.macfam .w-dock .w-text::before{content:"⌕";color:var(--muted);font-size:1.2em;line-height:1;margin-right:2px}
   body.macfam .w-dock .w-button{background:var(--mac-btn);border:1px solid var(--hairline-strong);color:var(--mac-btn-fg)}
   body.macfam .w-dock .w-toggle{color:var(--fg)}
   body.macfam .w-dock .w-divider{border-color:var(--hairline)}
   body.macfam .w-dock .w-hintbar,body.macfam .w-dock .fx-title{color:var(--muted)}
+  body.macfam .w-dock .w-hint b{color:var(--ui-accent)}
