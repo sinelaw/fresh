@@ -69,15 +69,21 @@
   body.macfam .tab .x:hover{background:color-mix(in srgb,var(--fg) 16%,transparent);color:var(--fg)}
 
   /* ---- sidebar (file explorer): a source list with an inset rounded
-     selection pill in the system accent (Finder "prominent" selection) ---- */
+     selection pill (Big Sur source list) ---- */
   body.macfam .fileexplorer{background:var(--mac-sidebar);border-right:1px solid var(--hairline-strong)}
-  body.macfam .fileexplorer .fx-title{color:var(--muted);font-weight:600}
+  body.macfam .fileexplorer .fx-title{color:var(--muted);font-weight:600;text-transform:none}
   body.macfam .fileexplorer .fx-list{padding:5px 8px}
   body.macfam .fileexplorer .fx-row{border-radius:6px;margin:1px 0}
-  body.macfam .fileexplorer .fx-row.sel{background:var(--ui-accent);color:#fff;box-shadow:none}
-  body.macfam .fileexplorer .fx-row.sel .fx-icon,
-  body.macfam .fileexplorer .fx-row.sel .fx-chev{color:#fff}
-  body.macfam .fileexplorer .fx-icon.dir{color:var(--ui-accent)}
+  /* macOS sidebars select with a SOFT neutral pill + dark label — the accent
+     blue is reserved for menus / buttons / the focused control (see the Mail
+     reference). Icons keep their tint through the selection. */
+  body.macfam .fileexplorer .fx-row.sel{
+    background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg);box-shadow:none}
+  body.macfam .fileexplorer .fx-row.sel .fx-name{color:var(--fg)}
+  body.macfam .fileexplorer .fx-row.sel .fx-chev{color:var(--muted)}
+  body.macfam .fileexplorer .fx-row.sel .fx-icon{color:var(--muted)}
+  body.macfam .fileexplorer .fx-icon.dir,
+  body.macfam .fileexplorer .fx-row.sel .fx-icon.dir{color:var(--ui-accent)}
 
   /* ---- status bar: a quiet strip matching the frame ---- */
   body.macfam .statusbar{background:var(--shell);color:var(--status-fg);
@@ -110,7 +116,7 @@
   body.macfam .settings-modal .set-cat.sel,body.macfam .settings-modal .set-dual-row.sel,
   body.macfam .kbedit .kb-row.sel,body.macfam .w-list-row.sel,
   body.macfam .auxmodal .am-line.sel,body.macfam .settings-modal .set-sresult.sel,
-  body.macfam .fileexplorer .fx-row.sel,body.macfam .menu.open,
+  body.macfam .menu.open,
   body.macfam .settings-modal .set-dd-row.sel{
     background:var(--ui-accent);color:#fff;box-shadow:none}
   body.macfam .palette .prow.sel .pdesc,body.macfam .palette .prow.sel .pkey{
@@ -182,16 +188,16 @@
     color:var(--fg);padding:12px 10px 8px}
   /* Roomier source-list rows (macOS spacing). */
   body.macfam .w-dock .w-tree-row,body.macfam .w-dock .w-list-row{padding:3px 8px}
-  /* Selection semantics: a thin session ROW gets the focused-list blue; a
-     multi-line project CARD gets a SOFT tinted selection with a coloured edge —
-     never a saturated block. */
+  /* Selection semantics (Big Sur source list): a soft NEUTRAL pill for rows,
+     and a soft-filled CARD with a faint accent edge — the accent blue is kept
+     for menus / buttons, not the persistent sidebar. */
   body.macfam .w-dock .w-tree-row.sel,body.macfam .w-dock .w-list-row.sel{
-    background:var(--ui-accent);color:#fff;box-shadow:none}
+    background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg);box-shadow:none}
   body.macfam .w-dock .w-tree-card,body.macfam .w-dock .w-list-card{
     border-color:var(--hairline-strong);background:transparent;padding:3px 4px;margin:2px 1px}
   body.macfam .w-dock .w-tree-card.sel,body.macfam .w-dock .w-list-card.sel{
-    background:color-mix(in srgb,var(--ui-accent) 15%,transparent);
-    border-color:color-mix(in srgb,var(--ui-accent) 50%,transparent);color:var(--fg);box-shadow:none}
+    background:color-mix(in srgb,var(--fg) 8%,transparent);
+    border-color:color-mix(in srgb,var(--ui-accent) 42%,transparent);color:var(--fg);box-shadow:none}
   /* Inside a selected card the whole card IS the selection — don't re-fill the
      primary row blue; keep the detail line muted. */
   body.macfam .w-dock .w-tree-card.sel .w-tree-row.sel,
