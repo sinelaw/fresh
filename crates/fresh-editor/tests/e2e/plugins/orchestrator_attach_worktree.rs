@@ -1067,3 +1067,139 @@ fn archive_last_in_place_session_opens_replacement() {
             )
         });
 }
+
+/// End-to-end guard for deleting a *live* worktree session from the dock's
+/// right-click menu (arrow onto the worktree to open it, F2 → Delete →
+/// Confirm): the row must be removed, the worktree `git worktree remove`d,
+/// and — after an explicit re-scan — the row must not reappear.
+///
+/// Context: `editor.closeWindow` is asynchronous, so the host keeps
+/// reporting the window from its snapshot for a beat after the plugin drops
+/// the session from its model. `reconcileSessions` (run on every dock
+/// refresh) rebuilds the list from that snapshot, so it can resurrect the
+/// just-deleted workspace — the reported "deleted item still appears in the
+/// list". The `closingWindowIds` tombstone in `orchestrator.ts` stops that
+/// re-add. Note: the transient re-add self-heals once the deferred close
+/// lands (the `window_closed` hook re-reconciles against the now-updated
+/// snapshot), so a virtual-time harness converges to the correct end state
+/// with or without the tombstone; the flicker/persistence itself was
+/// reproduced and the fix validated interactively via tmux (per
+/// CONTRIBUTING's reproduction tip). This test locks in the observable
+/// contract of the flow and guards against a regression in the
+/// tombstone/reconcile bookkeeping that leaves or resurrects a row.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // attach spawns a Unix shell terminal.
+fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
+    if !pty_available() {
+        eprintln!("skipping: no PTY available in this environment");
+        return;
+    }
+    let (_temp, repo, wt) = set_up_repo_with_worktree();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, repo.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Toggle Dock");
+
+    open_dock(&mut harness);
+
+    // Alt+T reveals the discovered on-disk worktree below the base session.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "dock should reveal the on-disk `feature-x` worktree after Alt+T.\n\
+                 Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Arrow the highlight onto the on-disk row: the debounced live-switch
+    // attaches a managed session there (keeping the dock focused), so the
+    // row turns from `· on-disk` into a live, active `feature-x` session.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && !s.contains("· on-disk")
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "arrowing onto the dock's discovered worktree should open a live \
+                 session (row loses `· on-disk`).\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+    // Confirm the attach really opened a second window before deleting it.
+    harness
+        .wait_until(|h| h.editor().session_count() >= 2)
+        .unwrap();
+
+    // Open the row's right-click context menu (F2 is its keyboard
+    // equivalent), then pick Delete: Visit / Move / Archive / Delete, so
+    // three Downs land on Delete.
+    harness.send_key(KeyCode::F(2), KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Delete"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "F2 on the worktree row should open its context menu with a \
+                 Delete action.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+    for _ in 0..3 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "Delete should open the Confirm Delete pane.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // Confirm panel focuses Cancel first; Tab to `Confirm Delete`, activate.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The worktree is removed from disk and its row must be gone from the
+    // dock — and stay gone. Without the fix the async-close snapshot lag
+    // lets reconcile re-add the row, so it lingers/returns in the list.
+    harness
+        .wait_until(|h| !wt.exists() && !h.screen_to_string().contains("feature-x"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "after Delete → Confirm the `feature-x` worktree row must be gone \
+                 from the dock (wt.exists()={}).\nScreen:\n{}",
+                wt.exists(),
+                harness.screen_to_string()
+            )
+        });
+
+    // Belt-and-braces: the row must not resurrect on a later refresh. Poke
+    // the dock (Alt+T re-scans worktrees) and confirm it stays absent.
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    assert!(
+        !harness.screen_to_string().contains("feature-x"),
+        "the deleted worktree row reappeared in the dock after a refresh.\n\
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+}

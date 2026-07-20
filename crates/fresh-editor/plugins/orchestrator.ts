@@ -1162,11 +1162,30 @@ function backendFacet(info: WindowInfo): AgentSession["remote"] | undefined {
   };
 }
 
+// Window ids we've deliberately closed as part of a lifecycle action
+// (Delete / Archive / Kill). `editor.closeWindow` is asynchronous — the
+// host keeps reporting the window from `listWindows()` for a beat after we
+// drop it from the model — so without this guard the very next
+// `refreshOpenDialog` → `reconcileSessions` resurrects the workspace the
+// user just deleted from that stale snapshot, leaving a deleted row
+// lingering in the dock (and, whenever the healing reconcile lost the
+// race, staying there for good). An id is removed from the set once the
+// host confirms the close (the window leaves `listWindows()`), or by the
+// `window_closed` hook.
+const closingWindowIds = new Set<number>();
+
 function reconcileSessions(): void {
   const editorSessions = editor.listWindows();
   const seen = new Set<number>();
   for (const s of editorSessions) {
     seen.add(s.id);
+    // A window we just closed for a lifecycle action still shows up in the
+    // host snapshot until the deferred close lands. Keep it out of the
+    // model rather than re-adding the row the user just deleted.
+    if (closingWindowIds.has(s.id)) {
+      orchestratorSessions.delete(s.id);
+      continue;
+    }
     const existing = orchestratorSessions.get(s.id);
     if (!existing) {
       // A born-attached remote window (created by core after
@@ -1222,6 +1241,14 @@ function reconcileSessions(): void {
   // on-disk worktree set, by `refreshDiscoveredWorktrees`.
   for (const id of orchestratorSessions.keys()) {
     if (id > 0 && !seen.has(id)) orchestratorSessions.delete(id);
+  }
+  // Retire tombstones whose window the host has now actually closed: a
+  // live window is added to `seen` above (before the tombstone skip), so
+  // `!seen.has(id)` means the close landed and `listWindows()` no longer
+  // reports it. Clearing it keeps a future window that reuses the id from
+  // being wrongly suppressed.
+  for (const id of [...closingWindowIds]) {
+    if (!seen.has(id)) closingWindowIds.delete(id);
   }
   // A worktree that's now open as a live window must not also linger
   // as a discovered row. Drop any discovered entry whose root a live
@@ -4616,6 +4643,10 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
     if (s.terminalId) editor.signalWindow(id, "SIGKILL");
+    // Tombstone before the (async) close so a mid-archive
+    // `refreshOpenDialog` doesn't reconcile the workspace back in from the
+    // still-stale window snapshot.
+    closingWindowIds.add(id);
     editor.closeWindow(id);
     // Brief settle so the filesystem reflects the pty's exit before we
     // move the worktree out from under it.
@@ -4912,6 +4943,10 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
       editor.setActiveWindow(pickNextActiveSession(id));
     }
     if (s.terminalId) editor.signalWindow(id, "SIGKILL");
+    // Tombstone before the (async) close so any `refreshOpenDialog` that
+    // runs before the host processes it doesn't reconcile the workspace
+    // straight back in from the still-stale window snapshot.
+    closingWindowIds.add(id);
     editor.closeWindow(id);
     if (removable) await editor.delay(250);
   }
@@ -8631,6 +8666,9 @@ function killSelected(): void {
   if (s && s.terminalId !== null) {
     editor.closeTerminal(s.terminalId);
   }
+  // Tombstone so reconcile drops the row immediately instead of resurrecting
+  // it from the stale window snapshot until the deferred close lands.
+  closingWindowIds.add(id);
   editor.closeWindow(id);
 }
 
@@ -8648,7 +8686,11 @@ editor.on("window_created", () => {
   refreshOpenDialog();
 });
 
-editor.on("window_closed", () => {
+editor.on("window_closed", (e) => {
+  // The host has confirmed this window is gone, so drop any tombstone for
+  // it (reconcile won't re-add it now that it's out of `listWindows()` —
+  // this just keeps the set from growing).
+  if (e && typeof e.id === "number") closingWindowIds.delete(e.id);
   refreshOpenDialog();
 });
 
