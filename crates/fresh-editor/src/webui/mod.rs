@@ -606,7 +606,12 @@ fn serve_request(
     if req.method == "POST" {
         if let Some(origin) = req.header("origin") {
             if !origin_host_matches(origin, req.header("host"), bind_host) {
-                respond(&mut stream, "403 Forbidden", "text/plain", b"origin not allowed")?;
+                respond(
+                    &mut stream,
+                    "403 Forbidden",
+                    "text/plain",
+                    b"origin not allowed",
+                )?;
                 return Ok(Served::Http { mutated: false });
             }
         }
@@ -1134,8 +1139,9 @@ fn value_fingerprint(v: &Value) -> u64 {
         }
     }
     let mut hw = HashWriter(std::collections::hash_map::DefaultHasher::new());
-    // Writing to a hasher never fails, and Value serialization is infallible.
-    let _ = serde_json::to_writer(&mut hw, v);
+    // Writing to a hasher never fails, and Value serialization is infallible —
+    // `drop` the (always-Ok) result without a `let _` (denied for must-use).
+    drop(serde_json::to_writer(&mut hw, v));
     hw.0.finish()
 }
 
@@ -1321,7 +1327,7 @@ impl WsSession {
                     // gone, and we're dropping the client either way) and
                     // report the disconnect.
                     self.enqueue(0x8, &frame.payload);
-                    let _ = self.flush();
+                    drop(self.flush());
                     return Err(std::io::Error::new(
                         ErrorKind::ConnectionAborted,
                         "client sent close",
