@@ -412,6 +412,16 @@ impl crate::app::Editor {
         // so the token is live by the time the child can read its env.
         let mut terminal_env = env.unwrap_or_default();
         if let Some(allowlist) = command_allowlist {
+            // A capability token is useless unless the client inside the
+            // terminal can also *find* this editor's control socket. Ensure the
+            // socket is listening (idempotent — already up in the common case,
+            // started here for run modes that skip the init-time bind) and
+            // advertise BOTH the session and the token together. FRESH_SESSION
+            // is injected here, applied after the manager's own best-effort
+            // attempt, so a token never ships without a session to talk to.
+            if let Ok(session_id) = crate::server::local_control::start() {
+                terminal_env.insert("FRESH_SESSION".to_string(), session_id.to_string());
+            }
             let token = crate::server::command_access::mint(
                 crate::server::command_access::Grant::new(Some(id.0), allowlist),
             );
