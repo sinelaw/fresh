@@ -523,8 +523,28 @@ Known-good numbers for a macOS-family theme, for calibration:
 - **Hairlines / separators:** ~9% black (light) / ~8–10% white (dark).
 - **Radii:** control ~6px, card/panel ~8–11px; window corner ~10px.
 - **Font:** SF (system) chrome at ~13px; the buffer stays monospace.
-- **Selection:** persistent sidebars use a **soft neutral** pill (dark label);
-  accent + white is reserved for menus, buttons, and the *focused* list.
+- **Selection:** context-dependent — a *light* sidebar (Finder/Mail) uses a
+  **soft neutral** pill with a dark label; a *dark, branded* sidebar (Bear) uses
+  a **filled accent** pill with white text; a content list may mark selection
+  with a **left accent bar** instead of a fill. Accent + white is otherwise
+  reserved for menus, buttons, and the *focused* list. Pick per surface and keep
+  it consistent.
+- **Buttons:** push buttons are near-**flat solid accent** with a faint top
+  sheen (`inset 0 1px 0 rgba(255,255,255,.22)`), **not** a gradient — cf. the
+  "Try now" pill and Control Center toggles.
+- **Panels / cards:** Big Sur floating surfaces are **generously rounded**
+  (~12px for palettes/modals/cards; Control Center cards ~14–16px) with heavy
+  backdrop-blur vibrancy and a soft shadow. Menus stay tighter (~6–8px).
+- **Materials:** Control Center / notification cards are the signature look —
+  translucent, rounded, floating; the global menu bar and dock are translucent
+  too. (Our maximized full-bleed app has no desktop behind it, so sidebars are
+  opaque; a floating-window variant would enable true vibrancy — that's what the
+  Cosmos shell already does.)
+
+References used for calibration: a real **Mail** window (light, soft-gray
+sidebar selection, count badges, monochrome toolbar) and a faithful **Big Sur
+clone** (light + dark — Control Center cards, dark-sidebar filled-accent
+selection, flat accent buttons, rounded translucent panels).
 
 ---
 
