@@ -411,6 +411,17 @@ impl crate::app::Editor {
         // happens here — after the window id is known, before the PTY spawns —
         // so the token is live by the time the child can read its env.
         let mut terminal_env = env.unwrap_or_default();
+        // Advertise the running editor's own executable path so an agent in this
+        // workspace drives the EXACT same binary — its `--cmd` verbs and `--help`
+        // match this build, never some other `fresh` earlier on PATH. Injected
+        // here (not only in the terminal manager) so it reliably rides the agent
+        // session's env alongside FRESH_SESSION / FRESH_CMD_TOKEN, whatever the
+        // manager's own cwd/socket state.
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe) = exe.to_str() {
+                terminal_env.insert("FRESH_BIN".to_string(), exe.to_string());
+            }
+        }
         if let Some(allowlist) = command_allowlist {
             // A capability token is useless unless the client inside the
             // terminal can also *find* this editor's control socket. Ensure the

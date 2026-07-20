@@ -621,6 +621,15 @@ fn build_shell_command(
         if let Some(session_id) = crate::server::local_control::local_session_id() {
             cmd.env("FRESH_SESSION", session_id);
         }
+        // Advertise the running fresh executable's own path so a nested `fresh`
+        // — and, above all, an agent taught the Fresh CLI — invokes the EXACT
+        // same binary this editor is running. Its `--cmd` verbs and `--help`
+        // then match this build, never some other `fresh` that happens to sit
+        // earlier on PATH. Local-only (skip_cwd ⇒ a remote host where this path
+        // is meaningless), mirroring FRESH_SESSION.
+        if let Ok(exe) = std::env::current_exe() {
+            cmd.env("FRESH_BIN", exe);
+        }
     }
 
     // On Windows, ensure PROMPT is set for cmd.exe.

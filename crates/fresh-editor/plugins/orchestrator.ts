@@ -5659,16 +5659,18 @@ function rebuildFormFocusCycle(): void {
     cycle.push("project_path", "name", "cmd");
     // Agent-specific controls sit between the command and the Advanced fold,
     // matching `agentOptionsFields`' render order (Auto mode, then Start prompt).
+    // "Teach Fresh CLI" moved under Advanced, so it's a Tab stop there, not here.
     const agent = activeAgentEntry();
     if (agent?.auto) cycle.push("auto_mode");
-    if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
     if (agent?.prompt) cycle.push("start_prompt");
-    // The "Advanced…" header is always a Tab stop; its worktree + branch
-    // fields join the cycle only while the section is expanded. "Checkout
-    // branch" is a stop on any git path (it drives the in-place checkout when
-    // no worktree is created); "New branch name" only when cutting a worktree.
+    // The "Advanced…" header is always a Tab stop; its folded fields join the
+    // cycle only while the section is expanded, in render order: Teach Fresh
+    // CLI, then worktree, then "Checkout branch" (a stop on any git path — it
+    // drives the in-place checkout when no worktree is created), then "New
+    // branch name" (only when cutting a worktree).
     cycle.push("advanced_toggle");
     if (form.advancedExpanded) {
+      if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
       if (worktreeEnabled) cycle.push("worktree");
       if (worktreeEnabled) cycle.push("branch");
       if (effectiveCreateWorktree) cycle.push("new_branch");
@@ -5983,10 +5985,11 @@ const FRESH_CLI_DEFAULT_ALLOWLIST = ["split_vertical", "split_horizontal"];
 // with. Keep the command strings exact — they're the agent's only reference.
 const FRESH_CLI_SYSTEM_PROMPT = [
   "You are running inside a Fresh editor workspace and can control it from the shell via the `fresh` CLI.",
-  "Discover what you can do: `fresh --cmd cmd list --json` (lists the commands you're allowed to run in this workspace).",
-  "Run one: `fresh --cmd cmd run <id>` (e.g. `fresh --cmd cmd run split_vertical`), or the shortcut `fresh --cmd split --vertical`.",
-  "Open a file in this workspace: `fresh <path>` (this blocks until you close the file, so use it for hand-offs, not quick peeks).",
-  "Open another project as a new workspace: `fresh --cmd workspace new <dir>`.",
+  "Always invoke it through the `$FRESH_BIN` environment variable — it points at the exact editor binary running this workspace, so its `--cmd` verbs and `--help` match this build (never rely on a bare `fresh` from PATH, which may be a different version).",
+  'Discover what you can do: `"$FRESH_BIN" --cmd cmd list --json` (lists the commands you\'re allowed to run in this workspace).',
+  'Run one: `"$FRESH_BIN" --cmd cmd run <id>` (e.g. `"$FRESH_BIN" --cmd cmd run split_vertical`), or the shortcut `"$FRESH_BIN" --cmd split --vertical`.',
+  'Open a file in this workspace: `"$FRESH_BIN" <path>` (this blocks until you close the file, so use it for hand-offs, not quick peeks).',
+  'Open another project as a new workspace: `"$FRESH_BIN" --cmd workspace new <dir>`.',
   "These commands act only on the current workspace.",
 ].join("\n");
 
@@ -6560,13 +6563,8 @@ function agentOptionsFields(): WidgetSpec[] {
       toggle(form.autoMode, editor.t("form.auto_mode"), { key: "auto_mode" }),
     );
   }
-  if (entry.systemPrompt) {
-    fields.push(
-      toggle(form.teachFreshCli, editor.t("form.teach_fresh_cli"), {
-        key: "teach_fresh_cli",
-      }),
-    );
-  }
+  // "Teach Fresh CLI" lives under the Advanced fold (see `advancedSection`),
+  // so it stays hidden by default even though it's enabled by default.
   if (entry.prompt) {
     fields.push(
       labeledSection({
@@ -6644,6 +6642,17 @@ function advancedSection(): WidgetSpec[] {
   const worktreeEnabled = form.projectPathIsGit !== false;
   const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
   const fields: WidgetSpec[] = [header];
+
+  // "Teach Fresh CLI" — enabled by default, but folded away here so it doesn't
+  // clutter the common case. Only meaningful for an agent with a systemPrompt
+  // injection strategy (a bare terminal / unknown command can't be "taught").
+  if (activeAgentEntry()?.systemPrompt) {
+    fields.push(
+      toggle(form.teachFreshCli, editor.t("form.teach_fresh_cli"), {
+        key: "teach_fresh_cli",
+      }),
+    );
+  }
 
   // Worktree toggle: a checkbox on a git path, else a disabled hint.
   fields.push(
@@ -7138,7 +7147,10 @@ function openForm(options?: { fromPicker?: boolean }): void {
     cmd: { value: lastCmd, cursor: lastCmd.length },
     startPrompt: { value: "", cursor: 0 },
     autoMode: false,
-    teachFreshCli: false,
+    // Teach the agent the Fresh CLI by default: the capability token is always
+    // minted, so an agent that knows the `fresh` verbs is strictly more useful
+    // out of the box. Only surfaces for agents with a systemPrompt strategy.
+    teachFreshCli: true,
     branch: { value: "", cursor: 0 },
     newBranch: { value: "", cursor: 0 },
     advancedExpanded: false,
