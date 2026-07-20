@@ -1217,3 +1217,31 @@ Series `3a78ad5ec`…`0bfb54edf`. Two fixtures: **A)** root NOT a repo (`/tmp/mo
 - Vi-mode quit: the `(s)ave/(d)iscard/(q)uit` prompt can swallow the first `d` right after leaving a vi visual mode — confirm the prompt is gone, else resend `d`+Enter.
 - Toggle Line Wrap from the palette can silently not apply on the first invocation (likely palette-open race) — verify a continuation row exists (blank-number gutter `    │`) before testing wrap-dependent behavior.
 - Go-to-line then Toggle Fold sequence is reliable for fold targeting; `Ctrl+G` prompt renders below the status bar as before.
+
+## v0.4.4 recheck batch + Virtual Space / Save All / Search-in-Project Files field (Run #59) — v0.4.4 @ f545a75ad
+- **Master jumped v0.4.3 (6ab255709) → v0.4.4 (f545a75ad).** The maintainer closed a LARGE batch of agent issues between Run #58 and now (open agent count 25→12). CHANGELOG 0.4.4 + commit log fix: #2135 #2606 #2604 #2605 #2583 #2601 #2602 #2599 #2591 #2592 #2587 #2596 #2597 #2577. **Lesson: when the version changes, read the CHANGELOG's Bug Fixes section AND `git log <oldbase>..HEAD` for `(#NNNN)` refs — they map directly to agent issues to recheck (preflight step 4).** All 5 I rechecked were ALREADY maintainer-closed → confirm via UI + record in state; do NOT post "confirmed fixed" comments on already-closed issues (frugal-GitHub rule).
+- **#2135 fix shape:** Edit menu (F10→Right) now lists `Replace...  Ctrl+R` AND `Query Replace...  Ctrl+Alt+R` as separate rows. Functional check: `Ctrl+R` → "Replace:" bar with `[ ] Confirm each`; `Ctrl+Alt+R` → "Query replace:" bar with `[x] Confirm each`. (Was: single "Replace..." wired to Ctrl+Alt+R, no basic entry.)
+- **#2606 / #2604 fix shape:** visual-block `>`/`<` now indent/dedent the block AND return `-- NORMAL --`; `da"` now includes the trailing whitespace (`the "quick" brown fox` → `the brown fox`, single space).
+
+### Virtual Space (new 0.4.4 feature)
+- Enable per buffer: palette **"Toggle Virtual Space (Current Buffer)"** → status `Virtual space: on (this buffer)`. Global config Editor > "Virtual Space" = `on` | `block` (only `on` tested).
+- **Behavior:** cursor moves PAST a line's real EOL and STAYS on the line (baseline without vspace: Right at EOL wraps to next line). On `short` (5 chars): End→Col6, Right×4 → `Ln1 Col10`. **Status bar Col TRACKS the virtual column** (this is the #2577 fix — previously frozen at the EOL col). Typing in virtual space MATERIALIZES padding: typing `ZZ` at Col10 → `short    ZZ` (5 chars + 4 spaces + ZZ).
+- **Per-buffer scoping CONFIRMED:** toggling on one buffer leaves other buffers clamped (other tab: End→Col14 then Right wraps to next line).
+- Harness: `tmux display -p '#{cursor_x} #{cursor_y}'` corroborates the physical cursor is past the text even when a single status capture lags.
+
+### Save All (new 0.4.4 feature)
+- Palette **"Save All"** ("Save all modified files to disk", builtin, no default key). With N dirty buffers → status "Saved N files", ALL tab asterisks cleared, ALL files written to disk. Nothing dirty → graceful "No modified files to save". Only saves MODIFIED buffers (count matches dirty count).
+
+### Search in Project: file filter (#2699, new 0.4.4)
+- Alt+A ("Search & Replace in Project") panel gained a **`Files:`** input (row 2, below Search/Replace; reach via **Tab ×2** from the Search field). Header shows `(N matches / M files)` and updates live as you type a glob.
+- Globs verified: `*.rs` matches by extension across directories (top-level a.rs + nested src/d.rs); `src/**` = directory glob (only files under src/); `*.py,*.md` = **comma-separated** multiple globs. Empty field = all files.
+- The `*Search/Replace*` panel opens as a BOTTOM-dock split (its own `*Search/Replace*` tab). Alt+A toggles it; a single capture right after opening may show only the editor half — capture the FULL pane (the panel + Matches list are in the lower rows).
+
+### Side observation — #2309 (read-only indicator) future recheck
+- The `*Search/Replace*` panel buffer renders a persistent `[RO]` segment in the status bar. #2309 (still OPEN) reported `[RO]` is NEVER rendered — but that was tested on read-only FILE buffers (library path / binary / Toggle Read-Only). The rendering path clearly EXISTS for panel buffers; a future #2309 recheck should re-verify FILE buffers specifically before concluding anything (do NOT infer #2309 fixed from the panel).
+
+### Harness lessons (Run #59)
+- **Container can be reclaimed MID-RUN.** After a restart: `/tmp` is wiped, local git branches can be lost, and the FIRST clone's origin refs may be STALE (this session's first read showed Run #32 as latest; the true state after restart was Run #58). Always `git fetch` + `git checkout -B <state-branch> origin/<state-branch>` fresh, and re-check `origin/master` HEAD, before trusting any state.
+- **Ctrl+O is remapped under vi mode** (didn't open the file dialog; consumed as a vi command). To open a specific fixture, LAUNCH with it as a file arg rather than opening in-session under vi mode.
+- Palette prefills `>` (command mode); typing a `:e`-style path yields `>:` (dead). For file mode, clear the `>` first (C-u/BSpace) — but palette file mode rejects absolute external paths anyway (Run #57), so prefer file-arg launch.
+- Launching from `/tmp/<fixturedir>` (not a repo, no tooling markers) avoids the Workspace-Trust dialog entirely; launching from `/home/user/fresh` triggers it (`.envrc, Cargo.toml, package.json`) — dismiss with `K`+Enter (Keep Restricted, no restart) when trust is irrelevant to the test.

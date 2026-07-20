@@ -2014,3 +2014,38 @@ Fixture `/tmp/fold58` tiny crate (struct+impl+fns+if+for) + `notes.txt` indented
 **State updates:** run_log (this), learning_db (+1 topic), github_issues (+#2606 row, header), confirmed_bugs (+BUG-037), potential_improvements (+IMP-031), test_plan (Run #58 DONE + RUN #59 order).
 
 **Cleanup:** killed tmux `fresh-run58`; removed `/tmp/fold58` (incl. 12MB fixture); kept `/tmp/fresh-master` worktree + target for next run (container permitting).
+
+---
+
+# Run #59 — 2026-07-20 (v0.4.4 @ f545a75ad) — master v0.4.3→v0.4.4 (BIG maintainer batch); 5 fixed-issue UI rechecks CONFIRMED + 3 new 0.4.4 features PASS; NO new bug, NO false positive
+
+**Context/harness:** Container reclaimed MID-RUN this session (lost an in-progress build + local state branch); re-synced `tui-automated-testing-state` from origin (was at Run #58, not the stale Run #32 the first clone showed), recreated worktree `/tmp/fresh-master`, rebuilt from **origin/master @ f545a75ad = v0.4.4** (exit 0). User mid-turn ask "rebase on latest master and rebuild" → built latest master (was v0.4.3 @ 6ab255709 at Run #58's base).
+
+**Preflight:** playbook + lessons intact; auth LIVE (`list_issues`). **Master version CHANGED (v0.4.3→v0.4.4)** → preflight step 4 rechecks DUE. v0.4.4 CHANGELOG + commit log fix a LARGE batch of open agent issues: #2135, #2606, #2604, #2605, #2583, #2601, #2602, #2599, #2591, #2592, #2587, #2596, #2597, #2577. Open agent-issue count dropped **25→12** (maintainer closed the whole batch since Run #58, incl. all 5 I rechecked below — so NO comments needed, they're already closed/completed).
+
+## Preflight rechecks — 5 CONFIRMED FIXED via UI (all already maintainer-closed → recorded, not re-commented)
+- **#2135** (Edit menu Replace split): F10→Edit now shows TWO items — `Replace... Ctrl+R` (basic) AND `Query Replace... Ctrl+Alt+R` (interactive). Functional proof: Ctrl+R → "Replace:" bar (Confirm-each OFF); Ctrl+Alt+R → "Query replace:" bar (Confirm-each ON). Was: single "Replace..." wired to Ctrl+Alt+R. Fix commit `38d6d6fac`. Closed 2026-07-19.
+- **#2606** (vi visual-block `>`/`<` indent): Ctrl+V + jj over lines 1–3, `>` → all 3 lines indented +4 spaces AND returns to `-- NORMAL --`; `<` → dedents back to 0 AND returns NORMAL. Was a no-op stuck in VISUAL BLOCK. Closed 2026-07-09.
+- **#2604** (vi `a"` trailing whitespace): `da"` from col 1 on `the "quick" brown fox` → `the brown fox$` (SINGLE space, cat-A-verified). Was `the  brown fox` (double space). Closed 2026-07-09.
+- **#2591** (Git Grep no-match): palette "Git Grep" for a non-existent string → status "No matches", NO `[⚠]` error badge. Was exit-128 ERROR badge. Closed 2026-07-15 (repo-scoping half is #2369).
+- **#2577** (virtual-space status bar): confirmed as part of the Virtual Space feature test below (status Col tracks the cursor into virtual space, not frozen). Closed 2026-07-12.
+
+## NEW COVERAGE 1 — Virtual Space (new 0.4.4 feature) — COMPREHENSIVE PASS, no bug
+Palette **"Toggle Virtual Space (Current Buffer)"** → status `Virtual space: on (this buffer)`. On line `short` (5 chars): BASELINE (off) End→Col6, Right wraps to next line (Ln2). VSPACE ON: End→Col6 then Right×4 → **Ln1 Col10** (4 cols past EOL, stays on line 1 — status TRACKS it = #2577 fix); typing `ZZ` at Col10 materialized padding → `short    ZZ` (5+4 spaces+ZZ). **Per-buffer scoping CONFIRMED:** the other tab (aquote.txt) had vspace OFF (End→Col14 then Right wraps to Ln2). Config `on`/`block` modes exist (only `on`/per-buffer toggle tested). tmux physical `#{cursor_x}=15` corroborated.
+
+## NEW COVERAGE 2 — Save All command (new 0.4.4 feature) — COMPREHENSIVE PASS, no bug
+Palette **"Save All"** ("Save all modified files to disk", builtin). With 2 dirty buffers → status "Saved 2 files", BOTH tab asterisks cleared, BOTH files written to disk (content verified). Run again with nothing dirty → graceful "No modified files to save".
+
+## NEW COVERAGE 3 — Search in Project: file filter (#2699, new 0.4.4) — COMPREHENSIVE PASS, no bug
+Alt+A panel now has a **`Files:`** field (row 2, Tab×2 from Search). 5 files each with MARKERTOKEN. Baseline (empty): 5 matches / 5 files. `*.rs` → 2 (a.rs + src/d.rs — extension glob matches across dirs). `src/**` → 1 (src/d.rs only — dir glob). `*.py,*.md` → 2 (b.py + c.md — comma-separated globs). Match count + file list update live per glob.
+
+## Side observation (→ learning_db, future #2309 recheck)
+The `*Search/Replace*` panel buffer DOES render a persistent `[RO]` segment in the status bar. #2309 (still OPEN) says `[RO]` is never rendered — but that was tested on read-only FILE buffers (library/binary/toggle). The rendering path clearly exists for panel buffers; a future #2309 recheck should re-verify whether file buffers now show it too (do NOT assume #2309 fixed from this alone — different buffer type).
+
+**No new bug filed, no false positive.** All rechecks passed; all 3 new features correct.
+
+**NEXT (Run #60+, top-down):** v0.4.4 has MANY untested features — (a) **Tab extraction to a co-tenant/orchestrator workspace** (flagship series: `a8a2e5623`…`cd78b76d9`; extract a tab/terminal to a new workspace rooted at shell cwd; co-tenant workspaces over same project root; reboot restores each window's file); (b) **Terminal mouse text-selection** (drag-to-select, view pauses, Ctrl+C copies, resumes; Shift+drag over mouse-hungry program) — mouse/SGR harness; (c) **Indent rainbow** (Editor > "Rainbow Indentation" + `indent_rainbow_1..6` theme palette) — ANSI-verify on indented file (needs indentation_guide on); (d) **NextPane/PrevPane** (#2562, flat pane cycle, lands-on-terminal→terminal mode); (e) **Orchestrator dock folders** (create/rename/delete folders, Move to Folder…, F2/right-click/palette); (f) **Theme text attributes** bold/italic/underline (#2638); (g) **Virtual Space `block` mode** (only `on` tested). Then #2197 pyright only if a fix lands. Remaining still-OPEN agent issues to watch: #2603 #2598 #2594 #2582 #2443 #2318 #2301 #2221 #2197 #2122 #2111 #2109.
+
+**State updates:** run_log (this), learning_db (+Run #59 topic), github_issues (5 rechecked issues → FIXED/closed rows + header + count 25→12), test_plan (Run #59 note + RUN #60 order). No confirmed_bugs/potential_improvements change (no bug, no new friction beyond the noted #2309 recheck pointer).
+
+**Cleanup:** killed all tmux sessions; removed `/tmp/qa-r59`; kept `/tmp/fresh-master` worktree + target for next run (container permitting).
