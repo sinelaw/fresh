@@ -42,6 +42,7 @@ pub mod file_explorer_open_focus;
 pub mod file_explorer_session_persist;
 pub mod file_permissions;
 pub mod flash;
+#[cfg(feature = "plugins")]
 pub mod floating_modal_frame_chrome;
 pub mod folding;
 pub mod glob_language_detection;
