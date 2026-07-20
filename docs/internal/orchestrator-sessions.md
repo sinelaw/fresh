@@ -376,8 +376,9 @@ The New Session form fields (Phases 1–5 **shipped**):
   the agent registry, so adding a registry entry surfaces a preset
   automatically.
 - **Auto mode** checkbox (local backend, agent-dependent) — appends the agent's
-  documented bypass-approvals flag to the launch (and resume) argv, e.g.
-  `claude --dangerously-skip-permissions`, `codex --full-auto`,
+  documented auto / reduced-approval flag to the launch (and resume) argv, e.g.
+  `claude --permission-mode auto` (the *safe*-autonomous mode, deliberately not
+  the `--dangerously-skip-permissions` full bypass), `codex --full-auto`,
   `aider --yes-always`. Hidden for agents with no such flag (opencode gates it
   via config) and for a bare terminal.
 - **Start prompt** box (local backend, agent-dependent) — an initial task handed

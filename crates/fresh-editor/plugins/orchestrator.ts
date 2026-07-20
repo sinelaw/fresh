@@ -156,10 +156,10 @@ type CreateSpec =
       name: string;
       // Agent command; "" ⇒ a bare terminal.
       cmd: string;
-      // Enable the agent's "auto"/bypass-approvals mode (adds the agent's
-      // documented flag, e.g. `claude --dangerously-skip-permissions`). Only
-      // honoured for a command that resolves to a known agent with an `auto`
-      // flag; ignored for a bare terminal / unknown command.
+      // Enable the agent's auto/reduced-approval mode (adds the agent's
+      // documented flag, e.g. `claude --permission-mode auto`). Only honoured
+      // for a command that resolves to a known agent with an `auto` flag;
+      // ignored for a bare terminal / unknown command.
       auto: boolean;
       // Initial prompt to hand the agent at launch (positional or via the
       // agent's prompt flag). "" ⇒ no prompt. Only applied to a resolved agent
@@ -384,9 +384,9 @@ interface NewSessionForm {
   // shown only for the local backend where agent launch is wired). Ignored for
   // a bare terminal / an agent with no prompt argument.
   startPrompt: { value: string; cursor: number };
-  // "Auto mode" toggle — adds the resolved agent's bypass-approvals flag to
-  // the launch (and resume) argv. Only meaningful for an agent that documents
-  // such a flag; the checkbox is hidden otherwise.
+  // "Auto mode" toggle — adds the resolved agent's auto/reduced-approval flag
+  // to the launch (and resume) argv. Only meaningful for an agent that
+  // documents such a flag; the checkbox is hidden otherwise.
   autoMode: boolean;
   // "Teach Fresh CLI" toggle — injects a system prompt teaching the agent the
   // `fresh` CLI and mints a capability token so it can drive the editor. Only
@@ -5900,15 +5900,21 @@ const AGENT_REGISTRY: AgentEntry[] = [
       provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
       continue: { resumeArgs: ["--continue"] },
     },
-    auto: ["--dangerously-skip-permissions"],
+    // "Auto mode" = `--permission-mode auto`: the safe-autonomous mode (a
+    // classifier vets actions before they run) — deliberately NOT
+    // `--dangerously-skip-permissions` (which is `bypassPermissions`, the
+    // unchecked maximal bypass, reserved for isolated containers).
+    auto: ["--permission-mode", "auto"],
     prompt: { style: "positional" },
     systemPrompt: { via: "flag", flag: "--append-system-prompt" },
   },
   {
     // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
     // --last` rejoins the latest session in the cwd. There's no launch-time
-    // session-id to pin, so it's continue-only. `--full-auto` runs without
-    // approvals; the initial prompt is a trailing positional (`codex "…"`).
+    // session-id to pin, so it's continue-only. `--full-auto` is codex's
+    // auto-approve mode (workspace-write sandbox, no prompts) — NOT the
+    // `--dangerously-bypass-approvals-and-sandbox` full bypass; the initial
+    // prompt is a trailing positional (`codex "…"`).
     id: "codex",
     label: "codex cli",
     match: /^codex$/,
