@@ -27,9 +27,9 @@
 //! which diff one level deeper as `"regions.panes.<index>"` plus
 //! `"regions.panes.len"` when the pane count changes (panes carry the bulk of
 //! the bytes; typing resends only the changed pane). Client→server input is
-//! JSON text frames with the same field shapes as the HTTP POST bodies below,
-//! tagged `{"type":"key"|"mouse"|"action"|"widget"|"settings"|"kbedit"|
-//! "paste"|"resize"}`.
+//! JSON text frames, tagged `{"type":"key"|"mouse"|"action"|"widget"|
+//! "settings"|"kbedit"|"paste"|"resize"}` — each carrying the fields its
+//! `apply_*` handler reads. Input arrives ONLY over this socket.
 //!
 //! Session model: exactly ONE WebSocket client at a time. A second upgrade
 //! attempt while one is connected is answered with a plain HTTP
@@ -44,17 +44,21 @@
 //! work when reached as `127.0.0.1:8137`; non-browser tools send no Origin
 //! and are accepted.
 //!
-//! **HTTP routes** all keep working exactly as before (full-scene responses;
-//! curl and the parity harness depend on them). A mutation made over HTTP
-//! reaches a connected WebSocket client as a pushed diff on the next tick:
-//!   - `GET /`        → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
+//! **HTTP routes** are now **read-only**. The mutating `POST` routes
+//! (`/key`, `/paste`, `/mouse`, `/action`, `/widget`, `/settings`, `/kbedit`,
+//! `/resize`, and the `/step` `/reset` parity-harness routes) predated the WS
+//! transport and were removed: the shipping frontend and the Playwright suite
+//! drive input over the WebSocket, and the Rust `scene_parity` test drives it
+//! via the in-process `apply_step` / `scene_value` entry points — nothing went
+//! through those HTTP routes. They were also the whole cross-origin hole: the
+//! same-origin check below guards the `/ws` upgrade but never ran on HTTP, so
+//! any web page could POST `/action` (or `/reset`) into the editor. What
+//! remains only reads state:
+//!   - `GET /`            → serves the page assembled from `web-ui/` (see `INDEX_HTML`)
 //!   - `GET /favicon.ico` → 204
-//!   - `GET /state`   → `{ w, h, regions, theme, clipboard }` from the real render
-//!   - `POST /key`    → runs the real `Editor::handle_key`, returns `/state`
-//!   - `POST /paste`  → `{text}` → the editor's bracketed-paste path, returns `/state`
-//!   - `POST /resize` → `{cols, rows}` → `Editor::resize`, returns `/state`
-//!   - `POST /mouse` `/action` `/widget` `/settings` `/kbedit` → same pattern
-//!   - `POST /step` `/reset` → parity-harness routes (no clipboard attach)
+//!   - `GET /state`       → `{ w, h, regions, theme, clipboard }` from the real
+//!     render (the frontend's manual `refresh()` resync, `run.sh`'s readiness
+//!     poll, curl inspection)
 
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
@@ -79,8 +83,7 @@ use crate::config;
 use crate::config_io::DirectoryContext;
 use crate::model::filesystem::{FileSystem, StdFileSystem};
 
-/// Default terminal size the bridge boots / resets to (cols, rows). One source
-/// so `run()` and the `/reset` route can't drift apart.
+/// Default terminal size the bridge boots to (cols, rows).
 const DEFAULT_SIZE: (u16, u16) = (140, 44);
 
 /// The web-UI frontend served at `GET /`, embedded at compile time from the
@@ -151,8 +154,7 @@ impl ClipboardSync {
 
 /// Construct a fresh editor exactly as the web bridge does: real plugin runtime
 /// enabled, init.ts loaded, chrome drawn as a semantic model (not cells). Shared
-/// by `run()`, the `/reset` route (scenario isolation) and the parity test
-/// runner so all three drive an identical editor.
+/// by `run()` and the parity test runner so both drive an identical editor.
 pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
     let dir_context = DirectoryContext::from_system()?;
     let working_dir = std::env::current_dir().unwrap_or_default();
@@ -195,8 +197,8 @@ pub fn build_editor(cols: u16, rows: u16, files: &[PathBuf]) -> Result<Editor> {
 }
 
 /// Apply one parity-scenario step to the editor: a key, a mouse event at a cell,
-/// an action by name, a literal string to type, or a tick. Shared by the web
-/// `/step` route and the Rust parity runner so both drive identical input.
+/// an action by name, a literal string to type, or a tick. Used by the Rust
+/// parity runner (`scene_parity`) to drive scenario input in-process.
 pub fn apply_step(editor: &mut Editor, step: &Value) {
     if let Some(s) = step.get("type").and_then(|t| t.as_str()) {
         for ch in s.chars() {
@@ -341,11 +343,9 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
 
         // 3) Pump pending connections; serve the complete ones. A `/ws`
         //    upgrade becomes THE client (or gets 409/403); anything else runs
-        //    through the same HTTP routes as before, blocking only for its
-        //    short localhost response write. An HTTP route that mutated the
-        //    editor (input routes, /step, /reset) counts as input so the
-        //    connected WS client gets the resulting diff pushed this pass.
-        let mut http_mutated = false;
+        //    through the read-only HTTP routes, blocking only for its short
+        //    localhost response write. HTTP no longer mutates the editor (input
+        //    is WS-only), so a served request never needs to force a push.
         let mut i = 0;
         while i < pending.len() {
             match pump_pending(&mut pending[i]) {
@@ -359,15 +359,14 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
                         conn.stream,
                         &req,
                         &mut editor,
-                        &mut cols,
-                        &mut rows,
-                        files,
+                        cols,
+                        rows,
                         &mut clip,
                         ws.is_some(),
                         bind_host,
                     ) {
                         Ok(Served::WsClient(session)) => ws = Some(session),
-                        Ok(Served::Http { mutated }) => http_mutated |= mutated,
+                        Ok(Served::Http) => {}
                         Err(e) => eprintln!("conn error: {e}"),
                     }
                 }
@@ -393,7 +392,7 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
         //    the diff cache belongs to the connected session, and a reconnect
         //    starts over with a fresh hello anyway.
         let now = Instant::now();
-        let had_input = applied_input || http_mutated;
+        let had_input = applied_input;
         if had_input || now >= next_tick {
             let needs_render = tick_only(&mut editor);
             let active_hint = poll_active(&editor);
@@ -508,10 +507,21 @@ fn try_parse_request(buf: &[u8]) -> Option<HttpRequest> {
             headers.push((name, val));
         }
     }
-    if buf.len() < head_end + content_length {
+    // A declared body larger than the request cap is a runaway (or hostile)
+    // client — reject it before any arithmetic. This guard is also what keeps
+    // the `checked_add` below from being the only thing between us and a panic:
+    // a `Content-Length: 18446744073709551615` header would otherwise make
+    // `head_end + content_length` wrap (release) or overflow-panic (debug), and
+    // the wrapped value slipped past the length check and sliced an inverted
+    // range — one unauthenticated request that killed the single editor thread.
+    if content_length > HTTP_REQUEST_CAP {
         return None;
     }
-    let body = buf[head_end..head_end + content_length].to_vec();
+    let end = head_end.checked_add(content_length)?;
+    if buf.len() < end {
+        return None;
+    }
+    let body = buf[head_end..end].to_vec();
     Some(HttpRequest {
         method,
         path,
@@ -524,22 +534,18 @@ fn try_parse_request(buf: &[u8]) -> Option<HttpRequest> {
 enum Served {
     /// The request was a successful `/ws` upgrade — this is the new client.
     WsClient(WsSession),
-    /// A plain HTTP exchange; `mutated` = the route may have changed editor
-    /// state (input routes, /step, /reset), so a connected WS client should
-    /// get a diff pushed without waiting for the tick deadline.
-    Http { mutated: bool },
+    /// A plain, read-only HTTP exchange — the page, favicon, or `/state`.
+    Http,
 }
 
 /// Serve one complete request: WS upgrades become THE client; everything else
-/// goes through the (unchanged) HTTP routes with `Connection: close`.
-#[allow(clippy::too_many_arguments)]
+/// goes through the read-only HTTP routes with `Connection: close`.
 fn serve_request(
     mut stream: TcpStream,
     req: &HttpRequest,
     editor: &mut Editor,
-    cols: &mut u16,
-    rows: &mut u16,
-    files: &[PathBuf],
+    cols: u16,
+    rows: u16,
     clip: &mut ClipboardSync,
     ws_busy: bool,
     bind_host: &str,
@@ -552,97 +558,54 @@ fn serve_request(
             .header("upgrade")
             .is_some_and(|u| u.to_ascii_lowercase().contains("websocket"));
     if wants_ws {
-        return match upgrade_ws(stream, req, editor, *cols, *rows, clip, ws_busy, bind_host)? {
+        return match upgrade_ws(stream, req, editor, cols, rows, clip, ws_busy, bind_host)? {
             Some(session) => Ok(Served::WsClient(session)),
-            None => Ok(Served::Http { mutated: false }),
+            None => Ok(Served::Http),
         };
     }
-    let mutated = handle_http(&mut stream, req, editor, cols, rows, files, clip)?;
-    Ok(Served::Http { mutated })
+    handle_http(&mut stream, req, editor, cols, rows, clip)?;
+    Ok(Served::Http)
 }
 
-/// The HTTP routes, exactly as they always behaved (full-scene responses).
-/// Returns whether the route may have mutated editor state.
-#[allow(clippy::too_many_arguments)]
+/// The HTTP routes — now **read-only**. Input arrives exclusively over the
+/// WebSocket (`apply_message`); the mutating `POST` routes that predated the WS
+/// transport were removed (see the module docs): nothing depended on them and
+/// leaving them unguarded made every editor mutation reachable cross-origin
+/// over HTTP, since the same-origin check guards only the `/ws` upgrade.
 fn handle_http(
     stream: &mut TcpStream,
     req: &HttpRequest,
     editor: &mut Editor,
-    cols: &mut u16,
-    rows: &mut u16,
-    files: &[PathBuf],
+    cols: u16,
+    rows: u16,
     clip: &mut ClipboardSync,
-) -> Result<bool> {
-    let body_json = || serde_json::from_slice::<Value>(&req.body).unwrap_or_else(|_| json!({}));
+) -> Result<()> {
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/") => {
-            respond(
-                stream,
-                "200 OK",
-                "text/html; charset=utf-8",
-                INDEX_HTML.as_bytes(),
-            )?;
-            Ok(false)
-        }
-        ("GET", "/favicon.ico") => {
-            respond(stream, "204 No Content", "image/x-icon", b"")?;
-            Ok(false)
-        }
+        ("GET", "/") => respond(
+            stream,
+            "200 OK",
+            "text/html; charset=utf-8",
+            INDEX_HTML.as_bytes(),
+        ),
+        ("GET", "/favicon.ico") => respond(stream, "204 No Content", "image/x-icon", b""),
+        // Read-only scene snapshot: the frontend's manual `refresh()` resync and
+        // `web-ui/test/run.sh`'s readiness poll use it, and it stays curl-able.
         ("GET", "/state") => {
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())?;
-            Ok(false)
+            let s = tick_scene(editor, cols, rows, clip).to_string();
+            respond(stream, "200 OK", "application/json", s.as_bytes())
         }
-        // Input routes: the route name IS the message kind, and `apply_message`
-        // is the same dispatch the WebSocket transport uses — the two transports
-        // cannot drift. Each returns the full post-tick scene, exactly as
-        // before; a connected WS client gets the mutation pushed as a diff in
-        // the same loop pass (the `true` below counts as input).
-        (
-            "POST",
-            p @ ("/key" | "/paste" | "/mouse" | "/action" | "/widget" | "/settings" | "/kbedit"
-            | "/resize"),
-        ) => {
-            apply_message(editor, &p[1..], &body_json(), cols, rows);
-            let s = tick_scene(editor, *cols, *rows, clip).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())?;
-            Ok(true)
-        }
-        // Parity-harness routes: apply one scenario step, and reset to a fresh
-        // editor so each scenario runs in isolation (mirrors the Rust runner,
-        // which builds a fresh editor per scenario).
-        ("POST", "/step") => {
-            let v = body_json();
-            apply_step(editor, &v);
-            let s = scene_json(editor, *cols, *rows).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())?;
-            Ok(true)
-        }
-        ("POST", "/reset") => {
-            (*cols, *rows) = DEFAULT_SIZE;
-            match build_editor(*cols, *rows, files) {
-                Ok(e) => *editor = e,
-                Err(err) => eprintln!("reset failed: {err}"),
-            }
-            let s = scene_json(editor, *cols, *rows).to_string();
-            respond(stream, "200 OK", "application/json", s.as_bytes())?;
-            Ok(true)
-        }
-        _ => {
-            respond(stream, "404 Not Found", "text/plain", b"not found")?;
-            Ok(false)
-        }
+        _ => respond(stream, "404 Not Found", "text/plain", b"not found"),
     }
 }
 
 // ---------------------------------------------------------------------------
-// Shared input dispatch (HTTP routes + WebSocket messages)
+// WebSocket input dispatch
 // ---------------------------------------------------------------------------
 
-/// Apply one input message by kind — the single dispatch behind both the HTTP
-/// POST routes (kind = route name) and the WS `{"type": kind, ...}` messages.
-/// Returns false for unknown kinds. Does NOT render: callers decide when a
-/// scene is built (per HTTP request, or once per WS input batch).
+/// Apply one input message by kind — the dispatch behind the WS
+/// `{"type": kind, ...}` messages (input arrives only over the WebSocket).
+/// Returns false for unknown kinds. Does NOT render: the caller builds one
+/// scene per WS input batch.
 fn apply_message(
     editor: &mut Editor,
     kind: &str,
@@ -1322,11 +1285,11 @@ fn poll_active(editor: &Editor) -> bool {
 }
 
 /// Build the browser-facing scene (no tick): `scene_json` plus the
-/// outbound-clipboard mirror (`ClipboardSync`). The parity harness (`/step`,
-/// `/reset`, `scene_value`) uses `scene_json` directly and carries no
-/// clipboard. The clipboard `seq` bumps on actual text changes (hash
-/// compare), so it cannot double-increment no matter which path — HTTP route
-/// or WS push — builds the scene.
+/// outbound-clipboard mirror (`ClipboardSync`). The parity harness
+/// (`scene_value`) uses `scene_json` directly and carries no clipboard. The
+/// clipboard `seq` bumps on actual text changes (hash compare), so it cannot
+/// double-increment no matter which path — `GET /state` or WS push — builds
+/// the scene.
 fn build_scene(editor: &mut Editor, cols: u16, rows: u16, clip: &mut ClipboardSync) -> Value {
     let mut scene = scene_json(editor, cols, rows);
     clip.attach(editor, &mut scene);
@@ -1745,7 +1708,33 @@ fn indexed_css(i: u8) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{host_only, origin_host_matches};
+    use super::{host_only, origin_host_matches, try_parse_request, HTTP_REQUEST_CAP};
+
+    #[test]
+    fn absurd_content_length_is_rejected_not_panicked() {
+        // Regression: a `Content-Length` near usize::MAX used to make
+        // `head_end + content_length` wrap (release) / overflow-panic (debug),
+        // and the wrapped value sliced an inverted range — one unauthenticated
+        // request that killed the single editor thread. It must now parse to
+        // "incomplete" (None), never panic.
+        let raw = b"POST /key HTTP/1.1\r\nContent-Length: 18446744073709551615\r\n\r\n";
+        assert!(try_parse_request(raw).is_none());
+        // A declared body just over the request cap is likewise refused up front.
+        let over = format!(
+            "POST /key HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            HTTP_REQUEST_CAP + 1
+        );
+        assert!(try_parse_request(over.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn well_formed_request_with_body_still_parses() {
+        let raw = b"POST /state HTTP/1.1\r\nContent-Length: 5\r\n\r\nhello";
+        let req = try_parse_request(raw).expect("complete request parses");
+        assert_eq!(req.method, "POST");
+        assert_eq!(req.path, "/state");
+        assert_eq!(req.body, b"hello");
+    }
 
     #[test]
     fn host_only_strips_scheme_port_and_brackets() {

@@ -169,7 +169,7 @@ browser (assembled web-ui page) ══WS /ws══► fresh::webui bridge ──
   scene.rs projections          hello (full scene)  into a cell     highlighter,
   buffer  = real highlighted    frame (region diffs) buffer, reads   handle_key, …)
   CELLS (SVG)                 input ══► {type:key|mouse|action|…}
-                              ──HTTP──►  GET /state, POST /key … (curl + harness)
+                              ──HTTP──►  GET /state (read-only; curl + readiness poll)
 ```
 
 The bridge (`crates/fresh-editor/src/webui/mod.rs`) runs the **actual**
@@ -192,10 +192,16 @@ and the frontend rebuilds only the DOM region containers whose paths changed
 (per-region patching, docs §3.4).
 One client at a time (a second `/ws` gets `409`; foreign `Origin` gets `403`);
 on disconnect the page retries with backoff and resyncs from the next hello.
-Every HTTP route (`GET /state`, `POST /key` `/mouse` `/action` `/widget`
-`/settings` `/kbedit` `/paste` `/resize` `/step` `/reset`) still answers with
-the full scene as before — curl and the parity harness are untouched, and an
-HTTP-side mutation is pushed to the connected browser as a diff immediately.
+All input (keys, mouse, paste, actions, widget/settings/kbedit hits, resize)
+rides the WebSocket. The HTTP surface is **read-only**: `GET /` serves the
+page, `GET /state` returns the full scene (used by the frontend's manual
+`refresh()` resync and `run.sh`'s readiness poll, and curl-inspectable), and
+`GET /favicon.ico` → `204`. The mutating `POST` routes that predated the
+WebSocket (`/key` `/mouse` `/action` `/widget` `/settings` `/kbedit` `/paste`
+`/resize` `/step` `/reset`) were removed — nothing used them (the parity test
+drives the editor in-process, not over HTTP), and because the same-origin
+check only guarded the `/ws` upgrade, they had let any web page POST input
+into the editor cross-origin.
 
 ## Run it
 
