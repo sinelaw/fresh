@@ -18,16 +18,24 @@
 //!      `InsertChar` into the active prompt), and the row is
 //!      asserted via `RowMatch::AnyRowContains`.
 //!
+//! Also covers issue #2723: an OS terminal resize (including a
+//! same-size re-notify from a DPI / monitor drag) must request the
+//! same full-redraw flag, so the next frame clears whatever the
+//! host left on the alt-screen instead of emitting an empty
+//! incremental diff.
+//!
 //! Anti-tests drop the load-bearing step (the `RedrawScreen`
 //! dispatch / the "redraw" filter) and assert the inverse.
 //!
 //! Source: `tests/e2e/redraw_screen.rs` (2 positive tests + 2
 //! anti-tests; no tests deferred).
 
+use crate::common::harness::EditorTestHarness;
 use crate::common::scenario::layout_scenario::{
     assert_layout_scenario, check_layout_scenario, LayoutScenario,
 };
 use crate::common::scenario::render_snapshot::{RenderSnapshotExpect, RowMatch};
+use crossterm::event::Event as CrosstermEvent;
 use fresh::test_api::Action;
 
 /// Build the `Action` sequence that opens the command palette and
@@ -111,5 +119,39 @@ fn anti_redraw_screen_palette_with_unrelated_query_hides_entry() {
         check_layout_scenario(scenario).is_err(),
         "anti-test: with an unrelated filter, the Redraw Screen palette entry must be \
          absent — RowMatch::AnyRowContains('Redraw Screen') should fail."
+    );
+}
+
+/// Issue #2723: changing terminal size must request a full clear +
+/// repaint (same flag as Redraw Screen), not just a layout pass.
+#[test]
+fn resize_requests_full_redraw() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _ = harness.api_mut().take_full_redraw_request_for_tests();
+
+    harness.resize(100, 30).unwrap();
+
+    assert!(
+        harness.api_mut().take_full_redraw_request_for_tests(),
+        "Editor::resize must request a full redraw so the next frame clears a host-wiped alt-screen"
+    );
+}
+
+/// Issue #2723: a same-size Resize (DPI / monitor drag that re-notifies
+/// without changing cell count) must still force a full redraw —
+/// ratatui only resets its front buffer on a real size change.
+#[test]
+fn same_size_resize_event_requests_full_redraw() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let _ = harness.api_mut().take_full_redraw_request_for_tests();
+
+    harness
+        .editor_mut()
+        .handle_input_event(CrosstermEvent::Resize(80, 24))
+        .unwrap();
+
+    assert!(
+        harness.api_mut().take_full_redraw_request_for_tests(),
+        "same-size Resize must still request a full redraw (#2723)"
     );
 }

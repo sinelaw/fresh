@@ -74,6 +74,7 @@ Or, pick your preferred method:
 | npm | [npm / npx](#npm) |
 | Rust users (Fast) | [cargo-binstall](#using-cargo-binstall) |
 | Rust users | [crates.io](#from-cratesio) |
+| Pixi | [pixi global](#pixi) |
 | Nix | [Nix flakes](#nix-flakes) |
 | Developers | [From source](#from-source) |
 
@@ -243,6 +244,31 @@ nix profile add github:sinelaw/fresh
 
 ```bash
 cargo install --locked fresh-editor
+```
+
+### Pixi
+
+Build and install Fresh globally from Git with [Pixi](https://pixi.sh/) (uses the `pixi-build-rust` backend). Requires [Pixi](https://pixi.sh/latest/#installation) on your `PATH`.
+
+The package manifest lives under `crates/fresh-editor`, so pass `--subdir`:
+
+```bash
+pixi global install --git https://github.com/sinelaw/fresh.git --subdir crates/fresh-editor
+```
+
+That builds the `fresh` binary from source and exposes it on your `PATH` (same as other `pixi global` tools). Pin a branch, tag, or revision if you want:
+
+```bash
+pixi global install --git https://github.com/sinelaw/fresh.git --subdir crates/fresh-editor --branch master
+pixi global install --git https://github.com/sinelaw/fresh.git --subdir crates/fresh-editor --tag v0.4.4
+```
+
+From a local checkout instead of Git:
+
+```bash
+pixi global install --path crates/fresh-editor
+# or develop inside the repo:
+pixi install && pixi run fresh
 ```
 
 ### From source

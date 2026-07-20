@@ -1,0 +1,49 @@
+# Conda package definition for the Fresh editor binary.
+# Built with pixi-build-rust from this Cargo workspace member.
+# The root pixi.toml depends on this package via `path = "crates/fresh-editor"`.
+
+[package]
+name = "fresh"
+version = "0.4.4"
+description = "A lightweight, fast terminal-based text editor with LSP support and TypeScript plugins"
+license = "GPL-2.0-only"
+homepage = "https://sinelaw.github.io/fresh/"
+repository = "https://github.com/sinelaw/fresh"
+documentation = "https://docs.rs/fresh-editor"
+
+[package.build.backend]
+name = "pixi-build-rust"
+version = "*"
+channels = [
+    "https://prefix.dev/pixi-build-backends",
+    "https://prefix.dev/conda-forge",
+]
+
+[package.build.config]
+# onig_sys + rquickjs bindgen need a C toolchain and libclang.
+compilers = ["rust", "c", "cxx"]
+# Only ship the editor binary (skip generate_schema / event_debug / …).
+extra-args = ["--bin", "fresh"]
+# Workspace siblings + embedded assets must participate in rebuild hashing.
+extra-input-globs = [
+    "../fresh-*/**",
+    "../../Cargo.toml",
+    "../../Cargo.lock",
+    "../../rust-toolchain.toml",
+    "themes/**",
+    "locales/**",
+    "plugins/**",
+    "keymaps/**",
+    "queries/**",
+    "types/**",
+    "docs/**",
+]
+
+# Match rust-toolchain.toml; conda-forge also carries newer rust which is fine.
+[package.build-dependencies]
+rust = ">=1.95"
+
+# Bindgen (rquickjs, onig) needs libclang headers at build time.
+[package.host-dependencies]
+clang = "*"
+pkg-config = "*"

@@ -5123,9 +5123,10 @@ impl Editor {
         // correct — but the freed strip can still show stale glyphs from
         // the old dock until something repaints those cells. Force a full
         // clear+redraw so the reclaim is unconditional on every terminal,
-        // mirroring how a resize relayout clears. Gated to the dock slot:
-        // a centered modal overlays the full-width chrome without carving
-        // it, so clearing on its close would only cause a visible flicker.
+        // mirroring how an OS resize forces a full clear (#2723). Gated to
+        // the dock slot: a centered modal overlays the full-width chrome
+        // without carving it, so clearing on its close would only cause a
+        // visible flicker.
         if slot == super::PanelSlot::Dock {
             self.request_full_redraw();
         }

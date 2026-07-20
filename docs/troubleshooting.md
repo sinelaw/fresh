@@ -58,6 +58,8 @@ echo $COLORTERM
 
 If something outside Fresh scribbles over the TUI — a stray shell message, an external program's output, a paste with unbalanced escape sequences, or a terminal that got wedged during a resize — the screen can end up with ghost text or misaligned cells. Run **Redraw Screen** from the command palette (`Ctrl+P`) to clear the terminal and repaint the UI from scratch.
 
+Fresh also clears and fully repaints automatically on terminal resize (including same-size re-notifies from a DPI / monitor change), so dragging a window between monitors should not leave a solid fill behind.
+
 ## Advanced Topics
 
 ### Visual Regression Testing

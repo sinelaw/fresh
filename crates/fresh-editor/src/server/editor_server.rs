@@ -1231,6 +1231,20 @@ impl EditorServer {
 
     /// Render the editor and broadcast output to all clients
     fn render_and_broadcast(&mut self) -> io::Result<()> {
+        // Honor editor-level full-redraw requests (e.g. OS resize /
+        // Action::RedrawScreen) before borrowing editor+terminal together.
+        // Without this, daemon clients keep a stale front buffer after the
+        // host wiped the alt-screen (#2723).
+        if self
+            .editor
+            .as_mut()
+            .is_some_and(|e| e.take_full_redraw_request())
+        {
+            for client in &mut self.clients {
+                client.needs_full_render = true;
+            }
+        }
+
         let Some(ref mut editor) = self.editor else {
             return Ok(());
         };

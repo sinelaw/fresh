@@ -33,6 +33,9 @@ types/fresh.d.ts
 .direnv/
 result*
 
+# Pixi
+.pixi/
+
 # Proptest regression files
 proptest-regressions/
 

@@ -1,0 +1,29 @@
+# Pixi workspace for building and installing Fresh from source.
+#
+# Requires the pixi-build preview feature (see
+# https://pixi.prefix.dev/latest/build/backends/pixi-build-rust/).
+#
+# Usage (from the repo root):
+#   pixi install          # build fresh via pixi-build-rust and install into .pixi/
+#   pixi run fresh --help
+#   pixi build -o dist    # produce a conda package under dist/
+
+[workspace]
+name = "fresh"
+channels = ["https://prefix.dev/conda-forge"]
+platforms = [
+    "linux-64",
+    "linux-aarch64",
+    "osx-64",
+    "osx-arm64",
+    "win-64",
+]
+preview = ["pixi-build"]
+
+# Build the editor package (crates/fresh-editor) with pixi-build-rust and
+# install the `fresh` binary into the default environment.
+[dependencies]
+fresh = { path = "crates/fresh-editor" }
+
+[tasks]
+fresh = "fresh"

@@ -107,7 +107,9 @@ impl Editor {
     /// Request the editor to restart with a new working directory
     /// This triggers a clean shutdown and restart with the new project root
     /// Request a full hardware terminal clear and redraw on the next frame.
-    /// Used after external commands have messed up the terminal state.
+    /// Used after external commands have messed up the terminal state, and
+    /// after OS terminal resizes (host terminals may wipe the alt-screen
+    /// out from under the incremental ratatui diff — see #2723).
     pub fn request_full_redraw(&mut self) {
         self.full_redraw_requested = true;
     }
@@ -329,11 +331,19 @@ impl Editor {
     /// layout. This is the OS-terminal-resize entry point; it only
     /// records the new screen size and defers everything else to the
     /// single layout funnel, [`Editor::relayout`].
+    ///
+    /// Also requests a full hardware clear + repaint. Host terminals
+    /// (notably Windows Terminal during a DPI / monitor drag) often
+    /// wipe or repaint the alt-screen out from under us while cell
+    /// count stays the same — ratatui's incremental front↔back diff
+    /// then emits nothing and the screen stays filled with whatever
+    /// the host left behind (#2723). Same path as **Redraw Screen**.
     pub fn resize(&mut self, width: u16, height: u16) {
         // Editor's canonical screen dimensions (used to seed new windows).
         self.terminal_width = width;
         self.terminal_height = height;
         self.relayout();
+        self.request_full_redraw();
     }
 
     /// The single layout funnel. Every event that can change the on-screen
