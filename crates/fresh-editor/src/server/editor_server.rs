@@ -23,6 +23,7 @@ use crate::config_io::DirectoryContext;
 use crate::server::capture_backend::{
     terminal_setup_sequences, terminal_teardown_sequences, CaptureBackend,
 };
+use crate::server::command_access;
 use crate::server::input_parser::InputParser;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
 use crate::server::protocol::{
@@ -181,6 +182,10 @@ struct ConnectedClient {
     needs_full_render: bool,
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
+    /// Per-workspace capability token presented in this client's `Hello`
+    /// (from `$FRESH_CMD_TOKEN`). Authorizes `ListCommands` / `RunCommand`
+    /// against the token's allowlist; `None` for clients that carry no token.
+    cmd_token: Option<String>,
 }
 
 impl EditorServer {
@@ -903,6 +908,7 @@ impl EditorServer {
             input_parser: InputParser::new(),
             needs_full_render: true,
             wait_id: None,
+            cmd_token: hello.cmd_token,
         })
     }
 
@@ -1132,6 +1138,52 @@ impl EditorServer {
                                 path
                             );
                         }
+                    }
+                }
+                ClientControl::ListCommands { include_args } => {
+                    // Scope the reply to the caller's token allowlist; a
+                    // client with no/unknown token gets an empty list (the
+                    // channel must not double as a capability probe).
+                    let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
+                    let commands = match (
+                        token.as_deref().and_then(command_access::lookup),
+                        self.editor.as_ref(),
+                    ) {
+                        (Some(grant), Some(editor)) => {
+                            command_access::list_allowed_commands(editor, &grant, include_args)
+                        }
+                        _ => Vec::new(),
+                    };
+                    if let Some(client) = self.clients.get_mut(idx) {
+                        let json =
+                            serde_json::to_string(&ServerControl::CommandList { commands })
+                                .unwrap_or_default();
+                        // Best-effort reply
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = client.conn.write_control(&json);
+                    }
+                }
+                ClientControl::RunCommand { id, args } => {
+                    let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
+                    let (ok, error) = command_access::run_command_by_id(
+                        self.editor.as_mut(),
+                        token.as_deref(),
+                        &id,
+                        &args,
+                    );
+                    if ok {
+                        resize_occurred = true; // Force re-render
+                    }
+                    if let Some(client) = self.clients.get_mut(idx) {
+                        let json = serde_json::to_string(&ServerControl::CommandResult {
+                            ok,
+                            error,
+                            output: None,
+                        })
+                        .unwrap_or_default();
+                        // Best-effort reply
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = client.conn.write_control(&json);
                     }
                 }
                 ClientControl::Quit => unreachable!(), // Handled above

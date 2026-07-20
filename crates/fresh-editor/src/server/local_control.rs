@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::app::Editor;
+use crate::server::command_access;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
 use crate::server::protocol::{
     ClientControl, FileRequest, ServerControl, ServerHello, VersionMismatch, PROTOCOL_VERSION,
@@ -57,6 +58,24 @@ enum LocalControlRequest {
     },
     /// Open a directory as a new, focused orchestrator window.
     OpenWindow { path: PathBuf },
+    /// Enumerate the editor commands `token` is allowed to run. The editor
+    /// thread computes the reply (it owns the command registry) and sends it
+    /// back on `reply`, where the parked handler thread writes it to the
+    /// client connection.
+    ListCommands {
+        token: Option<String>,
+        include_args: bool,
+        reply: Sender<ServerControl>,
+    },
+    /// Dispatch one command by id on the workspace `token` is bound to. As
+    /// with `ListCommands`, the editor thread does the work and answers on
+    /// `reply`.
+    RunCommand {
+        token: Option<String>,
+        id: String,
+        args: HashMap<String, String>,
+        reply: Sender<ServerControl>,
+    },
 }
 
 /// Shared state between the connection-handler threads and the editor
@@ -225,6 +244,38 @@ pub fn pump(editor: &mut Editor) -> bool {
                     tracing::warn!("OpenWindow ignored: path must be absolute: {:?}", path);
                 }
             }
+            Ok(LocalControlRequest::ListCommands {
+                token,
+                include_args,
+                reply,
+            }) => {
+                let commands = match token.as_deref().and_then(command_access::lookup) {
+                    Some(grant) => {
+                        command_access::list_allowed_commands(editor, &grant, include_args)
+                    }
+                    None => Vec::new(),
+                };
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = reply.send(ServerControl::CommandList { commands });
+            }
+            Ok(LocalControlRequest::RunCommand {
+                token,
+                id,
+                args,
+                reply,
+            }) => {
+                let (ok, error) =
+                    command_access::run_command_by_id(Some(editor), token.as_deref(), &id, &args);
+                if ok {
+                    changed = true;
+                }
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = reply.send(ServerControl::CommandResult {
+                    ok,
+                    error,
+                    output: None,
+                });
+            }
             Err(_) => break,
         }
     }
@@ -295,10 +346,15 @@ fn handle_connection(
     // reader per message would drop lines already buffered from the socket.
     let mut reader = std::io::BufReader::new(&conn.control);
 
-    if let Err(e) = handshake(&conn, &mut reader) {
-        tracing::debug!("Local control handshake failed: {}", e);
-        return;
-    }
+    // The capability token (from the client's `Hello`) is captured once and
+    // reused for every `ListCommands` / `RunCommand` on this connection.
+    let cmd_token = match handshake(&conn, &mut reader) {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::debug!("Local control handshake failed: {}", e);
+            return;
+        }
+    };
 
     loop {
         // Re-assert blocking mode before every read. `accept()` leaves the
@@ -358,6 +414,38 @@ fn handle_connection(
                     waiters.lock().unwrap().remove(&id);
                 }
             }
+            ClientControl::ListCommands { include_args } => {
+                // Round-trip to the editor thread (it owns the registry) and
+                // relay its answer back to the client. A recv error means the
+                // editor exited first; drop the reply in that case.
+                let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = req_tx.send(LocalControlRequest::ListCommands {
+                    token: cmd_token.clone(),
+                    include_args,
+                    reply: reply_tx,
+                });
+                if let Ok(reply) = reply_rx.recv() {
+                    let json = serde_json::to_string(&reply).unwrap_or_default();
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = conn.write_control(&json);
+                }
+            }
+            ClientControl::RunCommand { id, args } => {
+                let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = req_tx.send(LocalControlRequest::RunCommand {
+                    token: cmd_token.clone(),
+                    id,
+                    args,
+                    reply: reply_tx,
+                });
+                if let Ok(reply) = reply_rx.recv() {
+                    let json = serde_json::to_string(&reply).unwrap_or_default();
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = conn.write_control(&json);
+                }
+            }
             other => {
                 tracing::debug!("Local control ignoring unexpected message: {:?}", other);
             }
@@ -367,14 +455,16 @@ fn handle_connection(
 
 /// Read the `Hello`, version-check, and reply with `ServerHello` — the
 /// same shape as the daemon server's handshake, minus the data-channel
-/// terminal setup (nested clients never render).
+/// terminal setup (nested clients never render). Returns the client's
+/// capability token (`cmd_token` from the `Hello`, `None` if absent) so the
+/// command loop can authorize `ListCommands` / `RunCommand`.
 ///
 /// Shares the connection's [`BufReader`] with the post-handshake command
 /// loop so no buffered bytes are lost between the two.
 fn handshake(
     conn: &ServerConnection,
     reader: &mut std::io::BufReader<&StreamWrapper>,
-) -> std::io::Result<()> {
+) -> std::io::Result<Option<String>> {
     // `accept()` hands us a non-blocking control socket; the Hello read must
     // block until the client sends it (see the command loop for the same
     // reason `write_control` requires re-asserting this).
@@ -412,7 +502,8 @@ fn handshake(
     let session_id = local_session_id().unwrap_or("local").to_string();
     let response = serde_json::to_string(&ServerControl::Hello(ServerHello::new(session_id)))
         .map_err(std::io::Error::other)?;
-    conn.write_control(&response)
+    conn.write_control(&response)?;
+    Ok(hello.cmd_token)
 }
 
 /// Read one newline-delimited control message from a shared connection
@@ -687,6 +778,84 @@ mod tests {
         match req {
             LocalControlRequest::OpenFiles { .. } => "OpenFiles",
             LocalControlRequest::OpenWindow { .. } => "OpenWindow",
+            LocalControlRequest::ListCommands { .. } => "ListCommands",
+            LocalControlRequest::RunCommand { .. } => "RunCommand",
         }
+    }
+
+    /// Connect a thin client, completing the handshake with a `cmd_token`
+    /// stamped into the `Hello` (as a workspace-spawned agent would).
+    fn connect_client_with_token(paths: &SocketPaths, token: &str) -> ClientConnection {
+        let conn = ClientConnection::connect(paths).expect("client connect");
+        let mut hello = ClientHello::new(TermSize::new(80, 24));
+        hello.cmd_token = Some(token.to_string());
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .expect("write hello");
+        let resp = conn
+            .read_control()
+            .expect("read server hello")
+            .expect("server hello present");
+        match serde_json::from_str::<ServerControl>(&resp).expect("parse server hello") {
+            ServerControl::Hello(_) => {}
+            other => panic!("expected ServerControl::Hello, got {:?}", other),
+        }
+        conn
+    }
+
+    /// A `RunCommand` is forwarded to the editor thread carrying the
+    /// connection's `cmd_token` (captured from the `Hello`) and its id — the
+    /// thread that owns the editor is the only place it can be authorized and
+    /// dispatched, so the handler round-trips it there.
+    #[test]
+    fn run_command_forwards_request_with_token() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("run-cmd-token-test", dir.path());
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+
+        let conn = connect_client_with_token(&paths, "tok-123");
+        let msg = ClientControl::RunCommand {
+            id: "split_vertical".to_string(),
+            args: HashMap::new(),
+        };
+        conn.write_control(&serde_json::to_string(&msg).unwrap())
+            .unwrap();
+
+        match bound.req_rx.recv().expect("request forwarded") {
+            LocalControlRequest::RunCommand { token, id, .. } => {
+                assert_eq!(token.as_deref(), Some("tok-123"));
+                assert_eq!(id, "split_vertical");
+            }
+            other => panic!("expected RunCommand, got {}", req_kind(&other)),
+        }
+
+        bound.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// A client that presents no token still forwards the request, but with
+    /// `token: None`; the editor-thread authorization then refuses it. This
+    /// asserts the no-token path is wired (the refusal itself is unit-tested
+    /// against `command_access::run_command_by_id`).
+    #[test]
+    fn run_command_without_token_forwards_none() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("run-cmd-notoken-test", dir.path());
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+
+        let conn = connect_client(&paths);
+        let msg = ClientControl::RunCommand {
+            id: "split_vertical".to_string(),
+            args: HashMap::new(),
+        };
+        conn.write_control(&serde_json::to_string(&msg).unwrap())
+            .unwrap();
+
+        match bound.req_rx.recv().expect("request forwarded") {
+            LocalControlRequest::RunCommand { token, .. } => {
+                assert!(token.is_none());
+            }
+            other => panic!("expected RunCommand, got {}", req_kind(&other)),
+        }
+
+        bound.shutdown.store(true, Ordering::SeqCst);
     }
 }

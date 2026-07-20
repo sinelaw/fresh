@@ -169,6 +169,9 @@ oxc_span = { workspace = true, optional = true }
 # Always required (for schema generation and runtime)
 serde.workspace = true
 serde_json.workspace = true
+# Random capability tokens for the agent command channel (server-minted,
+# unforgeable per-workspace ids stamped into `$FRESH_CMD_TOKEN`).
+uuid = { version = "1", features = ["v4"] }
 # Comment- and trailing-comma-tolerant JSON parsing for config files (JSONC).
 jsonc-parser.workspace = true
 schemars.workspace = true

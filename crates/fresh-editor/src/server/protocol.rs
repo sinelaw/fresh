@@ -11,7 +11,11 @@ use std::collections::HashMap;
 ///
 /// v2: added `ClientControl::OpenWindow` (open a directory as a new
 /// orchestrator window), used by the nested-terminal forwarding path.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// v3: added the command channel — `ClientControl::ListCommands` /
+/// `RunCommand`, `ServerControl::CommandList` / `CommandResult`, and an
+/// optional `cmd_token` on `ClientHello` (the per-workspace capability token,
+/// read from `$FRESH_CMD_TOKEN`, that authorizes command dispatch).
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +42,12 @@ pub struct ClientHello {
     /// Environment variables relevant for rendering
     /// Keys: TERM, COLORTERM, LANG, LC_ALL
     pub env: HashMap<String, Option<String>>,
+    /// Per-workspace capability token (from `$FRESH_CMD_TOKEN`), presented so
+    /// the server can authorize `ListCommands` / `RunCommand` against this
+    /// workspace's allowlist. `None` for clients that carry no token (a plain
+    /// attach, an older client) — command dispatch is then refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cmd_token: Option<String>,
 }
 
 impl ClientHello {
@@ -55,6 +65,9 @@ impl ClientHello {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             term_size,
             env,
+            // Populated from `$FRESH_CMD_TOKEN` when present so a client that
+            // was spawned inside a Fresh workspace can drive it.
+            cmd_token: std::env::var("FRESH_CMD_TOKEN").ok().filter(|t| !t.is_empty()),
         }
     }
 
@@ -132,6 +145,51 @@ pub enum ClientControl {
     /// embedded terminal: the directory becomes a new workspace (a `Window`)
     /// instead of launching a second editor in the terminal.
     OpenWindow { path: String },
+    /// Enumerate the editor commands the caller's `cmd_token` is allowed to
+    /// run. The server answers with `ServerControl::CommandList`, scoped to the
+    /// token's allowlist (so it can't double as a capability-probing channel).
+    /// Refused when no valid token was presented in `Hello`.
+    ListCommands {
+        /// Include each command's argument schema (else just id/name/category).
+        #[serde(default)]
+        include_args: bool,
+    },
+    /// Run one editor command by id, on the workspace the caller's token is
+    /// bound to (the target window is derived from the token, never passed in).
+    /// The server answers with `ServerControl::CommandResult`. Refused when the
+    /// id is not on the token's allowlist or no valid token was presented.
+    RunCommand {
+        id: String,
+        /// Command arguments as `key -> value` (e.g. `direction -> vertical`).
+        #[serde(default)]
+        args: HashMap<String, String>,
+    },
+}
+
+/// One entry in a `CommandList` response — a command the caller may invoke.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInfo {
+    /// Stable command id (what `RunCommand.id` expects), e.g. `split_vertical`.
+    pub id: String,
+    /// Human-readable, localized name.
+    pub name: String,
+    /// Palette category / group, when the command has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// Declared arguments (empty for the argless majority). Only populated when
+    /// the request set `include_args`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<CommandArgInfo>,
+}
+
+/// Schema for a single command argument, surfaced by `cmd describe`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandArgInfo {
+    pub name: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// A file to open with optional line/column position, range, and hover message
@@ -184,6 +242,19 @@ pub enum ServerControl {
     /// keeps running so the editor state is preserved and picked up cleanly
     /// when the client resumes.
     SuspendClient,
+    /// Answer to `ListCommands`: the commands the caller may run, already
+    /// scoped to the token's allowlist.
+    CommandList { commands: Vec<CommandInfo> },
+    /// Answer to `RunCommand`: whether the command dispatched, an error reason
+    /// (unknown id / not allowed / dispatch failure), and optional textual
+    /// output for the client to print.
+    CommandResult {
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
 }
 
 /// Wrapper for control channel messages (used for JSON serialization)
@@ -326,6 +397,11 @@ mod tests {
                 }],
                 wait: false,
             },
+            ClientControl::ListCommands { include_args: true },
+            ClientControl::RunCommand {
+                id: "split_vertical".to_string(),
+                args: HashMap::new(),
+            },
         ];
 
         for variant in variants {
@@ -356,11 +432,51 @@ mod tests {
                 use_system_clipboard: true,
             },
             ServerControl::SuspendClient,
+            ServerControl::CommandList {
+                commands: vec![CommandInfo {
+                    id: "split_vertical".to_string(),
+                    name: "Split: Vertical".to_string(),
+                    category: Some("View".to_string()),
+                    args: vec![],
+                }],
+            },
+            ServerControl::CommandResult {
+                ok: true,
+                error: None,
+                output: None,
+            },
         ];
 
         for variant in variants {
             let json = serde_json::to_string(&variant).unwrap();
             let _: ServerControl = serde_json::from_str(&json).unwrap();
         }
+    }
+
+    #[test]
+    fn test_run_command_roundtrip() {
+        let mut args = HashMap::new();
+        args.insert("direction".to_string(), "vertical".to_string());
+        let msg = ClientControl::RunCommand {
+            id: "split".to_string(),
+            args,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"run_command\""));
+        match serde_json::from_str::<ClientControl>(&json).unwrap() {
+            ClientControl::RunCommand { id, args } => {
+                assert_eq!(id, "split");
+                assert_eq!(args.get("direction").map(String::as_str), Some("vertical"));
+            }
+            other => panic!("expected RunCommand, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_hello_cmd_token_optional() {
+        // A hello serialized without a token must parse back with `None`.
+        let json = r#"{"protocol_version":3,"client_version":"x","term_size":{"cols":80,"rows":24},"env":{}}"#;
+        let parsed: ClientHello = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.cmd_token, None);
     }
 }

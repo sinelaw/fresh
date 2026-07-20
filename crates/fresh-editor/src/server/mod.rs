@@ -12,6 +12,7 @@
 //! See `docs/internal/session-persistence-design.md` for full design.
 
 pub mod capture_backend;
+pub mod command_access;
 pub mod daemon;
 pub mod editor_server;
 pub mod input_parser;
