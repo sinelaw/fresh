@@ -542,6 +542,15 @@ fn test_ansi_rgb_color_rendering() {
     // The ANSI-aware wrapping should handle this correctly
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
     harness.open_file(&file_path).unwrap();
+    // Move the caret off the first block: a block cursor repaints its own cell's
+    // glyph for contrast, which would otherwise mask the ANSI color asserted
+    // below on the first block.
+    harness
+        .send_key(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        )
+        .unwrap();
     harness.render().unwrap();
 
     // Get the content area start row (after menu bar and tab bar)

@@ -958,17 +958,34 @@ impl Editor {
         // When a prompt is active the prompt renderer already placed the
         // caret on the prompt line via `frame.set_cursor_position`; don't
         // override it with the (now-irrelevant) buffer cursor.
+        let mut committed_cursor: Option<(u16, u16)> = None;
         if let Some((cx, cy)) = pending_hardware_cursor {
             if self.active_window().prompt.is_none() && !self.cursor_obscured_by_overlay(cx, cy) {
                 frame.set_cursor_position((cx, cy));
+                committed_cursor = Some((cx, cy));
             }
         }
+
+        // A hardware block cursor needs its cell's glyph repainted to contrast
+        // with the cursor color. Compute the replacement now, but apply it
+        // *after* color conversion so the 256-color contrast pass
+        // (`enforce_minimum_contrast`) — which judges the glyph against the
+        // editor background, not the terminal-drawn cursor color — cannot undo
+        // it.
+        let pending_block_cursor_glyph =
+            committed_cursor.and_then(|_| self.planned_block_cursor_glyph_fg());
 
         // Convert all colors for terminal capability (256/16 color fallback)
         crate::view::color_support::convert_buffer_colors(
             frame.buffer_mut(),
             self.color_capability,
         );
+
+        if let (Some((cx, cy)), Some(fg)) = (committed_cursor, pending_block_cursor_glyph) {
+            if let Some(cell) = frame.buffer_mut().cell_mut((cx, cy)) {
+                cell.set_fg(fg);
+            }
+        }
 
         // Frame-buffer animations run last so they mutate the final paint.
         self.active_window_mut()
@@ -2363,6 +2380,36 @@ impl Editor {
             }
         }
         false
+    }
+
+    /// Plan how to keep the glyph under a colored block cursor readable.
+    ///
+    /// When a hardware block cursor is in use, the terminal paints the cursor
+    /// cell's background with the theme cursor color (set via OSC 12) but leaves
+    /// the glyph in its own foreground color — which is chosen to contrast with
+    /// the *editor* background, not the cursor color, so it can be hard to read
+    /// (and, when it matches the cursor color, e.g. a `syntax.keyword` token in
+    /// Dracula, invisible).
+    ///
+    /// We don't apply the software `REVERSED` modifier here (it double-inverts
+    /// inside multiplexers like zellij/tmux), so instead the caller repaints the
+    /// cursor-cell glyph in the returned high-contrast color (black or white by
+    /// the cursor color's luminance) — always, regardless of the glyph's own
+    /// color, so the cursor reads like a normal reverse-video block. Returns
+    /// `None` to leave the glyph untouched: for bar/underline cursors,
+    /// software-cursor mode, or an unresolvable cursor color (no OSC 12 emitted,
+    /// so the terminal draws its own legible cursor).
+    fn planned_block_cursor_glyph_fg(&self) -> Option<ratatui::style::Color> {
+        // Bar/underline cursors leave the glyph visible; only block cursors
+        // cover the whole cell. Software-cursor-only mode already paints the
+        // cell with REVERSED, so there is no terminal block to collide with.
+        if !self.config.editor.cursor_style.is_block()
+            || (self.software_cursor_only && !self.session_mode)
+        {
+            return None;
+        }
+
+        block_cursor_glyph_fg(self.theme.read().unwrap().cursor)
     }
 
     /// Render the Quick Open hints line showing available mode prefixes
@@ -5251,4 +5298,84 @@ fn byte_to_screen_col(text: &str, target_byte: usize) -> usize {
         byte += ch.len_utf8();
     }
     col
+}
+
+/// Pick a high-contrast foreground for the glyph under a hardware block cursor,
+/// or `None` to leave it untouched.
+///
+/// The terminal paints the cursor cell's background with the cursor color, so
+/// the glyph must contrast with *that* color rather than with the editor
+/// background. We always repaint to black or white by the cursor color's
+/// luminance — independent of the glyph's own color — so the cursor reads like
+/// a normal reverse-video block for any theme.
+///
+/// Returns `None` when the cursor color cannot be resolved to RGB
+/// (`Color::Reset` / `Color::Indexed`): in that case no OSC 12 cursor color was
+/// emitted, so the terminal draws its own reverse-video cursor and no fixup is
+/// needed.
+fn block_cursor_glyph_fg(cursor_color: ratatui::style::Color) -> Option<ratatui::style::Color> {
+    // No resolvable cursor color means no OSC 12 was emitted.
+    crate::view::theme::color_to_rgb(cursor_color)?;
+    Some(crate::view::color_support::readable_bw_on(cursor_color))
+}
+
+#[cfg(test)]
+mod block_cursor_collision_tests {
+    use super::block_cursor_glyph_fg;
+    use crate::config::CursorStyle;
+    use ratatui::style::Color;
+
+    #[test]
+    fn light_cursor_gets_black_glyph() {
+        // Dracula pink cursor is light: glyph must be black to stay readable.
+        assert_eq!(
+            block_cursor_glyph_fg(Color::Rgb(255, 121, 198)),
+            Some(Color::Black)
+        );
+    }
+
+    #[test]
+    fn dark_cursor_gets_white_glyph() {
+        // A dark navy cursor needs a white glyph.
+        assert_eq!(
+            block_cursor_glyph_fg(Color::Rgb(20, 24, 60)),
+            Some(Color::White)
+        );
+    }
+
+    #[test]
+    fn recolors_regardless_of_glyph_color() {
+        // The replacement depends only on the cursor color, never on the glyph's
+        // own foreground — always a guaranteed-contrast color.
+        assert_eq!(
+            block_cursor_glyph_fg(Color::Rgb(255, 121, 198)),
+            Some(Color::Black)
+        );
+    }
+
+    #[test]
+    fn resolves_named_cursor_colors() {
+        // Named colors resolve to RGB (mirroring the OSC 12 path).
+        assert_eq!(block_cursor_glyph_fg(Color::White), Some(Color::Black));
+        assert_eq!(block_cursor_glyph_fg(Color::Black), Some(Color::White));
+    }
+
+    #[test]
+    fn skips_unresolvable_cursor_colors() {
+        // Reset / indexed cursor colors emit no OSC 12, so the terminal's own
+        // cursor handles legibility — leave the glyph untouched.
+        assert_eq!(block_cursor_glyph_fg(Color::Reset), None);
+        assert_eq!(block_cursor_glyph_fg(Color::Indexed(5)), None);
+    }
+
+    #[test]
+    fn only_block_styles_count_as_block() {
+        assert!(CursorStyle::Default.is_block());
+        assert!(CursorStyle::BlinkingBlock.is_block());
+        assert!(CursorStyle::SteadyBlock.is_block());
+        assert!(!CursorStyle::BlinkingBar.is_block());
+        assert!(!CursorStyle::SteadyBar.is_block());
+        assert!(!CursorStyle::BlinkingUnderline.is_block());
+        assert!(!CursorStyle::SteadyUnderline.is_block());
+    }
 }

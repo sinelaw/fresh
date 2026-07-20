@@ -1295,6 +1295,16 @@ fn test_crlf_syntax_highlighting_offset() {
     .unwrap();
     harness.open_file(&fixture.path).unwrap();
 
+    // Move the caret off line 1: a block cursor repaints its own cell's glyph
+    // for contrast, which would otherwise mask the keyword color sampled on
+    // line 1 below. Park it on the trailing empty line, away from every sample.
+    harness
+        .send_key(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::CONTROL,
+        )
+        .unwrap();
+
     // Wait a bit for syntax highlighting to initialize
     harness.render().unwrap();
     std::thread::sleep(std::time::Duration::from_millis(100));
