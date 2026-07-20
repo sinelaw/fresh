@@ -6535,7 +6535,9 @@ function agentPresetRow(): WidgetSpec {
   const selectedIndex = Math.max(0, presets.findIndex((p) => p.key === activeKey));
   return dropdown(presets.map((p) => p.label), {
     selectedIndex,
-    label: editor.t("form.agent"),
+    // Strip the trailing colon from the shared "Agent:" label — the dropdown
+    // widget adds its own separator, so the raw string renders "Agent::".
+    label: editor.t("form.agent").replace(/:\s*$/, ""),
     key: "agent_dropdown",
   });
 }

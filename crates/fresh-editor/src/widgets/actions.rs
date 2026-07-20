@@ -36,7 +36,16 @@ fn leaf_key_matches(spec: &WidgetSpec, target: &str) -> bool {
         | WidgetSpec::Button { key: Some(k), .. }
         | WidgetSpec::Text { key: Some(k), .. }
         | WidgetSpec::List { key: Some(k), .. }
-        | WidgetSpec::Tree { key: Some(k), .. } => k == target,
+        | WidgetSpec::Tree { key: Some(k), .. }
+        // Dropdown / Number / DualList are focusable, keyable, interactive
+        // leaves too — the smart-key router (Up/Down cycle, Enter/Space open,
+        // etc.) dispatches on the focused widget resolved *through this
+        // function*, so omitting them left a focused dropdown/number/dual-list
+        // unreachable by keyboard (the lookup returned None and every key fell
+        // through).
+        | WidgetSpec::Dropdown { key: Some(k), .. }
+        | WidgetSpec::Number { key: Some(k), .. }
+        | WidgetSpec::DualList { key: Some(k), .. } => k == target,
         _ => false,
     }
 }
@@ -331,6 +340,31 @@ mod tests {
     fn find_widget_by_key_returns_none_for_empty_target() {
         let spec = toggle_with_key("a");
         assert!(find_widget_by_key(&spec, "").is_none());
+    }
+
+    #[test]
+    fn find_widget_by_key_finds_dropdown() {
+        // Regression: a focused Dropdown must be resolvable by key, or the
+        // smart-key router can't drive it (Up/Down cycle, Enter/Space open).
+        let dropdown = WidgetSpec::Dropdown {
+            options: vec!["a".into(), "b".into()],
+            selected_index: 0,
+            label: "Agent".into(),
+            focused: true,
+            label_width: 0,
+            open: false,
+            scroll_offset: 0,
+            key: Some("agent_dropdown".into()),
+        };
+        let spec = WidgetSpec::Row {
+            wrap: false,
+            children: vec![toggle_with_key("t"), dropdown],
+            key: None,
+        };
+        assert!(matches!(
+            find_widget_by_key(&spec, "agent_dropdown"),
+            Some(WidgetSpec::Dropdown { .. })
+        ));
     }
 
     fn node(text: &str, depth: u32, has_children: bool) -> TreeNode {
