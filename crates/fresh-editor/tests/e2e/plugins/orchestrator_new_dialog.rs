@@ -1108,3 +1108,125 @@ fn ctrl_enter_submits_from_a_text_field() {
         .wait_until(|h| !h.screen_to_string().contains("←/→ switch type"))
         .unwrap();
 }
+
+/// Advance Tab focus until the single "Agent:" preset stop is reached.
+fn focus_agent_preset_stop(harness: &mut EditorTestHarness) {
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("Agent:") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the 'Agent:' stop. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+}
+
+/// The launcher prioritises the four coding-CLI presets — a bare
+/// `terminal`, `claude code cli`, `codex cli`, and `opencode` — ahead of
+/// the long-standing `aider` and the `custom…` escape hatch. All four
+/// appear in the "Agent:" preset row, and claude/codex/opencode keep that
+/// priority order.
+#[test]
+fn preset_row_lists_prioritised_agents_in_order() {
+    let (_temp, workspace) = set_up_workspace();
+    let harness = open_form_on(&workspace);
+    let screen = harness.screen_to_string();
+
+    for label in ["terminal", "claude code cli", "codex cli", "opencode"] {
+        assert!(
+            screen.contains(label),
+            "preset row must list `{label}`. Screen:\n{screen}",
+        );
+    }
+
+    let idx = |needle: &str| {
+        screen
+            .find(needle)
+            .unwrap_or_else(|| panic!("`{needle}` must appear. Screen:\n{screen}"))
+    };
+    assert!(
+        idx("claude code cli") < idx("codex cli"),
+        "claude must precede codex in the preset row. Screen:\n{screen}",
+    );
+    assert!(
+        idx("codex cli") < idx("opencode"),
+        "codex must precede opencode in the preset row. Screen:\n{screen}",
+    );
+}
+
+/// Picking a coding agent surfaces its per-agent controls — an "Auto
+/// mode" checkbox and a "Start prompt" box — which are hidden for the
+/// bare `terminal` default. Stepping ←/→ off `terminal` onto the first
+/// agent (claude) reveals both.
+#[test]
+fn selecting_an_agent_reveals_auto_mode_and_start_prompt() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // The bare-terminal default carries no agent options.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Auto mode") && !screen.contains("Start prompt"),
+        "the terminal preset must not show agent-only controls. Screen:\n{screen}",
+    );
+
+    focus_agent_preset_stop(&mut harness);
+
+    // ←/→ steps off `terminal` onto the first agent (claude), whose
+    // command fills the field and whose controls appear.
+    let mut guard = 0;
+    while !harness.screen_to_string().contains("Auto mode") {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 8,
+            "stepping the preset selector never surfaced Auto mode. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+    assert!(
+        harness.screen_to_string().contains("Start prompt"),
+        "an agent that takes a launch prompt must show the Start prompt box. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// The agent controls adapt to the selected agent: opencode has no
+/// launch bypass-approvals flag (it's config-driven), so it shows the
+/// Start prompt box but *not* the Auto mode checkbox.
+#[test]
+fn opencode_shows_start_prompt_without_auto_mode() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    focus_agent_preset_stop(&mut harness);
+
+    // Step ←/→ until opencode is the active (focused) preset. The whole
+    // preset row is one line (so it always *contains* "opencode"); the
+    // load-bearing signal is the `▸` marker sitting on the opencode button.
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("▸ [ opencode") {
+        harness.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 8,
+            "stepping the preset selector never reached opencode. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Start prompt"),
+        "opencode takes a launch prompt, so the Start prompt box must show. Screen:\n{screen}",
+    );
+    assert!(
+        !screen.contains("Auto mode"),
+        "opencode has no launch auto-mode flag, so no Auto mode checkbox. Screen:\n{screen}",
+    );
+}

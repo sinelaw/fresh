@@ -156,6 +156,15 @@ type CreateSpec =
       name: string;
       // Agent command; "" ⇒ a bare terminal.
       cmd: string;
+      // Enable the agent's "auto"/bypass-approvals mode (adds the agent's
+      // documented flag, e.g. `claude --dangerously-skip-permissions`). Only
+      // honoured for a command that resolves to a known agent with an `auto`
+      // flag; ignored for a bare terminal / unknown command.
+      auto: boolean;
+      // Initial prompt to hand the agent at launch (positional or via the
+      // agent's prompt flag). "" ⇒ no prompt. Only applied to a resolved agent
+      // that documents a prompt argument; never replayed on resume.
+      startPrompt: string;
       // Fork point for `git worktree add`; "" ⇒ the detected default branch.
       branch: string;
       // Create a fresh worktree (only honoured when the path is a git tree).
@@ -367,6 +376,14 @@ interface NewSessionForm {
   projectPath: { value: string; cursor: number };
   name: { value: string; cursor: number };
   cmd: { value: string; cursor: number };
+  // Initial prompt handed to a supporting agent at launch (a single-line box,
+  // shown only for the local backend where agent launch is wired). Ignored for
+  // a bare terminal / an agent with no prompt argument.
+  startPrompt: { value: string; cursor: number };
+  // "Auto mode" toggle — adds the resolved agent's bypass-approvals flag to
+  // the launch (and resume) argv. Only meaningful for an agent that documents
+  // such a flag; the checkbox is hidden otherwise.
+  autoMode: boolean;
   branch: { value: string; cursor: number };
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
@@ -5617,6 +5634,11 @@ function rebuildFormFocusCycle(): void {
     cycle.push("project_path");
     if (worktreeEnabled) cycle.push("worktree");
     cycle.push("name", "cmd");
+    // Agent-specific controls sit between the command and the branch, matching
+    // `agentOptionsFields`' render order (Auto mode, then Start prompt).
+    const agent = activeAgentEntry();
+    if (agent?.auto) cycle.push("auto_mode");
+    if (agent?.prompt) cycle.push("start_prompt");
     if (!branchInert) cycle.push("branch");
   } else if (form.backend === "devcontainer") {
     cycle.push("project_path", "name", "cmd");
@@ -5819,29 +5841,101 @@ interface AgentResumeSpec {
   provision?: { idFlag: string; resumeArgs: string[] };
   continue?: { resumeArgs: string[] };
 }
-// `id` is the command the New Session dropdown fills in and the basename the
-// matcher keys on; `match` lets a path/args form (e.g. `/usr/bin/claude --foo`)
-// still resolve to the entry.
-const AGENT_REGISTRY: Array<{ id: string; match: RegExp; spec: AgentResumeSpec }> = [
+// How an agent takes an initial prompt on the command line: as a trailing
+// positional (`claude "prompt"`) or behind a flag (`opencode --prompt "…"`,
+// `aider -m "…"`). Absent ⇒ the agent has no launch-prompt argument and the
+// New Session prompt box is hidden for it.
+type AgentPromptArg =
+  | { style: "positional" }
+  | { style: "flag"; flag: string };
+interface AgentEntry {
+  // The command the New Session dropdown fills in and the basename the matcher
+  // keys on.
+  id: string;
+  // Human label for the preset button. Falls back to `id` when omitted.
+  label?: string;
+  // Resolves a path/args form (e.g. `/usr/bin/claude --foo`) to this entry.
+  match: RegExp;
+  // Resume strategy across editor restarts (see `resolveAgentLaunch`).
+  spec: AgentResumeSpec;
+  // Flag(s) enabling the agent's "auto"/bypass-approvals mode. Absent ⇒ the
+  // agent has no such flag (opencode gates this via config, not a flag), so the
+  // "Auto mode" checkbox is hidden for it.
+  auto?: string[];
+  // How the agent accepts an initial prompt at launch. Absent ⇒ no prompt box.
+  prompt?: AgentPromptArg;
+}
+// The four launcher-priority agents come first (claude, codex, opencode), then
+// the long-standing aider entry. Order here drives the preset-row order.
+const AGENT_REGISTRY: AgentEntry[] = [
   {
     // Claude Code CLI: `--session-id <uuid>` pins the session at launch;
     // `--resume <uuid>` rejoins it; `--continue` resumes the latest in cwd.
     id: "claude",
+    label: "claude code cli",
     match: /^claude$/,
     spec: {
       provision: { idFlag: "--session-id", resumeArgs: ["--resume", "{id}"] },
       continue: { resumeArgs: ["--continue"] },
     },
+    auto: ["--dangerously-skip-permissions"],
+    prompt: { style: "positional" },
+  },
+  {
+    // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
+    // --last` rejoins the latest session in the cwd. There's no launch-time
+    // session-id to pin, so it's continue-only. `--full-auto` runs without
+    // approvals; the initial prompt is a trailing positional (`codex "…"`).
+    id: "codex",
+    label: "codex cli",
+    match: /^codex$/,
+    spec: { continue: { resumeArgs: ["resume", "--last"] } },
+    auto: ["--full-auto"],
+    prompt: { style: "positional" },
+  },
+  {
+    // opencode (SST): `--continue` resumes the latest session in the cwd.
+    // "Auto"/YOLO mode is config-driven (permissions in opencode.json), so it
+    // has no launch flag — the checkbox is hidden. `--prompt` pre-seeds the TUI.
+    id: "opencode",
+    label: "opencode",
+    match: /^opencode$/,
+    spec: { continue: { resumeArgs: ["--continue"] } },
+    prompt: { style: "flag", flag: "--prompt" },
   },
   {
     // aider keeps its conversation in the repo and reloads it with
     // `--restore-chat-history`; it has no caller-supplied session id, so it's
-    // a continue-only (strategy B) agent.
+    // a continue-only (strategy B) agent. `--yes-always` auto-confirms; `-m`
+    // hands it a message.
     id: "aider",
+    label: "aider",
     match: /^aider$/,
     spec: { continue: { resumeArgs: ["--restore-chat-history"] } },
+    auto: ["--yes-always"],
+    prompt: { style: "flag", flag: "-m" },
   },
 ];
+
+// The registry entry a typed command resolves to (by argv0 basename), or null
+// for a bare terminal / unknown command. Drives which agent-only controls
+// (Auto mode, Start prompt) the form surfaces.
+function agentEntryForCmd(cmd: string): AgentEntry | null {
+  const argv = splitAgentCmd(cmd);
+  if (argv.length === 0) return null;
+  const base = editor.pathBasename(argv[0]) || argv[0];
+  return AGENT_REGISTRY.find((e) => e.match.test(base)) ?? null;
+}
+
+// The agent (if any) the form's current command resolves to.
+function activeAgentEntry(): AgentEntry | null {
+  return form ? agentEntryForCmd(form.cmd.value) : null;
+}
+
+// Build the argv fragment that hands `prompt` to an agent per its prompt style.
+function agentPromptArgs(spec: AgentPromptArg, prompt: string): string[] {
+  return spec.style === "flag" ? [spec.flag, prompt] : [prompt];
+}
 
 // Presets for the New Session "Agent Command" dropdown: the plain shell
 // (default), every registry agent (which a restart will resume), and a
@@ -5861,7 +5955,7 @@ function agentPresets(): AgentPreset[] {
   ];
   for (const e of AGENT_REGISTRY) {
     presets.push({
-      label: e.id,
+      label: e.label ?? e.id,
       cmd: e.id,
       key: `agent-preset-${e.id}`,
       resumes: true,
@@ -5951,24 +6045,43 @@ function agentSessionUuid(): string {
 // agents) pass through unchanged with no resume — i.e. today's behaviour.
 function resolveAgentLaunch(
   argv: string[],
+  opts?: { auto?: boolean; prompt?: string },
 ): { launch: string[]; resume?: string[] } {
   if (argv.length === 0) return { launch: argv };
   const argv0 = argv[0];
   const base = editor.pathBasename(argv0) || argv0;
   const entry = AGENT_REGISTRY.find((e) => e.match.test(base));
+  // Unknown command (a plain shell / custom binary): pass through untouched.
+  // Auto mode and the start prompt are agent-registry features, so there's
+  // nothing to inject here.
   if (!entry) return { launch: argv };
+
+  // Auto-mode flags ride on *both* launch and resume — a resumed session
+  // keeps the approval posture the user chose. Prompt is launch-only: it seeds
+  // the first turn and must never be replayed when rejoining the conversation.
+  const autoArgs = opts?.auto && entry.auto ? entry.auto : [];
+  const prompt = (opts?.prompt ?? "").trim();
+  const promptArgs = prompt && entry.prompt
+    ? agentPromptArgs(entry.prompt, prompt)
+    : [];
+  // Flags first, then the (trailing) prompt so a positional prompt stays last.
+  const withAuto = [...argv, ...autoArgs];
+
   if (entry.spec.provision) {
     const id = agentSessionUuid();
     const { idFlag, resumeArgs } = entry.spec.provision;
     return {
-      launch: [...argv, idFlag, id],
-      resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id))],
+      launch: [...withAuto, idFlag, id, ...promptArgs],
+      resume: [argv0, ...resumeArgs.map((a) => a.replace("{id}", id)), ...autoArgs],
     };
   }
   if (entry.spec.continue) {
-    return { launch: argv, resume: [argv0, ...entry.spec.continue.resumeArgs] };
+    return {
+      launch: [...withAuto, ...promptArgs],
+      resume: [argv0, ...entry.spec.continue.resumeArgs, ...autoArgs],
+    };
   }
-  return { launch: argv };
+  return { launch: [...withAuto, ...promptArgs] };
 }
 
 async function spawnCollect(
@@ -6359,6 +6472,42 @@ function agentPresetRow(): WidgetSpec {
   return row(...parts);
 }
 
+// Agent-specific controls shown below the Agent Command field: a "Start
+// prompt" box (for agents that take a launch prompt) and an "Auto mode"
+// checkbox (for agents with a bypass-approvals flag). Both are local-only —
+// remote backends don't route through `resolveAgentLaunch` — and adapt to the
+// resolved agent: a bare terminal / unknown command shows neither, opencode
+// shows only the prompt (no auto flag), etc.
+function agentOptionsFields(): WidgetSpec[] {
+  if (!form || form.backend !== "local") return [];
+  const entry = activeAgentEntry();
+  if (!entry) return [];
+  const fields: WidgetSpec[] = [];
+  if (entry.auto) {
+    fields.push(
+      toggle(form.autoMode, editor.t("form.auto_mode"), { key: "auto_mode" }),
+    );
+  }
+  if (entry.prompt) {
+    fields.push(
+      labeledSection({
+        label: editor.t("form.start_prompt"),
+        child: text({
+          value: form.startPrompt.value,
+          cursorByte: form.startPrompt.cursor,
+          placeholder: editor.t("form.start_prompt_placeholder"),
+          fullWidth: true,
+          // Single-line to stay consistent with the form's keyboard model
+          // (Enter advances focus, Ctrl+Enter submits); the whole prompt is
+          // handed to the agent as one launch argument.
+          key: "start_prompt",
+        }),
+      }),
+    );
+  }
+  return fields;
+}
+
 // Local backend: Project Path + worktree toggle + linked-worktree hint.
 function localBodyFields(): WidgetSpec[] {
   if (!form) return [];
@@ -6732,6 +6881,9 @@ function buildFormSpec(): WidgetSpec {
         key: "cmd",
       }),
     }),
+    // Agent-specific controls (Auto mode / Start prompt), adaptive to the
+    // resolved agent. Empty for a bare terminal / unknown command.
+    ...agentOptionsFields(),
   ];
   // Branch is local-only (the fork point for `git worktree add`).
   if (form.backend === "local") {
@@ -6836,6 +6988,8 @@ function openForm(options?: { fromPicker?: boolean }): void {
     // terminal, or — for SSH — the remote login shell). No hidden
     // "empty means reuse lastCmd" fallback at submit time.
     cmd: { value: lastCmd, cursor: lastCmd.length },
+    startPrompt: { value: "", cursor: 0 },
+    autoMode: false,
     branch: { value: "", cursor: 0 },
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
@@ -7371,6 +7525,11 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
         projectPath,
         name: sessionName,
         cmd,
+        // Only carry agent options for a command that resolves to an agent
+        // that supports them, so a bare terminal / custom command never gets
+        // stray flags or a prompt appended.
+        auto: !!agentEntryForCmd(cmd)?.auto && f.autoMode,
+        startPrompt: agentEntryForCmd(cmd)?.prompt ? f.startPrompt.value.trim() : "",
         branch: f.branch.value.trim(),
         createWorktree: f.createWorktree,
         displayLabel,
@@ -7752,7 +7911,10 @@ async function runLocalCreate(id: number): Promise<void> {
   if (createWorktree) appendHistory("branch", reportedBranch);
 
   const argv = splitAgentCmd(cmd);
-  const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv);
+  const { launch: launchArgv, resume: resumeArgv } = resolveAgentLaunch(argv, {
+    auto: spec.auto,
+    prompt: spec.startPrompt,
+  });
   const sharedWorktree = !createWorktree && !isLinkedAttach;
 
   // Capture the user's current window so focus can return to it after
@@ -8539,6 +8701,8 @@ editor.on("widget_event", (e) => {
         ? form.name
         : field === "cmd"
         ? form.cmd
+        : field === "start_prompt"
+        ? form.startPrompt
         : field === "branch"
         ? form.branch
         : field === "ssh_host"
@@ -8588,6 +8752,12 @@ editor.on("widget_event", (e) => {
           rebuildFormFocusCycle();
           renderForm();
         }
+        // Editing the command changes which agent it resolves to, and thus
+        // whether the Auto mode / Start prompt controls appear — re-lay-out.
+        if (field === "cmd") {
+          rebuildFormFocusCycle();
+          renderForm();
+        }
       }
       return;
     }
@@ -8598,6 +8768,17 @@ editor.on("widget_event", (e) => {
         form.createWorktree = checked;
       } else {
         form.createWorktree = !form.createWorktree;
+      }
+      renderForm();
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "auto_mode") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const checked = payload.checked;
+      if (typeof checked === "boolean") {
+        form.autoMode = checked;
+      } else {
+        form.autoMode = !form.autoMode;
       }
       renderForm();
       return;

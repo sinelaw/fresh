@@ -73,6 +73,7 @@ other docs assume.
 | Doc | What it covers |
 |-----|----------------|
 | [settings-widget-unification-plan.md](settings-widget-unification-plan.md) | Phased plan to collapse the two separate UI-control systems — the Settings `view/controls/` library and the plugin `WidgetSpec` runtime — into the single declarative widget framework already exposed to plugins. Unlike the docs above, this describes intended work, not the system as built. |
+| [agent-fresh-cli-exposure-plan.md](agent-fresh-cli-exposure-plan.md) | How the Orchestrator launcher could teach a launched coding agent to drive the surrounding editor by shelling out to `fresh` (open a file, split, spawn a workspace) — the `FRESH_SESSION` seam, per-agent system-prompt injection mechanisms, the control-socket gap, and a phased plan. The launcher half (agent presets, resume, Start prompt, Auto mode) ships; the CLI-exposure half is planned. |
 
 ## A note on history
 

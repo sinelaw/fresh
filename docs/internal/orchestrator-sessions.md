@@ -371,8 +371,20 @@ The New Session form fields (Phases 1–5 **shipped**):
   (`shared_worktree = true`), which also covers non-git directories and
   multi-session-sharing-one-tree.
 - **Branch** — base ref for the worktree fork (git + worktree-on only).
-- **Agent** dropdown — terminal / claude / aider / custom (Phase 3 of
-  agent-resume).
+- **Agent** dropdown — a bare `terminal`, then the launcher-priority coding
+  CLIs `claude` / `codex` / `opencode`, then `aider`, then `custom…`. Built from
+  the agent registry, so adding a registry entry surfaces a preset
+  automatically.
+- **Auto mode** checkbox (local backend, agent-dependent) — appends the agent's
+  documented bypass-approvals flag to the launch (and resume) argv, e.g.
+  `claude --dangerously-skip-permissions`, `codex --full-auto`,
+  `aider --yes-always`. Hidden for agents with no such flag (opencode gates it
+  via config) and for a bare terminal.
+- **Start prompt** box (local backend, agent-dependent) — an initial task handed
+  to the agent as a launch argument, positional (`claude "…"`, `codex "…"`) or
+  behind the agent's prompt flag (`opencode --prompt "…"`, `aider -m "…"`).
+  Applied to the launch only, never replayed on resume. Hidden for agents with
+  no launch-prompt argument and for a bare terminal.
 - **Input history** — per-field MRU (Up/Down), global per user, capped, stored
   under the data dir's `orchestrator/`.
 
@@ -409,9 +421,14 @@ The plugin holds a user-overridable agent registry with two strategies:
   (`claude … --session-id <uuid>`) and resume with it
   (`claude --resume <uuid>`); `--continue` as the cwd-latest fallback. Trusted by
   construction — no output capture, no parsing.
-- **continue** (broad default; aider): resume the most recent session in the cwd
-  (`aider --restore-chat-history`), ambiguity broken by per-session config
-  isolation.
+- **continue** (broad default; codex / opencode / aider): resume the most recent
+  session in the cwd, ambiguity broken by per-session config isolation. The
+  rejoin argv is each agent's own: `codex resume --last` (resume is a
+  *subcommand*, not a flag), `opencode --continue`, `aider --restore-chat-history`.
+
+Auto-mode flags, when the user enabled Auto mode, ride on **both** the launch and
+the resume argv (a resumed session keeps the approval posture the user chose); a
+Start prompt rides on the launch only.
 
 Launch resolution returns a launch argv plus an optional resume argv: the launch
 carries any minted `--session-id`, the resume is the resolved rejoin argv. The
