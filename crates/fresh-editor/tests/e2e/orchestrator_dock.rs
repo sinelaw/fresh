@@ -2973,3 +2973,155 @@ fn new_folder_dialog_wears_native_modal_frame() {
     h.assert_screen_not_contains("[×]");
     h.assert_screen_contains("Orchestrator");
 }
+
+/// Open the New-Session ("New Workspace") form via the command palette and
+/// wait for its body — the "Workspace Name" field label, which lives only
+/// inside the form — to render.
+fn open_new_session_form(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: New Workspace").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Workspace Name"))
+        .unwrap();
+}
+
+/// The New-Session ("New Workspace") form is a centered floating panel that
+/// now wears the native modal-frame chrome: its "ORCHESTRATOR :: New
+/// Workspace" title bar + border come from the host (`mount({ title,
+/// closable })`), replacing the in-body styled header banner the form used
+/// to draw itself. This asserts, on rendered cells, that (a) the title
+/// renders in the native title bar (the frame's top border) and (b) a
+/// clickable native `[×]` close button is drawn there, then confirms that
+/// clicking `[×]` — and, on a fresh open, pressing Esc — tears the form
+/// down through the plugin's existing cancel path.
+///
+/// Before the migration the form drew no `[×]` (its header was an in-body
+/// banner, dismissable only with Esc), so `find_text_on_screen("[×]")`
+/// would find nothing and this test would fail.
+#[test]
+fn new_session_form_wears_native_modal_frame() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Keep clipboard interaction internal so the test stays host-isolated.
+    h.editor_mut().set_clipboard_for_test(String::new());
+    h.render().unwrap();
+
+    open_new_session_form(&mut h);
+
+    // (a)+(b): the native `[×]` close button is drawn, and the form's title
+    // text sits on the SAME row — i.e. inside the frame's top border (the
+    // native title bar), not merely somewhere in the body.
+    let (cx, cy) = h
+        .find_text_on_screen("[×]")
+        .expect("the migrated New-Session form must draw a native `[×]` close button");
+    let title_row = h
+        .screen_to_string()
+        .lines()
+        .nth(cy as usize)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        title_row.contains("New Workspace"),
+        "the form title must render in the native title bar (top border, row {cy}), \
+         alongside the `[×]`. Row: {title_row:?}\nScreen:\n{}",
+        h.screen_to_string(),
+    );
+
+    // Clicking `[×]` dismisses the form via the same cancel path as Esc:
+    // the body ("Workspace Name") and the native chrome both vanish.
+    h.mouse_click(cx, cy).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Workspace Name"))
+        .unwrap();
+    h.assert_screen_not_contains("[×]");
+
+    // Re-open and confirm Esc dismisses it the same way (both routes fire
+    // the panel's cancel `widget_event`, which the orchestrator handles).
+    open_new_session_form(&mut h);
+    h.assert_screen_contains("[×]");
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Workspace Name"))
+        .unwrap();
+    h.assert_screen_not_contains("[×]");
+}
+
+/// Open the modal ("control room") session picker via the command palette
+/// and wait for its body — the "Project:" scope control, which lives only
+/// inside the picker — to render.
+fn open_modal_picker(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Open").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Open"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Project:"))
+        .unwrap();
+}
+
+/// The centered modal session picker (`Orchestrator: Open`) now wears the
+/// native modal-frame chrome: its "ORCHESTRATOR :: Workspaces" title bar +
+/// border come from the host (`mount({ title, closable })`), replacing the
+/// in-body title row `buildOpenSpec` used to draw. This asserts, on
+/// rendered cells, that (a) the title renders in the native title bar and
+/// (b) a clickable native `[×]` is drawn there, then confirms that clicking
+/// `[×]` — and, on a fresh open, pressing Esc — dismisses the picker.
+///
+/// Note the DOCK is deliberately not involved: the frame is added only to
+/// the centered modal mount (chrome is dropped for dock placement), so this
+/// drives the pure-modal path (no dock open behind it).
+///
+/// Before the migration the picker drew no `[×]` (its title was an in-body
+/// row), so `find_text_on_screen("[×]")` would find nothing and this test
+/// would fail.
+#[test]
+fn modal_picker_wears_native_modal_frame() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Keep clipboard interaction internal so the test stays host-isolated.
+    h.editor_mut().set_clipboard_for_test(String::new());
+    h.render().unwrap();
+
+    open_modal_picker(&mut h);
+
+    // (a)+(b): the native `[×]` close button is drawn, and the picker's
+    // title text sits on the SAME row — inside the frame's top border.
+    let (cx, cy) = h
+        .find_text_on_screen("[×]")
+        .expect("the migrated modal picker must draw a native `[×]` close button");
+    let title_row = h
+        .screen_to_string()
+        .lines()
+        .nth(cy as usize)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        title_row.contains("Workspaces"),
+        "the picker title must render in the native title bar (top border, row {cy}), \
+         alongside the `[×]`. Row: {title_row:?}\nScreen:\n{}",
+        h.screen_to_string(),
+    );
+
+    // Clicking `[×]` dismisses the picker via the same cancel path as Esc:
+    // the body ("Project:") and the native chrome both vanish.
+    h.mouse_click(cx, cy).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Project:"))
+        .unwrap();
+    h.assert_screen_not_contains("[×]");
+
+    // Re-open and confirm Esc dismisses it the same way.
+    open_modal_picker(&mut h);
+    h.assert_screen_contains("[×]");
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Project:"))
+        .unwrap();
+    h.assert_screen_not_contains("[×]");
+}

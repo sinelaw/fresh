@@ -2829,15 +2829,12 @@ function buildOpenSpec(): WidgetSpec {
       }
     : null;
 
-  // Scope chrome. The title keeps the active project visible; the
-  // `Project:` control below is the clickable scope switch.
+  // Scope chrome. The `Project:` control below is the clickable scope
+  // switch; the current scope now reads off that button rather than a
+  // title suffix (the dialog title is native modal-frame chrome).
   const scope = openDialog.scope;
   const curKey = currentProjectKey();
-  const curName = projectLabel(curKey);
   const scopeKey = editor.getKeybindingLabel("orchestrator_toggle_scope", OPEN_MODE);
-  const titleSuffix = scope === "current"
-    ? editor.t("list.title_suffix_current", { project: curName })
-    : editor.t("list.title_suffix_all");
   const sectionLabel = editor.t("list.section_label");
   // `Project:` control — a visible, clickable scope switch with the
   // Alt+P hint baked into the button label. Shows the current
@@ -2899,21 +2896,9 @@ function buildOpenSpec(): WidgetSpec {
   );
 
   return col(
-    {
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: editor.t("list.title"),
-            style: { fg: "ui.popup_border_fg", bold: true },
-          },
-          {
-            text: titleSuffix,
-            style: { fg: "ui.menu_disabled_fg" },
-          },
-        ]),
-      ],
-    },
+    // The "ORCHESTRATOR :: Workspaces" title is native modal-frame chrome
+    // now (set on the panel at mount — see `openControlRoom`), so the spec
+    // starts straight at the error banner / two-pane body.
     ...(errorBanner ? [errorBanner] : []),
     spacer(0),
     // Two-pane: sessions list | preview. Renderer's `row()`
@@ -3477,7 +3462,16 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     // 90% × 90% of the terminal — the open dialog wants room for
     // a real session list + preview pane, unlike the new-session
     // form which stays compact.
-    openPanel.mount(buildOpenSpec(), { widthPct: 90, heightPct: 90 });
+    openPanel.mount(buildOpenSpec(), {
+      widthPct: 90,
+      heightPct: 90,
+      // Native modal-frame chrome replaces the in-body "ORCHESTRATOR ::
+      // Workspaces" title row; `closable` renders a native `[×]` that
+      // dismisses via the same cancel path as Esc. Chrome is only drawn
+      // for Centered placement, so the dock mount above never gets it.
+      title: editor.t("list.title"),
+      closable: true,
+    });
     // The control room is a global orchestrator feature: render it over
     // the full screen (covering its own dimmed dock) rather than cramped
     // into the chrome area beside the dock. A no-op when no dock is up
@@ -6262,17 +6256,6 @@ async function nextAutoSessionName(
   return `${base}-${next}`;
 }
 
-// Three distinct styles for the header line: section keyword
-// ("ORCHESTRATOR"), structural separators ("::"), and step label. The
-// border-fg key picks up the same accent the floating panel border
-// uses, so the title visually anchors to the dialog chrome.
-const HEADER_KEYWORD_STYLE = {
-  fg: "ui.popup_border_fg",
-  bold: true,
-} as const;
-const HEADER_SEP_STYLE = { fg: "ui.menu_disabled_fg" } as const;
-const HEADER_LABEL_STYLE = { fg: "ui.menu_active_fg", bold: true } as const;
-
 // Subtitle splits the static prefix "Project:" from the project
 // path so each gets its own foreground — matching the three-tier
 // (label / label-value / input) palette the design calls for.
@@ -6672,21 +6655,9 @@ function buildConnectingView(): WidgetSpec {
 
   const remote = form.backend === "ssh" || form.backend === "kubernetes";
   return col(
-    row(
-      flexSpacer(),
-      {
-        kind: "raw",
-        entries: [
-          styledRow([
-            { text: editor.t("form.header_keyword"), style: HEADER_KEYWORD_STYLE },
-            { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: editor.t("form.header_label"), style: HEADER_LABEL_STYLE },
-          ]),
-        ],
-      },
-      flexSpacer(),
-    ),
-    spacer(0),
+    // The "ORCHESTRATOR :: New Workspace" title is native modal-frame
+    // chrome now (set on the panel at mount time and kept across the
+    // connecting-state re-render), so no in-body banner is drawn here.
     ...rows,
     spacer(0),
     {
@@ -6719,22 +6690,9 @@ function buildFormSpec(): WidgetSpec {
   if (form.submitting) return buildConnectingView();
 
   const children: WidgetSpec[] = [
-    // === Header: centered title (no stale `Review Synthesized`). =
-    row(
-      flexSpacer(),
-      {
-        kind: "raw",
-        entries: [
-          styledRow([
-            { text: editor.t("form.header_keyword"), style: HEADER_KEYWORD_STYLE },
-            { text: " :: ", style: HEADER_SEP_STYLE },
-            { text: editor.t("form.header_label"), style: HEADER_LABEL_STYLE },
-          ]),
-        ],
-      },
-      flexSpacer(),
-    ),
-    spacer(0),
+    // The title ("ORCHESTRATOR :: New Workspace") + border are now
+    // native modal-frame chrome drawn by the host (see `openForm`), so
+    // the spec starts straight at the "Run in:" session-type tabs.
     // === "Run in:" session-type tabs. ============================
     backendTabsRow(),
     spacer(0),
@@ -6913,6 +6871,12 @@ function openForm(options?: { fromPicker?: boolean }): void {
     // a plain terminal capture (driveable by automation) and the
     // layout stays constant as Tab moves focus between controls.
     focusMarker: true,
+    // The dialog's title + border are now native modal-frame chrome
+    // (drawn by the host around the WidgetSpec) rather than the in-body
+    // "ORCHESTRATOR :: New Workspace" banner, and `closable` renders a
+    // native `[×]` that dismisses via the same cancel path as Esc.
+    title: `${editor.t("form.header_keyword")} :: ${editor.t("form.header_label")}`,
+    closable: true,
   });
   // The New-Session form is a global orchestrator feature too: center it
   // over the full screen (covering its own dimmed dock) rather than in the
@@ -9222,11 +9186,18 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "cancel") {
-      // Esc unmounted the picker panel — sync our own state. If the
-      // picker was floated over a live dock, hand control back to the
-      // dock (still mounted in its own slot) rather than dropping to the
-      // bare editor.
+      // Esc / native `[×]` unmounted the picker panel — sync our own
+      // state. This teardown is for the centered MODAL picker only: the
+      // dock (LeftDock placement) never fires `cancel` (its Esc blurs to
+      // the editor, host-side), and the modal always runs with
+      // `dockMode === false` — even when floated over a live dock, where
+      // the dock is parked in `dockPanel`. Guard on `dockMode` so a stray
+      // cancel can never tear the dock down.
+      if (dockMode) return;
       openPanel = null;
+      // If the picker was floated over a live dock, hand control back to
+      // the dock (still mounted in its own slot) rather than dropping to
+      // the bare editor.
       if (restoreDockBehindPicker()) return;
       openDialog = null;
       editor.setEditorMode(null);
