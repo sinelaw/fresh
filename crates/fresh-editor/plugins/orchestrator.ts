@@ -4217,11 +4217,19 @@ function mountFolderDialog(): void {
     dockBlurred = true;
     editor.floatingPanelControl(openPanel.id(), "blur", 0);
   }
+  const renaming = createFolderDialog!.renameId !== null;
   createFolderPanel = new FloatingWidgetPanel();
   createFolderPanel.mount(buildCreateFolderSpec(), {
     widthPct: 50,
     heightPct: 42,
     focusMarker: true,
+    // The dialog's title + border are now native modal-frame chrome
+    // (drawn by the host around the WidgetSpec), and `closable` renders
+    // a native `[×]` that dismisses via the same cancel path as Esc.
+    title: renaming
+      ? editor.t("dock.rename_folder_dialog_title")
+      : editor.t("dock.new_folder_dialog_title"),
+    closable: true,
   });
   editor.floatingPanelControl(createFolderPanel.id(), "fullscreen", 1);
   editor.setEditorMode(CREATE_FOLDER_MODE);
@@ -4275,12 +4283,9 @@ function buildCreateFolderSpec(): WidgetSpec {
       ),
     ),
   );
-  return labeledSection({
-    label: renaming
-      ? editor.t("dock.rename_folder_dialog_title")
-      : editor.t("dock.new_folder_dialog_title"),
-    child: col(...children),
-  });
+  // The dialog's title + border come from the native modal-frame chrome
+  // (see `mountFolderDialog`), so the spec is just the content column.
+  return col(...children);
 }
 
 // Commit the dialog: create the folder and (when the checkbox is on)

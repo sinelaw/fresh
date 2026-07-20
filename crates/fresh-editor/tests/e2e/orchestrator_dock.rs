@@ -2883,3 +2883,93 @@ fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
          hover reveals"
     );
 }
+
+/// Drive the dock's "New Task… ▾" create dropdown to open the "New Folder"
+/// dialog. Clicks the dropdown, then clicks its "New Folder…" option (a
+/// mouse activate routes straight to the plugin's `runDockMenuOption`, so
+/// there's no keyboard-focus race). Returns once the dialog's body —
+/// text that lives only inside it — is on screen.
+fn open_new_folder_dialog(h: &mut EditorTestHarness) {
+    let new_row = row_of(h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    // The create dropdown opens listing "New Task…" / "New Folder…".
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    let (fx, fy) = h
+        .find_text_on_screen("New Folder")
+        .expect("the create dropdown should list a 'New Folder…' option");
+    h.mouse_click(fx, fy).unwrap();
+    // The dialog's "Folder name" prompt and "Create Folder" button are
+    // text unique to the dialog body (not the toolbar or the dropdown).
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Folder name") && s.contains("Create Folder")
+    })
+    .unwrap();
+}
+
+/// The "New Folder" dialog is a centered floating panel that now wears the
+/// native modal-frame chrome: its title bar + border come from the host
+/// (`mount({ title, closable })`), not a `labeledSection` faked inside the
+/// WidgetSpec. This test opens the dialog through the dock's create
+/// dropdown and asserts, on rendered cells, that (a) the dialog title
+/// renders in the native title bar (the frame's top border) and (b) a
+/// clickable native `[×]` close button is drawn there. It then confirms
+/// that clicking `[×]` — and, on a fresh open, pressing Esc — tears the
+/// dialog down through the plugin's existing cancel path, leaving the dock.
+///
+/// Before the migration the dialog faked its title with a `labeledSection`
+/// border and drew no `[×]`, so `find_text_on_screen("[×]")` would find
+/// nothing and this test would fail — the assertion catches the feature's
+/// absence.
+#[test]
+fn new_folder_dialog_wears_native_modal_frame() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // Keep clipboard interaction internal so the test stays host-isolated.
+    h.editor_mut().set_clipboard_for_test(String::new());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    open_new_folder_dialog(&mut h);
+
+    // (a)+(b): the native `[×]` close button is drawn, and the dialog's
+    // title text sits on the SAME row — i.e. inside the frame's top border
+    // (the native title bar), not merely somewhere in the dialog body.
+    let (cx, cy) = h
+        .find_text_on_screen("[×]")
+        .expect("the migrated folder dialog must draw a native `[×]` close button");
+    let title_row = h
+        .screen_to_string()
+        .lines()
+        .nth(cy as usize)
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        title_row.contains("New Folder"),
+        "the dialog title must render in the native title bar (top border, row {cy}), \
+         alongside the `[×]`. Row: {title_row:?}\nScreen:\n{}",
+        h.screen_to_string(),
+    );
+
+    // Clicking `[×]` dismisses the dialog via the same cancel path as Esc:
+    // the body ("Create Folder" / "Folder name") and the native chrome all
+    // vanish, and the dock stays.
+    h.mouse_click(cx, cy).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Create Folder"))
+        .unwrap();
+    h.assert_screen_not_contains("[×]");
+    h.assert_screen_contains("Orchestrator");
+
+    // Re-open and confirm Esc dismisses it the same way (both routes fire
+    // the panel's cancel `widget_event`, which the orchestrator handles).
+    open_new_folder_dialog(&mut h);
+    h.assert_screen_contains("[×]");
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Create Folder"))
+        .unwrap();
+    h.assert_screen_not_contains("[×]");
+    h.assert_screen_contains("Orchestrator");
+}
