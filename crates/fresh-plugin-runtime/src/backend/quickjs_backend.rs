@@ -6761,6 +6761,8 @@ impl JsEditorApi {
                 command: opts.command,
                 title: opts.title,
                 resume: opts.resume,
+                env: opts.env,
+                command_allowlist: opts.command_allowlist,
                 request_id: id,
             });
         Ok(id)

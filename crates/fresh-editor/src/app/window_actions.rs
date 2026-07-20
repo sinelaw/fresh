@@ -336,6 +336,8 @@ impl crate::app::Editor {
         title: Option<String>,
         window_authority: crate::services::authority::Authority,
         resume: Option<Vec<String>>,
+        env: Option<HashMap<String, String>>,
+        command_allowlist: Option<Vec<String>>,
     ) -> Result<(WindowId, fresh_core::TerminalId, fresh_core::BufferId), String> {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
@@ -399,6 +401,23 @@ impl crate::app::Editor {
         // marks this as a restorable *session* terminal (re-spawn it on
         // restore), distinct from a throwaway ephemeral build/exec shell.
         let restore_command = command.clone().unwrap_or_default();
+
+        // Assemble the extra env injected into the seeded terminal's child.
+        // Starts from the plugin-supplied `env` (empty when omitted). When a
+        // `command_allowlist` is present, mint a capability token bound to
+        // *this* new window plus that allowlist and advertise it as
+        // `FRESH_CMD_TOKEN` so a client running inside the terminal can drive
+        // exactly those commands against this window (and no other). Minting
+        // happens here — after the window id is known, before the PTY spawns —
+        // so the token is live by the time the child can read its env.
+        let mut terminal_env = env.unwrap_or_default();
+        if let Some(allowlist) = command_allowlist {
+            let token = crate::server::command_access::mint(
+                crate::server::command_access::Grant::new(Some(id.0), allowlist),
+            );
+            terminal_env.insert("FRESH_CMD_TOKEN".to_string(), token);
+        }
+
         let spawn_result = {
             let target = self
                 .windows
@@ -412,6 +431,7 @@ impl crate::app::Editor {
                 persistent: false, // ephemeral by default; orchestrator owns persistence
                 command,
                 title: title.filter(|t| !t.is_empty()),
+                env: terminal_env,
             })
         };
 
@@ -1367,6 +1387,8 @@ impl crate::app::Editor {
             command,
             None,
             authority,
+            None,
+            None,
             None,
         ) {
             Ok((window_id, _terminal, _buffer)) => {

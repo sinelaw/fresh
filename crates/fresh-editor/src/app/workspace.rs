@@ -878,6 +878,7 @@ impl crate::app::window::Window {
             Some(backing_path.clone()),
             wrapper_for_spawn,
             env_delta,
+            std::collections::HashMap::new(),
         ) {
             Ok(id) => id,
             Err(e) => {

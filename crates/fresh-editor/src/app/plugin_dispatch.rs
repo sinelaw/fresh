@@ -903,10 +903,20 @@ impl Editor {
                 command,
                 title,
                 resume,
+                env,
+                command_allowlist,
                 request_id,
             } => {
                 self.handle_create_window_with_terminal(
-                    root, label, cwd, command, title, resume, request_id,
+                    root,
+                    label,
+                    cwd,
+                    command,
+                    title,
+                    resume,
+                    env,
+                    command_allowlist,
+                    request_id,
                 );
             }
             PluginCommand::SetActiveWindow { id } => {
@@ -3745,6 +3755,8 @@ impl Editor {
         command: Option<Vec<String>>,
         title: Option<String>,
         resume: Option<Vec<String>>,
+        env: Option<std::collections::HashMap<String, String>>,
+        command_allowlist: Option<Vec<String>>,
         request_id: u64,
     ) {
         let callback_id = JsCallbackId::from(request_id);
@@ -3777,6 +3789,8 @@ impl Editor {
             title,
             new_authority,
             resume,
+            env,
+            command_allowlist,
         ) {
             Ok((window_id, terminal_id, buffer_id)) => {
                 let api_result = fresh_core::api::SessionWithTerminalResult {
@@ -3855,6 +3869,7 @@ impl Editor {
                 persistent,
                 command,
                 title: title.filter(|t| !t.is_empty()),
+                env: std::collections::HashMap::new(),
             })
         };
         match result {

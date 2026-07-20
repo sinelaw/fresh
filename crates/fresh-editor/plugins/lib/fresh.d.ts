@@ -799,6 +799,24 @@ type CreateWindowWithTerminalOptions = {
 	* is a plain argv element — never interpolated into a shell string.
 	*/
 	resume?: Array<string>;
+	/**
+	* Extra environment variables to set in the spawned
+	* terminal's child process, on top of the inherited/activated
+	* env. Applied after the editor's control vars (`TERM`,
+	* `FRESH_SESSION`), so a plugin's entry wins over those only
+	* when it names the same key. `None` (the default) adds
+	* nothing — old callers behave exactly as before.
+	*/
+	env?: { [key in string] : string };
+	/**
+	* When `Some`, the host mints an unforgeable capability token
+	* bound to the NEW window and this allowlist of command ids,
+	* and injects it into the spawned terminal as `FRESH_CMD_TOKEN`.
+	* A client presenting that token over the control socket may run
+	* exactly the listed command ids against this window. `None` (the
+	* default) mints no token and injects nothing.
+	*/
+	commandAllowlist?: Array<string>;
 };
 type SessionWithTerminalResult = {
 	/**

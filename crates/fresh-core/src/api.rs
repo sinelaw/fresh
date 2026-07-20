@@ -2647,6 +2647,14 @@ pub enum PluginCommand {
         /// Restore-time argv (agent resume); see
         /// `CreateWindowWithTerminalOptions::resume`.
         resume: Option<Vec<String>>,
+        /// Extra env for the spawned terminal; see
+        /// `CreateWindowWithTerminalOptions::env`.
+        env: Option<std::collections::HashMap<String, String>>,
+        /// When `Some`, the host mints a capability token bound to the
+        /// new window + these command ids and injects it as
+        /// `FRESH_CMD_TOKEN`; see
+        /// `CreateWindowWithTerminalOptions::command_allowlist`.
+        command_allowlist: Option<Vec<String>>,
         request_id: u64,
     },
 
@@ -5153,6 +5161,24 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub resume: Option<Vec<String>>,
+    /// Extra environment variables to set in the spawned
+    /// terminal's child process, on top of the inherited/activated
+    /// env. Applied after the editor's control vars (`TERM`,
+    /// `FRESH_SESSION`), so a plugin's entry wins over those only
+    /// when it names the same key. `None` (the default) adds
+    /// nothing — old callers behave exactly as before.
+    #[serde(default)]
+    #[ts(optional)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+    /// When `Some`, the host mints an unforgeable capability token
+    /// bound to the NEW window and this allowlist of command ids,
+    /// and injects it into the spawned terminal as `FRESH_CMD_TOKEN`.
+    /// A client presenting that token over the control socket may run
+    /// exactly the listed command ids against this window. `None` (the
+    /// default) mints no token and injects nothing.
+    #[serde(default)]
+    #[ts(optional)]
+    pub command_allowlist: Option<Vec<String>>,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new
@@ -7090,5 +7116,48 @@ mod tests {
         }
         writer.join().unwrap();
         assert_eq!(drained.len(), 200);
+    }
+}
+
+#[cfg(test)]
+mod create_window_with_terminal_options_tests {
+    use super::CreateWindowWithTerminalOptions;
+
+    /// Old callers that supply neither `env` nor `commandAllowlist` must
+    /// still deserialize, with both new fields defaulting to `None`.
+    #[test]
+    fn deserializes_without_new_fields() {
+        let opts: CreateWindowWithTerminalOptions =
+            serde_json::from_str(r#"{"root":"/tmp/x"}"#).expect("legacy payload should decode");
+        assert_eq!(opts.root, "/tmp/x");
+        assert!(opts.env.is_none());
+        assert!(opts.command_allowlist.is_none());
+    }
+
+    /// The two new fields round-trip through serde using their camelCase
+    /// JSON names (`env`, `commandAllowlist`).
+    #[test]
+    fn new_fields_round_trip() {
+        let json = r#"{
+            "root": "/tmp/proj",
+            "env": {"FOO": "bar"},
+            "commandAllowlist": ["split_vertical", "open_file"]
+        }"#;
+        let opts: CreateWindowWithTerminalOptions =
+            serde_json::from_str(json).expect("payload with new fields should decode");
+        assert_eq!(
+            opts.env.as_ref().and_then(|e| e.get("FOO")).map(String::as_str),
+            Some("bar")
+        );
+        assert_eq!(
+            opts.command_allowlist.as_deref(),
+            Some(&["split_vertical".to_string(), "open_file".to_string()][..])
+        );
+
+        let reencoded = serde_json::to_string(&opts).expect("re-serialize");
+        let back: CreateWindowWithTerminalOptions =
+            serde_json::from_str(&reencoded).expect("re-decode");
+        assert_eq!(back.command_allowlist, opts.command_allowlist);
+        assert_eq!(back.env, opts.env);
     }
 }
