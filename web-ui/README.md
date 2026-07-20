@@ -147,10 +147,19 @@ is never overridden, so the buffer stays the TUI theme's). The buffer's
 `--font-family` at a proportional stack without disturbing the monospace grid.
 
 Users switch it three ways, all frontend-owned: the floating **theme pill** in
-the top-right corner (a menu of the three), the **Ctrl/Cmd+Alt+T** chord
+the top-right corner (a menu of the four), the **Ctrl/Cmd+Alt+T** chord
 (Shift reverses), and the mobile **⋮** sheet's "Theme:" row. The choice is
 exposed on `window.fresh` (`setWebTheme` / `cycleWebTheme` / `webTheme` /
 `webThemes`) for drivers and tests.
+
+When building or reviewing a theme, walk
+`docs/internal/web-ui-theme-checklist.md` — an element-by-element visual
+checklist of every chrome surface (dock, explorer, buffer, menus, palette,
+popups, settings, …) and the dimensions to verify (margins, colours, padding,
+text, icons, gaps, borders, selection/hover/focus states), plus the macOS
+reference values and the gotchas (never inherit `--bg` on a control; keep the
+buffer monospace; inset menu highlights via `::before`; selection language per
+surface).
 
 ## Architecture (taps the real render pipeline)
 
