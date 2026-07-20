@@ -281,6 +281,16 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     let mut editor = build_editor(cols, rows, files)?;
     let mut clip = ClipboardSync::new(&editor);
 
+    // Bind the in-process control socket so a `fresh` run inside an embedded
+    // terminal can forward opens *and* drive the command channel
+    // (`ListCommands` / `RunCommand`) back to this editor — same as the TUI
+    // path (main.rs). Web mode previously skipped this, so an agent workspace
+    // got a `FRESH_CMD_TOKEN` with no socket to reach. Best-effort: on failure
+    // the editor still runs, nested launches just open inline.
+    if let Err(e) = crate::server::local_control::start() {
+        eprintln!("[webui] local control socket unavailable: {e}");
+    }
+
     let listener = TcpListener::bind(addr)?;
     listener.set_nonblocking(true)?;
     // Host part of the bind address — only the fallback for the WS-upgrade
@@ -299,6 +309,14 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
     let mut next_tick = Instant::now();
 
     loop {
+        // 0) Drain nested-forward command requests (file/dir opens, and the
+        //    `fresh --cmd` command channel) before anything else, exactly like
+        //    the TUI loop (main.rs). `pump` is a cheap no-op until `start()`
+        //    has bound the socket and never blocks. Its result is folded into
+        //    `had_input` below so the queued work is applied and pushed in this
+        //    same iteration rather than waiting for the idle tick.
+        let control_changed = crate::server::local_control::pump(&mut editor);
+
         // 1) Drain the WS input batch FIRST (this also detects a client that
         //    closed, e.g. a browser reload, so its replacement upgrade in
         //    step 2/3 isn't bounced with a 409). Read/parse errors drop the
@@ -399,7 +417,9 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
         //    the diff cache belongs to the connected session, and a reconnect
         //    starts over with a fresh hello anyway.
         let now = Instant::now();
-        let had_input = applied_input || http_mutated;
+        // `control_changed` (a `fresh --cmd` request applied above) forces the
+        // tick + scene push this iteration so command effects show immediately.
+        let had_input = applied_input || http_mutated || control_changed;
         if had_input || now >= next_tick {
             let needs_render = tick_only(&mut editor);
             let active_hint = poll_active(&editor);
