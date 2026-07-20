@@ -54,8 +54,14 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
 
     // The state a previous session left behind: a local workspace that was
     // still being created (its worktree not yet made) when the editor quit,
-    // under the orchestrator's pending-workspace key.
-    let target = project.join("recovered-ws");
+    // under the orchestrator's pending-workspace key. The persisted `label`
+    // ("resumed-alias") is the *resolved* name the row last showed — distinct
+    // from the spec's capture-time `displayLabel` ("stale-default", derived
+    // from the then-empty name field) and from the project dir basename
+    // ("proj_dir"). Recovery must restore the row under the persisted `label`,
+    // not re-derive the stale default — so a row showing "resumed-alias" proves
+    // the persisted label was honoured.
+    let target = project.join("proj_dir");
     let target_str = target.to_string_lossy().to_string();
     let pending = json!([{
         "spec": {
@@ -65,10 +71,10 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
             "cmd": "",
             "branch": "",
             "createWorktree": false,
-            "displayLabel": "recovered-ws",
+            "displayLabel": "stale-default",
             "displayProject": target_str,
         },
-        "label": "recovered-ws",
+        "label": "resumed-alias",
     }]);
     h.editor_mut()
         .handle_plugin_command(PluginCommand::SetGlobalState {
@@ -93,10 +99,19 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
     h.editor_mut().fire_ready_hook();
 
     // The interrupted workspace comes back — paused and resumable — in the
-    // dock, labelled as it was.
+    // dock, labelled with the resolved name it last showed ("resumed-alias"),
+    // NOT the stale capture-time default. Without honouring the persisted
+    // `label`, the row would render "stale-default" and this wait would hang.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("recovered-ws") && s.contains("Interrupted")
+        s.contains("resumed-alias") && s.contains("Interrupted")
     })
     .unwrap();
+    // And the stale default name is not what surfaced.
+    assert!(
+        !h.screen_to_string().contains("stale-default"),
+        "restored row must show the persisted resolved name, not the stale \
+         capture-time default. Screen:\n{}",
+        h.screen_to_string(),
+    );
 }

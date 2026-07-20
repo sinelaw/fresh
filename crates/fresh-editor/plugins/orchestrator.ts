@@ -187,10 +187,6 @@ interface PendingCreate {
   message: string;
   // Everything the worker needs to (re-)run the create.
   spec: CreateSpec;
-  // The window that was active when the create was launched. A remote
-  // attach makes its born window active on success; restoring this keeps
-  // the user where they were ("stay put, mark ready").
-  originActive: number;
   // `true` when the user chose "Create & Visit": once the workspace is real,
   // focus follows into it (dive) instead of staying put. `false` for "Create
   // in Background" (and for restored/resumed rows — a relaunch never yanks
@@ -7487,7 +7483,7 @@ function pendingCreatingMessage(spec: CreateSpec): string {
 // background worker. Returns the placeholder's synthetic id.
 function startPendingWorkspace(
   spec: CreateSpec,
-  opts?: { restored?: boolean; visit?: boolean },
+  opts?: { restored?: boolean; visit?: boolean; label?: string },
 ): number {
   const id = allocPendingId();
   const restored = opts?.restored === true;
@@ -7495,7 +7491,10 @@ function startPendingWorkspace(
     spec.backend === "local" ? undefined : { ...spec.facet };
   orchestratorSessions.set(id, {
     id,
-    label: spec.displayLabel,
+    // A restored row keeps the name it last showed (the resolved / relabelled
+    // one persisted alongside the spec); a fresh row starts from the spec's
+    // capture-time display label.
+    label: opts?.label || spec.displayLabel,
     // Synthetic root — a placeholder owns no real directory yet, and a unique
     // key keeps it in its own stable dock-order slot.
     root: `pending:${id}`,
@@ -7510,7 +7509,6 @@ function startPendingWorkspace(
       phase: restored ? "paused" : "creating",
       message: restored ? editor.t("dock.pending_interrupted") : pendingCreatingMessage(spec),
       spec,
-      originActive: editor.activeWindow(),
       // A restored/resumed row never yanks focus on relaunch.
       visit: !restored && opts?.visit === true,
     },
@@ -7626,10 +7624,29 @@ function dismissPending(id: number): void {
   }
 }
 
+// Best-effort teardown of a worktree this local create added but then had to
+// abandon (the placeholder was dismissed mid-flight). Leaving it would orphan
+// the branch + directory with nothing tracking it. `--force` since the tree is
+// freshly created; any failure is swallowed — there's nothing else to do from
+// a cancellation path.
+async function discardCreatedWorktree(repoRoot: string, root: string): Promise<void> {
+  await spawnCollect(
+    "git",
+    ["-C", repoRoot, "worktree", "remove", "--force", root],
+    repoRoot,
+  );
+}
+
 // Background worker: create a local worktree (when requested) and spawn the
 // session window, swapping the placeholder for the real row. Idempotent on a
 // resume — if the target worktree already exists (a prior run made it before
 // the editor quit) the add is skipped and the session opens in place.
+//
+// Cancellation: `dismissPending` deletes the session from the map, so each
+// `orchestratorSessions.get(id)?.pending` check below is also a cancel point.
+// Because a local create has real side effects (a worktree on disk, a spawned
+// window), the checkpoints after those effects undo them rather than just
+// bailing — so a dismissed create leaves nothing behind.
 async function runLocalCreate(id: number): Promise<void> {
   const s0 = orchestratorSessions.get(id);
   if (!s0 || !s0.pending || s0.pending.spec.backend !== "local") return;
@@ -7652,6 +7669,14 @@ async function runLocalCreate(id: number): Promise<void> {
   const sessionName = spec.name ||
     (await nextAutoSessionName(repoRoot, { persist: true }));
   if (!orchestratorSessions.get(id)?.pending) return;
+  // Pin the auto-resolved name back into the spec so a retry or a
+  // restart-recovery targets the *same* worktree instead of allocating a fresh
+  // `<proj>-(N+1)` — which would bypass the `rootExists` idempotency below and
+  // orphan the worktree a prior attempt already created.
+  if (!spec.name) {
+    spec.name = sessionName;
+    savePendingSpecs();
+  }
   relabelPending(id, sessionName);
 
   const root = createWorktree
@@ -7661,6 +7686,9 @@ async function runLocalCreate(id: number): Promise<void> {
   // Recovery idempotency: a worktree left on disk by an interrupted run is
   // reused rather than re-added (a re-add would fail and error the row).
   const rootExists = createWorktree && editor.fileExists(root);
+  // Whether *this* run put the worktree on disk (vs. reusing an existing one),
+  // so a mid-flight dismissal can remove exactly what it created.
+  let addedWorktree = false;
   if (createWorktree && !rootExists) {
     setPendingMessage(id, editor.t("dock.pending_adding_worktree"));
     const parent = editor.pathDirname(root);
@@ -7694,8 +7722,14 @@ async function runLocalCreate(id: number): Promise<void> {
       }
       addRes = fallback;
     }
+    addedWorktree = true;
   }
-  if (!orchestratorSessions.get(id)?.pending) return; // dismissed mid-add
+  if (!orchestratorSessions.get(id)?.pending) {
+    // Dismissed while the worktree was being added — remove what we just
+    // created so a dismissed create leaves nothing orphaned on disk.
+    if (addedWorktree) await discardCreatedWorktree(repoRoot, root);
+    return;
+  }
 
   if (cmd) editor.setGlobalState("orchestrator.last_cmd", cmd);
 
@@ -7733,6 +7767,23 @@ async function runLocalCreate(id: number): Promise<void> {
       resume: resumeArgv,
     });
     const winId = result.windowId;
+    // Dismissed during the (awaited) spawn: the window was born and dove in,
+    // but the user has since dismissed this workspace. Tear the window (and its
+    // agent process) down and remove any worktree we added, rather than
+    // resurrecting the dismissed row as a live session.
+    if (!orchestratorSessions.get(id)?.pending) {
+      // `close_window` refuses the active window (the spawn dove into it), so
+      // move focus off it first — back where the user was, or any other window.
+      restoreActiveWindow(restoreTo);
+      if (editor.activeWindow() === winId) {
+        const other = editor.listWindows().find((w) => w.id !== winId);
+        if (other) editor.setActiveWindow(other.id);
+      }
+      if (result.terminalId) editor.signalWindow(winId, "SIGKILL");
+      editor.closeWindow(winId);
+      if (addedWorktree) await discardCreatedWorktree(repoRoot, root);
+      return;
+    }
     editor.setWindowState("project_path", effectiveProjectPath);
     editor.setWindowState("shared_worktree", sharedWorktree);
     const discId = discoveredIdByPath.get(root);
@@ -7824,12 +7875,17 @@ async function runRemoteCreate(id: number): Promise<void> {
   s.pending.phase = "creating";
   s.pending.message = editor.t("dock.pending_connecting");
   if (s.remote) s.remote.state = "starting";
-  const restoreTo = s.pending.originActive;
   const visit = s.pending.visit;
   // The born window adopts this facet via the `window_created` hook.
   pendingRemoteFacet = { ...spec.facet };
   if (openPanel) refreshOpenDialog();
   try {
+    // Capture the user's *current* window right before the attach dives into
+    // the born one, so a "stay put" create returns focus to where they are now.
+    // The connect can run — or wait queued behind another attach — for seconds
+    // while the user navigates elsewhere, so the submit-time window is stale;
+    // mirror the local worker, which recaptures fresh here too.
+    const restoreTo = editor.activeWindow();
     await editor.attachRemoteAgent(spec.spec);
     // Success: the born-attached window is live and already tracked (the
     // hook adopted the facet). Drop the placeholder.
@@ -7899,7 +7955,11 @@ function recoverPendingWorkspaces(): void {
     if (!e || typeof e !== "object") continue;
     const spec = (e as Record<string, unknown>).spec as CreateSpec | undefined;
     if (!spec || spec.backend !== "local") continue;
-    startPendingWorkspace(spec, { restored: true });
+    // Restore the name the row last showed (persisted by `savePendingSpecs`),
+    // not the generic capture-time default it would otherwise re-derive.
+    const savedLabel = (e as Record<string, unknown>).label;
+    const label = typeof savedLabel === "string" && savedLabel ? savedLabel : undefined;
+    startPendingWorkspace(spec, { restored: true, label });
     restored++;
   }
   if (restored > 0) showDockForPending();
