@@ -90,26 +90,85 @@ useful immediately and reversible. It also surfaces the honest limitation: file
 open blocks, so the prompt tells the agent to background it (`fresh file &`) or
 prefer it for hand-offs, not mid-task peeks.
 
-**Phase 2 — widen the wire protocol.** Add `ClientControl` variants and dispatch
-in *both* control-socket handlers (the daemon server and the in-process/direct
-handler, which must stay symmetric):
+**Phase 2 — a general command channel (`fresh cmd`).** Rather than one verb per
+capability, expose the editor's existing **command registry** (the same id +
+name + category set the palette and keybindings resolve) over the control
+socket, so the surface grows automatically as commands are added.
 
-- `SplitView { direction }` → the split actions.
-- `RunCommand { id, args? }` → a **whitelisted** subset of palette command ids
-  (split, new terminal, new workspace, focus navigation). A whitelist, not
-  arbitrary action dispatch, keeps the blast radius small.
-- A non-blocking `OpenFiles { wait: false }` form reachable from the
-  nested-forward path (today it hardcodes `wait: true`).
+*Protocol additions* (implemented symmetrically in **both** the daemon
+`editor_server` handler and the in-process/direct handler — they must stay in
+lock-step):
 
-Expose these as stable `fresh` subcommands (e.g. `fresh split --vertical`,
-`fresh cmd <id>`), so the system prompt can name durable commands rather than
-socket internals. Extend the prompt to document them.
+- `ClientControl::ListCommands { include_args }` → `ServerControl::CommandList
+  { commands: [{ id, name, category, args }] }`. Maps straight onto the registry.
+- `ClientControl::RunCommand { id, args }` → `ServerControl::CommandResult
+  { ok, error?, output? }`. Dispatches through the palette's command→action→event
+  pipeline. The target window is **derived from the caller's token** (below), not
+  passed in — so a caller can only ever drive its own workspace.
+- A capability token rides on `ClientControl::Hello` (the client reads it from
+  `$FRESH_CMD_TOKEN`); both new verbs are rejected without a valid one.
+
+*CLI surface* (a new `fresh cmd` subcommand group; connects to `$FRESH_SESSION`,
+does the Hello handshake with `$FRESH_CMD_TOKEN`, sends one request, prints,
+exits — the non-attaching client path, like today's `fresh --cmd daemon
+open-file`):
+
+- `fresh cmd list [--json]` — the **discovery** verb. Emits the commands this
+  session's token is allowed to run (see below); `--json` is the agent-facing
+  form. Each entry is `{ id, name, category, args }` so the allowed set is
+  self-describing and directly runnable.
+- `fresh cmd describe <id> [--json]` — one command's arg schema + example.
+- `fresh cmd run <id> [--arg k=v … | --json '{…}']` (shorthand `fresh cmd <id>`)
+  — the **invocation** verb. Prints the result; exit 0 / non-zero.
+- Thin aliases over `cmd run` for the common moves: `fresh split
+  [--vertical|--horizontal]`, `fresh workspace new <dir>` (alongside today's
+  `fresh <file>` / `fresh <dir>`).
+- Shared: `--session <id>` (default `$FRESH_SESSION`), `--json`,
+  `--wait/--no-wait` (for commands that open a buffer).
+
+The system prompt then says *"run `fresh cmd list --json` to see everything you
+can do, then `fresh cmd run <id>`"* — discovery is self-describing, so the command
+set is never hard-coded into the prompt, and it always reflects the live grant.
 
 **Phase 3 — bidirectional + remote reach.** Add read-back (`ServerControl`
 responses for active file / selection / workspace list) so an agent can act on
 editor state, and propagate a session handle across remote wrappers (or add an
 `env` option to `createWindowWithTerminal`) so agents in docker/ssh/k8s panes can
 participate.
+
+## Security model — per-workspace capability tokens
+
+Command dispatch lets a child process drive the editor, so it is gated — but
+**not** by Workspace Trust, which is a different axis (is this *repo* trusted).
+Command authority is per *workspace/agent*, granted at creation, and enforced by
+an **unforgeable capability token**:
+
+- **Minting.** When the launcher creates a workspace, the server mints a random
+  high-entropy id (128-bit / UUIDv4 — server-side only, nothing the agent
+  supplies) and records it in a token table bound to `{ window, allowlist }`.
+- **Injection.** The token is stamped into the workspace's spawned process as
+  its own env var, **`FRESH_CMD_TOKEN`**, distinct from `FRESH_SESSION`:
+  - `FRESH_SESSION` = *addressing* — which editor's socket to reach.
+  - `FRESH_CMD_TOKEN` = *authority + targeting* — the server maps it to a window
+    and an allowlist.
+  (This is why Phase 2 also needs an `env` option on `createWindowWithTerminal`,
+  which it lacks today.)
+- **Authorization.** The client presents `$FRESH_CMD_TOKEN` in the Hello. The
+  server (a) resolves it to `{ window, allowlist }`, (b) **derives the target
+  window from the token** — so a token can never reach a sibling workspace and
+  `RunCommand` carries no window field — and (c) checks **each command id against
+  that token's allowlist** before dispatch; unlisted ids are refused.
+- **Discovery = the grant.** `fresh cmd list` returns **only** the commands the
+  presenting token is allowed to run, so it can't double as a capability-probing
+  side channel. (`--all`, human/debug only, may show denied entries marked
+  non-invokable, and is itself not grantable to an agent token.)
+- **Lifecycle.** Tokens are in-memory and per session: minted at create, revoked
+  on teardown, re-minted (rotated) on resume. Same-user, unix-socket-local — not
+  a network secret; the trust boundary is the pane, so any process the user runs
+  in that workspace legitimately shares it.
+- **Allowlist source.** Defined by the launcher at creation from a safe default
+  set (splits, open-in-workspace, new-workspace, navigation), widenable per the
+  dialog. Anything that writes files or mutates config stays out of the default.
 
 ## Open design questions
 
@@ -121,12 +180,9 @@ participate.
   where does the generated file live so it neither pollutes the repo nor collides
   with a user's real `AGENTS.md`? (Candidate: write into the session worktree,
   git-ignored, removed on teardown; or *append* a marked block and strip it.)
-- **Whitelist scope.** Which palette commands are safe to expose to an agent over
-  the socket? Splits and navigation are clearly safe; anything that writes files
-  or changes config is not.
-- **Blocking-open UX.** Until Phase 2's non-blocking form lands, the prompt must
-  be explicit that `fresh <file>` parks the agent — otherwise an agent "opens a
-  file to look at it" and hangs waiting for a human.
+- **Blocking-open UX.** Until a non-blocking open form lands, the prompt must be
+  explicit that `fresh <file>` parks the agent — otherwise an agent "opens a file
+  to look at it" and hangs waiting for a human.
 - **aider.** Given it has no autonomous shell, it likely opts out of the whole
   feature (the dialog can hide the checkbox for it, the same way it hides Auto
   mode for opencode).
