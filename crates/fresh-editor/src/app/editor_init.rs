@@ -667,10 +667,9 @@ impl Editor {
             dock_resizing: false,
         };
 
-        // Seed plugin file I/O with the initial active window's authority, so
-        // it is correct even for sessions launched directly against a remote
-        // backend (before any window switch occurs).
-        editor.publish_active_filesystem_to_plugins();
+        // The plugin per-window filesystem registry is populated on the first
+        // `update_plugin_state_snapshot` (during startup, before any plugin
+        // runs), so nothing to seed here.
         editor
     }
 
@@ -1127,7 +1126,10 @@ impl Editor {
             Arc::clone(&command_registry),
             dir_context.clone(),
             Arc::clone(&theme_cache),
+            // Authority seed (repointed to the active window shortly after) and
+            // the fixed local-host filesystem for `LocalPath` values.
             Arc::clone(&filesystem),
+            Arc::clone(&orchestrator_filesystem),
         )));
         t.phase("PluginManager::new");
 

@@ -1949,6 +1949,10 @@ type LanguagePackConfig = {
 	*/
 	formatter: FormatterPackConfig | null;
 };
+type LocalPath = {
+	kind: "local";
+	value: string;
+};
 type LspServerPackConfig = {
 	/**
 	* Command to start the LSP server
@@ -2064,6 +2068,11 @@ type VirtualBufferResult = {
 	* The split ID (if created in a new split)
 	*/
 	splitId: number | null;
+};
+type WindowPath = {
+	kind: "authority";
+	window: number;
+	value: string;
 };
 /**
 * Main editor API interface
@@ -2521,42 +2530,56 @@ interface EditorAPI {
 	*/
 	utf8ByteLength(text: string): number;
 	/**
-	* Check if file exists
+	* Check if a file exists on the path's filesystem (a window's authority,
+	* or the local host for a `LocalPath`).
 	*/
-	fileExists(path: string): boolean;
+	fileExists(path: string | LocalPath | WindowPath): boolean;
 	/**
-	* Read file contents
+	* Read file contents from the path's filesystem.
 	*/
-	readFile(path: string): string | null;
+	readFile(path: string | LocalPath | WindowPath): string | null;
 	/**
-	* Write file contents
+	* Write file contents to the path's filesystem. Parent directories are
+	* created as needed.
 	*/
-	writeFile(path: string, content: string): boolean;
+	writeFile(path: string | LocalPath | WindowPath, content: string): boolean;
 	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
-	readDir(path: string): DirEntry[];
+	readDir(path: string | LocalPath | WindowPath): DirEntry[];
 	/**
-	* Create a directory (and all parent directories) recursively.
-	* Returns true if the directory was created or already exists.
+	* Create a directory (and all parent directories) recursively on the
+	* path's filesystem. Returns true if the directory was created or already
+	* exists.
 	*/
-	createDir(path: string): boolean;
+	createDir(path: string | LocalPath | WindowPath): boolean;
 	/**
-	* Remove a file or directory by moving it to the OS trash/recycle bin.
-	* For safety, the path must be under the OS temp directory or the Fresh
-	* config directory. Returns true on success.
+	* Permanently remove a file or directory on the path's filesystem
+	* (recursively for directories). For safety, the path must be under the OS
+	* temp directory or the Fresh config directory. Returns true on success.
 	*/
-	removePath(path: string): boolean;
+	removePath(path: string | LocalPath | WindowPath): boolean;
 	/**
-	* Rename/move a file or directory. Returns true on success.
-	* Falls back to copy then trash for cross-filesystem moves.
+	* Rename/move a file or directory. Both paths must target the same
+	* filesystem (a cross-backend move is rejected). Returns true on success.
 	*/
-	renamePath(from: string, to: string): boolean;
+	renamePath(from: string | LocalPath | WindowPath, to: string | LocalPath | WindowPath): boolean;
 	/**
-	* Copy a file or directory recursively to a new location.
-	* Returns true on success.
+	* Copy a file or directory recursively to a new location. Both paths must
+	* target the same filesystem. Returns true on success.
 	*/
-	copyPath(from: string, to: string): boolean;
+	copyPath(from: string | LocalPath | WindowPath, to: string | LocalPath | WindowPath): boolean;
+	/**
+	* Construct a `LocalPath` — a path that always resolves on the local
+	* editor host, regardless of the active window's authority. Use for
+	* editor-owned state under the config/data dirs.
+	*/
+	localPath(path: string): LocalPath;
+	/**
+	* Construct a `WindowPath` — a path that resolves on a specific window's
+	* authority filesystem, regardless of which window is focused.
+	*/
+	windowPath(windowId: number, path: string): WindowPath;
 	/**
 	* Get the OS temporary directory path.
 	*/
@@ -2771,7 +2794,7 @@ interface EditorAPI {
 	/**
 	* Get file stat information
 	*/
-	fileStat(path: string): unknown;
+	fileStat(path: string | LocalPath | WindowPath): unknown;
 	/**
 	* Check if a background process is still running
 	*/

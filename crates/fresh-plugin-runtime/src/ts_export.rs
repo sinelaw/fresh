@@ -184,9 +184,27 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // and this crate must not depend on it. Keep in sync.
         "RemoteIndicatorStatePayload" => Some(REMOTE_INDICATOR_STATE_DECL.to_string()),
 
+        // Typed plugin paths. A bare `string` (an authority path on the active
+        // window) stays valid everywhere for backward compatibility; these two
+        // tag a path for a specific filesystem. Hand-written because the
+        // authoritative `PluginPath` enum is decoded in the backend, not
+        // ts-rs-derived. Keep in sync with `fresh_core::api::PluginPath` and
+        // `editor.localPath` / `editor.windowPath`.
+        "LocalPath" => Some(LOCAL_PATH_DECL.to_string()),
+        "WindowPath" => Some(WINDOW_PATH_DECL.to_string()),
+
         _ => None,
     }
 }
+
+/// A path that always resolves on the local editor host. Built via
+/// `editor.localPath(...)`.
+const LOCAL_PATH_DECL: &str = r#"type LocalPath = { kind: "local"; value: string };"#;
+
+/// A path that resolves on a specific window's authority filesystem. Built via
+/// `editor.windowPath(windowId, ...)`.
+const WINDOW_PATH_DECL: &str =
+    r#"type WindowPath = { kind: "authority"; window: number; value: string };"#;
 
 /// Hand-written declaration for `AuthorityPayload` and its helpers.
 /// See the doc comment on the match arm for why this isn't ts-rs.

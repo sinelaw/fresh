@@ -194,6 +194,24 @@ impl Editor {
     }
 
     pub fn update_plugin_state_snapshot(&mut self) {
+        // Rebuild the per-window filesystem registry so plugin file I/O resolves
+        // against the correct window's authority (or the active one). This runs
+        // on the same cadence as the snapshot, so it captures window
+        // create/close and focus changes without hooking each site.
+        #[cfg(feature = "plugins")]
+        if let Some(registry) = self.plugin_manager.read().unwrap().window_fs_registry() {
+            let active = self.active_window;
+            let entries: Vec<(
+                fresh_core::WindowId,
+                std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+            )> = self
+                .windows
+                .iter()
+                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority.filesystem)))
+                .collect();
+            registry.rebuild(active, entries);
+        }
+
         let Some(snapshot_handle) = self.plugin_manager.read().unwrap().state_snapshot_handle()
         else {
             return;

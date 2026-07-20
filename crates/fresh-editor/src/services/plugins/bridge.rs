@@ -11,41 +11,84 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
-/// Shared, live handle to the active window's filesystem backend.
-///
-/// The editor updates this whenever the active window (and therefore its
-/// authority) changes, so plugin file I/O always follows the currently focused
-/// session — the local host for a local window, the remote host for an
-/// SSH/container window — with no snapshotting and no local fallback.
-pub struct ActiveFilesystem(RwLock<Arc<dyn FileSystem + Send + Sync>>);
+use fresh_core::WindowId;
 
-impl ActiveFilesystem {
-    pub fn new(fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
-        Self(RwLock::new(fs))
+/// Per-window filesystem registry: maps each live window to its authority
+/// backend, plus which window is active. The editor rebuilds it from its
+/// windows whenever it refreshes the plugin state snapshot, so plugin file I/O
+/// can target a specific window (or the active one) regardless of focus — the
+/// filesystem counterpart of addressing a window by `bufferId`.
+pub struct WindowFsRegistry {
+    inner: RwLock<WindowFsRegistryInner>,
+}
+
+struct WindowFsRegistryInner {
+    active: WindowId,
+    map: HashMap<WindowId, Arc<dyn FileSystem + Send + Sync>>,
+}
+
+impl WindowFsRegistry {
+    /// Seed with a single backend under `WindowId(1)` (the boot window). The
+    /// editor replaces this with the real window set on the first snapshot
+    /// refresh, which runs during startup before any plugin executes.
+    pub fn new(seed: Arc<dyn FileSystem + Send + Sync>) -> Self {
+        let mut map = HashMap::new();
+        map.insert(WindowId(1), seed);
+        Self {
+            inner: RwLock::new(WindowFsRegistryInner {
+                active: WindowId(1),
+                map,
+            }),
+        }
     }
 
-    /// The filesystem backend currently in effect.
-    pub fn get(&self) -> Arc<dyn FileSystem + Send + Sync> {
-        self.0.read().unwrap().clone()
+    /// Replace the whole registry from the editor's current windows.
+    pub fn rebuild(
+        &self,
+        active: WindowId,
+        entries: Vec<(WindowId, Arc<dyn FileSystem + Send + Sync>)>,
+    ) {
+        let mut inner = self.inner.write().unwrap();
+        inner.active = active;
+        inner.map = entries.into_iter().collect();
     }
 
-    /// Point plugin file I/O at a new backend (called on active-window change).
-    pub fn set(&self, fs: Arc<dyn FileSystem + Send + Sync>) {
-        *self.0.write().unwrap() = fs;
+    /// The backend for `window`, or the active window's when `None`. Returns
+    /// `None` if the requested window no longer exists.
+    fn get(&self, window: Option<WindowId>) -> Option<Arc<dyn FileSystem + Send + Sync>> {
+        let inner = self.inner.read().unwrap();
+        let id = window.unwrap_or(inner.active);
+        inner.map.get(&id).cloned()
     }
 }
 
-/// [`PluginFilesystem`] that routes every operation to the active window's
-/// authority filesystem via [`ActiveFilesystem`]. This is the *only* filesystem
-/// plugins touch, so their file access follows remote/SSH backends exactly like
-/// the editor core does.
-pub struct AuthorityPluginFilesystem {
-    active: Arc<ActiveFilesystem>,
+/// Resolves the concrete backend a [`RoutedFilesystem`] should use for the
+/// current call. Returns `None` when the target is unavailable (e.g. a window
+/// that has closed), in which case every operation fails rather than silently
+/// retargeting.
+type FsResolver = Arc<dyn Fn() -> Option<Arc<dyn FileSystem + Send + Sync>> + Send + Sync>;
+
+/// [`PluginFilesystem`] that routes every operation to a backend chosen per
+/// call by its resolver — either a fixed local-host filesystem (`LocalPath`)
+/// or a window's authority looked up live in a [`WindowFsRegistry`].
+pub struct RoutedFilesystem {
+    resolve: FsResolver,
 }
 
-impl AuthorityPluginFilesystem {
-    pub fn new(active: Arc<ActiveFilesystem>) -> Self {
-        Self { active }
+impl RoutedFilesystem {
+    /// Always route to `fs` (used for the local editor host).
+    pub fn fixed(fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
+        Self {
+            resolve: Arc::new(move || Some(Arc::clone(&fs))),
+        }
+    }
+
+    /// Route to `window`'s authority (or the active window's) looked up in
+    /// `registry` on each call.
+    pub fn window(registry: Arc<WindowFsRegistry>, window: Option<WindowId>) -> Self {
+        Self {
+            resolve: Arc::new(move || registry.get(window)),
+        }
     }
 
     /// Ensure `path`'s parent directory exists, creating it if necessary.
@@ -63,22 +106,27 @@ impl AuthorityPluginFilesystem {
     }
 }
 
-impl PluginFilesystem for AuthorityPluginFilesystem {
+impl PluginFilesystem for RoutedFilesystem {
     fn read_file(&self, path: &Path) -> Option<Vec<u8>> {
-        self.active.get().read_file(path).ok()
+        (self.resolve)()?.read_file(path).ok()
     }
 
     fn write_file(&self, path: &Path, contents: &[u8]) -> bool {
-        let fs = self.active.get();
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
     }
 
     fn exists(&self, path: &Path) -> bool {
-        self.active.get().exists(path)
+        (self.resolve)().map(|fs| fs.exists(path)).unwrap_or(false)
     }
 
     fn read_dir(&self, path: &Path) -> Vec<PluginDirEntry> {
-        match self.active.get().read_dir(path) {
+        let Some(fs) = (self.resolve)() else {
+            return Vec::new();
+        };
+        match fs.read_dir(path) {
             Ok(entries) => entries
                 .into_iter()
                 .map(|e| PluginDirEntry {
@@ -92,12 +140,16 @@ impl PluginFilesystem for AuthorityPluginFilesystem {
     }
 
     fn create_dir_all(&self, path: &Path) -> bool {
-        let fs = self.active.get();
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         fs.is_dir(path).unwrap_or(false) || fs.create_dir_all(path).is_ok()
     }
 
     fn remove_path(&self, path: &Path) -> bool {
-        let fs = self.active.get();
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         if fs.is_dir(path).unwrap_or(false) {
             fs.remove_dir_all(path).is_ok()
         } else {
@@ -106,7 +158,9 @@ impl PluginFilesystem for AuthorityPluginFilesystem {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> bool {
-        let fs = self.active.get();
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         if fs.rename(from, to).is_ok() {
             return true;
         }
@@ -128,7 +182,9 @@ impl PluginFilesystem for AuthorityPluginFilesystem {
     }
 
     fn copy(&self, from: &Path, to: &Path) -> bool {
-        let fs = self.active.get();
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         if fs.is_dir(from).unwrap_or(false) {
             fs.copy_dir_all(from, to).is_ok()
         } else {
@@ -137,7 +193,7 @@ impl PluginFilesystem for AuthorityPluginFilesystem {
     }
 
     fn stat(&self, path: &Path) -> Option<PluginFileStat> {
-        let fs = self.active.get();
+        let fs = (self.resolve)()?;
         let md = fs.metadata(path).ok()?;
         Some(PluginFileStat {
             is_file: fs.is_file(path).unwrap_or(false),
@@ -148,7 +204,7 @@ impl PluginFilesystem for AuthorityPluginFilesystem {
     }
 
     fn canonicalize(&self, path: &Path) -> Option<PathBuf> {
-        self.active.get().canonicalize(path).ok()
+        (self.resolve)()?.canonicalize(path).ok()
     }
 }
 
@@ -156,8 +212,13 @@ pub struct EditorServiceBridge {
     pub command_registry: Arc<RwLock<CommandRegistry>>,
     pub dir_context: DirectoryContext,
     pub theme_cache: Arc<RwLock<std::collections::HashMap<String, serde_json::Value>>>,
-    /// The plugin filesystem, routing to the active window's authority.
-    pub plugin_fs: Arc<dyn PluginFilesystem>,
+    /// Local-host plugin filesystem — always the editor host, regardless of
+    /// authority. Backs `LocalPath` values.
+    pub local_plugin_fs: Arc<dyn PluginFilesystem>,
+    /// Per-window authority backends; the editor rebuilds it on each snapshot
+    /// refresh. Backs bare-string paths (active window) and `WindowPath` values
+    /// (a specific window).
+    pub window_registry: Arc<WindowFsRegistry>,
 }
 
 impl PluginServiceBridge for EditorServiceBridge {
@@ -165,8 +226,15 @@ impl PluginServiceBridge for EditorServiceBridge {
         self
     }
 
-    fn filesystem(&self) -> Arc<dyn PluginFilesystem> {
-        Arc::clone(&self.plugin_fs)
+    fn authority_filesystem(&self, window: Option<u64>) -> Arc<dyn PluginFilesystem> {
+        Arc::new(RoutedFilesystem::window(
+            Arc::clone(&self.window_registry),
+            window.map(WindowId),
+        ))
+    }
+
+    fn local_filesystem(&self) -> Arc<dyn PluginFilesystem> {
+        Arc::clone(&self.local_plugin_fs)
     }
 
     fn translate(&self, plugin_name: &str, key: &str, args: &HashMap<String, String>) -> String {

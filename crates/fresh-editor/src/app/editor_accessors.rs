@@ -715,21 +715,6 @@ impl Editor {
         }
     }
 
-    /// Repoint the plugin filesystem at the active window's authority backend,
-    /// so plugin file I/O (`readFile`/`readDir`/`writeFile`/…) follows the
-    /// focused session — the local host for a local window, the remote host for
-    /// an SSH/container window. Called at startup and on every active-window
-    /// change. No-op when compiled without plugins.
-    pub(crate) fn publish_active_filesystem_to_plugins(&self) {
-        #[cfg(feature = "plugins")]
-        {
-            let fs = std::sync::Arc::clone(&self.active_window().authority.filesystem);
-            if let Some(cell) = self.plugin_manager.read().unwrap().active_filesystem() {
-                cell.set(fs);
-            }
-        }
-    }
-
     /// Read-only access to the active authority.
     pub fn authority(&self) -> &crate::services::authority::Authority {
         // The editor's active backend *is* the active window's authority —

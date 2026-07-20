@@ -994,6 +994,33 @@ fn check_range<'js>(
 // Internal helpers used by the macro-processed `impl JsEditorApi` below.
 // Kept in a plain impl block so they don't get exported as JS methods.
 impl JsEditorApi {
+    /// The filesystem a plugin path resolves against: the local editor host for
+    /// a `LocalPath`, or a window's authority (a specific window, or the active
+    /// one for a bare string) otherwise.
+    fn fs_for(
+        &self,
+        path: &fresh_core::api::PluginPath,
+    ) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+        match path {
+            fresh_core::api::PluginPath::Local(_) => self.services.local_filesystem(),
+            fresh_core::api::PluginPath::Authority { window, .. } => {
+                self.services.authority_filesystem(*window)
+            }
+        }
+    }
+
+    /// Whether two plugin paths resolve to the same filesystem backend (so a
+    /// two-path op like rename/copy is well-defined). Cross-backend moves are
+    /// rejected rather than silently operating on one side.
+    fn same_backend(a: &fresh_core::api::PluginPath, b: &fresh_core::api::PluginPath) -> bool {
+        use fresh_core::api::PluginPath::{Authority, Local};
+        match (a, b) {
+            (Local(_), Local(_)) => true,
+            (Authority { window: wa, .. }, Authority { window: wb, .. }) => wa == wb,
+            _ => false,
+        }
+    }
+
     /// Send an AddPluginConfigField command to the host.
     fn send_field_registration(&self, field_name: &str, field_schema: serde_json::Value) {
         let _ = self
@@ -2314,25 +2341,37 @@ impl JsEditorApi {
 
     // === File System ===
 
-    /// Check if file exists (via the active window's authority filesystem).
-    pub fn file_exists(&self, path: String) -> bool {
-        self.services.filesystem().exists(Path::new(&path))
+    /// Check if a file exists on the path's filesystem (a window's authority,
+    /// or the local host for a `LocalPath`).
+    pub fn file_exists(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
+    ) -> bool {
+        self.fs_for(&path).exists(Path::new(path.as_str()))
     }
 
-    /// Read file contents (via the active window's authority filesystem).
-    pub fn read_file(&self, path: String) -> Option<String> {
-        self.services
-            .filesystem()
-            .read_file(Path::new(&path))
+    /// Read file contents from the path's filesystem.
+    pub fn read_file(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
+    ) -> Option<String> {
+        self.fs_for(&path)
+            .read_file(Path::new(path.as_str()))
             .and_then(|bytes| String::from_utf8(bytes).ok())
     }
 
-    /// Write file contents (via the active window's authority filesystem).
-    /// Parent directories are created as needed.
-    pub fn write_file(&self, path: String, content: String) -> bool {
-        self.services
-            .filesystem()
-            .write_file(Path::new(&path), content.as_bytes())
+    /// Write file contents to the path's filesystem. Parent directories are
+    /// created as needed.
+    pub fn write_file(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
+        content: String,
+    ) -> bool {
+        self.fs_for(&path)
+            .write_file(Path::new(path.as_str()), content.as_bytes())
     }
 
     /// Read directory contents (returns array of {name, is_file, is_dir})
@@ -2340,27 +2379,35 @@ impl JsEditorApi {
     pub fn read_dir<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
-        path: String,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
     ) -> rquickjs::Result<Value<'js>> {
-        let entries = self.services.filesystem().read_dir(Path::new(&path));
+        let entries = self.fs_for(&path).read_dir(Path::new(path.as_str()));
         rquickjs_serde::to_value(ctx, &entries)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
-    /// Create a directory (and all parent directories) recursively, via the
-    /// active window's authority filesystem. Returns true if the directory was
-    /// created or already exists.
-    pub fn create_dir(&self, path: String) -> bool {
-        self.services.filesystem().create_dir_all(Path::new(&path))
+    /// Create a directory (and all parent directories) recursively on the
+    /// path's filesystem. Returns true if the directory was created or already
+    /// exists.
+    pub fn create_dir(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
+    ) -> bool {
+        self.fs_for(&path).create_dir_all(Path::new(path.as_str()))
     }
 
-    /// Permanently remove a file or directory via the active window's authority
-    /// filesystem (recursively for directories). For safety, the path must be
-    /// under the OS temp directory or the Fresh config directory. Returns true
-    /// on success.
-    pub fn remove_path(&self, path: String) -> bool {
-        let fs = self.services.filesystem();
-        let target = match fs.canonicalize(Path::new(&path)) {
+    /// Permanently remove a file or directory on the path's filesystem
+    /// (recursively for directories). For safety, the path must be under the OS
+    /// temp directory or the Fresh config directory. Returns true on success.
+    pub fn remove_path(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
+    ) -> bool {
+        let fs = self.fs_for(&path);
+        let target = match fs.canonicalize(Path::new(path.as_str())) {
             Some(p) => p,
             None => return false, // path doesn't exist or can't be resolved
         };
@@ -2398,20 +2445,84 @@ impl JsEditorApi {
         fs.remove_path(&target)
     }
 
-    /// Rename/move a file or directory via the active window's authority
-    /// filesystem. Returns true on success.
-    pub fn rename_path(&self, from: String, to: String) -> bool {
-        self.services
-            .filesystem()
-            .rename(Path::new(&from), Path::new(&to))
+    /// Rename/move a file or directory. Both paths must target the same
+    /// filesystem (a cross-backend move is rejected). Returns true on success.
+    pub fn rename_path(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        from: fresh_core::api::PluginPath,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")] to: fresh_core::api::PluginPath,
+    ) -> bool {
+        if !Self::same_backend(&from, &to) {
+            return false;
+        }
+        self.fs_for(&from)
+            .rename(Path::new(from.as_str()), Path::new(to.as_str()))
     }
 
-    /// Copy a file or directory recursively to a new location via the active
-    /// window's authority filesystem. Returns true on success.
-    pub fn copy_path(&self, from: String, to: String) -> bool {
-        self.services
-            .filesystem()
-            .copy(Path::new(&from), Path::new(&to))
+    /// Copy a file or directory recursively to a new location. Both paths must
+    /// target the same filesystem. Returns true on success.
+    pub fn copy_path(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        from: fresh_core::api::PluginPath,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")] to: fresh_core::api::PluginPath,
+    ) -> bool {
+        if !Self::same_backend(&from, &to) {
+            return false;
+        }
+        self.fs_for(&from)
+            .copy(Path::new(from.as_str()), Path::new(to.as_str()))
+    }
+
+    /// Construct a `LocalPath` — a path that always resolves on the local
+    /// editor host, regardless of the active window's authority. Use for
+    /// editor-owned state under the config/data dirs.
+    #[plugin_api(ts_return = "LocalPath")]
+    pub fn local_path<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        path: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        #[derive(serde::Serialize)]
+        struct LocalPathJs<'a> {
+            kind: &'static str,
+            value: &'a str,
+        }
+        rquickjs_serde::to_value(
+            ctx,
+            &LocalPathJs {
+                kind: "local",
+                value: &path,
+            },
+        )
+        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Construct a `WindowPath` — a path that resolves on a specific window's
+    /// authority filesystem, regardless of which window is focused.
+    #[plugin_api(ts_return = "WindowPath")]
+    pub fn window_path<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        window_id: u64,
+        path: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        #[derive(serde::Serialize)]
+        struct WindowPathJs<'a> {
+            kind: &'static str,
+            window: u64,
+            value: &'a str,
+        }
+        rquickjs_serde::to_value(
+            ctx,
+            &WindowPathJs {
+                kind: "authority",
+                window: window_id,
+                value: &path,
+            },
+        )
+        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
 
     /// Get the OS temporary directory path.
@@ -3209,9 +3320,10 @@ impl JsEditorApi {
     pub fn file_stat<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
-        path: String,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        path: fresh_core::api::PluginPath,
     ) -> rquickjs::Result<Value<'js>> {
-        let stat = self.services.filesystem().stat(Path::new(&path)).map(|s| {
+        let stat = self.fs_for(&path).stat(Path::new(path.as_str())).map(|s| {
             serde_json::json!({
                 "isFile": s.is_file,
                 "isDir": s.is_dir,
@@ -8400,8 +8512,14 @@ mod tests {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
-        fn filesystem(&self) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+        fn authority_filesystem(
+            &self,
+            _window: Option<u64>,
+        ) -> Arc<dyn fresh_core::services::PluginFilesystem> {
             Arc::clone(&self.fs)
+        }
+        fn local_filesystem(&self) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+            Arc::new(StdTestFilesystem)
         }
         fn translate(
             &self,
@@ -10232,8 +10350,14 @@ mod tests {
         fn as_any(&self) -> &dyn std::any::Any {
             self
         }
-        fn filesystem(&self) -> Arc<dyn fresh_core::services::PluginFilesystem> {
-            self.inner.filesystem()
+        fn authority_filesystem(
+            &self,
+            window: Option<u64>,
+        ) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+            self.inner.authority_filesystem(window)
+        }
+        fn local_filesystem(&self) -> Arc<dyn fresh_core::services::PluginFilesystem> {
+            self.inner.local_filesystem()
         }
         fn translate(
             &self,
@@ -10948,22 +11072,34 @@ mod tests {
 
         let (tx, _rx) = mpsc::channel();
         let state_snapshot = Arc::new(RwLock::new(EditorStateSnapshot::new()));
+        // Authority = sentinel (returns data for any path); local = real disk.
         let services = Arc::new(TestServiceBridge::with_fs(Arc::new(SentinelFs)));
         let mut backend = QuickJsBackend::with_state(state_snapshot, tx, services).unwrap();
 
-        backend
-            .execute_js(
-                r#"
+        // A real file on the local host, for the LocalPath route to read back.
+        let local_file =
+            std::env::temp_dir().join(format!("fresh_ptp_route_{}.txt", std::process::id()));
+        std::fs::write(&local_file, b"LOCALDATA").unwrap();
+        let local_file_js = local_file.to_string_lossy().replace('\\', "\\\\");
+
+        let js = format!(
+            r#"
             const editor = getEditor();
-            // A path that does not exist on the real disk — the sentinel
-            // filesystem still returns content, proving the read is routed.
-            globalThis._read = editor.readFile("/definitely/not/on/disk/xyz");
-            globalThis._exists = editor.fileExists("/definitely/not/on/disk/xyz");
+            // Bare string → active-window authority (the sentinel), even for a
+            // path that doesn't exist on disk — proving reads route through the
+            // bridge, never std::fs.
+            globalThis._authRead = editor.readFile("/definitely/not/on/disk/xyz");
+            globalThis._authExists = editor.fileExists("/definitely/not/on/disk/xyz");
             globalThis._entries = editor.readDir("/whatever").map(e => e.name).join(",");
+            // windowPath(id, ...) → that window's authority (still the sentinel).
+            globalThis._winRead = editor.readFile(editor.windowPath(7, "/definitely/not/on/disk/xyz"));
+            // localPath(...) → the local host, reading the real temp file.
+            globalThis._localRead = editor.readFile(editor.localPath("{local}"));
         "#,
-                "test.js",
-            )
-            .unwrap();
+            local = local_file_js,
+        );
+
+        backend.execute_js(&js, "test.js").unwrap();
 
         backend
             .plugin_contexts
@@ -10973,10 +11109,16 @@ mod tests {
             .clone()
             .with(|ctx| {
                 let global = ctx.globals();
-                assert_eq!(global.get::<_, String>("_read").unwrap(), "SENTINEL");
-                assert!(global.get::<_, bool>("_exists").unwrap());
+                // String and WindowPath both hit the authority (sentinel).
+                assert_eq!(global.get::<_, String>("_authRead").unwrap(), "SENTINEL");
+                assert!(global.get::<_, bool>("_authExists").unwrap());
                 assert_eq!(global.get::<_, String>("_entries").unwrap(), "only.txt");
+                assert_eq!(global.get::<_, String>("_winRead").unwrap(), "SENTINEL");
+                // LocalPath hits the local host and reads the real file.
+                assert_eq!(global.get::<_, String>("_localRead").unwrap(), "LOCALDATA");
             });
+
+        std::fs::remove_file(&local_file).ok();
     }
 
     #[test]

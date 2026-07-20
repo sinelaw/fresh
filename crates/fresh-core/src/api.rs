@@ -5206,6 +5206,51 @@ pub struct SessionWithTerminalResult {
 #[ts(export, type = "Array<Record<string, unknown>>")]
 pub struct TextPropertiesAtCursor(pub Vec<HashMap<String, JsonValue>>);
 
+/// A filesystem path passed from a plugin, tagged with which filesystem it
+/// resolves against.
+///
+/// Windows each own their own authority (local, or a remote/SSH/container
+/// backend), so a path must say which one it means — like a VS Code `Uri`
+/// naming its authority. The tagging mirrors how the rest of the plugin API is
+/// window-scoped by identity (a `bufferId` locates its window); a path's tag is
+/// the filesystem counterpart.
+///
+/// - A bare JS string is [`PluginPath::Authority`] with no window → the
+///   **active** window's backend. This is the backward-compatible default:
+///   existing plugins that pass strings keep working unchanged.
+/// - `{ kind: "local", value }`, built via `editor.localPath(...)`, is
+///   [`PluginPath::Local`] — always the local editor host, whatever the active
+///   authority is.
+/// - `{ kind: "authority", window, value }`, built via
+///   `editor.windowPath(windowId, ...)`, is [`PluginPath::Authority`] bound to
+///   a **specific** window's backend, regardless of focus.
+///
+/// The TypeScript surface renders this as `string | LocalPath | WindowPath`
+/// (see the hand-written declarations in `ts_export.rs`).
+#[derive(Debug, Clone)]
+pub enum PluginPath {
+    /// A path on a window's authority filesystem. `window` selects which
+    /// window; `None` means the active window.
+    Authority {
+        /// The owning window's id, or `None` for the active window.
+        window: Option<u64>,
+        /// The path string.
+        path: String,
+    },
+    /// A path on the local editor-host filesystem.
+    Local(String),
+}
+
+impl PluginPath {
+    /// The underlying path string, regardless of variant.
+    pub fn as_str(&self) -> &str {
+        match self {
+            PluginPath::Authority { path, .. } => path,
+            PluginPath::Local(path) => path,
+        }
+    }
+}
+
 // Implement FromJs for option types using rquickjs_serde
 #[cfg(feature = "plugins")]
 mod fromjs_impls {
@@ -5256,6 +5301,42 @@ mod fromjs_impls {
         fn into_js(self, ctx: &Ctx<'js>) -> rquickjs::Result<Value<'js>> {
             rquickjs_serde::to_value(ctx.clone(), &self.0)
                 .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+        }
+    }
+
+    impl<'js> FromJs<'js> for PluginPath {
+        fn from_js(_ctx: &Ctx<'js>, value: Value<'js>) -> rquickjs::Result<Self> {
+            // A bare string is an active-window authority path (backward compatible).
+            if let Some(s) = value.as_string() {
+                let s = s.to_string()?;
+                return Ok(PluginPath::Authority {
+                    window: None,
+                    path: s,
+                });
+            }
+            // A `{ kind, value, window? }` object selects the filesystem explicitly.
+            if let Some(obj) = value.as_object() {
+                let kind: String = obj.get::<_, String>("kind").unwrap_or_default();
+                let path: String = obj.get::<_, String>("value")?;
+                return match kind.as_str() {
+                    "local" => Ok(PluginPath::Local(path)),
+                    "authority" | "" => Ok(PluginPath::Authority {
+                        // Absent/undefined `window` ⇒ active window.
+                        window: obj.get::<_, u64>("window").ok(),
+                        path,
+                    }),
+                    other => Err(rquickjs::Error::new_from_js_message(
+                        "object",
+                        "PluginPath",
+                        format!("unknown path kind: {other}"),
+                    )),
+                };
+            }
+            Err(rquickjs::Error::new_from_js_message(
+                "value",
+                "PluginPath",
+                "expected a string path or a { kind, value } path object".to_string(),
+            ))
         }
     }
 

@@ -91,11 +91,20 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Support downcasting for tests
     fn as_any(&self) -> &dyn std::any::Any;
 
-    /// The filesystem plugins must use for all file I/O. Implementations MUST
-    /// route through the active window's authority so plugin file access follows
-    /// remote/SSH backends exactly like the editor core does — never a bare
-    /// `std::fs` fallback.
-    fn filesystem(&self) -> Arc<dyn PluginFilesystem>;
+    /// The filesystem plugins use for authority-scoped file I/O — a window's
+    /// backend (local for a local window, remote for an SSH/container window).
+    /// `window` selects which window; `None` means the active window (where a
+    /// bare string path resolves). A `None` return of an operation on a window
+    /// that no longer exists is treated as a failed op, never a silent fallback.
+    fn authority_filesystem(&self, window: Option<u64>) -> Arc<dyn PluginFilesystem>;
+
+    /// The filesystem plugins use for explicitly local file I/O — always the
+    /// editor host, regardless of the active authority. This is where a
+    /// `LocalPath` (built via `editor.localPath(...)`) resolves; the package
+    /// manager and other plugins that persist editor-owned state under the
+    /// config/data dirs use it so their files stay on the host during remote
+    /// sessions.
+    fn local_filesystem(&self) -> Arc<dyn PluginFilesystem>;
 
     /// Translate a string for a plugin
     fn translate(&self, plugin_name: &str, key: &str, args: &HashMap<String, String>) -> String;
@@ -198,7 +207,10 @@ impl PluginServiceBridge for NoopServiceBridge {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
-    fn filesystem(&self) -> Arc<dyn PluginFilesystem> {
+    fn authority_filesystem(&self, _window: Option<u64>) -> Arc<dyn PluginFilesystem> {
+        Arc::new(NoopPluginFilesystem)
+    }
+    fn local_filesystem(&self) -> Arc<dyn PluginFilesystem> {
         Arc::new(NoopPluginFilesystem)
     }
     fn translate(&self, _plugin_name: &str, key: &str, _args: &HashMap<String, String>) -> String {

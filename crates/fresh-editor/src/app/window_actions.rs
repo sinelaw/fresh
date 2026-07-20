@@ -371,7 +371,6 @@ impl crate::app::Editor {
         // directly.
         let previous_id = self.active_window;
         self.active_window = id;
-        self.publish_active_filesystem_to_plugins();
 
         // Run the workspace-trust decision for the project this session opens,
         // exactly as the CLI / session-server startup paths do — the
@@ -467,7 +466,6 @@ impl crate::app::Editor {
                 // out of PTYs, ...).
                 self.windows.remove(&id);
                 self.active_window = previous_id;
-                self.publish_active_filesystem_to_plugins();
                 return Err(e);
             }
         };
@@ -664,8 +662,6 @@ impl crate::app::Editor {
         // derives from the active window's root, so moving the pointer
         // is all it takes (no separate working_dir to sync).
         self.active_window = id;
-        // Repoint plugin file I/O at the newly focused window's authority.
-        self.publish_active_filesystem_to_plugins();
 
         // For a never-activated incoming window, install the freshly
         // built layout into the window's `splits` field and attach

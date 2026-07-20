@@ -24,10 +24,10 @@ use fresh_plugin_runtime::PluginThreadHandle;
 pub struct PluginManager {
     #[cfg(feature = "plugins")]
     inner: Option<PluginThreadHandle>,
-    /// Live handle to the filesystem plugins use, kept so the editor can
-    /// repoint it at the active window's authority on focus changes.
+    /// Per-window filesystem registry, kept so the editor can rebuild it from
+    /// its windows whenever it refreshes the plugin state snapshot.
     #[cfg(feature = "plugins")]
-    active_fs: Option<Arc<super::bridge::ActiveFilesystem>>,
+    window_registry: Option<Arc<super::bridge::WindowFsRegistry>>,
     #[cfg(not(feature = "plugins"))]
     _phantom: std::marker::PhantomData<()>,
     /// Test-only side channel: commands pushed via
@@ -49,29 +49,34 @@ impl PluginManager {
         command_registry: Arc<RwLock<CommandRegistry>>,
         dir_context: DirectoryContext,
         theme_cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+        authority_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
         local_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
     ) -> Self {
         #[cfg(feature = "plugins")]
         {
             if enable {
-                // Seed the plugin filesystem with the boot backend; the editor
-                // repoints it at the active window's authority once windows
-                // exist and on every focus change.
-                let active_fs = Arc::new(super::bridge::ActiveFilesystem::new(local_filesystem));
-                let plugin_fs: Arc<dyn fresh_core::services::PluginFilesystem> = Arc::new(
-                    super::bridge::AuthorityPluginFilesystem::new(Arc::clone(&active_fs)),
-                );
+                // Per-window authority registry: seeded with the boot backend
+                // and rebuilt from the editor's windows on each snapshot
+                // refresh. Backs bare-string paths (active window) and
+                // `WindowPath` values (a specific window).
+                let window_registry =
+                    Arc::new(super::bridge::WindowFsRegistry::new(authority_filesystem));
+                // Local-host filesystem: fixed, never retargeted, so `LocalPath`
+                // values always resolve on the editor host.
+                let local_plugin_fs: Arc<dyn fresh_core::services::PluginFilesystem> =
+                    Arc::new(super::bridge::RoutedFilesystem::fixed(local_filesystem));
                 let services = Arc::new(EditorServiceBridge {
                     command_registry: command_registry.clone(),
                     dir_context,
                     theme_cache,
-                    plugin_fs,
+                    local_plugin_fs,
+                    window_registry: Arc::clone(&window_registry),
                 });
                 match PluginThreadHandle::spawn(services) {
                     Ok(handle) => {
                         return Self {
                             inner: Some(handle),
-                            active_fs: Some(active_fs),
+                            window_registry: Some(window_registry),
                             pending_injected_commands: Vec::new(),
                         }
                     }
@@ -86,7 +91,7 @@ impl PluginManager {
             }
             Self {
                 inner: None,
-                active_fs: None,
+                window_registry: None,
                 pending_injected_commands: Vec::new(),
             }
         }
@@ -96,6 +101,7 @@ impl PluginManager {
             let _ = command_registry; // Suppress unused warning
             let _ = dir_context; // Suppress unused warning
             let _ = theme_cache; // Suppress unused warning
+            let _ = authority_filesystem; // Suppress unused warning
             let _ = local_filesystem; // Suppress unused warning
             if enable {
                 tracing::warn!("Plugins requested but compiled without plugin support");
@@ -107,14 +113,14 @@ impl PluginManager {
         }
     }
 
-    /// Live handle to the filesystem plugins use, if plugins are active.
+    /// The per-window filesystem registry, if plugins are active.
     ///
-    /// The editor calls [`ActiveFilesystem::set`](super::bridge::ActiveFilesystem::set)
-    /// on it whenever the active window changes so plugin file I/O follows the
-    /// focused session's authority (local or remote).
+    /// The editor calls [`WindowFsRegistry::rebuild`](super::bridge::WindowFsRegistry::rebuild)
+    /// on it whenever it refreshes the plugin state snapshot, so plugin file I/O
+    /// resolves against the correct window's authority (or the active one).
     #[cfg(feature = "plugins")]
-    pub fn active_filesystem(&self) -> Option<Arc<super::bridge::ActiveFilesystem>> {
-        self.active_fs.clone()
+    pub fn window_fs_registry(&self) -> Option<Arc<super::bridge::WindowFsRegistry>> {
+        self.window_registry.clone()
     }
 
     /// Inject a [`PluginCommand`](super::api::PluginCommand) into the
