@@ -25,6 +25,13 @@ fn local_submit_closes_form_and_shows_dock_row() {
     std::fs::create_dir_all(&project).unwrap();
     let project = project.canonicalize().unwrap();
 
+    // A distinct, non-git target dir for the new workspace, so its row carries
+    // a name (`task_ws`) that can't be confused with the launch session or with
+    // generic dock chrome.
+    let task_dir = base.path().join("task_ws");
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let task_dir = task_dir.canonicalize().unwrap();
+
     let plugins_dir = project.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
     copy_plugin_lib(&plugins_dir);
@@ -61,15 +68,25 @@ fn local_submit_closes_form_and_shows_dock_row() {
     })
     .unwrap();
 
-    // Submit with the default project path (the workspace itself). Ctrl+Enter
-    // submits from the initial text field.
+    // Point the Project Path at the distinct non-git dir, then submit.
+    // Ctrl+Enter submits from the text field.
+    h.type_text(&task_dir.display().to_string()).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("task_ws"))
+        .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
 
-    // The form is gone and the dock (its "New Task…" toolbar) is showing —
-    // the workspace now lives in the list, not behind a modal.
+    // The form is gone and the dock is showing — the workspace now lives in the
+    // list, not behind a modal. Crucially, assert the *row itself* is present:
+    // the new workspace appears in the dock by name (`task_ws`), so a
+    // regression where submit opens the dock but drops no pending/real row
+    // would fail here — `New Task` alone is generic toolbar chrome that renders
+    // whenever the dock opens. The non-blocking create resolves fast for a
+    // plain (non-git, no-worktree) dir, so the row may already have swapped
+    // from its transient `Creating…` state to the live session by now; either
+    // way the workspace's own row must be listed.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("New Task") && !s.contains("ORCHESTRATOR :: New Workspace")
+        s.contains("task_ws") && !s.contains("ORCHESTRATOR :: New Workspace")
     })
     .unwrap();
 
