@@ -77,28 +77,67 @@
     border-top:1px solid var(--hairline-strong)}
   body.macfam .statusbar .txt{color:var(--fg)}
 
-  /* ---- floating chrome: vibrancy cards (light or dark), soft macOS shadow,
-     accent selection. Menus/popovers/palette/modals all share the material. ---- */
-  body.macfam .dropdown,body.macfam .popup,body.macfam .ctxmenu,
+  /* ---- floating chrome ----
+     Menus / popovers / context menus use a near-opaque "menu" material (macOS
+     menus barely show content behind them); the large surfaces (palette,
+     Settings, dialogs) use a more translucent vibrancy. Both get the macOS
+     shadow + a hairline edge. */
+  body.macfam .dropdown,body.macfam .popup,body.macfam .ctxmenu{
+    background:color-mix(in srgb,var(--bg2) 97%,transparent);color:var(--fg);
+    -webkit-backdrop-filter:blur(28px) saturate(1.6);backdrop-filter:blur(28px) saturate(1.6);
+    border:1px solid var(--hairline-strong)}
   body.macfam .palette,body.macfam .settings-modal,body.macfam .kbedit,
   body.macfam .trustdialog,body.macfam .auxmodal,
-  body.macfam .widget-surface.w-floatingModal{
+  body.macfam .widget-surface.w-floatingModal,body.macfam .palette.centered{
     background:var(--mac-panel);color:var(--fg);
     -webkit-backdrop-filter:blur(32px) saturate(1.7);backdrop-filter:blur(32px) saturate(1.7);
     border:1px solid var(--hairline-strong)}
-  body.macfam .palette.centered{background:var(--mac-panel)}
-  /* One selection language: flat accent + white text (replaces the skin's
-     translucent-teal pill wholesale). */
-  body.macfam .mitem.hi,body.macfam .palette .prow.sel,
-  body.macfam .popup .popup-row.sel,body.macfam .ctxmenu .ctxitem.sel,
-  body.macfam .settings-modal .set-cat.sel,body.macfam .settings-modal .set-item.sel,
-  body.macfam .settings-modal .set-dual-row.sel,body.macfam .kbedit .kb-row.sel,
-  body.macfam .w-list-row.sel,body.macfam .auxmodal .am-line.sel,
-  body.macfam .settings-modal .set-sresult.sel,body.macfam .menu.open{
+
+  /* Selection language, macOS-accurate:
+     • SOURCE LISTS / menus / list rows → a flat accent fill, white text.
+     • MENU + CONTEXT-MENU items → an INSET rounded highlight (Sonoma), drawn as
+       a ::before pill so it floats clear of the panel edge.
+     • FORM rows (a focused Settings item) → a SUBTLE accent tint with normal
+       text, never a full saturated bar. */
+  body.macfam .palette .prow.sel,
+  body.macfam .settings-modal .set-cat.sel,body.macfam .settings-modal .set-dual-row.sel,
+  body.macfam .kbedit .kb-row.sel,body.macfam .w-list-row.sel,
+  body.macfam .auxmodal .am-line.sel,body.macfam .settings-modal .set-sresult.sel,
+  body.macfam .fileexplorer .fx-row.sel,body.macfam .menu.open,
+  body.macfam .settings-modal .set-dd-row.sel{
     background:var(--ui-accent);color:#fff;box-shadow:none}
-  body.macfam .mitem.hi .accel,body.macfam .mitem.hi .arrow,
   body.macfam .palette .prow.sel .pdesc,body.macfam .palette .prow.sel .pkey{
     color:rgba(255,255,255,.82);border-color:rgba(255,255,255,.4)}
+  /* Inset rounded menu / context highlight. The rows need a stacking context so
+     the negatively-z'd ::before pill stays above the panel but below the text
+     (.mitem is already absolute+z-indexed; give the others one). */
+  body.macfam .ctxmenu .ctxitem,body.macfam .popup .popup-row{position:relative;z-index:0}
+  body.macfam .mitem.hi,body.macfam .ctxmenu .ctxitem.sel,body.macfam .popup .popup-row.sel{
+    background:transparent;color:#fff}
+  body.macfam .mitem.hi::before,body.macfam .ctxmenu .ctxitem.sel::before,
+  body.macfam .popup .popup-row.sel::before{
+    content:"";position:absolute;left:5px;right:5px;top:1px;bottom:1px;
+    border-radius:5px;background:var(--ui-accent);z-index:-1}
+  body.macfam .mitem.hi .accel,body.macfam .mitem.hi .arrow{color:rgba(255,255,255,.82)}
+  /* Focused Settings row: subtle tint, dark label kept. */
+  body.macfam .settings-modal .set-item.sel{
+    background:color-mix(in srgb,var(--ui-accent) 13%,transparent);color:var(--fg);box-shadow:none}
+
+  /* Controls. The value pop-ups / fields default to var(--bg) (the dark buffer
+     colour) — repoint them at the light/dark chrome so they read as macOS
+     pop-up buttons and text fields, not black chips. */
+  body.macfam .settings-modal .set-pill,body.macfam .settings-modal .set-field,
+  body.macfam .settings-modal .set-step,body.macfam .settings-modal .set-dd,
+  body.macfam .settings-modal .set-dd-row{
+    background:var(--mac-btn);border-color:var(--hairline-strong);color:var(--fg)}
+  body.macfam .settings-modal .set-dd{background:color-mix(in srgb,var(--bg2) 97%,transparent)}
+  body.macfam .settings-modal .set-dd-row{background:transparent;border:none}
+  /* Off-state toggle track: a neutral system gray (on-state stays accent —
+     scope to :not(.on) so it doesn't out-specify the .on fill). */
+  body.macfam .settings-modal .set-switch:not(.on),
+  body.macfam .w-toggle:not(.on) .w-box{
+    background:color-mix(in srgb,var(--fg) 24%,transparent)}
+  body.macfam .settings-modal .set-switch.on{background:var(--ui-accent)}
 
   /* Buttons: a macOS push button (light or dark) + a filled-accent primary. */
   body.macfam .settings-modal .btn,body.macfam .trustdialog .td-btn,
