@@ -1291,6 +1291,29 @@ pub(crate) struct FloatingWidgetState {
     /// (`MountFloatingWidget.focus_marker`); the Orchestrator New
     /// Session form uses it.
     pub focus_marker: bool,
+    /// Native modal-frame chrome: when `Some`, a `Centered` panel draws
+    /// a **title bar** into its top border (left-aligned title text,
+    /// styled like the frame). The content `WidgetSpec` is unchanged and
+    /// still renders in the interior below. This is the declarative
+    /// dialog's *shell* — plugins no longer fake a title with a
+    /// `labeledSection` border inside the spec. Ignored for the dock and
+    /// anchored placements. Opt-in at mount (`MountFloatingWidget.title`);
+    /// `None` keeps the historical untitled frame.
+    pub title: Option<String>,
+    /// Native modal-frame chrome: when `true`, a `Centered` panel draws a
+    /// `[×]` **close button** at the top-right of its border. Clicking it
+    /// dismisses the panel exactly like Esc / Cancel (fires the panel's
+    /// `cancel` `widget_event` via the same path as
+    /// `dismiss_floating_panel_with_cancel`). Opt-in at mount
+    /// (`MountFloatingWidget.closable`); `false` draws no button.
+    pub closable: bool,
+    /// Screen rect of the `[×]` close button, recomputed on every draw
+    /// (like `last_inner_rect`) so the mouse hit-test can map a press back
+    /// to the dismiss action, and the web projection can ship it for a
+    /// native close control. Populated even under `suppress_chrome_cells`
+    /// (web mode) since geometry is computed there without painting cells.
+    /// `None` when the panel isn't a closable `Centered` modal.
+    pub close_button_rect: Option<ratatui::layout::Rect>,
 }
 
 /// How long the dock's overlay scrollbar stays visible after a keyboard
@@ -1830,6 +1853,9 @@ mod tests {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            title: None,
+            closable: false,
+            close_button_rect: None,
         }
     }
 

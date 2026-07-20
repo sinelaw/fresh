@@ -85,6 +85,21 @@ impl Editor {
         let (col, row) = (mouse_event.column, mouse_event.row);
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // A press on the native modal-frame `[×]` close button
+                // dismisses the panel exactly like Esc / Cancel (same
+                // `dismiss_floating_panel_with_cancel` path that fires the
+                // panel's `cancel` widget_event). Checked BEFORE the general
+                // panel hit-test so the click never also focuses a widget in
+                // the interior beneath the button.
+                if let Some(cbr) = self
+                    .panel(super::PanelSlot::Floating)
+                    .and_then(|f| f.close_button_rect)
+                {
+                    if in_rect(col, row, cbr) {
+                        self.dismiss_floating_panel_with_cancel(super::PanelSlot::Floating);
+                        return Ok(true);
+                    }
+                }
                 // An anchored popup (right-click context menu) dismisses when
                 // the press lands outside its box — standard menu behaviour.
                 // The centered modal instead swallows outside-clicks (it has

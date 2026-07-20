@@ -1662,6 +1662,8 @@ impl Editor {
                 height_pct,
                 as_dock,
                 focus_marker,
+                title,
+                closable,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
                 self.handle_mount_floating_widget(
@@ -1671,6 +1673,8 @@ impl Editor {
                     height_pct,
                     as_dock,
                     focus_marker,
+                    title,
+                    closable,
                 );
             }
 
@@ -4918,6 +4922,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_mount_floating_widget(
         &mut self,
         panel_key: crate::widgets::PanelKey,
@@ -4926,6 +4931,10 @@ impl Editor {
         height_pct: u8,
         as_dock: bool,
         focus_marker: bool,
+        // Native modal-frame chrome for a centered panel (ignored for the
+        // dock / anchored). See `FloatingWidgetState::{title,closable}`.
+        title: Option<String>,
+        closable: bool,
     ) {
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
@@ -4980,6 +4989,12 @@ impl Editor {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker,
+            // The native modal frame is a centered-modal affordance; the dock
+            // (left companion) and anchored (context-menu) placements never
+            // draw a title bar or close button, so drop the chrome there.
+            title: if as_dock { None } else { title },
+            closable: !as_dock && closable,
+            close_button_rect: None,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();

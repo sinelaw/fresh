@@ -4377,6 +4377,8 @@ impl Editor {
             panel_focused,
             scrollbar_zone_hovered,
             scrollbar_flash_until,
+            title,
+            closable,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4390,6 +4392,8 @@ impl Editor {
                 fwp.focused,
                 fwp.scrollbar_zone_hovered,
                 fwp.scrollbar_flash_until,
+                fwp.title.clone(),
+                fwp.closable,
             ),
             None => return,
         };
@@ -4453,6 +4457,26 @@ impl Editor {
             }
         };
 
+        // Native modal-frame chrome (the declarative dialog's *shell*) is a
+        // centered-modal-only affordance: a title bar drawn into the top
+        // border and a `[×]` close button one cell in from the top-right
+        // corner. The dock draws only a right divider and the anchored popup
+        // hugs its content, so neither wears this chrome. The button rect is
+        // computed here — before the draw / no-draw split below — so the web
+        // projection and the mouse hit-test both see it even when we compute
+        // geometry without painting cells (`suppress_chrome_cells`).
+        let is_centered = matches!(placement, super::PanelPlacement::Centered);
+        let close_button_rect = if is_centered && closable && overlay_rect.width >= 5 {
+            Some(ratatui::layout::Rect {
+                x: overlay_rect.x + overlay_rect.width - 4,
+                y: overlay_rect.y,
+                width: 3,
+                height: 1,
+            })
+        } else {
+            None
+        };
+
         // Web renders this panel natively from `widgets_view`; compute geometry
         // (incl. `last_inner_rect` for click routing) but paint no cells. TUI
         // passes draw=true so its rendering is unchanged.
@@ -4480,7 +4504,7 @@ impl Editor {
         } else {
             theme.popup_border_fg
         };
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(if is_dock {
                 Borders::RIGHT
             } else {
@@ -4488,14 +4512,43 @@ impl Editor {
             })
             .border_style(ratatui::style::Style::default().fg(dock_border_fg))
             .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
+        // Native modal-frame title bar: a centered modal with a `title`
+        // renders it left-aligned into the top border (` My Dialog `),
+        // styled like the frame. Ratatui reserves the border cells the
+        // title overlaps, and a `closable` panel's `[×]` is painted after
+        // the block so it always sits on top at the top-right corner.
+        if is_centered {
+            if let Some(t) = title.as_deref() {
+                block = block.title(ratatui::text::Span::styled(
+                    format!(" {t} "),
+                    ratatui::style::Style::default()
+                        .fg(theme.popup_border_fg)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+            }
+        }
         let inner = block.inner(overlay_rect);
         if draw {
             frame.render_widget(block, overlay_rect);
+            // Paint the `[×]` close button over the top border, after the
+            // block so it wins the corner cells. Its screen rect was
+            // recorded above for the mouse hit-test / web projection.
+            if let Some(cbr) = close_button_rect {
+                frame.buffer_mut().set_string(
+                    cbr.x,
+                    cbr.y,
+                    "[×]",
+                    ratatui::style::Style::default()
+                        .fg(theme.popup_border_fg)
+                        .bg(theme.suggestion_bg),
+                );
+            }
         }
 
         if inner.width == 0 || inner.height == 0 {
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
+                fwp.close_button_rect = close_button_rect;
             }
             return;
         }
@@ -4505,6 +4558,7 @@ impl Editor {
         if !draw {
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.last_inner_rect = Some(inner);
+                fwp.close_button_rect = close_button_rect;
             }
             return;
         }
@@ -4754,6 +4808,7 @@ impl Editor {
 
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.last_inner_rect = Some(inner);
+            fwp.close_button_rect = close_button_rect;
             fwp.scrollbar_tracks = scrollbar_tracks;
             fwp.scrollbar_hover_zones = scrollbar_hover_zones;
         }

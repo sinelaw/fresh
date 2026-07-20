@@ -907,6 +907,20 @@ pub struct WidgetSurfaceView {
     pub spec: fresh_core::api::WidgetSpec,
     pub instances: HashMap<String, WidgetInstanceView>,
     pub hits: Vec<WidgetHitView>,
+    /// Native modal-frame title (the declarative dialog's *shell*, drawn by
+    /// the frontend as a title bar — not part of the `spec`). `None` for the
+    /// dock, anchored popups, and untitled centered panels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// True when the centered modal draws a `[×]` close button; the frontend
+    /// renders it and forwards a click to `close_rect` (below).
+    pub closable: bool,
+    /// Screen rect of the `[×]` close button, in terminal cells. The frontend
+    /// forwards a click at this cell back through `handle_mouse`, which the
+    /// TUI hit-test resolves to the same dismiss path. `None` when the panel
+    /// isn't a closable centered modal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub close_rect: Option<RectView>,
 }
 
 impl Editor {
@@ -1023,6 +1037,9 @@ impl Editor {
                 spec: panel.spec.clone(),
                 instances,
                 hits,
+                title: fwp.title.clone(),
+                closable: fwp.closable,
+                close_rect: fwp.close_button_rect.map(RectView::from),
             });
         }
         out

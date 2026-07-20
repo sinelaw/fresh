@@ -216,6 +216,16 @@
     box-shadow:0 10px 36px rgba(0,0,0,.45)}
   .widget-surface.w-floatingModal.anchored .w-button{display:block;text-align:left}
   .widget-surface .w-col{gap:3px}
+  /* Native modal-frame chrome: a title bar + [×] close button the host draws
+     around the WidgetSpec content (the declarative dialog's shell). */
+  .w-modal-titlebar{display:flex;align-items:center;gap:8px;
+    padding:2px 4px 6px;margin-bottom:2px;
+    border-bottom:1px solid var(--hairline,var(--border))}
+  .w-modal-title{flex:1;font-weight:600;color:var(--fg);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .w-modal-close{cursor:pointer;user-select:none;line-height:1;
+    padding:0 6px;border-radius:4px;color:var(--muted,#9aa)}
+  .w-modal-close:hover{background:color-mix(in srgb, var(--fg) 12%, transparent);color:var(--fg)}
   /* --- Plugin dialog polish (New Folder, etc.) ---------------------------
      A floating modal whose root is a labeledSection is a small dialog. Give
      it a clean card: the section owns the padding (so its border doesn't

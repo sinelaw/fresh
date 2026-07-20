@@ -982,6 +982,16 @@ export class FloatingWidgetPanel {
        * control is legible from a plain terminal capture and the
        * layout stays constant as focus moves. Default false. */
       focusMarker?: boolean;
+      /** Native modal-frame title. When set, the host draws a title bar
+       * into the centered panel's top border (the dialog's *shell* —
+       * you no longer fake a title with a `labeledSection` border inside
+       * the spec). Ignored for `asDock`. Omitted → untitled frame. */
+      title?: string;
+      /** Native modal-frame close button. When true, the host draws a
+       * `[×]` at the centered panel's top-right; clicking it dismisses
+       * the panel exactly like Esc / Cancel (fires the panel's `cancel`
+       * `widget_event`). Ignored for `asDock`. Default false. */
+      closable?: boolean;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -996,6 +1006,8 @@ export class FloatingWidgetPanel {
       hp,
       options.asDock ?? false,
       options.focusMarker ?? false,
+      options.title ?? "",
+      options.closable ?? false,
     );
   }
 

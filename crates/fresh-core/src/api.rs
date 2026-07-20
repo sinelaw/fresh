@@ -4430,6 +4430,18 @@ pub enum PluginCommand {
         /// false) so existing panels render unchanged.
         #[serde(default)]
         focus_marker: bool,
+        /// Native modal-frame title. When `Some`, a centered panel draws a
+        /// title bar into its top border (the declarative dialog's shell,
+        /// drawn by the host — not faked with a `labeledSection` inside the
+        /// spec). `None` (default) keeps the historical untitled frame.
+        #[serde(default)]
+        title: Option<String>,
+        /// Native modal-frame close button. When `true`, a centered panel
+        /// draws a `[×]` at the top-right of its border; clicking it
+        /// dismisses the panel exactly like Esc / Cancel. Default `false`
+        /// (no button) so existing panels render unchanged.
+        #[serde(default)]
+        closable: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget

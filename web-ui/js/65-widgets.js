@@ -712,6 +712,22 @@ function widgetSurfaceEls(s){
     el.style.top=(px(s.rect.y,CH)-SHELL.top+4)+"px";
     el.style.height=(px(s.rect.h,CH)+SHELL.top+SHELL.bot-8)+"px";
   }
+  // Native modal-frame chrome (the declarative dialog's *shell*): a title bar
+  // and a `[×]` close button drawn by the host AROUND the WidgetSpec content,
+  // not inside the spec. The close button forwards a click to the host's
+  // recorded `closeRect` cell, which the TUI mouse hit-test resolves to the
+  // same dismiss path (`dismiss_floating_panel_with_cancel`) as Esc.
+  if(s.kind==="floatingModal" && (s.title || s.closable)){
+    const bar=div("w-modal-titlebar");
+    const ttl=div("w-modal-title"); ttl.textContent=s.title||""; bar.appendChild(ttl);
+    if(s.closable && s.closeRect){
+      const x=div("w-modal-close"); x.textContent="×"; x.title="Close";
+      const cc=rectCell(s.closeRect);
+      x.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendMouse({kind:"down",button:"left",col:cc.col,row:cc.row}); };
+      bar.appendChild(x);
+    }
+    el.appendChild(bar);
+  }
   if(s.kind==="floatingModal"){
     // The host sizes the panel in whole terminal cells, but the DOM adds
     // per-row gaps + padding a cell grid can't express, so a snug dialog

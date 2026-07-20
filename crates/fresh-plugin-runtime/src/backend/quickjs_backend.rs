@@ -6054,6 +6054,12 @@ impl JsEditorApi {
         height_pct: f64,
         as_dock: rquickjs::function::Opt<bool>,
         focus_marker: rquickjs::function::Opt<bool>,
+        // Native modal-frame chrome for a centered panel: an optional title
+        // bar and an optional `[×]` close button, drawn by the host around
+        // the declarative `WidgetSpec` content. Both default off for
+        // back-compat with existing mount calls.
+        title: rquickjs::function::Opt<String>,
+        closable: rquickjs::function::Opt<bool>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -6075,6 +6081,8 @@ impl JsEditorApi {
                 height_pct,
                 as_dock: as_dock.0.unwrap_or(false),
                 focus_marker: focus_marker.0.unwrap_or(false),
+                title: title.0.filter(|s| !s.is_empty()),
+                closable: closable.0.unwrap_or(false),
             })
             .is_ok())
     }
