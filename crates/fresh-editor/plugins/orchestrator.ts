@@ -4872,6 +4872,8 @@ async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
       root: projectRoot,
       label,
       cwd: projectRoot,
+      // Always mint the workspace's capability token (see runLocalCreate).
+      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
     });
     // `createWindowWithTerminal` fires `window_created`, which reconciles
     // the new window into the model; set it eagerly too so the immediate
@@ -5948,11 +5950,13 @@ const AGENT_REGISTRY: AgentEntry[] = [
   },
 ];
 
-// Command ids the "Teach Fresh CLI" token is minted for. Conservative and
-// safe: these two back the `fresh --cmd split` alias, letting an agent split
-// its own workspace without exposing the full command surface. Passed to the
-// host as `commandAllowlist`, which binds the minted `FRESH_CMD_TOKEN` to
-// exactly these ids on the new window.
+// Command ids the workspace's capability token is minted for. Conservative and
+// safe: these two back the `fresh --cmd split` alias, letting a process in the
+// workspace split its own view without exposing the full command surface.
+// Passed to the host as `commandAllowlist` on *every* workspace creation, which
+// binds the minted `FRESH_CMD_TOKEN` to exactly these ids on the new window —
+// the token is always present; the "Teach Fresh CLI" toggle only controls
+// whether the agent is *told* about it (the system-prompt injection).
 const FRESH_CLI_DEFAULT_ALLOWLIST = ["split_vertical", "split_horizontal"];
 
 // System prompt injected (via flag or AGENTS.md) when "Teach Fresh CLI" is on.
@@ -8031,9 +8035,10 @@ async function runLocalCreate(id: number): Promise<void> {
       command: launchArgv.length > 0 ? launchArgv : undefined,
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
-      // Mint the capability token bound to this window + allowlist so the
-      // agent's `fresh --cmd cmd ...` calls are authorised.
-      commandAllowlist: teach ? FRESH_CLI_DEFAULT_ALLOWLIST : undefined,
+      // Always mint the capability token bound to this window + allowlist so
+      // `fresh --cmd cmd ...` from inside the workspace is authorised — whether
+      // or not the agent was taught about it. `teach` only gates the prompt.
+      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
     });
     const winId = result.windowId;
     // Dismissed during the (awaited) spawn: the window was born and dove in,
@@ -8282,6 +8287,8 @@ async function attachToWorktree(opts: {
       root: opts.root,
       label: opts.label,
       cwd: opts.root,
+      // Always mint the workspace's capability token (see runLocalCreate).
+      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
     });
     const id = result.windowId;
     editor.setWindowState("project_path", opts.projectPath);
