@@ -58,6 +58,7 @@ function submenuItems(reg, depth){
 function menuCompression(reg){
   const SEP_PX = Math.max(8, Math.round(CH*0.52));   // compact separator slot
   const rowExtra = CH - SEP_PX;                        // px removed per sep row
+  const PAD = Math.max(4, Math.round(CH*0.26));        // target panel top/bottom inset (~5px)
   const sepByDepth = {};                              // depth -> Set(cell-y of seps)
   const addSep=(d,y)=>{ (sepByDepth[d]=sepByDepth[d]||new Set()).add(y); };
   const topItems = reg.menus[reg.menuOpen]?.items||[];
@@ -66,25 +67,45 @@ function menuCompression(reg){
     if(list[su.index]?.kind==="sep") addSep(su.depth, su.rect.y); }
   // Sum the sep-shrink accumulated ABOVE cell-y within one depth's own stack.
   const shrinkAbove=(d,y)=>{ let s=0; const set=sepByDepth[d]; if(set) for(const sy of set) if(sy<y) s+=rowExtra; return s; };
-  // Each depth's stack starts shifted up by the shrink its parent applied at the
-  // submenu's anchor row (depth 0 anchors at 0).
-  const boxTop={0: reg.dropdown?.rect?.y ?? 0};
-  for(const b of (reg.dropdown?.submenuBoxes||[])) boxTop[b.depth]=b.rect.y;
-  const anchor={0:0};
-  for(const d of Object.keys(boxTop).map(Number).sort((a,b)=>a-b)){
-    if(d===0) continue; anchor[d]=(anchor[d-1]||0)+shrinkAbove(d-1, boxTop[d]);
+  // Per-depth backing box + item extents (cells), to compress the panel's own
+  // top/bottom padding row (~1 full cell in the TUI border) down to PAD.
+  const box={}; if(reg.dropdown?.rect) box[0]=reg.dropdown.rect;
+  for(const b of (reg.dropdown?.submenuBoxes||[])) box[b.depth]=b.rect;
+  const itemYs={};
+  for(const di of (reg.dropdown?.items||[])) (itemYs[0]=itemYs[0]||[]).push(di.rect.y);
+  for(const su of (reg.dropdown?.submenus||[])) (itemYs[su.depth]=itemYs[su.depth]||[]).push(su.rect.y);
+  const topCut={}, botCut={};   // px removed from a depth's top / bottom padding
+  for(const d of Object.keys(box).map(Number)){
+    const bx=box[d], ys=itemYs[d];
+    if(!bx || !ys || !ys.length){ topCut[d]=0; botCut[d]=0; continue; }
+    topCut[d]=Math.max(0, (Math.min(...ys)-bx.y)*CH - PAD);
+    botCut[d]=Math.max(0, ((bx.y+bx.h)-(Math.max(...ys)+1))*CH - PAD);
   }
-  const shiftFor=(d,y)=>(anchor[d]||0)+shrinkAbove(d,y);
+  // panelShift: how far each depth's PANEL moves up. Depth 0's panel top stays
+  // anchored under the menu bar; a submenu's panel tracks its parent item's total
+  // upward shift so it stays aligned (the −topCut[d] cancels the extra its own
+  // items get, keeping the submenu's first item level with the parent row).
+  const boxTop={0: box[0]?.y ?? 0};
+  for(const d in box) boxTop[d]=box[d].y;
+  const panelShift={0:0};
+  for(const d of Object.keys(box).map(Number).sort((a,b)=>a-b)){
+    if(d===0) continue;
+    panelShift[d]=(panelShift[d-1]||0)+shrinkAbove(d-1, boxTop[d])+(topCut[d-1]||0)-(topCut[d]||0);
+  }
+  // Items shift by their panel's shift + own seps above + their own top-pad cut.
+  const itemShift=(d,y)=>(panelShift[d]||0)+shrinkAbove(d,y)+(topCut[d]||0);
+  const sepsInside=(d,rect)=>{ let e=0; const set=sepByDepth[d];
+    if(set) for(const sy of set) if(sy>=rect.y && sy<rect.y+rect.h) e+=rowExtra; return e; };
   return {
     SEP_PX,
     isSep:(d,y)=> sepByDepth[d]?.has(y)||false,
-    top:(d,y)=> px(y,CH) - shiftFor(d,y),
-    height:(d,rect)=>{
-      if(sepByDepth[d]?.has(rect.y)) return SEP_PX;
-      let extra=0; const set=sepByDepth[d];             // a panel spans several rows
-      if(set) for(const sy of set) if(sy>=rect.y && sy<rect.y+rect.h) extra+=rowExtra;
-      return px(rect.h,CH) - extra;
-    },
+    // items / separators / labels
+    top:(d,y)=> px(y,CH) - itemShift(d,y),
+    height:(d,rect)=> sepByDepth[d]?.has(rect.y) ? SEP_PX : px(rect.h,CH) - sepsInside(d,rect),
+    // backing panels — top tracks the parent shift (no per-item pad cut), height
+    // hugs the now-compressed content (drop the excess top+bottom padding + seps).
+    panelTop:(d,y)=> px(y,CH) - (panelShift[d]||0),
+    panelH:(d,rect)=> px(rect.h,CH) - sepsInside(d,rect) - (topCut[d]||0) - (botCut[d]||0),
   };
 }
 
@@ -197,7 +218,7 @@ function dropdownPanels(reg, comp, shiftsOut){
     }
     prevRight=b.rect.x + b.rect.w;
     const p=div("dropdown"+(b.depth>=1?" submenu":"")); place(p,b.rect);
-    if(comp){ p.style.top=comp.top(b.depth,b.rect.y)+"px"; p.style.height=comp.height(b.depth,b.rect)+"px"; }
+    if(comp){ p.style.top=comp.panelTop(b.depth,b.rect.y)+"px"; p.style.height=comp.panelH(b.depth,b.rect)+"px"; }
     panels.push(p);
   }
   return panels;
