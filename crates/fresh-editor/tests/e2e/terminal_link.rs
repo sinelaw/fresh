@@ -144,6 +144,30 @@ fn ctrl_left_click(harness: &mut EditorTestHarness, col: u16, row: u16) {
     }
 }
 
+/// Send a Ctrl+move (buttonless motion) at the given cell — the hover gesture.
+fn ctrl_move(harness: &mut EditorTestHarness, col: u16, row: u16) {
+    harness
+        .send_mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: col,
+            row,
+            modifiers: KeyModifiers::CONTROL,
+        })
+        .unwrap();
+}
+
+/// Whether the rendered cell at `(x, y)` is underlined — how the Ctrl+hover
+/// link highlight paints a clickable path (observe rendered output, not state).
+fn cell_underlined(harness: &EditorTestHarness, x: u16, y: u16) -> bool {
+    harness
+        .get_cell_style(x, y)
+        .map(|s| {
+            s.add_modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+        })
+        .unwrap_or(false)
+}
+
 /// Ctrl+Click on a `path:line:col` printed in the terminal opens the file
 /// (resolved against Fresh's working directory) and jumps to that line.
 #[test]
@@ -287,4 +311,144 @@ fn ctrl_click_on_nonexistent_path_is_inert() {
     // And the live terminal is still the active view: its grid still renders
     // to the screen (re-feed in case a racing repaint wiped it).
     feed_output_until_visible(&mut harness, terminal_id, output, "does/not/exist.rs");
+}
+
+/// A program that enabled mouse reporting (DECSET 1000/1006 — a "raw mode" TUI
+/// that grabbed the mouse) must not steal Ctrl+Click: the click opens the path
+/// link instead of being forwarded into the program's stdin. Before the fix,
+/// `try_forward_mouse_to_terminal` ran ahead of the link opener and swallowed
+/// the Ctrl+press (`wants_mouse && !shift`), so links only worked at a bare
+/// shell prompt.
+#[test]
+fn ctrl_click_opens_path_under_mouse_reporting_program() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(
+        tmp.path().join("src/main.rs"),
+        "line one\nline two TARGET\nline three\n",
+    )
+    .unwrap();
+
+    let mut harness = match harness_or_skip(100, 24, tmp.path().to_path_buf()) {
+        Some(h) => h,
+        None => return,
+    };
+
+    // Enable click + SGR mouse reporting (1000 + 1006), then print the path —
+    // exactly what a mouse-driven program on the main screen does.
+    open_terminal_with_output(
+        &mut harness,
+        b"\x1b[?1000h\x1b[?1006hbuild error at src/main.rs:2:6 here\n",
+        "src/main.rs:2:6",
+    );
+
+    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
+    ctrl_left_click(&mut harness, col + 4, row);
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("line two TARGET");
+    harness.assert_screen_contains("Ln 2");
+}
+
+/// Ctrl+Click opens a path even while an alternate-screen program (vim/less/
+/// htop) is running. Before the fix, `detect_terminal_link_at` bailed on
+/// alternate-screen, so both the click and the hover highlight were dead there.
+#[test]
+fn ctrl_click_opens_path_in_alternate_screen() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(
+        tmp.path().join("src/main.rs"),
+        "line one\nline two TARGET\nline three\n",
+    )
+    .unwrap();
+
+    let mut harness = match harness_or_skip(100, 24, tmp.path().to_path_buf()) {
+        Some(h) => h,
+        None => return,
+    };
+
+    // Enter the alternate screen (1049), home the cursor, then print the path
+    // onto it — like a full-screen program showing a build error.
+    open_terminal_with_output(
+        &mut harness,
+        b"\x1b[?1049h\x1b[Hbuild error at src/main.rs:2:6 here\n",
+        "src/main.rs:2:6",
+    );
+
+    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
+    ctrl_left_click(&mut harness, col + 4, row);
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("line two TARGET");
+    harness.assert_screen_contains("Ln 2");
+}
+
+/// Ctrl+hover underlines a path shown by an alternate-screen program. Before the
+/// fix, `detect_terminal_link_at` bailed on alternate-screen, so hover never
+/// highlighted there even though the click's Moved event reached it.
+#[test]
+fn ctrl_hover_highlights_path_in_alternate_screen() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), "x\n").unwrap();
+
+    let mut harness = match harness_or_skip(100, 24, tmp.path().to_path_buf()) {
+        Some(h) => h,
+        None => return,
+    };
+
+    open_terminal_with_output(
+        &mut harness,
+        b"\x1b[?1049h\x1b[Hopen src/main.rs:2:6 to jump\n",
+        "src/main.rs:2:6",
+    );
+
+    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
+    // Not underlined until we Ctrl+hover it.
+    assert!(
+        !cell_underlined(&harness, col + 2, row),
+        "path should not be underlined before hovering"
+    );
+
+    ctrl_move(&mut harness, col + 2, row);
+    harness.render().unwrap();
+
+    assert!(
+        cell_underlined(&harness, col, row) && cell_underlined(&harness, col + 4, row),
+        "Ctrl+hover should underline the path span in an alternate-screen program"
+    );
+}
+
+/// Ctrl+hover underlines a path even when the program subscribed to all-motion
+/// mouse tracking (DECSET 1003). Before the fix, the buttonless Moved event was
+/// forwarded to the PTY (`terminal_wants_mouse_motion`) before the hover code
+/// ran, so the highlight never appeared.
+#[test]
+fn ctrl_hover_highlights_path_under_all_motion_tracking() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(tmp.path().join("src/main.rs"), "x\n").unwrap();
+
+    let mut harness = match harness_or_skip(100, 24, tmp.path().to_path_buf()) {
+        Some(h) => h,
+        None => return,
+    };
+
+    // All-motion tracking (1003) + SGR (1006): the mode that legitimately
+    // receives buttonless motion — yet Ctrl+move must still drive link hover.
+    open_terminal_with_output(
+        &mut harness,
+        b"\x1b[?1003h\x1b[?1006hopen src/main.rs:2:6 to jump\n",
+        "src/main.rs:2:6",
+    );
+
+    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
+    ctrl_move(&mut harness, col + 2, row);
+    harness.render().unwrap();
+
+    assert!(
+        cell_underlined(&harness, col, row) && cell_underlined(&harness, col + 4, row),
+        "Ctrl+hover should underline the path span under all-motion tracking"
+    );
 }

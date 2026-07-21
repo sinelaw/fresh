@@ -30,6 +30,29 @@ impl Window {
             return None;
         }
 
+        // Ctrl reserves the Left-button / motion gesture for Fresh's own
+        // file-link hover + open (the xterm/VS Code convention: Ctrl/Cmd+Click
+        // opens links, overriding the inner program's mouse capture). Never
+        // forward those to the PTY — otherwise a program that enabled mouse
+        // reporting (DECSET 1000/1002/1003) or is in the alternate screen would
+        // swallow the click before `try_open_terminal_link` /
+        // `update_terminal_link_hover` (mouse_input.rs) ever see it, and links
+        // would only work at a bare shell prompt. Non-Ctrl events still forward
+        // normally, so the program keeps its ordinary mouse behaviour.
+        if mouse_event
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+            && matches!(
+                mouse_event.kind,
+                MouseEventKind::Down(MouseButton::Left)
+                    | MouseEventKind::Up(MouseButton::Left)
+                    | MouseEventKind::Drag(MouseButton::Left)
+                    | MouseEventKind::Moved
+            )
+        {
+            return None;
+        }
+
         // Find terminal buffer at this position.
         let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
 
@@ -117,9 +140,12 @@ impl Window {
     /// detected link (path + optional line/col + column span), and the
     /// terminal's OSC 7 working directory (for resolving relative paths).
     ///
-    /// Only fires in live terminal mode and *not* in alternate-screen mode
-    /// (where mouse events are forwarded to the running full-screen program).
-    /// The returned link is textual only — the caller resolves and checks it.
+    /// Only fires in live terminal mode (not the read-only scrollback view).
+    /// It intentionally *does* fire for alternate-screen / mouse-reporting
+    /// programs: the Ctrl gesture is reserved for links and withheld from the
+    /// PTY (see `try_forward_mouse_to_terminal`), so a path printed by such a
+    /// program stays Ctrl-hoverable / Ctrl-clickable. The returned link is
+    /// textual only — the caller resolves and checks it.
     pub(crate) fn detect_terminal_link_at(
         &self,
         col: u16,
@@ -134,10 +160,11 @@ impl Window {
             return None;
         }
         let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
-        // Alternate-screen programs own the mouse; don't shadow their clicks.
-        if self.is_terminal_in_alternate_screen(buffer_id) {
-            return None;
-        }
+        // Detection runs even for alternate-screen / mouse-reporting programs:
+        // this is only reached for Ctrl-held gestures (see the callers in
+        // `terminal_link.rs`, both Ctrl-gated), which `try_forward_mouse_to_terminal`
+        // deliberately withholds from the PTY so a path shown by vim/less/htop or
+        // any mouse-capturing program is still Ctrl-hoverable and Ctrl-clickable.
         let term_col = col.saturating_sub(content_rect.x) as usize;
         let term_row = row.saturating_sub(content_rect.y);
 
