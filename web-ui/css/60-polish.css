@@ -13,7 +13,7 @@
   /* Floating surfaces: one elevation language — soft hairline edge + real
      shadow + a consistent large radius, so menus/popups/palette/modals feel
      like the same family of cards. */
-  .dropdown,.popup,.ctxmenu,.palette,.settings-modal .set-dd{
+  .dropdown,.popup,.ctxmenu,.palette,.set-dd{
     border:1px solid var(--hairline);border-radius:var(--r-md);box-shadow:var(--shadow)}
   .settings-modal,.kbedit,.auxmodal.centered,.trustdialog,.widget-surface.w-floatingModal{
     border:1px solid var(--hairline);border-radius:var(--r-lg);box-shadow:var(--shadow)}
@@ -38,7 +38,7 @@
   .settings-modal .set-item-block .set-list,.settings-modal .set-list-row,
   .settings-modal .set-list-add,.settings-modal .set-dual-col,.settings-modal .set-dual-coltitle,
   .settings-modal .set-field,.settings-modal .set-pill,.settings-modal .set-step,
-  .settings-modal .set-dd-row,.settings-modal .btn{border-color:var(--hairline)}
+  .set-dd-row,.settings-modal .btn{border-color:var(--hairline)}
   .kbedit .kb-title,.kbedit .kb-header,.kbedit .kb-footer,.kbedit .kb-table .kb-row.kb-head,
   .kbedit .kb-btn,.kbedit .kb-field,.kbedit .kb-autocomplete{border-color:var(--hairline)}
   .auxmodal .am-title,.auxmodal .am-footer{border-color:var(--hairline)}
@@ -56,13 +56,13 @@
   .settings-modal .set-pill,.settings-modal .set-field,.settings-modal .set-step,
   .settings-modal .btn,.kbedit .kb-btn,.w-button,.td-btn,.w-toggle,.pkey,.tab .x{border-radius:var(--r-sm)}
   .settings-modal .set-item-block .set-list,.settings-modal .set-dual-col,
-  .w-section,.w-list-card,.settings-modal .set-dd{border-radius:var(--r-md)}
+  .w-section,.w-list-card,.set-dd{border-radius:var(--r-md)}
 
   /* Readable text/fills ON accent-coloured backgrounds (fixes the white-on-white
      primary button under high-contrast). */
   .settings-modal .btn.primary,.w-button.primary,.trustdialog .td-btn.primary{color:var(--on-accent)}
   .settings-modal .set-switch.on::after{background:var(--on-accent)}
-  .settings-modal .set-dd-row.sel,.kbedit .kb-btn.focus{color:var(--on-accent)}
+  .set-dd-row.sel,.kbedit .kb-btn.focus{color:var(--on-accent)}
 
   /* Quiet, uniform hover affordance. */
   .menu:hover{background:var(--hover)}
@@ -226,7 +226,7 @@
      key chip) → the hairline language instead of a fixed grey. */
   .trustdialog .td-btn,.w-button,.palette .prow .pkey,
   .settings-modal .set-step,.settings-modal .set-pill,.settings-modal .set-field,
-  .settings-modal .set-dd,.settings-modal .set-dual-btn,.settings-modal .btn,
+  .set-dd,.settings-modal .set-dual-btn,.settings-modal .btn,
   .settings-modal .set-overlay,.kbedit .kb-btn,.kbedit .kb-overlay{
     border-color:var(--hairline-strong)}
   /* Primary text on the menuHi / --sel highlight pill → readable in any theme. */

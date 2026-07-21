@@ -1,6 +1,10 @@
 // Per-region DOM patching, motion (FX), render().
 // (web-ui/js — concatenated in filename order into the page's single
 // <script> by crates/fresh-editor/build.rs; all files share one scope.)
+// The region whose fill is currently running, so a dropdown pop-over portaled
+// to the body-level host during that fill can be tagged with (and later reaped
+// by) its owning region. See renderRegion + the popoverHost callers.
+let popoverRegionOwner=null;
 // ---- per-region DOM patching (docs §3.4, the frontend half) ----------------
 // Frames arrive as per-region diffs (see applyFrame), so the DOM is patched
 // per region too: #app holds one stable display:contents container per region
@@ -240,7 +244,16 @@ function renderRegion(name){
     if(name==="palette"){ const s=c.querySelector(".modal-scrim"); if(s) fxExit(s,"fx-out"); }
   }
   if(name!=="caret") c.textContent="";     // the caret patches its own child in place
+  // Reap this region's portaled dropdown pop-overs before the rebuild: if a
+  // dropdown is still open, REGION_FILL re-mounts a fresh one below; otherwise
+  // it stays gone. Per-region (not a blanket clear) so a frame that only
+  // repaints some OTHER region can't drop an open list. `popoverRegionOwner`
+  // tags any pop-over mounted during this fill (see popoverHost callers).
+  const _ph=document.getElementById("fresh-popover-host");
+  if(_ph) _ph.querySelectorAll('[data-popover-region="'+name+'"]').forEach(e=>e.remove());
+  popoverRegionOwner=name;
   REGION_FILL[name](c, scene.regions);
+  popoverRegionOwner=null;
   if(fx&&willHave){
     const el=c.querySelector(fx.sel);
     if(el&&!hadEl){
@@ -293,6 +306,8 @@ function render(){
   applyTheme(scene.theme);
   applyWebTheme();   // layer the frontend web-theme chrome tokens over the TUI theme
   ensureContainers();
+  // Each region reaps + re-mounts its own portaled dropdown pop-overs as it
+  // renders below (see renderRegion), so no blanket clear is needed here.
   for(const n of REGION_ORDER) renderRegion(n);
   renderedRegions=REGION_ORDER.slice();
   // Native touch shell on narrow/portrait viewports (desktop is untouched).

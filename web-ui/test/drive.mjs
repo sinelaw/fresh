@@ -865,13 +865,13 @@ check('no JS page errors', errs.length === 0, errs.join(' | '));
 
 // ---------------------------------------------------------------------------
 // Dropdown pop-over placement, macOS skin. The macOS vibrancy modal uses
-// `backdrop-filter`, which makes it the containing block for any
-// `position:fixed` descendant — so a naive viewport-anchored option list
-// lands offset by the modal's origin (off in a corner, effectively
-// invisible). The widget Dropdown must compensate for that so its list opens
-// directly under the pill; the Settings `.set-dd` must drop BELOW its pill,
-// not overlap/precede it.
-console.log('\n[dropdown pop-overs anchor under their trigger (macOS skin)]');
+// `backdrop-filter`, making it the containing block for `position:fixed`
+// descendants; the Settings modal is a `transform`ed, `overflow:hidden` box
+// with a scrolling item list. A dropdown's floating option list must, in both:
+// open under its trigger (not offset by the modal origin), never be clipped by
+// those scroll/overflow containers, and grow to fit its widest option. The
+// closed pill's width must also stay stable open↔closed.
+console.log('\n[dropdown pop-overs anchor under their trigger, never clip (macOS skin)]');
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 // Skin is read from localStorage at boot; single-client bridge → /reset first,
 // then set the skin and reload so the vibrancy modal is in play.
@@ -889,39 +889,57 @@ await page.request.post(URL + '/action', { data: { action: 'orchestrator_run_age
 await page.waitForFunction(() => document.querySelectorAll('.w-dropdown .w-dd-pill').length > 0, null, { timeout: 8000 }).catch(() => {});
 const raBox = await page.locator('.w-dropdown .w-dd-pill').first().boundingBox();
 if (raBox) {
+  const closedW = await page.evaluate(() => document.querySelector('.w-dd-pill').getBoundingClientRect().width);
   await page.mouse.click(raBox.x + raBox.width / 2, raBox.y + raBox.height / 2);
   await page.waitForFunction(() => !!document.querySelector('.w-dd.w-dd-floating'), null, { timeout: 5000 }).catch(() => {});
   const w = await page.evaluate(() => {
     const list = document.querySelector('.w-dd.w-dd-floating'), pill = document.querySelector('.w-dd-pill');
     if (!list || !pill) return null;
     const lr = list.getBoundingClientRect(), pr = pill.getBoundingClientRect();
-    return { dx: Math.round(lr.left - pr.left), dy: Math.round(lr.top - pr.bottom) };
+    return { dx: Math.round(lr.left - pr.left), dy: Math.round(lr.top - pr.bottom), openW: pr.width };
   });
   await page.screenshot({ path: `${SHOTS}/34-macos-widget-dropdown.png` });
   check('Run-Agent widget dropdown opens directly under its pill (not offset by the modal)',
     !!w && Math.abs(w.dx) <= 4 && w.dy >= -2 && w.dy <= 8, JSON.stringify(w));
+  // The open (▴) and closed (▾) chevrons must be the same width so the pill
+  // doesn't jump — regressed when open used the full-size ▲ vs the small ▾.
+  check('closed pill width stays stable when opened (matched-size chevron)',
+    !!w && Math.abs(w.openW - closedW) <= 1, JSON.stringify({ closedW: Math.round(closedW), openW: Math.round(w.openW) }));
 }
 await page.keyboard.press('Escape'); await page.waitForTimeout(100);
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
-// (b) Settings `.set-dd` must drop BELOW its `.set-pill` (skin-independent,
-// but exercised here in the same macOS session).
+// (b) Settings "Default Language" dropdown: a long option list far wider than
+// its compact "(none)" pill, with the control flush against the dialog's right
+// edge — the exact case that used to run off the edge and get clipped by the
+// scroll container. It must open below the pill, grow WIDER than the pill (to
+// fit option text), and sit fully inside the modal (no clipping on any side).
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
-const spBox = await page.locator('.settings-modal .set-pill').first().boundingBox();
-if (spBox) {
-  await page.mouse.click(spBox.x + spBox.width / 2, spBox.y + spBox.height / 2);
-  await page.waitForFunction(() => !!document.querySelector('.settings-modal .set-dd'), null, { timeout: 5000 }).catch(() => {});
+const langPill = page.locator('.settings-modal .set-item', { hasText: 'Default Language' }).locator('.set-pill');
+await langPill.scrollIntoViewIfNeeded().catch(() => {});
+const lpBox = await langPill.boundingBox();
+if (lpBox) {
+  await page.mouse.click(lpBox.x + lpBox.width / 2, lpBox.y + lpBox.height / 2);
+  await page.waitForFunction(() => !!document.querySelector('.set-dd'), null, { timeout: 5000 }).catch(() => {});
   const sd = await page.evaluate(() => {
-    const dd = document.querySelector('.settings-modal .set-dd'), pill = document.querySelector('.settings-modal .set-pill');
-    if (!dd || !pill) return null;
-    const dr = dd.getBoundingClientRect(), pr = pill.getBoundingClientRect();
-    return { ddTop: Math.round(dr.top), pillBottom: Math.round(pr.bottom), dx: Math.round(dr.left - pr.left) };
+    const item = [...document.querySelectorAll('.settings-modal .set-item')].find(r => r.textContent.includes('Default Language'));
+    // The option list is portaled to the body-level host, not inside the modal.
+    const dd = document.querySelector('#fresh-popover-host .set-dd'), pill = item && item.querySelector('.set-pill');
+    const modal = document.querySelector('.settings-modal');
+    if (!dd || !pill || !modal) return null;
+    const d = dd.getBoundingClientRect(), p = pill.getBoundingClientRect(), m = modal.getBoundingClientRect();
+    return {
+      below: Math.round(d.top - p.bottom), grewWiderBy: Math.round(d.width - p.width),
+      insideModal: d.left >= m.left - 1 && d.right <= m.right + 1 && d.top >= m.top - 1 && d.bottom <= m.bottom + 1,
+      d: { l: Math.round(d.left), r: Math.round(d.right), b: Math.round(d.bottom) }, m: { l: Math.round(m.left), r: Math.round(m.right), b: Math.round(m.bottom) },
+    };
   });
   await page.screenshot({ path: `${SHOTS}/35-macos-settings-dropdown.png` });
-  check('Settings dropdown list drops BELOW its pill (not overlapping/above it)',
-    !!sd && sd.ddTop >= sd.pillBottom - 2 && Math.abs(sd.dx) <= 6, JSON.stringify(sd));
+  check('Settings "Default Language" list opens below its pill', !!sd && sd.below >= -1 && sd.below <= 8, JSON.stringify(sd));
+  check('Settings dropdown grows wider than its compact pill to fit options', !!sd && sd.grewWiderBy > 8, JSON.stringify(sd));
+  check('Settings dropdown is NOT clipped — fully inside the dialog', !!sd && sd.insideModal, JSON.stringify(sd));
 }
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 

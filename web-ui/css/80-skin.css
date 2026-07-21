@@ -77,7 +77,7 @@
   .settings-modal .set-sresult.sel,.kbedit .kb-field.focus{
     background:var(--sel);box-shadow:var(--sel-ring)}
   .menu.open{background:var(--sel);color:var(--fg)}
-  .settings-modal .set-dd-row.sel,.kbedit .kb-ac-row.sel{
+  .set-dd-row.sel,.kbedit .kb-ac-row.sel{
     background:var(--sel);box-shadow:var(--sel-ring);color:var(--fg)}
 
   /* The dock's selected card is the signature moment: a soft teal glow

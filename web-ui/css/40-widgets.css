@@ -99,7 +99,7 @@
   .settings-modal .set-item-head{display:flex;align-items:center;gap:12px}
   .settings-modal .set-name{flex:1;min-width:0} .settings-modal .set-desc{color:var(--muted);white-space:normal;margin-top:1px}
   .settings-modal .set-ctl-wrap{flex:0 0 auto;max-width:50%;text-align:right;display:flex;justify-content:flex-end;align-items:center}
-  .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px;position:relative}
+  .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px}
   .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
   /* toggle switch */
   .settings-modal .set-switch{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;transition:background .1s}
@@ -111,8 +111,12 @@
   /* dropdown pill + text field */
   .settings-modal .set-pill{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg)}
   .settings-modal .set-field{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .settings-modal .set-dd{position:absolute;top:100%;left:0;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:3}
-  .settings-modal .set-dd-row{padding:1px 10px} .settings-modal .set-dd-row.sel{background:var(--accent);color:#fff}
+  /* Floating option list: `position:fixed` (positioned by JS —
+     positionFloatingPopover) so the Settings list's `overflow:auto` never
+     clips it. The list grows to fit its widest option and shifts to stay in
+     view — see the JS for the anchor/flip/shift rationale. */
+  .set-dd{position:fixed;left:0;top:0;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:200}
+  .set-dd-row{padding:1px 10px} .set-dd-row.sel{background:var(--accent);color:#fff}
   /* composite list controls */
   .settings-modal .set-item-block .set-list{margin:4px 0 2px 8px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
   .settings-modal .set-list-row{display:flex;align-items:center;gap:8px;padding:2px 10px;border-bottom:1px solid rgba(255,255,255,.05)}
@@ -296,6 +300,10 @@
      so the option list extends past the dialog border (parity with the TUI
      floating popover). JS sets left/top/min-width from the pill's rect. */
   .w-dd-floating{position:fixed;top:0;left:0;z-index:200;min-width:0}
+  /* Body-level portal host for dropdown option lists (widget + Settings), so
+     no `transform`/`overflow` modal ancestor can clip them. Zero-size (its
+     children are all position:fixed); high z-index sits above every modal. */
+  #fresh-popover-host{position:fixed;left:0;top:0;width:0;height:0;z-index:100000}
   .w-dd-row{padding:1px 10px;white-space:nowrap}
   .w-dd-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
   .w-dual-cols{display:flex;gap:10px}

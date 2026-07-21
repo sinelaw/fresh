@@ -137,7 +137,7 @@
   body.macfam .kbedit .kb-row.sel,body.macfam .w-list-row.sel,
   body.macfam .auxmodal .am-line.sel,body.macfam .settings-modal .set-sresult.sel,
   body.macfam .menu.open,
-  body.macfam .settings-modal .set-dd-row.sel{
+  body.macfam .set-dd-row.sel{
     background:var(--ui-accent);color:#fff;box-shadow:none}
   body.macfam .palette .prow.sel .pdesc,body.macfam .palette .prow.sel .pkey{
     color:rgba(255,255,255,.82);border-color:rgba(255,255,255,.4)}
@@ -200,11 +200,11 @@
      colour) — repoint them at the light/dark chrome so they read as macOS
      pop-up buttons and text fields, not black chips. */
   body.macfam .settings-modal .set-pill,body.macfam .settings-modal .set-field,
-  body.macfam .settings-modal .set-step,body.macfam .settings-modal .set-dd,
-  body.macfam .settings-modal .set-dd-row{
+  body.macfam .settings-modal .set-step,body.macfam .set-dd,
+  body.macfam .set-dd-row{
     background:var(--mac-btn);border-color:var(--hairline-strong);color:var(--fg)}
-  body.macfam .settings-modal .set-dd{background:color-mix(in srgb,var(--bg2) 97%,transparent)}
-  body.macfam .settings-modal .set-dd-row{background:transparent;border:none}
+  body.macfam .set-dd{background:color-mix(in srgb,var(--bg2) 97%,transparent)}
+  body.macfam .set-dd-row{background:transparent;border:none}
   /* Off-state toggle track: a neutral system gray (on-state stays accent —
      scope to :not(.on) so it doesn't out-specify the .on fill). */
   body.macfam .settings-modal .set-switch:not(.on),
