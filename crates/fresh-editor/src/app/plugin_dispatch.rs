@@ -1547,10 +1547,22 @@ impl Editor {
                 window_id,
                 command,
                 title,
+                env,
+                command_allowlist,
                 request_id,
             } => {
                 self.handle_create_terminal(
-                    cwd, direction, ratio, focus, persistent, window_id, command, title, request_id,
+                    cwd,
+                    direction,
+                    ratio,
+                    focus,
+                    persistent,
+                    window_id,
+                    command,
+                    title,
+                    env,
+                    command_allowlist,
+                    request_id,
                 );
             }
 
@@ -3814,6 +3826,7 @@ impl Editor {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     fn handle_create_terminal(
         &mut self,
         cwd: Option<String>,
@@ -3824,6 +3837,8 @@ impl Editor {
         target_session_id: Option<fresh_core::WindowId>,
         command: Option<Vec<String>>,
         title: Option<String>,
+        env: Option<std::collections::HashMap<String, String>>,
+        command_allowlist: Option<Vec<String>>,
         request_id: u64,
     ) {
         // Resolve target window. Explicit `windowId` wins when the
@@ -3856,6 +3871,31 @@ impl Editor {
             None
         };
 
+        // Assemble the extra env injected into the spawned terminal's child.
+        // Starts from the plugin-supplied `env` (empty when omitted), then
+        // mirrors `create_window_with_terminal`: advertise this editor's own
+        // binary as `FRESH_BIN`, and — when a `command_allowlist` is given —
+        // mint a capability token bound to the TARGET window plus that
+        // allowlist and inject it as `FRESH_CMD_TOKEN` (with `FRESH_SESSION`
+        // so the client inside the terminal can find the control socket).
+        // This is what lets an agent spawned into an *existing* window drive
+        // the editor exactly like one born via `createWindowWithTerminal`.
+        let mut terminal_env = env.unwrap_or_default();
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe) = exe.to_str() {
+                terminal_env.insert("FRESH_BIN".to_string(), exe.to_string());
+            }
+        }
+        if let Some(allowlist) = command_allowlist {
+            if let Ok(session_id) = crate::server::local_control::start() {
+                terminal_env.insert("FRESH_SESSION".to_string(), session_id.to_string());
+            }
+            let token = crate::server::command_access::mint(
+                crate::server::command_access::Grant::new(Some(target_id.0), allowlist),
+            );
+            terminal_env.insert("FRESH_CMD_TOKEN".to_string(), token);
+        }
+
         let result = {
             let target = self
                 .windows
@@ -3869,7 +3909,7 @@ impl Editor {
                 persistent,
                 command,
                 title: title.filter(|t| !t.is_empty()),
-                env: std::collections::HashMap::new(),
+                env: terminal_env,
             })
         };
         match result {

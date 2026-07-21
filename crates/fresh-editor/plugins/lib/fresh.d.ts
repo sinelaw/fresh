@@ -889,6 +889,24 @@ type CreateTerminalOptions = {
 	* to disambiguate. Empty string is treated the same as `None`.
 	*/
 	title?: string;
+	/**
+	* Extra environment variables to set in the spawned terminal's
+	* child process, on top of the inherited/activated env. Mirrors
+	* `CreateWindowWithTerminalOptions::env`. `None` (the default)
+	* adds nothing, so existing callers behave exactly as before.
+	*/
+	env?: { [key in string] : string };
+	/**
+	* When `Some`, the host mints an unforgeable capability token
+	* bound to the TARGET window (the active window, or `windowId`
+	* when set) and this allowlist of command ids, and injects it
+	* into the spawned terminal as `FRESH_CMD_TOKEN` (alongside
+	* `FRESH_SESSION`). This lets an agent spawned into an *existing*
+	* window drive exactly those commands against it — the same
+	* capability a `createWindowWithTerminal` agent gets. `None` (the
+	* default) mints no token and injects nothing.
+	*/
+	commandAllowlist?: Array<string>;
 };
 type CursorInfo = {
 	/**

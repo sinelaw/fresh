@@ -6709,6 +6709,8 @@ impl JsEditorApi {
             window_id: None,
             command: None,
             title: None,
+            env: None,
+            command_allowlist: None,
         });
 
         // Track request_id → plugin_name for async resource tracking
@@ -6727,6 +6729,8 @@ impl JsEditorApi {
             persistent: opts.persistent.unwrap_or(false),
             command: opts.command,
             title: opts.title,
+            env: opts.env,
+            command_allowlist: opts.command_allowlist,
             request_id: id,
         });
         Ok(id)

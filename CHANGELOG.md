@@ -1,5 +1,15 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+* **`Run Agent…` command — start a coding agent from anywhere** - a new command-palette command opens a compact picker to launch any of the starting processes the New-Workspace dialogue offers (a bare terminal or an agent: `claude`, `codex`, `opencode`, `aider`) without the full dialogue. Choose whether it runs in your **current workspace** (a terminal in the window you're already in, alongside your open buffers — no new worktree) or a **new workspace** (a fresh worktree + window), toggle auto mode, and optionally hand it a first prompt; the picker remembers your last choice. Either way the launch reuses the dialogue's exact logic — session-id pinning, auto-mode flags, Fresh-CLI system-prompt injection, the `FRESH_CMD_TOKEN` capability, and environment — so an agent started this way is indistinguishable from a dialogue-launched one.
+
+### Bug Fixes
+
+* **Codex "Auto mode" now actually engages** - the checkbox previously passed `--full-auto`, which recent Codex CLI rejects outright (the flag was removed from the root command). Auto mode now launches Codex with `--sandbox workspace-write --ask-for-approval never` — its self-approving posture inside the workspace-write sandbox — on both launch and resume.
+
 ## 0.4.4
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

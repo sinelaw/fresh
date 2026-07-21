@@ -153,6 +153,8 @@ fn create_terminal_targets_inactive_session_via_session_id() {
             window_id: Some(alpha),
             command: None,
             title: None,
+            env: None,
+            command_allowlist: None,
             request_id: 9999,
         })
         .unwrap();

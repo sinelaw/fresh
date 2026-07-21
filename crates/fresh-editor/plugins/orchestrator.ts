@@ -531,6 +531,38 @@ let createFolderPanel: FloatingWidgetPanel | null = null;
 // Cancel that *creates* the folder is exactly backwards).
 let createFolderFocusKey = "folder-name";
 
+// ---------------------------------------------------------------------
+// "Run Agent…" dialog — a lightweight picker to launch one of the
+// starting processes the New-Workspace dialogue offers (a bare terminal
+// or a registered agent) from an existing session, WITHOUT the full
+// workspace-creation form. The user picks the process, whether it runs
+// in the current window or a fresh worktree+window, auto mode, and an
+// optional first prompt; the choice is remembered for next time. Both
+// targets reuse the dialogue's launch logic (session-id pin, auto flags,
+// Fresh-CLI system-prompt injection, capability token) so a
+// palette-launched agent is indistinguishable from a dialogue-launched
+// one.
+// ---------------------------------------------------------------------
+const RUN_AGENT_MODE = "orchestrator-run-agent-dialog";
+// Where a Run-Agent launch lands: a terminal in the CURRENT window, or a
+// fresh worktree + window (the dialogue's classic path).
+type RunAgentTarget = "current" | "new";
+interface RunAgentDialogState {
+  // Index into `runAgentProcesses()` (0 = bare terminal, then agents).
+  agentIndex: number;
+  target: RunAgentTarget;
+  // Auto/bypass-approvals mode. Only meaningful (and only shown) for an
+  // agent whose registry entry has an `auto` flag.
+  auto: boolean;
+  // Optional first prompt handed to the agent at launch. Only shown for
+  // an agent that documents a prompt argument.
+  prompt: { value: string; cursor: number };
+}
+let runAgentDialog: RunAgentDialogState | null = null;
+let runAgentPanel: FloatingWidgetPanel | null = null;
+// Persisted last choice so the dialog reopens where the user left it.
+const RUN_AGENT_LAST_KEY = "orchestrator.run_agent.last";
+
 // Open dialog state. `null` ⇒ the picker isn't mounted. Lives
 // alongside the new-session form state but is independent of
 // it — the two dialogs share the orchestrator mode plumbing but
@@ -5937,15 +5969,24 @@ const AGENT_REGISTRY: AgentEntry[] = [
   {
     // OpenAI Codex CLI: resume is a *subcommand*, not a flag — `codex resume
     // --last` rejoins the latest session in the cwd. There's no launch-time
-    // session-id to pin, so it's continue-only. `--full-auto` is codex's
-    // auto-approve mode (workspace-write sandbox, no prompts) — NOT the
-    // `--dangerously-bypass-approvals-and-sandbox` full bypass; the initial
-    // prompt is a trailing positional (`codex "…"`).
+    // session-id to pin, so it's continue-only.
+    //
+    // Auto mode: `--full-auto` was REMOVED from the root command (recent Codex
+    // rejects `codex --full-auto` outright; it survives only under `codex exec`
+    // as a deprecation warning that redirects to `--sandbox workspace-write`).
+    // The current no-prompt, self-approving posture is the pair
+    // `--sandbox workspace-write --ask-for-approval never`: Codex runs
+    // model-proposed commands itself inside the workspace-write sandbox and
+    // never stops to ask — deliberately NOT `-s danger-full-access` nor the
+    // `--dangerously-bypass-approvals-and-sandbox` full bypass. Both flags are
+    // accepted on the root command AND on the `resume` subcommand, so they ride
+    // launch and resume alike. The initial prompt is a trailing positional
+    // (`codex "…"`).
     id: "codex",
     label: "codex",
     match: /^codex$/,
     spec: { continue: { resumeArgs: ["resume", "--last"] } },
-    auto: ["--full-auto"],
+    auto: ["--sandbox", "workspace-write", "--ask-for-approval", "never"],
     prompt: { style: "positional" },
     systemPrompt: { via: "file", path: "AGENTS.md" },
   },
@@ -8524,6 +8565,279 @@ function startNewSession(): void {
   openForm();
 }
 
+// =============================================================================
+// "Run Agent…" — launch a starting process from an existing session
+// =============================================================================
+
+// A starting process the Run-Agent dialog can launch: a bare terminal plus
+// every registered agent (the same non-custom presets the New-Workspace
+// dropdown lists). `cmd` is the argv the dialogue's Command field would hold.
+interface RunAgentProcess {
+  cmd: string;
+  label: string;
+  entry: AgentEntry | null;
+}
+function runAgentProcesses(): RunAgentProcess[] {
+  const list: RunAgentProcess[] = [
+    { cmd: "", label: editor.t("form.agent_terminal"), entry: null },
+  ];
+  for (const e of AGENT_REGISTRY) {
+    list.push({ cmd: e.id, label: e.label ?? e.id, entry: e });
+  }
+  return list;
+}
+
+// Options a Run-Agent launch carries, mirroring the dialogue's per-agent
+// controls. `auto`/`prompt`/`teachFreshCli` are only honoured for an agent
+// whose registry entry supports each (a bare terminal ignores all three).
+interface RunAgentLaunchOpts {
+  auto: boolean;
+  prompt: string;
+  teachFreshCli: boolean;
+}
+
+// Launch `cmd` as a terminal in the CURRENT window — no new worktree, no new
+// window. Reuses `resolveAgentLaunch` for the argv (session-id pin, auto
+// flags, flag-style system prompt) and mints the same capability token the
+// dialogue does via the extended `createTerminal`, so the agent can drive the
+// editor exactly like a dialogue-launched one. File-style system prompts
+// (codex/opencode `AGENTS.md`) are written into the current cwd.
+async function launchAgentInCurrentWorkspace(
+  cmd: string,
+  opts: RunAgentLaunchOpts,
+): Promise<void> {
+  const trimmedCmd = cmd.trim();
+  const cwd = editor.getCwd();
+  const entry = agentEntryForCmd(trimmedCmd);
+  // "Teach Fresh CLI": inject the CLI system prompt (via flag on launch, or by
+  // writing AGENTS.md for file-style agents). The capability token is minted
+  // regardless (see `commandAllowlist` below) — `teach` only gates the prompt.
+  const teach = opts.teachFreshCli && entry?.systemPrompt ? entry.systemPrompt : null;
+  if (teach?.via === "file") {
+    writeFreshCliPromptFile(editor.pathJoin(cwd, teach.path));
+  }
+  const argv = splitAgentCmd(trimmedCmd);
+  const { launch } = resolveAgentLaunch(argv, {
+    auto: opts.auto,
+    prompt: opts.prompt,
+    systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
+  });
+  if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
+  try {
+    await editor.createTerminal({
+      cwd,
+      command: launch.length > 0 ? launch : undefined,
+      title: launch.length > 0 ? editor.pathBasename(launch[0]) || launch[0] : undefined,
+      // Always mint the capability token bound to THIS window + allowlist, so
+      // `fresh --cmd ...` from inside the terminal is authorised — matching the
+      // dialogue, where the token is always present and only the prompt is
+      // gated by "Teach Fresh CLI".
+      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
+      focus: true,
+    });
+  } catch (e) {
+    editor.setStatus(
+      editor.t("status.prefix", { msg: e instanceof Error ? e.message : String(e) }),
+    );
+  }
+}
+
+// Launch `cmd` in a fresh worktree + window — the dialogue's classic path,
+// reached without opening the form. Builds the same `CreateSpec` a default
+// submit would and runs it through `startPendingWorkspace` → `runLocalCreate`.
+async function launchAgentInNewWorkspace(
+  cmd: string,
+  opts: RunAgentLaunchOpts,
+): Promise<void> {
+  const trimmedCmd = cmd.trim();
+  // Resolve the Project Path the way the dialogue's probe does: the active
+  // window's local default, resolved to its canonical repo root when it sits
+  // inside a git tree. `runLocalCreate` re-resolves this itself, so the
+  // worktree fork point is identical either way — this is for the display row.
+  const localDefault = localProjectDefault();
+  const canonical = await resolveCanonicalRepoRoot(localDefault);
+  const projectPath = canonical || localDefault;
+  const entry = agentEntryForCmd(trimmedCmd);
+  startPendingWorkspace(
+    {
+      backend: "local",
+      projectPath,
+      name: "",
+      cmd: trimmedCmd,
+      auto: !!entry?.auto && opts.auto,
+      startPrompt: entry?.prompt ? opts.prompt.trim() : "",
+      teachFreshCli: !!entry?.systemPrompt && opts.teachFreshCli,
+      branch: "",
+      newBranch: "",
+      // A fresh worktree like the dialogue; `runLocalCreate` demotes this to an
+      // in-place open when the project path isn't a git tree.
+      createWorktree: true,
+      displayLabel: editor.pathBasename(projectPath) ||
+        editor.t("dock.pending_default_name"),
+      displayProject: projectPath,
+    },
+    // Land in the new workspace — an explicit "run this agent" reads as "take
+    // me there", matching the dialogue's "Create & Visit".
+    { visit: true },
+  );
+}
+
+// Persist the dialog's current choice (agent + target + auto) so the next open
+// starts where the user left off. The start prompt is deliberately not
+// persisted — it's a per-invocation message, not a setting.
+function saveRunAgentLast(cmd: string, target: RunAgentTarget, auto: boolean): void {
+  editor.setGlobalState(RUN_AGENT_LAST_KEY, { cmd, target, auto });
+}
+
+// The dialog's initial state, seeded from the last-used choice (falling back
+// to a bare terminal in the current workspace).
+function initialRunAgentState(): RunAgentDialogState {
+  const last = editor.getGlobalState(RUN_AGENT_LAST_KEY) as
+    | { cmd?: unknown; target?: unknown; auto?: unknown }
+    | undefined;
+  const procs = runAgentProcesses();
+  const lastCmd = typeof last?.cmd === "string" ? last.cmd : "";
+  const idx = Math.max(0, procs.findIndex((p) => p.cmd === lastCmd));
+  const target: RunAgentTarget = last?.target === "new" ? "new" : "current";
+  return {
+    agentIndex: idx,
+    target,
+    auto: last?.auto === true,
+    prompt: { value: "", cursor: 0 },
+  };
+}
+
+// Open the Run-Agent dialog. No-op if it (or another orchestrator dialog) is
+// already up.
+function openRunAgentDialog(): void {
+  if (runAgentDialog || form || createFolderDialog) return;
+  runAgentDialog = initialRunAgentState();
+  mountRunAgentDialog();
+}
+
+function mountRunAgentDialog(): void {
+  // Yield the dock's keyboard while the dialog owns it (mirrors the
+  // new-session form and the folder dialog).
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  }
+  runAgentPanel = new FloatingWidgetPanel();
+  runAgentPanel.mount(buildRunAgentSpec(), {
+    widthPct: 55,
+    heightPct: 60,
+    focusMarker: true,
+    title: `${editor.t("form.header_keyword")} :: ${editor.t("run_agent.title")}`,
+    closable: true,
+  });
+  editor.floatingPanelControl(runAgentPanel.id(), "fullscreen", 1);
+  editor.setEditorMode(RUN_AGENT_MODE);
+  // Land focus on the agent picker so ↑/↓ (with the list open) or Tab flow
+  // naturally from there.
+  runAgentPanel.setFocusKey("run-agent-agent");
+}
+
+// The dialog spec: agent picker, target picker, optional Auto-mode toggle and
+// Start-prompt field (agent-dependent), and the Cancel / Run buttons.
+function buildRunAgentSpec(): WidgetSpec {
+  const d = runAgentDialog!;
+  const procs = runAgentProcesses();
+  const proc = procs[d.agentIndex] ?? procs[0];
+  const children: WidgetSpec[] = [
+    dropdown(procs.map((p) => p.label), {
+      selectedIndex: d.agentIndex,
+      label: editor.t("run_agent.agent_label"),
+      labelWidth: 12,
+      key: "run-agent-agent",
+    }),
+    dropdown(
+      [editor.t("run_agent.target_current"), editor.t("run_agent.target_new")],
+      {
+        selectedIndex: d.target === "new" ? 1 : 0,
+        label: editor.t("run_agent.target_label"),
+        labelWidth: 12,
+        key: "run-agent-target",
+      },
+    ),
+  ];
+  // Auto mode: only for an agent that documents a bypass/auto flag.
+  if (proc.entry?.auto) {
+    children.push(
+      toggle(d.auto, editor.t("run_agent.auto_mode"), { key: "run-agent-auto" }),
+    );
+  }
+  // Start prompt: only for an agent that documents a prompt argument.
+  if (proc.entry?.prompt) {
+    children.push(
+      row(
+        raw([
+          styledRow([
+            {
+              text: editor.t("run_agent.prompt_label") + ": ",
+              style: { fg: "ui.menu_disabled_fg" },
+            },
+          ]),
+        ]),
+        text({
+          value: d.prompt.value,
+          cursorByte: d.prompt.cursor,
+          placeholder: editor.t("run_agent.prompt_placeholder"),
+          fieldWidth: 32,
+          key: "run-agent-prompt",
+        }),
+      ),
+    );
+  }
+  children.push(
+    wrappingRow(
+      button(editor.t("run_agent.btn_cancel"), { intent: "danger", key: "run-agent-cancel" }),
+      spacer(2),
+      button(editor.t("run_agent.btn_run"), { intent: "primary", key: "run-agent-run" }),
+    ),
+  );
+  return col(...children);
+}
+
+// Commit the dialog: launch the selected process against the chosen target,
+// remember the choice, and close.
+function submitRunAgent(): void {
+  const d = runAgentDialog;
+  if (!d) return;
+  const procs = runAgentProcesses();
+  const proc = procs[d.agentIndex] ?? procs[0];
+  const opts: RunAgentLaunchOpts = {
+    auto: !!proc.entry?.auto && d.auto,
+    prompt: proc.entry?.prompt ? d.prompt.value.trim() : "",
+    // Teach Fresh CLI on by default (matches the dialogue), where supported.
+    teachFreshCli: !!proc.entry?.systemPrompt,
+  };
+  const target = d.target;
+  const cmd = proc.cmd;
+  saveRunAgentLast(cmd, target, d.auto);
+  closeRunAgentDialog();
+  if (target === "current") {
+    void launchAgentInCurrentWorkspace(cmd, opts);
+  } else {
+    void launchAgentInNewWorkspace(cmd, opts);
+  }
+}
+
+// Tear down the dialog and hand keyboard focus back to the dock (if up).
+function closeRunAgentDialog(): void {
+  if (runAgentPanel) {
+    runAgentPanel.unmount();
+    runAgentPanel = null;
+  }
+  runAgentDialog = null;
+  editor.setEditorMode(null);
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    openPanel.setFocusKey("sessions");
+    refreshOpenDialog();
+  }
+}
+
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`
 // handles printable input outside this list.
@@ -8568,6 +8882,20 @@ const FOLDER_DIALOG_MODE_BINDINGS: [string, string][] = [
   ["C-Enter", "orchestrator_folder_submit"],
 ];
 editor.defineMode(CREATE_FOLDER_MODE, FOLDER_DIALOG_MODE_BINDINGS, true, true);
+
+// Run-Agent dialog: only Ctrl+Enter is bound (submit from anywhere). Plain
+// Enter, Tab, ↑/↓, Space and Esc all fall through to the panel's default
+// smart-key routing — so Enter opens/commits the focused dropdown or activates
+// the focused button, Tab cycles fields, and Esc closes an open dropdown (then,
+// with nothing open, fires the panel `cancel` event handled in `widget_event`).
+const RUN_AGENT_MODE_BINDINGS: [string, string][] = [
+  ["C-Enter", "orchestrator_run_agent_submit"],
+];
+editor.defineMode(RUN_AGENT_MODE, RUN_AGENT_MODE_BINDINGS, true, true);
+registerHandler("orchestrator_run_agent_submit", () => {
+  if (runAgentDialog) submitRunAgent();
+});
+
 registerHandler("orchestrator_folder_submit", () => {
   if (!createFolderDialog) return;
   // Enter submits from anywhere in the dialog — except on the Cancel
@@ -8860,6 +9188,62 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "folder-create") {
       submitCreateFolder();
+      return;
+    }
+    return;
+  }
+  // ---------------------------------------------------------------------
+  // "Run Agent…" dialog: agent picker, target picker, Auto toggle,
+  // Start-prompt field, Cancel / Run.
+  // ---------------------------------------------------------------------
+  if (runAgentPanel && runAgentDialog && e.panel_id === runAgentPanel.id()) {
+    const d = runAgentDialog;
+    if (e.event_type === "cancel") {
+      // Esc / click-outside: the host already unmounted the panel, so just
+      // drop our handle and refocus the dock.
+      runAgentPanel = null;
+      runAgentDialog = null;
+      editor.setEditorMode(null);
+      if (openPanel && dockMode) {
+        dockBlurred = false;
+        editor.floatingPanelControl(openPanel.id(), "focus", 0);
+        openPanel.setFocusKey("sessions");
+        refreshOpenDialog();
+      }
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "run-agent-agent") {
+      const idx = (e.payload as { index?: unknown })?.index;
+      if (typeof idx === "number") {
+        d.agentIndex = idx;
+        // Rebuild: the Auto toggle and Start-prompt field appear/disappear
+        // with the selected agent's capabilities.
+        runAgentPanel.update(buildRunAgentSpec());
+      }
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "run-agent-target") {
+      const idx = (e.payload as { index?: unknown })?.index;
+      if (typeof idx === "number") d.target = idx === 1 ? "new" : "current";
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "run-agent-prompt") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      if (typeof payload.value === "string") d.prompt.value = payload.value;
+      if (typeof payload.cursorByte === "number") d.prompt.cursor = payload.cursorByte;
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "run-agent-auto") {
+      const checked = (e.payload as { checked?: unknown })?.checked;
+      d.auto = typeof checked === "boolean" ? checked : !d.auto;
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "run-agent-cancel") {
+      closeRunAgentDialog();
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "run-agent-run") {
+      submitRunAgent();
       return;
     }
     return;
@@ -9948,6 +10332,20 @@ editor.registerCommand(
   "%cmd.move",
   "%cmd.move_desc",
   "orchestrator_move",
+  null,
+  { terminalBypass: true },
+);
+
+// "Run Agent…" — launch a terminal or agent from an existing session without
+// the full New-Workspace dialogue (see the Run-Agent section above). Named for
+// what it does — start a coding agent — with no "workspace"/"orchestrator" in
+// the label. `terminalBypass` keeps it reachable from a keyboard-focused
+// terminal pane, like the other orchestrator commands.
+registerHandler("orchestrator_run_agent", openRunAgentDialog);
+editor.registerCommand(
+  "%cmd.run_agent",
+  "%cmd.run_agent_desc",
+  "orchestrator_run_agent",
   null,
   { terminalBypass: true },
 );

@@ -4141,6 +4141,17 @@ pub enum PluginCommand {
         /// See `CreateTerminalOptions::title`.
         #[serde(default)]
         title: Option<String>,
+        /// Extra env vars for the spawned child, on top of the
+        /// inherited/activated env. See `CreateTerminalOptions::env`.
+        /// `None` adds nothing.
+        #[serde(default)]
+        env: Option<std::collections::HashMap<String, String>>,
+        /// Optional capability-token allowlist. When `Some`, the host
+        /// mints a token bound to the target window + these command ids
+        /// and injects `FRESH_CMD_TOKEN` / `FRESH_SESSION` into the
+        /// spawned child. See `CreateTerminalOptions::command_allowlist`.
+        #[serde(default)]
+        command_allowlist: Option<Vec<String>>,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -5113,6 +5124,24 @@ pub struct CreateTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub title: Option<String>,
+    /// Extra environment variables to set in the spawned terminal's
+    /// child process, on top of the inherited/activated env. Mirrors
+    /// `CreateWindowWithTerminalOptions::env`. `None` (the default)
+    /// adds nothing, so existing callers behave exactly as before.
+    #[serde(default)]
+    #[ts(optional)]
+    pub env: Option<std::collections::HashMap<String, String>>,
+    /// When `Some`, the host mints an unforgeable capability token
+    /// bound to the TARGET window (the active window, or `windowId`
+    /// when set) and this allowlist of command ids, and injects it
+    /// into the spawned terminal as `FRESH_CMD_TOKEN` (alongside
+    /// `FRESH_SESSION`). This lets an agent spawned into an *existing*
+    /// window drive exactly those commands against it — the same
+    /// capability a `createWindowWithTerminal` agent gets. `None` (the
+    /// default) mints no token and injects nothing.
+    #[serde(default, rename = "commandAllowlist")]
+    #[ts(optional, rename = "commandAllowlist")]
+    pub command_allowlist: Option<Vec<String>>,
 }
 
 /// Options for `createWindowWithTerminal` — the atomic
