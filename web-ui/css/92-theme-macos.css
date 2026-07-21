@@ -63,6 +63,15 @@
   body.macfam .mitem .lab{gap:3px}
   body.macfam .mitem .check{width:10px}
 
+  /* List/row hover: the shared --hover reads heavy and muddy over the light macOS
+     chrome; use a whisper of neutral tint instead (the accent stays reserved for
+     the actual selection). */
+  body.macfam .palette .prow:not(.sel):hover,
+  body.macfam .popup .popup-row:not(.sel):not(.disabled):hover,
+  body.macfam .settings-modal .set-cat:not(.sel):hover,
+  body.macfam .kbedit .kb-row:not(.sel):not(.kb-head):hover{
+    background:color-mix(in srgb,var(--fg) 7%,transparent)}
+
   /* ---- menu bar: a light unified toolbar beneath the title bar ---- */
   body.macfam .menubar{background:var(--shell);border-bottom:1px solid var(--hairline-strong)}
   body.macfam .menu{color:var(--fg);font-weight:500}
