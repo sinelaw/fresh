@@ -8737,63 +8737,93 @@ function mountRunAgentDialog(): void {
   runAgentPanel.setFocusKey("run-agent-agent");
 }
 
-// The dialog spec: agent picker, target picker, optional Auto-mode toggle and
-// Start-prompt field (agent-dependent), and the Cancel / Run buttons.
+// Shared label-column width for the form. Pads every label so the `:`
+// separators and value cells line up in a single column ("Auto mode" is the
+// longest label at 9 cols, so 11 leaves a two-space gutter before the colon).
+const RUN_AGENT_LABEL_WIDTH = 11;
+
+// A blank spacer row — one empty line — used to pad the top/bottom of the form
+// and separate the field groups, per the dialog layout.
+function runAgentBlankRow(): WidgetSpec {
+  return raw([styledRow([{ text: "" }])]);
+}
+
+// The dialog spec: a padded, single-column form — agent picker, target picker,
+// optional Auto-mode toggle (with a muted inline hint) and Start-prompt field
+// (both agent-dependent), then the centered Cancel / Run buttons. Every control
+// shares `RUN_AGENT_LABEL_WIDTH` so their `label :` columns and value cells
+// align; blank rows give the form vertical breathing room.
 function buildRunAgentSpec(): WidgetSpec {
   const d = runAgentDialog!;
   const procs = runAgentProcesses();
   const proc = procs[d.agentIndex] ?? procs[0];
+  const lw = RUN_AGENT_LABEL_WIDTH;
   const children: WidgetSpec[] = [
+    runAgentBlankRow(),
     dropdown(procs.map((p) => p.label), {
       selectedIndex: d.agentIndex,
       label: editor.t("run_agent.agent_label"),
-      labelWidth: 12,
+      labelWidth: lw,
       key: "run-agent-agent",
     }),
+    runAgentBlankRow(),
     dropdown(
       [editor.t("run_agent.target_current"), editor.t("run_agent.target_new")],
       {
         selectedIndex: d.target === "new" ? 1 : 0,
         label: editor.t("run_agent.target_label"),
-        labelWidth: 12,
+        labelWidth: lw,
         key: "run-agent-target",
       },
     ),
   ];
-  // Auto mode: only for an agent that documents a bypass/auto flag.
+  // Auto mode: only for an agent that documents a bypass/auto flag. Rendered
+  // form-style (`Auto mode : [v]`) so its chip aligns under the other value
+  // cells, with the rationale as a muted hint trailing the chip.
   if (proc.entry?.auto) {
     children.push(
-      toggle(d.auto, editor.t("run_agent.auto_mode"), { key: "run-agent-auto" }),
-    );
-  }
-  // Start prompt: only for an agent that documents a prompt argument.
-  if (proc.entry?.prompt) {
-    children.push(
+      runAgentBlankRow(),
       row(
+        toggle(d.auto, editor.t("run_agent.auto_label"), {
+          labelFirst: true,
+          labelWidth: lw,
+          key: "run-agent-auto",
+        }),
         raw([
           styledRow([
-            {
-              text: editor.t("run_agent.prompt_label") + ": ",
-              style: { fg: "ui.menu_disabled_fg" },
-            },
+            { text: " (" + editor.t("run_agent.auto_help") + ")", style: { fg: "ui.menu_disabled_fg" } },
           ]),
         ]),
-        text({
-          value: d.prompt.value,
-          cursorByte: d.prompt.cursor,
-          placeholder: editor.t("run_agent.prompt_placeholder"),
-          fieldWidth: 32,
-          key: "run-agent-prompt",
-        }),
       ),
     );
   }
+  // Start prompt: only for an agent that documents a prompt argument. Uses the
+  // text widget's own form label so its bracketed field aligns with the rest.
+  if (proc.entry?.prompt) {
+    children.push(
+      runAgentBlankRow(),
+      text({
+        value: d.prompt.value,
+        cursorByte: d.prompt.cursor,
+        placeholder: editor.t("run_agent.prompt_placeholder"),
+        label: editor.t("run_agent.prompt_label"),
+        labelWidth: lw,
+        fieldWidth: 26,
+        key: "run-agent-prompt",
+      }),
+    );
+  }
+  // Centered Cancel / Run group with a wide gutter, then bottom padding.
   children.push(
-    wrappingRow(
+    runAgentBlankRow(),
+    row(
+      flexSpacer(),
       button(editor.t("run_agent.btn_cancel"), { intent: "danger", key: "run-agent-cancel" }),
-      spacer(2),
+      spacer(6),
       button(editor.t("run_agent.btn_run"), { intent: "primary", key: "run-agent-run" }),
+      flexSpacer(),
     ),
+    runAgentBlankRow(),
   );
   return col(...children);
 }
