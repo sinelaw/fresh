@@ -167,6 +167,15 @@
   body.macfam .w-floatingModal.anchored .w-button.focus,
   body.macfam .w-floatingModal.anchored .w-button.sel,
   body.macfam .w-floatingModal.anchored .w-button.primary{box-shadow:none;outline:none}
+  /* The header row (workspace name / "create") and the footer hint ("Esc to
+     close") are `.w-raw` captions, not selectable rows — make them read as
+     chrome: small and muted, the header a semibold caption, the footer set off
+     by a hairline. Otherwise they look like plain disabled menu items. */
+  body.macfam .w-floatingModal.anchored .w-raw{font-size:11px;color:var(--muted);padding:1px 12px}
+  body.macfam .w-floatingModal.anchored .w-raw:first-child{
+    font-weight:600;padding:3px 12px 3px;letter-spacing:.02em}
+  body.macfam .w-floatingModal.anchored .w-raw:last-child{
+    padding-top:4px;margin-top:3px;border-top:1px solid var(--hairline)}
   body.macfam .w-floatingModal.anchored .w-button.primary,
   body.macfam .w-floatingModal.anchored .w-button.sel,
   body.macfam .w-floatingModal.anchored .w-button:hover{color:#fff}
@@ -188,7 +197,7 @@
      scope to :not(.on) so it doesn't out-specify the .on fill). */
   body.macfam .settings-modal .set-switch:not(.on),
   body.macfam .w-toggle:not(.on) .w-box{
-    background:color-mix(in srgb,var(--fg) 24%,transparent)}
+    background:color-mix(in srgb,var(--fg) 19%,transparent)}   /* light neutral, ~macOS #E9E9EA */
   body.macfam .settings-modal .set-switch.on{background:var(--ui-accent)}
   /* Switch shape — the base 26×14 with a 10px knob reads thin and the knob
      floats; macOS System Settings switches are a chunkier ~1.75:1 pill whose
