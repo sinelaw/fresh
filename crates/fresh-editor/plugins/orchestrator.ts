@@ -8725,6 +8725,9 @@ function mountRunAgentDialog(): void {
   runAgentPanel = new FloatingWidgetPanel();
   runAgentPanel.mount(buildRunAgentSpec(), {
     widthPct: 55,
+    // A generous cap; both frontends size to the form's real content (the TUI
+    // shrinks to fit, the web modal uses `height:auto`), so this only bounds
+    // the dialog on a very short terminal.
     heightPct: 60,
     focusMarker: true,
     title: `${editor.t("form.header_keyword")} :: ${editor.t("run_agent.title")}`,

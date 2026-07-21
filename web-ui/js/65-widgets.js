@@ -8,6 +8,19 @@
 // Concatenate a TextPropertyEntry's display text (segments preferred).
 function entryText(e){ return (e.segments&&e.segments.length)?e.segments.map(s=>s.text||"").join(""):(e.text||""); }
 
+// A fixed-width form-label cell ("Agent:") so a column of controls aligns.
+// The width (in ch) is the spec's `labelWidth` — the display-column budget the
+// TUI pads the label to — carried through instead of discarded, so the web can
+// build the same aligned grid. The stylesheet owns the actual look/alignment
+// per theme; trailing pad spaces are trimmed since the width is what aligns.
+function formLabel(text, labelWidth){
+  const l=document.createElement("span");
+  l.className="w-flabel";
+  l.textContent=(text||"").replace(/\s+$/,"")+":";
+  if(labelWidth>0) l.style.setProperty("--flw", labelWidth);
+  return l;
+}
+
 // Route a widget interaction. `ctx.kind` is "toolbar" (prompt toolbar, routed by
 // key) or "panel" (floating/dock, routed by the hit's IDENTITY — widgetKey +
 // eventType + payload — with the recorded hit's index as a legacy tiebreaker).
@@ -121,11 +134,19 @@ function widgetEl(spec, ctx){
     return el;
   }
   if(kind==="toggle"){
-    const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":""));
+    const el=div("w-toggle"+(spec.checked?" on":"")+(focused?" focus":"")+(spec.labelFirst?" labelfirst":""));
     // A sliding switch (CSS-drawn), matching the Settings UI toggles —
-    // not a unicode ☑/☐ glyph.
-    const box=document.createElement("span"); box.className="w-box"; el.appendChild(box);
-    const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
+    // not a unicode ☑/☐ glyph. `labelFirst` renders the form layout
+    // (`Auto mode : [switch]`) so the chip aligns under a column of controls;
+    // the default keeps the chip-first `[switch] label` layout.
+    const box=document.createElement("span"); box.className="w-box";
+    if(spec.labelFirst){
+      if(spec.label) el.appendChild(formLabel(spec.label, spec.labelWidth));
+      el.appendChild(box);
+    } else {
+      el.appendChild(box);
+      const lb=document.createElement("span"); lb.className="w-label"; lb.textContent=spec.label||""; el.appendChild(lb);
+    }
     if(spec.key) el.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); routeWidget(ctx,spec); };
     return el;
   }
@@ -159,7 +180,12 @@ function widgetEl(spec, ctx){
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const val=(inst&&inst.textValue!=null)?inst.textValue:(spec.value||"");
     const el=div("w-text"+(focused?" focus":""));
-    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    // A form-style field (`label` + `labelWidth`) keeps its label OUTSIDE the
+    // bordered field, in the shared label column, so the label doesn't get
+    // boxed into the input and the field aligns with the other controls. A
+    // plain labelled field (no width) keeps the legacy inline label.
+    const formField=spec.label&&spec.labelWidth>0;
+    if(spec.label&&!formField){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
     const multi=(spec.rows||1)>1;
     const input=document.createElement(multi?"textarea":"input");
     input.className="w-text-input";
@@ -204,6 +230,12 @@ function widgetEl(spec, ctx){
       });
       el.appendChild(dd);
     }
+    if(formField){
+      const rowEl=div("w-field-row");
+      rowEl.appendChild(formLabel(spec.label, spec.labelWidth));
+      rowEl.appendChild(el);
+      return rowEl;
+    }
     return el;
   }
   if(kind==="number"){
@@ -232,8 +264,11 @@ function widgetEl(spec, ctx){
     const inst=(ctx.instances&&spec.key)?ctx.instances[spec.key]:null;
     const selIdx=(inst&&inst.selectedIndex!=null)?inst.selectedIndex:(spec.selectedIndex||0);
     const open=inst?!!inst.dropdownOpen:!!spec.open;
-    const el=div("w-dropdown"+(focused?" focus":""));
-    if(spec.label){ const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    const el=div("w-dropdown"+(focused?" focus":"")+(spec.label&&spec.labelWidth>0?" wform":""));
+    if(spec.label){
+      if(spec.labelWidth>0) el.appendChild(formLabel(spec.label, spec.labelWidth));
+      else { const l=document.createElement("span"); l.className="w-text-label"; l.textContent=spec.label+": "; el.appendChild(l); }
+    }
     const pill=document.createElement("span"); pill.className="w-dd-pill";
     pill.textContent=((spec.options||[])[selIdx]??"—")+(open?" ▲":" ▾");
     pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_toggle",{}); };
@@ -730,22 +765,26 @@ function widgetSurfaceEls(s){
   }
   if(s.kind==="floatingModal"){
     // The host sizes the panel in whole terminal cells, but the DOM adds
-    // per-row gaps + padding a cell grid can't express, so a snug dialog
-    // (e.g. the New Folder dialog) would overflow its fixed height and clip
-    // its buttons under `overflow:auto`. Treat the host height as a minimum
-    // and let the modal grow to fit its content; nudge it up by half the
-    // overflow so it stays visually centered. An anchored popup instead
-    // stays pinned at its click cell — it grows downward, no recentering.
-    const want=el.style.height; el.style.minHeight=want; el.style.height="auto";
+    // per-row gaps + padding a cell grid can't express. `height:auto` sizes the
+    // modal to its real content so it never clips its buttons.
+    const want=parseFloat(el.style.height||"0");
     if(s.anchored){
-      // Content-sized in both axes (host cells can't express DOM padding);
-      // the host-clamped rect stays as the minimum so the popup never
-      // shrinks below its TUI footprint.
+      // Anchored popup (context menu): keep the host height as a floor and
+      // content-size the width; it stays pinned at its click cell, growing
+      // downward (no recentering).
+      el.style.minHeight=el.style.height; el.style.height="auto";
       el.style.minWidth=el.style.width; el.style.width="auto"; el.style.maxWidth="60vw";
-    } else requestAnimationFrame(()=>{
-      const grew=el.offsetHeight-parseFloat(want||"0");
-      if(grew>0) el.style.top=(parseFloat(el.style.top)-grew/2)+"px";
-    });
+    } else {
+      // Form dialog: size to content EXACTLY — no host-height floor — so it
+      // neither clips its buttons nor leaves dead space below them, then shift
+      // by half the delta vs the host-planned height so it stays centered
+      // whether the content came out taller OR shorter than the cell estimate.
+      el.style.height="auto";
+      requestAnimationFrame(()=>{
+        const delta=el.offsetHeight-want;
+        if(delta) el.style.top=(parseFloat(el.style.top)-delta/2)+"px";
+      });
+    }
   }
   const ctx={ kind:"panel", plugin:s.plugin, panelId:s.panelId, hits:s.hits, instances:s.instances, focusKey:s.focusKey };
   el.appendChild(widgetEl(s.spec, ctx));

@@ -49,6 +49,14 @@
   .w-text{display:flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:4px;padding:1px 6px;background:var(--bg)}
   .w-text.focus{outline:1px solid var(--accent)}
   .w-text-label{color:var(--muted)}
+  /* Form label column (honours the spec's labelWidth): a fixed-width cell so a
+     stack of labelled controls line up their value cells. `--flw` is the
+     display-column budget carried from the WidgetSpec; the field-row lays the
+     label beside its control. Themes own the alignment/colour. */
+  .w-flabel{flex:0 0 auto;box-sizing:border-box;width:calc(var(--flw,8)*1ch);color:var(--muted);white-space:nowrap}
+  .w-field-row{display:flex;align-items:center;gap:0;min-width:0}
+  .w-field-row .w-text{flex:1 1 auto;min-width:0}
+  .w-dropdown.wform,.w-toggle.labelfirst{gap:0}
   .w-list{display:flex;flex-direction:column;overflow:auto}
   .w-list-row{padding:1px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-list-row.sel{background:var(--menuhi);color:#fff}

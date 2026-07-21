@@ -281,3 +281,33 @@
   body.macfam .w-dock .w-divider{border-color:var(--hairline)}
   body.macfam .w-dock .w-hintbar,body.macfam .w-dock .fx-title{color:var(--muted)}
   body.macfam .w-dock .w-hint b{color:var(--ui-accent)}
+
+  /* ---- Plugin form dialogs (Run Agent &c.) → a native macOS sheet ----
+     Scoped to a non-anchored floating modal that is a plain form (no
+     `.w-section` fieldsets — that's the larger New Workspace dialog). Layout
+     lives here under .macfam so BOTH macOS variants share identical sizing;
+     only the colour tokens differ between light and dark. */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)){padding:0;border-radius:10px;overflow:hidden}
+  /* Header: centred title on a faintly-separated bar, close on the far right. */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-modal-titlebar{
+    position:relative;justify-content:center;padding:9px 14px;margin:0;
+    background:color-mix(in srgb,var(--fg) 4%,transparent);
+    border-bottom:1px solid var(--hairline)}
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-modal-title{
+    flex:0 1 auto;text-align:center;font-weight:590;font-size:.92em;color:var(--mac-title-fg)}
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-modal-close{
+    position:absolute;right:9px;top:50%;transform:translateY(-50%)}
+  /* Body padding (the form column). */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section))>.w-col{padding:14px 22px 16px;gap:4px}
+  /* Right-aligned label column (macOS form convention). */
+  body.macfam .w-flabel{text-align:right;padding-right:10px;color:var(--muted)}
+  /* Pop-up buttons: a real macOS pop-up (bevel + accent disclosure). */
+  body.macfam .w-floatingModal .w-dd-pill{
+    background:var(--mac-btn);border:1px solid var(--hairline-strong);color:var(--mac-btn-fg);
+    border-radius:6px;padding:2px 9px;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 1px 1px rgba(0,0,0,.10)}
+  body.macfam .w-floatingModal .w-dropdown.focus .w-dd-pill{
+    outline:none;border-color:var(--ui-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent) 30%,transparent)}
+  /* Keep the label-first toggle's label neutral (don't inherit the on-accent). */
+  body.macfam .w-toggle.labelfirst .w-flabel{color:var(--muted)}
+  /* Buttons: give the centred group room to breathe. */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-button{padding:4px 18px;border-radius:6px}
