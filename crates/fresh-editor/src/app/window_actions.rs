@@ -402,42 +402,15 @@ impl crate::app::Editor {
         // restore), distinct from a throwaway ephemeral build/exec shell.
         let restore_command = command.clone().unwrap_or_default();
 
-        // Assemble the extra env injected into the seeded terminal's child.
-        // Starts from the plugin-supplied `env` (empty when omitted). When a
-        // `command_allowlist` is present, mint a capability token bound to
-        // *this* new window plus that allowlist and advertise it as
-        // `FRESH_CMD_TOKEN` so a client running inside the terminal can drive
-        // exactly those commands against this window (and no other). Minting
-        // happens here — after the window id is known, before the PTY spawns —
-        // so the token is live by the time the child can read its env.
-        let mut terminal_env = env.unwrap_or_default();
-        // Advertise the running editor's own executable path so an agent in this
-        // workspace drives the EXACT same binary — its `--cmd` verbs and `--help`
-        // match this build, never some other `fresh` earlier on PATH. Injected
-        // here (not only in the terminal manager) so it reliably rides the agent
-        // session's env alongside FRESH_SESSION / FRESH_CMD_TOKEN, whatever the
-        // manager's own cwd/socket state.
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(exe) = exe.to_str() {
-                terminal_env.insert("FRESH_BIN".to_string(), exe.to_string());
-            }
-        }
-        if let Some(allowlist) = command_allowlist {
-            // A capability token is useless unless the client inside the
-            // terminal can also *find* this editor's control socket. Ensure the
-            // socket is listening (idempotent — already up in the common case,
-            // started here for run modes that skip the init-time bind) and
-            // advertise BOTH the session and the token together. FRESH_SESSION
-            // is injected here, applied after the manager's own best-effort
-            // attempt, so a token never ships without a session to talk to.
-            if let Ok(session_id) = crate::server::local_control::start() {
-                terminal_env.insert("FRESH_SESSION".to_string(), session_id.to_string());
-            }
-            let token = crate::server::command_access::mint(
-                crate::server::command_access::Grant::new(Some(id.0), allowlist),
-            );
-            terminal_env.insert("FRESH_CMD_TOKEN".to_string(), token);
-        }
+        // Assemble the extra env injected into the seeded terminal's child:
+        // `FRESH_BIN` always, plus (when `command_allowlist` is present) a
+        // capability token bound to *this* new window + that allowlist, so a
+        // client in the terminal can drive exactly those commands against this
+        // window and no other. Minting happens here — after the window id is
+        // known, before the PTY spawns — so the token is live by the time the
+        // child reads its env. See `terminal::agent_command_env`.
+        let terminal_env =
+            crate::app::terminal::agent_command_env(id, env, command_allowlist);
 
         let spawn_result = {
             let target = self

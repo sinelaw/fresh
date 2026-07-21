@@ -103,6 +103,51 @@ pub struct PluginTerminalSpec {
     pub env: HashMap<String, String>,
 }
 
+/// Assemble the extra env for a terminal that hosts an agent which may drive
+/// the editor from its shell.
+///
+/// Always advertises `FRESH_BIN` — this editor's own executable path — so a
+/// nested `fresh` or a Fresh-CLI-taught agent invokes the EXACT build running
+/// here, never some other `fresh` earlier on PATH (its `--cmd` verbs then match
+/// this build). This duplicates what the terminal manager already injects
+/// universally, on purpose: it guarantees `FRESH_BIN` rides the child's env
+/// regardless of the manager's own cwd/socket state.
+///
+/// When `command_allowlist` is `Some`, mints an unforgeable capability token
+/// bound to `window` plus that allowlist and injects it as `FRESH_CMD_TOKEN`,
+/// alongside `FRESH_SESSION` — ensuring the control socket is listening first
+/// so a token never ships without a session to talk to. Token minting is
+/// deliberately caller-driven (opt-in via the allowlist), never blanket: a
+/// standing editor-driving capability belongs only in terminals a caller
+/// explicitly grants it to, not in every spawned subprocess.
+///
+/// Shared by `create_window_with_terminal` (agents born in a new window) and
+/// `handle_create_terminal` (agents spawned into an existing window) so both
+/// paths mint and inject identically. `base_env` seeds the map (plugin-supplied
+/// env, empty when omitted).
+pub(crate) fn agent_command_env(
+    window: fresh_core::WindowId,
+    base_env: Option<HashMap<String, String>>,
+    command_allowlist: Option<Vec<String>>,
+) -> HashMap<String, String> {
+    let mut env = base_env.unwrap_or_default();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe) = exe.to_str() {
+            env.insert("FRESH_BIN".to_string(), exe.to_string());
+        }
+    }
+    if let Some(allowlist) = command_allowlist {
+        if let Ok(session_id) = crate::server::local_control::start() {
+            env.insert("FRESH_SESSION".to_string(), session_id.to_string());
+        }
+        let token = crate::server::command_access::mint(
+            crate::server::command_access::Grant::new(Some(window.0), allowlist),
+        );
+        env.insert("FRESH_CMD_TOKEN".to_string(), token);
+    }
+    env
+}
+
 impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
     /// terminal in this window, applying the `terminal.shell` config

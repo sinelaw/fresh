@@ -3871,30 +3871,14 @@ impl Editor {
             None
         };
 
-        // Assemble the extra env injected into the spawned terminal's child.
-        // Starts from the plugin-supplied `env` (empty when omitted), then
-        // mirrors `create_window_with_terminal`: advertise this editor's own
-        // binary as `FRESH_BIN`, and — when a `command_allowlist` is given —
-        // mint a capability token bound to the TARGET window plus that
-        // allowlist and inject it as `FRESH_CMD_TOKEN` (with `FRESH_SESSION`
-        // so the client inside the terminal can find the control socket).
-        // This is what lets an agent spawned into an *existing* window drive
-        // the editor exactly like one born via `createWindowWithTerminal`.
-        let mut terminal_env = env.unwrap_or_default();
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(exe) = exe.to_str() {
-                terminal_env.insert("FRESH_BIN".to_string(), exe.to_string());
-            }
-        }
-        if let Some(allowlist) = command_allowlist {
-            if let Ok(session_id) = crate::server::local_control::start() {
-                terminal_env.insert("FRESH_SESSION".to_string(), session_id.to_string());
-            }
-            let token = crate::server::command_access::mint(
-                crate::server::command_access::Grant::new(Some(target_id.0), allowlist),
-            );
-            terminal_env.insert("FRESH_CMD_TOKEN".to_string(), token);
-        }
+        // Assemble the extra env injected into the spawned terminal's child:
+        // `FRESH_BIN` plus, when `command_allowlist` is given, a capability
+        // token bound to the TARGET window + that allowlist (with
+        // `FRESH_SESSION`). This is what lets an agent spawned into an
+        // *existing* window drive the editor exactly like one born via
+        // `createWindowWithTerminal` — both paths share the same helper.
+        let terminal_env =
+            crate::app::terminal::agent_command_env(target_id, env, command_allowlist);
 
         let result = {
             let target = self
