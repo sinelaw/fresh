@@ -107,14 +107,14 @@
      Settings, dialogs) use a more translucent vibrancy. Both get the macOS
      shadow + a hairline edge. */
   body.macfam .dropdown,body.macfam .popup,body.macfam .ctxmenu{
-    background:color-mix(in srgb,var(--bg2) 97%,transparent);color:var(--fg);
-    -webkit-backdrop-filter:blur(28px) saturate(1.6);backdrop-filter:blur(28px) saturate(1.6);
+    background:color-mix(in srgb,var(--bg2) 84%,transparent);color:var(--fg);
+    -webkit-backdrop-filter:blur(50px) saturate(1.9);backdrop-filter:blur(50px) saturate(1.9);
     border:1px solid var(--hairline-strong)}
   body.macfam .palette,body.macfam .settings-modal,body.macfam .kbedit,
   body.macfam .trustdialog,body.macfam .auxmodal,
   body.macfam .widget-surface.w-floatingModal,body.macfam .palette.centered{
     background:var(--mac-panel);color:var(--fg);
-    -webkit-backdrop-filter:blur(32px) saturate(1.7);backdrop-filter:blur(32px) saturate(1.7);
+    -webkit-backdrop-filter:blur(60px) saturate(2);backdrop-filter:blur(60px) saturate(2);
     border:1px solid var(--hairline-strong)}
 
   /* Selection language, macOS-accurate:
@@ -155,9 +155,9 @@
      near-opaque menu material and BORDERLESS rows with an inset highlight,
      instead of a stack of bordered push-buttons. */
   body.macfam .widget-surface.w-floatingModal.anchored{
-    background:color-mix(in srgb,var(--bg2) 92%,transparent);border:1px solid var(--hairline-strong);
+    background:color-mix(in srgb,var(--bg2) 84%,transparent);border:1px solid var(--hairline-strong);
     border-radius:8px;   /* was the base 12px — too bubbly for a menu; match .ctxmenu */
-    -webkit-backdrop-filter:blur(28px) saturate(1.6);backdrop-filter:blur(28px) saturate(1.6)}
+    -webkit-backdrop-filter:blur(50px) saturate(1.9);backdrop-filter:blur(50px) saturate(1.9)}
   body.macfam .w-floatingModal.anchored .w-button{
     background:transparent;border:none;border-radius:5px;padding:3px 12px;
     position:relative;z-index:0;color:var(--fg)}
@@ -171,11 +171,14 @@
      close") are `.w-raw` captions, not selectable rows — make them read as
      chrome: small and muted, the header a semibold caption, the footer set off
      by a hairline. Otherwise they look like plain disabled menu items. */
-  body.macfam .w-floatingModal.anchored .w-raw{font-size:11px;color:var(--muted);padding:1px 12px}
+  body.macfam .w-floatingModal.anchored .w-raw{color:var(--muted);padding:1px 12px}
+  /* Header (the context name): near item size so it doesn't read as a jarringly
+     smaller line — differentiated by weight + muted colour, not by shrinking. */
   body.macfam .w-floatingModal.anchored .w-raw:first-child{
-    font-weight:600;padding:3px 12px 3px;letter-spacing:.02em}
+    font-size:13px;font-weight:600;padding:3px 12px 4px}
+  /* Footer hint: a genuine secondary hint, so a step smaller, set off by a rule. */
   body.macfam .w-floatingModal.anchored .w-raw:last-child{
-    padding-top:4px;margin-top:3px;border-top:1px solid var(--hairline)}
+    font-size:11px;padding:4px 12px 2px;margin-top:3px;border-top:1px solid var(--hairline)}
   body.macfam .w-floatingModal.anchored .w-button.primary,
   body.macfam .w-floatingModal.anchored .w-button.sel,
   body.macfam .w-floatingModal.anchored .w-button:hover{color:#fff}

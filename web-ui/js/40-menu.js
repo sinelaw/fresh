@@ -123,7 +123,8 @@ function menuDropdownEls(reg){
   const out=[];
   if(reg.menuOpen==null || !reg.dropdown) return out;
   const comp=menuCompression(reg);
-  for(const grp of dropdownPanels(reg, comp)) out.push(grp);   // solid backing panels
+  const xshift={};   // depth -> cells the panel was nudged right (submenu seam fix)
+  for(const grp of dropdownPanels(reg, comp, xshift)) out.push(grp);   // solid backing panels
   const path=reg.submenuPath||[];
   // top-level items: highlighted = menuHighlight when no submenu is deeper,
   // otherwise the parent of the open submenu (path[0]).
@@ -137,7 +138,15 @@ function menuDropdownEls(reg){
     const list=submenuItems(reg, su.depth);
     const deepest = su.depth===path.length;
     const hi = deepest ? su.index===reg.menuHighlight : su.index===path[su.depth];
-    const el=itemRow(list[su.index], su.rect, hi, comp, su.depth); if(el) out.push(el);
+    const el=itemRow(list[su.index], su.rect, hi, comp, su.depth); if(el){
+      // Move the item right with its nudged panel (see dropdownPanels) so the
+      // 1-cell left inset — and thus the label rhythm and highlight pill — match
+      // the top-level menu. The right edge is preserved (width shrinks by the
+      // same amount); the click cell (rectCell) is untouched.
+      const sh=(xshift[su.depth]||0)*CW;
+      if(sh>0){ el.style.left=(px(su.rect.x,CW)+sh)+"px"; el.style.width=Math.max(0,px(su.rect.w,CW)-sh)+"px"; }
+      out.push(el);
+    }
   }
   return out;
 }
@@ -147,7 +156,7 @@ function menuDropdownEls(reg){
 // `submenuBoxes`) — the same footprint the TUI border occupies, so the panel
 // sits flush under the menu bar instead of leaving the border row as a gap.
 // Item-union fallback kept for scenes predating the recorded boxes.
-function dropdownPanels(reg, comp){
+function dropdownPanels(reg, comp, shiftsOut){
   const panels=[];
   const union=(rects)=>{
     if(!rects.length) return null;
@@ -180,6 +189,11 @@ function dropdownPanels(reg, comp){
     if(b.depth>=1 && prevRight!=null && b.rect.x<prevRight){
       const shift=prevRight-b.rect.x;
       b.rect.x=prevRight; b.rect.w=Math.max(0, b.rect.w-shift);
+      // Record the shift so the item rects (placed separately in
+      // menuDropdownEls) can move with the panel — otherwise the submenu items
+      // lose the 1-cell inset the panel had, so their labels and the accent
+      // highlight would hug (and overhang) the panel's left edge.
+      if(shiftsOut) shiftsOut[b.depth]=shift;
     }
     prevRight=b.rect.x + b.rect.w;
     const p=div("dropdown"+(b.depth>=1?" submenu":"")); place(p,b.rect);
