@@ -157,9 +157,13 @@ document.addEventListener("mousemove",e=>{
     return;
   }
   if(onChrome(e)) return;
-  if(lastMoveCell&&c.col===lastMoveCell.col&&c.row===lastMoveCell.row) return;
-  lastMoveCell=c;
-  sendMouse({kind:"moved",col:c.col,row:c.row});
+  // Carry the modifiers on `moved` too (not just down/drag): Ctrl+hover over a
+  // file path in the embedded terminal underlines it, and the server only
+  // computes that highlight when CONTROL is held. Ctrl is part of the de-dupe
+  // key so pressing/releasing it re-sends even within the same cell.
+  if(lastMoveCell&&c.col===lastMoveCell.col&&c.row===lastMoveCell.row&&lastMoveCell.ctrl===e.ctrlKey) return;
+  lastMoveCell={col:c.col,row:c.row,ctrl:e.ctrlKey};
+  sendMouse({kind:"moved",col:c.col,row:c.row,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey});
 });
 document.addEventListener("mouseup",e=>{ dragging=false; if(onChrome(e)) return; const c=cellAt(e); sendMouse({kind:"up",button:btn(e),col:c.col,row:c.row}); });
 document.addEventListener("contextmenu",e=>e.preventDefault());

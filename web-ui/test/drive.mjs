@@ -861,6 +861,82 @@ check('picking Cosmos from the menu restores the bezel shell', await page.evalua
   window.fresh.webTheme === 'cosmos' && document.getElementById('device').classList.contains('on')));
 await page.screenshot({ path: `${SHOTS}/34-theme-cosmos.png` });
 
+console.log('\n[embedded terminal: Ctrl+hover carries the modifier and underlines a path link]');
+// Regression: the frontend used to send `moved` events WITHOUT the ctrl flag,
+// so Ctrl+hover over a file path in the embedded terminal never underlined it
+// (the server only computes the link highlight while CONTROL is held), even
+// though Ctrl+click — whose `down` event DID carry ctrl — worked. Open a real
+// terminal, print a path that resolves at the server's cwd (repo root), and
+// Ctrl-move over it.
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+await page.request.post(URL + '/action', { data: { action: 'open_terminal' } });
+await page.waitForFunction(() => window.fresh.scene.regions.panes.some(p =>
+  p.cells.some(r => r.map(x => x.t).join('').match(/[#$]/))), { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(500);
+// Capture outgoing WS mouse messages so we can see what the frontend emits.
+await page.evaluate(() => {
+  window.__mouse = [];
+  const orig = WebSocket.prototype.send;
+  WebSocket.prototype.send = function (data) {
+    try { const o = JSON.parse(data); if (o && o.type === 'mouse') window.__mouse.push(o); } catch {}
+    return orig.call(this, data);
+  };
+});
+// Create a real file and print its ABSOLUTE path, so the link resolves
+// regardless of the terminal's cwd.
+const PROBE = '/tmp/fresh_link_probe.txt';
+await page.keyboard.type(`touch ${PROBE} && echo "see ${PROBE}:1:1 here"`);
+await page.keyboard.press('Enter');
+await page.waitForFunction(() => window.fresh.scene.regions.panes.some(p =>
+  p.cells.some(r => r.map(x => x.t).join('').includes('see /tmp/fresh_link_probe.txt:1:1 here'))), { timeout: 6000 }).catch(() => {});
+await page.waitForTimeout(300);
+// Locate the OUTPUT line's path (last occurrence; the first is the typed echo).
+{
+  const NEEDLE = 'fresh_link_probe.txt:1:1';
+  // The web terminal grid is run-encoded (each cell is a styled run, not one
+  // char), so a cell's column is the sum of the preceding runs' text lengths.
+  // Locate the needle by accumulating run widths, prefer the OUTPUT line (last
+  // occurrence), and report whether the runs covering it are underlined.
+  const findLink = s => {
+    let best = null;
+    for (const pane of s.regions.panes) {
+      for (let r = 0; r < pane.cells.length; r++) {
+        const row = pane.cells[r];
+        let text = '', starts = [], col = 0;
+        for (const cell of row) { starts.push(col); text += cell.t; col += cell.t.length; }
+        const i = text.indexOf(NEEDLE);
+        if (i < 0) continue;
+        const underlinedAt = ci => {
+          for (let k = 0; k < row.length; k++) { if (ci >= starts[k] && ci < starts[k] + row[k].t.length) return !!row[k].u; }
+          return false;
+        };
+        best = { pane, r, col: pane.content.x + i, row: pane.content.y + r,
+                 underlined: [0, 2, 4, NEEDLE.length - 1].every(k => underlinedAt(i + k)) };
+      }
+    }
+    return best;
+  };
+  const tm2 = await page.evaluate(() => window.fresh.metrics);
+  const h = findLink(await scene(page));
+  if (h) {
+    await page.keyboard.down('Control');
+    await page.mouse.move(gx(tm2, h.col + 2 + 0.5), gy(tm2, h.row + 0.5));
+    await page.mouse.move(gx(tm2, h.col + 3 + 0.5), gy(tm2, h.row + 0.5)); // cross a cell so the de-dupe re-sends
+    await page.waitForTimeout(400);
+    const movedCtrl = await page.evaluate(() => (window.__mouse || []).some(m => m.kind === 'moved' && m.ctrl === true));
+    check('Ctrl+move over the terminal emits a `moved` event carrying ctrl:true', movedCtrl,
+      JSON.stringify(await page.evaluate(() => (window.__mouse || []).filter(m => m.kind === 'moved').slice(-2))));
+    // Observe rendered output: the path span is underlined in the scene cells.
+    const u = findLink(await scene(page));
+    check('Ctrl+hover underlines the resolvable path in the terminal (scene cells)', !!(u && u.underlined),
+      JSON.stringify(u && { row: u.row, col: u.col, underlined: u.underlined }));
+    await page.keyboard.up('Control');
+    await page.screenshot({ path: `${SHOTS}/35-terminal-ctrl-hover.png` });
+  } else {
+    check('embedded terminal printed the path link', false, `path "${NEEDLE}" not found in terminal cells`);
+  }
+}
+
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
