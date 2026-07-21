@@ -5656,20 +5656,23 @@ function rebuildFormFocusCycle(): void {
   if (form.backend === "local") {
     const worktreeEnabled = form.projectPathIsGit !== false;
     const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
-    cycle.push("project_path", "name", "cmd");
-    // Agent-specific controls sit between the command and the Advanced fold,
+    // The agent selector is a single stop after Session Name. The Agent Command
+    // field moved under the Advanced fold (a power-user override the dropdown
+    // fills), so it's a Tab stop there, not in the body.
+    cycle.push("project_path", "name", "agent_dropdown");
+    // Agent-specific controls sit between the selector and the Advanced fold,
     // matching `agentOptionsFields`' render order (Auto mode, then Start prompt).
-    // "Teach Fresh CLI" moved under Advanced, so it's a Tab stop there, not here.
     const agent = activeAgentEntry();
     if (agent?.auto) cycle.push("auto_mode");
     if (agent?.prompt) cycle.push("start_prompt");
     // The "Advanced…" header is always a Tab stop; its folded fields join the
-    // cycle only while the section is expanded, in render order: Teach Fresh
-    // CLI, then worktree, then "Checkout branch" (a stop on any git path — it
-    // drives the in-place checkout when no worktree is created), then "New
-    // branch name" (only when cutting a worktree).
+    // cycle only while expanded, in render order: Agent Command, Teach Fresh
+    // CLI, worktree, "Checkout branch" (a stop on any git path — it drives the
+    // in-place checkout when no worktree is created), then "New branch name"
+    // (only when cutting a worktree).
     cycle.push("advanced_toggle");
     if (form.advancedExpanded) {
+      cycle.push("cmd");
       if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
       if (worktreeEnabled) cycle.push("worktree");
       if (worktreeEnabled) cycle.push("branch");
@@ -5686,10 +5689,10 @@ function rebuildFormFocusCycle(): void {
     }
     cycle.push("name", "cmd");
   }
-  // The agent selector is a single dropdown Tab stop just before the Agent
-  // Command field (←/→ or ↑/↓ cycles the options), present for every backend.
+  // On remote backends the agent selector sits just before the (still-inline)
+  // Agent Command field. Local already placed `agent_dropdown` explicitly.
   const cmdIdx = cycle.indexOf("cmd");
-  if (cmdIdx >= 0) {
+  if (cmdIdx >= 0 && !cycle.includes("agent_dropdown")) {
     cycle.splice(cmdIdx, 0, "agent_dropdown");
   }
   cycle.push("create-visit", "create-bg", "cancel");
@@ -6084,7 +6087,10 @@ function activeAgentPresetKey(): string {
 function applyAgentPreset(p: AgentPreset): void {
   if (!form) return;
   if (p.custom) {
-    // Hand focus to the free-text field so the user can type a command.
+    // Hand focus to the free-text command field so the user can type. On local
+    // that field lives under Advanced, so expand the fold first; otherwise the
+    // `cmd` key isn't in the focus cycle and the setFocusKey would be dropped.
+    if (form.backend === "local") form.advancedExpanded = true;
     // Focus must be set *after* the re-render — re-mounting the spec resets
     // host focus, which would otherwise clobber the setFocusKey.
     renderForm();
@@ -6553,6 +6559,27 @@ function agentPresetRow(): WidgetSpec {
 // remote backends don't route through `resolveAgentLaunch` — and adapt to the
 // resolved agent: a bare terminal / unknown command shows neither, opencode
 // shows only the prompt (no auto flag), etc.
+// "Agent Command" text input — the raw command the workspace launches. The
+// agent dropdown fills it, so it's a power-user override: folded into Advanced
+// on the local backend, shown inline on remote backends (no Advanced fold).
+function cmdField(): WidgetSpec {
+  return labeledSection({
+    label: editor.t("form.agent_command"),
+    child: text({
+      value: form!.cmd.value,
+      cursorByte: form!.cmd.cursor,
+      // Clearing the field falls back to the backend default: a bare local
+      // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
+      // spawn the remote login shell. The placeholder names that default.
+      placeholder: form!.backend === "ssh"
+        ? editor.t("form.cmd_placeholder_ssh")
+        : editor.t("form.agent_terminal"),
+      fullWidth: true,
+      key: "cmd",
+    }),
+  });
+}
+
 function agentOptionsFields(): WidgetSpec[] {
   if (!form || form.backend !== "local") return [];
   const entry = activeAgentEntry();
@@ -6646,6 +6673,10 @@ function advancedSection(): WidgetSpec[] {
   const worktreeEnabled = form.projectPathIsGit !== false;
   const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
   const fields: WidgetSpec[] = [header];
+
+  // "Agent Command" — the raw launch command. The agent dropdown fills it, so
+  // it lives here as a power-user override rather than cluttering the body.
+  fields.push(cmdField());
 
   // "Teach Fresh CLI" — enabled by default, but folded away here so it doesn't
   // clutter the common case. Only meaningful for an agent with a systemPrompt
@@ -7017,21 +7048,9 @@ function buildFormSpec(): WidgetSpec {
       }),
     }),
     agentPresetRow(),
-    labeledSection({
-      label: editor.t("form.agent_command"),
-      child: text({
-        value: form.cmd.value,
-        cursorByte: form.cmd.cursor,
-        // Clearing the field falls back to the backend default: a bare local
-        // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
-        // spawn the remote login shell. The placeholder names that default.
-        placeholder: form.backend === "ssh"
-          ? editor.t("form.cmd_placeholder_ssh")
-          : editor.t("form.agent_terminal"),
-        fullWidth: true,
-        key: "cmd",
-      }),
-    }),
+    // On remote backends the command box stays inline (no Advanced fold to hold
+    // it); on local it moves into Advanced (appended in `advancedSection`).
+    ...(form.backend === "local" ? [] : [cmdField()]),
     // Agent-specific controls (Auto mode / Start prompt), adaptive to the
     // resolved agent. Empty for a bare terminal / unknown command.
     ...agentOptionsFields(),
