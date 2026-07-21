@@ -863,6 +863,68 @@ await page.screenshot({ path: `${SHOTS}/34-theme-cosmos.png` });
 
 check('no JS page errors', errs.length === 0, errs.join(' | '));
 
+// ---------------------------------------------------------------------------
+// Dropdown pop-over placement, macOS skin. The macOS vibrancy modal uses
+// `backdrop-filter`, which makes it the containing block for any
+// `position:fixed` descendant — so a naive viewport-anchored option list
+// lands offset by the modal's origin (off in a corner, effectively
+// invisible). The widget Dropdown must compensate for that so its list opens
+// directly under the pill; the Settings `.set-dd` must drop BELOW its pill,
+// not overlap/precede it.
+console.log('\n[dropdown pop-overs anchor under their trigger (macOS skin)]');
+await page.keyboard.press('Escape'); await page.waitForTimeout(120);
+// Skin is read from localStorage at boot; single-client bridge → /reset first,
+// then set the skin and reload so the vibrancy modal is in play.
+await page.request.post(URL + '/reset', { data: {} });
+await page.evaluate(() => { try { localStorage.setItem('fresh.webtheme', 'macos'); } catch (_) {} });
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForFunction(() => window.fresh && window.fresh.wsOpen && window.fresh.scene && window.fresh.scene.regions.panes.length > 0, null, { timeout: 20000 });
+await page.waitForTimeout(400);
+check('macOS skin active (vibrancy modal in play)',
+  await page.evaluate(() => document.body.classList.contains('theme-macos')));
+
+// (a) Orchestrator "Run Agent" widget dropdown, mounted inside the
+// backdrop-filter modal — the case that regressed.
+await page.request.post(URL + '/action', { data: { action: 'orchestrator_run_agent' } });
+await page.waitForFunction(() => document.querySelectorAll('.w-dropdown .w-dd-pill').length > 0, null, { timeout: 8000 }).catch(() => {});
+const raBox = await page.locator('.w-dropdown .w-dd-pill').first().boundingBox();
+if (raBox) {
+  await page.mouse.click(raBox.x + raBox.width / 2, raBox.y + raBox.height / 2);
+  await page.waitForFunction(() => !!document.querySelector('.w-dd.w-dd-floating'), null, { timeout: 5000 }).catch(() => {});
+  const w = await page.evaluate(() => {
+    const list = document.querySelector('.w-dd.w-dd-floating'), pill = document.querySelector('.w-dd-pill');
+    if (!list || !pill) return null;
+    const lr = list.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+    return { dx: Math.round(lr.left - pr.left), dy: Math.round(lr.top - pr.bottom) };
+  });
+  await page.screenshot({ path: `${SHOTS}/34-macos-widget-dropdown.png` });
+  check('Run-Agent widget dropdown opens directly under its pill (not offset by the modal)',
+    !!w && Math.abs(w.dx) <= 4 && w.dy >= -2 && w.dy <= 8, JSON.stringify(w));
+}
+await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+
+// (b) Settings `.set-dd` must drop BELOW its `.set-pill` (skin-independent,
+// but exercised here in the same macOS session).
+await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
+await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
+await page.waitForTimeout(300);
+const spBox = await page.locator('.settings-modal .set-pill').first().boundingBox();
+if (spBox) {
+  await page.mouse.click(spBox.x + spBox.width / 2, spBox.y + spBox.height / 2);
+  await page.waitForFunction(() => !!document.querySelector('.settings-modal .set-dd'), null, { timeout: 5000 }).catch(() => {});
+  const sd = await page.evaluate(() => {
+    const dd = document.querySelector('.settings-modal .set-dd'), pill = document.querySelector('.settings-modal .set-pill');
+    if (!dd || !pill) return null;
+    const dr = dd.getBoundingClientRect(), pr = pill.getBoundingClientRect();
+    return { ddTop: Math.round(dr.top), pillBottom: Math.round(pr.bottom), dx: Math.round(dr.left - pr.left) };
+  });
+  await page.screenshot({ path: `${SHOTS}/35-macos-settings-dropdown.png` });
+  check('Settings dropdown list drops BELOW its pill (not overlapping/above it)',
+    !!sd && sd.ddTop >= sd.pillBottom - 2 && Math.abs(sd.dx) <= 6, JSON.stringify(sd));
+}
+await page.keyboard.press('Escape'); await page.waitForTimeout(120);
+
 console.log('\n[touch pan/scroll on mobile (hasTouch context)]');
 // The bridge is single-client: close the desktop page (frees /ws) before
 // opening a touch context against the same server.

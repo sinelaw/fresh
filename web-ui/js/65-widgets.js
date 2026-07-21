@@ -289,12 +289,31 @@ function widgetEl(spec, ctx){
       requestAnimationFrame(()=>{
         if(!pill.isConnected) return;
         const r=pill.getBoundingClientRect();
-        dd.style.left=r.left+"px";
+        // `position:fixed` normally resolves against the viewport, BUT an
+        // ancestor with transform/filter/backdrop-filter/perspective becomes
+        // the fixed element's containing block instead — the macOS skin's
+        // vibrancy modal (`backdrop-filter:blur(...)`) does exactly this, so a
+        // naive viewport-relative left/top lands the list offset by the
+        // modal's origin (way off, effectively invisible). Subtract the
+        // containing block's origin so the popover sits under the pill in any
+        // skin. No such ancestor ⇒ (0,0), i.e. plain viewport coordinates.
+        let cbLeft=0, cbTop=0;
+        for(let a=dd.parentElement; a; a=a.parentElement){
+          const cs=getComputedStyle(a);
+          if(cs.transform!=="none"||cs.perspective!=="none"
+             ||(cs.filter&&cs.filter!=="none")
+             ||(cs.backdropFilter&&cs.backdropFilter!=="none")
+             ||(cs.webkitBackdropFilter&&cs.webkitBackdropFilter!=="none")
+             ||/transform|filter|perspective/.test(cs.willChange||"")){
+            const cb=a.getBoundingClientRect(); cbLeft=cb.left; cbTop=cb.top; break;
+          }
+        }
+        dd.style.left=(r.left-cbLeft)+"px";
         dd.style.minWidth=r.width+"px";
         const h=dd.offsetHeight;
         let top=r.bottom+2;
         if(top+h>window.innerHeight && r.top-h-2>0) top=r.top-h-2;
-        dd.style.top=top+"px";
+        dd.style.top=(top-cbTop)+"px";
       });
     }
     return el;

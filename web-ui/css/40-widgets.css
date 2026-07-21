@@ -99,7 +99,7 @@
   .settings-modal .set-item-head{display:flex;align-items:center;gap:12px}
   .settings-modal .set-name{flex:1;min-width:0} .settings-modal .set-desc{color:var(--muted);white-space:normal;margin-top:1px}
   .settings-modal .set-ctl-wrap{flex:0 0 auto;max-width:50%;text-align:right;display:flex;justify-content:flex-end;align-items:center}
-  .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px}
+  .settings-modal .set-ctl{display:inline-flex;align-items:center;gap:4px;position:relative}
   .settings-modal .set-ctl.set-dim{color:var(--muted);font-style:italic}
   /* toggle switch */
   .settings-modal .set-switch{width:26px;height:14px;border-radius:8px;background:#555;position:relative;display:inline-block;transition:background .1s}
@@ -111,7 +111,7 @@
   /* dropdown pill + text field */
   .settings-modal .set-pill{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg)}
   .settings-modal .set-field{padding:1px 8px;border:1px solid #5a5a5a;border-radius:4px;background:var(--bg);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .settings-modal .set-dd{position:absolute;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:3}
+  .settings-modal .set-dd{position:absolute;top:100%;left:0;background:var(--bg2);border:1px solid #5a5a5a;border-radius:4px;max-height:200px;overflow:auto;margin-top:2px;z-index:3}
   .settings-modal .set-dd-row{padding:1px 10px} .settings-modal .set-dd-row.sel{background:var(--accent);color:#fff}
   /* composite list controls */
   .settings-modal .set-item-block .set-list{margin:4px 0 2px 8px;border:1px solid var(--border);border-radius:6px;overflow:hidden}
