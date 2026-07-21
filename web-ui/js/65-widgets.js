@@ -830,14 +830,14 @@ function widgetSurfaceEls(s){
     out.push(scrim);
   }
   const el=div("region widget-surface w-"+s.kind+(s.anchored?" anchored":"")); place(el,s.rect);
-  if(s.kind==="dock" && !isMobile() && s.rect.x===0 && webTheme==="cosmos"){
-    // COSMOS shell: the dock keeps its cell rect for hit-testing (widget
+  if(s.kind==="dock" && !isMobile() && s.rect.x===0 && shellTheme()){
+    // Shell themes: the dock keeps its cell rect for hit-testing (widget
     // clicks forward LOGICAL cells, never pixel-derived ones), but its
     // visual card is inset from the device — a gap on the right where the
     // bezel's left rail lands — and stretched to the bezel's vertical
-    // extents so it reads as its own floating glass panel. Cosmos-only: the
-    // macOS / compact themes have no bezel, so their dock keeps its plain
-    // cell rect (a flush full-height sidebar).
+    // extents so it reads as its own floating panel. Shell-only: the macOS /
+    // compact themes have no bezel, so their dock keeps its plain cell rect
+    // (a flush full-height sidebar).
     el.style.width=Math.max(140, px(s.rect.w,CW)-SHELL.side-SHELL.gap)+"px";
     el.style.top=(px(s.rect.y,CH)-SHELL.top+4)+"px";
     el.style.height=(px(s.rect.h,CH)+SHELL.top+SHELL.bot-8)+"px";
