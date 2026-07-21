@@ -4830,7 +4830,11 @@ impl Editor {
                 } else {
                     anchor_screen_y.saturating_sub(h)
                 };
-                let x = inner.x.min(area.x + area.width.saturating_sub(w));
+                // Anchor the box under the trigger's `[` (its display column
+                // within the row) rather than at the panel's left edge, then
+                // clamp so it stays inside the frame.
+                let anchor_screen_x = inner.x.saturating_add(dp.anchor_col as u16);
+                let x = anchor_screen_x.min(area.x + area.width.saturating_sub(w));
                 let y = y.clamp(area.y, area.y + area.height.saturating_sub(h));
                 let popup_rect = ratatui::layout::Rect {
                     x,

@@ -4266,6 +4266,16 @@ impl Editor {
             } else {
                 false
             }
+        } else if hit_kind == "dropdown" && hit_event == "dropdown_toggle" {
+            // Clicking the `[value ▼]` trigger toggles the option list open.
+            // Focus moved to this dropdown just above, so `focused_dropdown_open`
+            // reads *this* widget's state. Without this the click only focused
+            // the dropdown and fired the event to the plugin, never opening the
+            // list (the shared `deliver_widget_hit` path handled this; this
+            // TUI-native click path did not).
+            let now_open = !self.focused_dropdown_open(&panel_key);
+            self.set_dropdown_open(&panel_key, &hit_key, now_open);
+            true
         } else {
             false
         };

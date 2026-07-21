@@ -1312,6 +1312,117 @@ fn agent_dropdown_opens_as_floating_popover() {
     }
 }
 
+/// Clicking the *closed* `Agent: [<value> ▼]` trigger opens the option
+/// pop-over. The trigger is not focused when the form opens (Project Path
+/// is), so the click must BOTH move focus to the dropdown AND toggle its
+/// list open. Regression: the TUI floating-panel click path only focused
+/// the dropdown and fired the event to the plugin — it never called
+/// `set_dropdown_open`, so a click left the list closed (the pop-over only
+/// opened via the keyboard `Enter` path). A second click on the now-open,
+/// focused trigger must close it again.
+#[test]
+fn clicking_agent_dropdown_trigger_toggles_popover() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Distinctive preset names: the closed trigger shows exactly one (the
+    // selected value), the open pop-over lists several.
+    let names = ["terminal", "claude", "codex", "opencode"];
+    let count_names = |screen: &str| names.iter().filter(|n| screen.contains(**n)).count();
+    let closed_before = count_names(&harness.screen_to_string());
+
+    // Locate the closed trigger by its selected value and click it. `terminal`
+    // is the default Agent value and (with Advanced collapsed) appears only in
+    // the dropdown trigger, so its cell is inside the `[terminal ▼]` button.
+    let (col, row) = harness
+        .find_text_on_screen("terminal")
+        .expect("the Agent dropdown trigger `[terminal ▼]` must be visible");
+    harness.mouse_click(col, row).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let open_screen = harness.screen_to_string();
+    let open_count = count_names(&open_screen);
+    assert!(
+        open_count >= 3 && open_count > closed_before,
+        "clicking the Agent dropdown trigger must open the option pop-over \
+         (many presets visible at once); before={closed_before}, open={open_count}. \
+         Screen:\n{open_screen}",
+    );
+
+    // Click the trigger again (now focused + open) — it must close.
+    let (col2, row2) = harness
+        .find_text_on_screen("terminal")
+        .expect("the Agent trigger stays visible while open");
+    harness.mouse_click(col2, row2).unwrap();
+    harness.tick_and_render().unwrap();
+    assert!(
+        count_names(&harness.screen_to_string()) < open_count,
+        "a second click on the open trigger must close the pop-over. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// The open Agent pop-over box anchors its top-left corner directly under
+/// the trigger's `[` bracket, not at the panel's left content edge.
+/// Regression: the host drew the floating box at `inner.x` (panel left)
+/// regardless of the trigger's column, so a labeled `Agent: [terminal ▼]`
+/// dropdown showed its option list shifted far to the left of the button.
+#[test]
+fn agent_dropdown_popover_anchored_under_trigger() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+    focus_agent_preset_stop(&mut harness);
+
+    // Open the pop-over. The trigger arrow flips `▼` → `▲` and the option
+    // list surfaces below.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("opencode"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let lines: Vec<&str> = screen.lines().collect();
+
+    // The focused `▸ Agent: [<value> ▲]` trigger row. Its `[` marks the
+    // button's start column (all leading glyphs — `│`, `▸`, spaces, letters
+    // — are one display column wide, so a char count == display column).
+    let trigger_row = lines
+        .iter()
+        .position(|l| l.contains("Agent:") && l.contains('▲'))
+        .expect("the open Agent trigger row (`▸ Agent: [.. ▲]`) must be on screen");
+    let bracket_col = lines[trigger_row]
+        .chars()
+        .position(|c| c == '[')
+        .expect("the trigger row must contain the `[` button bracket");
+
+    // The dialog's own left border is the first `│` on the trigger row; the
+    // pop-over must NOT anchor there (that was the bug).
+    let dialog_left = lines[trigger_row]
+        .chars()
+        .position(|c| c == '│')
+        .expect("the dialog left border `│` must be on the trigger row");
+    assert!(
+        bracket_col > dialog_left + 2,
+        "precondition: the labeled trigger's `[` ({bracket_col}) sits well right \
+         of the dialog's left border ({dialog_left}).",
+    );
+
+    // The pop-over opens one row below the trigger; its top-left corner `┌`
+    // must land exactly on the trigger's `[` column.
+    let corner = harness.get_cell(bracket_col as u16, (trigger_row + 1) as u16);
+    assert_eq!(
+        corner.as_deref(),
+        Some("┌"),
+        "the pop-over's top-left corner `┌` must sit under the trigger's `[` \
+         (col {bracket_col}, row {}); found {:?}. The box must anchor under the \
+         button, not at the panel's left edge.\nScreen:\n{screen}",
+        trigger_row + 1,
+        corner,
+    );
+}
+
 /// Picking a coding agent surfaces its per-agent controls — an "Auto
 /// mode" checkbox and a "Start prompt" box — which are hidden for the
 /// bare `terminal` default. Stepping ←/→ off `terminal` onto the first

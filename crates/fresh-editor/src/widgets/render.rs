@@ -203,13 +203,17 @@ pub struct RenderOutput {
 /// floating pop-over. `anchor_row` is the 0-based row of the `[value ▼]`
 /// trigger within the panel's inner area (the host adds `inner.y` to get
 /// the screen row and draws the box one row below, flipping above when
-/// there's no room). `options`/`selected`/`scroll` mirror the inline
+/// there's no room). `anchor_col` is the 0-based **display column** of the
+/// trigger's `[` bracket within the row (the host adds `inner.x` to get the
+/// screen column), so the box drops directly under the button instead of at
+/// the panel's left edge. `options`/`selected`/`scroll` mirror the inline
 /// list's model so the box renders and hit-tests identically — just at
 /// screen coordinates instead of panel-clipped ones.
 #[derive(Debug, Clone)]
 pub struct DropdownPopup {
     pub widget_key: String,
     pub anchor_row: u32,
+    pub anchor_col: u32,
     pub options: Vec<String>,
     pub selected: usize,
     pub scroll: usize,
@@ -1436,9 +1440,21 @@ fn collect_dropdown(
     // areas are registered by the host draw pass, not here (they live
     // outside the panel's buffer rows).
     if open {
+        // Anchor column = the display width of the row text before the
+        // button's `[`, so the pop-over drops directly under the value cell
+        // rather than at the panel's left content edge. `button_range.0` is a
+        // byte offset into `entry.text`; measure its display width (the focus
+        // marker `▸ ` is 4 bytes but 2 columns, so byte length would misalign).
+        use crate::primitives::display_width::str_width;
+        let anchor_col = entry
+            .text
+            .get(..button_range.0)
+            .map(|prefix| str_width(prefix) as u32)
+            .unwrap_or(0);
         out.dropdown_popups.push(DropdownPopup {
             widget_key,
             anchor_row: 0,
+            anchor_col,
             options: options.to_vec(),
             selected: cur as usize,
             scroll: scroll_offset,
