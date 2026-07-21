@@ -313,6 +313,43 @@ fn ctrl_click_on_nonexistent_path_is_inert() {
     feed_output_until_visible(&mut harness, terminal_id, output, "does/not/exist.rs");
 }
 
+/// The real Claude-Code scenario: a full-screen mouse-driven TUI (alt screen +
+/// all-motion tracking + SGR) rendering a file reference in its `Tool(path:line)`
+/// form. Ctrl+Click on it opens the file — the parenthesised path is detected
+/// despite the `Update(` prefix and trailing `)`, and the click isn't forwarded
+/// to the program.
+#[test]
+fn ctrl_click_opens_parenthesized_tool_call_path_in_tui() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::write(
+        tmp.path().join("src/main.rs"),
+        "line one\nline two TARGET\nline three\n",
+    )
+    .unwrap();
+
+    let mut harness = match harness_or_skip(100, 24, tmp.path().to_path_buf()) {
+        Some(h) => h,
+        None => return,
+    };
+
+    // Alt screen (1049) + all-motion tracking (1003) + SGR (1006), then a
+    // tool-call line as Claude Code renders it.
+    open_terminal_with_output(
+        &mut harness,
+        b"\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[H  Update(src/main.rs:2:6)\n",
+        "src/main.rs:2:6",
+    );
+
+    // Click inside the parenthesised path.
+    let (col, row) = find_on_screen(&harness, "src/main.rs:2:6").expect("path on screen");
+    ctrl_left_click(&mut harness, col + 2, row);
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("line two TARGET");
+    harness.assert_screen_contains("Ln 2");
+}
+
 /// A program that enabled mouse reporting (DECSET 1000/1006 — a "raw mode" TUI
 /// that grabbed the mouse) must not steal Ctrl+Click: the click opens the path
 /// link instead of being forwarded into the program's stdin. Before the fix,

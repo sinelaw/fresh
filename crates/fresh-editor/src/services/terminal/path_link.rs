@@ -75,6 +75,25 @@ pub fn detect_link_at(line: &str, col: usize) -> Option<DetectedLink> {
         end += 1;
     }
 
+    // Narrow to a parenthesised path when the token wraps one — e.g. Claude
+    // Code's `Read(src/main.rs)` / `Update(src/foo.rs:12)`, or a bare
+    // `(src/main.rs:12)`. Without this the leading prefix (`Read(`) or the
+    // trailing `)` glues onto the path and it never resolves. Only narrow when
+    // the parenthesised content is itself path-like, so a `name(line,col)`
+    // location suffix (e.g. `Program.cs(34,12)`) keeps its meaning and is parsed
+    // by `split_location_suffix` below instead.
+    if let Some(lp) = (start..end).find(|&i| chars[i] == '(') {
+        if let Some(rp) = (lp + 1..end).rev().find(|&i| chars[i] == ')') {
+            if lp + 1 < rp {
+                let inner: String = chars[lp + 1..rp].iter().collect();
+                if parenthesized_is_path(&inner) {
+                    start = lp + 1;
+                    end = rp;
+                }
+            }
+        }
+    }
+
     // Peel leading wrappers (quotes/brackets) off the front.
     while start < end && is_opener(chars[start]) {
         start += 1;
@@ -210,6 +229,22 @@ fn rfind_digit_run(chars: &[char], end: usize) -> usize {
         i -= 1;
     }
     i
+}
+
+/// Heuristic for the content inside a `(...)`: is it a *path* (so the token is
+/// `prefix(path)` / `(path)`, e.g. Claude Code's `Read(src/main.rs:12)`), rather
+/// than a numeric `(line,col)` / `(line)` location suffix (e.g.
+/// `Program.cs(34,12)`)?
+///
+/// Path-like: contains a separator or `~`, or a dotted name with a letter
+/// (`main.rs`). Deliberately rejects pure-numeric content (`34`, `34,12`) and
+/// dotted numbers (`1.5`) so a real location suffix isn't mistaken for a path.
+fn parenthesized_is_path(inner: &str) -> bool {
+    let inner = inner.trim();
+    inner.contains('/')
+        || inner.contains('\\')
+        || inner.contains('~')
+        || (inner.contains('.') && inner.chars().any(|c| c.is_alphabetic()))
 }
 
 /// Heuristic: does this token look like a file path rather than, say, a bare
@@ -367,5 +402,54 @@ mod tests {
         let line = "x.rs";
         let got = detect_link_at(line, 999).unwrap();
         assert_eq!(got.path, "x.rs");
+    }
+
+    /// Claude Code's tool-call rendering `Read(path)`: the `Read(` prefix must
+    /// not glue onto the path — the parenthesised path is what resolves.
+    /// (ASCII-only so char offsets equal byte offsets for the range slice.)
+    #[test]
+    fn tool_call_parenthesized_path() {
+        let line = "- Read(src/main.rs)";
+        // Click inside the path (col 10) and, separately, on the `Read` prefix
+        // (col 3) — both resolve to the parenthesised path.
+        for col in [10, 3] {
+            let got = detect_link_at(line, col).unwrap();
+            assert_eq!(got.path, "src/main.rs", "col {col}");
+            assert_eq!(got.line, None);
+            assert_eq!(&line[got.range], "src/main.rs");
+        }
+    }
+
+    /// `Tool(path:line:col)`: the location suffix inside the parens is parsed
+    /// and the trailing `)` doesn't block it.
+    #[test]
+    fn tool_call_parenthesized_path_with_location() {
+        let line = "Update(crates/app/src/foo.rs:12:3)";
+        let got = detect_link_at(line, 20).unwrap();
+        assert_eq!(got.path, "crates/app/src/foo.rs");
+        assert_eq!(got.line, Some(12));
+        assert_eq!(got.column, Some(3));
+        assert_eq!(&line[got.range], "crates/app/src/foo.rs:12:3");
+    }
+
+    /// A bare `(path:line)` — a filename wrapped in parens with a line ref.
+    #[test]
+    fn bare_parenthesized_path_with_line() {
+        let line = "see (src/main.rs:2) now";
+        let got = detect_link_at(line, 6).unwrap();
+        assert_eq!(got.path, "src/main.rs");
+        assert_eq!(got.line, Some(2));
+        assert_eq!(&line[got.range], "src/main.rs:2");
+    }
+
+    /// The `name(line,col)` location form must NOT be reinterpreted as a
+    /// parenthesised path (the inner `34,12` is numeric, not path-like).
+    #[test]
+    fn numeric_paren_suffix_not_treated_as_inner_path() {
+        let line = "Program.cs(34,12): warning";
+        let got = detect_link_at(line, 3).unwrap();
+        assert_eq!(got.path, "Program.cs");
+        assert_eq!(got.line, Some(34));
+        assert_eq!(got.column, Some(12));
     }
 }
