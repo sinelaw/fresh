@@ -1079,7 +1079,7 @@ export class Finder<T> {
     if (!entry.location) return;
 
     try {
-      const content = await this.editor.readFile(entry.location.file);
+      const content = await this.editor.readFile(this.editor.authorityPath(entry.location.file));
       if (!content) return;
       const lines = content.split("\n");
 

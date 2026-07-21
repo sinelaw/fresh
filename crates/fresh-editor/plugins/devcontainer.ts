@@ -191,26 +191,26 @@ function findConfig(): boolean {
 
   // Priority 1: .devcontainer/devcontainer.json
   const primary = editor.pathJoin(cwd, ".devcontainer", "devcontainer.json");
-  const primaryContent = editor.readFile(primary);
+  const primaryContent = editor.readFile(editor.authorityPath(primary));
   if (primaryContent !== null) {
     if (tryParse(primary, primaryContent)) return true;
   }
 
   // Priority 2: .devcontainer.json
   const secondary = editor.pathJoin(cwd, ".devcontainer.json");
-  const secondaryContent = editor.readFile(secondary);
+  const secondaryContent = editor.readFile(editor.authorityPath(secondary));
   if (secondaryContent !== null) {
     if (tryParse(secondary, secondaryContent)) return true;
   }
 
   // Priority 3: .devcontainer/<subfolder>/devcontainer.json
   const dcDir = editor.pathJoin(cwd, ".devcontainer");
-  if (editor.fileExists(dcDir)) {
-    const entries = editor.readDir(dcDir);
+  if (editor.fileExists(editor.authorityPath(dcDir))) {
+    const entries = editor.readDir(editor.authorityPath(dcDir));
     for (const entry of entries) {
       if (entry.is_dir) {
         const subConfig = editor.pathJoin(dcDir, entry.name, "devcontainer.json");
-        const subContent = editor.readFile(subConfig);
+        const subContent = editor.readFile(editor.authorityPath(subConfig));
         if (subContent !== null) {
           if (tryParse(subConfig, subContent)) return true;
         }
@@ -1843,7 +1843,7 @@ async function runDevcontainerUp(extraArgs: string[]): Promise<void> {
     // On failure the log file holds the stderr trace — surface its
     // last non-empty line as a human-readable status blurb. This
     // is purely cosmetic; exit_code drove the branch.
-    const logText = editor.readFile(logPath) ?? "";
+    const logText = editor.readFile(editor.authorityPath(logPath)) ?? "";
     const errText = extractLastNonEmptyLine(logText)
       ?? `exit ${result.exit_code}`;
     enterFailedAttach(errText);
@@ -1912,10 +1912,10 @@ async function prepareBuildLogFile(cwd: string): Promise<string | null> {
     return null;
   }
   const cacheIgnore = `${cacheDir}/.gitignore`;
-  if (editor.readFile(cacheIgnore) === null) {
+  if (editor.readFile(editor.authorityPath(cacheIgnore)) === null) {
     // writeFile failure is non-fatal — worst case the user sees
     // `.fresh-cache/` in `git status` once.
-    editor.writeFile(cacheIgnore, "*\n");
+    editor.writeFile(editor.authorityPath(cacheIgnore), "*\n");
   }
   // `toISOString()` → "2026-04-21T12:34:56.789Z"; strip the ms+Z
   // and swap separators that are awkward in filenames on some
@@ -2211,7 +2211,7 @@ async function devcontainer_show_build_logs(): Promise<void> {
     editor.setStatus(editor.t("status.no_build_log"));
     return;
   }
-  if (editor.readFile(path) === null) {
+  if (editor.readFile(editor.authorityPath(path)) === null) {
     editor.setStatus(editor.t("status.build_log_missing"));
     return;
   }
@@ -2301,13 +2301,13 @@ function devcontainer_scaffold_config(): void {
   // Respect an existing config — always a safer default than
   // overwriting. The user can call `devcontainer_open_config` if they
   // just meant to edit it.
-  if (editor.fileExists(configFile)) {
+  if (editor.fileExists(editor.authorityPath(configFile))) {
     editor.setStatus(editor.t("status.scaffold_already_exists"));
     editor.openFile(configFile, null, null);
     return;
   }
 
-  if (!editor.createDir(dcDir)) {
+  if (!editor.createDir(editor.authorityPath(dcDir))) {
     editor.setStatus(editor.t("status.scaffold_failed"));
     return;
   }
@@ -2323,7 +2323,7 @@ function devcontainer_scaffold_config(): void {
       2,
     ) + "\n";
 
-  if (!editor.writeFile(configFile, template)) {
+  if (!editor.writeFile(editor.authorityPath(configFile), template)) {
     editor.setStatus(editor.t("status.scaffold_failed"));
     return;
   }

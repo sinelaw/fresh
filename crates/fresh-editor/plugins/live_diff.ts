@@ -269,7 +269,7 @@ async function loadBranchRef(filePath: string, ref: string): Promise<string | nu
 }
 
 function loadDiskRef(filePath: string): string | null {
-  return editor.readFile(filePath);
+  return editor.readFile(editor.authorityPath(filePath));
 }
 
 async function resolveDefaultBranch(filePath: string): Promise<string> {

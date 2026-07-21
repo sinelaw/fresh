@@ -179,7 +179,7 @@ async function navigateToStep(stepIndex: number): Promise<void> {
   if (!step) return;
 
   // Check if file exists (fileExists is sync, not async)
-  const fileExists = editor.fileExists(step.file_path);
+  const fileExists = editor.fileExists(editor.authorityPath(step.file_path));
 
   if (!fileExists) {
     // Show error in popup but allow navigation to continue
@@ -228,7 +228,7 @@ async function navigateToStep(stepIndex: number): Promise<void> {
 async function loadTour(manifestPath: string): Promise<void> {
   try {
     // Read and parse manifest
-    const content = editor.readFile(manifestPath);
+    const content = editor.readFile(editor.authorityPath(manifestPath));
     if (!content) {
       editor.error("Failed to read tour file: " + manifestPath);
       return;

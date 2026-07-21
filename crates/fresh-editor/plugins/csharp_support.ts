@@ -107,7 +107,7 @@ function findProjectRoot(startPath: string): string | null {
   while (depth < maxDepth) {
     // Check if this directory contains a .csproj or .sln file
     try {
-      const entries = editor.readDir(currentDir);
+      const entries = editor.readDir(editor.authorityPath(currentDir));
       for (const entry of entries) {
         if (entry.is_file) {
           if (entry.name.endsWith(".csproj") || entry.name.endsWith(".sln")) {

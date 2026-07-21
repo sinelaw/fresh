@@ -84,7 +84,7 @@ interface Detected {
 
 function fileExists(p: string): boolean {
   try {
-    return editor.fileExists(p);
+    return editor.fileExists(editor.authorityPath(p));
   } catch (_e) {
     return false;
   }

@@ -192,6 +192,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // `editor.localPath` / `editor.windowPath`.
         "LocalPath" => Some(LOCAL_PATH_DECL.to_string()),
         "WindowPath" => Some(WINDOW_PATH_DECL.to_string()),
+        "AuthorityPath" => Some(AUTHORITY_PATH_DECL.to_string()),
 
         _ => None,
     }
@@ -205,6 +206,10 @@ const LOCAL_PATH_DECL: &str = r#"type LocalPath = { kind: "local"; value: string
 /// `editor.windowPath(windowId, ...)`.
 const WINDOW_PATH_DECL: &str =
     r#"type WindowPath = { kind: "authority"; window: number; value: string };"#;
+
+/// A path that resolves on the active window's authority filesystem, stated
+/// explicitly. Built via `editor.authorityPath(...)`.
+const AUTHORITY_PATH_DECL: &str = r#"type AuthorityPath = { kind: "authority"; value: string };"#;
 
 /// Hand-written declaration for `AuthorityPayload` and its helpers.
 /// See the doc comment on the match arm for why this isn't ts-rs.

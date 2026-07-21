@@ -1245,7 +1245,7 @@ async function start_merge_conflict() : Promise<void> {
   let content: string;
   if (catFileResult.exit_code !== 0) {
     editor.debug(`Merge: git show :0: failed, reading working tree file`);
-    const fileContent = await editor.readFile(info.path);
+    const fileContent = await editor.readFile(editor.authorityPath(info.path));
     if (!fileContent) {
       editor.setStatus(editor.t("status.failed_read"));
       return;
@@ -1253,7 +1253,7 @@ async function start_merge_conflict() : Promise<void> {
     content = fileContent;
   } else {
     // The staged version shouldn't have conflict markers, use working tree
-    const fileContent = await editor.readFile(info.path);
+    const fileContent = await editor.readFile(editor.authorityPath(info.path));
     if (!fileContent) {
       editor.setStatus(editor.t("status.failed_read"));
       return;

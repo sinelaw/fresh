@@ -70,7 +70,7 @@ async function cachePathFor(module: string): Promise<string> {
   const root = version
     ? `${editor.getDataDir()}/slang-builtin/${version}`
     : `${editor.getTempDir()}/fresh-slang-builtin`;
-  editor.createDir(root); // stdoutTo won't create parent dirs
+  editor.createDir(editor.localPath(root)); // stdoutTo won't create parent dirs
   return `${root}/${module}.slang`;
 }
 
@@ -105,7 +105,7 @@ editor.on("lsp_open_external_uri", async (data: LspOpenExternalUriData) => {
 
   const path = await cachePathFor(module);
 
-  if (!editor.fileExists(path)) {
+  if (!editor.fileExists(editor.localPath(path))) {
     editor.setStatus(`slang-lsp: loading builtin module '${module}'…`);
     const res = await editor.spawnProcess(
       "slangd",
@@ -113,7 +113,7 @@ editor.on("lsp_open_external_uri", async (data: LspOpenExternalUriData) => {
       undefined,
       path // stdoutTo: write the dump straight to the cache file
     );
-    if (res.exit_code !== 0 || !editor.fileExists(path)) {
+    if (res.exit_code !== 0 || !editor.fileExists(editor.localPath(path))) {
       editor.setStatus(
         `slang-lsp: failed to load builtin module '${module}' (exit ${res.exit_code})`
       );

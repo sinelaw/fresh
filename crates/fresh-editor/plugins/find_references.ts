@@ -65,7 +65,7 @@ async function loadLineContent(
       lines = cached;
     } else {
       try {
-        const content = await editor.readFile(ref.file);
+        const content = await editor.readFile(editor.authorityPath(ref.file));
         lines = content ? content.split("\n") : [];
       } catch {
         lines = [];

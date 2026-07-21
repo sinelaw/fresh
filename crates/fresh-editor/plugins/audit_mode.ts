@@ -498,7 +498,7 @@ function persistReview(): void {
     if (!path) return;
     const dir = reviewStorageDirFor(state.repo.root);
     if (dir) {
-        try { editor.createDir(dir); } catch {}
+        try { editor.createDir(editor.localPath(dir)); } catch {}
     }
     const payload: PersistedReview = {
         version: REVIEW_STORAGE_VERSION,
@@ -509,7 +509,7 @@ function persistReview(): void {
         updated_at: new Date().toISOString(),
     };
     try {
-        editor.writeFile(path, JSON.stringify(payload, null, 2));
+        editor.writeFile(editor.localPath(path), JSON.stringify(payload, null, 2));
     } catch {}
 }
 
@@ -518,9 +518,9 @@ function loadPersistedReview(repoRoot: string, reviewKey: string): PersistedRevi
     if (!repoRoot) return null;
     const path = reviewStoragePathFor(repoRoot, reviewKey);
     if (!path) return null;
-    if (!editor.fileExists(path)) return null;
+    if (!editor.fileExists(editor.localPath(path))) return null;
     try {
-        const raw = editor.readFile(path);
+        const raw = editor.readFile(editor.localPath(path));
         if (!raw) return null;
         const parsed = JSON.parse(raw) as PersistedReview;
         if (!parsed || typeof parsed !== 'object') return null;
@@ -2989,7 +2989,7 @@ function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: numbe
 async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> {
     const tmpDir = editor.getTempDir();
     const patchPath = editor.pathJoin(tmpDir, `fresh-review-${Date.now()}.patch`);
-    editor.writeFile(patchPath, patch);
+    editor.writeFile(editor.localPath(patchPath), patch);
     const cwd = gitCwd();
     // Validate first
     const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
@@ -3810,7 +3810,7 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
         if (show.exit_code === 0) oldContent = show.stdout;
     }
     if (file.status !== 'D') {
-        const read = await editor.readFile(absPath);
+        const read = await editor.readFile(editor.authorityPath(absPath));
         if (read !== null) newContent = read;
     }
     return { oldContent, newContent, absPath };
@@ -4022,7 +4022,7 @@ async function review_drill_down() {
     if (selectedFile.status === 'D') {
         newContent = "";
     } else {
-        const readResult = await editor.readFile(absoluteFilePath);
+        const readResult = await editor.readFile(editor.authorityPath(absoluteFilePath));
         if (readResult === null) {
             editor.setStatus(editor.t("status.failed_new_version"));
             return;
@@ -5251,7 +5251,7 @@ async function review_export_session() {
     }
 
     const filePath = editor.pathJoin(reviewDir, "session.md");
-    await editor.writeFile(filePath, md);
+    await editor.writeFile(editor.authorityPath(filePath), md);
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_session", review_export_session);
@@ -5275,7 +5275,7 @@ async function review_export_json() {
     };
 
     const filePath = editor.pathJoin(reviewDir, "session.json");
-    await editor.writeFile(filePath, JSON.stringify(session, null, 2));
+    await editor.writeFile(editor.authorityPath(filePath), JSON.stringify(session, null, 2));
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_json", review_export_json);
@@ -5915,7 +5915,7 @@ async function side_by_side_diff_current_file() {
     }
 
     // Read new file content (use absolute path for readFile)
-    const newContent = await editor.readFile(absolutePath);
+    const newContent = await editor.readFile(editor.authorityPath(absolutePath));
     if (newContent === null) {
         editor.setStatus(editor.t("status.failed_new_version"));
         return;

@@ -1672,6 +1672,10 @@ type ReplaceResult = {
 	*/
 	bufferId: number;
 };
+type AuthorityPath = {
+	kind: "authority";
+	value: string;
+};
 type AuthorityFilesystem = {
 	kind: "local";
 };
@@ -2533,42 +2537,42 @@ interface EditorAPI {
 	* Check if a file exists on the path's filesystem (a window's authority,
 	* or the local host for a `LocalPath`).
 	*/
-	fileExists(path: string | LocalPath | WindowPath): boolean;
+	fileExists(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
 	* Read file contents from the path's filesystem.
 	*/
-	readFile(path: string | LocalPath | WindowPath): string | null;
+	readFile(path: string | LocalPath | WindowPath | AuthorityPath): string | null;
 	/**
 	* Write file contents to the path's filesystem. Parent directories are
 	* created as needed.
 	*/
-	writeFile(path: string | LocalPath | WindowPath, content: string): boolean;
+	writeFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
 	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
-	readDir(path: string | LocalPath | WindowPath): DirEntry[];
+	readDir(path: string | LocalPath | WindowPath | AuthorityPath): DirEntry[];
 	/**
 	* Create a directory (and all parent directories) recursively on the
 	* path's filesystem. Returns true if the directory was created or already
 	* exists.
 	*/
-	createDir(path: string | LocalPath | WindowPath): boolean;
+	createDir(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
 	* Permanently remove a file or directory on the path's filesystem
 	* (recursively for directories). For safety, the path must be under the OS
 	* temp directory or the Fresh config directory. Returns true on success.
 	*/
-	removePath(path: string | LocalPath | WindowPath): boolean;
+	removePath(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
 	* Rename/move a file or directory. Both paths must target the same
 	* filesystem (a cross-backend move is rejected). Returns true on success.
 	*/
-	renamePath(from: string | LocalPath | WindowPath, to: string | LocalPath | WindowPath): boolean;
+	renamePath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
 	* Copy a file or directory recursively to a new location. Both paths must
 	* target the same filesystem. Returns true on success.
 	*/
-	copyPath(from: string | LocalPath | WindowPath, to: string | LocalPath | WindowPath): boolean;
+	copyPath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
 	* Construct a `LocalPath` — a path that always resolves on the local
 	* editor host, regardless of the active window's authority. Use for
@@ -2580,6 +2584,13 @@ interface EditorAPI {
 	* authority filesystem, regardless of which window is focused.
 	*/
 	windowPath(windowId: number, path: string): WindowPath;
+	/**
+	* Construct an `AuthorityPath` — the active window's authority filesystem,
+	* stated explicitly. Routes identically to passing a bare string, but is
+	* self-documenting: bundled plugins use it so bare strings are reserved as
+	* the backward-compatible default for external plugins.
+	*/
+	authorityPath(path: string): AuthorityPath;
 	/**
 	* Get the OS temporary directory path.
 	*/
@@ -2794,7 +2805,7 @@ interface EditorAPI {
 	/**
 	* Get file stat information
 	*/
-	fileStat(path: string | LocalPath | WindowPath): unknown;
+	fileStat(path: string | LocalPath | WindowPath | AuthorityPath): unknown;
 	/**
 	* Check if a background process is still running
 	*/

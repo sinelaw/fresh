@@ -1274,14 +1274,14 @@ function scanSessionContent(): void {
   const dir = editor.pathJoin(editor.getDataDir(), "workspaces");
   let entries: DirEntry[];
   try {
-    entries = editor.readDir(dir);
+    entries = editor.readDir(editor.localPath(dir));
   } catch {
     return;
   }
   if (!entries) return;
   for (const e of entries) {
     if (!e.is_file || !e.name.endsWith(".json")) continue;
-    const raw = editor.readFile(editor.pathJoin(dir, e.name));
+    const raw = editor.readFile(editor.localPath(editor.pathJoin(dir, e.name)));
     if (!raw) continue;
     let ws: Record<string, unknown>;
     try {
@@ -4811,7 +4811,7 @@ function archiveManifestPath(repoRoot: string): string {
 
 function loadArchiveManifest(repoRoot: string): ArchiveManifest {
   const path = archiveManifestPath(repoRoot);
-  const raw = editor.readFile(path);
+  const raw = editor.readFile(editor.localPath(path));
   if (!raw) return { version: 1, sessions: [] };
   try {
     const parsed = JSON.parse(raw);
@@ -4831,8 +4831,8 @@ function loadArchiveManifest(repoRoot: string): ArchiveManifest {
 function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
   const path = archiveManifestPath(repoRoot);
   const dir = editor.pathDirname(path);
-  if (!editor.createDir(dir)) return false;
-  return editor.writeFile(path, JSON.stringify(m, null, 2));
+  if (!editor.createDir(editor.localPath(dir))) return false;
+  return editor.writeFile(editor.localPath(path), JSON.stringify(m, null, 2));
 }
 
 // Pick a session id to make active so that `excludeId` can be
@@ -4985,7 +4985,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
       s.label,
     );
     const parent = editor.pathDirname(archivedRoot);
-    if (!editor.createDir(parent)) {
+    if (!editor.createDir(editor.localPath(parent))) {
       return { ok: false, err: editor.t("err.could_not_create", { path: parent }), repoRoot };
     }
     const moveRes = await spawnCollect(
@@ -5118,7 +5118,7 @@ async function syncSessions(repoRoot: string): Promise<SyncResult> {
   // First-time setup creates the worktree as an orphan branch
   // with no parent commit (cleanest history; no leftover files
   // from the original tree).
-  if (!editor.createDir(editor.pathDirname(wt))) {
+  if (!editor.createDir(editor.localPath(editor.pathDirname(wt)))) {
     return { ok: false, err: "createDir failed for sync workspace parent" };
   }
   const branchExists = await spawnCollect(
@@ -5173,7 +5173,7 @@ async function syncSessions(repoRoot: string): Promise<SyncResult> {
   // lives at the root of the sync branch.
   const snapshot = await buildSyncSnapshot(repoRoot);
   const sessionsPath = editor.pathJoin(wt, "sessions.json");
-  if (!editor.writeFile(sessionsPath, JSON.stringify(snapshot, null, 2))) {
+  if (!editor.writeFile(editor.localPath(sessionsPath), JSON.stringify(snapshot, null, 2))) {
     return { ok: false, err: "writeFile sessions.json failed" };
   }
 
@@ -6007,14 +6007,14 @@ const FRESH_CLI_BLOCK_END = "<!-- fresh-cli:end -->";
 // rather than overwriting the user's content; otherwise create it fresh.
 function writeFreshCliPromptFile(path: string): void {
   const block = `${FRESH_CLI_BLOCK_START}\n${FRESH_CLI_SYSTEM_PROMPT}\n${FRESH_CLI_BLOCK_END}\n`;
-  if (editor.fileExists(path)) {
-    const existing = editor.readFile(path) ?? "";
+  if (editor.fileExists(editor.localPath(path))) {
+    const existing = editor.readFile(editor.localPath(path)) ?? "";
     // Idempotent on retry / restart-recovery: never stack duplicate blocks.
     if (existing.includes(FRESH_CLI_BLOCK_START)) return;
     const sep = existing.length === 0 || existing.endsWith("\n") ? "\n" : "\n\n";
-    editor.writeFile(path, existing + sep + block);
+    editor.writeFile(editor.localPath(path), existing + sep + block);
   } else {
-    editor.writeFile(path, block);
+    editor.writeFile(editor.localPath(path), block);
   }
 }
 
@@ -7441,7 +7441,7 @@ function computePathCompletions(typed: string): string[] {
     parent = typed.slice(0, slashIdx);
     basename = typed.slice(slashIdx + 1);
   }
-  const entries = editor.readDir(parent);
+  const entries = editor.readDir(editor.localPath(parent));
   const matches = entries
     .filter((e) => !basename || e.name.startsWith(basename))
     .filter((e) => !e.name.startsWith(".") || basename.startsWith("."));
@@ -8037,14 +8037,14 @@ async function runLocalCreate(id: number): Promise<void> {
 
   // Recovery idempotency: a worktree left on disk by an interrupted run is
   // reused rather than re-added (a re-add would fail and error the row).
-  const rootExists = createWorktree && editor.fileExists(root);
+  const rootExists = createWorktree && editor.fileExists(editor.localPath(root));
   // Whether *this* run put the worktree on disk (vs. reusing an existing one),
   // so a mid-flight dismissal can remove exactly what it created.
   let addedWorktree = false;
   if (createWorktree && !rootExists) {
     setPendingMessage(id, editor.t("dock.pending_adding_worktree"));
     const parent = editor.pathDirname(root);
-    if (!editor.createDir(parent)) {
+    if (!editor.createDir(editor.localPath(parent))) {
       failPending(id, editor.t("err.mkdir_failed", { path: parent }));
       return;
     }

@@ -2345,7 +2345,7 @@ impl JsEditorApi {
     /// or the local host for a `LocalPath`).
     pub fn file_exists(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> bool {
         self.fs_for(&path).exists(Path::new(path.as_str()))
@@ -2354,7 +2354,7 @@ impl JsEditorApi {
     /// Read file contents from the path's filesystem.
     pub fn read_file(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> Option<String> {
         self.fs_for(&path)
@@ -2366,7 +2366,7 @@ impl JsEditorApi {
     /// created as needed.
     pub fn write_file(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
         content: String,
     ) -> bool {
@@ -2379,7 +2379,7 @@ impl JsEditorApi {
     pub fn read_dir<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> rquickjs::Result<Value<'js>> {
         let entries = self.fs_for(&path).read_dir(Path::new(path.as_str()));
@@ -2392,7 +2392,7 @@ impl JsEditorApi {
     /// exists.
     pub fn create_dir(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> bool {
         self.fs_for(&path).create_dir_all(Path::new(path.as_str()))
@@ -2403,7 +2403,7 @@ impl JsEditorApi {
     /// temp directory or the Fresh config directory. Returns true on success.
     pub fn remove_path(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> bool {
         let fs = self.fs_for(&path);
@@ -2449,9 +2449,10 @@ impl JsEditorApi {
     /// filesystem (a cross-backend move is rejected). Returns true on success.
     pub fn rename_path(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")] to: fresh_core::api::PluginPath,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        to: fresh_core::api::PluginPath,
     ) -> bool {
         if !Self::same_backend(&from, &to) {
             return false;
@@ -2464,9 +2465,10 @@ impl JsEditorApi {
     /// target the same filesystem. Returns true on success.
     pub fn copy_path(
         &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")] to: fresh_core::api::PluginPath,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        to: fresh_core::api::PluginPath,
     ) -> bool {
         if !Self::same_backend(&from, &to) {
             return false;
@@ -2519,6 +2521,31 @@ impl JsEditorApi {
             &WindowPathJs {
                 kind: "authority",
                 window: window_id,
+                value: &path,
+            },
+        )
+        .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Construct an `AuthorityPath` — the active window's authority filesystem,
+    /// stated explicitly. Routes identically to passing a bare string, but is
+    /// self-documenting: bundled plugins use it so bare strings are reserved as
+    /// the backward-compatible default for external plugins.
+    #[plugin_api(ts_return = "AuthorityPath")]
+    pub fn authority_path<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        path: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        #[derive(serde::Serialize)]
+        struct AuthorityPathJs<'a> {
+            kind: &'static str,
+            value: &'a str,
+        }
+        rquickjs_serde::to_value(
+            ctx,
+            &AuthorityPathJs {
+                kind: "authority",
                 value: &path,
             },
         )
@@ -3320,7 +3347,7 @@ impl JsEditorApi {
     pub fn file_stat<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath")]
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         path: fresh_core::api::PluginPath,
     ) -> rquickjs::Result<Value<'js>> {
         let stat = self.fs_for(&path).stat(Path::new(path.as_str())).map(|s| {
