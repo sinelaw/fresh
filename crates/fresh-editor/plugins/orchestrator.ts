@@ -9236,6 +9236,9 @@ editor.on("widget_event", (e) => {
     if (e.event_type === "toggle" && e.widget_key === "run-agent-auto") {
       const checked = (e.payload as { checked?: unknown })?.checked;
       d.auto = typeof checked === "boolean" ? checked : !d.auto;
+      // Rebuild so the checkbox glyph reflects the new state (the toggle's
+      // visual comes from the spec, like the folder dialog's checkbox).
+      runAgentPanel.update(buildRunAgentSpec());
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "run-agent-cancel") {
