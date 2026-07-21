@@ -385,10 +385,22 @@ fn new_session_form_hints_existing_worktree() {
 
     // Typing an existing directory opens the path-completion popup, whose
     // candidate rows overlay the lines directly under Project Path — where the
-    // attach hint now sits. Close the transient popup (Esc; the form stays
-    // open) so the persistent hint below the field is visible, matching what
-    // the user sees once they stop typing.
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    // attach hint now sits. Wait until either the hint is already visible OR
+    // the popup is up (its dim `┄` separator), THEN close the popup. Gating the
+    // Esc on the popup actually being open is load-bearing: pressing Esc before
+    // the popup renders (a race on a slow/loaded CI runner) would cancel the
+    // whole dialog instead of just the popup, and the hint would never appear.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("existing worktree") || s.contains('┄')
+        })
+        .unwrap();
+    if !harness.screen_to_string().contains("existing worktree") {
+        // Popup is overlaying the hint — dismiss it (the form stays open, since
+        // the popup is confirmed up), revealing the persistent hint below.
+        harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    }
 
     harness
         .wait_until(|h| h.screen_to_string().contains("existing worktree"))
