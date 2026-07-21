@@ -52,6 +52,17 @@
   body.macfam #mactitle .mt-name{margin:0 auto;font-weight:590;color:var(--mac-title-fg);
     letter-spacing:.01em;max-width:56%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
+  /* ---- dropdown item horizontal rhythm ----
+     The base row stacked the TUI's phantom 1-cell border inset (~9.5px, a real
+     border glyph in the terminal but only a 1px CSS border here) + 14px padding
+     + a 12px checkmark gutter + 6px gap → labels landed ~41px from the panel
+     edge, roughly 2× a native menu. Trim the CSS padding and the checkmark
+     gutter so labels sit ~24px in (the ✓ still fits), and pull the right pad in
+     to match — the accelerator stays right-aligned via the flexed .lab. */
+  body.macfam .mitem{padding:0 12px 0 3px}
+  body.macfam .mitem .lab{gap:3px}
+  body.macfam .mitem .check{width:10px}
+
   /* ---- menu bar: a light unified toolbar beneath the title bar ---- */
   body.macfam .menubar{background:var(--shell);border-bottom:1px solid var(--hairline-strong)}
   body.macfam .menu{color:var(--fg);font-weight:500}
@@ -131,6 +142,10 @@
   body.macfam .popup .popup-row.sel::before{
     content:"";position:absolute;left:5px;right:5px;top:1px;bottom:1px;
     border-radius:5px;background:var(--ui-accent);z-index:-1}
+  /* A dropdown .mitem already sits one CELL (~9.5px) inside its panel, so the
+     +5px pill above floated ~14px from the edge — far looser than a native menu.
+     Pull it back out so the accent bar hugs the panel at ~6px, like macOS. */
+  body.macfam .mitem.hi::before{left:-3px;right:-3px}
   body.macfam .mitem.hi .accel,body.macfam .mitem.hi .arrow{color:rgba(255,255,255,.82)}
   /* Focused Settings row: subtle tint, dark label kept. */
   body.macfam .settings-modal .set-item.sel{
@@ -140,10 +155,18 @@
      near-opaque menu material and BORDERLESS rows with an inset highlight,
      instead of a stack of bordered push-buttons. */
   body.macfam .widget-surface.w-floatingModal.anchored{
-    background:color-mix(in srgb,var(--bg2) 97%,transparent);border:1px solid var(--hairline-strong)}
+    background:color-mix(in srgb,var(--bg2) 92%,transparent);border:1px solid var(--hairline-strong);
+    border-radius:8px;   /* was the base 12px — too bubbly for a menu; match .ctxmenu */
+    -webkit-backdrop-filter:blur(28px) saturate(1.6);backdrop-filter:blur(28px) saturate(1.6)}
   body.macfam .w-floatingModal.anchored .w-button{
-    background:transparent;border:none;border-radius:5px;padding:4px 12px;
+    background:transparent;border:none;border-radius:5px;padding:3px 12px;
     position:relative;z-index:0;color:var(--fg)}
+  /* The selected/hovered row shows ONLY the inset accent pill — kill the generic
+     focus box-shadow ring (60-polish.css) that otherwise draws a second, softer
+     rectangle OUTSIDE the pill (the "double border"). */
+  body.macfam .w-floatingModal.anchored .w-button.focus,
+  body.macfam .w-floatingModal.anchored .w-button.sel,
+  body.macfam .w-floatingModal.anchored .w-button.primary{box-shadow:none;outline:none}
   body.macfam .w-floatingModal.anchored .w-button.primary,
   body.macfam .w-floatingModal.anchored .w-button.sel,
   body.macfam .w-floatingModal.anchored .w-button:hover{color:#fff}
@@ -167,6 +190,17 @@
   body.macfam .w-toggle:not(.on) .w-box{
     background:color-mix(in srgb,var(--fg) 24%,transparent)}
   body.macfam .settings-modal .set-switch.on{background:var(--ui-accent)}
+  /* Switch shape — the base 26×14 with a 10px knob reads thin and the knob
+     floats; macOS System Settings switches are a chunkier ~1.75:1 pill whose
+     knob nearly fills the track (~1.5px margin) with a faint drop shadow. */
+  body.macfam .settings-modal .set-switch,
+  body.macfam .w-toggle .w-box{width:30px;height:18px;border-radius:9px}   /* ~1.7:1, full pill */
+  body.macfam .settings-modal .set-switch::after,
+  body.macfam .w-toggle .w-box::after{
+    width:15px;height:15px;top:1.5px;left:1.5px;   /* knob fills ~0.85, ~1.5px inset */
+    box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.04)}
+  body.macfam .settings-modal .set-switch.on::after,
+  body.macfam .w-toggle.on .w-box::after{left:13.5px}   /* travel = 30−15−1.5−1.5 */
 
   /* Buttons: a macOS push button (light or dark) + a filled-accent primary. */
   body.macfam .settings-modal .btn,body.macfam .trustdialog .td-btn,

@@ -42,15 +42,70 @@ function submenuItems(reg, depth){
   return items;
 }
 
+// Vertical compression for the open menu tree. In the TUI a separator is a full
+// character row, so the core emits it as a 1-cell row — on the web that renders
+// as a hairline floating in a ~21px void, which reads as "menus have way too
+// much padding". This shrinks every separator row to a compact macOS separator
+// (~11px) and pulls the rows below it up, so groups sit tight the way a native
+// AppKit menu does. Item rows keep their full cell height (already ~correct).
+//
+// Everything — items, separators, backing panels, submenu boxes — is placed
+// through this same per-depth remap, so alignment is preserved: a submenu
+// re-anchors to its (now shifted) parent row, and each level compresses its own
+// separators on top of that anchor. Hit-testing is unaffected: clicks/hover are
+// dispatched by each row's STORED cell (rectCell), never by its pixel position,
+// so moving the box up doesn't change which item the editor resolves.
+function menuCompression(reg){
+  const SEP_PX = Math.max(8, Math.round(CH*0.52));   // compact separator slot
+  const rowExtra = CH - SEP_PX;                        // px removed per sep row
+  const sepByDepth = {};                              // depth -> Set(cell-y of seps)
+  const addSep=(d,y)=>{ (sepByDepth[d]=sepByDepth[d]||new Set()).add(y); };
+  const topItems = reg.menus[reg.menuOpen]?.items||[];
+  for(const di of (reg.dropdown?.items||[])) if(topItems[di.index]?.kind==="sep") addSep(0, di.rect.y);
+  for(const su of (reg.dropdown?.submenus||[])){ const list=submenuItems(reg, su.depth);
+    if(list[su.index]?.kind==="sep") addSep(su.depth, su.rect.y); }
+  // Sum the sep-shrink accumulated ABOVE cell-y within one depth's own stack.
+  const shrinkAbove=(d,y)=>{ let s=0; const set=sepByDepth[d]; if(set) for(const sy of set) if(sy<y) s+=rowExtra; return s; };
+  // Each depth's stack starts shifted up by the shrink its parent applied at the
+  // submenu's anchor row (depth 0 anchors at 0).
+  const boxTop={0: reg.dropdown?.rect?.y ?? 0};
+  for(const b of (reg.dropdown?.submenuBoxes||[])) boxTop[b.depth]=b.rect.y;
+  const anchor={0:0};
+  for(const d of Object.keys(boxTop).map(Number).sort((a,b)=>a-b)){
+    if(d===0) continue; anchor[d]=(anchor[d-1]||0)+shrinkAbove(d-1, boxTop[d]);
+  }
+  const shiftFor=(d,y)=>(anchor[d]||0)+shrinkAbove(d,y);
+  return {
+    SEP_PX,
+    isSep:(d,y)=> sepByDepth[d]?.has(y)||false,
+    top:(d,y)=> px(y,CH) - shiftFor(d,y),
+    height:(d,rect)=>{
+      if(sepByDepth[d]?.has(rect.y)) return SEP_PX;
+      let extra=0; const set=sepByDepth[d];             // a panel spans several rows
+      if(set) for(const sy of set) if(sy>=rect.y && sy<rect.y+rect.h) extra+=rowExtra;
+      return px(rect.h,CH) - extra;
+    },
+  };
+}
+
 // One native dropdown row, positioned at the pipeline's cell rect.
-// `hi` says whether the editor currently highlights this row.
-function itemRow(item, rect, hi){
+// `hi` says whether the editor currently highlights this row. `comp`/`depth`
+// apply the separator compression above (top/height are remapped, x/width and
+// the click cell stay exactly as the editor reported them).
+function itemRow(item, rect, hi, comp, depth){
   if(!item) return null;
-  if(item.kind==="sep"){ const s=div("msep"); place(s,rect); s.style.height="1px"; s.style.top=px(rect.y+0.5,CH)+"px"; return s; }
-  if(item.kind==="label"){ const l=div("mlabel"); place(l,rect); l.style.lineHeight=CH+"px"; l.textContent=item.label; return l; }
+  if(item.kind==="sep"){ const s=div("msep"); place(s,rect);
+    const slot = comp ? comp.SEP_PX : CH;
+    const top  = comp ? comp.top(depth,rect.y) : px(rect.y,CH);
+    s.style.height="1px"; s.style.top=(top+(slot-1)/2)+"px"; return s; }
+  if(item.kind==="label"){ const l=div("mlabel"); place(l,rect);
+    if(comp){ l.style.top=comp.top(depth,rect.y)+"px"; l.style.height=comp.height(depth,rect)+"px"; }
+    l.style.lineHeight=CH+"px"; l.textContent=item.label; return l; }
   const cell=rectCell(rect);
   const row=div("mitem"+(hi?" hi":"")+(item.enabled===false?" disabled":""));
-  place(row,rect); row.style.lineHeight=CH+"px";
+  place(row,rect);
+  if(comp){ row.style.top=comp.top(depth,rect.y)+"px"; row.style.height=comp.height(depth,rect)+"px"; }
+  row.style.lineHeight=CH+"px";
   const check = item.checked===true?"✓":"";
   const arrow = item.kind==="submenu"?'<span class="arrow">›</span>':"";
   const accel = item.accel?`<span class="accel">${esc(item.accel)}</span>`:"";
@@ -67,21 +122,22 @@ function itemRow(item, rect, hi){
 function menuDropdownEls(reg){
   const out=[];
   if(reg.menuOpen==null || !reg.dropdown) return out;
-  for(const grp of dropdownPanels(reg)) out.push(grp);      // solid backing panels
+  const comp=menuCompression(reg);
+  for(const grp of dropdownPanels(reg, comp)) out.push(grp);   // solid backing panels
   const path=reg.submenuPath||[];
   // top-level items: highlighted = menuHighlight when no submenu is deeper,
   // otherwise the parent of the open submenu (path[0]).
   const items=reg.menus[reg.menuOpen]?.items||[];
   for(const di of reg.dropdown.items){
     const hi = path.length===0 ? di.index===reg.menuHighlight : di.index===path[0];
-    const el=itemRow(items[di.index], di.rect, hi); if(el) out.push(el);
+    const el=itemRow(items[di.index], di.rect, hi, comp, 0); if(el) out.push(el);
   }
   // expanded submenu levels
   for(const su of (reg.dropdown.submenus||[])){
     const list=submenuItems(reg, su.depth);
     const deepest = su.depth===path.length;
     const hi = deepest ? su.index===reg.menuHighlight : su.index===path[su.depth];
-    const el=itemRow(list[su.index], su.rect, hi); if(el) out.push(el);
+    const el=itemRow(list[su.index], su.rect, hi, comp, su.depth); if(el) out.push(el);
   }
   return out;
 }
@@ -91,7 +147,7 @@ function menuDropdownEls(reg){
 // `submenuBoxes`) — the same footprint the TUI border occupies, so the panel
 // sits flush under the menu bar instead of leaving the border row as a gap.
 // Item-union fallback kept for scenes predating the recorded boxes.
-function dropdownPanels(reg){
+function dropdownPanels(reg, comp){
   const panels=[];
   const union=(rects)=>{
     if(!rects.length) return null;
@@ -126,7 +182,9 @@ function dropdownPanels(reg){
       b.rect.x=prevRight; b.rect.w=Math.max(0, b.rect.w-shift);
     }
     prevRight=b.rect.x + b.rect.w;
-    const p=div("dropdown"+(b.depth>=1?" submenu":"")); place(p,b.rect); panels.push(p);
+    const p=div("dropdown"+(b.depth>=1?" submenu":"")); place(p,b.rect);
+    if(comp){ p.style.top=comp.top(b.depth,b.rect.y)+"px"; p.style.height=comp.height(b.depth,b.rect)+"px"; }
+    panels.push(p);
   }
   return panels;
 }
