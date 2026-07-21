@@ -335,9 +335,9 @@ impl Editor {
             paste_deadline,
             deferred_redraw_deadline,
         ]
-            .into_iter()
-            .flatten()
-            .min()
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Earliest time a terminal tab needs its foreground-process title
