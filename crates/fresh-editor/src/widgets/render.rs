@@ -189,6 +189,30 @@ pub struct RenderOutput {
     /// with the geometry + state the host needs to paint and drag a
     /// scrollbar. Empty for lists that fit.
     pub scroll_regions: Vec<ScrollRegion>,
+    /// The open `Dropdown`'s option list, surfaced for a screen-level
+    /// floating pop-over instead of inline panel rows. `Some` only when a
+    /// keyed Dropdown is open; the panel `entries` then hold just the
+    /// compact `[value ▼]` trigger. The host draws this as a bordered box
+    /// anchored to the trigger's screen row, clipped to the terminal (not
+    /// the panel), so the list extends past the panel/modal frame. Only
+    /// one can be open at a time (the focused widget). See [`DropdownPopup`].
+    pub dropdown_popup: Option<DropdownPopup>,
+}
+
+/// The open `Dropdown`'s option list, projected for a host-native
+/// floating pop-over. `anchor_row` is the 0-based row of the `[value ▼]`
+/// trigger within the panel's inner area (the host adds `inner.y` to get
+/// the screen row and draws the box one row below, flipping above when
+/// there's no room). `options`/`selected`/`scroll` mirror the inline
+/// list's model so the box renders and hit-tests identically — just at
+/// screen coordinates instead of panel-clipped ones.
+#[derive(Debug, Clone)]
+pub struct DropdownPopup {
+    pub widget_key: String,
+    pub anchor_row: u32,
+    pub options: Vec<String>,
+    pub selected: usize,
+    pub scroll: usize,
 }
 
 /// One row produced by an `Overlay` widget. `buffer_row` is the
@@ -249,6 +273,11 @@ struct CollectedOutput {
     embeds: Vec<EmbedRect>,
     overlays: Vec<OverlayRow>,
     scroll_regions: Vec<ScrollRegion>,
+    /// Open-Dropdown pop-overs, each anchored to its trigger row. Shifted
+    /// through Col/Row/Section collapse exactly like `overlays`'
+    /// `buffer_row`, then collapsed to `RenderOutput::dropdown_popup`
+    /// (only one Dropdown is open at a time — the focused one).
+    dropdown_popups: Vec<DropdownPopup>,
 }
 
 /// Render a spec to a [`RenderOutput`].
@@ -371,6 +400,9 @@ fn render_spec_inner(
         embeds: collected.embeds,
         overlays: collected.overlays,
         scroll_regions: collected.scroll_regions,
+        // At most one Dropdown is open at a time (the focused one); take
+        // the first if the spec somehow produced several.
+        dropdown_popup: collected.dropdown_popups.into_iter().next(),
     }
 }
 
@@ -772,6 +804,7 @@ fn collect_row(
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
+    let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
 
     // Two-pass layout for Row:
     //  1. Walk children, render each. Track flex spacers
@@ -811,6 +844,10 @@ fn collect_row(
         // a row-offset adjustment — Row pieces all sit
         // on the same buffer-row as the merged row.
         overlays.extend(child_out.overlays);
+        // A Dropdown in a Row collapses onto the row's single line, so
+        // its pop-over anchors at the row's `buffer_row` (row 0 here;
+        // the caller shifts it up). Forward unshifted, like overlays.
+        dropdown_popups.extend(child_out.dropdown_popups);
         if child_out.entries.is_empty() {
             debug_assert!(child_out.hits.is_empty(), "empty children produce no hits");
             continue;
@@ -888,6 +925,7 @@ fn collect_row(
         embeds,
         overlays,
         scroll_regions,
+        dropdown_popups,
     }
 }
 
@@ -1075,6 +1113,7 @@ fn collect_col(
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
+    let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
 
     for child in children {
         // Overlay children DO NOT contribute vertical
@@ -1128,6 +1167,10 @@ fn collect_col(
                 sr.buffer_row += row_offset;
                 scroll_regions.push(sr);
             }
+            for mut dp in child_out.dropdown_popups {
+                dp.anchor_row += row_offset;
+                dropdown_popups.push(dp);
+            }
             continue;
         }
         for mut h in child_out.hits {
@@ -1146,6 +1189,10 @@ fn collect_col(
             sr.buffer_row += row_offset;
             scroll_regions.push(sr);
         }
+        for mut dp in child_out.dropdown_popups {
+            dp.anchor_row += row_offset;
+            dropdown_popups.push(dp);
+        }
         overlays.extend(child_out.overlays.into_iter().map(|mut o| {
             o.buffer_row += row_offset;
             o
@@ -1160,6 +1207,7 @@ fn collect_col(
         embeds,
         overlays,
         scroll_regions,
+        dropdown_popups,
     }
 }
 
@@ -1361,6 +1409,13 @@ fn collect_dropdown(
         open,
         spec_scroll,
     );
+    // The open list now floats as a screen-level pop-over
+    // (`out.dropdown_popups`) instead of growing inline, so the panel
+    // keeps only the compact `[value ▲]` trigger row and never
+    // grows/clips inside the frame. `render_dropdown`'s inline
+    // `option_rows` are discarded here (the Settings dialog, which calls
+    // `render_dropdown` directly, still uses them for its inline list).
+    let _ = option_rows;
     let widget_key = key.unwrap_or("").to_string();
     // A click on the `[value ▼]` button toggles the option list open
     // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
@@ -1373,22 +1428,21 @@ fn collect_dropdown(
         payload: json!({}),
         event_type: "dropdown_toggle",
     });
-    let _ = scroll_offset;
-    for (row_i, (idx, mut opt_entry)) in option_rows.into_iter().enumerate() {
-        // Each visible option row is a full-width click target that
-        // selects that option and closes the list.
-        let row_len = opt_entry.text.len();
-        out.hits.push(HitArea {
-            widget_key: widget_key.clone(),
-            widget_kind: "dropdown",
-            buffer_row: (1 + row_i) as u32,
-            byte_start: 0,
-            byte_end: row_len,
-            payload: json!({ "index": idx }),
-            event_type: "dropdown_select",
+    // Open: surface the option list as a floating pop-over anchored to
+    // the trigger's row (row 0 within this sub-render; Col/Row/Section
+    // collapse shifts `anchor_row` up to the panel-inner row). The host
+    // draws + hit-tests it at screen coordinates, so it extends past the
+    // panel/modal border instead of reflowing the panel. Option hit
+    // areas are registered by the host draw pass, not here (they live
+    // outside the panel's buffer rows).
+    if open {
+        out.dropdown_popups.push(DropdownPopup {
+            widget_key,
+            anchor_row: 0,
+            options: options.to_vec(),
+            selected: cur as usize,
+            scroll: scroll_offset,
         });
-        ensure_trailing_newline(&mut opt_entry);
-        out.entries.push(opt_entry);
     }
     ensure_trailing_newline(&mut entry);
     out.entries.insert(0, entry);
@@ -1891,6 +1945,7 @@ fn collect_list(
         embeds: Vec::new(),
         overlays: Vec::new(),
         scroll_regions,
+        dropdown_popups: Vec::new(),
     }
 }
 
@@ -1909,6 +1964,7 @@ fn collect_labeled_section(
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut scroll_regions: Vec<ScrollRegion> = Vec::new();
+    let mut dropdown_popups: Vec<DropdownPopup> = Vec::new();
 
     // Inner area: 1 column of border + 1 column of
     // padding on each side ⇒ 4 columns of chrome.
@@ -1927,6 +1983,13 @@ fn collect_labeled_section(
         o.buffer_row += 1;
         o
     }));
+    // Same +1 shift for a Dropdown pop-over nested in a section: the top
+    // border occupies row 0, so the child's row 0 (its trigger) is the
+    // section's row 1.
+    for mut dp in child_out.dropdown_popups {
+        dp.anchor_row += 1;
+        dropdown_popups.push(dp);
+    }
 
     // Render the top border with the label embedded as a
     // legend: `╭─ <label> ─...─╮`. When the label is empty,
@@ -1992,6 +2055,7 @@ fn collect_labeled_section(
         embeds,
         overlays,
         scroll_regions,
+        dropdown_popups,
     }
 }
 
@@ -2071,6 +2135,7 @@ fn collect_overlay(
         embeds: child_out.embeds,
         overlays: child_out.overlays,
         scroll_regions: child_out.scroll_regions,
+        dropdown_popups: child_out.dropdown_popups,
     }
 }
 
@@ -8686,7 +8751,7 @@ mod tests {
     }
 
     #[test]
-    fn dropdown_emits_button_and_option_hit_areas() {
+    fn dropdown_open_emits_toggle_hit_and_floating_popup() {
         let spec = WidgetSpec::Dropdown {
             label_width: 0,
             open: true,
@@ -8695,20 +8760,27 @@ mod tests {
             selected_index: 0,
             label: String::new(),
             focused: true,
-            key: None,
+            key: Some("d".into()),
         };
-        let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let toggles: Vec<_> = hits
+        let out = render_spec(&spec, &HashMap::new(), "d", u32::MAX);
+        let toggles = out
+            .hits
             .iter()
             .filter(|h| h.event_type == "dropdown_toggle")
-            .collect();
-        let selects: Vec<_> = hits
-            .iter()
-            .filter(|h| h.event_type == "dropdown_select")
-            .collect();
-        assert_eq!(toggles.len(), 1);
-        assert_eq!(selects.len(), 2);
-        assert_eq!(selects[1].payload["index"], 1);
+            .count();
+        assert_eq!(toggles, 1, "the trigger button stays a toggle hit");
+        // Options no longer render inline — they surface on the floating
+        // pop-over instead, so the panel has NO `dropdown_select` hits.
+        assert!(
+            !out.hits.iter().any(|h| h.event_type == "dropdown_select"),
+            "open dropdown must not emit inline option hits"
+        );
+        let dp = out
+            .dropdown_popup
+            .expect("an open dropdown surfaces a floating pop-over");
+        assert_eq!(dp.widget_key, "d");
+        assert_eq!(dp.options, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(dp.anchor_row, 0, "trigger is the panel's row 0");
     }
 
     #[test]
@@ -8744,10 +8816,10 @@ mod tests {
     }
 
     #[test]
-    fn dropdown_open_emits_inline_option_rows() {
+    fn dropdown_open_surfaces_popup_not_inline_rows() {
         let spec = make_dropdown(&["a", "b", "c"], 1, Some("d"));
-        // Focused + open in instance state → inline option rows below
-        // the value button.
+        // Focused + open in instance state → the option list floats as a
+        // screen-level pop-over; the panel keeps only the compact trigger.
         let mut prev = HashMap::new();
         prev.insert(
             "d".to_string(),
@@ -8757,15 +8829,22 @@ mod tests {
             },
         );
         let out = render_spec(&spec, &prev, "d", u32::MAX);
-        assert_eq!(out.entries.len(), 4, "button row + one row per option");
-        assert!(out.entries[2].text.contains('b'));
-        // Each option row is a full-width select hit.
-        let selects: Vec<_> = out
-            .hits
-            .iter()
-            .filter(|h| h.event_type == "dropdown_select")
-            .collect();
-        assert_eq!(selects.len(), 3);
+        assert_eq!(
+            out.entries.len(),
+            1,
+            "open dropdown keeps only the trigger row (no inline options)"
+        );
+        assert!(
+            !out.hits.iter().any(|h| h.event_type == "dropdown_select"),
+            "options moved to the pop-over — no inline select hits"
+        );
+        let dp = out.dropdown_popup.expect("open dropdown surfaces a popup");
+        assert_eq!(
+            dp.options,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert_eq!(dp.selected, 1);
+        assert_eq!(dp.anchor_row, 0);
     }
 
     #[test]
@@ -8783,6 +8862,10 @@ mod tests {
         // (no-autofocus so the sole tabbable isn't auto-selected).
         let out = render_spec_no_autofocus(&spec, &prev, "", u32::MAX);
         assert!(out.overlays.is_empty());
+        assert!(
+            out.dropdown_popup.is_none(),
+            "an unfocused (closed) dropdown surfaces no pop-over"
+        );
         match out.instance_states.get("d") {
             Some(WidgetInstanceState::Dropdown { open, .. }) => assert!(!open),
             other => panic!("expected Dropdown state, got {other:?}"),

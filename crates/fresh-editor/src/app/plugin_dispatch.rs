@@ -5010,6 +5010,9 @@ impl Editor {
             title: if as_dock { None } else { title },
             closable: !as_dock && closable,
             close_button_rect: None,
+            dropdown_popup: None,
+            dropdown_popup_hits: Vec::new(),
+            dropdown_popup_rect: None,
         });
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
@@ -5026,6 +5029,7 @@ impl Editor {
         let embeds = out.embeds;
         let overlays = out.overlays;
         let scroll_regions = out.scroll_regions;
+        let dropdown_popup = out.dropdown_popup;
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5041,6 +5045,7 @@ impl Editor {
             fwp.embeds = embeds;
             fwp.overlays = overlays;
             fwp.scroll_regions = scroll_regions;
+            fwp.dropdown_popup = dropdown_popup;
         }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
@@ -5094,6 +5099,7 @@ impl Editor {
         let embeds = out.embeds;
         let overlays = out.overlays;
         let scroll_regions = out.scroll_regions;
+        let dropdown_popup = out.dropdown_popup;
         if self
             .widget_registry
             .update(
@@ -5118,6 +5124,7 @@ impl Editor {
             fwp.embeds = embeds;
             fwp.overlays = overlays;
             fwp.scroll_regions = scroll_regions;
+            fwp.dropdown_popup = dropdown_popup;
         }
     }
 

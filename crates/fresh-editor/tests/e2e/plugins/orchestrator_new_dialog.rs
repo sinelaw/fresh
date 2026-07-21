@@ -1198,6 +1198,120 @@ fn preset_row_lists_prioritised_agents_in_order() {
     );
 }
 
+/// The Agent selector opens its option list as a screen-level FLOATING
+/// pop-over: Enter (routed to the host's `set_dropdown_open`, not the
+/// no-op `activate()`) reveals every preset at once, layered on top of
+/// the form rather than reflowing it, and Esc closes it back to the
+/// single compact `Agent: [<selected> ▼]` trigger. A click on an option
+/// row selects it and closes the list.
+#[test]
+fn agent_dropdown_opens_as_floating_popover() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    focus_agent_preset_stop(&mut harness);
+
+    // Distinctive preset names; the closed trigger shows exactly one of
+    // them (the selected value), the open pop-over lists several.
+    let names = ["terminal", "claude", "codex", "opencode"];
+    let count_names = |screen: &str| names.iter().filter(|n| screen.contains(**n)).count();
+
+    let closed_before = count_names(&harness.screen_to_string());
+
+    // Enter opens the pop-over. Before the fix, Enter hit `activate()` — a
+    // no-op on a Dropdown — so the list never opened.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    let open_screen = harness.screen_to_string();
+    let open_count = count_names(&open_screen);
+    assert!(
+        open_count >= 3 && open_count > closed_before,
+        "Enter must float the agent option list open (many presets visible \
+         at once); before={closed_before}, open={open_count}. Screen:\n{open_screen}",
+    );
+
+    // Web-scene parity: the projection the web frontend renders from (the
+    // `/state` route → `widgets_view`) must report the dropdown as OPEN, so
+    // the web floats its own native option pop-over from the same state.
+    {
+        let surfaces = harness.editor().widgets_view();
+        let modal = surfaces
+            .iter()
+            .find(|s| s.kind == "floatingModal")
+            .expect("the New-Workspace form must appear as a floatingModal in the web scene");
+        let inst = modal
+            .instances
+            .get("agent_dropdown")
+            .expect("the web scene must carry the agent_dropdown instance state");
+        assert_eq!(
+            inst.dropdown_open,
+            Some(true),
+            "the web scene must report the agent dropdown as open (so the web \
+             frontend renders the floating option list)",
+        );
+    }
+
+    // Esc closes the pop-over, back to the single-value trigger.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.tick_and_render().unwrap();
+    let closed_screen = harness.screen_to_string();
+    assert!(
+        count_names(&closed_screen) < open_count,
+        "Esc must close the pop-over back to the compact trigger. Screen:\n{closed_screen}",
+    );
+
+    // Re-open and pick an option by clicking its row. `claude` is a stable
+    // preset that is not the default selection (`terminal`), so clicking it
+    // both changes the value and closes the list.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    let (col, row) = harness
+        .find_text_on_screen("claude")
+        .expect("`claude` option row must be visible in the open pop-over");
+    harness.mouse_click(col, row).unwrap();
+    harness.tick_and_render().unwrap();
+    let after_click = harness.screen_to_string();
+    assert!(
+        count_names(&after_click) < open_count,
+        "clicking an option must close the pop-over. Screen:\n{after_click}",
+    );
+    assert!(
+        focused_line(&after_click).contains("claude"),
+        "clicking the `claude` option must select it as the Agent value. Screen:\n{after_click}",
+    );
+
+    // Web-scene parity again: after the click the projection must show the
+    // pop-over closed and the newly-selected index committed — the same
+    // state the web `/state` route would report so selection round-trips.
+    {
+        let surfaces = harness.editor().widgets_view();
+        let modal = surfaces
+            .iter()
+            .find(|s| s.kind == "floatingModal")
+            .expect("form surface in web scene after selection");
+        let inst = modal
+            .instances
+            .get("agent_dropdown")
+            .expect("agent_dropdown instance in web scene after selection");
+        assert_eq!(
+            inst.dropdown_open,
+            Some(false),
+            "picking an option must close the pop-over in the web scene too",
+        );
+        // `claude` is index 1 in the prioritised preset order (terminal, claude,
+        // codex, …), so a successful click committed that selection.
+        assert_eq!(
+            inst.selected_index,
+            Some(1),
+            "the clicked `claude` option must be the committed selection in the web scene",
+        );
+    }
+}
+
 /// Picking a coding agent surfaces its per-agent controls — an "Auto
 /// mode" checkbox and a "Start prompt" box — which are hidden for the
 /// bare `terminal` default. Stepping ←/→ off `terminal` onto the first

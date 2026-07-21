@@ -5639,6 +5639,13 @@ const HISTORY_CAP = 100;
 /// keys this form actually binds it stays in sync.
 let formFocusCycle: string[] = [];
 let formFocusIndex = 0;
+// Mirror of the Agent dropdown's option pop-over open/closed state, kept in
+// sync from the host's `dropdown_open` widget_event (fired on every open/close
+// — keyboard, trigger click, or an option pick). The form's Enter/Escape key
+// handlers read it to route those keys correctly: an open pop-over swallows
+// Enter/Escape into the list (commit / dismiss), a closed one lets them
+// activate / cancel the dialog.
+let agentDropdownOpen = false;
 
 function rebuildFormFocusCycle(): void {
   if (!form) {
@@ -7619,6 +7626,7 @@ function closeForm(): void {
     formPanel = null;
   }
   form = null;
+  agentDropdownOpen = false;
   editor.setEditorMode(null);
 }
 
@@ -8627,6 +8635,16 @@ registerHandler("orchestrator_form_key_enter", () => {
     dispatchFormKey("Enter");
     return;
   }
+  // Focused Agent dropdown: Enter opens the option pop-over (and, when it's
+  // already open, commits the highlighted option and closes). `activate()` is
+  // a no-op on a Dropdown, so route the raw key to the host's smart-key
+  // dispatch instead — `set_dropdown_open` / the open-list short-circuit
+  // handle both directions. (Mouse click on the `[value ▼]` trigger already
+  // opens it via the host's `dropdown_toggle` hit.)
+  if (formFocusedKey() === "agent_dropdown") {
+    dispatchFormKey("Enter");
+    return;
+  }
   // Popup closed: Enter must NOT advance focus (Tab / Shift-Tab are the only
   // field movers). Activate the focused control instead — `activate()` fires
   // a Button's "activate" event (Create / Cancel / Advanced / the type tabs)
@@ -8651,6 +8669,14 @@ registerHandler("orchestrator_form_key_escape", () => {
   // resync happens in the widget_event handler. Only when
   // the popup is already closed does Escape cancel the form.
   if (completionVisibleForFocused()) {
+    dispatchFormKey("Escape");
+    return;
+  }
+  // An open Agent dropdown pop-over swallows the first Escape: route it to
+  // the host's dropdown short-circuit (which closes the list) instead of
+  // cancelling the dialog. A second Escape — now that the list is closed —
+  // falls through to `cancelForm` below.
+  if (agentDropdownOpen && formFocusedKey() === "agent_dropdown") {
     dispatchFormKey("Escape");
     return;
   }
@@ -8981,6 +9007,15 @@ editor.on("widget_event", (e) => {
       // that mirror from the authoritative signal here so the
       // plugin never has to predict host-side focus rules.
       snapFormFocusTo(e.widget_key);
+      // Leaving the Agent dropdown (Tab / click elsewhere) closes its
+      // pop-over host-side; keep the local mirror honest.
+      if (e.widget_key !== "agent_dropdown") agentDropdownOpen = false;
+      return;
+    }
+    if (e.event_type === "dropdown_open" && e.widget_key === "agent_dropdown") {
+      // Host-authoritative open/closed signal for the option pop-over.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      agentDropdownOpen = payload.open === true;
       return;
     }
     if (e.event_type === "change" && e.widget_key === "agent_dropdown") {

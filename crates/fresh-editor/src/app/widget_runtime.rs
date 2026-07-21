@@ -866,6 +866,7 @@ impl Editor {
         let embeds = out_pieces.embeds;
         let overlays = out_pieces.overlays;
         let scroll_regions = out_pieces.scroll_regions;
+        let dropdown_popup = out_pieces.dropdown_popup;
         if self
             .widget_registry
             .update_side_effects(
@@ -888,6 +889,7 @@ impl Editor {
                     fwp.embeds = embeds;
                     fwp.overlays = overlays;
                     fwp.scroll_regions = scroll_regions;
+                    fwp.dropdown_popup = dropdown_popup;
                 }
             }
             return;
@@ -1960,11 +1962,12 @@ impl Editor {
             Some(fresh_core::api::WidgetSpec::Dropdown { selected_index, .. }) => *selected_index,
             _ => return,
         };
-        let cur = match panel.instance_states.get(widget_key) {
-            Some(crate::widgets::WidgetInstanceState::Dropdown { selected_index, .. }) => {
-                *selected_index
-            }
-            _ => spec_sel,
+        let (cur, prev_open) = match panel.instance_states.get(widget_key) {
+            Some(crate::widgets::WidgetInstanceState::Dropdown {
+                selected_index,
+                open,
+            }) => (*selected_index, *open),
+            _ => (spec_sel, false),
         };
         if let Some(panel_mut) = self.widget_registry.get_mut(panel_key) {
             panel_mut.instance_states.insert(
@@ -1976,6 +1979,21 @@ impl Editor {
             );
         }
         self.rerender_widget_panel(panel_key);
+        // Notify the plugin when the option pop-over actually opens or
+        // closes (any path: keyboard, a `[value ▼]` trigger click, or an
+        // option pick that closes it). The plugin mirrors this so its own
+        // key handlers can tell "dropdown open" apart from "dropdown
+        // closed" — e.g. Escape closes the open list but cancels the
+        // dialog when it's already closed. Not a value edit, so it's a
+        // distinct `dropdown_open` event, never `change`.
+        if open != prev_open {
+            self.fire_widget_event(
+                panel_key,
+                widget_key.to_string(),
+                "dropdown_open".into(),
+                serde_json::json!({ "open": open }),
+            );
+        }
     }
 
     /// Apply a `DualList` interaction, update the host-owned instance

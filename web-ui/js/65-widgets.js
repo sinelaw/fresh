@@ -239,13 +239,28 @@ function widgetEl(spec, ctx){
     pill.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_toggle",{}); };
     el.appendChild(pill);
     if(open){
-      const dd=div("w-dd");
+      const dd=div("w-dd w-dd-floating");
       (spec.options||[]).forEach((o,i)=>{
         const r=div("w-dd-row"+(i===selIdx?" sel":"")); r.textContent=o;
         r.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); if(spec.key) routeControl(ctx,spec.key,"dropdown_select",{index:i}); };
         dd.appendChild(r);
       });
       el.appendChild(dd);
+      // Float the option list as a screen-level pop-over so it extends PAST
+      // the modal's border instead of growing/clipping inside it (parity
+      // with the TUI popover). `position:fixed` escapes the surface's
+      // `overflow` clip; we anchor it under the pill after layout, flipping
+      // above when there's no room below.
+      requestAnimationFrame(()=>{
+        if(!pill.isConnected) return;
+        const r=pill.getBoundingClientRect();
+        dd.style.left=r.left+"px";
+        dd.style.minWidth=r.width+"px";
+        const h=dd.offsetHeight;
+        let top=r.bottom+2;
+        if(top+h>window.innerHeight && r.top-h-2>0) top=r.top-h-2;
+        dd.style.top=top+"px";
+      });
     }
     return el;
   }

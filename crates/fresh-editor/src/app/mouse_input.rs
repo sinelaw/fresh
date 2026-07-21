@@ -4110,7 +4110,58 @@ impl Editor {
 
     /// `handle_editor_click` uses; clicks outside the rect are
     /// swallowed without dismissing the panel.
+    /// Resolve a click against the open dropdown pop-over's screen rects
+    /// (recorded by the last draw). A click on an option row delivers the
+    /// same `dropdown_select` hit a TUI cell click on the old inline list
+    /// would; a click elsewhere inside the box (border) is swallowed so it
+    /// neither selects nor dismisses the modal. Returns true when the click
+    /// was inside the pop-over box (and thus consumed).
+    fn try_dropdown_popup_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
+        let (panel_key, key, hits, popup_rect) = match self.panel(slot) {
+            Some(f) => (
+                f.panel_key.clone(),
+                f.dropdown_popup.as_ref().map(|d| d.widget_key.clone()),
+                f.dropdown_popup_hits.clone(),
+                f.dropdown_popup_rect,
+            ),
+            None => return false,
+        };
+        let popup_rect = match popup_rect {
+            Some(r) => r,
+            None => return false,
+        };
+        let key = match key {
+            Some(k) if !k.is_empty() => k,
+            _ => return false,
+        };
+        // Option row → select that index (fires `change`) and close.
+        if let Some(hit) = hits.iter().find(|h| in_rect(col, row, h.rect)) {
+            let ha = crate::widgets::HitArea {
+                widget_key: key,
+                widget_kind: "dropdown",
+                buffer_row: 0,
+                byte_start: 0,
+                byte_end: 0,
+                payload: serde_json::json!({ "index": hit.index }),
+                event_type: "dropdown_select",
+            };
+            self.deliver_widget_hit(&panel_key, &ha, None);
+            return true;
+        }
+        // Inside the box but not on a row (its border): consume so the
+        // modal isn't dismissed and the list stays open.
+        in_rect(col, row, popup_rect)
+    }
+
     fn handle_floating_widget_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) {
+        // An open dropdown's option list floats as a screen-level pop-over
+        // that extends PAST the panel/modal border, so a click on one of
+        // its option rows lands outside the panel's inner rect and would be
+        // dropped by the gate below. Resolve it first, against the screen
+        // rects recorded at draw time.
+        if self.try_dropdown_popup_click(slot, col, row) {
+            return;
+        }
         // Scrollbar press wins over row hit-testing (the bar overlaps
         // the list's rightmost column).
         if self.try_widget_scrollbar_press(slot, col, row) {

@@ -1314,6 +1314,33 @@ pub(crate) struct FloatingWidgetState {
     /// (web mode) since geometry is computed there without painting cells.
     /// `None` when the panel isn't a closable `Centered` modal.
     pub close_button_rect: Option<ratatui::layout::Rect>,
+    /// The open `Dropdown`'s option list, surfaced by the widget renderer
+    /// for a screen-level floating pop-over (drawn by
+    /// `render_floating_widget_panel` at the trigger's screen row, clipped
+    /// to the terminal so it extends past the panel/modal frame). `None`
+    /// when no keyed Dropdown in this panel is open. Refreshed on every
+    /// render alongside `entries`.
+    pub dropdown_popup: Option<crate::widgets::DropdownPopup>,
+    /// Screen-space hit rectangles for the open dropdown pop-over's option
+    /// rows, recomputed on every draw (like `close_button_rect`). Each maps
+    /// a terminal rect to the absolute option index; the mouse hit-test
+    /// checks these BEFORE the panel-inner gate so a click on an option
+    /// below the modal border still selects it. Empty when no pop-over is
+    /// drawn.
+    pub dropdown_popup_hits: Vec<DropdownPopupOptionHit>,
+    /// Full screen rect of the drawn dropdown pop-over box (border
+    /// included), so a click anywhere inside it is consumed rather than
+    /// dismissing the modal. `None` when no pop-over is drawn.
+    pub dropdown_popup_rect: Option<ratatui::layout::Rect>,
+}
+
+/// One option row of the open dropdown pop-over, captured at draw time as
+/// a screen rect → absolute option index, so the mouse hit-test can route
+/// a click on the (panel-escaping) pop-over back to `dropdown_select`.
+#[derive(Debug, Clone)]
+pub(crate) struct DropdownPopupOptionHit {
+    pub rect: ratatui::layout::Rect,
+    pub index: usize,
 }
 
 /// How long the dock's overlay scrollbar stays visible after a keyboard
@@ -1856,6 +1883,9 @@ mod tests {
             title: None,
             closable: false,
             close_button_rect: None,
+            dropdown_popup: None,
+            dropdown_popup_hits: Vec::new(),
+            dropdown_popup_rect: None,
         }
     }
 

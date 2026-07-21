@@ -284,6 +284,10 @@
   .w-dd{position:absolute;left:0;top:100%;z-index:98;background:var(--bg2);
     border:1px solid var(--hairline,var(--border));border-radius:4px;max-height:200px;overflow-y:auto;
     box-shadow:0 8px 24px rgba(0,0,0,.4);min-width:100%}
+  /* Screen-level pop-over: `position:fixed` escapes the modal's overflow clip
+     so the option list extends past the dialog border (parity with the TUI
+     floating popover). JS sets left/top/min-width from the pill's rect. */
+  .w-dd-floating{position:fixed;top:0;left:0;z-index:200;min-width:0}
   .w-dd-row{padding:1px 10px;white-space:nowrap}
   .w-dd-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
   .w-dual-cols{display:flex;gap:10px}

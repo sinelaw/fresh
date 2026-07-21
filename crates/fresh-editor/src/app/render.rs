@@ -4379,6 +4379,7 @@ impl Editor {
             scrollbar_flash_until,
             title,
             closable,
+            dropdown_popup,
         ) = match self.panel(slot) {
             Some(fwp) => (
                 fwp.width_pct,
@@ -4394,6 +4395,7 @@ impl Editor {
                 fwp.scrollbar_flash_until,
                 fwp.title.clone(),
                 fwp.closable,
+                fwp.dropdown_popup.clone(),
             ),
             None => return,
         };
@@ -4781,6 +4783,110 @@ impl Editor {
             );
         }
 
+        // ---- Open-Dropdown floating pop-over ---------------------------
+        // Painted AFTER the panel content, at the trigger's SCREEN row and
+        // clamped to the whole frame (`area`) rather than the panel — so
+        // the option list extends past the panel/modal border instead of
+        // growing/clipping it. Geometry mirrors the
+        // `PanelPlacement::Anchored` popup: hug the content, and flip above
+        // the trigger when there's no room below. Each option's screen rect
+        // is recorded so the mouse hit-test can route a click (which lands
+        // outside the panel's inner rect) back to `dropdown_select`.
+        let mut dropdown_popup_hits: Vec<super::DropdownPopupOptionHit> = Vec::new();
+        let mut dropdown_popup_rect: Option<ratatui::layout::Rect> = None;
+        if let Some(dp) = dropdown_popup.as_ref() {
+            use crate::primitives::display_width::{byte_offset_at_visual_column, str_width};
+            use ratatui::style::{Modifier, Style};
+            let visible = dp
+                .options
+                .len()
+                .min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
+            if visible > 0 {
+                let max_scroll = dp.options.len().saturating_sub(visible);
+                let scroll = dp.scroll.min(max_scroll);
+                // Box width = widest visible option + 1 col of left padding,
+                // + 2 for the borders; clamped to the frame.
+                let content_w = dp
+                    .options
+                    .iter()
+                    .skip(scroll)
+                    .take(visible)
+                    .map(|o| str_width(o) as u16)
+                    .max()
+                    .unwrap_or(0);
+                let w = content_w
+                    .saturating_add(1)
+                    .saturating_add(2)
+                    .clamp(4, area.width);
+                let h = (visible as u16).saturating_add(2).clamp(3, area.height);
+                // Anchor to the trigger's screen row; prefer opening below
+                // (one row under the trigger), flipping above when the box
+                // would run off the bottom of the frame.
+                let anchor_screen_y = inner.y.saturating_add(dp.anchor_row as u16);
+                let below_y = anchor_screen_y.saturating_add(1);
+                let bottom = area.y + area.height;
+                let y = if below_y.saturating_add(h) <= bottom {
+                    below_y
+                } else {
+                    anchor_screen_y.saturating_sub(h)
+                };
+                let x = inner.x.min(area.x + area.width.saturating_sub(w));
+                let y = y.clamp(area.y, area.y + area.height.saturating_sub(h));
+                let popup_rect = ratatui::layout::Rect {
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                };
+                frame.render_widget(Clear, popup_rect);
+                let popup_block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(ratatui::style::Style::default().fg(theme.popup_border_fg))
+                    .style(ratatui::style::Style::default().bg(theme.suggestion_bg));
+                let popup_inner = popup_block.inner(popup_rect);
+                frame.render_widget(popup_block, popup_rect);
+                for (row_i, idx) in (scroll..scroll + visible).enumerate() {
+                    let ry = popup_inner.y + row_i as u16;
+                    if ry >= popup_inner.y + popup_inner.height {
+                        break;
+                    }
+                    let row_rect = ratatui::layout::Rect {
+                        x: popup_inner.x,
+                        y: ry,
+                        width: popup_inner.width,
+                        height: 1,
+                    };
+                    let selected = idx == dp.selected;
+                    let row_bg = if selected {
+                        theme.suggestion_selected_bg
+                    } else {
+                        theme.suggestion_bg
+                    };
+                    frame.render_widget(
+                        Block::default().style(ratatui::style::Style::default().bg(row_bg)),
+                        row_rect,
+                    );
+                    // One col of left padding, truncated to the interior.
+                    let avail = popup_inner.width.saturating_sub(1) as usize;
+                    let opt = dp.options.get(idx).map(|s| s.as_str()).unwrap_or("");
+                    let cut = byte_offset_at_visual_column(opt, avail);
+                    let text = &opt[..cut];
+                    let mut style = Style::default().fg(theme.suggestion_fg).bg(row_bg);
+                    if selected {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    frame
+                        .buffer_mut()
+                        .set_string(popup_inner.x + 1, ry, text, style);
+                    dropdown_popup_hits.push(super::DropdownPopupOptionHit {
+                        rect: row_rect,
+                        index: idx,
+                    });
+                }
+                dropdown_popup_rect = Some(popup_rect);
+            }
+        }
+
         if let Some(fc) = focus_cursor {
             let cx = inner.x.saturating_add(byte_to_screen_col(
                 entries
@@ -4811,6 +4917,8 @@ impl Editor {
             fwp.close_button_rect = close_button_rect;
             fwp.scrollbar_tracks = scrollbar_tracks;
             fwp.scrollbar_hover_zones = scrollbar_hover_zones;
+            fwp.dropdown_popup_hits = dropdown_popup_hits;
+            fwp.dropdown_popup_rect = dropdown_popup_rect;
         }
     }
 
