@@ -94,10 +94,11 @@ function layoutShell(){
   syncAppOrigin();
   const dev=document.getElementById("device");
   if(!dev) return;
-  // The COSMOS hardware bezel is a cosmos-theme decoration; the macOS / compact
-  // web themes run full-bleed, so the device is hidden and the menubar clip
-  // (which carves out the dock↔bezel gap) is neutralised for them.
-  if(isMobile()||!scene||webTheme!=="cosmos"){
+  // The bezel is a shell-theme decoration (COSMOS hardware / Winamp skin
+  // window); the macOS / compact web themes run full-bleed, so the device is
+  // hidden and the menubar clip (which carves out the dock↔bezel gap) is
+  // neutralised for them.
+  if(isMobile()||!scene||!shellTheme()){
     dev.classList.remove("on");
     document.documentElement.style.setProperty("--clip-left","0px");
     return;

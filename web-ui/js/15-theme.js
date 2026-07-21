@@ -22,24 +22,30 @@
 //     window chrome and the wallpaper/bezel opt-out off that class. Cosmos needs
 //     no rules of its own: it IS the base look, so its class only marks the
 //     switcher's active row and gates the hardware bezel in layoutShell().
-const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact"];
-const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact" };
+const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp"];
+const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic" };
 const WEB_THEME_DESC = {
   cosmos: "Wallpaper, glass & hardware bezel",
   macos: "Native macOS — light & vibrant",
   "macos-dark": "Native macOS — dark & vibrant",
   compact: "Dense, chrome-light IDE",
+  winamp: "Brushed metal, bevels & LCD green",
 };
 // The macOS variants share one structural stylesheet (title bar, traffic
 // lights, system font, control shapes); only their colour tokens differ.
 const MACOS_THEMES = ["macos", "macos-dark"];
+// Themes built on the COSMOS shell layout: the grid is inset inside the #device
+// bezel and the dock floats beside it as its own panel (Cosmos dresses that as
+// hardware, Winamp as a stack of skin windows). macOS / Compact run full-bleed.
+const SHELL_THEMES = ["cosmos", "winamp"];
+function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 // The inline custom properties applyTheme() (js/20-cells.js) owns. applyWebTheme
 // must NOT clear these when a theme leaves them unset — applyTheme just re-wrote
 // them from the live TUI theme, and that is exactly what Cosmos wants.
 const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--bg2", "--bg3",
   "--menuhi", "--border", "--status-bg", "--status-fg", "--on-accent", "--on-sel", "--shell"];
 // Density multiplier per theme (layered under user zoom in measureMetrics).
-const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92 };
+const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1 };
 
 // Per-theme chrome palettes. Cosmos = {} (identity — inherit the TUI theme).
 // The macOS variants are fixed "System" palettes (light / dark) built from the
@@ -110,6 +116,26 @@ const WEB_THEME_VARS = {
     "--sel-ring": "inset 0 0 0 1px color-mix(in srgb, var(--ui-accent) 42%, transparent)",
     "--shadow": "0 10px 28px rgba(0,0,0,.5)",
     "--r-sm": "3px", "--r-md": "4px", "--r-lg": "6px",
+  },
+  // Winamp Classic — the base skin's palette: brushed-graphite chrome, LCD
+  // green readouts, the playlist editor's navy selection, square corners and a
+  // hard offset drop shadow instead of a soft one. Structure (bevels, metal
+  // gradients, scanlines) lives in css/95-theme-winamp.css.
+  winamp: {
+    "--fg": "#d5d9e0", "--muted": "#8e94a0",
+    "--bg2": "#3a3d47", "--bg3": "#2c2f37",
+    "--menuhi": "#1c2fa8", "--border": "#14161b",
+    "--status-bg": "#000000", "--status-fg": "#3bd76e",
+    "--shell": "#33363f",
+    "--accent": "#2bf573", "--ui-accent": "#2bf573",
+    "--on-ui-accent": "#04140a", "--on-accent": "#04140a", "--on-sel": "#ffffff",
+    "--ok": "#2bf573",
+    "--surface": "#3a3d47", "--surface-2": "#2c2f37",
+    "--hairline": "rgba(255,255,255,.10)", "--hairline-strong": "rgba(255,255,255,.22)",
+    "--hover": "rgba(255,255,255,.09)",
+    "--sel": "#1c2fa8", "--sel-ring": "none",
+    "--shadow": "4px 4px 0 rgba(0,0,0,.55), 0 0 0 1px #14161b",
+    "--r-sm": "0px", "--r-md": "0px", "--r-lg": "0px",
   },
 };
 // Union of every override key, for stale-clearing on theme switch.
