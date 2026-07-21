@@ -33,6 +33,17 @@ impl Window {
         // Find terminal buffer at this position.
         let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
 
+        // `send_terminal_mouse` writes to the *focused* terminal and makes the
+        // coordinates relative to `content_rect`, so both must describe the
+        // same pane. If the pointer is over a *different* terminal pane than
+        // the focused one, forwarding would inject that pane's mouse reports
+        // into the focused child's stdin — a child that may never have enabled
+        // mouse reporting at all (sinelaw/fresh#2745). Only the focused
+        // terminal receives the mouse.
+        if buffer_id != self.active_buffer() {
+            return None;
+        }
+
         let forward = match forwarding {
             // Legacy rule: forward every event to any alternate-screen
             // program, whether or not it asked for the mouse.

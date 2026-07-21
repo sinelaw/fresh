@@ -77,6 +77,7 @@ dev-bins = ["dep:ratatui", "dep:vt100"]
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
     "dep:crossterm",
+    "dep:fresh-input-parser",
     "dep:ratatui",
     "ratatui/crossterm",  # Enable ratatui's crossterm backend for native terminal
     "dep:chrono",
@@ -136,6 +137,7 @@ schema-only = []
 wasm = [
     "dep:ratatui",  # ratatui core is WASM-compatible (no crossterm backend)
     "dep:crossterm",  # crossterm event types are pure Rust data structures
+    "dep:fresh-input-parser",
     "dep:syntect",
     # Use fancy-regex instead of onig for WASM (pure Rust, no C dependencies)
     "syntect/regex-fancy",
@@ -157,6 +159,9 @@ fresh-parser-js = { workspace = true, optional = true }
 # be dropped from minimal builds.
 fresh-languages = { workspace = true, optional = true }
 fresh-plugin-runtime = { workspace = true, optional = true }
+# Terminal input (VT/ANSI) parser — turns the raw client byte stream into
+# crossterm events. Pulled in wherever crossterm is (runtime / wasm).
+fresh-input-parser = { workspace = true, optional = true }
 
 # oxc syntax-checks the user's `init.ts` (`fresh --cmd init check` and the
 # pre-load check). `init.ts` is config-as-code executed by the QuickJS plugin

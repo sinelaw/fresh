@@ -4535,13 +4535,17 @@ fn run_event_loop(
     gpm_client: &Option<GpmClient>,
     terminal_modes: &mut TerminalModes,
 ) -> AnyhowResult<()> {
+    // Host input is read raw and parsed by fresh's own state machine (see
+    // `services::tty_input`), not crossterm — this is what prevents mouse
+    // reports from leaking into focused terminals (#2745).
+    let mut reader = fresh::services::tty_input::TtyReader::new();
     run_event_loop_common(
         editor,
         terminal,
         workspace_enabled,
         key_translator,
         terminal_modes,
-        |timeout| poll_with_gpm(gpm_client.as_ref(), timeout),
+        |timeout| poll_with_gpm(&mut reader, gpm_client.as_ref(), timeout),
     )
 }
 
@@ -4654,19 +4658,17 @@ fn run_event_loop(
     key_translator: &KeyTranslator,
     terminal_modes: &mut TerminalModes,
 ) -> AnyhowResult<()> {
+    // Host input is read raw and parsed by fresh's own state machine (see
+    // `services::tty_input`), not crossterm — this is what prevents mouse
+    // reports from leaking into focused terminals (#2745).
+    let mut reader = fresh::services::tty_input::TtyReader::new();
     run_event_loop_common(
         editor,
         terminal,
         workspace_enabled,
         key_translator,
         terminal_modes,
-        |timeout| {
-            if event_poll(timeout)? {
-                Ok(safe_event_read()?)
-            } else {
-                Ok(None)
-            }
-        },
+        |timeout| reader.poll(timeout),
     )
 }
 
@@ -4926,25 +4928,30 @@ where
 /// Poll for events from both GPM and crossterm (Linux with libgpm available)
 #[cfg(target_os = "linux")]
 fn poll_with_gpm(
+    reader: &mut fresh::services::tty_input::TtyReader,
     gpm_client: Option<&GpmClient>,
     timeout: Duration,
 ) -> AnyhowResult<Option<CrosstermEvent>> {
     use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
     use std::os::unix::io::{AsRawFd, BorrowedFd};
 
-    // If no GPM client, just use crossterm polling
+    // Serve any already-decoded event (or a pending resize) first.
+    if let Some(ev) = reader.next_buffered() {
+        return Ok(Some(ev));
+    }
+    if let Some(ev) = reader.take_resize() {
+        return Ok(Some(ev));
+    }
+
+    // Without GPM, the reader owns stdin polling + parsing entirely.
     let Some(gpm) = gpm_client else {
-        return if event_poll(timeout)? {
-            Ok(safe_event_read()?)
-        } else {
-            Ok(None)
-        };
+        return reader.poll(timeout);
     };
 
-    // Set up poll for both stdin (crossterm) and GPM fd
+    // With GPM, poll stdin and the GPM fd together so a mouse event on either
+    // wakes us. stdin bytes are still parsed by the reader (fresh's parser).
     let stdin_fd = std::io::stdin().as_raw_fd();
     let gpm_fd = gpm.fd();
-    tracing::trace!("GPM poll: stdin_fd={}, gpm_fd={}", stdin_fd, gpm_fd);
 
     // SAFETY: We're borrowing the fds for the duration of the poll call
     let stdin_borrowed = unsafe { BorrowedFd::borrow_raw(stdin_fd) };
@@ -4958,60 +4965,43 @@ fn poll_with_gpm(
     // Convert timeout to milliseconds, clamping to u16::MAX (about 65 seconds)
     let timeout_ms = timeout.as_millis().min(u16::MAX as u128) as u16;
     let poll_timeout = PollTimeout::from(timeout_ms);
-    let ready = poll(&mut poll_fds, poll_timeout)?;
+    // EINTR (e.g. a SIGWINCH) surfaces as an error; treat it as "nothing ready"
+    // and fall through to the resize check below.
+    let ready = poll(&mut poll_fds, poll_timeout).unwrap_or(0);
 
     if ready == 0 {
-        return Ok(None);
+        return Ok(reader.take_resize());
     }
 
     let stdin_revents = poll_fds[0].revents();
     let gpm_revents = poll_fds[1].revents();
-    tracing::trace!(
-        "GPM poll: ready={}, stdin_revents={:?}, gpm_revents={:?}",
-        ready,
-        stdin_revents,
-        gpm_revents
-    );
 
     // Check GPM first (mouse events are typically less frequent)
     if gpm_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
-        tracing::trace!("GPM poll: GPM fd has data, reading event...");
         match gpm.read_event() {
             Ok(Some(gpm_event)) => {
-                tracing::trace!(
-                    "GPM event received: x={}, y={}, buttons={}, type=0x{:x}",
-                    gpm_event.x,
-                    gpm_event.y,
-                    gpm_event.buttons.0,
-                    gpm_event.event_type
-                );
                 if let Some(mouse_event) = gpm_to_crossterm(&gpm_event) {
-                    tracing::trace!("GPM event converted to crossterm: {:?}", mouse_event);
                     return Ok(Some(CrosstermEvent::Mouse(mouse_event)));
                 } else {
                     tracing::debug!("GPM event could not be converted to crossterm event");
                 }
             }
-            Ok(None) => {
-                tracing::trace!("GPM poll: read_event returned None");
-            }
+            Ok(None) => {}
             Err(e) => {
                 tracing::warn!("GPM poll: read_event error: {}", e);
             }
         }
     }
 
-    // Check stdin (crossterm events)
+    // Then stdin, parsed by fresh's state machine.
     if stdin_revents.is_some_and(|r| r.contains(PollFlags::POLLIN)) {
-        // Use crossterm's read since it handles escape sequence parsing
-        if event_poll(Duration::ZERO)? {
-            if let Some(ev) = safe_event_read()? {
-                return Ok(Some(ev));
-            }
+        reader.drain_stdin();
+        if let Some(ev) = reader.next_buffered() {
+            return Ok(Some(ev));
         }
     }
 
-    Ok(None)
+    Ok(reader.take_resize())
 }
 
 /// Skip stale mouse move events, return the latest one.
@@ -5023,6 +5013,14 @@ fn coalesce_mouse_moves(
 
     // Only coalesce mouse moves
     if !matches!(&event, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
+        return Ok((event, None));
+    }
+
+    // On Unix, the TtyReader owns stdin and already coalesces motion floods as
+    // it queues them; draining crossterm here would race the reader on fd 0
+    // (and re-introduce crossterm's fragile mouse parsing). Nothing to do.
+    #[cfg(unix)]
+    if fresh::services::tty_input::raw_input_active() {
         return Ok((event, None));
     }
 

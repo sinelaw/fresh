@@ -1,0 +1,22 @@
+[package]
+name = "fresh-input-parser"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Incremental terminal input (VT/ANSI) parser: a DEC/ANSI state machine that turns raw byte streams into crossterm events without ever leaking control-sequence bytes as literal input"
+keywords = ["terminal", "vt100", "ansi", "parser", "input"]
+categories = ["parsing", "command-line-interface"]
+
+[lib]
+name = "fresh_input_parser"
+path = "src/lib.rs"
+
+[dependencies]
+crossterm.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest = "1.9"

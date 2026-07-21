@@ -1411,6 +1411,7 @@ dependencies = [
  "encoding_rs",
  "fresh-core",
  "fresh-gui",
+ "fresh-input-parser",
  "fresh-languages",
  "fresh-parser-js",
  "fresh-plugin-api-macros",
@@ -1478,6 +1479,15 @@ dependencies = [
  "tracing",
  "windows-sys 0.60.2",
  "winit",
+]
+
+[[package]]
+name = "fresh-input-parser"
+version = "0.4.4"
+dependencies = [
+ "crossterm",
+ "proptest",
+ "tracing",
 ]
 
 [[package]]
