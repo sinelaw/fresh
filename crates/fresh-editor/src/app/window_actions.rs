@@ -409,8 +409,7 @@ impl crate::app::Editor {
         // window and no other. Minting happens here — after the window id is
         // known, before the PTY spawns — so the token is live by the time the
         // child reads its env. See `terminal::agent_command_env`.
-        let terminal_env =
-            crate::app::terminal::agent_command_env(id, env, command_allowlist);
+        let terminal_env = crate::app::terminal::agent_command_env(id, env, command_allowlist);
 
         let spawn_result = {
             let target = self

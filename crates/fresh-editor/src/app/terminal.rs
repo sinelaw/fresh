@@ -140,9 +140,10 @@ pub(crate) fn agent_command_env(
         if let Ok(session_id) = crate::server::local_control::start() {
             env.insert("FRESH_SESSION".to_string(), session_id.to_string());
         }
-        let token = crate::server::command_access::mint(
-            crate::server::command_access::Grant::new(Some(window.0), allowlist),
-        );
+        let token = crate::server::command_access::mint(crate::server::command_access::Grant::new(
+            Some(window.0),
+            allowlist,
+        ));
         env.insert("FRESH_CMD_TOKEN".to_string(), token);
     }
     env
