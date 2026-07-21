@@ -4125,11 +4125,16 @@ pub fn render_dropdown(
     let max_scroll = options.len().saturating_sub(visible);
     let scroll = (scroll_offset as usize).min(max_scroll);
     if open {
-        let indent = marker.len()
+        // Align the option column under the button's value cell using DISPLAY
+        // width, never byte length: the focus marker `▸ ` is 4 bytes but only
+        // 2 columns, so a byte-length indent pushed the popup two cells right
+        // of the value it belongs under.
+        use crate::primitives::display_width::str_width;
+        let indent = str_width(marker)
             + if label.is_empty() {
                 0
             } else {
-                pad_label(label, label_width as usize).len() + 2
+                str_width(&pad_label(label, label_width as usize)) + 2
             };
         for (row_i, opt) in options.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + row_i;
