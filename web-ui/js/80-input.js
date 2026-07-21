@@ -131,7 +131,13 @@ let dragging=false, lastCell=null;
 // forwards them to the editor at the exact cell rects the pipeline reported.
 // The document-level handlers are the fallback for buffer interiors, scrollbars
 // and separators, so they ignore anything that lands on a chrome element.
-const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
+// NB: dropdown ITEMS (.mitem/.msep/.mlabel) are siblings of the .dropdown backing
+// panel, not children, so they must be listed explicitly. They own their own
+// hover/click at the exact cell the editor reported (rectCell); without them the
+// document fallback would forward a LINEAR pixel→cell hover (cellAt) that is
+// wrong once the menu reflow makes an item's screen position differ from
+// cell×CH — sending a bogus cell that e.g. closes a submenu the item just opened.
+const onChrome = e => e.target.closest("#mobile,.menubar,.dropdown,.mitem,.msep,.mlabel,.tabbar,.statusbar,.palette,.popup,.fileexplorer,.trustdialog,.modal-scrim,.widget-surface,.ctxmenu,.auxmodal,.kbedit,.settings-modal");
 // `count` carries the browser's click count (event.detail); the bridge primes
 // the editor's own double/triple-click detection with it (see apply_mouse).
 document.addEventListener("mousedown",e=>{ if(onChrome(e)) return; if(mSheetOpen){ mSheetOpen=false; render(); } const c=cellAt(e); dragging=true; lastCell=c; sendMouse({kind:"down",button:btn(e),col:c.col,row:c.row,count:e.detail,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey}); });
