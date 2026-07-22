@@ -15,6 +15,7 @@ use crate::app::Editor;
 use fresh_core::LeafId;
 use ratatui::layout::Rect;
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 /// A cell rectangle, serialized as `{x, y, w, h}` (matching the bridge's
@@ -905,7 +906,13 @@ pub struct WidgetSurfaceView {
     pub focus_key: String,
     /// The raw, already-serializable `WidgetSpec` tree — rendered natively.
     pub spec: fresh_core::api::WidgetSpec,
-    pub instances: HashMap<String, WidgetInstanceView>,
+    /// Keyed by widget key. A `BTreeMap` (not `HashMap`) so serialization is
+    /// key-ordered and therefore STABLE across scene builds: the region-diff
+    /// hashes the serialized bytes, and a randomized map order made an
+    /// otherwise-unchanged panel hash differently every tick, pushing a
+    /// redundant `regions.widgets` frame ~once a second — a full dock rebuild
+    /// (scrollbar flicker, dropped scroll gesture) for no real change.
+    pub instances: BTreeMap<String, WidgetInstanceView>,
     pub hits: Vec<WidgetHitView>,
     /// Native modal-frame title (the declarative dialog's *shell*, drawn by
     /// the frontend as a title bar — not part of the `spec`). `None` for the
@@ -943,7 +950,7 @@ impl Editor {
             let Some(panel) = self.widget_registry.get(&fwp.panel_key) else {
                 continue;
             };
-            let mut instances = HashMap::new();
+            let mut instances = BTreeMap::new();
             for (key, st) in &panel.instance_states {
                 use crate::widgets::WidgetInstanceState as W;
                 let view = match st {
