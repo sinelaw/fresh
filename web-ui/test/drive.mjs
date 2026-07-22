@@ -281,6 +281,90 @@ await page.keyboard.press('End');
 for (let i = 0; i < 3; i++) await page.keyboard.press('Backspace');
 await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
+console.log('\n[dock chrome polish: no h-scroll, list fills, dropdowns float over content]');
+// Regression cover for the orchestrator-dock visual fixes: the dock never
+// raises a spurious horizontal scrollbar; the session tree fills the panel
+// (the TUI hint-padding rows are dropped in the web); and the toolbar
+// dropdowns float over the content (positioned by `layoutDockOverlays`)
+// instead of reflowing the list, with a full-width option highlight and an
+// outside-click dismiss.
+const dockOverlay = () => page.locator('.widget-surface.w-dock > .w-col > .w-overlay');
+const treeHeight = () => page.evaluate(() => {
+  const t = document.querySelector('.widget-surface.w-dock .w-tree');
+  return t ? Math.round(t.getBoundingClientRect().height) : -1;
+});
+
+// (1) No horizontal scrollbar: over-wide `pre` tree rows ellipsis-clip.
+const dockOverflowX = await page.evaluate(() =>
+  getComputedStyle(document.querySelector('.widget-surface.w-dock')).overflowX);
+check('dock never scrolls horizontally (overflow-x: hidden)', dockOverflowX === 'hidden', dockOverflowX);
+
+// (2) The session list fills the panel (no blank filler stealing the space).
+const fillRatio = await page.evaluate(() => {
+  const dock = document.querySelector('.widget-surface.w-dock');
+  const tree = document.querySelector('.widget-surface.w-dock .w-tree');
+  return tree ? tree.getBoundingClientRect().height / dock.getBoundingClientRect().height : 0;
+});
+check('session list fills the dock (tree ≥ 55% of dock height)', fillRatio >= 0.55, `ratio=${fillRatio.toFixed(2)}`);
+
+// (3) New Task… dropdown floats flush under its button (never on top of it),
+//     and its option highlight fills the row instead of hugging the text.
+await page.locator('.widget-surface.w-dock .w-button.primary', { hasText: 'New Task' }).first().click();
+await page.waitForFunction(() => !!document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
+  { timeout: 8000 }).catch(() => {});
+const newInfo = await page.evaluate(() => {
+  const ov = document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay');
+  const btn = [...document.querySelectorAll('.widget-surface.w-dock .w-button.primary')]
+    .find(b => /New Task/.test(b.textContent));
+  if (!ov || !btn) return null;
+  const o = ov.getBoundingClientRect(), b = btn.getBoundingClientRect();
+  const opt = ov.querySelector('.w-button'), row = opt && opt.closest('.w-row');
+  return {
+    floats: getComputedStyle(ov).position === 'absolute',
+    belowButton: o.top >= b.bottom - 2,
+    optionFillsRow: !!row && opt.getBoundingClientRect().width >= row.getBoundingClientRect().width - 2,
+  };
+});
+check('New Task dropdown floats absolutely, flush below its button', !!newInfo && newInfo.floats && newInfo.belowButton, JSON.stringify(newInfo));
+check('dropdown option highlight fills the row (no half-width spacer)', !!newInfo && newInfo.optionFillsRow, JSON.stringify(newInfo));
+await page.keyboard.press('Escape');
+await page.waitForFunction(() => !document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
+  { timeout: 8000 }).catch(() => {});
+
+// (4) Move to Folder… floats over the tree without reflowing it, and an
+//     outside click dismisses it (the dropdowns carry no scrim of their own).
+await page.locator('.widget-surface.w-dock .w-tree-row').first().click({ button: 'right' });
+await page.waitForFunction(() => (window.fresh.scene.regions.widgets || []).some(w => w.kind === 'floatingModal'),
+  { timeout: 8000 }).catch(() => {});
+const treeBeforeMove = await treeHeight();
+await page.locator('.widget-surface.w-floatingModal .w-button', { hasText: 'Move to Folder' }).first().click();
+await page.waitForFunction(() => !!document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
+  { timeout: 8000 }).catch(() => {});
+const moveInfo = await page.evaluate(() => {
+  const ov = document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay');
+  const tree = document.querySelector('.widget-surface.w-dock .w-tree');
+  const div = document.querySelector('.widget-surface.w-dock .w-divider');
+  if (!ov) return null;
+  const ovTop = Math.round(ov.getBoundingClientRect().top);
+  // The menu is pinned to the divider at the head of the tree (a small
+  // divider gap sits above the first tree row); the pre-fix bug parked it at
+  // the panel top over the toolbar, which this catches.
+  return {
+    floats: getComputedStyle(ov).position === 'absolute',
+    atTreeHead: !!div && Math.abs(ovTop - Math.round(div.getBoundingClientRect().top)) <= 3
+      && (!tree || ovTop >= Math.round(tree.getBoundingClientRect().top) - 16),
+    treeH: tree ? Math.round(tree.getBoundingClientRect().height) : -1,
+  };
+});
+check('Move to Folder floats absolutely at the head of the tree', !!moveInfo && moveInfo.floats && moveInfo.atTreeHead, JSON.stringify(moveInfo));
+check('Move to Folder does not collapse the session list', !!moveInfo && moveInfo.treeH >= treeBeforeMove * 0.7, `tree ${treeBeforeMove} -> ${moveInfo && moveInfo.treeH}`);
+await page.screenshot({ path: `${SHOTS}/30-dock-move-dropdown.png` });
+await page.mouse.click(1000, 700); // click in the editor, outside the dock
+await page.waitForFunction(() => !document.querySelector('.widget-surface.w-dock > .w-col > .w-overlay'),
+  { timeout: 8000 }).catch(() => {});
+check('outside-click dismisses the Move to Folder dropdown', (await dockOverlay().count()) === 0);
+await page.keyboard.press('Escape'); await page.waitForTimeout(150);
+
 console.log('\n[keybinding editor = full native modal incl. edit dialog]');
 // Start clean: dismiss any focused dock/floating panel so keys reach the editor.
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
