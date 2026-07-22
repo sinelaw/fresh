@@ -953,7 +953,16 @@ function widgetSurfaceEls(s){
   // A left dock's rightmost column is an editor resize border (dock_resizing);
   // give it an explicit grip since the .widget-surface is in onChrome.
   if(s.kind==="dock"){
-    el.appendChild(borderDragHandle(s.rect.x + s.rect.w - 1, s.rect.y, s.rect.h));
+    const grip=borderDragHandle(s.rect.x + s.rect.w - 1, s.rect.y, s.rect.h);
+    // A shell-inset dock's visual card is NARROWER than its logical cell rect
+    // (the bezel gap on the right). The grip is placed at the logical edge, so
+    // it would jut past the card and give the panel a phantom horizontal
+    // scroll region (an "empty" strip you can scroll to). Pin it to the card's
+    // own right edge instead; the drag still forwards the logical resize col.
+    if(!isMobile() && s.rect.x===0 && shellTheme()){
+      grip.style.left=(Math.max(140, px(s.rect.w,CW)-SHELL.side-SHELL.gap)-px(1,CW))+"px";
+    }
+    el.appendChild(grip);
     // Position the dock dropdowns after layout (offsetTop needs the panel in
     // the document) and arm outside-click dismissal.
     if(!isMobile()){
