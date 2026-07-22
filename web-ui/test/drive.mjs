@@ -863,7 +863,7 @@ check('Winamp: theme class set, shell bezel ON, skin furniture built', await pag
 check('Winamp: chrome palette layered inline (navy selection + LCD-green accent), buffer stays monospace',
   await page.evaluate(() => {
     const r = document.documentElement.style;
-    return r.getPropertyValue('--sel').trim() === '#2d4486' && r.getPropertyValue('--accent').trim() === '#4ef07f';
+    return r.getPropertyValue('--sel').trim() === '#313c90' && r.getPropertyValue('--accent').trim() === '#4ef07f';
   }) && (await svgFamily()) === cosmosBufFont);
 await page.screenshot({ path: `${SHOTS}/33b-theme-winamp.png` });
 // The floating switcher: clicking the pill opens a 3-row menu; a row switches.

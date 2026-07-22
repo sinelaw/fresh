@@ -128,7 +128,7 @@ const WEB_THEME_VARS = {
   winamp: {
     "--fg": "#e9d9c2", "--muted": "#9b856a",
     "--bg2": "#4a2d1c", "--bg3": "#3b2417",
-    "--menuhi": "#2d4486", "--border": "#1b1109",
+    "--menuhi": "#313c90", "--border": "#1b1109",
     "--status-bg": "#050705", "--status-fg": "#1a8f43",
     "--shell": "#4a2d1c",
     "--accent": "#4ef07f", "--ui-accent": "#f6c471",
@@ -137,7 +137,7 @@ const WEB_THEME_VARS = {
     "--surface": "#4a2d1c", "--surface-2": "#3b2417",
     "--hairline": "rgba(255,208,150,.12)", "--hairline-strong": "rgba(255,208,150,.26)",
     "--hover": "rgba(255,208,150,.10)",
-    "--sel": "#2d4486", "--sel-ring": "none",
+    "--sel": "#313c90", "--sel-ring": "none",
     "--shadow": "6px 6px 0 rgba(0,0,0,.5), 0 0 0 1px #1b1109",
     "--r-sm": "2px", "--r-md": "3px", "--r-lg": "4px",
   },
