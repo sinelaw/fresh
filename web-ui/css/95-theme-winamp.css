@@ -20,9 +20,9 @@
     /* Window metal: a MUTED warm taupe-brown (sampled from the reference skin —
        desaturated, not a saturated copper), with a light sheen along the top and
        a modest darkening toward the foot so it reads as a machined slab. */
-    --wa-face:linear-gradient(180deg,#5b4636 0%,#48352b 46%,#382a21 100%);
-    --wa-face-flat:#453329;
-    --wa-plate:linear-gradient(180deg,#5a4634 0%,#48362b 54%,#3a2c22 100%); /* raised parts */
+    --wa-face:linear-gradient(180deg,#503d2f 0%,#3f2e25 46%,#2c2019 100%);
+    --wa-face-flat:#3c2c23;
+    --wa-plate:linear-gradient(180deg,#54402f 0%,#403026 54%,#342820 100%); /* raised parts */
     --wa-sunken:#070606;                                             /* LCD / code wells */
     /* Vertical brushed-metal striations, layered over any face fill — fine and
        low-contrast so it reads as brushed grain, not stripes. */
@@ -62,9 +62,9 @@
     --wa-ctl-press:var(--wa-ring),var(--wa-in),0 1px 2px rgba(0,0,0,.4);
     /* Dramatic top-lit sheen across the big panels: a warm glow high-centre that
        falls off to the darker edges + foot (the reference's lighting). */
-    --wa-light:radial-gradient(120% 78% at 50% -6%,rgba(255,224,172,.28),transparent 50%),
-      linear-gradient(180deg,rgba(255,220,170,.05),transparent 30%,rgba(0,0,0,.14) 100%),
-      radial-gradient(120% 60% at 50% 116%,rgba(78,240,127,.06),transparent 58%)}
+    --wa-light:radial-gradient(96% 62% at 50% -2%,rgba(255,231,184,.56),transparent 48%),
+      linear-gradient(180deg,rgba(255,224,176,.08) 0%,transparent 22%,rgba(0,0,0,.22) 70%,rgba(0,0,0,.38) 100%),
+      radial-gradient(120% 60% at 50% 118%,rgba(78,240,127,.055),transparent 58%)}
 
   /* ---- the desk: near-black with a warm bloom under the windows ---- */
   body.theme-winamp:not(.mobile){background:
