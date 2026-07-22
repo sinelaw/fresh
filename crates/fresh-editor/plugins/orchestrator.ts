@@ -3367,7 +3367,12 @@ async function probeGit(s: AgentSession): Promise<void> {
       s.root,
     );
     if (st.exit_code !== 0) {
-      s.git = { status: "ok", fetchedAt: Date.now() }; // not a git dir → empty summary
+      // `git status` failed. This is usually transient — an agent holding
+      // `.git/index.lock`, a mid-checkout worktree, etc. — so KEEP the last
+      // known summary instead of blanking it (a genuine non-git dir simply
+      // never had `info`, so this stays empty there). Dropping it made the
+      // card's git segment blink on every failed poll (TUI + web churn).
+      s.git = { status: "ok", fetchedAt: Date.now(), info: s.git?.info };
       return;
     }
     const info = parsePorcelainV2(st.stdout || "");
@@ -3382,7 +3387,9 @@ async function probeGit(s: AgentSession): Promise<void> {
     }
     s.git = { status: "ok", fetchedAt: Date.now(), info };
   } catch (_e) {
-    s.git = { status: "ok", fetchedAt: Date.now() };
+    // Spawn/parse error (git missing, killed, etc.) — same as above: keep the
+    // last known summary rather than blanking the card on a transient failure.
+    s.git = { status: "ok", fetchedAt: Date.now(), info: s.git?.info };
   } finally {
     gitProbesInFlight.delete(s.id);
     scheduleProbeRefresh();

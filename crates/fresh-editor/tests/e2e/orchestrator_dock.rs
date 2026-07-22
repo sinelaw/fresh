@@ -3176,3 +3176,85 @@ fn modal_picker_wears_native_modal_frame() {
         .unwrap();
     h.assert_screen_not_contains("[×]");
 }
+
+/// A committed, clean git project (has a HEAD) + the orchestrator plugin.
+fn setup_committed_project(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let root = temp_dir.path().join(name);
+    fs::create_dir(&root).unwrap();
+    let plugins_dir = root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "orchestrator");
+    fs::write(root.join("readme.txt"), "a\nb\nc\n").unwrap();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?} failed");
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.email", "t@example.com"]);
+    git(&["config", "user.name", "Test"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "init"]);
+    (temp_dir, root)
+}
+
+/// A transient git-probe failure (an agent momentarily holding
+/// `.git/index.lock`, or any other transient `git` error) must NOT erase the
+/// card's last-known git summary. Before the fix, `probeGit`'s error paths
+/// dropped the cached `info`, so the summary blinked away on every failed
+/// poll — visible churn in the TUI and, on the web, a dock rebuild that reset
+/// the session-list scroll. Drives only the dock open and asserts on rendered
+/// output, per CONTRIBUTING §2.
+///
+/// Non-vacuous by construction: a second "witness" session proves a probe
+/// re-runs (its TTL expiring drives the same poll cycle that re-probes the
+/// target), so when the witness updates the target has been re-probed too —
+/// no vacuous pass. The git-probe TTL is on the wall clock, so `wait_until`
+/// (which pumps real time) is what expires it; there's no fixed timeout.
+#[test]
+fn dock_git_summary_survives_transient_probe_failure() {
+    // Target session: a committed repo dirtied to a distinctive "+2" summary.
+    let (_tmp_a, root_a) = setup_committed_project("gitproj");
+    fs::write(root_a.join("readme.txt"), "a\nb\nc\nd\ne\n").unwrap();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+            .unwrap();
+
+    // Witness session: a second committed repo, used only to prove a re-probe
+    // cycle actually ran (it shares the wall-clock TTL with the target).
+    let (_tmp_b, root_b) = setup_committed_project("witness");
+    h.editor_mut()
+        .create_window_at(root_b.clone(), "witness".to_string());
+
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // First probes (no TTL gate): target shows "+2", witness shows "clean".
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("+2") && s.contains("clean")
+    })
+    .unwrap();
+
+    // Force the target's NEXT probe to FAIL (remove its `.git` so `git status`
+    // exits non-zero — the same class as a transient lock/error), and give the
+    // witness a new, distinctive summary ("+7") to change to.
+    fs::remove_dir_all(root_a.join(".git")).unwrap();
+    fs::write(root_b.join("readme.txt"), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\n").unwrap();
+
+    // Wait for the witness to re-probe to "+7": the same poll cycle re-probes
+    // the target (whose probe now fails). This can't pass vacuously — if
+    // probes never re-ran, "+7" would never appear and this would hang.
+    h.wait_until(|h| h.screen_to_string().contains("+7"))
+        .unwrap();
+    h.wait_until_stable(|_| true).unwrap();
+
+    // The target's failed re-probe must NOT have wiped its last-known summary.
+    h.assert_screen_contains("+2");
+}
