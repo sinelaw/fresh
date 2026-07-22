@@ -217,7 +217,10 @@
   .widget-surface{background:var(--bg2);overflow-y:auto;overflow-x:hidden;z-index:40;padding:4px 6px;
     display:flex;flex-direction:column}
   .widget-surface>.w-col,.widget-surface>.w-row{flex:1 1 auto;min-height:0}
-  .widget-surface .w-list,.widget-surface .w-tree{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}
+  /* `scrollbar-gutter:stable` reserves the scrollbar's column so a re-render
+     that briefly changes content height can't pop the bar in/out and shove
+     the rows sideways (a flicker on the dock's frequent repaints). */
+  .widget-surface .w-list,.widget-surface .w-tree{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
   /* rows/cards keep their natural height — the LIST scrolls, its items never
      squash to fit the flex-constrained track */
   .widget-surface .w-list>*,.widget-surface .w-tree>*{flex:0 0 auto}

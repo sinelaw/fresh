@@ -151,8 +151,12 @@
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-row{gap:0}
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
     background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.10)}
-  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button.primary{background:rgba(255,255,255,.16);
+  /* Highlight follows the mouse (hover), not the keyboard cursor: the primary
+     (cursor) row renders like any other so nothing is pre-selected on open,
+     and the hovered row lights up. */
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button.primary{
+    background:transparent;box-shadow:none;color:#e8eef5}
+  body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.16);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
   /* The anchored context menu (right-click a session) wears the SAME frosted
      card + borderless menu rows as the dock dropdowns, so the two read as one
@@ -165,9 +169,10 @@
   body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button{
     border:none;background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px;
     text-align:left;box-shadow:none}
-  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button:hover{
-    background:rgba(255,255,255,.10)}
+  /* Hover-driven highlight (see the dock dropdown above): no stuck cursor row. */
   body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.primary{
+    background:transparent;box-shadow:none;color:#e8eef5}
+  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button:hover{
     background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
   body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.danger{
     background:transparent;color:#ff9b9b}

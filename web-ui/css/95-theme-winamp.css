@@ -270,6 +270,20 @@
      flat transparent override that used to sit here is gone). Width comes
      from the base full-width rule. */
   body.theme-winamp .w-dock .w-overlay .w-button{padding:3px 10px}
+  /* Highlight follows the mouse (hover), not a stuck keyboard cursor: the
+     primary (cursor) row renders as a plain plate so nothing is pre-selected
+     on open, and the hovered row lights up with the green primary plate.
+     Applies to the dock dropdowns AND the anchored right-click context menu. */
+  body.theme-winamp .w-dock .w-overlay .w-button.primary,
+  body.theme-winamp .widget-surface.w-floatingModal.anchored .w-button.primary{
+    background:var(--wa-gloss),var(--wa-plate);color:#f0dcc2;
+    box-shadow:var(--wa-ctl);text-shadow:0 1px 0 rgba(0,0,0,.5)}
+  body.theme-winamp .w-dock .w-overlay .w-button:hover,
+  body.theme-winamp .widget-surface.w-floatingModal.anchored .w-button:hover{
+    background:
+      radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.4),transparent 62%),
+      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%);color:#f4f6df;
+    box-shadow:var(--wa-ring),var(--wa-vbevel),inset 0 1px 0 rgba(255,255,255,.32),0 2px 4px rgba(0,0,0,.45)}
 
   /* ===================== chrome inside the code well ==================== */
   /* Cell-aligned rows: colour + inset bevels only, never box metrics. */

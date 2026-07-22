@@ -20,11 +20,16 @@
   .mitem{display:flex;align-items:center;gap:18px;padding:0 14px;white-space:nowrap;cursor:default;color:var(--fg)}
   .mitem.hi{background:var(--menuhi);color:#fff}
   .mitem.disabled{color:#6a6a6a}
-  .mitem .lab{flex:1;display:flex;align-items:center;gap:6px}
-  .mitem .accel{color:var(--muted)}
+  /* The label takes the row and the accel sits in a fixed right-hand column.
+     `min-width:0` + ellipsis lets a long label truncate cleanly (…) instead of
+     shoving the accel past the panel's right edge (the proportional chrome font
+     can exceed the pipeline's monospace cell box), so the shortcuts stay
+     column-aligned. `.lab` is a block (not flex) so text-overflow works. */
+  .mitem .lab{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mitem .accel{flex:0 0 auto;color:var(--muted)}
   .mitem.hi .accel{color:#dfe8ff}
   .mitem .arrow{color:var(--muted)}
-  .mitem .check{width:12px;display:inline-block;text-align:center}
+  .mitem .check{width:12px;display:inline-block;text-align:center;margin-right:6px}
   .msep{height:1px;background:#4a4a4a;margin:4px 8px}
   .mlabel{padding:0 14px;color:var(--muted);font-style:italic}
 

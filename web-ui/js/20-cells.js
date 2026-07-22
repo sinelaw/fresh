@@ -146,5 +146,8 @@ function applyTheme(t){
 // per-region patching the snapshot/restore is scoped to the one region
 // container actually being rebuilt — untouched regions keep their scroll
 // positions by simply not being touched.
-const SCROLL_KEEP = ".set-items,.set-cats,.w-list,.widget-surface";
+// `.w-tree` is the orchestrator dock's session-list scroll container (the
+// list is rendered in full and scrolls natively); it must survive the dock's
+// frequent re-renders or the list snaps to the top mid-scroll.
+const SCROLL_KEEP = ".set-items,.set-cats,.w-list,.w-tree,.widget-surface";
 

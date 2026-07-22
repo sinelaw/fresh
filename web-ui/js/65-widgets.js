@@ -855,9 +855,14 @@ function layoutDockOverlays(surface){
 
 // Outside-click dismiss for the dock dropdowns. They carry no scrim (a dock
 // is not a modal), so without this a click outside the open menu leaves it
-// stranded. A press anywhere outside an open dock overlay sends Escape, which
-// the host translates to `dock_menu_cancel` while the menu owns the keyboard
-// (same dismissal the anchored context-menu scrim uses). Attached once.
+// stranded. A press outside an open dock overlay sends Escape, which the host
+// translates to `dock_menu_cancel` while the menu owns the keyboard (same
+// dismissal the anchored context-menu scrim uses). Attached once.
+//
+// Clicks on a dock *button* (the "New Task… ▾" trigger, the project pill, …)
+// are LET THROUGH untouched: the plugin's own handler toggles/closes the menu
+// (clicking the open trigger must close it, not be swallowed here). Only
+// clicks on inert space — the tree, the editor, empty chrome — dismiss.
 let dockOverlayDismissWired=false;
 function wireDockOverlayDismiss(){
   if(dockOverlayDismissWired) return;
@@ -865,7 +870,8 @@ function wireDockOverlayDismiss(){
   document.addEventListener("mousedown",e=>{
     const open=document.querySelector(".widget-surface.w-dock > .w-col > .w-overlay");
     if(!open) return;
-    if(open.contains(e.target)) return; // a click on an option runs normally
+    if(open.contains(e.target)) return;                       // option click → runs normally
+    if(e.target.closest(".widget-surface.w-dock .w-button")) return; // trigger button → plugin toggles it
     e.preventDefault(); e.stopPropagation();
     sendKey({key:"Escape"});
   },true);
