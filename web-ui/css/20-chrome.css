@@ -17,7 +17,7 @@
      to the right so it doesn't darken the parent panel across the seam. */
   .dropdown.submenu{box-shadow:8px 14px 40px rgba(0,0,0,.45)}
   .mitem,.msep,.mlabel{position:absolute;z-index:81}
-  .mitem{display:flex;align-items:center;gap:18px;padding:0 14px;white-space:nowrap;cursor:default;color:var(--fg)}
+  .mitem{display:flex;align-items:center;gap:16px;padding:0 10px;white-space:nowrap;cursor:default;color:var(--fg)}
   .mitem.hi{background:var(--menuhi);color:#fff}
   .mitem.disabled{color:#6a6a6a}
   /* The label takes the row and the accel sits in a fixed right-hand column.
@@ -29,7 +29,7 @@
   .mitem .accel{flex:0 0 auto;color:var(--muted)}
   .mitem.hi .accel{color:#dfe8ff}
   .mitem .arrow{color:var(--muted)}
-  .mitem .check{width:12px;display:inline-block;text-align:center;margin-right:6px}
+  .mitem .check{width:11px;display:inline-block;text-align:center;margin-right:3px}
   .msep{height:1px;background:#4a4a4a;margin:4px 8px}
   .mlabel{padding:0 14px;color:var(--muted);font-style:italic}
 

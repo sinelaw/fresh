@@ -340,8 +340,16 @@
   body.theme-winamp .palette .prow{color:#9fdcb4;border-radius:0}
   body.theme-winamp .palette .prow.sel,body.theme-winamp .ctxmenu .ctxitem.sel,
   body.theme-winamp .popup .popup-row.sel,body.theme-winamp .settings-modal .set-cat.sel,
-  body.theme-winamp .settings-modal .set-item.sel,body.theme-winamp .w-list-row.sel,
-  body.theme-winamp .mitem.hi{background:var(--sel);color:#fff;border-radius:0}
+  body.theme-winamp .settings-modal .set-item.sel,body.theme-winamp .w-list-row.sel{background:var(--sel);color:#fff;border-radius:0}
+  /* Menu-bar dropdown highlight: the theme's lit olive-green plate (the same
+     highlight as the right-click context menu), not the blue list-selection —
+     which read as foreign in the warm chrome. */
+  body.theme-winamp .mitem.hi{
+    background:
+      radial-gradient(90% 130% at 50% -22%,rgba(255,255,214,.35),transparent 62%),
+      linear-gradient(180deg,#96a04c 0%,#7f8a3e 46%,#565c29 100%);
+    color:#f6f2df;border-radius:0}
+  body.theme-winamp .mitem.hi .accel{color:rgba(246,242,223,.72)}
   body.theme-winamp .mitem.hi::before,body.theme-winamp .ctxmenu .ctxitem.sel::before,
   body.theme-winamp .popup .popup-row.sel::before{display:none}
   body.theme-winamp .palette .prow .pkey{border-radius:2px;border-color:#7d5230}

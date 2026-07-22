@@ -101,7 +101,10 @@ const REGION_FILL={
   // native menu bar + dropdown (one family: menuOpen/menuHighlight/submenuPath/
   // dropdown/menus all redraw together)
   menu(c,reg){ if(reg.menubar) c.appendChild(menuBarEl(reg));
-    for(const d of menuDropdownEls(reg)) c.appendChild(d); },
+    for(const d of menuDropdownEls(reg)) c.appendChild(d);
+    // Fit each open dropdown to its widest row's real (proportional) content
+    // once laid out, so accelerators stay column-aligned in any chrome font.
+    if(reg.menuOpen!=null) requestAnimationFrame(()=>fitMenuWidths(c)); },
   statusbar(c,reg){ if(reg.statusbar) c.appendChild(statusBarEl(reg.statusbar)); },
   // native popups (completion / hover / action / list / text) — semantic, not cells
   popups(c,reg){ for(const p of (reg.popups||[])) c.appendChild(popupEl(p)); },

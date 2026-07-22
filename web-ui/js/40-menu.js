@@ -140,6 +140,41 @@ function itemRow(item, rect, hi, comp, depth){
   return row;
 }
 
+// Widen each dropdown panel (and its rows) to fit the WIDEST row's real
+// rendered content. The core sizes menus in monospace cells, but web chrome
+// draws in a proportional font, so the char-count box can be too narrow — the
+// longest label+accelerator would overflow the panel (or, with the ellipsis
+// guard, truncate). Measuring the natural width here keeps the accelerators in
+// one right-aligned column without hard-coding any width or touching the core.
+// Placement (top/left, and the click cell) is unchanged, so hit-testing — which
+// forwards the item's logical cell, not a pixel — is unaffected.
+function fitMenuWidths(host){
+  host.querySelectorAll(".dropdown").forEach(panel=>{
+    const pr=panel.getBoundingClientRect();
+    const rows=[...host.querySelectorAll(".mitem,.msep,.mlabel")].filter(m=>{
+      const r=m.getBoundingClientRect();
+      return r.left>=pr.left-2 && r.left<pr.right && r.top>=pr.top-2 && r.bottom<=pr.bottom+2;
+    });
+    const items=rows.filter(m=>m.classList.contains("mitem"));
+    if(!items.length) return;
+    // Rows are inset within the panel (the cell box reserves a border column);
+    // widen the ROWS to their content but grow the PANEL by that same inset on
+    // each side, so a widened row never spills past the panel's edge (which
+    // made the selection bar overhang the right border).
+    const inset=Math.max(0, Math.round(items[0].getBoundingClientRect().left - pr.left));
+    let content=0;
+    for(const m of items){
+      const w0=m.style.width;
+      m.style.width="max-content";
+      content=Math.max(content, Math.ceil(m.getBoundingClientRect().width));
+      m.style.width=w0;
+    }
+    if(content+inset*2<=Math.ceil(pr.width)) return;   // the cell box already fits
+    panel.style.width=(content+inset*2)+"px";
+    for(const m of rows) m.style.width=content+"px";
+  });
+}
+
 function menuDropdownEls(reg){
   const out=[];
   if(reg.menuOpen==null || !reg.dropdown) return out;
