@@ -1587,11 +1587,18 @@ function sessionState(s: AgentSession): AgentState {
   return Date.now() - s.lastOutputAt < IDLE_AFTER_MS ? "working" : "idle";
 }
 
+// Age is shown at DAY granularity on purpose. A finer (s/m/h) counter ticks
+// every second/minute, and because the dock re-renders on the probe-poll
+// cadence, each tick changed the serialized card → a real frame → a full
+// dock teardown/rebuild, i.e. a scrollbar flicker and a dropped scroll
+// gesture for a purely cosmetic counter. At day granularity the string is
+// stable across the whole session's normal lifetime, so idle re-renders
+// diff to nothing and the panel stays still.
 function ageString(createdAt: number): string {
-  const sec = Math.max(0, Math.floor((Date.now() - createdAt) / 1000));
-  if (sec < 60) return `${sec}s`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m`;
-  return `${Math.floor(sec / 3600)}h`;
+  const days = Math.max(0, Math.floor((Date.now() - createdAt) / 86_400_000));
+  if (days <= 0) return "today";
+  if (days === 1) return "1d";
+  return `${days}d`;
 }
 
 // =============================================================================
