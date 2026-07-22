@@ -1958,7 +1958,12 @@ function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
   // (only the very first probe, with no prior info, shows the spinner).
   const g = probe?.info;
   if (!g) {
-    if (probe?.status === "loading") {
+    // Show the spinner only on the genuinely FIRST probe (never completed yet,
+    // so `fetchedAt` is still 0). A directory that simply isn't a git repo
+    // never gains `info`, so re-probing it every TTL would otherwise re-enter
+    // "loading" and blink "…" back on each poll — a serialized change that
+    // pushed a redundant widgets frame (dock flicker) every ~15s per session.
+    if (probe?.status === "loading" && !probe.fetchedAt) {
       right.push({ text: "…", style: { fg: dim, italic: true } });
     }
     return { left, right };
@@ -3399,10 +3404,13 @@ async function probeGit(s: AgentSession): Promise<void> {
     s.git = { status: "ok", fetchedAt: Date.now(), info: s.git?.info };
   } finally {
     gitProbesInFlight.delete(s.id);
-    scheduleProbeRefresh();
-    // Refill the slot this probe just freed so the pool keeps draining
-    // between polls (preserves throughput under the concurrency cap).
+    // Refill the slot this probe just freed FIRST, so the pool keeps draining
+    // between polls (preserves throughput under the concurrency cap) and, more
+    // importantly, so the quiescence check in `scheduleProbeRefresh` sees the
+    // newly-started probes — otherwise the last completion of a wave would look
+    // idle while more sessions are still queued, and refresh mid-batch.
     drainGitProbes();
+    scheduleProbeRefresh();
   }
 }
 
@@ -3438,15 +3446,39 @@ function startProbePolling(): void {
   tick();
 }
 
-// Coalesce the re-renders triggered by probe completions: a batch of
-// probes finishing together collapses into one refresh rather than one
-// per probe (the open-time storm that made the panel feel unresponsive).
+// Coalesce the re-renders triggered by probe completions into ONE atomic
+// update per batch. A poll cycle can re-probe many sessions (git + pr), and
+// they finish at different times — a bounded git pool drains in waves, gh is
+// network-latent. Refreshing per completion trickled a frame each, so the
+// dock visibly repainted several times per cycle (flicker, and any in-flight
+// scroll gesture dropped). Instead we hold the refresh until every probe has
+// settled (`gitProbesInFlight` and `prProbesInFlight` both empty) and then
+// repaint once, so the whole batch of new git/pr summaries lands together.
+// The `finally` blocks call this AFTER re-draining, so a still-queued session
+// keeps the pool non-empty and defers the refresh to the true end of the wave.
+//
+// On top of batching, the probe-driven repaint is RATE-LIMITED: a fresh round
+// starts at most once per `PROBE_REFRESH_MIN_INTERVAL_MS`. Even if waves keep
+// settling back-to-back, the dock never repaints from probes more often than
+// this, which caps any residual churn to a slow, unnoticeable cadence. Only
+// this probe path is throttled — interactive updates call `refreshOpenDialog`
+// directly and stay instant.
+const PROBE_REFRESH_MIN_INTERVAL_MS = 4000;
 let probeRefreshPending = false;
+let lastProbeRefreshAt = 0;
 function scheduleProbeRefresh(): void {
+  // Not yet quiescent — a later completion will call back in and land the one
+  // refresh once the batch fully settles.
+  if (gitProbesInFlight.size > 0 || prProbesInFlight.size > 0) return;
   if (probeRefreshPending) return;
   probeRefreshPending = true;
-  void editor.delay(150).then(() => {
+  // Honour both the coalescing debounce (150ms) and the minimum spacing since
+  // the last probe refresh, whichever is longer.
+  const sinceLast = Date.now() - lastProbeRefreshAt;
+  const wait = Math.max(150, PROBE_REFRESH_MIN_INTERVAL_MS - sinceLast);
+  void editor.delay(wait).then(() => {
     probeRefreshPending = false;
+    lastProbeRefreshAt = Date.now();
     if (openPanel) refreshOpenDialog();
   });
 }
