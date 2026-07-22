@@ -5,11 +5,10 @@ into `crossterm::event::Event`s — why Fresh parses those bytes itself instead 
 letting crossterm do it, the state machine that does the parsing, the invariant
 that machine exists to preserve, and the protocol coverage it still lacks.
 
-Everything in §1–§4 is IMPLEMENTED. §5 is a gap register: protocol behaviour the
-parser does not handle today, derived from the xterm control-sequence reference
-and the kitty keyboard protocol specification. Gaps are not bugs filed against a
-plan — they are the known distance between the parser and the protocols it
-consumes.
+Everything in §1–§4 is IMPLEMENTED. §5 records the xterm/kitty protocol coverage
+the parser gained by closing an earlier gap register (derived from the xterm
+control-sequence reference and the kitty keyboard protocol specification),
+together with the few limitations that remain by design.
 
 This doc covers the *byte stream → `Event`* stage only. What happens to an
 `Event` afterwards — key translation, modal dispatch, keybinding resolution — is
@@ -73,14 +72,15 @@ legitimately starts a new sequence.
 
 | State | Role | Exit |
 |-------|------|------|
-| Ground | Printable bytes become characters, C0 controls become key events | `ESC` → Escape; UTF-8 lead byte → Utf8 |
-| Escape | A lone `ESC`, awaiting disambiguation | `[` → Csi; `O` → Ss3; another `ESC` → emit Escape and stay; anything else → Alt+key |
+| Ground | Printable bytes become characters, C0 controls become key events; stray C1/continuation/invalid-lead bytes are dropped | `ESC` → Escape; UTF-8 lead byte → Utf8 |
+| Escape | A lone `ESC`, awaiting disambiguation | `[` → Csi; `O` → Ss3; `P ] _ ^ X` → StringSeq; another `ESC` → emit Escape and stay; a UTF-8 lead byte → Utf8 (Alt); anything else → Alt+key |
 | Csi | Accumulating parameter/intermediate bytes | Final byte → dispatch; unexpected control byte → drop to ground and reprocess |
 | CsiIgnore | A malformed or over-long CSI being swallowed | Final byte → drop; control byte → resync from ground |
-| Ss3 | After `ESC O`; the next byte is the final | Always → Ground |
+| Ss3 | After `ESC O`; the next byte is the final (cursor, F1–F4, application keypad) | Always → Ground |
 | X10 | Collecting the three raw coordinate bytes of a legacy mouse report | Three bytes → mouse event; any byte `< 0x20` → abandon and reprocess |
-| Utf8 | Accumulating a multi-byte character | Width reached → decode |
-| Paste | Inside bracketed paste, accumulating content | End marker → `Paste` event |
+| Utf8 | Accumulating a multi-byte character; each byte must be a continuation byte | Continuation byte fails eager check → abandon and reprocess; width reached → decode |
+| Paste | Inside bracketed paste, accumulating content | End marker → `Paste` event; over `MAX_PASTE` bytes → flush and resync |
+| StringSeq | Inside a DCS/OSC/APC/PM/SOS string, discarding content | `ST` (`ESC \`) or `BEL` → drop and return to ground; a non-`ST` `ESC` → resync from Escape |
 
 Two resync rules do the heavy lifting on malformed input:
 
@@ -96,8 +96,10 @@ Two resync rules do the heavy lifting on malformed input:
 Coordinate arithmetic saturates rather than wrapping, and no buffer is indexed
 without a length check, so no input can panic the parser. This is covered by
 property tests: chunk-invariance (splitting a sequence at any byte boundary
-yields the same events), no-panic over arbitrary byte streams, and well-formed
-round-trips at every split point.
+yields the same events), no-panic over arbitrary byte streams, well-formed
+round-trips at every split point, and — for the two invariants in §5 — that a
+string-type sequence with any body is swallowed at every split, and that no PUA
+codepoint ever becomes a character key.
 
 ### Resolving a standalone Escape
 
@@ -138,77 +140,71 @@ is fixed everywhere.
   to strip mouse sequences that the Windows console corrupts by dropping their
   leading `ESC` — see the notes in the winterm crate.
 
-## 5. Gap register
+## 5. Protocol coverage (closed gaps)
 
-Known distance between the parser and the protocols it consumes. Ordered by
-blast radius: the first group can put bytes into a buffer or a child pty, which
-is the failure the parser exists to prevent.
+These behaviours were once the parser's known distance from the protocols it
+consumes; they are now handled. Grouped by the blast radius they used to carry —
+the first group could put bytes into a buffer or a child pty, the failure the
+parser exists to prevent — each is covered by a test that fails without the fix.
 
-### Emits sequence bytes as text
+### Was emitting sequence bytes as text
 
-- **No DCS / OSC / APC / PM / SOS string states.** The Escape state understands
-  `[`, `O`, and `ESC`; every other introducer falls through to the Alt+key arm,
-  which emits `Alt+<introducer>` and then the entire payload as literal
-  characters. Any string-type reply that can arrive on stdin hits this: OSC 52
-  clipboard responses, OSC 10/11 colour queries, DECRQSS and XTGETTCAP and
-  XTVERSION replies, kitty graphics APC. The fix is a string-accumulation state
-  that swallows to `ST`, with BEL accepted as a legacy OSC terminator.
-- **Kitty functional keys become Private Use Area characters.** The protocol
-  maps every non-printable key into the PUA — lock and menu keys, F13–F35, the
-  full keypad, media keys, standalone modifier keys, and a placeholder for
-  "layout value unavailable". The CSI-u dispatcher has no table for these, so
-  they fall through to a character conversion and get *inserted into the buffer*
-  as invisible characters. The rule to enforce is that nothing in the PUA range
-  may become a character key.
-- **C1 bytes and stray UTF-8 continuation bytes produce `Null` key events**
-  rather than being discarded. (Declining to treat `0x9B` as an 8-bit CSI is
-  correct under UTF-8 and should stay.)
+- **DCS / OSC / APC / PM / SOS string states.** The Escape state routes the
+  string introducers (`P ] _ ^ X`) into a `StringSeq` state that discards the
+  payload until `ST` (`ESC \`) or a legacy `BEL`. Previously every introducer
+  but `[`/`O` fell through to the Alt+key arm and dumped its whole payload as
+  literal characters — OSC 52 clipboard responses, OSC 10/11 colour queries,
+  DECRQSS/XTGETTCAP/XTVERSION replies, and kitty graphics APC all hit this. A
+  non-`ST` `ESC` inside a string resyncs a fresh sequence rather than leaking.
+- **Kitty functional keys map out of the Private Use Area.** The CSI-u
+  dispatcher resolves the PUA range (U+E000–U+F8FF) through a functional-key
+  table — lock/menu keys, F13–F35, the full keypad, media keys, standalone
+  modifier keys — and *drops* any unassigned PUA codepoint. Nothing in the PUA
+  range can become a character key, so no invisible glyph reaches the buffer.
+- **C1 bytes and stray UTF-8 continuation bytes are discarded**, not surfaced as
+  `Null` keys. (`0x9B` is still declined as an 8-bit CSI, which is correct under
+  UTF-8.)
 
-### Wrong or lost keys
+### Was producing wrong or lost keys
 
-- **Free mouse motion from JediTerm-based terminals reads as a click.** Those
-  emulators strip the motion bit, sending the no-button code with a press
-  terminator. The SGR decoder maps the no-button value to the left button and
-  the press terminator to a button-down, producing a click flood on every mouse
-  move. A no-button code can never be a press.
-- **SGR reports with a trailing separator before the terminator are dropped.**
-  The decoder requires exactly three parameter fields; the optional trailing
-  separator is part of the grammar.
-- **Event types are ignored.** The kitty modifier field carries a press / repeat
-  / release sub-parameter, which is stripped and always reported as a press.
-  Harmless while event-type reporting stays off, but it is a live config flag —
-  enabled, every keystroke would fire twice.
-- **Modifier decoding is incomplete.** Only Shift, Alt and Ctrl are mapped;
-  Super, Hyper and Meta are dropped, and the Caps Lock / Num Lock state bits
-  have no equivalent. The modifier field is also parsed into a type too narrow
-  to hold its maximum legal value, which fails closed to "no modifiers".
-- **Application-keypad SS3 forms are dropped.** The SS3 state covers F1–F4,
-  arrows, Home and End, but not keypad Enter, keypad Begin, or the keypad
-  digit/operator forms — so the numeric keypad goes silent whenever application
-  keypad mode is active.
-- **`CSI E` (keypad Begin) has no dispatch arm**, and the modified-F1–F4 guard
-  caps the modifier value below Hyper and Meta.
-- **Alt + non-ASCII is garbage.** The Alt arm converts the following byte
-  directly instead of routing a UTF-8 lead byte into the character collector.
-- **A kitty flags query reply is decoded as a NUL key.** More generally, a
-  parameter list introduced by `?` or `>` is a *reply*, never a key, and should
-  be discarded before dispatch.
+- **Free mouse motion from JediTerm-based terminals reads as motion.** A
+  no-button code (3) is always motion, never a button event — even with an `M`
+  terminator and no motion bit, which is how those emulators report movement.
+  The old decoder mapped it to a left button-down, flooding clicks on every move.
+- **SGR reports tolerate a trailing separator** before the terminator; the
+  decoder now reads the first three fields instead of requiring exactly three.
+- **Kitty event types are honoured.** The modifier field's press/repeat/release
+  sub-parameter becomes the key event's kind, so a release is no longer reported
+  as a fresh press (which would double every keystroke with event reporting on).
+- **Modifier decoding is complete.** Shift/Alt/Ctrl/Super/Hyper/Meta are all
+  mapped, and the modifier field is parsed as `u16` so its maximum legal value
+  (256) no longer overflows and fails closed. Caps Lock / Num Lock have no
+  `KeyModifiers` equivalent and are ignored.
+- **Application-keypad SS3 forms decode** — keypad Enter, Begin, and the
+  digit/operator keys — so the numeric keypad works under application keypad
+  mode. `CSI E` (keypad Begin) has a dispatch arm, and the modified-F1–F4 guard
+  now reaches Hyper and Meta.
+- **Alt + non-ASCII decodes correctly.** An `ESC`-prefixed UTF-8 lead byte routes
+  into the character collector (carrying Alt) instead of being converted raw.
+- **`?`/`>`-introduced replies are discarded** before dispatch (kitty
+  keyboard-flags report, Device Attributes responses) instead of decoding as a
+  NUL key.
 
 ### Robustness
 
-- **The paste buffer is unbounded and cannot be flushed.** The parameter cap
-  protects CSI sequences only. A paste-start with no terminator grows memory
-  without limit and swallows every subsequent keystroke, and the flush path
-  rescues only the Escape state.
-- **The UTF-8 collector does not validate continuation bytes eagerly.** It
-  accumulates the expected width and only then decodes, so an `ESC` landing
-  inside a truncated character is buffered before the failure is noticed. It
-  recovers — the invalid path reprocesses the trailing bytes — but this is the
-  same hazard the X10 validity floor already handles properly. The lead-byte
-  test also accepts values that cannot begin a valid codepoint.
-- **Paste content is not sanitized.** The payload may contain control bytes, and
-  the protocol's own security note warns that a nested end marker can be used to
-  force a premature exit from paste state.
+- **The paste buffer is bounded.** On an unterminated or oversized paste (over
+  `MAX_PASTE`), the accumulated content is flushed as a `Paste` event and the
+  parser resyncs to ground, so it can neither grow without limit nor swallow
+  every subsequent keystroke.
+- **The UTF-8 collector validates continuation bytes eagerly** (the X10
+  validity-floor pattern): a non-continuation byte abandons the partial
+  character and is reprocessed from ground, so an `ESC` mid-character resyncs
+  immediately. The lead-byte range is tightened to RFC 3629 (0xC2–0xF4).
+- **Paste content is sanitised** of stray C0/C1 control bytes; tab, newline,
+  carriage return and `ESC` are kept so multi-line and styled pastes survive.
+  One limitation is inherent to bracketed paste and remains by design: the
+  payload is delimited by the first `ESC [ 201 ~`, so a nested end marker still
+  ends the paste early — the protocol offers no in-band way to prevent it.
 
 ---
 
