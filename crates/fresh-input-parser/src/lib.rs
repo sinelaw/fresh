@@ -37,7 +37,7 @@
 //! [williams]: https://vt100.net/emu/dec_ansi_parser
 
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 
 /// Bracketed-paste end marker.
@@ -45,9 +45,15 @@ const PASTE_END: &[u8] = b"\x1b[201~";
 
 /// Upper bound on the parameter/intermediate bytes buffered for a single CSI
 /// sequence. Real sequences are far shorter; anything longer is treated as a
-/// runaway/malformed sequence and dropped. Bracketed-paste *content* is not
-/// subject to this — it accumulates separately and is unbounded.
+/// runaway/malformed sequence and dropped.
 const MAX_CSI_PARAMS: usize = 128;
+
+/// Upper bound on buffered bracketed-paste content. A paste-start (`ESC [ 200 ~`)
+/// whose terminator never arrives would otherwise grow memory without limit and
+/// swallow every subsequent keystroke. On reaching this bound the accumulated
+/// content is emitted as a `Paste` event and the parser resyncs to ground. The
+/// bound is far above any realistic interactive paste.
+const MAX_PASTE: usize = 4 * 1024 * 1024;
 
 /// The parser's current state. Mirrors the relevant sub-states of the DEC/ANSI
 /// state machine; printable/UTF-8 handling lives in `Ground`/`Utf8`.
@@ -70,11 +76,17 @@ enum State {
     /// Collecting the three raw coordinate bytes of an X10 mouse report.
     X10 { buf: [u8; 3], have: u8 },
     /// Accumulating a multi-byte UTF-8 character in `self.buffer`; `width` is
-    /// the total expected length.
-    Utf8 { width: u8 },
+    /// the total expected length. `alt` records that the character was
+    /// introduced by an `ESC` prefix (Alt + the character).
+    Utf8 { width: u8, alt: bool },
     /// Inside a bracketed paste (`ESC [ 200 ~` … `ESC [ 201 ~`); content
     /// accumulates in `self.paste`.
     Paste,
+    /// Inside a string-type control sequence — DCS (`ESC P`), OSC (`ESC ]`),
+    /// APC (`ESC _`), PM (`ESC ^`) or SOS (`ESC X`). Content is discarded until
+    /// the terminator: `ST` (`ESC \`) or a legacy `BEL`. `saw_esc` records that
+    /// the previous byte was an `ESC`, so the next byte can complete an `ST`.
+    StringSeq { saw_esc: bool },
 }
 
 /// Incremental terminal-input parser.
@@ -183,8 +195,17 @@ impl InputParser {
                         continue;
                     }
                 }
-                State::Utf8 { .. } => self.feed_utf8(byte, out),
+                State::Utf8 { .. } => {
+                    if !self.feed_utf8(byte, out) {
+                        continue;
+                    }
+                }
                 State::Paste => self.feed_paste(byte, out),
+                State::StringSeq { saw_esc } => {
+                    if !self.feed_string(byte, saw_esc) {
+                        continue;
+                    }
+                }
             }
             break;
         }
@@ -200,7 +221,16 @@ impl InputParser {
                 self.buffer.push(b);
                 self.state = State::Utf8 {
                     width: utf8_char_width(b) as u8,
+                    alt: false,
                 };
+            }
+            // C1 controls, stray UTF-8 continuation bytes (0x80–0xBF), and
+            // bytes that cannot begin a valid UTF-8 sequence (0xC0/0xC1,
+            // 0xF5–0xFF) are noise on a UTF-8 input stream: discard them rather
+            // than surfacing a `Null` key. (In particular this declines to
+            // treat 0x9B as an 8-bit CSI, which is correct under UTF-8.)
+            b if b >= 0x80 => {
+                tracing::trace!("InputParser: discarding stray high byte {:#04x}", b);
             }
             b => out.push(byte_to_event(b)),
         }
@@ -215,12 +245,33 @@ impl InputParser {
                 self.state = State::Csi;
             }
             b'O' => self.state = State::Ss3,
+            // String-type introducers: DCS (`P`), OSC (`]`), APC (`_`),
+            // PM (`^`), SOS (`X`). These open a string whose content is
+            // discarded until `ST`/`BEL`; without this arm the introducer and
+            // its whole payload leaked out as `Alt+<introducer>` plus literal
+            // characters (e.g. an OSC 52 clipboard or OSC 10/11 colour reply).
+            b'P' | b']' | b'_' | b'^' | b'X' => {
+                self.state = State::StringSeq { saw_esc: false };
+            }
             0x1b => {
                 // First ESC was standalone; stay in Escape for the second one.
                 out.push(Event::Key(KeyEvent::new(
                     KeyCode::Esc,
                     KeyModifiers::empty(),
                 )));
+            }
+            other if is_utf8_start_byte(other) => {
+                // Alt + a multi-byte character: route the lead byte into the
+                // UTF-8 collector with the Alt modifier pending, instead of
+                // mangling it through `byte_to_keycode` (which only handles
+                // ASCII and would report Alt+Null). e.g. Alt+é arrives as
+                // `ESC 0xC3 0xA9` and must decode to Alt+'é'.
+                self.buffer.clear();
+                self.buffer.push(other);
+                self.state = State::Utf8 {
+                    width: utf8_char_width(other) as u8,
+                    alt: true,
+                };
             }
             other => {
                 // Alt + key.
@@ -299,6 +350,19 @@ impl InputParser {
             b'D' => Some(KeyCode::Left),
             b'H' => Some(KeyCode::Home),
             b'F' => Some(KeyCode::End),
+            // Application-keypad forms (DECPAM). Without these the numeric
+            // keypad went silent whenever application keypad mode was active.
+            b'M' => Some(KeyCode::Enter),       // keypad Enter
+            b'E' => Some(KeyCode::KeypadBegin), // keypad Begin (the "5" key)
+            b'X' => Some(KeyCode::Char('=')),   // keypad Equal
+            b'j' => Some(KeyCode::Char('*')),   // keypad Multiply
+            b'k' => Some(KeyCode::Char('+')),   // keypad Add
+            b'l' => Some(KeyCode::Char(',')),   // keypad Separator
+            b'm' => Some(KeyCode::Char('-')),   // keypad Subtract
+            b'n' => Some(KeyCode::Char('.')),   // keypad Decimal
+            b'o' => Some(KeyCode::Char('/')),   // keypad Divide
+            // Keypad digits 0–9 (`ESC O p` … `ESC O y`).
+            b'p'..=b'y' => Some(KeyCode::Char((b'0' + (byte - b'p')) as char)),
             _ => None,
         };
         if let Some(code) = keycode {
@@ -339,49 +403,97 @@ impl InputParser {
     }
 
     /// `Utf8` state: accumulate the remaining bytes of a multi-byte character.
-    fn feed_utf8(&mut self, byte: u8, out: &mut Vec<Event>) {
-        self.buffer.push(byte);
-        let width = match self.state {
-            State::Utf8 { width } => width as usize,
+    /// Returns `false` if `byte` must be reprocessed from ground.
+    fn feed_utf8(&mut self, byte: u8, out: &mut Vec<Event>) -> bool {
+        let (width, alt) = match self.state {
+            State::Utf8 { width, alt } => (width as usize, alt),
             _ => unreachable!("feed_utf8 called outside Utf8 state"),
         };
+        // Eager validation: every byte after the lead must be a UTF-8
+        // continuation byte (0x80–0xBF). If it isn't, the character was
+        // truncated — drop the partial character (it is noise, never a control
+        // sequence) and reprocess this byte from ground (the X10 validity-floor
+        // pattern), so an `ESC` landing mid-character starts a clean sequence
+        // instead of being buffered and only noticed at decode time.
+        if !(0x80..=0xbf).contains(&byte) {
+            self.buffer.clear();
+            self.state = State::Ground;
+            return false;
+        }
+        self.buffer.push(byte);
         if self.buffer.len() < width {
-            return;
+            return true;
         }
         // We have `width` bytes; decode them.
+        let modifiers = if alt {
+            KeyModifiers::ALT
+        } else {
+            KeyModifiers::empty()
+        };
         match std::str::from_utf8(&self.buffer) {
             Ok(s) => {
                 if let Some(c) = s.chars().next() {
-                    out.push(Event::Key(KeyEvent::new(
-                        KeyCode::Char(c),
-                        KeyModifiers::empty(),
-                    )));
+                    out.push(Event::Key(KeyEvent::new(KeyCode::Char(c), modifiers)));
                 }
-                self.buffer.clear();
-                self.state = State::Ground;
             }
             Err(_) => {
-                // Invalid sequence: emit the lead byte as-is (genuine input,
-                // not a control sequence, so recovering it as a key is correct)
-                // and reprocess the remaining bytes from ground.
-                let rest: Vec<u8> = self.buffer.split_off(1);
-                let lead = self.buffer[0];
-                self.buffer.clear();
-                self.state = State::Ground;
-                out.push(byte_to_event(lead));
-                for b in rest {
-                    self.feed(b, out);
-                }
+                // Width reached but still invalid (e.g. an overlong or
+                // out-of-range encoding): drop the lead byte's worth and emit
+                // nothing rather than a bogus key.
+                tracing::trace!("InputParser: invalid UTF-8 sequence, dropping");
             }
+        }
+        self.buffer.clear();
+        self.state = State::Ground;
+        true
+    }
+
+    /// `StringSeq` state: discard the body of a DCS/OSC/APC/PM/SOS string until
+    /// its terminator. Returns `false` if `byte` must be reprocessed from
+    /// ground (an `ESC` that turned out to start a fresh sequence, not `ST`).
+    fn feed_string(&mut self, byte: u8, saw_esc: bool) -> bool {
+        if saw_esc {
+            if byte == b'\\' {
+                // `ST` (ESC \): string complete, discard it.
+                self.state = State::Ground;
+                true
+            } else {
+                // The `ESC` was not part of an `ST`: it begins a new escape
+                // sequence. Resync through the Escape state, reprocessing this
+                // byte as the disambiguator.
+                self.state = State::Escape;
+                false
+            }
+        } else {
+            match byte {
+                0x07 => self.state = State::Ground, // BEL: legacy OSC terminator
+                0x1b => self.state = State::StringSeq { saw_esc: true },
+                _ => {} // discard content byte
+            }
+            true
         }
     }
 
     /// `Paste` state: accumulate content until the end marker.
     fn feed_paste(&mut self, byte: u8, out: &mut Vec<Event>) {
         self.paste.push(byte);
-        if self.paste.ends_with(PASTE_END) {
+        // Only the end marker's final byte (`~`) can complete the paste, so
+        // guard the `ends_with` scan on it — otherwise every byte of a large
+        // paste pays for a full marker comparison.
+        if byte == b'~' && self.paste.ends_with(PASTE_END) {
             let content_len = self.paste.len() - PASTE_END.len();
-            let text = String::from_utf8_lossy(&self.paste[..content_len]).into_owned();
+            let text = sanitize_paste(&self.paste[..content_len]);
+            self.paste.clear();
+            self.state = State::Ground;
+            out.push(Event::Paste(text));
+            return;
+        }
+        if self.paste.len() >= MAX_PASTE {
+            // Unterminated/oversized paste: emit what we have and resync to
+            // ground, so the buffer is bounded and later keystrokes are not
+            // swallowed indefinitely.
+            tracing::trace!("InputParser: paste exceeded {} bytes, flushing", MAX_PASTE);
+            let text = sanitize_paste(&self.paste);
             self.paste.clear();
             self.state = State::Ground;
             out.push(Event::Paste(text));
@@ -396,6 +508,19 @@ impl InputParser {
         let params = std::mem::take(&mut self.buffer);
         self.state = State::Ground;
 
+        // A parameter list introduced by `?` or `>` is a device reply — a kitty
+        // keyboard-flags report (`CSI ? <flags> u`), a Device Attributes
+        // response, and so on — never a key press. Discard it before dispatch
+        // rather than misdecoding it (the flags reply used to surface as a NUL
+        // key). `<` is the SGR mouse introducer and is handled in the match.
+        if matches!(params.first(), Some(b'?') | Some(b'>')) {
+            tracing::trace!(
+                "InputParser: discarding CSI reply, final {:#04x}",
+                final_byte
+            );
+            return;
+        }
+
         match final_byte {
             b'A' => out.push(key(KeyCode::Up, modifiers_of(&params))),
             b'B' => out.push(key(KeyCode::Down, modifiers_of(&params))),
@@ -403,6 +528,8 @@ impl InputParser {
             b'D' => out.push(key(KeyCode::Left, modifiers_of(&params))),
             b'H' => out.push(key(KeyCode::Home, modifiers_of(&params))),
             b'F' => out.push(key(KeyCode::End, modifiers_of(&params))),
+            // Keypad Begin (the center "5" key), `CSI E` / `CSI 1;<mod> E`.
+            b'E' => out.push(key(KeyCode::KeypadBegin, modifiers_of(&params))),
             // Modified F1–F4: xterm's SS3-derived form `CSI 1 ; <mod> {P,Q,R,S}`
             // (e.g. Shift+F3 = `ESC [ 1 ; 2 R`). *Unmodified* F1–F4 arrive as
             // SS3 (`ESC O P/Q/R/S`) and are decoded in `feed_ss3`; adding a
@@ -461,7 +588,7 @@ impl InputParser {
 
         // xterm modifyOtherKeys mode 2: CSI 27 ; modifier ; keycode ~
         if parts.len() == 3 && parts[0] == "27" {
-            let mods_param: u8 = first_subparam(parts[1]).parse().unwrap_or(1);
+            let mods_param: u16 = first_subparam(parts[1]).parse().unwrap_or(1);
             let codepoint: u32 = first_subparam(parts[2]).parse().unwrap_or(0);
             let modifiers = modifiers_from_param(mods_param);
             if let Some(code) = functional_or_char(codepoint) {
@@ -471,7 +598,10 @@ impl InputParser {
         }
 
         let num: u8 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let mods = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(1);
+        let mods = parts
+            .get(1)
+            .and_then(|s| first_subparam(s).parse().ok())
+            .unwrap_or(1);
         let modifiers = modifiers_from_param(mods);
 
         // Bracketed paste start.
@@ -526,14 +656,31 @@ impl InputParser {
             .first()
             .and_then(|s| first_subparam(s).parse().ok())
             .unwrap_or(0);
-        let mods_param: u8 = parts
-            .get(1)
-            .and_then(|s| first_subparam(s).parse().ok())
-            .unwrap_or(1);
+        let mods_field = parts.get(1).copied().unwrap_or("");
+        let mods_param: u16 = first_subparam(mods_field).parse().unwrap_or(1);
         let modifiers = modifiers_from_param(mods_param);
+        // The modifier field may carry an event-type sub-parameter
+        // (`mods:event-type`): 1=press, 2=repeat, 3=release. Preserve it as the
+        // key event's kind so a release is not reported as a fresh press (which
+        // would fire every keystroke twice once event-type reporting is on).
+        let kind = event_kind_of(mods_field);
         if let Some(code) = functional_or_char(codepoint) {
-            out.push(Event::Key(KeyEvent::new(code, modifiers)));
+            out.push(Event::Key(KeyEvent::new_with_kind(code, modifiers, kind)));
         }
+    }
+}
+
+/// The event type encoded in the second sub-parameter of a kitty modifier field
+/// (`mods:event-type`): 1=press (default), 2=repeat, 3=release.
+fn event_kind_of(mods_field: &str) -> KeyEventKind {
+    match mods_field
+        .split(':')
+        .nth(1)
+        .and_then(|s| s.parse::<u8>().ok())
+    {
+        Some(2) => KeyEventKind::Repeat,
+        Some(3) => KeyEventKind::Release,
+        _ => KeyEventKind::Press,
     }
 }
 
@@ -552,19 +699,99 @@ fn first_subparam(field: &str) -> &str {
 }
 
 /// Map a Unicode codepoint from CSI-u / modifyOtherKeys to a key code.
+///
+/// The kitty keyboard protocol maps every non-printable key into the Unicode
+/// Private Use Area (U+E000–U+F8FF). Those codepoints must never become
+/// `Char` keys — that would insert an invisible PUA glyph into the buffer — so
+/// the PUA range is resolved through [`kitty_functional_key`], which maps the
+/// keys it knows and drops (returns `None` for) any other PUA codepoint.
 fn functional_or_char(codepoint: u32) -> Option<KeyCode> {
     Some(match codepoint {
         9 => KeyCode::Tab,
         13 => KeyCode::Enter,
         27 => KeyCode::Esc,
         127 => KeyCode::Backspace,
+        // Private Use Area: kitty functional keys, never printable characters.
+        0xe000..=0xf8ff => return kitty_functional_key(codepoint),
         cp => KeyCode::Char(char::from_u32(cp)?),
+    })
+}
+
+/// Map a kitty keyboard-protocol functional key (encoded as a Private Use Area
+/// codepoint) to a crossterm [`KeyCode`]. Returns `None` for PUA codepoints the
+/// protocol does not assign, so they are dropped rather than inserted as text.
+fn kitty_functional_key(cp: u32) -> Option<KeyCode> {
+    use crossterm::event::{MediaKeyCode as M, ModifierKeyCode as Mod};
+    Some(match cp {
+        57358 => KeyCode::CapsLock,
+        57359 => KeyCode::ScrollLock,
+        57360 => KeyCode::NumLock,
+        57361 => KeyCode::PrintScreen,
+        57362 => KeyCode::Pause,
+        57363 => KeyCode::Menu,
+        // F13–F35.
+        57376..=57398 => KeyCode::F(13 + (cp - 57376) as u8),
+        // Keypad digits 0–9.
+        57399..=57408 => KeyCode::Char((b'0' + (cp - 57399) as u8) as char),
+        57409 => KeyCode::Char('.'), // KP_DECIMAL
+        57410 => KeyCode::Char('/'), // KP_DIVIDE
+        57411 => KeyCode::Char('*'), // KP_MULTIPLY
+        57412 => KeyCode::Char('-'), // KP_SUBTRACT
+        57413 => KeyCode::Char('+'), // KP_ADD
+        57414 => KeyCode::Enter,     // KP_ENTER
+        57415 => KeyCode::Char('='), // KP_EQUAL
+        57416 => KeyCode::Char(','), // KP_SEPARATOR
+        57417 => KeyCode::Left,      // KP_LEFT
+        57418 => KeyCode::Right,     // KP_RIGHT
+        57419 => KeyCode::Up,        // KP_UP
+        57420 => KeyCode::Down,      // KP_DOWN
+        57421 => KeyCode::PageUp,    // KP_PAGE_UP
+        57422 => KeyCode::PageDown,  // KP_PAGE_DOWN
+        57423 => KeyCode::Home,      // KP_HOME
+        57424 => KeyCode::End,       // KP_END
+        57425 => KeyCode::Insert,    // KP_INSERT
+        57426 => KeyCode::Delete,    // KP_DELETE
+        57427 => KeyCode::KeypadBegin,
+        // Media keys.
+        57428 => KeyCode::Media(M::Play),
+        57429 => KeyCode::Media(M::Pause),
+        57430 => KeyCode::Media(M::PlayPause),
+        57431 => KeyCode::Media(M::Reverse),
+        57432 => KeyCode::Media(M::Stop),
+        57433 => KeyCode::Media(M::FastForward),
+        57434 => KeyCode::Media(M::Rewind),
+        57435 => KeyCode::Media(M::TrackNext),
+        57436 => KeyCode::Media(M::TrackPrevious),
+        57437 => KeyCode::Media(M::Record),
+        57438 => KeyCode::Media(M::LowerVolume),
+        57439 => KeyCode::Media(M::RaiseVolume),
+        57440 => KeyCode::Media(M::MuteVolume),
+        // Standalone modifier keys.
+        57441 => KeyCode::Modifier(Mod::LeftShift),
+        57442 => KeyCode::Modifier(Mod::LeftControl),
+        57443 => KeyCode::Modifier(Mod::LeftAlt),
+        57444 => KeyCode::Modifier(Mod::LeftSuper),
+        57445 => KeyCode::Modifier(Mod::LeftHyper),
+        57446 => KeyCode::Modifier(Mod::LeftMeta),
+        57447 => KeyCode::Modifier(Mod::RightShift),
+        57448 => KeyCode::Modifier(Mod::RightControl),
+        57449 => KeyCode::Modifier(Mod::RightAlt),
+        57450 => KeyCode::Modifier(Mod::RightSuper),
+        57451 => KeyCode::Modifier(Mod::RightHyper),
+        57452 => KeyCode::Modifier(Mod::RightMeta),
+        57453 => KeyCode::Modifier(Mod::IsoLevel3Shift),
+        57454 => KeyCode::Modifier(Mod::IsoLevel5Shift),
+        _ => return None,
     })
 }
 
 /// True when a CSI parameter list has the modified-function-key shape
 /// `1 ; <mod>` that xterm uses for Shift/Ctrl/Alt + F1–F4
-/// (`CSI 1;<mod> {P,Q,R,S}`), with `<mod>` a real modifier value (2–16).
+/// (`CSI 1;<mod> {P,Q,R,S}`), with `<mod>` a real modifier value (2–64).
+///
+/// The upper bound covers every combination of the six modifiers
+/// (Shift/Alt/Ctrl/Super/Hyper/Meta → bitmask up to 63, parameter up to 64);
+/// the previous cap of 16 dropped anything involving Hyper or Meta.
 ///
 /// The leading `1` is the F1–F4 selector, not a coordinate, so this
 /// distinguishes those keys from a Cursor Position Report
@@ -579,8 +806,8 @@ fn is_modified_f1_f4(params: &[u8]) -> bool {
     matches!(
         fields
             .next()
-            .and_then(|f| first_subparam(f).parse::<u8>().ok()),
-        Some(2..=16)
+            .and_then(|f| first_subparam(f).parse::<u16>().ok()),
+        Some(2..=64)
     )
 }
 
@@ -588,7 +815,7 @@ fn is_modified_f1_f4(params: &[u8]) -> bool {
 fn modifiers_of(params: &[u8]) -> KeyModifiers {
     let params_str = std::str::from_utf8(params).unwrap_or("");
     if let Some(idx) = params_str.find(';') {
-        if let Ok(mods) = first_subparam(&params_str[idx + 1..]).parse::<u8>() {
+        if let Ok(mods) = first_subparam(&params_str[idx + 1..]).parse::<u16>() {
             return modifiers_from_param(mods);
         }
     }
@@ -601,7 +828,11 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
     // Skip the leading '<'.
     let params_str = std::str::from_utf8(params.get(1..)?).ok()?;
     let parts: Vec<&str> = params_str.split(';').collect();
-    if parts.len() != 3 {
+    // The grammar is `Cb ; Cx ; Cy`, but some emulators append a trailing
+    // separator before the terminator (`Cb ; Cx ; Cy ;`), which splits into a
+    // trailing empty field. Accept three-or-more fields and read the first
+    // three; fewer than three is genuinely malformed.
+    if parts.len() < 3 {
         return None;
     }
     let cb: u16 = parts[0].parse().unwrap_or(0);
@@ -613,7 +844,7 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
         0 => MouseButton::Left,
         1 => MouseButton::Middle,
         2 => MouseButton::Right,
-        _ => MouseButton::Left, // 3 = no button (motion)
+        _ => MouseButton::Left, // 3 = no button; never used as a real button
     };
 
     let modifiers = KeyModifiers::from_bits_truncate(
@@ -632,24 +863,22 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
         },
     );
 
-    let kind = if cb & 32 != 0 {
-        if cb & 64 != 0 {
-            if cb & 1 != 0 {
-                MouseEventKind::ScrollDown
-            } else {
-                MouseEventKind::ScrollUp
-            }
-        } else if button_bits == 3 {
-            MouseEventKind::Moved
-        } else {
-            MouseEventKind::Drag(button)
-        }
-    } else if cb & 64 != 0 {
+    let kind = if cb & 64 != 0 {
+        // Wheel: low bit selects up/down.
         if cb & 1 != 0 {
             MouseEventKind::ScrollDown
         } else {
             MouseEventKind::ScrollUp
         }
+    } else if button_bits == 3 {
+        // No button pressed. This is always motion, never a button event —
+        // even with an `M` terminator and no motion bit, which is how
+        // JediTerm-based emulators (that strip the motion bit) report free
+        // mouse movement. Reading it as a left click produced a click flood on
+        // every mouse move.
+        MouseEventKind::Moved
+    } else if cb & 32 != 0 {
+        MouseEventKind::Drag(button)
     } else if pressed {
         MouseEventKind::Down(button)
     } else {
@@ -683,10 +912,23 @@ fn x10_mouse_event(buf: [u8; 3]) -> Event {
     })
 }
 
+/// Convert buffered bracketed-paste bytes to text, dropping stray C0/C1 control
+/// characters that never belong in pasted text — they can corrupt the buffer,
+/// and the bracketed-paste security note warns that embedded control bytes can
+/// be used to smuggle commands. Tab, newline, carriage return and ESC are kept
+/// so multi-line and styled (SGR-coloured) pastes survive intact.
+fn sanitize_paste(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .filter(|&c| !c.is_control() || matches!(c, '\t' | '\n' | '\r' | '\u{1b}'))
+        .collect()
+}
+
 /// Returns true if `b` is the leading byte of a UTF-8 multi-byte sequence.
-/// 0xC0 and 0xC1 are excluded per RFC 3629 (overlong encodings).
+/// Per RFC 3629 the valid lead-byte range is 0xC2–0xF4: 0xC0/0xC1 are overlong
+/// two-byte leads, and 0xF5–0xFF would encode code points above U+10FFFF.
 fn is_utf8_start_byte(b: u8) -> bool {
-    matches!(b, 0xC2..=0xF7)
+    matches!(b, 0xC2..=0xF4)
 }
 
 /// Total byte width of a UTF-8 sequence given its leading byte; 0 if invalid.
@@ -694,7 +936,7 @@ fn utf8_char_width(first_byte: u8) -> usize {
     match first_byte {
         0xC2..=0xDF => 2,
         0xE0..=0xEF => 3,
-        0xF0..=0xF7 => 4,
+        0xF0..=0xF4 => 4,
         _ => 0,
     }
 }
@@ -728,24 +970,35 @@ fn byte_to_keycode(byte: u8) -> KeyCode {
     }
 }
 
-/// Convert an xterm modifier parameter (1 + bitmask) to `KeyModifiers`.
-fn modifiers_from_param(param: u8) -> KeyModifiers {
+/// Convert an xterm/kitty modifier parameter (1 + bitmask) to `KeyModifiers`.
+///
+/// The parameter is taken as `u16` because the kitty keyboard protocol's
+/// maximum legal value is 256 (all of Shift/Alt/Ctrl/Super/Hyper/Meta plus
+/// Caps Lock and Num Lock), which does not fit in a `u8` — parsing it as `u8`
+/// overflowed and failed closed to "no modifiers". Caps Lock and Num Lock have
+/// no `KeyModifiers` equivalent and are ignored.
+fn modifiers_from_param(param: u16) -> KeyModifiers {
     let param = param.saturating_sub(1);
-    KeyModifiers::from_bits_truncate(
-        if param & 1 != 0 {
-            KeyModifiers::SHIFT.bits()
-        } else {
-            0
-        } | if param & 2 != 0 {
-            KeyModifiers::ALT.bits()
-        } else {
-            0
-        } | if param & 4 != 0 {
-            KeyModifiers::CONTROL.bits()
-        } else {
-            0
-        },
-    )
+    let mut mods = KeyModifiers::empty();
+    if param & 1 != 0 {
+        mods |= KeyModifiers::SHIFT;
+    }
+    if param & 2 != 0 {
+        mods |= KeyModifiers::ALT;
+    }
+    if param & 4 != 0 {
+        mods |= KeyModifiers::CONTROL;
+    }
+    if param & 8 != 0 {
+        mods |= KeyModifiers::SUPER;
+    }
+    if param & 16 != 0 {
+        mods |= KeyModifiers::HYPER;
+    }
+    if param & 32 != 0 {
+        mods |= KeyModifiers::META;
+    }
+    mods
 }
 
 #[cfg(test)]

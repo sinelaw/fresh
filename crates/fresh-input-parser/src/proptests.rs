@@ -186,4 +186,50 @@ proptest! {
             prop_assert_eq!(e, &Event::Key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
         }
     }
+
+    /// **String-type sequences never leak.** A DCS/OSC/APC/PM/SOS string with an
+    /// arbitrary ESC-free body, terminated by `ST` or `BEL`, must be consumed
+    /// whole — producing no key events — at every split point. This is the §5.1
+    /// invariant for the string states.
+    #[test]
+    fn string_sequences_are_swallowed_at_any_split(
+        introducer in prop::sample::select(vec![b'P', b']', b'_', b'^', b'X']),
+        body in proptest::collection::vec(0x20u8..=0x7e, 0..64),
+        bel in any::<bool>(),
+        cut in 0usize..80,
+    ) {
+        let mut seq = vec![0x1b, introducer];
+        seq.extend_from_slice(&body);
+        if bel {
+            seq.push(0x07); // BEL terminator
+        } else {
+            seq.extend_from_slice(b"\x1b\\"); // ST terminator
+        }
+        let cut = cut % (seq.len() + 1);
+        let mut p = InputParser::new();
+        let mut ev = p.parse(&seq[..cut]);
+        ev.extend(p.parse(&seq[cut..]));
+        let key_events = ev.iter().filter(|e| matches!(e, Event::Key(_))).count();
+        prop_assert_eq!(key_events, 0, "string leaked keys: {:?} (seq {:02x?})", ev, seq);
+    }
+
+    /// **No Private Use Area codepoint ever becomes a `Char` key.** For any
+    /// CSI-u codepoint in the PUA range (U+E000–U+F8FF), the result is either a
+    /// non-`Char` functional key or nothing — never an invisible PUA glyph
+    /// inserted into the buffer. This is the §5.1 invariant for kitty keys.
+    #[test]
+    fn pua_codepoints_never_become_char_keys(cp in 0xe000u32..=0xf8ff) {
+        let seq = format!("\x1b[{cp}u").into_bytes();
+        let ev = InputParser::new().parse(&seq);
+        for e in &ev {
+            if let Event::Key(ke) = e {
+                if let KeyCode::Char(c) = ke.code {
+                    prop_assert!(
+                        !('\u{e000}'..='\u{f8ff}').contains(&c),
+                        "cp {} produced PUA char {:?}", cp, c
+                    );
+                }
+            }
+        }
+    }
 }
