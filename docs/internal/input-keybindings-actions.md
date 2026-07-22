@@ -22,6 +22,9 @@ Terminal (crossterm KeyEvent)
   → log_and_apply_event / bulk edit — events mutate buffer + undo log
 ```
 
+The stage before this one — raw terminal bytes to a `KeyEvent`/`MouseEvent` — is
+[terminal-input-parsing.md](terminal-input-parsing.md).
+
 Three distinct vocabularies live here and the separation is deliberate (§4):
 
 - **Command** — a user-facing, localized, context-filtered palette entry. Wraps
