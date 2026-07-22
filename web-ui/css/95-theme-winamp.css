@@ -17,18 +17,28 @@
      ====================================================================== */
 
   body.theme-winamp{
-    --wa-face:linear-gradient(180deg,#6d4527,#513120 46%,#3b2417);   /* window metal */
-    --wa-face-flat:#4a2d1c;
-    --wa-plate:linear-gradient(180deg,#7d5230,#583520);              /* raised parts */
+    /* Window metal: a darker, cooler bronze-graphite than a flat copper — top
+       catches a warm sheen, the body sinks toward near-black at the foot. */
+    --wa-face:linear-gradient(180deg,#6a482a 0%,#472e1c 44%,#2c1d12 100%);
+    --wa-face-flat:#3f2819;
+    --wa-plate:linear-gradient(180deg,#7a5030 0%,#5a3820 55%,#432a18 100%); /* raised parts */
     --wa-sunken:#050705;                                             /* LCD / code wells */
-    --wa-lt:rgba(255,208,150,.34);      /* bevel highlight (top-left)     */
-    --wa-dk:rgba(0,0,0,.80);            /* bevel shadow    (bottom-right) */
+    /* Vertical brushed-metal striations, layered over any face fill. */
+    --wa-brush:repeating-linear-gradient(90deg,
+      rgba(255,236,204,.035) 0 1px,rgba(0,0,0,.05) 1px 2px,transparent 2px 4px);
+    --wa-metal:var(--wa-brush),var(--wa-face);
+    --wa-plate-brush:var(--wa-brush),var(--wa-plate);
+    --wa-lt:rgba(255,214,158,.40);      /* bevel highlight (top-left)     */
+    --wa-dk:rgba(0,0,0,.82);            /* bevel shadow    (bottom-right) */
     --wa-out:inset 1px 1px 0 var(--wa-lt),inset -1px -1px 0 var(--wa-dk);
     --wa-in:inset 1px 1px 0 var(--wa-dk),inset -1px -1px 0 var(--wa-lt);
-    --wa-amber:#f6c471;                 /* title / caption lettering */
+    /* Crisp dark seam that rings each window against the desk (Winamp windows
+       read as cut-outs, not soft cards). */
+    --wa-seam:0 0 0 1px rgba(0,0,0,.55);
+    --wa-amber:#f7c978;                 /* title / caption lettering */
     --wa-green:#4ef07f;                 /* phosphor readouts */
     --wa-green-dim:#1a8f43;
-    --wa-drop:8px 10px 0 rgba(0,0,0,.45),0 34px 80px rgba(0,0,0,.72)}
+    --wa-drop:6px 8px 0 rgba(0,0,0,.42),0 30px 74px rgba(0,0,0,.72)}
 
   /* ---- the desk: near-black with a warm bloom under the windows ---- */
   body.theme-winamp:not(.mobile){background:
@@ -41,8 +51,11 @@
   body.theme-winamp:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
   /* ==================== CODE STUDIO — the player window ================== */
-  body.theme-winamp #device{border-radius:6px;letter-spacing:normal;
-    background:var(--wa-face);box-shadow:var(--wa-drop),var(--wa-out)}
+  body.theme-winamp #device{border-radius:7px;letter-spacing:normal;
+    background:
+      radial-gradient(120% 70% at 50% 118%,rgba(78,240,127,.06),transparent 60%),
+      var(--wa-metal);
+    box-shadow:var(--wa-drop),var(--wa-seam),var(--wa-out)}
   body.theme-winamp #device::before{display:none}   /* machined rim → bevel */
   /* The code well: black, recessed, with a faint phosphor bloom. */
   body.theme-winamp #device .dv-screen{border-radius:2px;background:var(--wa-sunken);
@@ -52,13 +65,16 @@
   body.theme-winamp #device .wa-title{position:absolute;left:6px;right:6px;top:5px;
     height:calc(var(--bezel-top) - 13px);
     display:flex;align-items:center;gap:9px;padding:0 7px;border-radius:3px;
-    background:linear-gradient(90deg,#6a4326,#3a2416);box-shadow:var(--wa-out)}
+    background:var(--wa-brush),linear-gradient(180deg,#6d4a29,#3a2416);
+    box-shadow:var(--wa-out)}
+  /* Pinstripe rails: tight gold-on-black grooves flanking the caption. */
   body.theme-winamp #device .wa-rail{flex:1;height:9px;border-radius:1px;
     background:repeating-linear-gradient(180deg,
-      rgba(246,196,113,.55) 0 1px,rgba(0,0,0,.45) 1px 3px);
+      rgba(247,201,120,.62) 0 1px,rgba(0,0,0,.5) 1px 3px);
     box-shadow:var(--wa-in)}
   body.theme-winamp #device .wa-title-text{flex:0 0 auto;font-size:11px;font-weight:700;
-    letter-spacing:.22em;color:var(--wa-amber);text-shadow:0 1px 0 rgba(0,0,0,.8)}
+    letter-spacing:.24em;color:var(--wa-amber);
+    text-shadow:0 1px 0 rgba(0,0,0,.85),0 0 8px rgba(247,201,120,.25)}
   /* Window buttons: three little pressed plates (minimise / shade / close). */
   body.theme-winamp #device .wa-wbtns{display:flex;gap:3px;flex:0 0 auto}
   body.theme-winamp #device .wa-wbtns i{position:relative;width:13px;height:12px;
@@ -79,42 +95,68 @@
   /* ---- foot: a plain rail across the bottom bar (no transport, no meters) ---- */
   body.theme-winamp #device .wa-foot{position:absolute;left:6px;right:6px;bottom:6px;
     height:calc(var(--bezel-bot) - 14px);display:flex;align-items:center;
-    padding:0 10px;border-radius:3px;background:var(--wa-face);box-shadow:var(--wa-out)}
+    padding:0 10px;border-radius:3px;background:var(--wa-metal);box-shadow:var(--wa-out)}
   body.theme-winamp #device .wa-foot .wa-rail{flex:1}
 
   /* ---- side edges: plain copper rails (no rack hardware, no screws) ---- */
   body.theme-winamp #device .wa-edge{position:absolute;top:var(--bezel-top);
     bottom:var(--bezel-bot);width:calc(var(--bezel-side) - 10px);
-    background:var(--wa-face);box-shadow:var(--wa-out);border-radius:2px}
+    background:var(--wa-metal);box-shadow:var(--wa-out);border-radius:2px}
   body.theme-winamp #device .wa-edge.wa-l{left:5px}
   body.theme-winamp #device .wa-edge.wa-r{right:5px}
 
   /* ==================== ORCHESTRATOR — the playlist window =============== */
   body.theme-winamp:not(.mobile) .widget-surface.w-dock{
-    background:var(--wa-face);border-radius:6px;padding:5px 5px 6px;color:#cfe9d6;
-    box-shadow:var(--wa-drop),var(--wa-out)}
+    background:
+      radial-gradient(130% 60% at 50% 118%,rgba(78,240,127,.06),transparent 58%),
+      var(--wa-metal);
+    border-radius:7px;padding:5px 5px 6px;color:#cfe9d6;
+    box-shadow:var(--wa-drop),var(--wa-seam),var(--wa-out)}
   /* The dock's own first raw row becomes the window's caption bar. */
   body.theme-winamp:not(.mobile) .w-dock>.w-col>.w-raw:first-child{
-    background:linear-gradient(90deg,#6a4326,#3a2416);box-shadow:var(--wa-out);
+    background:var(--wa-brush),linear-gradient(180deg,#6d4a29,#3a2416);
+    box-shadow:var(--wa-out);
     border-radius:3px;color:var(--wa-amber);text-align:center;font-weight:700;
-    letter-spacing:.22em;text-transform:uppercase;margin:0 0 6px;padding:1px 6px}
+    letter-spacing:.24em;text-transform:uppercase;margin:0 0 6px;padding:1px 6px;
+    text-shadow:0 1px 0 rgba(0,0,0,.85),0 0 8px rgba(247,201,120,.25)}
   /* New Task: the green lit plate from the reference. */
   body.theme-winamp .w-dock .w-row.wrap .w-button.primary{flex:1 1 100%;text-align:center;
-    font-weight:700;color:#eafff1;background:linear-gradient(180deg,#5fbf6d,#1f7a37);
-    border:none;border-radius:3px;box-shadow:var(--wa-out);padding:3px 0;
-    text-shadow:0 1px 0 rgba(0,0,0,.45)}
+    font-weight:700;color:#eafff1;
+    background:linear-gradient(180deg,#78d886 0%,#3fa457 46%,#1c7233 100%);
+    border:none;border-radius:3px;padding:3px 0;
+    text-shadow:0 1px 0 rgba(0,0,0,.45);
+    box-shadow:var(--wa-out),inset 0 1px 0 rgba(255,255,255,.35)}
+  body.theme-winamp .w-dock .w-row.wrap .w-button.primary:hover{
+    background:linear-gradient(180deg,#84e492 0%,#48b160 46%,#227e39 100%)}
+  body.theme-winamp .w-dock .w-row.wrap .w-button.primary:active{
+    box-shadow:var(--wa-in)}
   body.theme-winamp .w-dock .w-text{flex:1 1 100%;background:var(--wa-sunken);
     color:var(--wa-green);border:none;border-radius:2px;box-shadow:var(--wa-in);
     padding:3px 8px;margin:4px 0}
   body.theme-winamp .w-dock .w-text::before{content:"⌕";color:var(--wa-green-dim)}
   body.theme-winamp .w-dock .w-text-input::placeholder{color:rgba(78,240,127,.4)}
   /* Controls: pressed metal plates; toggles read as little lit LEDs. */
-  body.theme-winamp .w-dock .w-button{background:var(--wa-plate);color:#f0dcc2;
-    border:none;border-radius:3px;box-shadow:var(--wa-out)}
+  body.theme-winamp .w-dock .w-button{background:var(--wa-plate-brush);color:#f0dcc2;
+    border:none;border-radius:3px;box-shadow:var(--wa-out);
+    text-shadow:0 1px 0 rgba(0,0,0,.5)}
+  body.theme-winamp .w-dock .w-button:hover{background:var(--wa-brush),
+    linear-gradient(180deg,#8a5c38,#5f3d22)}
   body.theme-winamp .w-dock .w-button:active{box-shadow:var(--wa-in)}
   body.theme-winamp .w-dock .w-toggle{color:#c9b69c}
-  body.theme-winamp .w-dock .w-toggle.on{color:var(--wa-amber);
-    text-shadow:0 0 7px rgba(246,196,113,.6)}
+  body.theme-winamp .w-dock .w-toggle.on{color:#d8f0df}
+  /* Toggle switch → a recessed slot with a green phosphor LED when lit. */
+  body.theme-winamp .w-toggle .w-box{background:#0a0d0a;box-shadow:var(--wa-in)}
+  body.theme-winamp .w-toggle .w-box::after{background:#b6a487;box-shadow:0 1px 1px rgba(0,0,0,.6)}
+  body.theme-winamp .w-toggle.on .w-box{
+    background:linear-gradient(180deg,#5ff08a,#1a8f43);
+    box-shadow:var(--wa-in),0 0 7px rgba(78,240,127,.55)}
+  body.theme-winamp .w-toggle.on .w-box::after{background:#eafff1}
+  body.theme-winamp .settings-modal .set-switch{background:#0a0d0a;box-shadow:var(--wa-in)}
+  body.theme-winamp .settings-modal .set-switch::after{background:#b6a487}
+  body.theme-winamp .settings-modal .set-switch.on{
+    background:linear-gradient(180deg,#5ff08a,#1a8f43);
+    box-shadow:var(--wa-in),0 0 7px rgba(78,240,127,.55)}
+  body.theme-winamp .settings-modal .set-switch.on::after{background:#eafff1}
   body.theme-winamp .w-dock .w-divider{border-color:rgba(255,208,150,.16)}
   body.theme-winamp .w-dock .w-hintbar{color:#9b856a}
   body.theme-winamp .w-dock .w-hint b{color:var(--wa-amber)}
@@ -151,11 +193,14 @@
 
   /* ===================== chrome inside the code well ==================== */
   /* Cell-aligned rows: colour + inset bevels only, never box metrics. */
-  body.theme-winamp .menubar{background:var(--wa-face);box-shadow:var(--wa-out);
+  body.theme-winamp .menubar{background:var(--wa-metal);box-shadow:var(--wa-out);
     border-bottom:none}
   body.theme-winamp .menu{color:#e7d6bd;text-shadow:0 1px 0 rgba(0,0,0,.7)}
   body.theme-winamp .menu:hover{background:rgba(255,208,150,.12)}
   body.theme-winamp .menu.open{background:var(--sel);color:#fff}
+  /* Engraved menu separators: a dark groove capped by a thin warm highlight. */
+  body.theme-winamp .msep{background:rgba(0,0,0,.6);
+    box-shadow:0 1px 0 rgba(255,214,158,.16);margin:4px 8px}
   body.theme-winamp .tabbar{background:var(--wa-face-flat);
     box-shadow:inset 0 -1px 0 rgba(0,0,0,.85)}
   body.theme-winamp .tab{color:#c2ab90;background:var(--wa-plate);
@@ -190,8 +235,8 @@
   body.theme-winamp .settings-modal,body.theme-winamp .m-sheet,
   body.theme-winamp .widget-surface.w-floatingModal,body.theme-winamp .pbrowser{
     -webkit-backdrop-filter:none;backdrop-filter:none;
-    background:var(--wa-face);color:#e9d9c2;border:none;border-radius:4px;
-    box-shadow:var(--wa-out),6px 6px 0 rgba(0,0,0,.5)}
+    background:var(--wa-metal);color:#e9d9c2;border:none;border-radius:4px;
+    box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5)}
   /* Their list bodies are LCD panes. */
   body.theme-winamp .palette .plist,body.theme-winamp .palette .pinput,
   body.theme-winamp .palette .ppreview{background:var(--wa-sunken)}
@@ -212,16 +257,25 @@
     color:var(--wa-green);border:none;border-radius:2px;box-shadow:var(--wa-in)}
   /* Buttons: beveled hardware switches that press in. */
   body.theme-winamp .settings-modal .btn,body.theme-winamp .w-button,
-  body.theme-winamp .trustdialog .td-btn{background:var(--wa-plate);color:#f0dcc2;
-    border:none;border-radius:3px;box-shadow:var(--wa-out)}
+  body.theme-winamp .trustdialog .td-btn{background:var(--wa-plate-brush);color:#f0dcc2;
+    border:none;border-radius:3px;box-shadow:var(--wa-out);
+    text-shadow:0 1px 0 rgba(0,0,0,.5)}
+  body.theme-winamp .settings-modal .btn:hover,body.theme-winamp .w-button:hover,
+  body.theme-winamp .trustdialog .td-btn:hover{background:var(--wa-brush),
+    linear-gradient(180deg,#8a5c38,#5f3d22)}
   body.theme-winamp .settings-modal .btn:active,body.theme-winamp .w-button:active{
     box-shadow:var(--wa-in)}
   body.theme-winamp .settings-modal .btn.primary,body.theme-winamp .w-button.primary,
   body.theme-winamp .trustdialog .td-btn.primary{
-    background:linear-gradient(180deg,#5fbf6d,#1f7a37);color:#eafff1;box-shadow:var(--wa-out)}
+    background:linear-gradient(180deg,#78d886 0%,#3fa457 46%,#1c7233 100%);color:#eafff1;
+    box-shadow:var(--wa-out),inset 0 1px 0 rgba(255,255,255,.35)}
 
   /* Chunky beveled scrollbars. */
-  body.theme-winamp *::-webkit-scrollbar{width:14px;height:14px;background:#1b1109}
-  body.theme-winamp *::-webkit-scrollbar-thumb{background:var(--wa-plate);
+  body.theme-winamp *::-webkit-scrollbar{width:14px;height:14px;
+    background:repeating-linear-gradient(90deg,#241610 0 1px,#140c07 1px 2px)}
+  body.theme-winamp *::-webkit-scrollbar-thumb{background:var(--wa-plate-brush);
     border-radius:0;box-shadow:var(--wa-out)}
+  body.theme-winamp *::-webkit-scrollbar-thumb:hover{background:var(--wa-brush),
+    linear-gradient(180deg,#8a5c38,#5f3d22)}
   body.theme-winamp *::-webkit-scrollbar-thumb:active{box-shadow:var(--wa-in)}
+  body.theme-winamp *::-webkit-scrollbar-corner{background:#140c07}

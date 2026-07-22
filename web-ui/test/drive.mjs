@@ -815,7 +815,7 @@ console.log('\n[web-UI theme system: switch chrome look without touching the buf
 // it re-skins the native chrome and never reaches the editor. Default is Cosmos
 // (the hardware-bezel shell); macOS and Compact are the added looks.
 check('theme API is exposed (setWebTheme / webTheme / webThemes)', await page.evaluate(() =>
-  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 4));
+  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 5));
 check('default theme is Cosmos with the hardware bezel on', await page.evaluate(() =>
   window.fresh.webTheme === 'cosmos' && document.body.classList.contains('theme-cosmos') && document.getElementById('device').classList.contains('on')));
 // The buffer stays the TUI monospace stack regardless of the chrome font.
@@ -851,10 +851,25 @@ check('Compact: theme class set, bezel off, denser grid (cell width shrank)', aw
   (await page.evaluate(() => window.fresh.metrics)).cw < cwCosmos);
 // The switch is persisted as a pure view preference in localStorage.
 check('theme choice persists in localStorage', await page.evaluate(() => localStorage.getItem('fresh.webtheme') === 'compact'));
+// → Winamp: a SHELL theme (like Cosmos) — the hardware bezel host is on and
+// dressed as the "CODE STUDIO" skin window (furniture), and its own chrome
+// palette is layered inline (navy playlist selection, LCD-green accent). The
+// BUFFER stays the TUI monospace stack, same as every other web theme.
+await page.evaluate(() => window.fresh.setWebTheme('winamp'));
+await page.waitForTimeout(400);
+check('Winamp: theme class set, shell bezel ON, skin furniture built', await page.evaluate(() =>
+  document.body.classList.contains('theme-winamp') && document.getElementById('device').classList.contains('on') &&
+  !!document.querySelector('#device .wa-title .wa-title-text')));
+check('Winamp: chrome palette layered inline (navy selection + LCD-green accent), buffer stays monospace',
+  await page.evaluate(() => {
+    const r = document.documentElement.style;
+    return r.getPropertyValue('--sel').trim() === '#2d4486' && r.getPropertyValue('--accent').trim() === '#4ef07f';
+  }) && (await svgFamily()) === cosmosBufFont);
+await page.screenshot({ path: `${SHOTS}/33b-theme-winamp.png` });
 // The floating switcher: clicking the pill opens a 3-row menu; a row switches.
 await page.locator('#themebtn').click();
 await page.waitForTimeout(150);
-check('theme switcher menu opens with all four themes', (await page.locator('#thememenu.open .ts-row').count()) === 4);
+check('theme switcher menu opens with all five themes', (await page.locator('#thememenu.open .ts-row').count()) === 5);
 await page.locator('#thememenu .ts-row', { hasText: 'Cosmos' }).first().click();
 await page.waitForTimeout(400);
 check('picking Cosmos from the menu restores the bezel shell', await page.evaluate(() =>
