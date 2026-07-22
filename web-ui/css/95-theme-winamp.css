@@ -1,202 +1,183 @@
-  /* Web theme: Winamp Classic — brushed metal, hard bevels, LCD green.
+  /* Web theme: Winamp Classic — copper metal, hard bevels, LCD green.
      (web-ui/css — concatenated in filename order into the page's single
      <style> block by crates/fresh-editor/build.rs; order is load-bearing:
      later files deliberately override earlier ones.) */
   /* ======================================================================
      Gated on body.theme-winamp (set by js/15-theme.js). A SHELL theme: it
      reuses the COSMOS layout — the grid stays inset inside #device and the
-     dock floats beside it (see SHELL_THEMES / layoutShell / widgetSurfaceEls)
-     — but dresses both as classic skin windows: the bezel becomes the main
-     player (title bar, window buttons, LCD readout, spectrum analyser), the
-     dock becomes the playlist editor. COLOURS come from applyWebTheme()'s
-     inline tokens; this file owns the metal, the bevels and the decoration.
-     Everything painted over the cell grid avoids layout-affecting properties
-     (borders/padding on chrome rows would slide the DOM off the cell pitch),
-     so bevels are drawn with inset box-shadows.
+     dock floats beside it (SHELL_THEMES / layoutShell / widgetSurfaceEls) —
+     but dresses both as skin windows: the bezel is the CODE STUDIO player
+     (rail title bar, LCD readout, analyser, transport) and the dock is the
+     ORCHESTRATOR playlist window. Its decoration is DECLARED as theme
+     furniture (WEB_THEME_FURNITURE.winamp), not baked into shell.html.
+     COLOURS come from applyWebTheme()'s inline tokens; this file owns the
+     metal, the bevels and the furniture.
+     Anything painted over the cell grid uses colour + inset shadows only —
+     borders or padding on chrome rows would slide the DOM off the cell pitch.
      ====================================================================== */
 
   body.theme-winamp{
-    --wa-lt:rgba(255,255,255,.30);       /* bevel highlight (top-left)  */
-    --wa-dk:rgba(0,0,0,.78);             /* bevel shadow    (bottom-right) */
-    --wa-metal:linear-gradient(180deg,#4b4e59,#3a3d47 14%,#31343d 62%,#25272e);
-    --wa-metal-flat:#33363f;
-    --wa-led:#2bf573;                    /* the display's phosphor green */
-    --wa-led-dim:#128d3f;
-    --wa-amber:#f6d24d;
-    /* Raised / recessed hardware, drawn without touching layout. */
+    --wa-face:linear-gradient(180deg,#6d4527,#513120 46%,#3b2417);   /* window metal */
+    --wa-face-flat:#4a2d1c;
+    --wa-plate:linear-gradient(180deg,#7d5230,#583520);              /* raised parts */
+    --wa-sunken:#050705;                                             /* LCD / code wells */
+    --wa-lt:rgba(255,208,150,.34);      /* bevel highlight (top-left)     */
+    --wa-dk:rgba(0,0,0,.80);            /* bevel shadow    (bottom-right) */
     --wa-out:inset 1px 1px 0 var(--wa-lt),inset -1px -1px 0 var(--wa-dk);
     --wa-in:inset 1px 1px 0 var(--wa-dk),inset -1px -1px 0 var(--wa-lt);
-    /* Bar visualiser: one gradient reused at 16 different heights. */
-    --wa-bar:linear-gradient(180deg,#eaff5c,#2bf573 42%,#0aa93f)}
+    --wa-amber:#f6c471;                 /* title / caption lettering */
+    --wa-green:#4ef07f;                 /* phosphor readouts */
+    --wa-green-dim:#1a8f43;
+    --wa-drop:8px 10px 0 rgba(0,0,0,.45),0 34px 80px rgba(0,0,0,.72)}
 
-  /* ---- the desk the windows sit on: near-black with a faint green bloom ---- */
+  /* ---- the desk: near-black with a warm bloom under the windows ---- */
   body.theme-winamp:not(.mobile){background:
-    radial-gradient(60rem 40rem at 18% -10%, rgba(43,245,115,.10), transparent 62%),
-    radial-gradient(50rem 40rem at 108% 108%, rgba(60,110,255,.10), transparent 60%),
-    repeating-linear-gradient(135deg,rgba(255,255,255,.017) 0 2px,transparent 2px 5px),
-    linear-gradient(180deg,#15171c,#0a0b0e) #0a0b0e}
-  /* Same clip as COSMOS: the menubar row spans the full grid width, so the
-     strip behind the floating dock must be carved out (layoutShell keeps
-     --clip-left at the dock's pixel width). */
+    radial-gradient(70rem 45rem at 20% -12%, rgba(255,150,60,.10), transparent 62%),
+    radial-gradient(55rem 42rem at 110% 110%, rgba(78,240,127,.07), transparent 60%),
+    repeating-linear-gradient(135deg,rgba(255,255,255,.016) 0 2px,transparent 2px 5px),
+    linear-gradient(180deg,#1a1512,#0b0a09) #0b0a09}
+  /* Same clip as COSMOS: the menubar row spans the whole grid, so the strip
+     behind the floating dock is carved out (--clip-left = dock width). */
   body.theme-winamp:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
 
-  /* ======================= the main player window ======================= */
-  body.theme-winamp #device{border-radius:0;letter-spacing:.14em;color:var(--wa-led-dim);
-    background:var(--wa-metal);
-    box-shadow:10px 12px 0 rgba(0,0,0,.45),0 40px 90px rgba(0,0,0,.7),var(--wa-out)}
-  body.theme-winamp #device::before{display:none}     /* machined rim → hard bevel */
-  /* The screen well: a black LCD cavity, recessed by a reversed bevel. */
-  body.theme-winamp #device .dv-screen{border-radius:0;background:#000;
-    box-shadow:var(--wa-in),0 0 0 1px rgba(0,0,0,.9),inset 0 0 90px rgba(43,245,115,.05)}
+  /* ==================== CODE STUDIO — the player window ================== */
+  body.theme-winamp #device{border-radius:6px;letter-spacing:normal;
+    background:var(--wa-face);box-shadow:var(--wa-drop),var(--wa-out)}
+  body.theme-winamp #device::before{display:none}   /* machined rim → bevel */
+  /* The code well: black, recessed, with a faint phosphor bloom. */
+  body.theme-winamp #device .dv-screen{border-radius:2px;background:var(--wa-sunken);
+    box-shadow:var(--wa-in),inset 0 0 90px rgba(78,240,127,.05)}
 
-  /* ---- title bar: the classic gradient strip + window buttons ---- */
-  body.theme-winamp #device .dv-top{left:7px;right:7px;top:7px;
-    height:calc(var(--bezel-top) - 28px);padding:0 6px;gap:8px;
-    background:linear-gradient(180deg,#6a7080,#474b57 40%,#2f323b);
-    box-shadow:var(--wa-out)}
-  /* Title text: the markup's COSMOS labels are neutralised and re-lettered
-     here, so the shell HTML stays theme-agnostic. */
-  body.theme-winamp #device .dv-label{font-size:0}
-  body.theme-winamp #device .dv-top .dv-label::before{content:"FRESH — MAIN WINDOW";
-    font-size:11px;letter-spacing:.22em;color:#cfd5e2;text-shadow:0 1px 0 #000}
-  /* The three "LEDs" become square minimise / shade / close boxes. */
-  body.theme-winamp #device .dv-leds{gap:3px}
-  body.theme-winamp #device .dv-leds i{width:12px;height:11px;border-radius:0;
-    background:linear-gradient(180deg,#5b606d,#3b3f49);
-    box-shadow:var(--wa-out);position:relative}
-  body.theme-winamp #device .dv-leds i::after{content:"";position:absolute;
-    background:#d7dce8;box-shadow:0 1px 0 rgba(0,0,0,.6)}
-  body.theme-winamp #device .dv-leds .g::after{left:3px;right:3px;bottom:2px;height:2px}
-  body.theme-winamp #device .dv-leds .y::after{left:3px;right:3px;top:4px;height:2px}
-  /* Close: two crossed bars (::before is the second stroke). */
-  body.theme-winamp #device .dv-leds .a::before,
-  body.theme-winamp #device .dv-leds .a::after{content:"";position:absolute;
-    left:2px;right:2px;top:5px;height:2px;background:#f2c3c3}
-  body.theme-winamp #device .dv-leds .a::before{transform:rotate(45deg)}
-  body.theme-winamp #device .dv-leds .a::after{transform:rotate(-45deg)}
-  /* A slim LCD strip under the title bar: the "now playing" readout. */
-  body.theme-winamp #device .dv-top::after{content:"128 KBPS  44 KHZ  STEREO  ▶ EDITING";
-    position:absolute;left:-1px;right:-1px;top:calc(100% + 3px);height:11px;
-    font-size:9px;letter-spacing:.28em;line-height:11px;padding:0 7px;
-    color:var(--wa-led);background:#000;box-shadow:var(--wa-in);
-    text-shadow:0 0 6px rgba(43,245,115,.75);overflow:hidden;white-space:nowrap}
-
-  /* ---- bottom bar: spectrum analyser + transport legend + seek slider ---- */
-  body.theme-winamp #device .dv-bottom{left:7px;right:7px;bottom:7px;
-    height:calc(var(--bezel-bot) - 16px);padding:0 8px;gap:14px;
-    background:var(--wa-metal);box-shadow:var(--wa-out)}
-  /* 16 bars: one shared gradient, sized per bar and pinned to the baseline,
-     with a segment mask painted over the top (Winamp's analyser is banded). */
-  body.theme-winamp #device .dv-bottom .dv-label:first-of-type{position:relative;
-    width:102px;height:26px;align-self:center;background:#000;box-shadow:var(--wa-in)}
-  body.theme-winamp #device .dv-bottom .dv-label:first-of-type::after{content:"";
-    position:absolute;inset:3px 4px;
-    background-image:
-      repeating-linear-gradient(180deg,rgba(0,0,0,.9) 0 1px,transparent 1px 3px),
-      var(--wa-bar),var(--wa-bar),var(--wa-bar),var(--wa-bar),
-      var(--wa-bar),var(--wa-bar),var(--wa-bar),var(--wa-bar),
-      var(--wa-bar),var(--wa-bar),var(--wa-bar),var(--wa-bar),
-      var(--wa-bar),var(--wa-bar),var(--wa-bar),var(--wa-bar);
-    background-repeat:repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat,
-      no-repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat,no-repeat,
-      no-repeat,no-repeat,no-repeat,no-repeat;
-    background-position:0 0,
-      0 100%,6px 100%,12px 100%,18px 100%,24px 100%,30px 100%,36px 100%,42px 100%,
-      48px 100%,54px 100%,60px 100%,66px 100%,72px 100%,78px 100%,84px 100%,90px 100%;
-    background-size:100% 100%,
-      4px 55%,4px 82%,4px 38%,4px 96%,4px 64%,4px 44%,4px 88%,4px 30%,
-      4px 72%,4px 50%,4px 92%,4px 34%,4px 68%,4px 46%,4px 78%,4px 26%}
-  /* Right-hand legend + a seek bar under it (the slider's knob is the notch). */
-  body.theme-winamp #device .dv-bottom .dv-label:last-of-type{position:relative;
-    font-size:0;color:var(--wa-led)}
-  body.theme-winamp #device .dv-bottom .dv-label:last-of-type::before{
-    content:"◀◀  ▶  ▮▮  ■  ▶▶";font-size:11px;letter-spacing:.3em;
-    color:#c3c9d6;text-shadow:0 1px 0 #000}
-  body.theme-winamp #device .dv-bottom .dv-label:last-of-type::after{content:"";
-    position:absolute;left:0;right:0;top:calc(100% + 5px);height:8px;
-    background:linear-gradient(90deg,var(--wa-led-dim) 0 62%,#1b1d22 62%),#1b1d22;
+  /* ---- title bar: pinstripe rails either side of the caption ---- */
+  body.theme-winamp #device .wa-title{position:absolute;left:6px;right:6px;top:5px;
+    height:calc(var(--bezel-top) - 13px);
+    display:flex;align-items:center;gap:9px;padding:0 7px;border-radius:3px;
+    background:linear-gradient(90deg,#6a4326,#3a2416);box-shadow:var(--wa-out)}
+  body.theme-winamp #device .wa-rail{flex:1;height:9px;border-radius:1px;
+    background:repeating-linear-gradient(180deg,
+      rgba(246,196,113,.55) 0 1px,rgba(0,0,0,.45) 1px 3px);
     box-shadow:var(--wa-in)}
+  body.theme-winamp #device .wa-title-text{flex:0 0 auto;font-size:11px;font-weight:700;
+    letter-spacing:.22em;color:var(--wa-amber);text-shadow:0 1px 0 rgba(0,0,0,.8)}
+  /* Window buttons: three little pressed plates (minimise / shade / close). */
+  body.theme-winamp #device .wa-wbtns{display:flex;gap:3px;flex:0 0 auto}
+  body.theme-winamp #device .wa-wbtns i{position:relative;width:13px;height:12px;
+    border-radius:2px;background:var(--wa-plate);box-shadow:var(--wa-out)}
+  body.theme-winamp #device .wa-wbtns i::before,
+  body.theme-winamp #device .wa-wbtns i::after{content:"";position:absolute;
+    background:#f3ddc0;box-shadow:0 1px 0 rgba(0,0,0,.55)}
+  body.theme-winamp #device .wa-min::before{left:3px;right:3px;bottom:3px;height:2px}
+  body.theme-winamp #device .wa-min::after{display:none}
+  body.theme-winamp #device .wa-shade::before{left:3px;right:3px;top:4px;height:2px}
+  body.theme-winamp #device .wa-shade::after{display:none}
+  body.theme-winamp #device .wa-close::before,
+  body.theme-winamp #device .wa-close::after{left:2px;right:2px;top:5px;height:2px;
+    background:#ffd0c4}
+  body.theme-winamp #device .wa-close::before{transform:rotate(45deg)}
+  body.theme-winamp #device .wa-close::after{transform:rotate(-45deg)}
 
-  /* ---- side rails: engraved legends, phosphor green ---- */
-  body.theme-winamp #device .dv-side{justify-content:center;gap:18px}
-  body.theme-winamp #device .dv-side span{color:#7f8695;letter-spacing:.34em;font-size:9px}
-  body.theme-winamp #device .dv-side.dv-l span::before{content:"FRESH 2.95 ";color:var(--wa-led-dim)}
-  body.theme-winamp #device .dv-side i{width:5px;height:5px;border-radius:0;
-    background:var(--wa-led);box-shadow:0 0 6px rgba(43,245,115,.9)}
-  /* No screws — this is a skin, not a machine. */
-  body.theme-winamp #device .dv-screw{display:none}
+  /* ---- foot: a plain rail across the bottom bar (no transport, no meters) ---- */
+  body.theme-winamp #device .wa-foot{position:absolute;left:6px;right:6px;bottom:6px;
+    height:calc(var(--bezel-bot) - 14px);display:flex;align-items:center;
+    padding:0 10px;border-radius:3px;background:var(--wa-face);box-shadow:var(--wa-out)}
+  body.theme-winamp #device .wa-foot .wa-rail{flex:1}
 
-  /* ======================= the playlist-editor dock ===================== */
+  /* ---- side edges: plain copper rails (no rack hardware, no screws) ---- */
+  body.theme-winamp #device .wa-edge{position:absolute;top:var(--bezel-top);
+    bottom:var(--bezel-bot);width:calc(var(--bezel-side) - 10px);
+    background:var(--wa-face);box-shadow:var(--wa-out);border-radius:2px}
+  body.theme-winamp #device .wa-edge.wa-l{left:5px}
+  body.theme-winamp #device .wa-edge.wa-r{right:5px}
+
+  /* ==================== ORCHESTRATOR — the playlist window =============== */
   body.theme-winamp:not(.mobile) .widget-surface.w-dock{
-    background:#0a0b0e;border-radius:0;padding:6px 5px 5px;color:#c7ffd8;
-    box-shadow:10px 12px 0 rgba(0,0,0,.45),0 40px 90px rgba(0,0,0,.7),
-      var(--wa-out),inset 0 0 0 4px var(--wa-metal-flat)}
-  /* The dock's own title row is the playlist window's title bar. */
+    background:var(--wa-face);border-radius:6px;padding:5px 5px 6px;color:#cfe9d6;
+    box-shadow:var(--wa-drop),var(--wa-out)}
+  /* The dock's own first raw row becomes the window's caption bar. */
   body.theme-winamp:not(.mobile) .w-dock>.w-col>.w-raw:first-child{
-    background:linear-gradient(180deg,#6a7080,#474b57 40%,#2f323b);
-    box-shadow:var(--wa-out);color:#cfd5e2;text-align:center;
-    letter-spacing:.2em;text-transform:uppercase;margin:-1px 0 6px;padding:1px 6px}
-  /* Controls: hardware switches and a black query box with green text. */
+    background:linear-gradient(90deg,#6a4326,#3a2416);box-shadow:var(--wa-out);
+    border-radius:3px;color:var(--wa-amber);text-align:center;font-weight:700;
+    letter-spacing:.22em;text-transform:uppercase;margin:0 0 6px;padding:1px 6px}
+  /* New Task: the green lit plate from the reference. */
   body.theme-winamp .w-dock .w-row.wrap .w-button.primary{flex:1 1 100%;text-align:center;
-    font-weight:700;color:#eafff1;background:linear-gradient(180deg,#2a9b52,#14622f);
-    border:none;border-radius:0;box-shadow:var(--wa-out);padding:4px 0}
-  body.theme-winamp .w-dock .w-text{flex:1 1 100%;background:#000;color:var(--wa-led);
-    border:none;border-radius:0;box-shadow:var(--wa-in);padding:3px 8px;margin:4px 0}
-  body.theme-winamp .w-dock .w-text::before{content:"⌕";color:var(--wa-led-dim)}
-  body.theme-winamp .w-dock .w-text-input::placeholder{color:rgba(43,245,115,.4)}
-  body.theme-winamp .w-dock .w-divider{border-color:rgba(255,255,255,.12)}
-  body.theme-winamp .w-dock .w-hintbar{color:#6f7686}
-  body.theme-winamp .w-dock .w-hint b{color:var(--wa-led)}
-  /* Playlist rows: green mono entries, navy selection bar, square everything. */
+    font-weight:700;color:#eafff1;background:linear-gradient(180deg,#5fbf6d,#1f7a37);
+    border:none;border-radius:3px;box-shadow:var(--wa-out);padding:3px 0;
+    text-shadow:0 1px 0 rgba(0,0,0,.45)}
+  body.theme-winamp .w-dock .w-text{flex:1 1 100%;background:var(--wa-sunken);
+    color:var(--wa-green);border:none;border-radius:2px;box-shadow:var(--wa-in);
+    padding:3px 8px;margin:4px 0}
+  body.theme-winamp .w-dock .w-text::before{content:"⌕";color:var(--wa-green-dim)}
+  body.theme-winamp .w-dock .w-text-input::placeholder{color:rgba(78,240,127,.4)}
+  /* Controls: pressed metal plates; toggles read as little lit LEDs. */
+  body.theme-winamp .w-dock .w-button{background:var(--wa-plate);color:#f0dcc2;
+    border:none;border-radius:3px;box-shadow:var(--wa-out)}
+  body.theme-winamp .w-dock .w-button:active{box-shadow:var(--wa-in)}
+  body.theme-winamp .w-dock .w-toggle{color:#c9b69c}
+  body.theme-winamp .w-dock .w-toggle.on{color:var(--wa-amber);
+    text-shadow:0 0 7px rgba(246,196,113,.6)}
+  body.theme-winamp .w-dock .w-divider{border-color:rgba(255,208,150,.16)}
+  body.theme-winamp .w-dock .w-hintbar{color:#9b856a}
+  body.theme-winamp .w-dock .w-hint b{color:var(--wa-amber)}
+  /* The playlist pane itself: a sunken black list of green entries. */
+  body.theme-winamp:not(.mobile) .w-dock>.w-col>.w-tree,
+  body.theme-winamp:not(.mobile) .w-dock>.w-col>.w-list{background:var(--wa-sunken);
+    box-shadow:var(--wa-in);padding:3px 2px}
   body.theme-winamp .w-dock .w-tree-row,body.theme-winamp .w-dock .w-list-row{
     border-radius:0;padding:1px 6px;color:#8fe8ab}
   body.theme-winamp .w-dock .w-tree-xrow{color:#5f8a6e}
   body.theme-winamp .w-dock .w-tree-row.sel,body.theme-winamp .w-dock .w-list-row.sel,
   body.theme-winamp .w-dock .w-tree-xrow.sel{background:var(--sel);color:#fff;box-shadow:none}
-  body.theme-winamp .w-dock .w-tree-card{border:none;border-radius:0;margin:2px 0;padding:1px 0;
-    background:rgba(255,255,255,.03);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
-  body.theme-winamp .w-dock .w-tree-card.sel{background:rgba(28,47,168,.35);
+  body.theme-winamp .w-dock .w-tree-disc,body.theme-winamp .w-dock .w-tree-check{
+    color:var(--wa-green-dim)}
+  body.theme-winamp .w-dock .w-tree-card{border:none;border-radius:0;margin:1px 0;padding:1px 0;
+    background:rgba(255,208,150,.03);box-shadow:inset 0 0 0 1px rgba(255,208,150,.07)}
+  body.theme-winamp .w-dock .w-tree-card.sel{background:rgba(45,68,134,.45);
     box-shadow:var(--wa-out);border:none}
-  body.theme-winamp .w-dock .w-tree-card.sel .w-tree-xrow{color:#b9c4ff}
-  /* Dock menus: little skin windows in their own right. */
+  body.theme-winamp .w-dock .w-tree-card.sel .w-tree-xrow{color:#c3ccf5}
+  /* Dock menus: small skin windows of their own. */
   body.theme-winamp:not(.mobile) .w-dock>.w-col{position:relative}
-  body.theme-winamp .w-dock .w-overlay{background:var(--wa-metal-flat);border:none;
-    border-radius:0;box-shadow:var(--wa-out),4px 4px 0 rgba(0,0,0,.5);padding:4px;margin:0;z-index:6}
+  body.theme-winamp .w-dock .w-overlay{background:var(--wa-face-flat);border:none;
+    border-radius:3px;box-shadow:var(--wa-out),6px 6px 0 rgba(0,0,0,.5);
+    padding:4px;margin:0;z-index:6}
   body.theme-winamp:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{
     position:absolute;left:0;right:0;top:44px}
   body.theme-winamp .w-dock .w-overlay .w-section{border:none;padding:1px}
-  body.theme-winamp .w-dock .w-overlay .w-section-label{color:#9aa1b0;
+  body.theme-winamp .w-dock .w-overlay .w-section-label{color:var(--wa-amber);
     text-transform:uppercase;font-size:.85em;letter-spacing:.12em;margin:2px 6px 4px}
   body.theme-winamp .w-dock .w-overlay .w-row{gap:0}
   body.theme-winamp .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
-    background:transparent;box-shadow:none;color:#dfe4ee;padding:3px 8px;border-radius:0}
+    background:transparent;box-shadow:none;color:#e9d9c2;padding:3px 8px;border-radius:0}
   body.theme-winamp .w-dock .w-overlay .w-button:hover{background:var(--sel);color:#fff}
 
-  /* ===================== chrome inside the screen ====================== */
+  /* ===================== chrome inside the code well ==================== */
   /* Cell-aligned rows: colour + inset bevels only, never box metrics. */
-  body.theme-winamp .menubar{background:var(--wa-metal);box-shadow:var(--wa-out);border-bottom:none}
-  body.theme-winamp .menu{color:#d3d8e4;text-shadow:0 1px 0 rgba(0,0,0,.7)}
-  body.theme-winamp .menu:hover{background:rgba(255,255,255,.10)}
+  body.theme-winamp .menubar{background:var(--wa-face);box-shadow:var(--wa-out);
+    border-bottom:none}
+  body.theme-winamp .menu{color:#e7d6bd;text-shadow:0 1px 0 rgba(0,0,0,.7)}
+  body.theme-winamp .menu:hover{background:rgba(255,208,150,.12)}
   body.theme-winamp .menu.open{background:var(--sel);color:#fff}
-  body.theme-winamp .tabbar{background:var(--wa-metal-flat);box-shadow:inset 0 -1px 0 rgba(0,0,0,.8)}
-  body.theme-winamp .tab{color:#a7adba;background:linear-gradient(180deg,#464a55,#33363f);
-    box-shadow:var(--wa-out);border-right:1px solid #16181d}
-  body.theme-winamp .tab:not(.active):hover{background:linear-gradient(180deg,#525765,#3b3f49)}
+  body.theme-winamp .tabbar{background:var(--wa-face-flat);
+    box-shadow:inset 0 -1px 0 rgba(0,0,0,.85)}
+  body.theme-winamp .tab{color:#c2ab90;background:var(--wa-plate);
+    box-shadow:var(--wa-out);border-right:1px solid #241509}
+  body.theme-winamp .tab:not(.active):hover{background:linear-gradient(180deg,#8d5c36,#65401f)}
   /* The active tab is the lit display: pressed in, black, phosphor label. */
-  body.theme-winamp .tab.active{background:#000;color:var(--wa-led);
-    text-shadow:0 0 7px rgba(43,245,115,.6);box-shadow:var(--wa-in)}
+  body.theme-winamp .tab.active{background:var(--wa-sunken);color:var(--wa-green);
+    text-shadow:0 0 7px rgba(78,240,127,.6);box-shadow:var(--wa-in)}
   body.theme-winamp .tab.active::after{display:none}
   body.theme-winamp .tab .x:hover{background:var(--sel);color:#fff}
   /* Status bar: the kbps/kHz readout — black LCD with scanlines. */
   body.theme-winamp .statusbar{background:
-    repeating-linear-gradient(180deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px),#000;
-    color:var(--wa-led-dim);box-shadow:var(--wa-in);border-top:none}
-  body.theme-winamp .statusbar .txt{color:var(--wa-led);text-shadow:0 0 6px rgba(43,245,115,.5)}
+    repeating-linear-gradient(180deg,rgba(255,255,255,.04) 0 1px,transparent 1px 3px),
+    var(--wa-sunken);
+    color:var(--wa-green-dim);box-shadow:var(--wa-in);border-top:none}
+  body.theme-winamp .statusbar .txt{color:var(--wa-green);
+    text-shadow:0 0 6px rgba(78,240,127,.5)}
   body.theme-winamp .statusbar .seg{border-radius:0}
-  body.theme-winamp .statusbar .seg:hover{background:rgba(43,245,115,.16);color:var(--wa-led)}
-  /* File explorer: another black playlist pane, framed by the metal rail. */
-  body.theme-winamp .fileexplorer{background:#0a0b0e;color:#8fe8ab;
-    border-right:1px solid #14161b;box-shadow:inset -3px 0 0 var(--wa-metal-flat)}
+  body.theme-winamp .statusbar .seg:hover{background:rgba(78,240,127,.16);color:var(--wa-green)}
+  /* File explorer: another sunken playlist pane behind a copper rail. */
+  body.theme-winamp .fileexplorer{background:var(--wa-sunken);color:#8fe8ab;
+    border-right:1px solid #1b1109;box-shadow:inset -3px 0 0 var(--wa-face-flat)}
   body.theme-winamp .fileexplorer .fx-title{color:var(--wa-amber);text-transform:uppercase}
   body.theme-winamp .fileexplorer .fx-row{border-radius:0;margin:0}
   body.theme-winamp .fileexplorer .fx-row.sel{background:var(--sel);color:#fff;box-shadow:none}
@@ -209,12 +190,14 @@
   body.theme-winamp .settings-modal,body.theme-winamp .m-sheet,
   body.theme-winamp .widget-surface.w-floatingModal,body.theme-winamp .pbrowser{
     -webkit-backdrop-filter:none;backdrop-filter:none;
-    background:var(--wa-metal-flat);color:#dfe4ee;border:none;border-radius:0;
+    background:var(--wa-face);color:#e9d9c2;border:none;border-radius:4px;
     box-shadow:var(--wa-out),6px 6px 0 rgba(0,0,0,.5)}
   /* Their list bodies are LCD panes. */
   body.theme-winamp .palette .plist,body.theme-winamp .palette .pinput,
-  body.theme-winamp .palette .ppreview{background:#000}
-  body.theme-winamp .palette .pinput .q{color:var(--wa-led)}
+  body.theme-winamp .palette .ppreview{background:var(--wa-sunken)}
+  body.theme-winamp .palette .ptitle,body.theme-winamp .palette .ptitlebar{
+    color:var(--wa-amber);letter-spacing:.12em;text-transform:uppercase}
+  body.theme-winamp .palette .pinput .q{color:var(--wa-green)}
   body.theme-winamp .palette .prow{color:#9fdcb4;border-radius:0}
   body.theme-winamp .palette .prow.sel,body.theme-winamp .ctxmenu .ctxitem.sel,
   body.theme-winamp .popup .popup-row.sel,body.theme-winamp .settings-modal .set-cat.sel,
@@ -222,24 +205,23 @@
   body.theme-winamp .mitem.hi{background:var(--sel);color:#fff;border-radius:0}
   body.theme-winamp .mitem.hi::before,body.theme-winamp .ctxmenu .ctxitem.sel::before,
   body.theme-winamp .popup .popup-row.sel::before{display:none}
-  body.theme-winamp .palette .prow .pkey{border-radius:0;border-color:#5b606d}
-  /* Text fields: recessed black wells with phosphor text. */
+  body.theme-winamp .palette .prow .pkey{border-radius:2px;border-color:#7d5230}
+  /* Text fields: recessed wells with phosphor text. */
   body.theme-winamp .palette .pinput,body.theme-winamp .w-text,
   body.theme-winamp .settings-modal .set-field,body.theme-winamp .settings-modal .set-search{
-    color:var(--wa-led);border:none;border-radius:0;box-shadow:var(--wa-in)}
+    color:var(--wa-green);border:none;border-radius:2px;box-shadow:var(--wa-in)}
   /* Buttons: beveled hardware switches that press in. */
   body.theme-winamp .settings-modal .btn,body.theme-winamp .w-button,
-  body.theme-winamp .trustdialog .td-btn{
-    background:linear-gradient(180deg,#4b4f5b,#383b45);color:#e6eaf2;
-    border:none;border-radius:0;box-shadow:var(--wa-out)}
+  body.theme-winamp .trustdialog .td-btn{background:var(--wa-plate);color:#f0dcc2;
+    border:none;border-radius:3px;box-shadow:var(--wa-out)}
   body.theme-winamp .settings-modal .btn:active,body.theme-winamp .w-button:active{
     box-shadow:var(--wa-in)}
   body.theme-winamp .settings-modal .btn.primary,body.theme-winamp .w-button.primary,
   body.theme-winamp .trustdialog .td-btn.primary{
-    background:linear-gradient(180deg,#2a9b52,#14622f);color:#eafff1;box-shadow:var(--wa-out)}
+    background:linear-gradient(180deg,#5fbf6d,#1f7a37);color:#eafff1;box-shadow:var(--wa-out)}
 
   /* Chunky beveled scrollbars. */
-  body.theme-winamp *::-webkit-scrollbar{width:14px;height:14px;background:#16181d}
-  body.theme-winamp *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#4b4f5b,#383b45);
+  body.theme-winamp *::-webkit-scrollbar{width:14px;height:14px;background:#1b1109}
+  body.theme-winamp *::-webkit-scrollbar-thumb{background:var(--wa-plate);
     border-radius:0;box-shadow:var(--wa-out)}
   body.theme-winamp *::-webkit-scrollbar-thumb:active{box-shadow:var(--wa-in)}
