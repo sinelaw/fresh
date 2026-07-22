@@ -73,9 +73,14 @@ measureMetrics();
 // #app rule); SHELL mirrors the CSS vars so JS can position the bezel and
 // inset the dock card. APPX/APPY is #app's live viewport origin — every
 // pixel→cell conversion (cellAt, border drags) maps through it.
-const SHELL=(()=>{ const n=k=>parseFloat(rootCss.getPropertyValue(k))||0;
-  return { pad:n("--shell-pad"), top:n("--bezel-top"), bot:n("--bezel-bot"),
-           side:n("--bezel-side"), gap:n("--dock-gap") }; })();
+// Read LIVE (getters), not once at parse: a web theme may override the bezel
+// geometry inline on :root (e.g. Winamp uses a thinner frame than Cosmos), and
+// layoutShell()/resize() must see the active theme's values. rootCss is a live
+// getComputedStyle, so each access reflects the current (possibly overridden) var.
+const shellN=k=>parseFloat(rootCss.getPropertyValue(k))||0;
+const SHELL={ get pad(){return shellN("--shell-pad");}, get top(){return shellN("--bezel-top");},
+  get bot(){return shellN("--bezel-bot");}, get side(){return shellN("--bezel-side");},
+  get gap(){return shellN("--dock-gap");} };
 let APPX=0, APPY=0;
 function syncAppOrigin(){ const r=document.getElementById("app").getBoundingClientRect(); APPX=r.left; APPY=r.top; }
 const appH=()=>document.getElementById("app").clientHeight;

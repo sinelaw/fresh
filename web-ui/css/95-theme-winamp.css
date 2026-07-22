@@ -96,9 +96,21 @@
     position:absolute;inset:0;pointer-events:none;border-radius:inherit;z-index:4}
   body.theme-winamp #device::after{background:var(--wa-light-top);mix-blend-mode:screen}
   body.theme-winamp #device::before{background:var(--wa-light-bot);mix-blend-mode:multiply}
-  /* The code well: black, recessed, with a faint phosphor bloom. */
-  body.theme-winamp #device .dv-screen{border-radius:3px;background:var(--wa-sunken);
-    box-shadow:var(--wa-well),inset 0 0 90px rgba(78,240,127,.05)}
+  /* The code well: a black screen recessed into the metal, framed the way the
+     reference frames it — a bright LIT rim on the metal side, a dark groove, then
+     the recessed black with a faint phosphor bloom. */
+  body.theme-winamp #device .dv-screen{border-radius:4px;background:var(--wa-sunken);
+    box-shadow:
+      /* machined groove channel engraved in the metal frame (bright/dark/bright),
+         then the lit screen rim — the reference's framed-screen look. */
+      0 0 0 1px rgba(0,0,0,.6),                     /* dark line hugging the screen   */
+      0 0 0 2px rgba(255,230,190,.34),              /* bright bevel on the metal      */
+      0 0 0 4px rgba(0,0,0,.42),                    /* dark groove                     */
+      0 0 0 5px rgba(255,228,186,.22),              /* faint outer bright             */
+      inset 2px 2px 0 rgba(255,236,198,.34),        /* inner lit rim, top-left         */
+      inset -2px -2px 0 rgba(0,0,0,.5),            /* inner shade, bottom-right       */
+      inset 6px 6px 11px rgba(0,0,0,.85),           /* recessed screen depth           */
+      inset 0 0 90px rgba(78,240,127,.05)}
 
   /* ---- title bar: pinstripe rails either side of the caption ---- */
   body.theme-winamp #device .wa-title{position:absolute;left:6px;right:6px;top:5px;
@@ -140,12 +152,11 @@
     padding:0 10px;border-radius:3px;background:var(--wa-metal);box-shadow:var(--wa-out)}
   body.theme-winamp #device .wa-foot .wa-rail{flex:1}
 
-  /* ---- side edges: plain copper rails (no rack hardware, no screws) ---- */
-  body.theme-winamp #device .wa-edge{position:absolute;top:var(--bezel-top);
-    bottom:var(--bezel-bot);width:calc(var(--bezel-side) - 10px);
-    background:var(--wa-metal);box-shadow:var(--wa-out);border-radius:2px}
-  body.theme-winamp #device .wa-edge.wa-l{left:5px}
-  body.theme-winamp #device .wa-edge.wa-r{right:5px}
+  /* ---- side edges: hidden. The #device metal already fills the side margins,
+     and the frame around the code is the recessed, lit .dv-screen bevel — so the
+     old raised side rails (which covered the screen's lit rim and left a seam)
+     are dropped, matching the reference's single solid bevelled frame. ---- */
+  body.theme-winamp #device .wa-edge{display:none}
 
   /* ==================== ORCHESTRATOR — the playlist window =============== */
   body.theme-winamp:not(.mobile) .widget-surface.w-dock{position:relative;

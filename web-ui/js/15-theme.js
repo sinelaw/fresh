@@ -140,6 +140,10 @@ const WEB_THEME_VARS = {
     "--sel": "#313c90", "--sel-ring": "none",
     "--shadow": "6px 6px 0 rgba(0,0,0,.5), 0 0 0 1px #1b1109",
     "--r-sm": "2px", "--r-md": "3px", "--r-lg": "4px",
+    // Thinner window frame than Cosmos — the reference's CODE STUDIO frames the
+    // screen with a slim bezel, so the content sits close to the window edges.
+    // SHELL reads these live (js/10-core.js), so #device + the grid re-fit.
+    "--bezel-side": "17px", "--bezel-top": "42px", "--bezel-bot": "44px",
   },
 };
 // ---- theme FURNITURE (declarative bezel decoration) ------------------------
