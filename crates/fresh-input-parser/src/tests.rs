@@ -121,6 +121,74 @@ fn csi_modifiers_parsed() {
 }
 
 #[test]
+fn modified_f1_f4_csi_form() {
+    // Modified F1–F4 use xterm's SS3-derived CSI form `CSI 1 ; <mod> {P,Q,R,S}`.
+    // (#699: Shift+F3 was dropped, so "Find Previous" never fired.) Sequences
+    // below were captured from tmux via `cat -v`.
+    let mut p = InputParser::new();
+    // Shift+F3
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;2R")),
+        vec![(KeyCode::F(3), KeyModifiers::SHIFT)]
+    );
+    // Ctrl+F3
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;5R")),
+        vec![(KeyCode::F(3), KeyModifiers::CONTROL)]
+    );
+    // Alt+F3
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;3R")),
+        vec![(KeyCode::F(3), KeyModifiers::ALT)]
+    );
+    // Ctrl+Shift+F3
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;6R")),
+        vec![(KeyCode::F(3), KeyModifiers::SHIFT | KeyModifiers::CONTROL)]
+    );
+    // Shift+F1 / F2 / F4 (P/Q/S siblings)
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;2P")),
+        vec![(KeyCode::F(1), KeyModifiers::SHIFT)]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;2Q")),
+        vec![(KeyCode::F(2), KeyModifiers::SHIFT)]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b[1;2S")),
+        vec![(KeyCode::F(4), KeyModifiers::SHIFT)]
+    );
+}
+
+#[test]
+fn unmodified_f1_f4_still_ss3() {
+    // Regression guard: unmodified F1–F4 must keep decoding via SS3
+    // (`ESC O P/Q/R/S`) and not be affected by the new CSI arms.
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1bOP")),
+        vec![(KeyCode::F(1), KeyModifiers::empty())]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1bOR")),
+        vec![(KeyCode::F(3), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn bare_csi_r_is_not_f3() {
+    // A bare `CSI R` (and a `1;1R` / non-`1` first field) is *not* a modified
+    // F3 — it must not be misdecoded as a keypress. This is the Cursor
+    // Position Report shape; guarding on `1;<mod≥2>` keeps it out.
+    let mut p = InputParser::new();
+    assert!(keys(&p.parse(b"\x1b[R")).is_empty());
+    assert!(keys(&p.parse(b"\x1b[1;1R")).is_empty());
+    // A realistic CPR body `CSI <row>;<col> R` (row != 1) also stays out.
+    assert!(keys(&p.parse(b"\x1b[24;80R")).is_empty());
+}
+
+#[test]
 fn shift_tab_csi_z() {
     let mut p = InputParser::new();
     assert_eq!(

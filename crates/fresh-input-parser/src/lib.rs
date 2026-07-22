@@ -376,6 +376,29 @@ impl InputParser {
             b'D' => out.push(key(KeyCode::Left, modifiers_of(&params))),
             b'H' => out.push(key(KeyCode::Home, modifiers_of(&params))),
             b'F' => out.push(key(KeyCode::End, modifiers_of(&params))),
+            // Modified F1–F4: xterm's SS3-derived form `CSI 1 ; <mod> {P,Q,R,S}`
+            // (e.g. Shift+F3 = `ESC [ 1 ; 2 R`). *Unmodified* F1–F4 arrive as
+            // SS3 (`ESC O P/Q/R/S`) and are decoded in `feed_ss3`; adding a
+            // modifier is what promotes the SS3 prefix to a CSI with a `1;<mod>`
+            // parameter, so only the modified variants land here. Without these
+            // arms every Shift/Ctrl/Alt + F1–F4 was silently dropped (#699:
+            // Shift+F3 "Find Previous" did nothing).
+            //
+            // The `1;<mod>` guard also separates these from a Cursor Position
+            // Report (`CSI <row> ; <col> R`). fresh never requests a host CPR on
+            // this input path — CPR only exists inside the integrated-terminal
+            // emulator — so a CPR can't legitimately arrive here; the guard is
+            // belt-and-suspenders that keeps a bare/foreign `CSI …R` from being
+            // misread as F3.
+            b'P' | b'Q' | b'R' | b'S' if is_modified_f1_f4(&params) => {
+                let code = match final_byte {
+                    b'P' => KeyCode::F(1),
+                    b'Q' => KeyCode::F(2),
+                    b'R' => KeyCode::F(3),
+                    _ => KeyCode::F(4), // b'S'
+                };
+                out.push(key(code, modifiers_of(&params)));
+            }
             b'~' => self.dispatch_tilde(&params, out),
             b'M' | b'm' => {
                 if params.first() == Some(&b'<') {
@@ -510,6 +533,28 @@ fn functional_or_char(codepoint: u32) -> Option<KeyCode> {
         127 => KeyCode::Backspace,
         cp => KeyCode::Char(char::from_u32(cp)?),
     })
+}
+
+/// True when a CSI parameter list has the modified-function-key shape
+/// `1 ; <mod>` that xterm uses for Shift/Ctrl/Alt + F1–F4
+/// (`CSI 1;<mod> {P,Q,R,S}`), with `<mod>` a real modifier value (2–16).
+///
+/// The leading `1` is the F1–F4 selector, not a coordinate, so this
+/// distinguishes those keys from a Cursor Position Report
+/// (`CSI <row>;<col> R`) and rejects the unmodified/`1;1` and bare `CSI R`
+/// forms (unmodified F1–F4 come through SS3, never here).
+fn is_modified_f1_f4(params: &[u8]) -> bool {
+    let s = std::str::from_utf8(params).unwrap_or("");
+    let mut fields = s.split(';');
+    if fields.next() != Some("1") {
+        return false;
+    }
+    matches!(
+        fields
+            .next()
+            .and_then(|f| first_subparam(f).parse::<u8>().ok()),
+        Some(2..=16)
+    )
 }
 
 /// Parse the modifier field (`…;mods`) of a standard CSI parameter list.
