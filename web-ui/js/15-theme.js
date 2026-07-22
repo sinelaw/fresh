@@ -22,6 +22,10 @@
 //     window chrome and the wallpaper/bezel opt-out off that class. Cosmos needs
 //     no rules of its own: it IS the base look, so its class only marks the
 //     switcher's active row and gates the hardware bezel in layoutShell().
+//   • Furniture — decorative DOM inside the bezel host, declared per theme in
+//     WEB_THEME_FURNITURE and built by renderFurniture(). shell.html ships an
+//     empty #device, so a theme's title bars / readouts / knobs live with the
+//     theme instead of in the page.
 const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp"];
 const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic" };
 const WEB_THEME_DESC = {
@@ -122,22 +126,79 @@ const WEB_THEME_VARS = {
   // hard offset drop shadow instead of a soft one. Structure (bevels, metal
   // gradients, scanlines) lives in css/95-theme-winamp.css.
   winamp: {
-    "--fg": "#d5d9e0", "--muted": "#8e94a0",
-    "--bg2": "#3a3d47", "--bg3": "#2c2f37",
-    "--menuhi": "#1c2fa8", "--border": "#14161b",
-    "--status-bg": "#000000", "--status-fg": "#3bd76e",
-    "--shell": "#33363f",
-    "--accent": "#2bf573", "--ui-accent": "#2bf573",
-    "--on-ui-accent": "#04140a", "--on-accent": "#04140a", "--on-sel": "#ffffff",
-    "--ok": "#2bf573",
-    "--surface": "#3a3d47", "--surface-2": "#2c2f37",
-    "--hairline": "rgba(255,255,255,.10)", "--hairline-strong": "rgba(255,255,255,.22)",
-    "--hover": "rgba(255,255,255,.09)",
-    "--sel": "#1c2fa8", "--sel-ring": "none",
-    "--shadow": "4px 4px 0 rgba(0,0,0,.55), 0 0 0 1px #14161b",
-    "--r-sm": "0px", "--r-md": "0px", "--r-lg": "0px",
+    "--fg": "#e9d9c2", "--muted": "#9b856a",
+    "--bg2": "#4a2d1c", "--bg3": "#3b2417",
+    "--menuhi": "#2d4486", "--border": "#1b1109",
+    "--status-bg": "#050705", "--status-fg": "#1a8f43",
+    "--shell": "#4a2d1c",
+    "--accent": "#4ef07f", "--ui-accent": "#f6c471",
+    "--on-ui-accent": "#2a1608", "--on-accent": "#04140a", "--on-sel": "#ffffff",
+    "--ok": "#4ef07f",
+    "--surface": "#4a2d1c", "--surface-2": "#3b2417",
+    "--hairline": "rgba(255,208,150,.12)", "--hairline-strong": "rgba(255,208,150,.26)",
+    "--hover": "rgba(255,208,150,.10)",
+    "--sel": "#2d4486", "--sel-ring": "none",
+    "--shadow": "6px 6px 0 rgba(0,0,0,.5), 0 0 0 1px #1b1109",
+    "--r-sm": "2px", "--r-md": "3px", "--r-lg": "4px",
   },
 };
+// ---- theme FURNITURE (declarative bezel decoration) ------------------------
+// Purely decorative DOM a theme wants inside #device — title bars, readouts,
+// analysers, transport clusters. Modelled on Winamp's *modern* skins: a classic
+// 2.x skin could only re-bitmap a hardcoded widget layout, while skin.xml let a
+// skin declare its own object tree. Same idea here — shell.html ships an EMPTY
+// #device and each theme declares what lives in it, so no theme's chrome is
+// baked into the page.
+//
+// A node is [ "tag.class.class", ...children ], where a child is another node
+// or a string (text). "×N" after the selector repeats the node (bar arrays).
+// Everything is decoration: the host is pointer-transparent, aria-hidden, and
+// nothing here may affect the cell grid's geometry.
+const WEB_THEME_FURNITURE = {
+  cosmos: [
+    ["div.dv-screen"],
+    ["div.dv-top", ["span.dv-label", "SPEC: COSMOS-991"], ["span.dv-grow"],
+      ["span.dv-leds", ["i.g"], ["i.y"], ["i.a"]]],
+    ["div.dv-side.dv-l", ["i"], ["span", "SPEC: COSMOS-991"]],
+    ["div.dv-side.dv-r", ["i"], ["span", "PROJECT: INFERNU.NIU"]],
+    ["div.dv-bottom", ["span.dv-label", "SPEC: COSMOS-991"], ["span.dv-grow"],
+      ["span.dv-label", "PROJECT: INFERNU CORE"]],
+    ["i.dv-screw.tl"], ["i.dv-screw.tr"], ["i.dv-screw.bl"], ["i.dv-screw.br"],
+  ],
+  // Winamp Classic — the editor is the "CODE STUDIO" skin window: window
+  // DECORATION only (rail title bar, caption, window buttons, side rails). No
+  // fake instrumentation — no analyser, no transport, no meters.
+  winamp: [
+    ["div.dv-screen"],
+    ["div.wa-title", ["i.wa-rail"], ["span.wa-title-text", "CODE STUDIO"], ["i.wa-rail"],
+      ["span.wa-wbtns", ["i.wa-min"], ["i.wa-shade"], ["i.wa-close"]]],
+    ["div.wa-edge.wa-l"], ["div.wa-edge.wa-r"], ["div.wa-foot", ["i.wa-rail"]],
+  ],
+};
+// Build a theme's furniture into #device. Called from applyWebTheme when the
+// theme changes (the tree is static per theme, so it is not rebuilt per frame).
+function renderFurniture() {
+  const host = document.getElementById("device");
+  if (!host) return;
+  if (host.dataset.theme === webTheme) return;
+  host.dataset.theme = webTheme;
+  host.textContent = "";
+  const build = (node, parent) => {
+    let [sel, ...kids] = node;
+    let times = 1;
+    const rep = sel.indexOf("×");
+    if (rep >= 0) { times = parseInt(sel.slice(rep + 1), 10) || 1; sel = sel.slice(0, rep); }
+    const parts = sel.split(".");
+    for (let i = 0; i < times; i++) {
+      const el = document.createElement(parts[0] || "div");
+      if (parts.length > 1) el.className = parts.slice(1).join(" ");
+      for (const k of kids) typeof k === "string" ? (el.textContent = k) : build(k, el);
+      parent.appendChild(el);
+    }
+  };
+  for (const node of (WEB_THEME_FURNITURE[webTheme] || [])) build(node, host);
+}
+
 // Union of every override key, for stale-clearing on theme switch.
 const WEB_THEME_ALL_KEYS = (() => {
   const s = new Set();
@@ -158,6 +219,7 @@ function applyWebTheme() {
   for (const n of WEB_THEMES) b.classList.toggle("theme-" + n, n === webTheme);
   // Family marker so the two macOS variants share one structural stylesheet.
   b.classList.toggle("macfam", MACOS_THEMES.includes(webTheme));
+  renderFurniture();
   const r = document.documentElement.style;
   const vars = WEB_THEME_VARS[webTheme] || {};
   for (const k of WEB_THEME_ALL_KEYS) {

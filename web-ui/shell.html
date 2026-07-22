@@ -36,19 +36,11 @@
 </style>
 </head>
 <body>
-<!-- Decorative hardware bezel (COSMOS shell). Positioned by layoutShell()
-     to wrap the grid minus the floating dock; pointer-transparent, painted
-     behind #app by document order. -->
-<div id="device" aria-hidden="true">
-  <div class="dv-screen"></div>
-  <div class="dv-top"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
-    <span class="dv-leds"><i class="g"></i><i class="y"></i><i class="a"></i></span></div>
-  <div class="dv-side dv-l"><i></i><span>SPEC: COSMOS-991</span></div>
-  <div class="dv-side dv-r"><i></i><span>PROJECT: INFERNU.NIU</span></div>
-  <div class="dv-bottom"><span class="dv-label">SPEC: COSMOS-991</span><span class="dv-grow"></span>
-    <span class="dv-label">PROJECT: INFERNU CORE</span></div>
-  <i class="dv-screw tl"></i><i class="dv-screw tr"></i><i class="dv-screw bl"></i><i class="dv-screw br"></i>
-</div>
+<!-- Decorative bezel host. EMPTY on purpose: its contents are the active web
+     theme's FURNITURE, declared in js/15-theme.js and built by renderFurniture()
+     (see the note there). Positioned by layoutShell() to wrap the grid minus the
+     floating dock; pointer-transparent, painted behind #app by document order. -->
+<div id="device" aria-hidden="true"></div>
 <div id="app"></div>
 <!-- macOS theme title bar (window controls + document title). Shown only under
      body.theme-macos; #app is inset below it. Decorative — pointer-transparent. -->
