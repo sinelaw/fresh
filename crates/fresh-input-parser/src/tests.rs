@@ -318,6 +318,28 @@ fn sgr_mouse_motion_without_button() {
 }
 
 #[test]
+fn sgr_mouse_zero_coordinate_does_not_panic() {
+    // Regression for #2732: an out-of-spec SGR mouse report with a 0 column or
+    // row must not underflow the `coord - 1` conversion. crossterm's parser
+    // panicked (`attempt to subtract with overflow`) / wrapped to 65535 here;
+    // our `saturating_sub(1)` yields a bounded 0 instead.
+    let mut p = InputParser::new();
+    for seq in [
+        &b"\x1b[<0;0;5M"[..], // column 0
+        &b"\x1b[<0;5;0M"[..], // row 0
+        &b"\x1b[<0;0;0M"[..], // both 0
+    ] {
+        let ev = p.parse(seq);
+        match &ev[0] {
+            Event::Mouse(me) => {
+                assert!(me.column <= 4 && me.row <= 4, "unexpected coords: {:?}", me);
+            }
+            other => panic!("expected mouse, got {:?}", other),
+        }
+    }
+}
+
+#[test]
 fn sgr_mouse_split_across_batches() {
     let mut p = InputParser::new();
     assert!(p.parse(&[0x1b]).is_empty());
