@@ -31,6 +31,12 @@ use std::time::Duration;
 use crossterm::event::{Event as CrosstermEvent, MouseEventKind};
 use fresh_input_parser::InputParser;
 
+/// How long a buffered lone `ESC` waits for a continuation before being
+/// reported as the Escape key. Terminals emit a sequence in one write, so the
+/// continuation (if any) is already queued; this only has to cover a read
+/// landing mid-sequence, and must stay well below human key-repeat latency.
+const ESC_GRACE: Duration = Duration::from_millis(15);
+
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
 static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
 
@@ -120,7 +126,24 @@ impl TtyReader {
     /// parser. The caller must have observed the fd readable; because stdin is
     /// in raw mode with at least one byte available, the `read` returns
     /// promptly without blocking.
+    ///
+    /// A lone trailing `ESC` is ambiguous — the Escape key, or the head of a
+    /// sequence split across reads — so it is held back until either the rest
+    /// arrives within [`ESC_GRACE`] or the grace window expires, at which point
+    /// it is flushed as an Escape key press.
     pub fn drain_stdin(&mut self) {
+        while self.read_once() {
+            if !self.parser.escape_pending() || !poll_readable(self.stdin_fd, ESC_GRACE) {
+                break;
+            }
+        }
+        for ev in self.parser.flush() {
+            self.push_coalesced(ev);
+        }
+    }
+
+    /// One `read()` + parse pass. Returns whether any bytes were read.
+    fn read_once(&mut self) -> bool {
         let mut buf = [0u8; 4096];
         // SAFETY: reading into a stack buffer we own, length-bounded.
         let n = unsafe {
@@ -130,12 +153,14 @@ impl TtyReader {
                 buf.len(),
             )
         };
-        if n > 0 {
-            let events = self.parser.parse(&buf[..n as usize]);
-            for ev in events {
-                self.push_coalesced(ev);
-            }
+        if n <= 0 {
+            return false;
         }
+        let events = self.parser.parse(&buf[..n as usize]);
+        for ev in events {
+            self.push_coalesced(ev);
+        }
+        true
     }
 
     /// Queue an event, collapsing a run of mouse-move events down to the latest

@@ -111,15 +111,42 @@ impl InputParser {
     ///
     /// Partial sequences are retained across calls, so splitting a sequence
     /// across chunks at any byte boundary yields the same events as delivering
-    /// it whole. Calling with an empty slice is a no-op (it never flushes a
-    /// buffered `ESC` as a standalone Escape — that only happens once the next
-    /// byte disambiguates it), matching the previous parser's contract.
+    /// it whole. Calling with an empty slice is a no-op; a buffered `ESC` is
+    /// only resolved by the next byte or by an explicit [`InputParser::flush`].
     pub fn parse(&mut self, bytes: &[u8]) -> Vec<Event> {
         let mut events = Vec::new();
         for &byte in bytes {
             self.feed(byte, &mut events);
         }
         events
+    }
+
+    /// True while a lone `ESC` is buffered, waiting for the next byte to say
+    /// whether it was the Escape key or the head of an escape sequence.
+    ///
+    /// A caller reading from a live tty uses this to decide when to
+    /// [`flush`](InputParser::flush): a standalone Escape has no continuation,
+    /// so once no more input arrives the ambiguity resolves to the key press.
+    pub fn escape_pending(&self) -> bool {
+        self.state == State::Escape
+    }
+
+    /// Resolve a buffered lone `ESC` as a standalone Escape key press.
+    ///
+    /// Returns the `Esc` key event (and returns to ground) when
+    /// [`escape_pending`](InputParser::escape_pending) is true; empty
+    /// otherwise. Only the `Escape` state is flushable — a partial CSI or
+    /// UTF-8 sequence keeps waiting, since its bytes must never surface as
+    /// literal keystrokes.
+    pub fn flush(&mut self) -> Vec<Event> {
+        if !self.escape_pending() {
+            return Vec::new();
+        }
+        self.state = State::Ground;
+        vec![Event::Key(KeyEvent::new(
+            KeyCode::Esc,
+            KeyModifiers::empty(),
+        ))]
     }
 
     /// Process a single byte, appending any completed events to `out`.

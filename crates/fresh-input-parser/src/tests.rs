@@ -319,6 +319,35 @@ fn esc_waits_for_next_byte() {
 }
 
 #[test]
+fn flush_emits_standalone_esc() {
+    let mut p = InputParser::new();
+    assert!(p.parse(&[0x1b]).is_empty());
+    assert!(p.escape_pending());
+    assert_eq!(
+        keys(&p.flush()),
+        vec![(KeyCode::Esc, KeyModifiers::empty())]
+    );
+    // Flushed once: the ESC is gone, and a following key stands alone.
+    assert!(!p.escape_pending());
+    assert!(p.flush().is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn flush_never_breaks_up_a_partial_sequence() {
+    // Mid-CSI and mid-UTF-8 bytes must keep waiting, never surface as keys.
+    for partial in [&b"\x1b[<35;67"[..], &b"\x1b[1;5"[..], &[0xe2, 0x82][..]] {
+        let mut p = InputParser::new();
+        p.parse(partial);
+        assert!(!p.escape_pending(), "{partial:02x?} is not a lone ESC");
+        assert!(p.flush().is_empty(), "flush emitted from {partial:02x?}");
+    }
+}
+
+#[test]
 fn esc_then_mouse_same_chunk() {
     let mut p = InputParser::new();
     let ev = p.parse(b"\x1b\x1b[<35;67;18M");
