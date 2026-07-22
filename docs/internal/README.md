@@ -44,6 +44,7 @@ other docs assume.
 | [text-model.md](text-model.md) | The persistent path-copying piece tree (and why not a rope or gap buffer), lazy loading for multi-GB files, interval-tree markers with gravity, the `Event`/`BulkEdit` model with O(1) `Arc`-snapshot undo, composite buffers, and the encoding/save path. |
 | [buffers-splits-undo.md](buffers-splits-undo.md) | App-layer buffer lifecycle and identity, buffer groups, the split/window tree, per-buffer vs per-view state, undo/redo with marker displacement, and hot-exit / crash recovery. |
 | [input-keybindings-actions.md](input-keybindings-actions.md) | A keystroke end-to-end: terminal key normalization, the modal dispatch priority stack, the command→action→event pipeline and why it's separated, the unified keybinding resolver, multi-cursor, and mouse hit-testing. |
+| [terminal-input-parsing.md](terminal-input-parsing.md) | The stage before that one: raw terminal bytes → events. Why Fresh parses input itself rather than using crossterm's parser, the DEC/ANSI state machine and the "control-sequence bytes are never emitted as text" invariant it protects, standalone-Escape resolution, the three input paths — and a register of the xterm/kitty protocol gaps that remain. |
 
 ### Rendering & language intelligence
 | Doc | What it covers |
