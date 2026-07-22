@@ -253,20 +253,23 @@
   body.theme-winamp .w-dock .w-tree-card.sel{background:rgba(58,87,209,.5);
     box-shadow:var(--wa-out);border:none}
   body.theme-winamp .w-dock .w-tree-card.sel .w-tree-xrow{color:#c3ccf5}
-  /* Dock menus: small skin windows of their own. */
-  body.theme-winamp:not(.mobile) .w-dock>.w-col{position:relative}
-  body.theme-winamp .w-dock .w-overlay{background:var(--wa-face-flat);border:none;
-    border-radius:3px;box-shadow:var(--wa-out),6px 6px 0 rgba(0,0,0,.5);
+  /* Dock menus are the SAME skin window as the anchored context menu — a
+     metal card with full-width beveled menu buttons — so the New Task /
+     Move-to-folder dropdowns read like the right-click menu. Positioning
+     (float over content, no reflow) is owned by js/65-widgets.js
+     `layoutDockOverlays`. */
+  body.theme-winamp .w-dock .w-overlay{background:var(--wa-metal);border:none;
+    border-radius:3px;box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5);
     padding:4px;margin:0;z-index:30}
-  body.theme-winamp:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{
-    position:absolute;left:0;right:0;top:44px}
   body.theme-winamp .w-dock .w-overlay .w-section{border:none;padding:1px}
   body.theme-winamp .w-dock .w-overlay .w-section-label{color:var(--wa-amber);
     text-transform:uppercase;font-size:.85em;letter-spacing:.12em;margin:2px 6px 4px}
   body.theme-winamp .w-dock .w-overlay .w-row{gap:0}
-  body.theme-winamp .w-dock .w-overlay .w-button{flex:1;text-align:left;border:none;
-    background:transparent;box-shadow:none;color:#e9d9c2;padding:3px 8px;border-radius:0}
-  body.theme-winamp .w-dock .w-overlay .w-button:hover{background:var(--sel);color:#fff}
+  /* Options keep the default beveled .w-button skin — regular plate, green
+     primary plate for the cursor row — exactly like the context menu (the
+     flat transparent override that used to sit here is gone). Width comes
+     from the base full-width rule. */
+  body.theme-winamp .w-dock .w-overlay .w-button{padding:3px 10px}
 
   /* ===================== chrome inside the code well ==================== */
   /* Cell-aligned rows: colour + inset bevels only, never box metrics. */

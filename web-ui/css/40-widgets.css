@@ -211,14 +211,35 @@
      the fallback for list-less panels taller than their rect; when a list is
      present the flex chain makes the content fit exactly, so the surface
      never scrolls. */
-  .widget-surface{background:var(--bg2);overflow:auto;z-index:40;padding:4px 6px;
+  /* Vertical scroll is the fallback for list-less panels; horizontal is
+     never wanted in a fixed-width dock — a row a shade too wide (a `pre`
+     tree line) must ellipsis-clip, not raise a flickering h-scrollbar. */
+  .widget-surface{background:var(--bg2);overflow-y:auto;overflow-x:hidden;z-index:40;padding:4px 6px;
     display:flex;flex-direction:column}
   .widget-surface>.w-col,.widget-surface>.w-row{flex:1 1 auto;min-height:0}
-  .widget-surface .w-list,.widget-surface .w-tree{flex:1 1 auto;min-height:0;overflow-y:auto}
+  .widget-surface .w-list,.widget-surface .w-tree{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}
   /* rows/cards keep their natural height — the LIST scrolls, its items never
      squash to fit the flex-constrained track */
   .widget-surface .w-list>*,.widget-surface .w-tree>*{flex:0 0 auto}
   .widget-surface.w-dock{border-right:1px solid var(--border)}
+  /* The dock column is the positioning context for its floating dropdowns
+     (New Task…, project filter, Move to folder…); js/65-widgets.js pins each
+     to the top of the row it belongs above so they overlay content instead
+     of reflowing the session list. */
+  .widget-surface.w-dock>.w-col{position:relative}
+  .widget-surface.w-dock>.w-col>.w-overlay{z-index:20}
+  /* Dock dropdown options are full-width menu rows, like the context menu:
+     each option is a `row(button, flexSpacer)`, and the spacer used to eat
+     half the row so hover/selection only highlighted the text. Drop the
+     spacer and let the button fill its row. */
+  .widget-surface.w-dock .w-overlay .w-row>.w-spacer{display:none}
+  .widget-surface.w-dock .w-overlay .w-row>.w-button{flex:1 1 100%;text-align:left}
+  /* The plugin pads the space under the tree with blank rows so the TUI can
+     pin its hint bar to the panel's bottom edge. In the web the flex column
+     already bottom-aligns the hints, so that filler would only steal the
+     vertical space the session list is meant to fill — drop it. */
+  .widget-surface.w-dock>.w-col>.w-tree+.w-raw,
+  .widget-surface.w-dock>.w-col>.w-list+.w-raw{display:none}
   .widget-surface.w-floatingModal{border:1px solid #5a5a5a;border-radius:8px;box-shadow:0 16px 60px rgba(0,0,0,.55);z-index:96}
   /* Anchored popup (right-click context menu): undimmed backdrop that still
      catches outside-clicks (dismiss), and a snug menu card — content-sized

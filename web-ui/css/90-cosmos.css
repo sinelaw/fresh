@@ -139,15 +139,12 @@
   body.theme-cosmos:not(.mobile) .w-dock .w-hint b{color:rgba(240,248,255,.8)}
   /* Dock dropdowns (New Task… / Move to folder…): a frosted menu card in
      place of the flat --bg2 overlay, with plain menu rows instead of the
-     editor's filled buttons. The New-Task menu (the overlay right after the
-     toolbar row) is pinned under its button — in flow it would land below
-     the wrapped search field. */
-  body.theme-cosmos:not(.mobile) .w-dock>.w-col{position:relative}
+     editor's filled buttons. Positioning (float over content, no reflow) is
+     owned by js/65-widgets.js `layoutDockOverlays`. */
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay{background:rgba(16,26,40,.92);
     -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
     border:1px solid rgba(255,255,255,.22);border-radius:14px;
-    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px;margin:0;z-index:6}
-  body.theme-cosmos:not(.mobile) .w-dock>.w-col>.w-row.wrap+.w-overlay{position:absolute;left:0;right:0;top:46px}
+    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px;margin:0;z-index:20}
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-section{border:none;padding:2px}
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-section-label{color:rgba(232,240,248,.55);
     text-transform:uppercase;font-size:.85em;letter-spacing:.07em;margin:2px 8px 6px}
@@ -157,6 +154,23 @@
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button:hover{background:rgba(255,255,255,.10)}
   body.theme-cosmos:not(.mobile) .w-dock .w-overlay .w-button.primary{background:rgba(255,255,255,.16);
     box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
+  /* The anchored context menu (right-click a session) wears the SAME frosted
+     card + borderless menu rows as the dock dropdowns, so the two read as one
+     component instead of the flat bordered-button box the base modal gives. */
+  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored{
+    background:rgba(16,26,40,.92);
+    -webkit-backdrop-filter:blur(18px) saturate(1.3);backdrop-filter:blur(18px) saturate(1.3);
+    border:1px solid rgba(255,255,255,.22);border-radius:14px;
+    box-shadow:0 18px 50px rgba(2,6,14,.6);padding:6px}
+  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button{
+    border:none;background:transparent;color:#e8eef5;padding:6px 10px;border-radius:9px;
+    text-align:left;box-shadow:none}
+  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button:hover{
+    background:rgba(255,255,255,.10)}
+  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.primary{
+    background:rgba(255,255,255,.16);box-shadow:inset 0 0 0 1px rgba(255,255,255,.28);color:#fff}
+  body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.danger{
+    background:transparent;color:#ff9b9b}
 
   /* Cell-painted file-browser band (OpenFile / SaveFileAs / SwitchProject):
      real pipeline cells, framed as a floating card above the panes and the
