@@ -40,9 +40,10 @@ const browser = await chromium.launch({ ...(EXE ? { executablePath: EXE } : {}),
 // its items (the TUI clips a dropdown to the grid, hiding the tail rows).
 const page = await browser.newPage({ viewport: { width: 1280, height: 960 }, deviceScaleFactor: 2 });
 const errs = []; page.on('pageerror', e => errs.push(String(e)));
-// The single-client test below deliberately opens a second /ws socket that the
-// server rejects (409) — Chromium logs that handshake failure as a console
-// error, so /ws connection noise is filtered out of the page-error assertion.
+// The mirroring test below opens a second /ws socket alongside the page's own
+// and later closes it — normal WebSocket churn that Chromium may log as console
+// noise, so /ws connection messages are filtered out of the page-error
+// assertion.
 page.on('console', m => { if (m.type() === 'error' && !/WebSocket connection to .*\/ws/.test(m.text())) errs.push('console:' + m.text()); });
 await page.goto(URL, { waitUntil: 'networkidle' });
 await page.waitForFunction(() => window.fresh && window.fresh.scene && window.fresh.scene.regions.panes.length > 0);
@@ -533,19 +534,55 @@ check('typing frame does NOT resend heavyweight unrelated regions',
   !diffKeys.includes('regions.settings') && !diffKeys.includes('regions.keybindingEditor') && !diffKeys.includes('regions.widgets'),
   JSON.stringify(diffKeys));
 
-console.log('\n[single-client model: a second WebSocket is rejected]');
-const second = await page.evaluate(() => new Promise(res => {
+console.log('\n[shared-view mirroring: multiple clients are all live at once]');
+// Opening the editor again (a second tab, another device, or the page you load
+// after a server restart) JOINS the shared session — both clients mirror the
+// SAME editor, neither is rejected. This is what stops a stale/half-open
+// background tab from locking out a new page (the old model bounced the newcomer
+// with 409, so a zombie held the single slot until a server restart).
+const secondJoined = await page.evaluate(() => new Promise(res => {
   const w = new WebSocket((location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws');
-  w.onopen = () => { w.close(); res('open'); };
+  window.__mirror = w;
+  window.__mirrorFrames = [];
+  w.onmessage = ev => { try { const m = JSON.parse(ev.data); window.__mirrorFrames.push(m.type);
+    if (m.type === 'hello') res('hello'); } catch (_) {} };
   w.onclose = () => res('closed');
   setTimeout(() => res('timeout'), 3000);
 }));
-check('second WebSocket is rejected before upgrade (409)', second === 'closed', second);
-check('first socket unaffected by the rejected second one', await page.evaluate(() => window.fresh.wsOpen));
-const seqR0 = await page.evaluate(() => window.fresh.seq);
+check('a second WebSocket JOINS and gets its own hello (mirroring, no 409)', secondJoined === 'hello', secondJoined);
+check('the page socket stays open alongside the second (both live)', await page.evaluate(() => window.fresh.wsOpen));
+// Input from the SECOND client mutates the shared editor, and BOTH clients get
+// the resulting pushed frame (the scene is built once and broadcast to all).
+const pFrames0 = await page.evaluate(() => window.fresh.frames);
+const mFrames0 = await page.evaluate(() => window.__mirrorFrames.length);
+await page.evaluate(() => window.__mirror.send(JSON.stringify({ type: 'key', key: 'Z' })));
+check("the page receives a frame from the OTHER client's input (shared editor)",
+  await page.waitForFunction(f0 => window.fresh.frames > f0, pFrames0, { timeout: 5000 }).then(() => true).catch(() => false));
+check('the second client also receives broadcast frames',
+  await page.waitForFunction(f0 => window.__mirrorFrames.length > f0, mFrames0, { timeout: 5000 }).then(() => true).catch(() => false));
+// The page's own input still round-trips too (it remained fully live).
+const pFrames1 = await page.evaluate(() => window.fresh.frames);
 await page.keyboard.type('Q');
-check('first socket still functional (input still round-trips)',
-  await page.waitForFunction(s0 => window.fresh.seq > s0, seqR0, { timeout: 5000 }).then(() => true).catch(() => false));
+check('the page socket is still functional (its own input round-trips)',
+  await page.waitForFunction(f0 => window.fresh.frames > f0, pFrames1, { timeout: 5000 }).then(() => true).catch(() => false));
+// Min-viewport resize policy: the shared grid is fit to the SMALLEST client so
+// it fits every window. Have the mirror report a narrower viewport and the
+// page's rendered width must shrink to match (bigger windows letterbox). Keep
+// the mirror's rows equal to the page's so only width changes — leaving the
+// vertical layout (and the later zoom hit-test) undisturbed.
+const sBig = await scene(page); const wBig = sBig.w;
+await page.evaluate(d => window.__mirror.send(JSON.stringify({ type: 'resize', cols: Math.max(20, d.w - 20), rows: d.h })), { w: wBig, h: sBig.h });
+check('a narrower mirror shrinks the shared grid to fit it (min viewport wins)',
+  await page.waitForFunction(w0 => window.fresh.scene.w < w0, wBig, { timeout: 5000 }).then(() => true).catch(() => false),
+  `w was ${wBig}`);
+// Close the extra client so the rest of the suite runs against the page alone;
+// the grid grows back once the small viewport that constrained it is gone.
+await page.evaluate(() => window.__mirror.close());
+check('closing the small mirror grows the grid back (constraint lifted)',
+  await page.waitForFunction(w0 => window.fresh.scene.w >= w0, wBig, { timeout: 5000 }).then(() => true).catch(() => false),
+  `w should return to ${wBig}`);
+check('closing one mirror leaves the page live (session survives a client leaving)',
+  await page.evaluate(() => window.fresh.wsOpen));
 
 console.log('\n[per-region DOM patching: a typing frame rebuilds only its regions]');
 // Have the file explorer open as the heavyweight *unrelated* region.

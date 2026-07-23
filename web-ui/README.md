@@ -190,8 +190,19 @@ a client) and pushes a `frame` of **region diffs** only when the scene
 changed — typing resends only the changed pane, an idle editor sends nothing,
 and the frontend rebuilds only the DOM region containers whose paths changed
 (per-region patching, docs §3.4).
-One client at a time (a second `/ws` gets `409`; foreign `Origin` gets `403`);
-on disconnect the page retries with backoff and resyncs from the next hello.
+**Many clients, one editor (shared-view mirroring).** Every `/ws` upgrade joins
+the session — a second tab, another device, or the page you load after a server
+restart all connect and stay live (a stale/half-open tab can no longer lock out
+a new page, the old first-come-`409` failure mode). The scene is built once per
+tick and pushed to each client as its own region diff; input is accepted from
+all of them and applied to the one editor. Because the clients have different
+window sizes but there is one grid, the render is fit to the **smallest**
+client's viewport (`effective_size`) so it fits every window — bigger windows
+letterbox. A liveness heartbeat (ping every 15 s, reap after 45 s of silence;
+browsers auto-pong) reaps a half-open peer so it can't linger or pin the grid to
+a dead small window's size. A foreign `Origin` still gets `403`; on disconnect
+the page retries with backoff and resyncs from the next hello. Independent
+per-client cursors/viewports are the deeper §3.7 work, still PLANNED.
 The frontend's input rides the WebSocket, but every HTTP route still answers as
 before (full scene): `GET /` (page), `GET /state` (used by the frontend's manual
 `refresh()` resync, `run.sh`'s readiness poll, and curl), and the `POST` input
@@ -237,8 +248,11 @@ buffer interior is the pipeline's real syntax-highlighted cells while all chrome
 is native HTML (no cell-drawn chrome), that key / mouse / menu / palette /
 settings / widget interactions run through the real `Editor` (over the
 WebSocket input path), and that the push transport behaves: server-pushed
-frames without page input, region diffs on typing, idle silence, and the
-single-client 409 — plus per-region DOM patching (a typing frame rebuilds
+frames without page input, region diffs on typing, idle silence, and
+shared-view mirroring (a second WebSocket joins and gets its own hello, both
+clients receive broadcast frames from either one's input, and the shared grid
+shrinks to the smallest client's viewport then grows back when it leaves) —
+plus per-region DOM patching (a typing frame rebuilds
 only its pane), measured metrics + app zoom (Ctrl+= / Ctrl+0, hit-testing
 while zoomed), touch pan/tap in a `hasTouch` mobile context, and the
 selection model: a drag on a live terminal grid becomes a real editor
@@ -248,7 +262,7 @@ native browser selection over the SVG grid. It also drives the **web-theme
 switch** (Cosmos ↔ macOS Light ↔ macOS Dark ↔ Compact): the body class, the bezel/title-bar swap,
 the buffer staying monospace under a proportional chrome font, the denser
 Compact grid, `localStorage` persistence, and the switcher menu.
-**149 assertions** across the chrome surfaces, plus screenshots.
+**171 assertions** across the chrome surfaces, plus screenshots.
 
 One command runs the whole thing — build the bridge, install the Playwright
 deps (`test/package.json`) on first use, start the server, run the suite,

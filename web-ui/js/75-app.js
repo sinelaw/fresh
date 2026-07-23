@@ -300,8 +300,10 @@ function connect(){
     }
   };
   // Close/error → non-modal banner + retry with backoff (500 ms doubling to
-  // 5 s max). The hello on reconnect fully resyncs (the server state
-  // survived; a server restart lands here too); input meanwhile is dropped.
+  // 5 s max). The hello on reconnect fully resyncs (the server state survived;
+  // a server restart lands here too); input meanwhile is dropped. Every client
+  // mirrors the same editor, so a reconnect just rejoins the shared session —
+  // there is no single slot to be locked out of.
   ws.onclose=()=>{ showReconnect(); const d=wsBackoff; wsBackoff=Math.min(5000,wsBackoff*2); setTimeout(connect,d); };
 }
 // Full-scene resync over the HTTP /state route (which stays curl-able for the
