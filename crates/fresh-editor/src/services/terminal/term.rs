@@ -774,7 +774,9 @@ impl TerminalState {
         Ok(written)
     }
 
-    /// Append the visible screen content to the writer as logical lines.
+    /// Append the visible screen content to the writer as logical lines,
+    /// returning the number of in-history rows that were *prepended* to the
+    /// first visible logical line (see below).
     ///
     /// Call this when exiting terminal mode (or saving a session) to add the
     /// current screen to the backing file. Wrapped rows are joined like
@@ -783,22 +785,66 @@ impl TerminalState {
     /// anchor to the start of this block and line up with the live PTY frame.
     /// The block is temporary — re-entering terminal mode truncates the file
     /// back to `backing_file_history_end`.
-    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    ///
+    /// # Complete capture of an in-progress wrapped line (fresh#2649)
+    ///
+    /// When a single logical line is taller than the pane, its earlier wrapped
+    /// rows scroll into grid history while its terminator is still on screen.
+    /// `flush_new_scrollback` deliberately leaves such an *in-progress* line
+    /// uncommitted (the file must end on a logical-line boundary), so those
+    /// in-history rows are captured by NEITHER path and are lost — the leading
+    /// characters of the line become unreachable at any scroll position and
+    /// vanish on session save.
+    ///
+    /// To fix this, when the first visible row continues a logical line whose
+    /// head is in grid history (`row_wraps(Line(-1))`), we walk backward
+    /// through history to the logical-line start and *prepend* those rows to
+    /// the first emitted logical line, so the FULL line reaches the backing
+    /// file. The returned count lets the caller offset the scroll-back anchor
+    /// past the prepended rows so the exit frame still lands on the live grid's
+    /// row 0.
+    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<usize> {
+        use alacritty_terminal::grid::Dimensions;
+
         let rows = self.rows as i32;
+
+        // Detect an in-progress logical line whose head is in grid history.
+        // `row_wraps(Line(-1))` means the last history row continues into
+        // visible row 0, i.e. row 0 is a continuation of a still-in-progress
+        // line. Walk upward while each further-back row also wraps into the
+        // one below it (and still exists in history) to find the line start.
+        let history = self.term.grid().history_size();
+        let mut prefix_rows = 0usize;
+        if rows > 0 && history > 0 && self.row_wraps(Line(-1)) {
+            prefix_rows = 1;
+            while prefix_rows < history && self.row_wraps(Line(-((prefix_rows + 1) as i32))) {
+                prefix_rows += 1;
+            }
+        }
+
         let mut start = 0i32;
         let mut row = 0i32;
+        let mut first_logical = true;
         while row < rows {
             if self.row_wraps(Line(row)) && row + 1 < rows {
                 row += 1;
                 continue;
             }
-            // `write_logical_line` indexes via the history convention, so pass
-            // visible rows through directly (offset 0 == oldest here is just row).
-            self.write_visible_logical_line(writer, start, row)?;
+            if first_logical && prefix_rows > 0 {
+                // The first visible logical line continues a line whose head
+                // rows are in history; prepend them so the full line is stored.
+                self.write_prefixed_visible_logical_line(writer, prefix_rows, start, row)?;
+            } else {
+                // `write_logical_line` indexes via the history convention, so
+                // pass visible rows through directly (offset 0 == oldest here
+                // is just row).
+                self.write_visible_logical_line(writer, start, row)?;
+            }
+            first_logical = false;
             row += 1;
             start = row;
         }
-        Ok(())
+        Ok(prefix_rows)
     }
 
     /// True if the last cell of `line` carries the `WRAPLINE` flag, i.e. the row
@@ -845,6 +891,32 @@ impl TerminalState {
         let mut sgr = SgrState::default();
         let mut out = String::with_capacity(self.cols as usize * 2);
         for row in line_start..=line_end {
+            self.append_row_cells(Line(row), &mut sgr, &mut out);
+        }
+        Self::finish_logical_line(&mut out, &sgr);
+        writeln!(writer, "{}", out)
+    }
+
+    /// Write one logical line made of `prefix_rows` history rows (the head of
+    /// an in-progress wrapped line, oldest first: `Line(-prefix_rows)` ..=
+    /// `Line(-1)`) joined with visible rows `vis_start..=vis_end`. Used by
+    /// `append_visible_screen` to capture a line taller than the pane in full.
+    fn write_prefixed_visible_logical_line<W: Write>(
+        &self,
+        writer: &mut W,
+        prefix_rows: usize,
+        vis_start: i32,
+        vis_end: i32,
+    ) -> io::Result<()> {
+        let mut sgr = SgrState::default();
+        let mut out = String::with_capacity(
+            (prefix_rows + (vis_end - vis_start) as usize + 1) * self.cols as usize * 2,
+        );
+        // History rows from oldest (`-prefix_rows`) to newest (`-1`).
+        for j in (1..=prefix_rows).rev() {
+            self.append_row_cells(Line(-(j as i32)), &mut sgr, &mut out);
+        }
+        for row in vis_start..=vis_end {
             self.append_row_cells(Line(row), &mut sgr, &mut out);
         }
         Self::finish_logical_line(&mut out, &sgr);
@@ -1497,6 +1569,68 @@ mod tests {
             output.contains("Line C"),
             "Visible screen should contain Line C"
         );
+    }
+
+    /// fresh#2649: a single logical line taller than the pane leaves its
+    /// leading rows in grid history while its cursor row is still on screen.
+    /// `flush_new_scrollback` won't commit an in-progress line, so those
+    /// in-history rows must be re-attached by `append_visible_screen` — the
+    /// FULL line (leading `X`s included) has to reach the sink, and the
+    /// returned prepended-row count must equal the in-history wrapped rows.
+    #[test]
+    fn test_append_visible_screen_reattaches_in_progress_line_head() {
+        // 20 cols × 5 rows. Print 8 'X' + 200 'A' = 208 chars with NO newline,
+        // so the line is still in progress (cursor mid-line). 208 / 20 = 11
+        // physical rows; 5 are visible, so 6 rows sit in grid history.
+        let mut state = TerminalState::new(20, 5);
+        state.process_output(b"XXXXXXXX");
+        state.process_output(&[b'A'; 200]);
+
+        let history_rows = state.history_size();
+        assert_eq!(history_rows, 6, "6 wrapped rows should be in history");
+
+        let mut sink: Vec<u8> = Vec::new();
+        // The line is in progress, so nothing is committed as scrollback yet.
+        assert_eq!(state.flush_new_scrollback(&mut sink).unwrap(), 0);
+        assert!(
+            sink.is_empty(),
+            "in-progress line must not be committed yet"
+        );
+
+        // Appending the visible screen must re-attach the in-history head.
+        let prepended = state.append_visible_screen(&mut sink).unwrap();
+        assert_eq!(
+            prepended, history_rows,
+            "prepended rows must equal the in-history wrapped rows"
+        );
+
+        let text = String::from_utf8_lossy(&sink);
+        let line = text
+            .lines()
+            .find(|l| l.contains("XXXXXXXX"))
+            .expect("the leading XXXXXXXX must be captured, not just the A tail");
+        assert_eq!(
+            line.chars().filter(|&c| c == 'X').count(),
+            8,
+            "all 8 leading X's must be present"
+        );
+        assert_eq!(
+            line.chars().filter(|&c| c == 'A').count(),
+            200,
+            "the full 200-char A tail must be present in the SAME logical line"
+        );
+    }
+
+    /// The re-attachment must not fire for a normal visible line whose head is
+    /// NOT in history (no data loss risk): the returned count is 0 and the
+    /// existing per-line capture is unchanged.
+    #[test]
+    fn test_append_visible_screen_no_prepend_when_head_on_screen() {
+        let mut state = TerminalState::new(80, 5);
+        state.process_output(b"Line A\r\nLine B\r\nLine C\r\n");
+        let mut sink: Vec<u8> = Vec::new();
+        let prepended = state.append_visible_screen(&mut sink).unwrap();
+        assert_eq!(prepended, 0, "no in-history head to re-attach");
     }
 
     #[test]
