@@ -192,14 +192,14 @@ function findConfig(): boolean {
   // Priority 1: .devcontainer/devcontainer.json
   const primary = editor.pathJoin(cwd, ".devcontainer", "devcontainer.json");
   const primaryContent = editor.readFile(editor.authorityPath(primary));
-  if (primaryContent !== null) {
+  if (primaryContent != null) {
     if (tryParse(primary, primaryContent)) return true;
   }
 
   // Priority 2: .devcontainer.json
   const secondary = editor.pathJoin(cwd, ".devcontainer.json");
   const secondaryContent = editor.readFile(editor.authorityPath(secondary));
-  if (secondaryContent !== null) {
+  if (secondaryContent != null) {
     if (tryParse(secondary, secondaryContent)) return true;
   }
 
@@ -211,7 +211,7 @@ function findConfig(): boolean {
       if (entry.is_dir) {
         const subConfig = editor.pathJoin(dcDir, entry.name, "devcontainer.json");
         const subContent = editor.readFile(editor.authorityPath(subConfig));
-        if (subContent !== null) {
+        if (subContent != null) {
           if (tryParse(subConfig, subContent)) return true;
         }
       }
