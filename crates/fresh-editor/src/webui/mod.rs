@@ -363,8 +363,7 @@ pub fn run(addr: &str, files: &[PathBuf]) -> Result<()> {
                 match ws[i].drain_messages() {
                     Ok(msgs) => {
                         for m in &msgs {
-                            let v: Value =
-                                serde_json::from_str(m).unwrap_or_else(|_| json!({}));
+                            let v: Value = serde_json::from_str(m).unwrap_or_else(|_| json!({}));
                             if v.get("type").and_then(|t| t.as_str()) == Some("resize") {
                                 if ws[i].note_resize(&v) {
                                     resize_dirty = true;
