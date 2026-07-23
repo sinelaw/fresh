@@ -4121,6 +4121,15 @@ interface HookEventMap {
 		 * a plugin name a workspace after whatever the terminal is running.
 		 */
 		terminal_title: string;
+		/**
+		 * The program's most recent out-of-band activity signal, sniffed from
+		 * the raw PTY stream: `true` while a command/task is running (OSC 133
+		 * command markers, OSC 9;4 progress), `false` when it has finished,
+		 * `null` when the program never emitted such a marker. Lets a plugin
+		 * drive a workspace's working/idle indicator off an explicit signal
+		 * instead of output timing.
+		 */
+		osc_activity: boolean | null;
 	};
 	terminal_exit: {
 		terminal_id: number;

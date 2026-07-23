@@ -438,6 +438,14 @@ pub enum HookArgs {
         /// the terminal is running, tracking the tab, without re-reading
         /// the PTY. Explicit (plugin-set) tab titles are surfaced too.
         terminal_title: String,
+        /// The program's most recent out-of-band activity signal, sniffed
+        /// from the raw PTY stream: `Some(true)` while a command / task is
+        /// running (OSC 133 command markers, OSC 9;4 progress),
+        /// `Some(false)` when it has finished, `None` when the program never
+        /// emitted such a marker. Lets a plugin drive a workspace's
+        /// working/idle indicator off an explicit signal instead of guessing
+        /// from output timing.
+        osc_activity: Option<bool>,
     },
 
     /// PTY terminal's spawned process has ended. Fires once per
@@ -746,6 +754,7 @@ mod tests {
             window_id: 2,
             last_line: "Do you want me to attempt a fix? (Y/n): ".into(),
             terminal_title: "bash \u{2014} root@host: ~/proj".into(),
+            osc_activity: Some(true),
         })
         .unwrap();
         assert_eq!(json["terminal_id"], 7);
@@ -755,6 +764,7 @@ mod tests {
             "Do you want me to attempt a fix? (Y/n): "
         );
         assert_eq!(json["terminal_title"], "bash \u{2014} root@host: ~/proj");
+        assert_eq!(json["osc_activity"], true);
     }
 
     #[test]

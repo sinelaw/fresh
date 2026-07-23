@@ -185,6 +185,140 @@ impl Osc7Scanner {
     }
 }
 
+/// Introducer for any OSC sequence: `ESC ]`.
+const OSC_INTRO: [u8; 2] = [0x1b, b']'];
+/// Cap on an activity OSC payload. The sequences we recognise (OSC 133
+/// command markers, OSC 9;4 progress) are short; a longer payload is a
+/// different OSC (title, clipboard, …) we don't track, so abandon it rather
+/// than buffer unboundedly.
+const OSC_ACTIVITY_MAX_PAYLOAD: usize = 64;
+
+/// Sniffs the out-of-band "activity" signals a program emits so the editor
+/// can tell a workspace is *working* even while it prints nothing (an agent
+/// thinking between commands, a long build). Two conventions are recognised,
+/// both dropped by the embedded emulator (`vte` surfaces no hook for them),
+/// so they're scanned from the raw PTY byte stream — the same technique
+/// [`Osc7Scanner`] uses for cwd reports:
+///
+///   * **OSC 133** shell-integration command markers (FinalTerm / iTerm2):
+///     `133;C` — a command's output began (running); `133;D[;exit]` — the
+///     command finished; `133;A` — a fresh prompt (idle / ready).
+///   * **OSC 9;4** progress (ConEmu / Windows Terminal): `9;4;1|3` sets an
+///     active / indeterminate progress (running); `9;4;0|2` clears it.
+///
+/// A program that emits neither leaves [`Self::activity`] at `None`, and the
+/// caller keeps its output-timing heuristic unchanged.
+#[derive(Debug, Default)]
+struct OscActivityScanner {
+    /// How many bytes of the `ESC ]` introducer have matched (0..2).
+    intro_match: usize,
+    /// True once the introducer matched and we're accumulating the payload.
+    collecting: bool,
+    /// True when the previous collected byte was `ESC` (possible `ST`).
+    saw_esc: bool,
+    /// Accumulated payload bytes (between the introducer and the terminator).
+    buf: Vec<u8>,
+    /// Any recognised signal seen so far — until then `activity()` is `None`.
+    seen: bool,
+    /// Whether the most recent signal says a command / task is running.
+    running: bool,
+}
+
+impl OscActivityScanner {
+    /// Feed one chunk of PTY output, updating `seen` / `running` for every
+    /// recognised sequence that completes within it.
+    fn feed(&mut self, data: &[u8]) {
+        for &byte in data {
+            if self.collecting {
+                if self.saw_esc {
+                    self.saw_esc = false;
+                    if byte == b'\\' {
+                        self.finish();
+                    } else {
+                        self.reset();
+                    }
+                } else if byte == 0x07 {
+                    self.finish();
+                } else if byte == 0x1b {
+                    self.saw_esc = true;
+                } else if self.buf.len() >= OSC_ACTIVITY_MAX_PAYLOAD {
+                    self.reset();
+                } else {
+                    self.buf.push(byte);
+                }
+            } else if byte == OSC_INTRO[self.intro_match] {
+                self.intro_match += 1;
+                if self.intro_match == OSC_INTRO.len() {
+                    self.collecting = true;
+                    self.intro_match = 0;
+                    self.buf.clear();
+                }
+            } else {
+                // Restart the introducer match; its only repeated prefix byte
+                // is ESC, so a one-byte re-check suffices.
+                self.intro_match = usize::from(byte == OSC_INTRO[0]);
+            }
+        }
+    }
+
+    /// Classify a completed OSC payload (the text between `ESC ]` and its
+    /// terminator) and reset to searching. Unrecognised payloads are ignored.
+    fn finish(&mut self) {
+        if let Ok(s) = std::str::from_utf8(&self.buf) {
+            if let Some(rest) = s.strip_prefix("133;") {
+                match rest.as_bytes().first().copied() {
+                    // Command output started → running.
+                    Some(b'C') => {
+                        self.seen = true;
+                        self.running = true;
+                    }
+                    // Command finished, or a fresh prompt → idle / ready.
+                    Some(b'D') | Some(b'A') => {
+                        self.seen = true;
+                        self.running = false;
+                    }
+                    // 'B' (command line entered, pre-exec) and anything else
+                    // aren't a running/idle edge on their own.
+                    _ => {}
+                }
+            } else if let Some(rest) = s.strip_prefix("9;4;") {
+                match rest.as_bytes().first().copied() {
+                    // Progress set (normal) / indeterminate → running.
+                    Some(b'1') | Some(b'3') => {
+                        self.seen = true;
+                        self.running = true;
+                    }
+                    // Progress cleared / error → not running.
+                    Some(b'0') | Some(b'2') => {
+                        self.seen = true;
+                        self.running = false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.collecting = false;
+        self.saw_esc = false;
+        self.intro_match = 0;
+        self.buf.clear();
+    }
+
+    /// `Some(true)` = a command / task is running, `Some(false)` = idle /
+    /// done, `None` = no activity signal has ever been seen (caller keeps its
+    /// own heuristic).
+    fn activity(&self) -> Option<bool> {
+        if self.seen {
+            Some(self.running)
+        } else {
+            None
+        }
+    }
+}
+
 /// Parse the payload of an OSC 7 sequence into a working-directory path.
 ///
 /// The conventional payload is a `file://host/path` URI (the host is usually
@@ -306,6 +440,10 @@ pub struct TerminalState {
     cwd: Option<PathBuf>,
     /// Resumable scanner that extracts OSC 7 payloads from the raw PTY stream.
     osc7: Osc7Scanner,
+    /// Resumable scanner for out-of-band activity markers (OSC 133 command
+    /// lifecycle, OSC 9;4 progress) — the emulator drops these, so we sniff
+    /// them from the raw stream too. Drives the workspace working/idle dot.
+    osc_activity: OscActivityScanner,
 }
 
 impl TerminalState {
@@ -336,6 +474,7 @@ impl TerminalState {
             pending_title,
             cwd: None,
             osc7: Osc7Scanner::default(),
+            osc_activity: OscActivityScanner::default(),
         }
     }
 
@@ -344,6 +483,15 @@ impl TerminalState {
     /// configured to emit OSC 7); `None` otherwise.
     pub fn cwd(&self) -> Option<&std::path::Path> {
         self.cwd.as_deref()
+    }
+
+    /// The program's most recent out-of-band activity signal, if any:
+    /// `Some(true)` while a command / task is running (OSC 133 `C`..`D`, or
+    /// an active OSC 9;4 progress), `Some(false)` when it has finished, and
+    /// `None` when the program has never emitted such a marker (the caller
+    /// then falls back to output-timing). See [`OscActivityScanner`].
+    pub fn osc_activity(&self) -> Option<bool> {
+        self.osc_activity.activity()
     }
 
     /// Drain any pending data that needs to be written back to the PTY.
@@ -373,6 +521,10 @@ impl TerminalState {
         if let Some(path) = osc7_payloads.iter().rev().find_map(|p| parse_osc7_path(p)) {
             self.cwd = Some(path);
         }
+
+        // Sniff activity markers (OSC 133 / OSC 9;4) out of the same raw
+        // stream — the emulator discards them too.
+        self.osc_activity.feed(data);
 
         self.parser.advance(&mut self.term, data);
         // The parser may have emitted OSC title events (0/1/2) into the
@@ -1118,6 +1270,50 @@ mod tests {
         state.process_output(b"Hello, World!");
         let content = state.content_string();
         assert!(content.contains("Hello, World!"));
+    }
+
+    #[test]
+    fn osc_activity_none_until_a_marker_is_seen() {
+        let mut state = TerminalState::new(80, 24);
+        assert_eq!(state.osc_activity(), None);
+        // Plain output (even with an unrelated OSC title) is not a marker.
+        state.process_output(b"ls -la\r\n\x1b]0;bash\x07done\r\n");
+        assert_eq!(state.osc_activity(), None);
+    }
+
+    #[test]
+    fn osc_133_command_markers_drive_running_state() {
+        let mut state = TerminalState::new(80, 24);
+        // Command output begins → running.
+        state.process_output(b"\x1b]133;C\x07");
+        assert_eq!(state.osc_activity(), Some(true));
+        // Command finishes (with an exit code) → idle, even though more
+        // output (the prompt) follows.
+        state.process_output(b"build ok\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ ");
+        assert_eq!(state.osc_activity(), Some(false));
+        // A fresh command starts again → running.
+        state.process_output(b"\x1b]133;C\x07");
+        assert_eq!(state.osc_activity(), Some(true));
+    }
+
+    #[test]
+    fn osc_133_marker_split_across_reads_is_reassembled() {
+        let mut state = TerminalState::new(80, 24);
+        // The sequence straddles two PTY reads — the scanner is resumable.
+        state.process_output(b"\x1b]13");
+        state.process_output(b"3;C\x07");
+        assert_eq!(state.osc_activity(), Some(true));
+    }
+
+    #[test]
+    fn osc_9_4_progress_drives_running_state() {
+        let mut state = TerminalState::new(80, 24);
+        // ST-terminated (ESC \) instead of BEL, active progress → running.
+        state.process_output(b"\x1b]9;4;1;40\x1b\\");
+        assert_eq!(state.osc_activity(), Some(true));
+        // Progress removed → idle.
+        state.process_output(b"\x1b]9;4;0\x1b\\");
+        assert_eq!(state.osc_activity(), Some(false));
     }
 
     #[test]

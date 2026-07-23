@@ -812,6 +812,14 @@ impl Editor {
             .and_then(|w| w.terminal_tab_title(terminal_id))
             .filter(|t| !(t.starts_with("*Terminal ") && t.ends_with('*')))
             .unwrap_or_default();
+        // The program's explicit activity marker (OSC 133 / OSC 9;4), if it
+        // emits one — lets a plugin drive the working/idle dot off a real
+        // signal instead of output timing.
+        let osc_activity = self
+            .windows
+            .get(&owner)
+            .and_then(|w| w.terminal_manager.get(terminal_id))
+            .and_then(|handle| handle.state.lock().ok().and_then(|s| s.osc_activity()));
         self.plugin_manager.read().unwrap().run_hook(
             "terminal_output",
             crate::services::plugins::hooks::HookArgs::TerminalOutput {
@@ -819,6 +827,7 @@ impl Editor {
                 window_id: owner.0,
                 last_line,
                 terminal_title,
+                osc_activity,
             },
         );
     }

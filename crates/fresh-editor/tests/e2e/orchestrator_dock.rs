@@ -3320,3 +3320,127 @@ fn dock_git_summary_survives_transient_probe_failure() {
     // The target's failed re-probe must NOT have wiped its last-known summary.
     h.assert_screen_contains("+2");
 }
+
+// ── #2 rename workspace via the context menu ────────────────────────────────
+
+/// Right-clicking a workspace offers "Rename…", and choosing it opens a
+/// dialog whose submit pins a manual name on the workspace — shown in the
+/// dock in place of the project basename. Before the rename feature the
+/// session context menu had no rename entry at all (`ctx-rename-session`
+/// never rendered), so this flow could not run.
+#[test]
+fn dock_context_menu_rename_workspace() {
+    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
+    // The session menu now offers Rename… (folders already had one).
+    h.assert_screen_contains("Rename");
+    let rrow = row_of(&h, "Rename") as u16;
+    h.mouse_click(4, rrow).unwrap();
+    // The workspace-rename dialog opens.
+    h.wait_until(|h| h.screen_to_string().contains("Rename Workspace"))
+        .unwrap();
+    // Clear the pre-filled basename and type a distinctive new name.
+    for _ in 0..40 {
+        h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+    h.type_text("ZebraRenamed").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The dock now shows the manual name.
+    h.wait_until(|h| h.screen_to_string().contains("ZebraRenamed"))
+        .unwrap();
+}
+
+// ── #5 / #4 terminal-driven workspace name + activity (need a PTY) ───────────
+
+/// True when a PTY can be opened in this environment; the terminal-backed
+/// tests below early-return (skip) otherwise, mirroring the terminal suite.
+fn pty_available() -> bool {
+    use portable_pty::{native_pty_system, PtySize};
+    native_pty_system()
+        .openpty(PtySize {
+            rows: 1,
+            cols: 1,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .is_ok()
+}
+
+/// The status glyph in a dock card's left margin for the row bearing `name`
+/// (`*` = working, `·` = idle), or `None` if the row/glyph isn't found.
+fn dock_status_glyph(h: &EditorTestHarness, name: &str) -> Option<char> {
+    let screen = h.screen_to_string();
+    let line = screen.lines().find(|l| l.contains(name))?;
+    let idx = line.find(name)?;
+    line[..idx]
+        .chars()
+        .rev()
+        .find(|&c| c == '*' || c == '\u{b7}')
+}
+
+/// A workspace with a terminal that reports a title names itself after that
+/// terminal: a constant workspace prefix + the terminal's title. Drives a
+/// real PTY that sets an OSC title and asserts the dock row picks it up.
+/// Before the auto-name change the dock row stayed at the plain project
+/// basename regardless of what the terminal was running.
+#[test]
+fn dock_workspace_auto_names_after_terminal_title() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available");
+        return;
+    }
+    let (_tmp, root) = setup_project("autoproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("autoproj"))
+        .unwrap();
+
+    // Open a terminal in the launch session and set a distinctive OSC title.
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+    h.type_text("printf '\\033]0;ZQTITLE\\007'").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The dock row now tracks the terminal title (prefix · …ZQTITLE…).
+    h.wait_until(|h| h.screen_to_string().contains("ZQTITLE"))
+        .unwrap();
+}
+
+/// An explicit OSC 133 "command finished" marker flips the workspace's
+/// activity dot to idle immediately, even though the marker itself is fresh
+/// terminal output the timing heuristic would still read as "working".
+/// Before the OSC change the indicator ignored 133/9;4 entirely, so a
+/// just-printed line always read working and the idle wait would never
+/// resolve.
+#[test]
+fn dock_indicator_honors_osc_command_done() {
+    if !pty_available() {
+        eprintln!("Skipping: PTY not available");
+        return;
+    }
+    let (_tmp, root) = setup_project("oscproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("oscproj"))
+        .unwrap();
+    h.editor_mut().open_terminal();
+    h.render().unwrap();
+
+    // "command started" marker: the row reads working (`*`).
+    h.type_text("printf '\\033]133;C\\007'").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| dock_status_glyph(h, "oscproj") == Some('*'))
+        .unwrap();
+
+    // "command finished" marker: despite the fresh output, the row flips to
+    // idle (`·`) because the OSC signal is authoritative.
+    h.type_text("printf '\\033]133;D\\007'").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| dock_status_glyph(h, "oscproj") == Some('\u{b7}'))
+        .unwrap();
+}

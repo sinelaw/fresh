@@ -88,6 +88,14 @@ interface AgentSession {
   // when the workspace hasn't been manually renamed. `undefined` until the
   // session's terminal reports a non-default title.
   terminalTitle?: string;
+  // Latest explicit OSC activity signal from the session's terminal (OSC
+  // 133 command markers / OSC 9;4 progress): `true` = a command/task is
+  // running, `false` = it has finished. When set, this is authoritative for
+  // the working/idle indicator (see `sessionState`), so an agent that goes
+  // quiet mid-command still reads "working" and a finished one flips to
+  // idle at once. `undefined`/`null` ⇒ no signal, fall back to output
+  // timing.
+  oscRunning?: boolean | null;
   // Absolute filesystem root.
   root: string;
   // Canonical project root this session belongs to (set at
@@ -1745,6 +1753,12 @@ const IDLE_AFTER_MS = 5000;
 // stored `state` field is just a cache of this for persistence/sorting.
 // No output ever (or no terminal) ⇒ idle: we have no evidence of work.
 function sessionState(s: AgentSession): AgentState {
+  // An explicit OSC activity signal (shell integration / progress) is
+  // authoritative over the output-timing heuristic: a command running keeps
+  // the workspace "working" even while it prints nothing, and a finished
+  // command flips it idle at once rather than riding out IDLE_AFTER_MS.
+  if (s.oscRunning === true) return "working";
+  if (s.oscRunning === false) return "idle";
   if (s.lastOutputAt === null) return "idle";
   return Date.now() - s.lastOutputAt < IDLE_AFTER_MS ? "working" : "idle";
 }
@@ -10616,6 +10630,18 @@ editor.on("terminal_output", (payload) => {
     // Terminal output is activity — feed the dock's day-granularity recency
     // order (persists at most once per session per day).
     markSessionActiveToday(s);
+    // Adopt any explicit OSC activity signal (OSC 133 / OSC 9;4) from the
+    // session's own terminal — authoritative for the working/idle dot. Only
+    // the session's agent terminal (when it has one), so a second shell in
+    // the same window can't drive the indicator. `null`/`undefined` leaves
+    // the previous state (a program that emits markers, then a batch without
+    // one, is still considered running/idle per the last marker).
+    if (
+      (s.terminalId === null || s.terminalId === payload.terminal_id) &&
+      (payload.osc_activity === true || payload.osc_activity === false)
+    ) {
+      s.oscRunning = payload.osc_activity;
+    }
     // Track the terminal's tab title so an un-renamed workspace names itself
     // after whatever it's running. Only adopt the session's own agent
     // terminal (when it has one) so a second shell the user opened in the
@@ -10646,6 +10672,10 @@ editor.on("terminal_exit", (payload) => {
     // `terminal_output` re-marks it working within the debounce window.
     s.lastOutputAt = null;
     s.state = "idle";
+    // The terminal is gone, so any running OSC marker is stale — clear it so
+    // a command that never emitted its "done" marker (killed, detached)
+    // doesn't leave the row stuck "working".
+    s.oscRunning = null;
     refreshOpenDialog();
   }
 });
