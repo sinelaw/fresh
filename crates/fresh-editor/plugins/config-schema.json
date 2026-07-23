@@ -26,6 +26,11 @@
       "type": "boolean",
       "default": true
     },
+    "self_update": {
+      "description": "Offer an interactive in-editor update when a new version is detected\n(default: true). When on, clicking the status-bar update indicator (or\nthe \"Update fresh\" command) prompts to update now; confirming runs the\nupdate locally in the background and logs to the data dir. When off, the\nindicator is passive (it only tells you a version is available). Has no\neffect if `check_for_updates` is false or the install method can't\nself-update.",
+      "type": "boolean",
+      "default": true
+    },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
       "$ref": "#/$defs/EditorConfig",

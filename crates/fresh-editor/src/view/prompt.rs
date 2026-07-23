@@ -107,6 +107,8 @@ pub enum PromptType {
     CopyWithFormattingTheme,
     /// Confirm reverting a modified file
     ConfirmRevert,
+    /// Confirm installing an available update ("Update now?")
+    ConfirmUpdate,
     /// Confirm saving over a file that changed on disk
     ConfirmSaveConflict,
     /// Confirm saving with sudo after permission denied

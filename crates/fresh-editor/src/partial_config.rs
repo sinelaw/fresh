@@ -77,6 +77,7 @@ pub struct PartialConfig {
     pub theme: Option<ThemeName>,
     pub locale: Option<String>,
     pub check_for_updates: Option<bool>,
+    pub self_update: Option<bool>,
     pub editor: Option<PartialEditorConfig>,
     pub file_explorer: Option<PartialFileExplorerConfig>,
     pub file_browser: Option<PartialFileBrowserConfig>,
@@ -104,6 +105,7 @@ impl Merge for PartialConfig {
         self.theme.merge_from(&other.theme);
         self.locale.merge_from(&other.locale);
         self.check_for_updates.merge_from(&other.check_for_updates);
+        self.self_update.merge_from(&other.self_update);
 
         // Nested structs: merge recursively
         merge_partial(&mut self.editor, &other.editor);
@@ -1130,6 +1132,7 @@ impl From<&crate::config::Config> for PartialConfig {
             theme: Some(cfg.theme.clone()),
             locale: cfg.locale.0.clone(),
             check_for_updates: Some(cfg.check_for_updates),
+            self_update: Some(cfg.self_update),
             editor: Some(PartialEditorConfig::from(&cfg.editor)),
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
             file_browser: Some(PartialFileBrowserConfig::from(&cfg.file_browser)),
@@ -1325,6 +1328,7 @@ impl PartialConfig {
                 self.locale.or_else(|| defaults.locale.0.clone()),
             ),
             check_for_updates: self.check_for_updates.unwrap_or(defaults.check_for_updates),
+            self_update: self.self_update.unwrap_or(defaults.self_update),
             editor: self
                 .editor
                 .map(|e| e.resolve(&defaults.editor))

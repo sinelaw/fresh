@@ -3356,6 +3356,7 @@ pub fn action_to_events(
         | Action::SelectLocale
         | Action::Revert
         | Action::ToggleAutoRevert
+        | Action::UpdateFresh
         | Action::FormatBuffer
         | Action::TrimTrailingWhitespace
         | Action::EnsureFinalNewline

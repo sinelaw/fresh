@@ -420,6 +420,16 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
 
+    /// Offer an interactive in-editor update when a new version is detected
+    /// (default: true). When on, clicking the status-bar update indicator (or
+    /// the "Update fresh" command) prompts to update now; confirming runs the
+    /// update locally in the background and logs to the data dir. When off, the
+    /// indicator is passive (it only tells you a version is available). Has no
+    /// effect if `check_for_updates` is false or the install method can't
+    /// self-update.
+    #[serde(default = "default_true")]
+    pub self_update: bool,
+
     /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
     #[serde(default)]
     pub editor: EditorConfig,
@@ -3055,6 +3065,7 @@ impl Default for Config {
             theme: default_theme_name(),
             locale: LocaleName::default(),
             check_for_updates: true,
+            self_update: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             file_browser: FileBrowserConfig::default(),

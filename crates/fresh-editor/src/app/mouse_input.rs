@@ -2445,6 +2445,10 @@ impl Editor {
             C::Messages => self.handle_action(Action::ShowStatusLog),
             // Owns its own toggle (second click closes the read-only menu).
             C::ReadOnly => self.handle_action(Action::ShowReadOnlyMenu),
+            C::Update => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::UpdateFresh)
+            }
         }
     }
 

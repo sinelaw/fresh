@@ -47,6 +47,8 @@ pub enum StatusBarClickable {
     RemoteIndicator,
     WorkspaceTrust,
     ReadOnly,
+    /// The "Update: vX.Y.Z" indicator — click to offer an in-editor update.
+    Update,
 }
 
 /// Categorization of how a rendered element should be styled and tracked for click detection.
@@ -1566,9 +1568,9 @@ impl StatusBarRenderer {
             ElementKind::RemoteIndicator(_) => Some(StatusBarClickable::RemoteIndicator),
             ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
             ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
+            ElementKind::Update => Some(StatusBarClickable::Update),
             ElementKind::Normal
             | ElementKind::RemoteDisconnected
-            | ElementKind::Update
             | ElementKind::Palette
             | ElementKind::Clock
             | ElementKind::Custom => None,

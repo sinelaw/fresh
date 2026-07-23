@@ -321,6 +321,29 @@ impl Editor {
                     self.set_status_message(t!("buffer.revert_cancelled").to_string());
                 }
             }
+            PromptType::ConfirmUpdate => {
+                let input_lower = input.trim().to_lowercase();
+                if matches!(input_lower.as_str(), "y" | "yes" | "update") {
+                    #[cfg(feature = "self-update")]
+                    {
+                        let log_dir = crate::services::log_dirs::log_dir().clone();
+                        match crate::services::updater::spawn_background_update(&log_dir) {
+                            Ok(path) => self.set_status_message(
+                                t!("update.started", path = path.display().to_string()).to_string(),
+                            ),
+                            Err(e) => {
+                                self.set_status_message(t!("update.failed", error = e).to_string())
+                            }
+                        }
+                    }
+                    #[cfg(not(feature = "self-update"))]
+                    {
+                        self.set_status_message(t!("update.unsupported").to_string());
+                    }
+                } else {
+                    self.set_status_message(t!("update.cancelled").to_string());
+                }
+            }
             PromptType::ConfirmSaveConflict => {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "o" || input_lower == "overwrite" {

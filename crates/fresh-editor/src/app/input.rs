@@ -1153,6 +1153,36 @@ impl Editor {
             Action::ToggleAutoRevert => {
                 self.toggle_auto_revert();
             }
+            Action::UpdateFresh => {
+                if !self.config().self_update {
+                    self.set_status_message(t!("update.disabled").to_string());
+                } else if !self.is_update_available() {
+                    self.set_status_message(t!("update.up_to_date").to_string());
+                } else {
+                    let version = self.latest_version().unwrap_or("").to_string();
+                    // Only prompt when there's actually something to run; for
+                    // unknown/source installs, point at the releases page.
+                    let actionable = self
+                        .get_update_result()
+                        .map(|r| {
+                            let plan = r.update_plan();
+                            plan.command.is_some()
+                                || matches!(
+                                    plan.kind,
+                                    crate::services::release_checker::UpdateKind::SelfContained
+                                )
+                        })
+                        .unwrap_or(false);
+                    if actionable {
+                        self.start_prompt(
+                            t!("prompt.update_confirm", version = version).to_string(),
+                            PromptType::ConfirmUpdate,
+                        );
+                    } else {
+                        self.set_status_message(t!("update.manual", version = version).to_string());
+                    }
+                }
+            }
             Action::FormatBuffer => {
                 if self.refuse_if_editing_disabled() {
                     return Ok(());
