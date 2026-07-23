@@ -853,6 +853,19 @@ pub struct SectionInfo {
     pub first_item_index: usize,
 }
 
+/// One entry for the Settings theme dropdown: a human-readable display name
+/// (the theme's name, as shown by "Select Theme") paired with the config value
+/// that persists when it is selected (the theme's portable form). Sourced from
+/// the live [`ThemeRegistry`](crate::view::theme::ThemeRegistry) so the
+/// dropdown never drifts from Select Theme (#2738).
+#[derive(Debug, Clone)]
+pub struct ThemeOption {
+    /// Display name shown in the dropdown (the theme name).
+    pub display: String,
+    /// Value stored in config when this option is chosen (portable form).
+    pub value: String,
+}
+
 /// Context for building setting items with layer awareness
 pub struct BuildContext<'a> {
     /// The merged config value (effective values)
@@ -864,6 +877,11 @@ pub struct BuildContext<'a> {
     /// Plugin-registered status-bar tokens (key → display title). Always
     /// present; pass an empty map in tests.
     pub available_status_bar_tokens: &'a HashMap<String, String>,
+    /// Live theme options `(display, value)` for the theme dropdown, in
+    /// Select-Theme order. Resolves the reserved `x-enum-from: "$themes"`
+    /// source. Empty when the registry isn't available (e.g. in tests) — the
+    /// control then simply renders no options.
+    pub theme_options: &'a [ThemeOption],
 }
 
 /// Convert a category tree into pages with control states
@@ -873,12 +891,14 @@ pub fn build_pages(
     layer_sources: &HashMap<String, ConfigLayer>,
     target_layer: ConfigLayer,
     available_status_bar_tokens: &HashMap<String, String>,
+    theme_options: &[ThemeOption],
 ) -> Vec<SettingsPage> {
     let ctx = BuildContext {
         config_value,
         layer_sources,
         target_layer,
         available_status_bar_tokens,
+        theme_options,
     };
     categories.iter().map(|cat| build_page(cat, &ctx)).collect()
 }
@@ -1044,31 +1064,65 @@ pub fn build_item(schema: &SettingSchema, ctx: &BuildContext) -> SettingItem {
 
             // Check for dynamic enum: derive dropdown options from another config field's keys
             if let Some(ref source_path) = schema.enum_from {
-                let mut options: Vec<String> = ctx
-                    .config_value
-                    .pointer(source_path)
-                    .and_then(|v| v.as_object())
-                    .map(|obj| obj.keys().cloned().collect())
-                    .unwrap_or_default();
-                options.sort();
+                // Reserved `$themes` source: the theme dropdown can't use the
+                // generic object-keys path, because a user theme's DISPLAY (its
+                // name) differs from the stored config VALUE (its portable
+                // form). Populate it from the live registry as (display, value)
+                // pairs, in Select-Theme order (no re-sorting), so the two lists
+                // are one source of truth (#2738).
+                if source_path == "$themes" {
+                    let display_names: Vec<String> = ctx
+                        .theme_options
+                        .iter()
+                        .map(|o| o.display.clone())
+                        .collect();
+                    let values: Vec<String> =
+                        ctx.theme_options.iter().map(|o| o.value.clone()).collect();
 
-                // Add empty option for nullable fields (unset/inherit)
-                let mut display_names = Vec::new();
-                let mut values = Vec::new();
-                if schema.nullable {
-                    display_names.push("(none)".to_string());
-                    values.push(String::new());
-                }
-                for key in &options {
-                    display_names.push(key.clone());
-                    values.push(key.clone());
-                }
+                    let current = if is_null { "" } else { value };
+                    let selected = values
+                        .iter()
+                        .position(|v| v == current)
+                        // Legacy configs may store a bare built-in name (e.g.
+                        // `"dark"`) rather than the portable `builtin://dark`;
+                        // still pre-select the matching option.
+                        .or_else(|| {
+                            values.iter().position(|v| {
+                                v.strip_prefix("builtin://")
+                                    .is_some_and(|name| name == current)
+                            })
+                        })
+                        .unwrap_or(0);
+                    let state = DropdownState::with_values(display_names, values, &schema.name)
+                        .with_selected(selected);
+                    SettingControl::Dropdown(state)
+                } else {
+                    let mut options: Vec<String> = ctx
+                        .config_value
+                        .pointer(source_path)
+                        .and_then(|v| v.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default();
+                    options.sort();
 
-                let current = if is_null { "" } else { value };
-                let selected = values.iter().position(|v| v == current).unwrap_or(0);
-                let state = DropdownState::with_values(display_names, values, &schema.name)
-                    .with_selected(selected);
-                SettingControl::Dropdown(state)
+                    // Add empty option for nullable fields (unset/inherit)
+                    let mut display_names = Vec::new();
+                    let mut values = Vec::new();
+                    if schema.nullable {
+                        display_names.push("(none)".to_string());
+                        values.push(String::new());
+                    }
+                    for key in &options {
+                        display_names.push(key.clone());
+                        values.push(key.clone());
+                    }
+
+                    let current = if is_null { "" } else { value };
+                    let selected = values.iter().position(|v| v == current).unwrap_or(0);
+                    let state = DropdownState::with_values(display_names, values, &schema.name)
+                        .with_selected(selected);
+                    SettingControl::Dropdown(state)
+                }
             } else {
                 let state = TextInputState::new(&schema.name).with_value(value);
                 SettingControl::Text(state)
@@ -1585,6 +1639,7 @@ mod tests {
             layer_sources: &EMPTY_SOURCES,
             target_layer: ConfigLayer::User,
             available_status_bar_tokens: &EMPTY_TOKENS,
+            theme_options: &[],
         }
     }
 
@@ -1601,7 +1656,84 @@ mod tests {
             layer_sources,
             target_layer,
             available_status_bar_tokens: &EMPTY_TOKENS,
+            theme_options: &[],
         }
+    }
+
+    /// Regression test for #2738: a `theme` string setting carrying the
+    /// reserved `x-enum-from: "$themes"` source renders as a dropdown populated
+    /// from the live registry — built-ins AND a user theme, in Select-Theme
+    /// order (display = name, value = portable form) — not from a static enum.
+    #[test]
+    fn test_theme_dropdown_populated_from_registry_with_user_theme() {
+        // A user theme present in the registry, discovered exactly as Select
+        // Theme would.
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+        std::fs::write(
+            themes_dir.join("my-user-theme.json"),
+            r#"{"name":"my-user-theme","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#,
+        )
+        .expect("write user theme");
+        let registry = crate::view::theme::ThemeLoader::new(themes_dir).load_all(&[]);
+        let theme_options: Vec<ThemeOption> = registry
+            .settings_theme_options()
+            .into_iter()
+            .map(|(display, value)| ThemeOption { display, value })
+            .collect();
+
+        let schema = SettingSchema {
+            path: "/theme".to_string(),
+            name: "Theme".to_string(),
+            description: Some("Color theme".to_string()),
+            setting_type: SettingType::String,
+            default: Some(serde_json::json!("high-contrast")),
+            read_only: false,
+            section: None,
+            order: None,
+            nullable: false,
+            enum_from: Some("$themes".to_string()),
+            dual_list_sibling: None,
+            dynamically_extendable_status_bar_elements: false,
+        };
+
+        // Config stores the legacy bare built-in name "dark".
+        let config = serde_json::json!({ "theme": "dark" });
+        static EMPTY_SOURCES: std::sync::LazyLock<HashMap<String, ConfigLayer>> =
+            std::sync::LazyLock::new(HashMap::new);
+        static EMPTY_TOKENS: std::sync::LazyLock<HashMap<String, String>> =
+            std::sync::LazyLock::new(HashMap::new);
+        let ctx = BuildContext {
+            config_value: &config,
+            layer_sources: &EMPTY_SOURCES,
+            target_layer: ConfigLayer::User,
+            available_status_bar_tokens: &EMPTY_TOKENS,
+            theme_options: &theme_options,
+        };
+
+        let item = build_item(&schema, &ctx);
+        let SettingControl::Dropdown(state) = &item.control else {
+            panic!("theme should render as a dropdown, not free text");
+        };
+
+        // The dropdown lists exactly the registry themes, in list (picker)
+        // order: display = name, value = portable form.
+        assert_eq!(state.options.len(), registry.list().len());
+        for (opt_display, info) in state.options.iter().zip(registry.list().iter()) {
+            assert_eq!(opt_display, &info.name);
+        }
+
+        // The user theme is present and valued by its portable form.
+        let user_idx = state
+            .options
+            .iter()
+            .position(|d| d == "my-user-theme")
+            .expect("user theme should be an option");
+        assert_eq!(state.values[user_idx], "my-user-theme.json");
+
+        // Legacy bare "dark" pre-selects the built-in whose portable form is
+        // "builtin://dark".
+        assert_eq!(state.selected_value(), Some("builtin://dark"));
     }
 
     #[test]

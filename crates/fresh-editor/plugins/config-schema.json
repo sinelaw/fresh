@@ -343,16 +343,7 @@
     "ThemeOptions": {
       "description": "Available color themes",
       "type": "string",
-      "enum": [
-        "dark",
-        "dracula",
-        "high-contrast",
-        "light",
-        "nord",
-        "nostalgia",
-        "solarized-dark",
-        "terminal"
-      ]
+      "x-enum-from": "$themes"
     },
     "LocaleOptions": {
       "description": "UI locale (language). Use null for auto-detection from environment.",

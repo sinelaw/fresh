@@ -254,6 +254,28 @@ impl ThemeRegistry {
         &self.theme_list
     }
 
+    /// Theme options for the Settings dropdown: `(display_name, config_value)`
+    /// pairs in the same order as [`Self::list`] — the order the "Select Theme"
+    /// picker shows.
+    ///
+    /// The display is the theme's name; the value is its
+    /// [`portable_form`](Self::portable_form) — exactly what selecting the
+    /// theme persists to `config.json`. Sourcing the Settings dropdown from
+    /// this method makes it share one source of truth with Select Theme
+    /// (built-ins **and** user themes, same order), so the two can never drift
+    /// (#2738).
+    pub fn settings_theme_options(&self) -> Vec<(String, String)> {
+        self.theme_list
+            .iter()
+            .map(|info| {
+                let value = self
+                    .portable_form(&info.key)
+                    .unwrap_or_else(|| info.key.clone());
+                (info.name.clone(), value)
+            })
+            .collect()
+    }
+
     /// Get all theme display names.
     pub fn names(&self) -> Vec<String> {
         self.theme_list.iter().map(|t| t.name.clone()).collect()
@@ -611,47 +633,60 @@ mod tests {
         assert!(list.iter().any(|t| t.name == "light"));
     }
 
-    /// Regression test for #2738: the settings theme dropdown is schema-driven
-    /// from the static `ThemeName::BUILTIN_OPTIONS` list, while "Select Theme"
-    /// reads the auto-generated `BUILTIN_THEMES` registry. If the static list
-    /// drifts, the dropdown silently omits (or misorders) themes. Guard that the
-    /// static list exactly equals the set of root (empty-pack) built-in themes
-    /// and that it is sorted alphabetically (matching the picker order).
+    /// Regression test for #2738: the Settings theme dropdown must be sourced
+    /// from the live registry (built-ins **and** user themes), in the same
+    /// order and with the same name→config-value mapping as the "Select Theme"
+    /// picker — so the two share one source of truth and never drift.
     #[test]
-    fn test_builtin_options_match_registry_and_sorted() {
-        use crate::config::ThemeName;
+    fn test_settings_theme_options_include_user_theme_in_picker_order() {
+        // A user theme sitting in the themes dir, exactly as Select Theme
+        // would discover it.
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let themes_dir = temp_dir.path().to_path_buf();
+        std::fs::write(
+            themes_dir.join("my-user-theme.json"),
+            r#"{"name":"my-user-theme","editor":{},"ui":{},"search":{},"diagnostic":{},"syntax":{}}"#,
+        )
+        .expect("Failed to write user theme");
 
-        let loader = ThemeLoader::embedded_only();
-        let registry = loader.load_all(&[]);
+        let registry = ThemeLoader::new(themes_dir).load_all(&[]);
 
-        // Root built-in theme names (empty pack), sorted for a stable compare.
-        let mut root_builtins: Vec<String> = registry
-            .list()
-            .iter()
-            .filter(|info| info.pack.is_empty())
-            .map(|info| info.name.clone())
-            .collect();
-        root_builtins.sort();
-        root_builtins.dedup();
+        let options = registry.settings_theme_options();
+        let list = registry.list();
 
-        let options: Vec<String> = ThemeName::BUILTIN_OPTIONS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-
-        // Parity: the dropdown lists exactly the root built-in themes.
+        // Same set + order as the registry list, which is precisely the order
+        // Select Theme renders (built-ins first, then user themes).
         assert_eq!(
-            options, root_builtins,
-            "ThemeName::BUILTIN_OPTIONS must match the root built-in themes from the registry"
+            options.len(),
+            list.len(),
+            "dropdown must list every theme the registry knows about"
+        );
+        for (opt, info) in options.iter().zip(list.iter()) {
+            assert_eq!(
+                opt.0, info.name,
+                "dropdown display must be the theme name, in picker order"
+            );
+        }
+
+        // The user theme is present — display is its name, value is the
+        // portable form persisted to config (a relative path here).
+        let user = options
+            .iter()
+            .find(|(name, _)| name == "my-user-theme")
+            .expect("user theme should appear in the settings dropdown");
+        assert_eq!(
+            user.1, "my-user-theme.json",
+            "user theme value must be its portable config form"
         );
 
-        // The dropdown must be alphabetically sorted (same order as Select Theme).
-        let mut sorted = options.clone();
-        sorted.sort();
-        assert_eq!(
-            options, sorted,
-            "ThemeName::BUILTIN_OPTIONS must be sorted alphabetically"
-        );
+        // Built-ins use the `builtin://NAME` portable form (same value Select
+        // Theme persists), never a bare name that could collide with a
+        // same-named user theme.
+        let dark = options
+            .iter()
+            .find(|(name, _)| name == "dark")
+            .expect("built-in `dark` should be listed");
+        assert_eq!(dark.1, "builtin://dark");
     }
 
     #[test]

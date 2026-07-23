@@ -44,6 +44,21 @@ impl Editor {
                 // Snapshot plugin-registered status-bar tokens for the dual-list picker.
                 let tokens = self.status_bar_token_registry.lock().unwrap().clone();
                 state.set_status_bar_tokens(tokens);
+                // Populate the theme dropdown from the live registry — the same
+                // list "Select Theme" shows (built-ins + user themes, same
+                // order), so the two never drift (#2738).
+                let theme_options = self
+                    .theme_registry
+                    .settings_theme_options()
+                    .into_iter()
+                    .map(
+                        |(display, value)| crate::view::settings::items::ThemeOption {
+                            display,
+                            value,
+                        },
+                    )
+                    .collect();
+                state.set_theme_options(theme_options);
                 state.show();
                 self.settings_state = Some(state);
             }

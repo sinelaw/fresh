@@ -13,25 +13,6 @@ use std::path::Path;
 #[serde(transparent)]
 pub struct ThemeName(pub String);
 
-impl ThemeName {
-    /// Built-in theme options shown in the settings dropdown.
-    ///
-    /// Must list every built-in root (empty-pack) theme in the same
-    /// alphabetical order the "Select Theme" picker uses (see the auto-generated
-    /// `BUILTIN_THEMES` registry). Kept in sync by the parity test in the
-    /// theme loader tests.
-    pub const BUILTIN_OPTIONS: &'static [&'static str] = &[
-        "dark",
-        "dracula",
-        "high-contrast",
-        "light",
-        "nord",
-        "nostalgia",
-        "solarized-dark",
-        "terminal",
-    ];
-}
-
 impl Deref for ThemeName {
     type Target = str;
     fn deref(&self) -> &Self::Target {
@@ -69,10 +50,21 @@ impl JsonSchema for ThemeName {
     }
 
     fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // A validated free-form string rather than a frozen `enum`: any config
+        // form accepted by `ThemeRegistry::resolve_key` (built-in names,
+        // `builtin://`, relative paths, `file://`/http(s) URIs) must validate,
+        // including user themes that don't exist at schema-generation time.
+        //
+        // `x-enum-from: "$themes"` is a dynamic-source hint (mirroring
+        // `default_language`'s `x-enum-from: "/languages"`). The settings UI
+        // resolves the reserved `$themes` token against the live
+        // `ThemeRegistry` so the dropdown lists exactly what "Select Theme"
+        // does — built-ins plus user themes — with no hand-maintained list to
+        // drift out of sync (#2738).
         schemars::json_schema!({
             "description": "Available color themes",
             "type": "string",
-            "enum": Self::BUILTIN_OPTIONS
+            "x-enum-from": "$themes"
         })
     }
 }
@@ -8424,40 +8416,67 @@ mod tests {
         }
     }
 
-    /// Regression test for #2738: the committed config schema (which drives the
-    /// settings theme dropdown at runtime) must stay in sync with
-    /// `ThemeName::BUILTIN_OPTIONS`, and expose all 8 themes in sorted order.
+    /// Regression test for #2738: the committed config schema must NOT freeze
+    /// the theme as a hard `enum`. It has to be a validated free-form string
+    /// carrying the `x-enum-from: "$themes"` dynamic-source hint, so user-theme
+    /// config values (paths / URIs / registry keys) validate and the settings
+    /// dropdown is sourced live from the registry rather than a static list.
     #[test]
-    fn test_config_schema_theme_enum_matches_builtin_options() {
+    fn test_config_schema_theme_is_dynamic_string_not_enum() {
         const SCHEMA_JSON: &str = include_str!("../plugins/config-schema.json");
         let schema: serde_json::Value =
             serde_json::from_str(SCHEMA_JSON).expect("config-schema.json must be valid JSON");
 
-        let enum_values = schema["$defs"]["ThemeOptions"]["enum"]
-            .as_array()
-            .expect("ThemeOptions.enum must be an array");
-        let schema_themes: Vec<String> = enum_values
-            .iter()
-            .map(|v| v.as_str().expect("theme enum values are strings").to_string())
-            .collect();
-
-        let options: Vec<String> = ThemeName::BUILTIN_OPTIONS
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let theme_options = &schema["$defs"]["ThemeOptions"];
 
         assert_eq!(
-            schema_themes, options,
-            "config-schema.json ThemeOptions enum is out of sync with ThemeName::BUILTIN_OPTIONS; \
+            theme_options["type"].as_str(),
+            Some("string"),
+            "ThemeOptions must be a plain string type"
+        );
+        assert!(
+            theme_options.get("enum").is_none(),
+            "ThemeOptions must NOT be a frozen enum (would reject user themes); \
              regenerate with scripts/gen_schema.sh"
         );
-
-        let mut sorted = schema_themes.clone();
-        sorted.sort();
         assert_eq!(
-            schema_themes, sorted,
-            "config-schema.json theme enum must be sorted alphabetically"
+            theme_options["x-enum-from"].as_str(),
+            Some("$themes"),
+            "ThemeOptions must carry the `$themes` dynamic-source hint so the \
+             settings dropdown is populated from the live theme registry"
         );
+    }
+
+    /// Regression test for #2738: because `theme` is no longer a hard enum, an
+    /// arbitrary user-theme config value (a relative path, a `file://` URI, or
+    /// a `builtin://` form) is accepted by the schema's string type instead of
+    /// being rejected as "not one of the allowed values".
+    #[test]
+    fn test_user_theme_config_value_validates_against_schema() {
+        const SCHEMA_JSON: &str = include_str!("../plugins/config-schema.json");
+        let schema: serde_json::Value =
+            serde_json::from_str(SCHEMA_JSON).expect("config-schema.json must be valid JSON");
+        let theme_options = &schema["$defs"]["ThemeOptions"];
+
+        // The only constraint on a theme value is `type: string` — no `enum`,
+        // no `pattern` — so every portable form the registry can emit validates.
+        assert_eq!(theme_options["type"].as_str(), Some("string"));
+        assert!(theme_options.get("enum").is_none());
+        assert!(theme_options.get("pattern").is_none());
+
+        // And a config carrying such a value deserializes cleanly.
+        for value in [
+            "my-custom-theme.json",
+            "packages/nord/dark.json",
+            "file:///home/user/.config/fresh/themes/x.json",
+            "builtin://dark",
+            "dark",
+        ] {
+            let cfg_json = format!(r#"{{"theme":"{}"}}"#, value);
+            let cfg: Config = serde_json::from_str(&cfg_json)
+                .unwrap_or_else(|e| panic!("theme value {:?} should deserialize: {}", value, e));
+            assert_eq!(cfg.theme.0, value);
+        }
     }
 
     #[test]
