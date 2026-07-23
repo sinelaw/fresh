@@ -546,3 +546,47 @@ fn test_auto_reconnect_task() {
         r3
     );
 }
+
+/// Regression: the blocking wrappers must be safe to call from *inside* a
+/// Tokio runtime — the plugin thread's situation when the Orchestrator dock
+/// does a synchronous remote `read_dir` while arrowing onto an unreachable
+/// SSH workspace. A plain `Handle::block_on` there panics ("Cannot start a
+/// runtime from within a runtime"); the fix drives the request off the
+/// current runtime thread instead.
+///
+/// The channel is first driven to the disconnected state so the in-runtime
+/// call returns immediately (ChannelClosed) rather than depending on
+/// wall-clock timing — the only thing under test is that it returns at all
+/// instead of panicking.
+#[test]
+fn test_request_blocking_within_runtime_does_not_panic() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let Some(channel) = rt.block_on(spawn_silent_agent()) else {
+        eprintln!("Skipping test: could not spawn silent agent");
+        return;
+    };
+
+    // Drive it to disconnected (one intentional timeout) so the in-runtime
+    // request below short-circuits on `is_connected()`.
+    arm_intentional_timeout(&channel);
+    let _ = channel.request_blocking("stat", serde_json::json!({"path": "/"}));
+    assert!(
+        !channel.is_connected(),
+        "precondition: channel disconnected"
+    );
+
+    // Invoke the blocking API synchronously from *within* an async task —
+    // exactly what the plugin thread does (its JS `read_dir` call is sync
+    // Rust running inside the plugin's async execution context). A plain
+    // `Handle::block_on` here panics; the fix drives it off-thread. Before
+    // the fix `rt.block_on` unwinds with the runtime-in-runtime panic and
+    // fails the test; now it returns the fast ChannelClosed error.
+    let ch = channel.clone();
+    let result = rt
+        .block_on(async move { ch.request_blocking("stat", serde_json::json!({"path": "/tmp"})) });
+    assert!(
+        result.is_err(),
+        "disconnected channel should return an error, not panic"
+    );
+}
