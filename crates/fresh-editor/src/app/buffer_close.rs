@@ -947,7 +947,7 @@ impl Editor {
         else {
             return;
         };
-        let tabs_width = self.active_window().effective_tabs_width();
+        let tabs_width = self.active_window().split_tabs_width(split_id);
         self.active_window_mut()
             .ensure_active_tab_visible(split_id, active_buffer, tabs_width);
     }

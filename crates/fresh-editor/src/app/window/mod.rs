@@ -2292,6 +2292,30 @@ impl Window {
         }
     }
 
+    /// Width of the tab bar for a *specific* split.
+    ///
+    /// [`effective_tabs_width`](Self::effective_tabs_width) returns the whole
+    /// editor-content width; but in a vertical split each pane's tab strip is
+    /// only as wide as that pane (`tabs_rect.width == split_area.width`).
+    /// Feeding the full width to the tab-scroll math makes a half-width split
+    /// scroll against ~2x its real width, so it under-scrolls and the ">"
+    /// overflow indicator disagrees with what's visible. This returns the
+    /// focused split's real pane width, falling back to
+    /// [`effective_tabs_width`](Self::effective_tabs_width) when the split
+    /// isn't in the current visible layout (e.g. hidden behind a maximized
+    /// sibling).
+    pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
+        match self.buffers.splits() {
+            Some((mgr, _)) => mgr
+                .get_visible_buffers(self.editor_content_area())
+                .into_iter()
+                .find(|(id, _, _)| *id == split_id)
+                .map(|(_, _, area)| area.width)
+                .unwrap_or_else(|| self.effective_tabs_width()),
+            None => self.effective_tabs_width(),
+        }
+    }
+
     /// The split id whose `SplitViewState` owns the currently-focused
     /// cursors/viewport for this window.
     #[inline]
