@@ -187,9 +187,11 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     // Two sessions in *different* projects: switching the active window
     // changes the "current project", which the picker would float to the
     // top. The persistent dock must keep a stable order regardless.
-    // Both projects are siblings under one parent so their project-key
-    // (path) sort is deterministic (`aaa_project` < `zzz_project`),
-    // making "stable order" testable without random-tempdir flakiness.
+    //
+    // The dock orders within-day ties newest-first-seen first, so the
+    // second session (zzz_project, created after the aaa_project launch
+    // session) sits above it — and that relative order must not change when
+    // the active window switches.
     let (_tmp_a, root_a) = setup_project("aaa_project");
     let parent = root_a.parent().unwrap().to_path_buf();
     let root_b = parent.join("zzz_project");
@@ -219,9 +221,9 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     let aaa_before = row_of(&h, "aaa_project");
     let zzz_before = row_of(&h, "zzz_project");
     assert!(
-        aaa_before < zzz_before,
-        "expected aaa above zzz initially; got aaa at row {aaa_before}, \
-         zzz at row {zzz_before}. Full screen for diagnosis:\n{}",
+        zzz_before < aaa_before,
+        "expected zzz (created later) above aaa initially; got aaa at row \
+         {aaa_before}, zzz at row {zzz_before}. Full screen for diagnosis:\n{}",
         h.screen_to_string(),
     );
 
@@ -243,14 +245,72 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     h.wait_until(|h| h.screen_to_string() != pre).unwrap();
     h.wait_until_stable(|_| true).unwrap();
 
-    // Order must be unchanged — aaa still above zzz (the bug floated the
-    // now-current zzz project to the top).
+    // Order must be unchanged — zzz still above aaa (the bug floated the
+    // now-current project to the top, or activation reshuffled the recency
+    // order intra-day).
     let aaa_after = row_of(&h, "aaa_project");
     let zzz_after = row_of(&h, "zzz_project");
     assert!(
-        aaa_after < zzz_after,
+        zzz_after < aaa_after,
         "dock list reordered on switch: aaa now at {aaa_after}, zzz at {zzz_after}.\n\
          Full screen for diagnosis:\n{}",
+        h.screen_to_string(),
+    );
+}
+
+/// The dock lists a folder's workspaces most-recently-active first. With no
+/// per-session activity yet, "recently active" reduces to newest-seen: a
+/// workspace created later sorts above the ones created before it. Before the
+/// recency-ordering change the dock pinned rows to their permanent first-seen
+/// slot (oldest on top), so `third`/`second` would trail `first` and this
+/// assertion fails.
+#[test]
+fn dock_lists_most_recently_active_workspace_first() {
+    let (_tmp, root_first) = setup_project("first");
+    let parent = root_first.parent().unwrap().to_path_buf();
+    let mut mk = |name: &str| -> PathBuf {
+        let p = parent.join(name);
+        fs::create_dir(&p).unwrap();
+        assert!(std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&p)
+            .status()
+            .unwrap()
+            .success());
+        p
+    };
+    let root_second = mk("second");
+    let root_third = mk("third");
+
+    let mut h = EditorTestHarness::with_config_and_working_dir(
+        120,
+        32,
+        Default::default(),
+        root_first.clone(),
+    )
+    .unwrap();
+    // Bring two more workspaces online, newest last. Each is "seen" by the
+    // dock after the launch session, so recency order is third, second, first.
+    h.editor_mut()
+        .create_window_at(root_second.clone(), "second".to_string());
+    h.editor_mut()
+        .create_window_at(root_third.clone(), "third".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("first") && s.contains("second") && s.contains("third")
+    })
+    .unwrap();
+
+    let first = row_of(&h, "first");
+    let second = row_of(&h, "second");
+    let third = row_of(&h, "third");
+    assert!(
+        third < second && second < first,
+        "expected most-recent-first order third<second<first; got \
+         first@{first} second@{second} third@{third}.\nScreen:\n{}",
         h.screen_to_string(),
     );
 }

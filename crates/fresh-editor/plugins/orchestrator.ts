@@ -989,6 +989,71 @@ function renameFolder(id: string, name: string): void {
   }
 }
 
+// ── Per-workspace "last active" day — the dock's within-folder sort key ──
+//
+// Within a folder the dock lists the most-recently-active workspaces first,
+// but at DAY granularity so the order is stable through the day and only
+// reshuffles when a workspace crosses a day boundary (a finer key would
+// re-sort — and, since a changed serialized row forces a full panel
+// teardown/rebuild, flicker — on every render; same rationale as
+// `ageString`). We persist the last-active *day number* keyed by canonical
+// root so the recency order survives restarts: the in-memory `lastOutputAt`
+// / `activatedAt` reset each launch and `createdAt` is stamped at reconcile
+// time, so without persistence every workspace would read "active today"
+// after a relaunch and the order would collapse to first-seen.
+const LAST_ACTIVE_KEY = "orchestrator.dock.last_active";
+const MS_PER_DAY = 86_400_000;
+let dockLastActive: Record<string, number> | null = null;
+
+function loadLastActive(): Record<string, number> {
+  if (dockLastActive) return dockLastActive;
+  const raw = editor.getGlobalState(LAST_ACTIVE_KEY);
+  const out: Record<string, number> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+  }
+  dockLastActive = out;
+  return out;
+}
+
+function saveLastActive(): void {
+  editor.setGlobalState(LAST_ACTIVE_KEY, (dockLastActive ?? {}) as unknown as object);
+}
+
+function todayDayNumber(): number {
+  return Math.floor(Date.now() / MS_PER_DAY);
+}
+
+// Record that a session was active "today". Writes through to global state
+// only when the stored day actually advances, so a chatty terminal (this
+// fires on every output batch) persists at most once per session per day
+// rather than thrashing the store on every keystroke.
+function markSessionActiveToday(s: AgentSession): void {
+  // On-disk (discovered) rows have no activity of their own — their recency
+  // is meaningless, so don't record (and they sort oldest, see below).
+  if (s.discovered) return;
+  const key = normRoot(s.root);
+  const day = todayDayNumber();
+  const store = loadLastActive();
+  if (store[key] === day) return;
+  store[key] = day;
+  saveLastActive();
+}
+
+// The most recent day this session was active — the persisted value folded
+// together with the live in-memory signals, so a session active *this* run
+// sorts correctly even before its day-change write has landed. Discovered
+// on-disk rows report 0 (oldest) so they sink below live sessions.
+function sessionLastActiveDay(s: AgentSession): number {
+  if (s.discovered) return 0;
+  const stored = loadLastActive()[normRoot(s.root)] ?? 0;
+  const liveMs = Math.max(s.lastOutputAt ?? 0, s.activatedAt ?? 0, s.createdAt ?? 0);
+  const liveDay = liveMs > 0 ? Math.floor(liveMs / MS_PER_DAY) : 0;
+  return Math.max(stored, liveDay);
+}
+
 // Delete a folder. Its child folders and member sessions reparent to the
 // deleted folder's own parent so nothing is orphaned — the subtree
 // bubbles up one level rather than disappearing.
@@ -1820,15 +1885,29 @@ function filterSessions(needle: string): number[] {
   };
 
   if (!needle) {
-    // The dock orders ONLY by each session's permanent slot — no project
-    // grouping, no current-project pinning, no label/state keys — so the
-    // list never reorders as the active window switches or a session's
-    // fields change. The modal picker (opened fresh each time) keeps the
-    // grouped, current-project-first browse order.
+    // The dock orders by recency at DAY granularity: most-recently-active
+    // workspaces first, older ones below. Ties within a day (the common
+    // case) fall back to newest-first-seen (a stable per-root slot), so the
+    // list holds still as the active window switches or a session's sub-day
+    // fields change, and only reorders when a workspace crosses a day
+    // boundary or a new one is created. Folder grouping (which folder a
+    // session sits under, and the folders' own name order) is applied later
+    // in `buildDockTree`; this only orders sessions *within* a group. The
+    // modal picker (opened fresh each time) keeps the grouped,
+    // current-project-first browse order.
     const comparator = dockMode
-      ? (a: number, b: number) =>
-          stableOrderKey(orchestratorSessions.get(a)!) -
-          stableOrderKey(orchestratorSessions.get(b)!)
+      ? (a: number, b: number) => {
+          const sa = orchestratorSessions.get(a)!;
+          const sb = orchestratorSessions.get(b)!;
+          const da = sessionLastActiveDay(sa);
+          const db = sessionLastActiveDay(sb);
+          if (da !== db) return db - da; // more recent active-day first
+          // Same day: newest-first-seen first. The slot is a strictly-
+          // increasing per-root counter, so this is deterministic and — like
+          // the day key — fixed for a given root, never shifting on
+          // activation or output within the day.
+          return stableOrderKey(sb) - stableOrderKey(sa);
+        }
       : byProjectThenStable;
     const ids = allIds.slice().sort(comparator);
     if (scope === "current") {
@@ -10298,7 +10377,12 @@ const ACTIVATION_GRACE_MS = 1500;
 
 editor.on("active_window_changed", () => {
   const s = orchestratorSessions.get(editor.activeWindow());
-  if (s) s.activatedAt = Date.now();
+  if (s) {
+    s.activatedAt = Date.now();
+    // Switching into a workspace counts as activity for the dock's recency
+    // order (persisted at day granularity).
+    markSessionActiveToday(s);
+  }
   refreshOpenDialog();
   // A passive (blurred) dock mirrors the active window, so keep its
   // highlighted row in sync when focus moves to another window from
@@ -10382,6 +10466,9 @@ editor.on("terminal_output", (payload) => {
     // any non-render reader see a fresh value too.
     s.lastOutputAt = Date.now();
     s.state = "working";
+    // Terminal output is activity — feed the dock's day-granularity recency
+    // order (persists at most once per session per day).
+    markSessionActiveToday(s);
     refreshOpenDialog();
     // Ensure the row flips back to idle once output stops, even if no
     // further event arrives to trigger a render.
