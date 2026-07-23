@@ -118,10 +118,10 @@ jobs:
         run: cargo generate-lockfile
       - name: Run tests (Linux — headless with Xvfb + lavapipe)
         if: runner.os == 'Linux'
-        run: xvfb-run cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+        run: xvfb-run cargo nextest run -j=16 --no-fail-fast --locked --all-features --all-targets
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
           WGPU_BACKEND: "vulkan"
       - name: Run tests
         if: runner.os != 'Linux'
-        run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+        run: cargo nextest run -j=16 --no-fail-fast --locked --all-features --all-targets
