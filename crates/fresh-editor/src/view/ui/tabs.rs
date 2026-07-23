@@ -165,6 +165,24 @@ const NEW_TAB_BUTTON_TEXT: &str = " + ";
 /// Display width (columns) of [`NEW_TAB_BUTTON_TEXT`].
 pub const NEW_TAB_BUTTON_WIDTH: usize = 3;
 
+/// Columns reserved at the right edge of a split's tab row for the split-control
+/// (maximize / close) buttons. The tab bar lays out — and the tab-scroll math
+/// measures against — the pane width *minus* this reserve, so the `<`/`>` scroll
+/// indicators and the pinned "+" never end up underneath the control buttons
+/// (which are painted on top of the row afterwards). Without the reserve the
+/// maximize button lands on the exact column the `>` right-overflow indicator
+/// wants, hiding it (fresh#2768). The block is `[gap][buttons][trailing blank]`.
+pub fn split_control_reserve(show_maximize: bool, show_close: bool) -> u16 {
+    let n = show_maximize as u16 + show_close as u16;
+    if n == 0 {
+        0
+    } else {
+        // 1 leading gap so the tabs don't butt against the buttons + 1 trailing
+        // blank at the pane's right edge.
+        n + 2
+    }
+}
+
 /// Glyph drawn at the left edge when earlier tabs are scrolled off.
 const SCROLL_INDICATOR_LEFT: &str = "<";
 /// Glyph drawn at the right edge when later tabs are scrolled off.
@@ -301,6 +319,85 @@ fn elided_tab_name(name: &str, max_cols: usize) -> String {
     body
 }
 
+/// Full (uncapped) display width of one tab's label — the name portion plus the
+/// close button, excluding the inter-tab separator. Mirrors the label format
+/// both builders paint, so the "do all tabs fit?" pre-pass measures exactly what
+/// the row would render at full names.
+fn full_tab_label_width(
+    t: &TabTarget,
+    name: &str,
+    buffers: &HashMap<BufferId, EditorState>,
+    buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+    preview_buffer: Option<BufferId>,
+) -> usize {
+    let modified = match t {
+        TabTarget::Buffer(id) if !composite_buffers.contains_key(id) => buffers
+            .get(id)
+            .filter(|state| state.buffer.is_modified())
+            .map(|_| "*")
+            .unwrap_or(""),
+        _ => "",
+    };
+    let binary = match t {
+        TabTarget::Buffer(id) if buffer_metadata.get(id).map(|m| m.binary).unwrap_or(false) => {
+            " [BIN]"
+        }
+        _ => "",
+    };
+    let preview_indicator = preview_suffix(t, preview_buffer);
+    let tab_name_text = format!(" {name}{modified}{preview_indicator}{binary} ");
+    str_width(&tab_name_text) + str_width("× ")
+}
+
+/// Decide the per-name elision cap for a split's tab bar.
+///
+/// When every tab fits at its FULL name within `available_width` (accounting for
+/// the inter-tab separators and the pinned "+" reservation) the names are shown
+/// untruncated (cap = `usize::MAX`, i.e. no elision). Only when the tabs would
+/// overflow — the bar is "full" — is each name capped at [`TAB_NAME_MAX_COLS`]
+/// so one long filename can't hide every other tab (issue #2650).
+///
+/// Both label builders ([`build_tab_spans`] and [`calculate_tab_widths`]) derive
+/// their cap from this with the same `available_width`, so their computed widths
+/// stay in lockstep.
+fn tab_name_cap(
+    tab_targets: &[TabTarget],
+    resolved_names: &HashMap<TabTarget, String>,
+    buffers: &HashMap<BufferId, EditorState>,
+    buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
+    preview_buffer: Option<BufferId>,
+    available_width: usize,
+) -> usize {
+    let mut full_total = 0usize;
+    let mut count = 0usize;
+    for t in tab_targets.iter() {
+        let Some(name) = resolved_names.get(t) else {
+            continue;
+        };
+        full_total += full_tab_label_width(
+            t,
+            name,
+            buffers,
+            buffer_metadata,
+            composite_buffers,
+            preview_buffer,
+        );
+        count += 1;
+    }
+    let full_total_with_seps = full_total + count.saturating_sub(1);
+    // `tabs_render_width` returns the columns actually available for tabs after
+    // reserving the pinned "+" (when they overflow). If the full-name total fits
+    // in that, nothing scrolls and we show full names.
+    let render_w = tabs_render_width(full_total_with_seps, available_width);
+    if full_total_with_seps <= render_w {
+        usize::MAX
+    } else {
+        TAB_NAME_MAX_COLS
+    }
+}
+
 /// Resolve display names for tab targets, disambiguating duplicates by appending a number.
 /// For example, if there are three unnamed buffers, they become "[No Name]", "[No Name] 2", "[No Name] 3".
 /// Similarly, duplicate filenames get numbered: "main.rs", "main.rs 2".
@@ -391,6 +488,7 @@ pub fn calculate_tab_widths(
     composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
     group_names: &HashMap<LeafId, String>,
     preview_buffer: Option<BufferId>,
+    available_width: usize,
 ) -> (Vec<usize>, Vec<TabTarget>) {
     let mut tab_widths: Vec<usize> = Vec::new();
     let mut rendered_targets: Vec<TabTarget> = Vec::new();
@@ -402,14 +500,24 @@ pub fn calculate_tab_widths(
         group_names,
     );
 
+    // Full names when they all fit, otherwise cap each at TAB_NAME_MAX_COLS.
+    // Must mirror `build_tab_spans` exactly (same cap) or widths drift.
+    let name_cap = tab_name_cap(
+        tab_targets,
+        &resolved_names,
+        buffers,
+        buffer_metadata,
+        composite_buffers,
+        preview_buffer,
+        available_width,
+    );
+
     for t in tab_targets.iter() {
         // Skip targets we couldn't resolve a name for (hidden, missing, etc.)
         let Some(name) = resolved_names.get(t) else {
             continue;
         };
-        // Bound the name so one long filename can't hide every other tab. Must
-        // mirror `build_tab_spans` exactly (same cap) or widths drift.
-        let name = elided_tab_name(name, TAB_NAME_MAX_COLS);
+        let name = elided_tab_name(name, name_cap);
 
         // Calculate modified indicator (groups and composite buffers don't show it)
         let modified = match t {
@@ -536,6 +644,7 @@ fn build_tab_spans(
     preview_buffer: Option<BufferId>,
     is_active_split: bool,
     theme: &crate::view::theme::Theme,
+    name_cap: usize,
 ) -> TabSpanLayout {
     let mut all_tab_spans: Vec<(Span<'static>, usize)> = Vec::new();
     let mut tab_ranges: Vec<(usize, usize, usize)> = Vec::new();
@@ -546,10 +655,10 @@ fn build_tab_spans(
         let Some(name_owned) = resolved_names.get(t).cloned() else {
             continue;
         };
-        // Bound the name so one long filename can't hide every other tab. Must
-        // mirror `calculate_tab_widths` exactly (same cap) or widths drift and
-        // hit-testing/scroll positions diverge from what's painted.
-        let name = elided_tab_name(&name_owned, TAB_NAME_MAX_COLS);
+        // Elide with the caller's shared cap. Must mirror `calculate_tab_widths`
+        // exactly (same cap) or widths drift and hit-testing/scroll positions
+        // diverge from what's painted.
+        let name = elided_tab_name(&name_owned, name_cap);
         let name = name.as_str();
         rendered_targets.push(*t);
 
@@ -715,6 +824,7 @@ fn map_tab_hit_areas(
     left_indicator_offset: usize,
     active_target: TabTarget,
     is_active_split: bool,
+    name_cap: usize,
     mut rec: Option<&mut CellThemeRecorder>,
 ) {
     let visible_start = offset;
@@ -778,7 +888,7 @@ fn map_tab_hit_areas(
             // hit-testing match the string the TUI actually draws.
             label: resolved_names
                 .get(target)
-                .map(|n| elided_tab_name(n, TAB_NAME_MAX_COLS))
+                .map(|n| elided_tab_name(n, name_cap))
                 .unwrap_or_default(),
             tab_area: Rect::new(screen_start, area.y, tab_width, 1),
             close_area: Rect::new(screen_close_start, area.y, close_width, 1),
@@ -844,6 +954,19 @@ impl TabsRenderer {
             group_names,
         );
 
+        // Full names when they all fit in this split's tab-bar width, otherwise
+        // cap each at TAB_NAME_MAX_COLS. Computed once here and threaded into the
+        // span builder and hit-area mapper so every consumer uses one cap.
+        let name_cap = tab_name_cap(
+            tab_targets,
+            &resolved_names,
+            buffers,
+            buffer_metadata,
+            composite_buffers,
+            preview_buffer,
+            area.width as usize,
+        );
+
         // Phase 1: build each tab's styled name + close spans and logical
         // column ranges (unresolvable targets are skipped, so the vectors
         // index by rendered position).
@@ -858,6 +981,7 @@ impl TabsRenderer {
             preview_buffer,
             is_active_split,
             theme,
+            name_cap,
         );
 
         // Phase 2: add separators between tabs (we do this after the loop to handle hidden buffers correctly)
@@ -1005,6 +1129,7 @@ impl TabsRenderer {
             left_indicator_offset,
             active_target,
             is_active_split,
+            name_cap,
             rec.as_deref_mut(),
         );
 
@@ -1261,9 +1386,11 @@ mod tests {
         let meta = HashMap::new();
         let comp = HashMap::new();
 
+        // A narrow bar (40) forces the long name to overflow -> capped.
+        let bar = 40;
         // calculate_tab_widths: single tab, no separator.
         let (widths, rendered) =
-            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None);
+            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None, bar);
         assert_eq!(rendered.len(), 1);
         assert_eq!(widths.len(), 1);
         // Full tab width = leading+trailing pad (2) + name (<=cap) + "× " (2).
@@ -1275,12 +1402,13 @@ mod tests {
         );
 
         // build_tab_spans must compute the identical width for the same input,
-        // or hit-testing/scroll drift.
+        // or hit-testing/scroll drift. Same cap decision as calculate_tab_widths.
         let resolved = resolve_tab_names(&targets, &buffers, &meta, &comp, &group_names);
+        let cap = tab_name_cap(&targets, &resolved, &buffers, &meta, &comp, None, bar);
         let theme =
             crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
         let (_spans, ranges, rendered2) = build_tab_spans(
-            &targets, &resolved, &buffers, &meta, &comp, targets[0], None, None, true, &theme,
+            &targets, &resolved, &buffers, &meta, &comp, targets[0], None, None, true, &theme, cap,
         );
         assert_eq!(rendered2.len(), 1);
         let span_width = ranges[0].1 - ranges[0].0;
@@ -1299,10 +1427,17 @@ mod tests {
         let buffers = HashMap::new();
         let meta = HashMap::new();
         let comp = HashMap::new();
-        let (tab_widths, rendered) =
-            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None);
-
         let max_width = 40;
+        let (tab_widths, rendered) = calculate_tab_widths(
+            &targets,
+            &buffers,
+            &meta,
+            &comp,
+            &group_names,
+            None,
+            max_width,
+        );
+
         let total: usize = tab_widths.iter().sum();
         for i in 0..rendered.len() {
             let width_idx = if i == 0 { 0 } else { i * 2 };
@@ -1329,6 +1464,149 @@ mod tests {
                 offset
             );
         }
+    }
+
+    #[test]
+    fn split_control_reserve_matches_button_count() {
+        // No buttons (single pane): no reservation.
+        assert_eq!(split_control_reserve(false, false), 0);
+        // Maximized single pane: only the maximize/restore button.
+        assert_eq!(split_control_reserve(true, false), 3);
+        // Multiple splits, not maximized: maximize + close grouped.
+        assert_eq!(split_control_reserve(true, true), 4);
+    }
+
+    #[test]
+    fn tab_names_full_when_they_fit_and_capped_when_overflowing() {
+        // A single name longer than the cap (30 cols) but shorter than a wide
+        // bar: it fits, so it is shown in full (no elision).
+        let name = "n".repeat(30);
+        let (targets, group_names) = build_group_inputs(&[name.as_str()]);
+        let buffers = HashMap::new();
+        let meta = HashMap::new();
+        let comp = HashMap::new();
+
+        let (wide_widths, _) =
+            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None, 100);
+        // pad(2) + full name(30) + "× "(2) = 34, untruncated.
+        assert_eq!(wide_widths[0], 34, "wide bar should show the full name");
+
+        // The same name in a narrow bar overflows, so it is capped.
+        let (narrow_widths, _) =
+            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None, 20);
+        assert!(
+            narrow_widths[0] <= TAB_NAME_MAX_COLS + 4,
+            "narrow bar should cap the name (width {})",
+            narrow_widths[0]
+        );
+        assert!(
+            narrow_widths[0] < wide_widths[0],
+            "capped width {} must be narrower than full width {}",
+            narrow_widths[0],
+            wide_widths[0]
+        );
+    }
+
+    /// Paint `render_for_split` into a fresh buffer and return row-0 as a string.
+    fn render_row0(
+        area: Rect,
+        targets: &[TabTarget],
+        group_names: &HashMap<LeafId, String>,
+        active: TabTarget,
+        offset: usize,
+    ) -> String {
+        let buffers = HashMap::new();
+        let meta = HashMap::new();
+        let comp = HashMap::new();
+        let theme =
+            crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        TabsRenderer::render_for_split(
+            &mut buf,
+            area,
+            targets,
+            &buffers,
+            &meta,
+            &comp,
+            active,
+            &theme,
+            true,
+            offset,
+            None,
+            group_names,
+            None,
+            None,
+            true,
+        );
+        (0..area.width)
+            .map(|x| buf[(area.x + x, area.y)].symbol().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn right_indicator_renders_when_scrolled_off_right() {
+        // Enough same-width tabs to overflow a narrow bar several times over.
+        let names = [
+            "alpha.rs",
+            "bravo.rs",
+            "charlie.rs",
+            "delta.rs",
+            "echo.rs",
+            "foxtrot.rs",
+        ];
+        let (targets, group_names) = build_group_inputs(&names);
+        let area = Rect::new(0, 0, 24, 1);
+
+        // Scroll so earlier tabs are off the left AND later tabs off the right.
+        let row = render_row0(area, &targets, &group_names, targets[2], 14);
+        assert!(
+            row.contains('<'),
+            "expected left overflow indicator, got {row:?}"
+        );
+        assert!(
+            row.contains('>'),
+            "expected right overflow indicator when tabs are scrolled off the right, got {row:?}"
+        );
+    }
+
+    #[test]
+    fn no_right_indicator_at_the_right_end() {
+        let names = [
+            "alpha.rs",
+            "bravo.rs",
+            "charlie.rs",
+            "delta.rs",
+            "echo.rs",
+            "foxtrot.rs",
+        ];
+        let (targets, group_names) = build_group_inputs(&names);
+        let area = Rect::new(0, 0, 24, 1);
+        // A large offset parks the bar at its right end: `<` shows, `>` must not.
+        let (widths, _) = calculate_tab_widths(
+            &targets,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &group_names,
+            None,
+            area.width as usize,
+        );
+        let total: usize = widths.iter().sum();
+        let row = render_row0(
+            area,
+            &targets,
+            &group_names,
+            *targets.last().unwrap(),
+            total,
+        );
+        assert!(
+            row.contains('<'),
+            "expected left indicator at the right end"
+        );
+        assert!(
+            !row.contains('>'),
+            "no right indicator once fully scrolled right, got {row:?}"
+        );
     }
 
     #[test]

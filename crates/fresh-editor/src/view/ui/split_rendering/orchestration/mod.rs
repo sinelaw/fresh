@@ -755,6 +755,23 @@ fn render_split_tab_bar(
             }
         })
         .collect();
+    // Split control buttons live at the right side of the tabs row.
+    //   Maximize/unmaximize: shown when multiple splits exist OR maximized.
+    //   Close: shown when multiple splits exist AND not maximized.
+    let show_maximize_btn = has_multiple_splits || is_maximized;
+    let show_close_btn = has_multiple_splits && !is_maximized;
+
+    // Reserve the control-button columns from the tab bar's width so the tab
+    // scroll indicators (`<` / `>`) and the pinned "+" never render underneath
+    // the buttons (fresh#2768). The buttons are painted on top afterwards.
+    let reserve = crate::view::ui::tabs::split_control_reserve(show_maximize_btn, show_close_btn);
+    let tabs_area = Rect::new(
+        layout.tabs_rect.x,
+        layout.tabs_rect.y,
+        layout.tabs_rect.width.saturating_sub(reserve),
+        layout.tabs_rect.height,
+    );
+
     // Render tabs for this split and collect hit areas. The tab bar records its
     // theme-key runs into a local vec as it paints; apply them to the per-cell
     // map afterward (the map isn't borrowed here).
@@ -763,7 +780,7 @@ fn render_split_tab_bar(
         let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
         TabsRenderer::render_for_split(
             buf,
-            layout.tabs_rect,
+            tabs_area,
             split_buffers,
             buffers,
             buffer_metadata,
@@ -784,16 +801,13 @@ fn render_split_tab_bar(
     tab_layouts.insert(split_id, tab_layout);
     let tab_row = layout.tabs_rect.y;
 
-    // Split control buttons at the right side of the tabs row.
-    //   Maximize/unmaximize: shown when multiple splits exist OR maximized.
-    //   Close: shown when multiple splits exist AND not maximized.
-    let show_maximize_btn = has_multiple_splits || is_maximized;
-    let show_close_btn = has_multiple_splits && !is_maximized;
     if !show_maximize_btn && !show_close_btn {
         return;
     }
 
-    // Layout from the right edge: [maximize] [space] [close] |
+    // Grouped at the right edge, close outermost: [maximize][close][blank]. The
+    // buttons sit adjacent (no gap) so they read as one control cluster; the
+    // reserve above keeps a 1-column gap between them and the tab content.
     let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
     if show_close_btn {
         let is_hovered = hovered_close_split == Some(split_id);
@@ -806,7 +820,7 @@ fn render_split_tab_bar(
             Paragraph::new("×").style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
         close_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
         close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
-        btn_x = btn_x.saturating_sub(2); // 1 space before the next button
+        btn_x = btn_x.saturating_sub(1); // adjacent to the maximize button
     }
     if show_maximize_btn {
         let is_hovered = hovered_maximize_split == Some(split_id);

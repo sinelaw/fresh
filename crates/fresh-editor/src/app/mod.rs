@@ -3916,7 +3916,8 @@ mod tests {
     /// but `ensure_active_tab_visible` used to be fed `effective_tabs_width`
     /// (the whole editor width), so the scroll math ran against ~2x the real
     /// width. `split_tabs_width` must report the focused split's real pane
-    /// width instead — roughly half the editor after a vertical split.
+    /// width (minus the split-control button columns, which the tab bar
+    /// reserves) instead — roughly half the editor after a vertical split.
     #[test]
     fn split_tabs_width_reports_per_split_pane_width() {
         let config = Config::default();
@@ -3944,11 +3945,15 @@ mod tests {
             .collect();
         assert_eq!(panes.len(), 2, "vertical split should yield two panes");
 
+        // Two side-by-side splits show the maximize + close buttons, so the tab
+        // bar reserves those columns; split_tabs_width reflects that.
+        let reserve = crate::view::ui::tabs::split_control_reserve(true, true);
         for (leaf, pane_width) in &panes {
             let w = editor.active_window().split_tabs_width(*leaf);
             assert_eq!(
-                w, *pane_width,
-                "split_tabs_width must equal the pane's real width"
+                w,
+                pane_width.saturating_sub(reserve),
+                "split_tabs_width must equal the pane's real width minus the control-button reserve"
             );
             assert!(
                 w < full_width,

@@ -54,6 +54,7 @@ impl crate::app::window::Window {
                 composites,
                 &group_names,
                 preview_buffer,
+                available_width as usize,
             );
 
             let total_tabs_width: usize = tab_widths.iter().sum();

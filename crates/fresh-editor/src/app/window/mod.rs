@@ -2306,12 +2306,24 @@ impl Window {
     /// sibling).
     pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
         match self.buffers.splits() {
-            Some((mgr, _)) => mgr
-                .get_visible_buffers(self.editor_content_area())
-                .into_iter()
-                .find(|(id, _, _)| *id == split_id)
-                .map(|(_, _, area)| area.width)
-                .unwrap_or_else(|| self.effective_tabs_width()),
+            Some((mgr, _)) => {
+                let visible = mgr.get_visible_buffers(self.editor_content_area());
+                let Some((_, _, area)) = visible.iter().find(|(id, _, _)| *id == split_id) else {
+                    return self.effective_tabs_width();
+                };
+                // The split-control (maximize / close) buttons are painted over
+                // the right edge of the tab row; reserve their columns here so
+                // the scroll math measures against the same width the tab bar
+                // actually lays tabs into (fresh#2768). Mirror the show-flags in
+                // `render_split_tab_bar`.
+                let has_multiple_splits = visible.len() > 1;
+                let is_maximized = mgr.is_maximized();
+                let show_maximize = has_multiple_splits || is_maximized;
+                let show_close = has_multiple_splits && !is_maximized;
+                let reserve =
+                    crate::view::ui::tabs::split_control_reserve(show_maximize, show_close);
+                area.width.saturating_sub(reserve)
+            }
             None => self.effective_tabs_width(),
         }
     }
