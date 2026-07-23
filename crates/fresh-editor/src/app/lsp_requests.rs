@@ -897,11 +897,20 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let request_id = self.active_window_mut().next_lsp_request_id;
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+        // Fan out to every capable server so non-null hovers can be merged
+        // (a first server returning null must not hide a second server's
+        // hover — sinelaw/fresh#2635). Pre-allocate ids and advance the
+        // counter past all of them.
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Hover,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
                 let result = handle.hover(
                     request_id,
                     uri.as_uri().clone(),
@@ -910,24 +919,28 @@ impl Editor {
                 );
                 if result.is_ok() {
                     tracing::info!(
-                        "Requested hover at {}:{}:{} (byte_pos={})",
+                        "Requested hover at {}:{}:{} (request_id={}, byte_pos={})",
                         uri.as_str(),
                         line,
                         character,
+                        request_id,
                         cursor_pos
                     );
                 }
-                result.is_ok()
-            })
-            .unwrap_or(false);
+                (request_id, result.is_ok())
+            },
+        );
 
-        if sent {
-            self.active_window_mut().next_lsp_request_id += 1;
-            self.active_window_mut().hover.record_request(
-                request_id,
-                line as u32,
-                character as u32,
-            );
+        let sent_ids: Vec<u64> = results
+            .iter()
+            .filter_map(|(id, ok)| ok.then_some(*id))
+            .collect();
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.active_window_mut()
+                .hover
+                .record_requests(&sent_ids, line as u32, character as u32);
         }
 
         Ok(())
@@ -966,11 +979,18 @@ impl Editor {
             );
         }
 
-        let request_id = self.active_window_mut().next_lsp_request_id;
+        let buffer_id = self.active_buffer();
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+        // Fan out to every capable server (see `request_hover`).
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Hover,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
                 let result = handle.hover(
                     request_id,
                     uri.as_uri().clone(),
@@ -979,27 +999,31 @@ impl Editor {
                 );
                 if result.is_ok() {
                     tracing::trace!(
-                        "Mouse hover requested at {}:{}:{} (byte_pos={})",
+                        "Mouse hover requested at {}:{}:{} (request_id={}, byte_pos={})",
                         uri.as_str(),
                         line,
                         character,
+                        request_id,
                         byte_pos
                     );
                 }
-                result.is_ok()
-            })
-            .unwrap_or(false);
+                (request_id, result.is_ok())
+            },
+        );
 
-        if sent {
-            self.active_window_mut().next_lsp_request_id += 1;
-            self.active_window_mut().hover.record_request(
-                request_id,
-                line as u32,
-                character as u32,
-            );
+        let sent_ids: Vec<u64> = results
+            .iter()
+            .filter_map(|(id, ok)| ok.then_some(*id))
+            .collect();
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.active_window_mut()
+                .hover
+                .record_requests(&sent_ids, line as u32, character as u32);
         }
 
-        Ok(sent)
+        Ok(!sent_ids.is_empty())
     }
 
     /// Handle hover response from LSP
@@ -1010,9 +1034,11 @@ impl Editor {
         is_markdown: bool,
         range: Option<((u32, u32), (u32, u32))>,
     ) {
-        // Check if this response is for the current pending request.
-        // `claim_pending` also drains the stored LSP position, which we keep
-        // around for diagnostic correlation below.
+        // Check if this response belongs to the current in-flight batch.
+        // Hover fans out to every capable server, so several responses may
+        // arrive for one batch; `claim_pending` returns the batch position
+        // (kept until the last response is claimed) for diagnostic
+        // correlation, and `None` for stale responses.
         let Some(position) = self.active_window_mut().hover.claim_pending(request_id) else {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
@@ -1025,31 +1051,65 @@ impl Editor {
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
-        let hover_lsp_position = Some(position);
+
+        // Accumulate this server's non-null contribution. Null / empty hovers
+        // (already normalized in `parse_hover_response`) are dropped here so a
+        // server that returns null cannot suppress another server's hover
+        // (sinelaw/fresh#2635).
+        if !contents.is_empty() {
+            tracing::debug!(
+                "LSP hover content (markdown={}, request_id={}):\n{}",
+                is_markdown,
+                request_id,
+                contents
+            );
+            self.active_window_mut()
+                .hover
+                .push_payload(crate::app::hover::HoverPayload {
+                    contents,
+                    is_markdown,
+                    range,
+                    server_name: None,
+                });
+        }
+
+        let all_in = self.active_window().hover.pending_is_empty();
+        let accumulated_empty = self.active_window().hover.accumulated().is_empty();
 
         // Gather any diagnostics whose range overlaps the hover position so
         // they can be fused into the top of the hover card. Without this the
         // user has to leave hover and go chase the error elsewhere in the UI
         // even though the cursor is already on the offending symbol.
-        let diagnostic_lines = hover_lsp_position
-            .map(|pos| self.compose_hover_diagnostic_lines(pos))
-            .unwrap_or_default();
+        let diagnostic_lines = self.compose_hover_diagnostic_lines(position);
 
-        if contents.is_empty() && diagnostic_lines.is_empty() {
+        if all_in && accumulated_empty && diagnostic_lines.is_empty() {
+            // Every capable server answered and none returned a hover, and
+            // there are no overlapping diagnostics — report "no hover" exactly
+            // once (only fires on the final response of the batch).
             self.set_status_message(t!("lsp.no_hover").to_string());
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
 
-        // Debug: log raw hover content to diagnose formatting issues
-        tracing::debug!(
-            "LSP hover content (markdown={}):\n{}",
-            is_markdown,
-            contents
-        );
+        if accumulated_empty && !all_in {
+            // No hover content yet and more servers are still outstanding —
+            // wait for them rather than flashing a diagnostics-only or empty
+            // popup that a later non-null hover would immediately replace.
+            return;
+        }
 
-        // Convert LSP range to byte offsets for highlighting
-        if let Some(((start_line, start_char), (end_line, end_char))) = range {
+        // Rebuild the popup from ALL accumulated payloads. This runs on every
+        // response that has (or follows) content, so the card grows as
+        // additional servers answer.
+        let payloads: Vec<crate::app::hover::HoverPayload> =
+            self.active_window().hover.accumulated().to_vec();
+
+        // Symbol range/overlay: use the FIRST payload that carries a range.
+        // Because we always scan the whole accumulator, a range set by an
+        // earlier server is never clobbered by a later rangeless server's
+        // word-boundary fallback.
+        let first_range = payloads.iter().find_map(|p| p.range);
+        if let Some(((start_line, start_char), (end_line, end_char))) = first_range {
             let state = self.active_state();
             let start_byte = state
                 .buffer
@@ -1125,7 +1185,7 @@ impl Editor {
                 .set_symbol_range(computed_range);
         }
 
-        // Create a popup with the hover contents.
+        // Create a popup with the merged hover contents.
         //
         // When a diagnostic overlaps the hover position, we pre-style its
         // lines (severity-colored header + plain message) and concatenate
@@ -1135,48 +1195,71 @@ impl Editor {
         // input — which rendered as uncolored bold text + a thick 40-cell
         // divider with blank-line padding, wasting vertical space and
         // losing the "this is an error" visual signal.
+        //
+        // Multiple servers' hover bodies are joined with the same one-row
+        // separator used between diagnostics and hover.
         use crate::view::markdown::{parse_markdown, StyledLine};
         use crate::view::popup::{Popup, PopupContent, PopupPosition};
         use ratatui::style::Style;
         use unicode_width::UnicodeWidthStr;
 
-        let hover_lines: Vec<StyledLine> = if contents.is_empty() {
-            Vec::new()
-        } else if is_markdown {
-            parse_markdown(
-                &contents,
-                &self.theme.read().unwrap(),
-                Some(&self.grammar_registry),
-            )
-        } else {
-            contents
-                .lines()
-                .map(|s| {
-                    let mut sl = StyledLine::new();
-                    sl.push(
-                        s.to_string(),
-                        Style::default().fg(self.theme.read().unwrap().popup_text_fg),
-                    );
-                    sl
-                })
-                .collect()
-        };
+        let is_markdown = payloads.iter().any(|p| p.is_markdown);
 
-        let has_diagnostic = !diagnostic_lines.is_empty();
-        let mut all_lines: Vec<StyledLine> = Vec::new();
-        all_lines.extend(diagnostic_lines);
-        if has_diagnostic && !hover_lines.is_empty() {
-            // Compact single-line separator — no blank padding, no 40-cell
-            // dash run. One row of dashes the width of the content, in the
-            // popup border color so it reads as "same card, new section."
+        // Build one styled block per non-empty payload.
+        let mut bodies: Vec<Vec<StyledLine>> = Vec::new();
+        for payload in &payloads {
+            if payload.contents.is_empty() {
+                continue;
+            }
+            let lines: Vec<StyledLine> = if payload.is_markdown {
+                parse_markdown(
+                    &payload.contents,
+                    &self.theme.read().unwrap(),
+                    Some(&self.grammar_registry),
+                )
+            } else {
+                payload
+                    .contents
+                    .lines()
+                    .map(|s| {
+                        let mut sl = StyledLine::new();
+                        sl.push(
+                            s.to_string(),
+                            Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                        );
+                        sl
+                    })
+                    .collect()
+            };
+            if !lines.is_empty() {
+                bodies.push(lines);
+            }
+        }
+
+        // One-row separator between sections (diagnostics ↔ hover, and hover ↔
+        // hover when more than one server answered). Compact — no blank
+        // padding, no 40-cell dash run; popup border color so it reads as
+        // "same card, new section."
+        let make_separator = || {
             let mut sep = StyledLine::new();
             sep.push(
                 "─".repeat(12),
                 Style::default().fg(self.theme.read().unwrap().popup_border_fg),
             );
-            all_lines.push(sep);
+            sep
+        };
+
+        let has_diagnostic = !diagnostic_lines.is_empty();
+        let mut all_lines: Vec<StyledLine> = Vec::new();
+        all_lines.extend(diagnostic_lines);
+        let mut need_separator = has_diagnostic;
+        for body in bodies {
+            if need_separator {
+                all_lines.push(make_separator());
+            }
+            all_lines.extend(body);
+            need_separator = true;
         }
-        all_lines.extend(hover_lines);
 
         // Drop trailing empty lines that some markdown payloads carry.
         while all_lines
