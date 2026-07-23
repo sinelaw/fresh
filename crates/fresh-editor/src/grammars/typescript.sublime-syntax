@@ -1,0 +1,117 @@
+%YAML 1.2
+---
+# TypeScript syntax highlighting for Fresh editor.
+#
+# NOTE: `.ts` buffers are highlighted by tree-sitter, not by this grammar —
+# the grammar catalog deliberately skips "TypeScript" the same way it skips
+# "JavaScript" (see grammar/types.rs). This grammar exists for embedded
+# contexts resolved by language token: Vue `<script lang="ts">` blocks and
+# Markdown ```ts fences (docs/internal/embedded-language-highlighting.md).
+name: TypeScript
+file_extensions:
+  - ts
+  - tsx
+  - mts
+  - cts
+scope: source.ts
+
+contexts:
+  main:
+    - include: comments
+    - include: template-strings
+    - include: strings
+    - include: decorators
+    - include: keywords
+    - include: numbers
+    - include: functions
+    - include: types
+
+  comments:
+    - match: '//'
+      scope: punctuation.definition.comment.ts
+      push:
+        - meta_scope: comment.line.double-slash.ts
+        - match: '$'
+          pop: true
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.ts
+      push:
+        - meta_scope: comment.block.ts
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.ts
+          pop: true
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.ts
+      push:
+        - meta_scope: string.quoted.double.ts
+        - match: '\\.'
+          scope: constant.character.escape.ts
+        - match: '"'
+          scope: punctuation.definition.string.end.ts
+          pop: true
+        - match: '$'
+          pop: true
+    - match: "'"
+      scope: punctuation.definition.string.begin.ts
+      push:
+        - meta_scope: string.quoted.single.ts
+        - match: '\\.'
+          scope: constant.character.escape.ts
+        - match: "'"
+          scope: punctuation.definition.string.end.ts
+          pop: true
+        - match: '$'
+          pop: true
+
+  template-strings:
+    - match: '`'
+      scope: punctuation.definition.string.begin.ts
+      push:
+        - meta_scope: string.quoted.template.ts
+        - match: '\\.'
+          scope: constant.character.escape.ts
+        - match: '\$\{[^}]*\}'
+          scope: variable.interpolation.ts
+        - match: '`'
+          scope: punctuation.definition.string.end.ts
+          pop: true
+
+  decorators:
+    - match: '@[A-Za-z_$][\w$]*'
+      scope: entity.name.decorator.ts
+
+  keywords:
+    - match: '\b(import|export|from|default|as)\b'
+      scope: keyword.other.ts
+    - match: '\b(if|else|for|while|do|switch|case|break|continue|return|try|catch|finally|throw|yield|await)\b'
+      scope: keyword.control.ts
+    - match: '\b(const|let|var|function|class|extends|implements|interface|type|enum|namespace|module|declare|abstract|readonly|public|private|protected|static|get|set|async|constructor|satisfies|infer|asserts|is|keyof|override|accessor)\b'
+      scope: keyword.declaration.ts
+    - match: '\b(new|delete|typeof|instanceof|void|in|of)\b'
+      scope: keyword.operator.ts
+    - match: '\b(true|false|null|undefined|NaN|Infinity|this|super|globalThis)\b'
+      scope: constant.language.ts
+
+  numbers:
+    - match: '\b0[xX][0-9a-fA-F_]+n?\b'
+      scope: constant.numeric.hex.ts
+    - match: '\b0[bB][01_]+n?\b'
+      scope: constant.numeric.binary.ts
+    - match: '\b0[oO][0-7_]+n?\b'
+      scope: constant.numeric.octal.ts
+    - match: '\b\d[\d_]*(\.[\d_]+)?([eE][+-]?\d+)?n?\b'
+      scope: constant.numeric.decimal.ts
+
+  functions:
+    - match: '(?<=\bfunction\s)[A-Za-z_$][\w$]*'
+      scope: entity.name.function.ts
+    - match: '\b[A-Za-z_$][\w$]*(?=\s*\()'
+      scope: variable.function.ts
+
+  types:
+    - match: '\b(string|number|boolean|any|unknown|never|object|symbol|bigint)\b'
+      scope: support.type.primitive.ts
+    - match: '\b[A-Z][\w$]*\b'
+      scope: support.class.ts

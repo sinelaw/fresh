@@ -236,6 +236,11 @@ pub const EARTHFILE_GRAMMAR: &str = include_str!("../../grammars/earthfile.subli
 pub const GOMOD_GRAMMAR: &str = include_str!("../../grammars/gomod.sublime-syntax");
 /// Embedded Vue grammar
 pub const VUE_GRAMMAR: &str = include_str!("../../grammars/vue.sublime-syntax");
+
+/// Embedded TypeScript grammar. Serves embedded contexts only (Vue
+/// `lang="ts"`, Markdown ```ts fences) — `.ts` buffers stay on
+/// tree-sitter via the catalog skip below, mirroring JavaScript.
+pub const TYPESCRIPT_GRAMMAR: &str = include_str!("../../grammars/typescript.sublime-syntax");
 /// Embedded Svelte grammar
 pub const SVELTE_GRAMMAR: &str = include_str!("../../grammars/svelte.sublime-syntax");
 /// Embedded Astro grammar
@@ -754,6 +759,7 @@ impl GrammarRegistry {
             (EARTHFILE_GRAMMAR, "Earthfile"),
             (GOMOD_GRAMMAR, "Go Module"),
             (VUE_GRAMMAR, "Vue"),
+            (TYPESCRIPT_GRAMMAR, "TypeScript"),
             (SVELTE_GRAMMAR, "Svelte"),
             (ASTRO_GRAMMAR, "Astro"),
             (HYPRLANG_GRAMMAR, "Hyprlang"),
@@ -1081,8 +1087,16 @@ impl GrammarRegistry {
         // still returns syntect's grammar via the catalog's fallback path,
         // so markdown popup rendering and other code-string highlighters
         // are unaffected.
+        //
+        // TypeScript is skipped for the same reason in reverse: its bundled
+        // grammar exists only for embedded contexts (Vue `lang="ts"`,
+        // Markdown ```ts fences, resolved via `find_syntax_by_token`), and
+        // `.ts` buffers must keep the richer tree-sitter highlighting.
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
-            if syntax.name == "Plain Text" || syntax.name == "JavaScript" {
+            if syntax.name == "Plain Text"
+                || syntax.name == "JavaScript"
+                || syntax.name == "TypeScript"
+            {
                 continue;
             }
             let (language_id, tree_sitter) = derive_language_id(&syntax.name);

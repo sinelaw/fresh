@@ -77,10 +77,16 @@ script and style), each with two scope selectors and an optional default:
 - `language_scope` — the scope the host grammar puts on the language
   token of the opening line (`constant.other.language-name` for both);
 - `default_language` — used when the opening line names no language *or*
-  names one that doesn't resolve to a syntax in the set. Vue uses js/css
-  (so `lang="ts"` — TypeScript has no TextMate grammar in fresh — gets
-  the standard JS approximation instead of nothing); Markdown uses
-  `None`, meaning such regions keep the host's own raw-code styling.
+  names one that doesn't resolve to a syntax in the set. Vue uses js/css;
+  Markdown uses `None`, meaning such regions keep the host's own raw-code
+  styling.
+
+A compact TextMate TypeScript grammar is bundled *solely* for embedded
+contexts (`lang="ts"` in Vue, ```ts fences): the grammar catalog skips it
+by name — mirroring the JavaScript skip — so `.ts` buffers keep the richer
+tree-sitter highlighting, while `find_syntax_by_token("ts")` still
+resolves it for regions. (Vendoring Sublime's official TS grammar is not
+an option: it needs `branch_point`, which no released syntect supports.)
 
 Per line, the host parser runs first (inside a region it is in a cheap
 "raw" context — it must run regardless, because only the host knows where

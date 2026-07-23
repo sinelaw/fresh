@@ -2321,16 +2321,15 @@ mod tests {
         );
     }
 
-    /// A `lang` naming a language with no syntect grammar (TypeScript is
-    /// tree-sitter-only in fresh) falls back to the region's default
-    /// language rather than dropping highlighting entirely — `<script
-    /// lang=\"ts\">` is the dominant real-world Vue pattern.
+    /// A `lang` naming a language with no grammar in the set falls back
+    /// to the region's default language rather than dropping
+    /// highlighting entirely.
     #[test]
     fn test_vue_unresolvable_lang_falls_back_to_default() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
         let mut engine = HighlightEngine::for_file(Path::new("App.vue"), None, &registry);
-        let content = "<script setup lang=\"ts\">\nconst answer = 42;\n</script>\n";
+        let content = "<script setup lang=\"mysterylang\">\nconst answer = 42;\n</script>\n";
         let buffer = Buffer::from_str(content, 0, test_fs());
         let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
         let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
@@ -2343,6 +2342,62 @@ mod tests {
                 .and_then(|span| span.category),
             Some(HighlightCategory::Keyword),
             "unresolvable lang token must fall back to the spec default (js)"
+        );
+    }
+
+    /// `lang="ts"` resolves to the bundled TypeScript grammar — the
+    /// dominant real-world Vue pattern gets TS-aware highlighting
+    /// (`interface` is not a keyword to the JS default it previously
+    /// fell back to).
+    #[test]
+    fn test_vue_lang_ts_uses_typescript_grammar() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("App.vue"), None, &registry);
+        let content =
+            "<script setup lang=\"ts\">\ninterface Greeting {\n  message: string;\n}\n</script>\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let category_at = |needle: &str| {
+            let position = content.find(needle).unwrap();
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category)
+        };
+        assert_eq!(
+            category_at("interface"),
+            Some(HighlightCategory::Keyword),
+            "TS-only keyword must be styled by the TypeScript grammar"
+        );
+        assert_eq!(
+            category_at("string"),
+            Some(HighlightCategory::Type),
+            "TS primitive type must be styled by the TypeScript grammar"
+        );
+    }
+
+    /// Markdown ```ts fences resolve to the same TypeScript grammar.
+    #[test]
+    fn test_markdown_ts_fence_uses_typescript_grammar() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let content = "```ts\ntype Answer = number;\n```\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let position = content.find("type").unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::Keyword),
+            "```ts fences must be parsed with the TypeScript grammar"
         );
     }
 
