@@ -19,6 +19,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **`NextPane` / `PrevPane`** - cycle through every split+tab pane as one flat list, distinct from `NextSplit`/`PrevSplit` and `NextWindow`/`PrevWindow`; landing on a terminal now also switches it into terminal mode (#2562, by @masmu).
 * **Orchestrator dock: organize workspaces into custom folders** - create/rename/delete folders and move workspaces between them ("Move to Folder…" via the context menu, `F2`, right-click, or the palette); the layout survives a crash. The toolbar is condensed to a "New Task…" dropdown and a search field, with other filters in a collapsible section (#2703).
 * **Search in Project: file filter** - a new **Files** field limits project search & replace to comma-separated globs like `*.rs` or `src/**` (#2699, by @asukaminato0721).
+* **File explorer follows the active buffer by default** - with the sidebar open, the tree now expands to and highlights the current file automatically, including when you jump to it via Quick Open (`Ctrl+P`), Open File, or Live Grep, so a jumped-to file is always revealed in the tree (#2365). Turn it off with File Explorer > "Follow Active Buffer".
 
 ### Bug Fixes
 
