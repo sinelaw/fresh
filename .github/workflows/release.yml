@@ -164,6 +164,12 @@ jobs:
             cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop"
           fi
 
+          # Generic self-update receipt for raw-archive installs. Wrapper
+          # channels (npm, Homebrew, AUR-bin, …) overwrite this with their own.
+          sh scripts/write-install-receipt.sh tarball "${ARCHIVE_NAME}/install-receipt.toml" \
+            target=${{ matrix.target }} \
+            asset=fresh-editor-${{ matrix.target }}.${{ matrix.archive_ext }}
+
           if [ "${{ matrix.archive_ext }}" = "tar.xz" ]; then
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
             sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
@@ -181,6 +187,24 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/fresh.exe" "$ARCHIVE_NAME/"
           Copy-Item "README.md", "LICENSE", "CHANGELOG.md" "$ARCHIVE_NAME/"
           # Plugins and themes are compiled into the binary; no on-disk copy needed.
+
+          # Generic self-update receipt for raw-archive installs (a winget/scoop
+          # wrapper would ship its own; a plain unzip self-updates). Built as an
+          # indented array (a here-string's terminator can't be indented, which
+          # would break this YAML block scalar).
+          $target = "${{ matrix.target }}"
+          $lines = @(
+            'schema = 1',
+            'channel = "tarball"',
+            'package_name = "fresh-editor"',
+            'managed = false',
+            'self_update = true',
+            '',
+            '[hints]',
+            "target = `"$target`"",
+            "asset = `"fresh-editor-$target.zip`""
+          )
+          $lines | Out-File -Encoding ASCII "$ARCHIVE_NAME/install-receipt.toml"
 
           Compress-Archive -Path "$ARCHIVE_NAME/*" -DestinationPath "$ARCHIVE_NAME.zip"
           $hash = (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower()
@@ -356,6 +380,22 @@ jobs:
               # Plugins and themes are compiled into the binary; the tarball
               # ships only the binary + docs.
               bin.install "fresh"
+              # Provenance receipt so the editor knows Homebrew installed it and
+              # defers updates to \`brew upgrade\`. Overrides the generic tarball
+              # receipt that ships inside the archive.
+              (prefix/"share/fresh").mkpath
+              (prefix/"share/fresh/install-receipt.toml").write <<~RECEIPT
+                schema = 1
+                channel = "homebrew"
+                version = "#{version}"
+                package_name = "fresh-editor"
+                managed = true
+                self_update = false
+
+                [hints]
+                formula = "fresh-editor"
+                tap = "sinelaw/homebrew-fresh"
+              RECEIPT
             end
 
             test do

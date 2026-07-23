@@ -33,6 +33,10 @@ override_dh_auto_build:
 override_dh_auto_install:
 	install -D -m 755 target/$(CARGO_TARGET)/release/fresh \
 		debian/fresh-editor/usr/bin/fresh
+	# Provenance receipt so the editor knows it was installed via apt/dpkg
+	# and defers updates to the system package manager.
+	sh scripts/write-install-receipt.sh apt \
+		debian/fresh-editor/usr/share/fresh-editor/install-receipt.toml
 
 # Ship the upstream CHANGELOG.md as /usr/share/doc/fresh-editor/changelog.gz
 override_dh_installchangelogs:

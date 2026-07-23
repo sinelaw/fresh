@@ -226,6 +226,20 @@ do_install_appimage() {
 
     ln -sf "$INSTALL_DIR/usr/bin/fresh" "$SYMLINK_PATH"
 
+    # Provenance receipt next to the extracted binary so the editor knows it
+    # was installed as an AppImage by this script and can self-update the same
+    # way. install_root records where to swap on update.
+    cat > "$INSTALL_DIR/usr/bin/install-receipt.toml" <<EOF
+schema = 1
+channel = "appimage"
+package_name = "fresh-editor"
+managed = false
+self_update = true
+
+[hints]
+install_root = "$INSTALL_DIR"
+EOF
+
     # Verify PATH
     case ":$PATH:" in
         *":${BIN_DIR}:"*) ;;

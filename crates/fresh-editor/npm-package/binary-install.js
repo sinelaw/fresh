@@ -150,6 +150,27 @@ async function install() {
         throw new Error(`Installation failed: binary not found at ${binaryPath}. Please check the release assets.`);
     }
 
+    // Provenance receipt (sidecar next to the binary). Overrides the generic
+    // `tarball` receipt that ships inside the archive so the editor defers
+    // updates to npm rather than self-swapping.
+    try {
+        const receipt = [
+            'schema = 1',
+            'channel = "npm"',
+            `version = "${VERSION}"`,
+            'package_name = "fresh-editor"',
+            'managed = true',
+            'self_update = false',
+            '',
+            '[hints]',
+            'npm_pkg = "@fresh-editor/fresh-editor"',
+            '',
+        ].join('\n');
+        fs.writeFileSync(path.join(binDir, 'install-receipt.toml'), receipt);
+    } catch (e) {
+        console.warn('Could not write install receipt:', e.message);
+    }
+
     console.log('fresh-editor installed successfully!');
 }
 

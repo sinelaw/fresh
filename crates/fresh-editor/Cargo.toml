@@ -317,4 +317,8 @@ assets = [
     { source = "resources/fresh.desktop", dest = "/usr/share/applications/fresh.desktop", mode = "644" },
     # Man page
     { source = "resources/fresh.1", dest = "/usr/share/man/man1/fresh.1", mode = "644" },
+    # Provenance receipt (generated in CI before `cargo generate-rpm`; see
+    # .github/workflows/linux-packages.yml). Tells the editor it was installed
+    # via dnf/rpm so updates defer to the system package manager.
+    { source = "target/install-receipt.toml", dest = "/usr/share/fresh-editor/install-receipt.toml", mode = "644" },
 ]

@@ -131,6 +131,10 @@ jobs:
       - name: Build .rpm package
         working-directory: crates/fresh-editor
         run: |
+          # Provenance receipt shipped inside the .rpm (see Cargo.toml
+          # [package.metadata.generate-rpm] assets). target/ is symlinked to
+          # the workspace target above.
+          sh ../../scripts/write-install-receipt.sh dnf target/install-receipt.toml
           cargo generate-rpm --target ${{ matrix.target }}
 
       - name: Collect packages
@@ -201,8 +205,12 @@ jobs:
           test ! -L /usr/bin/fresh || { echo "/usr/bin/fresh should not be a symlink"; exit 1; }
 
           echo ""
-          echo "=== Verifying /usr/share/fresh-editor/ is NOT shipped ==="
-          test ! -d /usr/share/fresh-editor || { echo "/usr/share/fresh-editor/ leaked into package"; ls -la /usr/share/fresh-editor; exit 1; }
+          echo "=== Verifying install receipt shipped (and nothing else under /usr/share/fresh-editor) ==="
+          test -f /usr/share/fresh-editor/install-receipt.toml || { echo "install receipt missing"; ls -la /usr/share/fresh-editor || true; exit 1; }
+          grep -q 'channel = "apt"' /usr/share/fresh-editor/install-receipt.toml || { echo "receipt has wrong channel"; cat /usr/share/fresh-editor/install-receipt.toml; exit 1; }
+          # Only the receipt belongs here — plugins/themes are embedded in the binary.
+          leaked=$(find /usr/share/fresh-editor -type f ! -name install-receipt.toml || true)
+          test -z "$leaked" || { echo "unexpected files under /usr/share/fresh-editor: $leaked"; exit 1; }
 
           echo ""
           echo "=== Testing binary ==="
@@ -280,8 +288,11 @@ jobs:
           file /usr/bin/fresh | grep -q ELF || { echo "/usr/bin/fresh is not an ELF binary"; exit 1; }
 
           echo ""
-          echo "=== Verifying /usr/share/fresh-editor/ is NOT shipped ==="
-          test ! -d /usr/share/fresh-editor || { echo "/usr/share/fresh-editor/ leaked into package"; ls -la /usr/share/fresh-editor; exit 1; }
+          echo "=== Verifying install receipt shipped (and nothing else under /usr/share/fresh-editor) ==="
+          test -f /usr/share/fresh-editor/install-receipt.toml || { echo "install receipt missing"; ls -la /usr/share/fresh-editor || true; exit 1; }
+          grep -q 'channel = "dnf"' /usr/share/fresh-editor/install-receipt.toml || { echo "receipt has wrong channel"; cat /usr/share/fresh-editor/install-receipt.toml; exit 1; }
+          leaked=$(find /usr/share/fresh-editor -type f ! -name install-receipt.toml || true)
+          test -z "$leaked" || { echo "unexpected files under /usr/share/fresh-editor: $leaked"; exit 1; }
 
           echo ""
           echo "=== Testing binary ==="
