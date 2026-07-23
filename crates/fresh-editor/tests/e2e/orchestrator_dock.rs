@@ -877,9 +877,11 @@ fn dock_right_border_drag_resizes_and_persists() {
 
 #[test]
 fn dock_show_empty_toggle_flips_on_click() {
-    // The "show empty" toggle defaults to off (hide trivial
-    // sessions). Clicking it flips the checkbox `[ ]` → `[v]`, proving the
-    // dock toggle is wired to the shared hide-trivial filter.
+    // The "show empty" toggle defaults to ON (show every workspace,
+    // including trivial ones) so a freshly created empty workspace stays
+    // visible instead of vanishing behind the hide-trivial filter.
+    // Clicking it flips the checkbox `[v]` → `[ ]`, proving the dock toggle
+    // is wired to the shared hide-trivial filter.
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -892,15 +894,15 @@ fn dock_show_empty_toggle_flips_on_click() {
     h.wait_until(|h| h.screen_to_string().contains("show empty"))
         .unwrap();
     let trow = row_of(&h, "show empty") as u16;
-    // Off by default: unchecked.
+    // On by default: checked.
     assert!(
-        h.screen_row_text(trow).contains("[ ] show empty"),
-        "expected toggle off by default: {:?}",
+        h.screen_row_text(trow).contains("[v] show empty"),
+        "expected toggle on by default: {:?}",
         h.screen_row_text(trow)
     );
-    // Click it → checked.
+    // Click it → unchecked (opt back into hiding trivial sessions).
     h.mouse_click(3, trow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[v] show empty"))
+    h.wait_until(|h| h.screen_to_string().contains("[ ] show empty"))
         .unwrap();
 }
 

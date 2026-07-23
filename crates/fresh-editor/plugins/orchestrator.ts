@@ -814,12 +814,13 @@ let lastOpenScope: "current" | "all" = "all";
 // worktrees" (Alt+T).
 let lastShowWorktrees = false;
 // Remembered across opens: whether "trivial" sessions are hidden.
-// Defaults to true — every editor launch on a throwaway directory or a
-// single file leaves a workspace file behind, which restores as a shell
-// window and clutters the list. Hiding them by default keeps the picker
-// focused on real sessions; the "Show empty/1-file sessions" checkbox
-// (Alt+I) reveals them.
-let lastHideTrivial = true;
+// Defaults to false — showing every workspace. A freshly created
+// workspace starts empty, so hiding trivial sessions made it vanish the
+// instant it lost the "active" exemption (issue: "new workspace
+// immediately disappears"). Showing all by default keeps new workspaces
+// visible; the "show empty" checkbox (Alt+I) opts back into hiding the
+// throwaway single-file / restored-shell rows.
+let lastHideTrivial = false;
 // Dock card density, remembered across opens. "card" (default) shows
 // the three-line rounded pill; "compact" shows one line per session.
 // Toggled by the dock toolbar's "view" button.
