@@ -3308,6 +3308,27 @@ impl Editor {
         }
     }
 
+    /// If a per-edit inlay-hints debounce has fired, send a fresh
+    /// `textDocument/inlayHint` request for the scheduled buffer. Mirrors
+    /// [`Window::check_diagnostic_pull_timer`]: the edit path writes the
+    /// debounce slot but nothing consumed it, so hints never refreshed after
+    /// an edit (sinelaw/fresh#2744). The response arrives asynchronously and
+    /// its handler is version-guarded, so no redraw is triggered here.
+    pub(crate) fn check_inlay_hints_timer(&mut self) {
+        let Some((buffer_id, trigger_time)) = self.active_window().scheduled_inlay_hints_request
+        else {
+            return;
+        };
+
+        if std::time::Instant::now() < trigger_time {
+            return;
+        }
+
+        self.active_window_mut().scheduled_inlay_hints_request = None;
+
+        self.request_inlay_hints_for_buffer(buffer_id);
+    }
+
     /// Issue a debounced folding range request if the timer has elapsed.
     pub(crate) fn maybe_request_folding_ranges_debounced(&mut self, buffer_id: BufferId) {
         let Some(ready_at) = self

@@ -170,6 +170,7 @@ pub fn editor_tick(
         needs_render = true;
     }
     editor.active_window_mut().check_diagnostic_pull_timer();
+    editor.check_inlay_hints_timer();
     if editor.check_warning_log() {
         needs_render = true;
     }
