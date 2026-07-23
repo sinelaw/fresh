@@ -3,7 +3,7 @@
 use crate::app::types::CellThemeRecorder;
 use crate::app::BufferMetadata;
 use crate::model::event::{BufferId, LeafId};
-use crate::primitives::display_width::str_width;
+use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
 use crate::view::split::TabTarget;
 use crate::view::ui::layout::point_in_rect;
@@ -263,6 +263,44 @@ pub fn scroll_to_show_tab(
     result
 }
 
+/// Single-character ellipsis (U+2026) appended when a tab name is elided.
+const TAB_NAME_ELLIPSIS: &str = "…";
+
+/// Maximum display width, in columns, for the *name* portion of a tab label.
+/// The surrounding pad, the modified/preview/binary indicators and the close
+/// button are budgeted separately, so this caps only the filename/group name.
+/// Without a cap a single very long name (e.g. 151 chars) consumes the whole
+/// strip and hides every other tab (issue #2650).
+const TAB_NAME_MAX_COLS: usize = 25;
+
+/// Elide `name` to at most `max_cols` display columns, keeping the leading
+/// characters and appending a single `…` when it is truncated. Width is
+/// measured with `char_width`/`str_width` (not bytes), so multibyte / CJK /
+/// emoji names are truncated on whole characters and never split mid-codepoint.
+/// Returns `name` unchanged when it already fits.
+///
+/// Both label builders — [`build_tab_spans`] and [`calculate_tab_widths`] — run
+/// the resolved name through this so their computed widths stay in lockstep; a
+/// mismatch would drift hit-testing and the scroll math.
+fn elided_tab_name(name: &str, max_cols: usize) -> String {
+    if str_width(name) <= max_cols {
+        return name.to_string();
+    }
+    let budget = max_cols.saturating_sub(str_width(TAB_NAME_ELLIPSIS));
+    let mut width = 0;
+    let mut body = String::new();
+    for ch in name.chars() {
+        let w = char_width(ch);
+        if width + w > budget {
+            break;
+        }
+        width += w;
+        body.push(ch);
+    }
+    body.push_str(TAB_NAME_ELLIPSIS);
+    body
+}
+
 /// Resolve display names for tab targets, disambiguating duplicates by appending a number.
 /// For example, if there are three unnamed buffers, they become "[No Name]", "[No Name] 2", "[No Name] 3".
 /// Similarly, duplicate filenames get numbered: "main.rs", "main.rs 2".
@@ -369,6 +407,9 @@ pub fn calculate_tab_widths(
         let Some(name) = resolved_names.get(t) else {
             continue;
         };
+        // Bound the name so one long filename can't hide every other tab. Must
+        // mirror `build_tab_spans` exactly (same cap) or widths drift.
+        let name = elided_tab_name(name, TAB_NAME_MAX_COLS);
 
         // Calculate modified indicator (groups and composite buffers don't show it)
         let modified = match t {
@@ -505,7 +546,11 @@ fn build_tab_spans(
         let Some(name_owned) = resolved_names.get(t).cloned() else {
             continue;
         };
-        let name = name_owned.as_str();
+        // Bound the name so one long filename can't hide every other tab. Must
+        // mirror `calculate_tab_widths` exactly (same cap) or widths drift and
+        // hit-testing/scroll positions diverge from what's painted.
+        let name = elided_tab_name(&name_owned, TAB_NAME_MAX_COLS);
+        let name = name.as_str();
         rendered_targets.push(*t);
 
         // Composite buffers and groups never show as modified.
@@ -729,7 +774,12 @@ fn map_tab_hit_areas(
 
         layout.tabs.push(TabHitArea {
             target: *target,
-            label: resolved_names.get(target).cloned().unwrap_or_default(),
+            // Store the *elided* label so the web frontend and mouse
+            // hit-testing match the string the TUI actually draws.
+            label: resolved_names
+                .get(target)
+                .map(|n| elided_tab_name(n, TAB_NAME_MAX_COLS))
+                .unwrap_or_default(),
             tab_area: Rect::new(screen_start, area.y, tab_width, 1),
             close_area: Rect::new(screen_close_start, area.y, close_width, 1),
         });
