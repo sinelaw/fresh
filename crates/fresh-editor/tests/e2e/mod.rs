@@ -78,6 +78,7 @@ pub mod issue_2031_next_prev_window;
 pub mod issue_2035_preview_renders_buffer_groups;
 pub mod issue_2119_wheel_scroll;
 pub mod issue_2124_quickfix_enter;
+pub mod issue_2283_dock_last_tab_close;
 pub mod issue_2345_language_settings;
 pub mod issue_2357_shebang_interpreter;
 pub mod issue_2362_replace_toolbar_theme;
