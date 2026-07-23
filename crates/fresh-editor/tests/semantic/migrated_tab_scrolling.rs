@@ -105,6 +105,30 @@ fn create_dummy_files(temp_dir: &TempDir) -> Vec<std::path::PathBuf> {
     files
 }
 
+/// Display-width cap the tab bar applies to a tab's *name* portion
+/// (mirrors `view::ui::tabs::TAB_NAME_MAX_COLS`, which is private).
+const TAB_NAME_MAX_COLS: usize = 25;
+
+/// The on-screen label the tab bar actually paints for a file.
+///
+/// Since issue #2650, a name wider than [`TAB_NAME_MAX_COLS`] columns is
+/// elided to its leading `TAB_NAME_MAX_COLS - 1` columns plus a single `…`
+/// so one long filename can't consume the whole strip and hide every other
+/// tab. Every dummy filename here (`long_file_name_number_NN.txt`, 28 chars)
+/// exceeds the cap, so each renders as its 24-char prefix + `…`. That prefix
+/// still carries the two-digit index, so the elided labels stay unique per
+/// file and the "active tab is visible" claim holds — we just assert on the
+/// label the editor actually draws instead of the full, now-elided filename.
+fn expected_tab_label(file_path: &std::path::Path) -> String {
+    let name = file_path.file_name().unwrap().to_str().unwrap();
+    if name.chars().count() <= TAB_NAME_MAX_COLS {
+        name.to_string()
+    } else {
+        let prefix: String = name.chars().take(TAB_NAME_MAX_COLS - 1).collect();
+        format!("{prefix}…")
+    }
+}
+
 #[test]
 fn migrated_active_tab_visibility_with_scrolling() {
     // Original: `test_active_tab_visibility_with_scrolling`. The
@@ -123,15 +147,13 @@ fn migrated_active_tab_visibility_with_scrolling() {
     for file_path in &files {
         harness.open_file(file_path).unwrap();
         harness.render().unwrap();
-        let active_file_name = file_path.file_name().unwrap().to_str().unwrap();
-        harness.assert_screen_contains(active_file_name);
+        harness.assert_screen_contains(&expected_tab_label(file_path));
     }
 
     // Initial check: Last opened file is active.
     let mut active_idx = NUM_FILES - 1;
     harness.render().unwrap();
-    let active_file_name = files[active_idx].file_name().unwrap().to_str().unwrap();
-    harness.assert_screen_contains(active_file_name);
+    harness.assert_screen_contains(&expected_tab_label(&files[active_idx]));
     if active_idx < NUM_FILES - 1 {
         assert!(
             harness.screen_to_string().contains(">"),
@@ -148,8 +170,7 @@ fn migrated_active_tab_visibility_with_scrolling() {
         active_idx = (active_idx + 1) % NUM_FILES;
 
         harness.render().unwrap();
-        let active_file_name = files[active_idx].file_name().unwrap().to_str().unwrap();
-        harness.assert_screen_contains(active_file_name);
+        harness.assert_screen_contains(&expected_tab_label(&files[active_idx]));
 
         let screen = harness.screen_to_string();
         // The e2e only enforces the no-left-indicator-on-first edge.
@@ -157,7 +178,7 @@ fn migrated_active_tab_visibility_with_scrolling() {
             assert!(
                 !screen.contains("<"),
                 "Expected no left scroll indicator for file: {}",
-                active_file_name
+                expected_tab_label(&files[active_idx])
             );
         }
     }
@@ -170,22 +191,21 @@ fn migrated_active_tab_visibility_with_scrolling() {
         active_idx = (active_idx + NUM_FILES - 1) % NUM_FILES;
 
         harness.render().unwrap();
-        let active_file_name = files[active_idx].file_name().unwrap().to_str().unwrap();
-        harness.assert_screen_contains(active_file_name);
+        harness.assert_screen_contains(&expected_tab_label(&files[active_idx]));
 
         let screen = harness.screen_to_string();
         if active_idx == 0 {
             assert!(
                 !screen.contains("<"),
                 "Expected no left scroll indicator for file: {}",
-                active_file_name
+                expected_tab_label(&files[active_idx])
             );
         }
         if active_idx == NUM_FILES - 1 {
             assert!(
                 !screen.contains(">"),
                 "Expected no right scroll indicator for file: {}",
-                active_file_name
+                expected_tab_label(&files[active_idx])
             );
         }
     }
@@ -202,7 +222,7 @@ fn migrated_active_tab_visibility_with_scrolling() {
         harness.render().unwrap();
     }
     assert_eq!(active_idx, middle_idx, "Failed to activate middle tab");
-    harness.assert_screen_contains(files[active_idx].file_name().unwrap().to_str().unwrap());
+    harness.assert_screen_contains(&expected_tab_label(&files[active_idx]));
 
     // Scroll right manually — active tab may scroll out of view.
     for _ in 0..5 {
@@ -226,7 +246,7 @@ fn migrated_active_tab_visibility_with_scrolling() {
         .unwrap();
     harness.render().unwrap();
     active_idx = (active_idx + 1) % NUM_FILES;
-    harness.assert_screen_contains(files[active_idx].file_name().unwrap().to_str().unwrap());
+    harness.assert_screen_contains(&expected_tab_label(&files[active_idx]));
 }
 
 #[test]
