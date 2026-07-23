@@ -838,6 +838,21 @@ impl TextMateEngine {
             return;
         }
 
+        // Finding the opening fence for an arbitrary viewport may require
+        // scanning from byte zero. Keep that whole-buffer pass under the same
+        // limit as the base TextMate engine; larger Markdown files retain the
+        // existing viewport-local `markup.raw` styling instead of paying an
+        // O(buffer length) cost after every edit.
+        if buffer.len() > MAX_PARSE_BYTES {
+            self.markdown_fence_cache = Some(MarkdownFenceCache {
+                buffer_version: buffer.version(),
+                buffer_len: buffer.len(),
+                recognized_ranges: Vec::new(),
+                spans: Vec::new(),
+            });
+            return;
+        }
+
         let Some(text) = buffer.to_string() else {
             self.markdown_fence_cache = None;
             return;
@@ -1988,6 +2003,41 @@ mod tests {
                 .and_then(|span| span.category),
             Some(HighlightCategory::String)
         );
+    }
+
+    #[test]
+    fn test_large_markdown_skips_full_buffer_fence_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let fence = "```rust\nfn answer() -> u32 { 42 }\n```\n";
+        let mut content = fence.to_string();
+        content.push_str(&"plain text\n".repeat(MAX_PARSE_BYTES / 10));
+        assert!(content.len() > MAX_PARSE_BYTES);
+
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, fence.len(), &theme, 0);
+        let position = content.find("fn answer").unwrap();
+
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::String),
+            "large Markdown files should keep viewport-local markup.raw styling"
+        );
+
+        let HighlightEngine::TextMate(textmate) = &engine else {
+            panic!("expected Markdown to use TextMate");
+        };
+        let cache = textmate
+            .markdown_fence_cache
+            .as_ref()
+            .expect("large-file gate should be cached");
+        assert!(cache.recognized_ranges.is_empty());
+        assert!(cache.spans.is_empty());
     }
 
     #[test]
