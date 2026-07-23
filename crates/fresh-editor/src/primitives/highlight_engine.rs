@@ -7,7 +7,8 @@
 //! Syntect's parser is a sequential state machine — it must process bytes
 //! in order from a known parse state to track multi-line constructs and
 //! embedded language transitions. To make scrolling cheap, the engine keeps
-//! a span cache, a `(ParseState, ScopeStack)` snapshot at the cache tail,
+//! a span cache, a composite `ParseSnapshot` (host parse state plus any
+//! embedded-language child state, see `EMBEDDING_SPECS`) at the cache tail,
 //! and periodic checkpoint anchors to support resume-from-anywhere.
 //!
 //! Three render-time paths, gated by what the cache covers:
@@ -276,6 +277,10 @@ pub struct TextMateEngine {
     embedding: Option<EmbeddingSpec>,
     // Fence-language-token → syntax index memo (None = unrecognized).
     embedded_syntax_memo: HashMap<String, Option<usize>>,
+    // Reusable per-line span buffers for embedding hosts, so region
+    // classification in `parse_snapshot_line` doesn't allocate per line.
+    host_span_scratch: Vec<(usize, usize, HighlightCategory)>,
+    child_span_scratch: Vec<(usize, usize, HighlightCategory)>,
     // Scope→Category memo. Syntect Scope atoms are append-only-interned
     // globally, so entries never need invalidation.
     scope_category_cache: HashMap<syntect::parsing::Scope, Option<HighlightCategory>>,
@@ -487,6 +492,8 @@ impl TextMateEngine {
             stats: HighlightStats::default(),
             embedding,
             embedded_syntax_memo: HashMap::new(),
+            host_span_scratch: Vec::new(),
+            child_span_scratch: Vec::new(),
             scope_category_cache: HashMap::new(),
         }
     }
@@ -704,7 +711,8 @@ impl TextMateEngine {
         };
 
         let was_in_region = scopes_contain(&snapshot.scopes, spec.region_scope);
-        let mut host_spans: Vec<(usize, usize, HighlightCategory)> = Vec::new();
+        let mut host_spans = std::mem::take(&mut self.host_span_scratch);
+        host_spans.clear();
         let (parse_ok, language_range) = self.parse_line_into_spans(
             &mut snapshot.state,
             &mut snapshot.scopes,
@@ -713,29 +721,54 @@ impl TextMateEngine {
             (!was_in_region).then_some(spec.language_scope),
             |start, end, category| host_spans.push((start, end, category)),
         );
-        let in_region = parse_ok && scopes_contain(&snapshot.scopes, spec.region_scope);
-
-        let content_line = was_in_region && in_region;
-        if content_line {
-            if let Some(mut embedded) = snapshot.embedded.take() {
-                let syntax_valid = embedded.syntax_index < self.syntax_set.syntaxes().len();
-                if syntax_valid {
-                    let _ = self.parse_line_into_spans(
-                        &mut embedded.state,
-                        &mut embedded.scopes,
-                        prepared,
-                        current_offset,
-                        None,
-                        &mut on_span,
-                    );
-                }
-                snapshot.embedded = Some(embedded);
-                return parse_ok;
-            }
-            // Region with an unrecognized language: keep host styling.
+        if !parse_ok {
+            // Transient host parse error (a regex-engine failure): emit
+            // nothing for this line, matching the single-layer path, and
+            // leave region membership untouched. The host scope stack is
+            // left as-is on error, so treating the error as a region
+            // close would silently drop the child parser and
+            // de-highlight the rest of the region.
+            self.host_span_scratch = host_spans;
+            return false;
         }
+        let in_region = scopes_contain(&snapshot.scopes, spec.region_scope);
 
-        for (start, end, category) in host_spans {
+        // NOTE for future `EMBEDDING_SPECS` hosts: classification is
+        // line-granular, so a host whose regions can close AND reopen
+        // within one line reads as continuous region content here.
+        // Markdown fence delimiters occupy whole lines, so this cannot
+        // arise for it.
+        let content_line = was_in_region && in_region;
+        if content_line && snapshot.embedded.is_some() {
+            let mut embedded = snapshot
+                .embedded
+                .take()
+                .expect("checked embedded.is_some() above");
+            let mut child_spans = std::mem::take(&mut self.child_span_scratch);
+            child_spans.clear();
+            let (child_ok, _) = self.parse_line_into_spans(
+                &mut embedded.state,
+                &mut embedded.scopes,
+                prepared,
+                current_offset,
+                None,
+                |start, end, category| child_spans.push((start, end, category)),
+            );
+            // On a child parse error, fall back to the host's raw
+            // styling for the line rather than leaving it unstyled.
+            let chosen = if child_ok { &child_spans } else { &host_spans };
+            for &(start, end, category) in chosen {
+                on_span(start, end, category);
+            }
+            snapshot.embedded = Some(embedded);
+            self.child_span_scratch = child_spans;
+            self.host_span_scratch = host_spans;
+            return true;
+        }
+        // A content line in a region with an unrecognized language falls
+        // through: it keeps the host's own styling.
+
+        for &(start, end, category) in &host_spans {
             on_span(start, end, category);
         }
         match (was_in_region, in_region) {
@@ -746,7 +779,8 @@ impl TextMateEngine {
             (true, false) => snapshot.embedded = None,
             _ => {}
         }
-        parse_ok
+        self.host_span_scratch = host_spans;
+        true
     }
 
     /// Build the child parser for a region that just opened, from the
