@@ -76,3 +76,7 @@ jobs:
           VERSION="${{ inputs.version }}"
           flatpak install --user -y fresh-editor-${VERSION}-x86_64.flatpak
           flatpak run io.github.sinelaw.fresh --version
+          # Verify the provenance receipt shipped inside the sandbox.
+          receipt=$(flatpak run --command=cat io.github.sinelaw.fresh /app/share/fresh/install-receipt.toml)
+          echo "$receipt"
+          echo "$receipt" | grep -q 'channel = "flatpak"' || { echo "flatpak receipt missing/wrong"; exit 1; }

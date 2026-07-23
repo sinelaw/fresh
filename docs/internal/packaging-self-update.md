@@ -7,14 +7,23 @@
 > the *same* mechanism without ever guessing. It supersedes the path-based
 > heuristic in `services/release_checker.rs`.
 >
-> **Implemented (Phase 1):** the `fresh-update` subcrate — the `Channel`
-> registry, the `install-receipt.toml` format, the layered `resolve()` with
-> confidence levels, the update-command registry, checksum verification and the
-> atomic binary swap, plus version comparison — all unit-tested. Its build
-> script embeds the target triple; `release_checker::detect_install_method()`
-> now delegates to it. **Not yet done:** writing receipts from each packaging
-> pipeline (Phase 2), the `fresh update` subcommand + networked download/extract
-> (Phase 3), and the one-key-update UX (Phase 4). See §15.
+> **Implemented (Phases 1–3):**
+> - **Phase 1** — the `fresh-update` subcrate: `Channel` registry,
+>   `install-receipt.toml` format, layered `resolve()` with confidence levels,
+>   the update-command registry, checksum verification, the atomic binary swap,
+>   and version comparison. `release_checker` delegates to it (the portable
+>   check/parse/detect logic now lives in the crate).
+> - **Phase 2** — every packaging pipeline writes a receipt (deb, rpm, AUR
+>   bin+source, Homebrew, npm, Flatpak, Nix, install.sh AppImage, and the raw
+>   release archive). CI asserts the deb/rpm/Flatpak receipts.
+> - **Phase 3** — `fresh --cmd update [--check] [--yes] [--allow-downgrade]`
+>   (behind the default `self-update` feature): delegate to the package manager, or
+>   download → verify SHA-256 → extract → atomic swap for tarball/AppImage.
+>   `fresh config paths` prints resolved provenance.
+>
+> **Not yet done (Phase 4):** the one-key in-editor update from the status-bar
+> notification, and GitHub build-attestation verification (SHA-256 is enforced;
+> attestation is still a follow-up). See §15 and §17.
 
 ---
 
@@ -338,6 +347,17 @@ writes the matching receipt (or relies on the package's own packaged receipt).
 Its AppImage branch writes `channel=appimage`, `self_update=true`,
 `install_root=~/.local/share/fresh-editor`.
 
+### 7.5 Known limitations
+- **winget / scoop / chocolatey.** These consume the same Windows `.zip` as a
+  raw download. winget-pkgs zip installers can't run a post-extract hook, so a
+  winget install currently inherits the archive's generic `tarball` receipt
+  (i.e. it would self-update rather than defer to `winget upgrade`). Marking it
+  `managed` needs a wrapper installer type; tracked for later. Scoop/Chocolatey
+  manifests *can* write a receipt, but those channels don't ship yet.
+- **cargo (crates.io).** A user's `cargo install` build doesn't see any
+  build-time env, so it can't embed `channel=cargo`. It relies on the path
+  heuristic (`~/.cargo/bin`), which is reliable enough; a receipt isn't written.
+
 ---
 
 ## 8. The self-update engine (SelfContained channels)
@@ -546,20 +566,28 @@ compare — all unit-tested. `build.rs` embeds the target triple and reruns on
 provenance is Unknown. Even with zero receipts written yet, this is already
 strictly better (embedded channel + honest confidence).
 
-**Phase 2 — receipts everywhere.**
-Teach each packaging pipeline (§7) to write its receipt. Extend
-`scripts/validate-package.sh` and the existing per-distro install tests in
-`linux-packages.yml` to assert the receipt exists with the right `channel`.
-This is the phase that delivers "know for sure."
+**Phase 2 — receipts everywhere. ✅ landed.**
+Each packaging pipeline (§7) writes its receipt via
+`scripts/write-install-receipt.sh` (shell/CI channels) or an inline literal
+(Ruby formula, npm JS, PKGBUILD, Nix). The deb/rpm install tests in
+`linux-packages.yml` and the Flatpak install test assert the receipt exists
+with the right `channel` (and, for deb/rpm, that nothing else leaked under
+`/usr/share/fresh-editor`). This is the phase that delivers "know for sure."
 
-**Phase 3 — `fresh update`.**
-Implement the subcommand: Delegated + Toolchain paths first (low risk, just runs
-known commands), then the SelfContained engine (`self_update.rs`) with full
-verification, behind the confidence gate.
+**Phase 3 — `fresh update`. ✅ landed.**
+`services/updater.rs` (feature `self-update`, in `default`). Delegated +
+Toolchain paths run/print the known command; the SelfContained engine
+downloads, verifies the SHA-256 sidecar (fail-closed), extracts (tar.xz/zip)
+or `--appimage-extract`s, and atomically swaps — gated on
+`confidence >= Embedded` via `self_update::can_self_update`. `config paths`
+prints provenance. Covered by extraction unit tests and a mock-server
+download→verify→extract integration test.
 
-**Phase 4 — UX polish.**
-One-key update from the status-bar notification for self-capable installs;
-`config paths` provenance dump; optional `editor.auto_update` opt-in.
+**Phase 4 — UX polish (remaining).**
+One-key update from the status-bar notification for self-capable installs; and
+GitHub build-attestation verification alongside the SHA-256 check. Optional
+`editor.auto_update` opt-in. The exit-time notification already prints the
+resolved command / `fresh --cmd update` hint.
 
 ---
 

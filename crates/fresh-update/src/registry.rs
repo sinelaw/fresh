@@ -143,7 +143,7 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
 
     let human = match kind {
         UpdateKind::SelfContained => {
-            "download the latest release and replace in place (fresh update)".to_string()
+            "download the latest release and replace in place (fresh --cmd update)".to_string()
         }
         UpdateKind::Manual if channel == Channel::Source => {
             "git pull && cargo install --path crates/fresh-editor".to_string()

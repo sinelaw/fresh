@@ -69,12 +69,7 @@ mod tests {
 
     #[test]
     fn evaluate_no_update_when_current() {
-        let c = evaluate_with(
-            "0.4.5",
-            r#"{"tag_name": "v0.4.5"}"#,
-            Provenance::unknown(),
-        )
-        .unwrap();
+        let c = evaluate_with("0.4.5", r#"{"tag_name": "v0.4.5"}"#, Provenance::unknown()).unwrap();
         assert!(!c.update_available);
     }
 

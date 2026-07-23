@@ -4549,7 +4549,7 @@ fn real_main() -> AnyhowResult<()> {
                 plan.kind,
                 fresh::services::release_checker::UpdateKind::SelfContained
             ) {
-                eprintln!("Update with: fresh update");
+                eprintln!("Update with: fresh --cmd update");
             } else {
                 eprintln!(
                     "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",

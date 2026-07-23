@@ -72,7 +72,9 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
     match plan.kind {
         UpdateKind::SelfContained => {
             if opts.check_only {
-                println!("An update is available. Run `fresh update` to install it in place.");
+                println!(
+                    "An update is available. Run `fresh --cmd update` to install it in place."
+                );
                 return Ok(());
             }
             self_contained_update(&prov, &latest, opts)
@@ -140,16 +142,8 @@ fn self_contained_update(
         .unwrap_or_else(|| format!("fresh-editor-{target}.{ext}"));
     let url = format!("{}/v{latest}/{asset}", opts.download_base);
 
-    println!("Downloading {url} ...");
-    let bytes = download(&url)?;
-    verify(&bytes, &format!("{url}.sha256"))?;
-
     let bin_name = if cfg!(windows) { "fresh.exe" } else { "fresh" };
-    let binary = if asset.ends_with(".zip") {
-        extract_from_zip(&bytes, bin_name)?
-    } else {
-        extract_from_tar_xz(&bytes, bin_name)?
-    };
+    let binary = fetch_and_extract_binary(&url, bin_name)?;
 
     let exe = std::env::current_exe().map_err(|e| format!("cannot find current exe: {e}"))?;
     println!("Installing to {} ...", exe.display());
@@ -237,6 +231,20 @@ fn file_name(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "fresh-editor".to_string())
+}
+
+/// Download an archive, verify its SHA-256 sidecar (`<url>.sha256`), and
+/// extract the named inner binary. Shared by the real update path and tests;
+/// deliberately does *not* touch the running executable.
+fn fetch_and_extract_binary(url: &str, bin_name: &str) -> Result<Vec<u8>, String> {
+    println!("Downloading {url} ...");
+    let bytes = download(url)?;
+    verify(&bytes, &format!("{url}.sha256"))?;
+    if url.ends_with(".zip") {
+        extract_from_zip(&bytes, bin_name)
+    } else {
+        extract_from_tar_xz(&bytes, bin_name)
+    }
 }
 
 /// Download a URL fully into memory (self-update assets are a few MB).
@@ -371,5 +379,50 @@ mod tests {
         }
         let got = extract_from_zip(&buf, "fresh.exe").unwrap();
         assert_eq!(got, b"MZ fake exe");
+    }
+
+    /// End-to-end (download -> verify -> extract) against a local mock server.
+    /// Exercises the real HTTP + checksum + extraction path without touching
+    /// the running executable. `http` feature only (needs the ureq client).
+    #[cfg(feature = "http")]
+    #[test]
+    fn fetch_verify_extract_end_to_end() {
+        use std::time::Duration;
+
+        let bin = b"#!/bin/sh\necho fresh 9.9.9\n";
+        let archive = make_tar_xz(bin);
+        let digest = self_update::sha256_hex(&archive);
+
+        // Serve `/asset.tar.xz` and `/asset.tar.xz.sha256`.
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let archive_for_thread = archive.clone();
+        let sha_line = format!("{digest}  asset.tar.xz");
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || loop {
+            if stop_rx.try_recv().is_ok() {
+                break;
+            }
+            if let Ok(Some(req)) = server.recv_timeout(Duration::from_millis(100)) {
+                if req.url().ends_with(".sha256") {
+                    let _ = req.respond(tiny_http::Response::from_string(sha_line.clone()));
+                } else {
+                    let _ = req.respond(tiny_http::Response::from_data(archive_for_thread.clone()));
+                }
+            }
+        });
+
+        let url = format!("http://127.0.0.1:{port}/asset.tar.xz");
+        let got = fetch_and_extract_binary(&url, "fresh").expect("update fetch failed");
+        assert_eq!(got, bin);
+
+        // A tampered payload must fail the checksum closed.
+        assert!(
+            verify(b"corrupted", &format!("{url}.sha256")).is_err(),
+            "verification should reject a mismatch"
+        );
+
+        let _ = stop_tx.send(());
+        let _ = handle.join();
     }
 }
