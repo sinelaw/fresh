@@ -149,6 +149,22 @@ interface BufferDiffState {
   hunks: Hunk[];
   /** True while a recompute is in flight. */
   updating: boolean;
+  /**
+   * Set when a recompute is requested while one is already in flight for
+   * this buffer. The running pass re-runs once more when it finishes so the
+   * request isn't lost (a dropped post-commit refresh left a stale diff on
+   * screen forever — the #2503 `focus_gained`/reflog path).
+   */
+  rerunRequested: boolean;
+  /**
+   * Request to drop the cached git reference and re-fetch it on the next
+   * recompute pass (a HEAD move: commit, checkout, reset, merge). Consumed
+   * *inside* the recompute mutex so a concurrent pass never observes a
+   * half-cleared reference — mutating `oldText`/`oldLines` directly from an
+   * event handler raced an in-flight recompute and rendered a bogus
+   * "everything added" diff.
+   */
+  reloadRef: boolean;
   /** Token bumped on every scheduleRecompute; mismatched tokens are stale. */
   pendingToken: number;
   /**
@@ -974,10 +990,44 @@ async function recompute(bufferId: number): Promise<void> {
   const state = states.get(bufferId);
   if (!state) return;
   if (!isEnabledForBuffer(state)) return;
-  if (state.updating) return;
+  // Serialize recomputes per buffer. A recompute suspends at its `await`
+  // points (git reference load, buffer-text fetch). A second trigger that
+  // arrives meanwhile must neither start a concurrent pass (it would race on
+  // the shared `oldText`/`oldLines` reference and render a bogus "everything
+  // added" diff) nor be silently dropped (a dropped post-commit refresh left
+  // the stale diff on screen until the external test timeout — #2503's
+  // `focus_gained`/reflog path). Coalesce: mark that another pass is needed
+  // and let the in-flight one run it before it releases the mutex.
+  if (state.updating) {
+    state.rerunRequested = true;
+    return;
+  }
 
   state.updating = true;
   try {
+    do {
+      state.rerunRequested = false;
+      // Consume a reference-reload request *inside* the mutex so no other
+      // pass can observe a half-cleared reference. Event handlers that need
+      // the cached git reference re-fetched (a HEAD move) set `reloadRef`
+      // rather than mutating `oldText`/`oldLines` directly. `lastHunksKey`
+      // is intentionally kept so an unchanged diff still suppresses a no-op
+      // repaint (no flicker on every window focus).
+      if (state.reloadRef) {
+        state.reloadRef = false;
+        state.oldText = null;
+        state.oldLines = [];
+        state.lastBufferText = null;
+      }
+      await onePass();
+    } while (state.rerunRequested);
+  } finally {
+    state.updating = false;
+  }
+
+  // A single diff pass. Early `return`s end this pass only; the wrapper's
+  // `do…while` still honors any `rerunRequested` recorded meanwhile.
+  async function onePass(): Promise<void> {
     if (state.oldText === null) {
       const ref = await loadReference(state);
       if (ref === null) {
@@ -1062,8 +1112,6 @@ async function recompute(bufferId: number): Promise<void> {
     renderHunks(state, newLines);
 
     editor.setViewState(bufferId, "live_diff_hunks", hunks);
-  } finally {
-    state.updating = false;
   }
 }
 
@@ -1098,6 +1146,8 @@ function ensureState(bufferId: number): BufferDiffState | null {
     oldLines: [],
     hunks: [],
     updating: false,
+    rerunRequested: false,
+    reloadRef: false,
     pendingToken: 0,
     override: getStoredOverride(bufferId),
     lastBufferText: null,
@@ -1337,15 +1387,15 @@ function refreshGitReferences(): void {
   for (const state of states.values()) {
     if (state.mode.kind === "disk") continue;
     if (!isEnabledForBuffer(state)) continue;
-    // Re-fetch the reference (HEAD may have moved) but keep `lastHunksKey`:
-    // this path fires on every window focus, so when the diff is in fact
-    // unchanged the recompute's hunk-equality guard suppresses the repaint
-    // and there's no flicker. `lastBufferText` must still be cleared so the
-    // "same buffer text" early-return doesn't skip recomputing against the
-    // new reference.
-    state.oldText = null;
-    state.oldLines = [];
-    state.lastBufferText = null;
+    // Request a reference re-fetch (HEAD may have moved) via the flag the
+    // recompute consumes under its mutex — NOT by mutating `oldText`/
+    // `oldLines` here, which races an in-flight recompute for this buffer
+    // and made it diff the new buffer against an emptied reference (every
+    // line shown as added, and never cleared). `reloadRef` keeps
+    // `lastHunksKey`, so when the diff is in fact unchanged the recompute's
+    // hunk-equality guard still suppresses the repaint and there's no
+    // flicker on every window focus.
+    state.reloadRef = true;
     recompute(state.bufferId).catch((e) => editor.error(`live-diff: ${e}`));
   }
 }
