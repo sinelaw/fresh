@@ -182,6 +182,63 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     );
 }
 
+/// Clicking the editor must hand keyboard focus back to the editor even when
+/// focus sits on a *filter* widget (e.g. the "view: compact" toggle) rather
+/// than the session list — the dock's focused divider must dim, symmetric
+/// with the list-focused case. Reproduces the report that an editor click
+/// kept focus on the orchestrator when a filter button was keyboard-focused.
+#[test]
+fn editor_click_blurs_dock_when_a_filter_widget_is_focused() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h); // dock mounts focused on the list
+
+    // The divider on a content row reflects panel focus (accent when
+    // focused, muted when blurred) — same probe as the Alt+O focus test.
+    const ROW: u16 = 6;
+    let border_col = |h: &EditorTestHarness| -> u16 {
+        let cols = h.screen_row_text(0).chars().count() as u16;
+        (0..cols)
+            .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+            .expect("dock right border (│) should be present on the toolbar row")
+    };
+    let divider_fg = |h: &EditorTestHarness| h.get_cell_style(border_col(h), ROW).unwrap().fg;
+    let focused_fg = divider_fg(&h);
+
+    // Reveal the Filters section and move keyboard focus off the list onto a
+    // filter widget (Tab from the list lands on the view toggle).
+    expand_filters(&mut h);
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    // Press Enter to flip the toggle (view: card ↔ compact) — the user's exact
+    // sequence. The flip re-renders the dock; focus must stay put, and the
+    // subsequent editor click must still blur.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+        .unwrap();
+    // Still focused (on a filter widget): the divider keeps its accent colour.
+    assert_eq!(
+        divider_fg(&h),
+        focused_fg,
+        "the dock should remain focused after Tab + Enter on a filter widget"
+    );
+
+    // Click the editor area (well to the right of the dock column). Focus must
+    // leave the dock: its divider dims.
+    let wall = dock_wall_col(&h);
+    h.mouse_click(wall + 20, 3).unwrap();
+    h.render().unwrap();
+    assert_ne!(
+        divider_fg(&h),
+        focused_fg,
+        "clicking the editor must blur the dock (dim its divider) even when a \
+         filter widget held focus, not keep focus on the orchestrator"
+    );
+}
+
 #[test]
 fn dock_list_order_is_stable_across_active_window_switch() {
     // Two sessions in *different* projects: switching the active window
