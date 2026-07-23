@@ -1,54 +1,26 @@
-//! Release checker module for checking if a new version is available.
+//! Release checker: is a newer version available, and how should the user get
+//! it?
 //!
-//! This module provides functionality to:
-//! - Check for new releases by fetching a GitHub releases API endpoint
-//! - Detect the installation method (Homebrew, npm, cargo, etc.) based on executable path
-//! - Provide appropriate update commands based on installation method
-//! - Daily update checking (debounced via stamp file)
+//! The provenance resolution ("how was this copy installed?") and the
+//! update-command registry now live in the `fresh-update` crate; version
+//! comparison and release-feed parsing moved there too. This module keeps only
+//! the editor-side concerns: the HTTP fetch (`services::http`), the daily
+//! debounce (`services::telemetry` stamp file), and the background thread that
+//! surfaces the result to the UI.
 
 use super::time_source::SharedTimeSource;
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+pub use fresh_update::{Provenance, UpdateKind, UpdatePlan};
 
 /// The current version of the editor
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Default GitHub releases API URL for the fresh editor
 pub const DEFAULT_RELEASES_URL: &str = "https://api.github.com/repos/sinelaw/fresh/releases/latest";
-
-/// Installation method detection result
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InstallMethod {
-    /// Installed via Homebrew
-    Homebrew,
-    /// Installed via cargo
-    Cargo,
-    /// Installed via npm
-    Npm,
-    /// Installed via a Linux package manager (apt, dnf, etc.)
-    PackageManager,
-    /// Installed via AUR (Arch User Repository)
-    Aur,
-    /// Unknown installation method or manually installed
-    Unknown,
-}
-
-impl InstallMethod {
-    /// Get the update command for this installation method
-    pub fn update_command(&self) -> Option<&'static str> {
-        Some(match self {
-            Self::Homebrew => "brew upgrade fresh-editor",
-            Self::Cargo => "cargo install --locked fresh-editor",
-            Self::Npm => "npm update -g @fresh-editor/fresh-editor",
-            Self::Aur => "yay -Syu fresh-editor  # or use your AUR helper",
-            Self::PackageManager => "Update using your system package manager",
-            Self::Unknown => return None,
-        })
-    }
-}
 
 /// Result of checking for a new release
 #[derive(Debug, Clone)]
@@ -57,8 +29,16 @@ pub struct ReleaseCheckResult {
     pub latest_version: String,
     /// Whether an update is available
     pub update_available: bool,
-    /// The detected installation method
-    pub install_method: InstallMethod,
+    /// How this copy of `fresh` was installed (drives the update command).
+    pub provenance: Provenance,
+}
+
+impl ReleaseCheckResult {
+    /// The concrete update action for this install (command to run, or the
+    /// self-contained/manual fallback). See `fresh_update::registry`.
+    pub fn update_plan(&self) -> UpdatePlan {
+        fresh_update::plan(&self.provenance)
+    }
 }
 
 /// Handle to a background update check (one-shot)
@@ -248,177 +228,57 @@ pub fn fetch_latest_version(url: &str) -> Result<String, String> {
     Ok(version)
 }
 
-/// Parse version from GitHub API JSON response
-fn parse_version_from_json(json: &str) -> Result<String, String> {
-    let tag_name_key = "\"tag_name\"";
-    let start = json
-        .find(tag_name_key)
-        .ok_or_else(|| "tag_name not found in response".to_string())?;
-
-    let after_key = &json[start + tag_name_key.len()..];
-
-    let value_start = after_key
-        .find('"')
-        .ok_or_else(|| "Invalid JSON: missing quote after tag_name".to_string())?;
-
-    let value_content = &after_key[value_start + 1..];
-    let value_end = value_content
-        .find('"')
-        .ok_or_else(|| "Invalid JSON: unclosed quote".to_string())?;
-
-    let tag = &value_content[..value_end];
-
-    // Strip 'v' prefix if present
-    Ok(tag.strip_prefix('v').unwrap_or(tag).to_string())
-}
-
-/// Map a `fresh-update` provenance channel onto the coarser `InstallMethod`
-/// used by the notification UI.
-fn channel_to_install_method(channel: fresh_update::Channel) -> InstallMethod {
-    use fresh_update::Channel;
-    match channel {
-        Channel::Homebrew => InstallMethod::Homebrew,
-        Channel::Cargo | Channel::CargoBinstall => InstallMethod::Cargo,
-        Channel::Npm => InstallMethod::Npm,
-        Channel::Aur | Channel::AurBin => InstallMethod::Aur,
-        Channel::Apt
-        | Channel::Dnf
-        | Channel::Zypper
-        | Channel::Pacman
-        | Channel::Flatpak
-        | Channel::Snap
-        | Channel::Winget
-        | Channel::Scoop
-        | Channel::Chocolatey
-        | Channel::Nix
-        | Channel::FreebsdPkg
-        | Channel::Mise => InstallMethod::PackageManager,
-        Channel::Tarball | Channel::Appimage | Channel::Source | Channel::Prebuilt
-        | Channel::Unknown => InstallMethod::Unknown,
-    }
-}
-
-/// Detect the installation method.
+/// Parse the version from a GitHub releases API body.
 ///
-/// Prefers deterministic provenance from the `fresh-update` crate (an install
-/// receipt, or the compile-time `FRESH_BUILD_CHANNEL`), and only falls back to
-/// the legacy executable-path heuristic when provenance is unknown. See
-/// `docs/internal/packaging-self-update.md`.
-pub fn detect_install_method() -> InstallMethod {
-    let method = channel_to_install_method(fresh_update::resolve().channel);
-    if method != InstallMethod::Unknown {
-        return method;
-    }
-    // Fall back to the legacy path heuristic (it still recognises generic
-    // system paths as a package-manager install, which the resolver leaves
-    // as Unknown pending a receipt).
-    match env::current_exe() {
-        Ok(path) => detect_install_method_from_path(&path),
-        Err(_) => InstallMethod::Unknown,
-    }
+/// Thin wrapper over `fresh_update::version::parse_tag_name` kept because
+/// callers/tests use the `Result` shape.
+fn parse_version_from_json(json: &str) -> Result<String, String> {
+    fresh_update::version::parse_tag_name(json)
+        .ok_or_else(|| "tag_name not found in response".to_string())
 }
 
-/// Detect installation method from a given executable path
-pub fn detect_install_method_from_path(exe_path: &Path) -> InstallMethod {
-    let path_str = exe_path.to_string_lossy();
-
-    // Check for Homebrew paths (macOS and Linux)
-    if path_str.contains("/opt/homebrew/")
-        || path_str.contains("/usr/local/Cellar/")
-        || path_str.contains("/home/linuxbrew/")
-        || path_str.contains("/.linuxbrew/")
-    {
-        return InstallMethod::Homebrew;
-    }
-
-    // Check for Cargo installation
-    if path_str.contains("/.cargo/bin/") || path_str.contains("\\.cargo\\bin\\") {
-        return InstallMethod::Cargo;
-    }
-
-    // Check for npm global installation
-    if path_str.contains("/node_modules/")
-        || path_str.contains("\\node_modules\\")
-        || path_str.contains("/npm/")
-        || path_str.contains("/lib/node_modules/")
-    {
-        return InstallMethod::Npm;
-    }
-
-    // Check for AUR installation (Arch Linux)
-    if path_str.starts_with("/usr/bin/") && is_arch_linux() {
-        return InstallMethod::Aur;
-    }
-
-    // Check for package manager installation (standard system paths)
-    if path_str.starts_with("/usr/bin/")
-        || path_str.starts_with("/usr/local/bin/")
-        || path_str.starts_with("/bin/")
-    {
-        return InstallMethod::PackageManager;
-    }
-
-    InstallMethod::Unknown
-}
-
-/// Check if we're running on Arch Linux
-fn is_arch_linux() -> bool {
-    std::fs::read_to_string("/etc/os-release")
-        .map(|content| content.contains("Arch Linux") || content.contains("ID=arch"))
-        .unwrap_or(false)
-}
-
-/// Compare two semantic versions
-/// Returns true if `latest` is newer than `current`
+/// Compare two versions; `true` if `latest` is newer than `current`.
+/// Delegates to `fresh_update::version`.
 pub fn is_newer_version(current: &str, latest: &str) -> bool {
-    let parse_version = |v: &str| -> Option<(u32, u32, u32)> {
-        let parts: Vec<&str> = v.split('.').collect();
-        if parts.len() >= 3 {
-            Some((
-                parts[0].parse().ok()?,
-                parts[1].parse().ok()?,
-                parts[2].split('-').next()?.parse().ok()?,
-            ))
-        } else if parts.len() == 2 {
-            Some((parts[0].parse().ok()?, parts[1].parse().ok()?, 0))
-        } else {
-            None
-        }
-    };
-
-    match (parse_version(current), parse_version(latest)) {
-        (Some((c_major, c_minor, c_patch)), Some((l_major, l_minor, l_patch))) => {
-            (l_major, l_minor, l_patch) > (c_major, c_minor, c_patch)
-        }
-        _ => false,
-    }
+    fresh_update::version::is_newer(current, latest)
 }
 
-/// Check for a new release (blocking)
+/// Detect how this copy of `fresh` was installed.
+///
+/// Delegates entirely to `fresh_update::resolve()` (receipt → embedded channel
+/// → path heuristic). See `docs/internal/packaging-self-update.md`.
+pub fn detect_provenance() -> Provenance {
+    fresh_update::resolve()
+}
+
+/// Check for a new release (blocking).
+///
+/// Fetches the release feed here (HTTP lives in `services::http`) and hands the
+/// body to `fresh_update::check::evaluate`, which parses it, compares versions,
+/// and resolves provenance.
 pub fn check_for_update(releases_url: &str) -> Result<ReleaseCheckResult, String> {
-    let latest_version = fetch_latest_version(releases_url)?;
-    let install_method = detect_install_method();
-    let update_available = is_newer_version(CURRENT_VERSION, &latest_version);
+    let body = super::http::get_release_json(releases_url)?;
+    let check = fresh_update::check::evaluate(CURRENT_VERSION, &body)?;
 
     tracing::debug!(
         current = CURRENT_VERSION,
-        latest = %latest_version,
-        update_available,
-        install_method = ?install_method,
+        latest = %check.latest_version,
+        update_available = check.update_available,
+        channel = %check.provenance.channel,
+        confidence = ?check.provenance.confidence,
         "Release check complete"
     );
 
     Ok(ReleaseCheckResult {
-        latest_version,
-        update_available,
-        install_method,
+        latest_version: check.latest_version,
+        update_available: check.update_available,
+        provenance: check.provenance,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_is_newer_version() {
@@ -445,42 +305,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_detect_install_method() {
-        let cases = [
-            (
-                "/opt/homebrew/Cellar/fresh/0.1.26/bin/fresh",
-                InstallMethod::Homebrew,
-            ),
-            (
-                "/usr/local/Cellar/fresh/0.1.26/bin/fresh",
-                InstallMethod::Homebrew,
-            ),
-            (
-                "/home/linuxbrew/.linuxbrew/bin/fresh",
-                InstallMethod::Homebrew,
-            ),
-            ("/home/user/.cargo/bin/fresh", InstallMethod::Cargo),
-            (
-                "C:\\Users\\user\\.cargo\\bin\\fresh.exe",
-                InstallMethod::Cargo,
-            ),
-            (
-                "/usr/local/lib/node_modules/fresh-editor/bin/fresh",
-                InstallMethod::Npm,
-            ),
-            ("/usr/local/bin/fresh", InstallMethod::PackageManager),
-            ("/home/user/downloads/fresh", InstallMethod::Unknown),
-        ];
-        for (path, expected) in cases {
-            assert_eq!(
-                detect_install_method_from_path(&PathBuf::from(path)),
-                expected,
-                "detect_install_method({:?})",
-                path
-            );
-        }
-    }
+    // Install-method detection now lives in `fresh_update::heuristic` and
+    // `fresh_update::provenance` (see that crate's tests). release_checker only
+    // delegates, so there is nothing path-specific to test here.
 
     #[test]
     fn test_parse_version_from_json() {

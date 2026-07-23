@@ -34,6 +34,7 @@
 //! ```
 
 pub mod channel;
+pub mod check;
 pub mod confidence;
 pub mod heuristic;
 pub mod provenance;
@@ -43,6 +44,7 @@ pub mod self_update;
 pub mod version;
 
 pub use channel::{Channel, ParseChannelError};
+pub use check::{evaluate, ReleaseCheck};
 pub use confidence::Confidence;
 pub use provenance::{resolve, resolve_from, Provenance, ResolveInputs};
 pub use receipt::{Hints, InstallReceipt};

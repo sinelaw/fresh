@@ -4476,8 +4476,12 @@ fn real_main() -> AnyhowResult<()> {
                 release_checker::CURRENT_VERSION,
                 update_result.latest_version
             );
-            if let Some(cmd) = update_result.install_method.update_command() {
-                eprintln!("Update with: {}", cmd);
+            let plan = update_result.update_plan();
+            if let Some(cmd) = &plan.command {
+                eprintln!("Update with: {}", cmd.join(" "));
+            } else if matches!(plan.kind, fresh::services::release_checker::UpdateKind::SelfContained)
+            {
+                eprintln!("Update with: fresh update");
             } else {
                 eprintln!(
                     "Download from: https://github.com/sinelaw/fresh/releases/tag/v{}",
