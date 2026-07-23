@@ -47,7 +47,7 @@ const BEFORE_HELP_EN: &str =
 #[command(before_help = BEFORE_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init
+    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -173,6 +173,11 @@ struct Args {
     dump_config: bool,
     show_paths: bool,
     list_grammars: bool,
+    /// `fresh update [...]` — check for and install an update.
+    update: bool,
+    update_check: bool,
+    update_yes: bool,
+    update_allow_downgrade: bool,
     locale: Option<String>,
     check_plugin: Option<PathBuf>,
     init: Option<Option<String>>,
@@ -208,6 +213,12 @@ impl From<Cli> for Args {
         } else {
             false
         };
+
+        // `fresh --cmd update [--check] [--yes] [--allow-downgrade]`
+        let update = cli.cmd.first().map(String::as_str) == Some("update");
+        let update_check = update && cli.cmd.iter().any(|a| a == "--check");
+        let update_yes = update && cli.cmd.iter().any(|a| a == "--yes" || a == "-y");
+        let update_allow_downgrade = update && cli.cmd.iter().any(|a| a == "--allow-downgrade");
 
         // Parse --cmd arguments to determine command
         let (
@@ -409,10 +420,14 @@ impl From<Cli> for Args {
                 ["grammar", "list"] | ["grammars", "list"] | ["grammar", "ls"] | ["grammars"] => (
                     false, None, false, None, false, false, None, cli.files, None,
                 ),
+                // Update command (handled via the update flags above)
+                ["update", ..] => (
+                    false, None, false, None, false, false, None, cli.files, None,
+                ),
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init");
+                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init, update");
                     std::process::exit(1);
                 }
             }
@@ -464,6 +479,10 @@ impl From<Cli> for Args {
             dump_config,
             show_paths,
             list_grammars,
+            update,
+            update_check,
+            update_yes,
+            update_allow_downgrade,
             locale: cli.locale,
             check_plugin: cli.check_plugin,
             init,
@@ -3735,13 +3754,57 @@ fn is_interactive_launch(args: &Args) -> bool {
         && !args.list_grammars
         && !args.dump_config
         && !args.show_paths
+        && !args.update
         && args.check_plugin.is_none()
 }
 
 fn show_paths_command() -> AnyhowResult<()> {
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
     fresh::services::log_dirs::print_all_paths(&dir_context);
+
+    // Also report resolved install provenance (how `fresh update` behaves).
+    let prov = fresh::services::release_checker::detect_provenance();
+    let plan = fresh::services::release_checker::plan_for(&prov);
+    println!();
+    println!(
+        "install channel:    {} ({})",
+        prov.channel.label(),
+        prov.channel
+    );
+    println!("provenance:         {:?}", prov.confidence);
+    if let Some(detail) = &prov.detail {
+        println!("provenance source:  {detail}");
+    }
+    println!(
+        "update mechanism:   {}",
+        plan.command
+            .as_ref()
+            .map(|c| c.join(" "))
+            .unwrap_or(plan.human)
+    );
     Ok(())
+}
+
+/// Handle `fresh update [--check] [--yes] [--allow-downgrade]`.
+fn update_command(args: &Args) -> AnyhowResult<()> {
+    #[cfg(feature = "self-update")]
+    {
+        let opts = fresh::services::updater::UpdateOptions {
+            check_only: args.update_check,
+            yes: args.update_yes,
+            allow_downgrade: args.update_allow_downgrade,
+            ..Default::default()
+        };
+        fresh::services::updater::run(&opts).map_err(|e| anyhow::anyhow!("update failed: {e}"))
+    }
+    #[cfg(not(feature = "self-update"))]
+    {
+        let _ = args;
+        anyhow::bail!(
+            "this build was compiled without self-update support; \
+             download the latest release from https://github.com/sinelaw/fresh/releases"
+        );
+    }
 }
 
 fn dump_config_command(args: &Args) -> AnyhowResult<()> {
@@ -3767,6 +3830,9 @@ fn run_if_subcommand(
     args: &Args,
     #[cfg(feature = "gui")] console_available: bool,
 ) -> Option<AnyhowResult<()>> {
+    if args.update {
+        return Some(update_command(args));
+    }
     if args.show_paths {
         return Some(show_paths_command());
     }
@@ -4479,8 +4545,10 @@ fn real_main() -> AnyhowResult<()> {
             let plan = update_result.update_plan();
             if let Some(cmd) = &plan.command {
                 eprintln!("Update with: {}", cmd.join(" "));
-            } else if matches!(plan.kind, fresh::services::release_checker::UpdateKind::SelfContained)
-            {
+            } else if matches!(
+                plan.kind,
+                fresh::services::release_checker::UpdateKind::SelfContained
+            ) {
                 eprintln!("Update with: fresh update");
             } else {
                 eprintln!(

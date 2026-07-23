@@ -251,6 +251,11 @@ pub fn detect_provenance() -> Provenance {
     fresh_update::resolve()
 }
 
+/// The update plan for a given provenance (thin re-export of the registry).
+pub fn plan_for(prov: &Provenance) -> UpdatePlan {
+    fresh_update::plan(prov)
+}
+
 /// Check for a new release (blocking).
 ///
 /// Fetches the release feed here (HTTP lives in `services::http`) and hands the

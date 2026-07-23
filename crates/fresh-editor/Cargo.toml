@@ -50,7 +50,7 @@ path = "tests/scene_parity.rs"
 required-features = ["web"]
 
 [features]
-default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http"]
+default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-update"]
 plugins = [
     "dep:fresh-plugin-runtime",
     "dep:fresh-parser-js",
@@ -117,6 +117,12 @@ runtime = [
 # When disabled, those paths become no-ops / return errors and the whole
 # TLS stack (ureq + rustls + ring + webpki) is dropped from the binary.
 http = ["dep:ureq"]
+# In-place self-update for self-contained installs (raw tarball / AppImage):
+# download the release asset, verify its SHA-256, extract, and atomically swap
+# the binary. Needs HTTP plus archive extraction (tar + xz + zip). Enabled by
+# default; dropped from min-size/no-default builds so they stay small and never
+# link the extraction/TLS stack.
+self-update = ["http", "dep:tar", "dep:xz2", "dep:zip"]
 # Web UI: `fresh --web [ADDR]` serves the real editor to a browser over a
 # local HTTP + WebSocket bridge (the `webui` module). The frontend (the page
 # build.rs assembles from web-ui/) is embedded into the binary so the build
@@ -239,6 +245,10 @@ arboard = { version = "3.6", default-features = false, features = ["wayland-data
 syntect = { version = "5.3", default-features = false, optional = true }
 
 ureq = { version = "3.1.4", default-features = false, features = ["rustls", "platform-verifier"], optional = true }
+# Archive extraction for self-update (behind the `self-update` feature).
+tar = { version = "0.4", optional = true }
+xz2 = { version = "0.1", optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 # Unicode handling - always needed for primitives
 unicode-width = { version = "0.2" }
 unicode-segmentation = { version = "1.12" }
