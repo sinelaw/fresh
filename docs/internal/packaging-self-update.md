@@ -21,9 +21,16 @@
 >   download → verify SHA-256 → extract → atomic swap for tarball/AppImage.
 >   `fresh config paths` prints resolved provenance.
 >
-> **Not yet done (Phase 4):** the one-key in-editor update from the status-bar
-> notification, and GitHub build-attestation verification (SHA-256 is enforced;
-> attestation is still a follow-up). See §15 and §17.
+> - **Phase 4 (partial)** — interactive in-editor update: the status-bar
+>   update indicator is clickable (and an "Update fresh" command exists);
+>   clicking prompts "Update now?", and confirming runs the update **locally**
+>   in the background (never on the window's remote `Authority`), logging to
+>   `<log_dir>/self-update.log`. Gated by the `self_update` config
+>   (default on).
+>
+> **Not yet done:** GitHub build-attestation verification (SHA-256 is enforced;
+> attestation is still a follow-up), and an optional `auto_update` (no-prompt)
+> mode. See §15 and §17.
 
 ---
 
@@ -583,11 +590,17 @@ or `--appimage-extract`s, and atomically swaps — gated on
 prints provenance. Covered by extraction unit tests and a mock-server
 download→verify→extract integration test.
 
-**Phase 4 — UX polish (remaining).**
-One-key update from the status-bar notification for self-capable installs; and
-GitHub build-attestation verification alongside the SHA-256 check. Optional
-`editor.auto_update` opt-in. The exit-time notification already prints the
-resolved command / `fresh --cmd update` hint.
+**Phase 4 — interactive UX. ✅ landed (attestation remaining).**
+The status-bar `Update: vX.Y.Z` indicator is clickable (`StatusBarClickable::
+Update` → `Action::UpdateFresh`), and a command-palette entry "Update fresh"
+does the same. When `self_update` is on and an update is available, it prompts
+`ConfirmUpdate`; confirming calls `updater::spawn_background_update`, which
+re-invokes `fresh --cmd update --yes` as a **local** detached child (never the
+window's `Authority`) and streams its output to `<log_dir>/self-update.log`.
+The editor keeps running on the old inode until restart. Unknown/source
+installs point at the releases page instead of prompting. Still remaining:
+GitHub build-attestation verification alongside SHA-256, and an optional
+no-prompt `auto_update` mode.
 
 ---
 
