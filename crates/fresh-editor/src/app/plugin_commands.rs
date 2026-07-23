@@ -1429,7 +1429,12 @@ impl Editor {
         line: Option<usize>,
         column: Option<usize>,
     ) -> AnyhowResult<()> {
-        // Switch to the target split
+        // Validate the target split BEFORE touching any buffer state so a
+        // dead/unknown split id cannot leave an orphan buffer loaded with
+        // nothing on screen. `set_active_split` returns false when the id
+        // doesn't resolve to a live leaf (the split was closed, or its last
+        // tab collapsed it away). Surface that as an error so the failure is
+        // reported instead of masquerading as success (#2769).
         let target_split_id = LeafId(SplitId(split_id));
         if !self
             .windows
@@ -1439,13 +1444,13 @@ impl Editor {
             .set_active_split(target_split_id)
         {
             tracing::error!("Failed to switch to split {}", split_id);
-            return Ok(());
+            anyhow::bail!("openFileInSplit: split {} does not exist", split_id);
         }
 
         // Open the file in the now-active split
         if let Err(e) = self.open_file(&path) {
             tracing::error!("Failed to open file from plugin: {}", e);
-            return Ok(());
+            return Err(e);
         }
 
         // Jump to the specified location (or default to start)
