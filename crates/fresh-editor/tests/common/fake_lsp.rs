@@ -2449,6 +2449,220 @@ done
         dir.join("fake_lsp_server_drops_semantic_tokens.sh")
     }
 
+    /// Spawn a fake LSP server that advertises `hoverProvider` but always
+    /// returns `result: null` for `textDocument/hover` — like vtsls returning
+    /// no hover for a Tailwind class. Used to regression-test sinelaw/fresh#2635,
+    /// where a null hover from the first server suppressed a second server's
+    /// hover.
+    pub fn spawn_hover_null(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then break; fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"textDocumentSync":1,"hoverProvider":true}}}'
+        ;;
+    "textDocument/hover")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose"|"initialized")
+        ;;
+    "textDocument/diagnostic")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"items":[],"resultId":null}}'
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::hover_null_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the null-hover fake LSP server script.
+    pub fn hover_null_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_hover_null.sh")
+    }
+
+    /// Spawn a fake LSP server that returns a distinctive hover body
+    /// ("HoverAlpha content") WITH a range. Used together with
+    /// `spawn_hover_null` / `spawn_hover_beta` to test hover merging across
+    /// multiple servers.
+    pub fn spawn_hover_alpha(dir: &std::path::Path) -> anyhow::Result<Self> {
+        Self::spawn_hover_with_body(
+            dir,
+            &Self::hover_alpha_script_path(dir),
+            "HoverAlpha content",
+        )
+    }
+
+    /// Get the path to the "HoverAlpha" fake LSP server script.
+    pub fn hover_alpha_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_hover_alpha.sh")
+    }
+
+    /// Spawn a fake LSP server that returns a distinctive hover body
+    /// ("HoverBeta content") WITH a range.
+    pub fn spawn_hover_beta(dir: &std::path::Path) -> anyhow::Result<Self> {
+        Self::spawn_hover_with_body(
+            dir,
+            &Self::hover_beta_script_path(dir),
+            "HoverBeta content",
+        )
+    }
+
+    /// Get the path to the "HoverBeta" fake LSP server script.
+    pub fn hover_beta_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_hover_beta.sh")
+    }
+
+    /// Shared helper: write and spawn a fake LSP server whose
+    /// `textDocument/hover` returns `body` (markdown) with a range spanning
+    /// 10 characters from the requested position.
+    fn spawn_hover_with_body(
+        _dir: &std::path::Path,
+        script_path: &std::path::Path,
+        body: &str,
+    ) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        // `body` is embedded via a shell variable so we don't have to escape
+        // it into the JSON template; the template itself uses no `{}` so no
+        // format!-escaping is needed.
+        let script = format!(
+            r#"#!/bin/bash
+
+HOVER_BODY="{body}"
+
+read_message() {{
+    local content_length=0
+    while IFS= read -r line; do
+        line="${{line%$'\r'}}"
+        if [ -z "$line" ]; then break; fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${{line#Content-Length:}}"
+                content_length="${{content_length// /}}"
+                ;;
+        esac
+    done
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}}
+
+send_message() {{
+    local message="$1"
+    local length=${{#message}}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}}
+
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then break; fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+case "$method" in
+    "initialize")
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"capabilities":{{"textDocumentSync":1,"hoverProvider":true}}}}}}'
+        ;;
+    "textDocument/hover")
+        line=$(echo "$msg" | grep -o '"line":[0-9]*' | head -1 | cut -d':' -f2)
+        char=$(echo "$msg" | grep -o '"character":[0-9]*' | head -1 | cut -d':' -f2)
+        end_char=$((char + 10))
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"contents":{{"kind":"markdown","value":"'"$HOVER_BODY"'"}},"range":{{"start":{{"line":'$line',"character":'$char'}},"end":{{"line":'$line',"character":'$end_char'}}}}}}}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didClose"|"initialized")
+        ;;
+    "textDocument/diagnostic")
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":{{"items":[],"resultId":null}}}}'
+        ;;
+    "shutdown")
+        send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":null}}'
+        break
+        ;;
+    *)
+        if [ -n "$msg_id" ]; then
+            send_message '{{"jsonrpc":"2.0","id":'$msg_id',"result":null}}'
+        fi
+        ;;
+esac
+done
+"#
+        );
+
+        std::fs::write(script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
     /// Stop the server
     pub fn stop(&mut self) {
         let _ = self.stop_tx.send(());
