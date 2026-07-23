@@ -63,7 +63,10 @@ fn setup_editor_with_dock_terminal() -> DockFixture {
     // Sanity: two distinct leaves; the terminal lives in the dock, and the
     // editor leaf holds the file (not the terminal).
     assert_ne!(editor_leaf, dock_leaf);
-    assert!(harness.editor().active_window().is_terminal_buffer(terminal_buffer));
+    assert!(harness
+        .editor()
+        .active_window()
+        .is_terminal_buffer(terminal_buffer));
     assert!(
         editor_leaf_tabs(&harness, editor_leaf).contains(&file_buffer),
         "precondition: the editor leaf should hold the opened file"
