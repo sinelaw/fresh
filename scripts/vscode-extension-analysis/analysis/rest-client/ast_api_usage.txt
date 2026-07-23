@@ -1,0 +1,156 @@
+# rest-client - Full API & Side Effects Report (AST)
+Files analyzed: 79
+
+## vscode API
+     20x  vscode.commands.registerCommand
+     12x  vscode.Uri.parse
+     10x  vscode.window.showInformationMessage
+      9x  vscode.window.showErrorMessage
+      8x  vscode.window.showWarningMessage
+      7x  vscode.Uri.file
+      6x  vscode.window.activeTextEditor
+      6x  vscode.window.showTextDocument
+      6x  vscode.window
+      6x  vscode.CompletionItemKind.Field
+      5x  vscode.env.clipboard
+      5x  vscode.workspace.openTextDocument
+      5x  vscode.commands.executeCommand
+      4x  vscode.window.showQuickPick
+      3x  vscode.languages.registerCodeLensProvider
+      3x  vscode.window.createStatusBarItem
+      2x  vscode.ViewColumn.Active
+      2x  vscode.languages.registerCompletionItemProvider
+      2x  vscode.languages.registerHoverProvider
+      2x  vscode.languages.registerDefinitionProvider
+      2x  vscode.window.createOutputChannel
+      2x  vscode.workspace.onDidChangeConfiguration
+      2x  vscode.window.onDidChangeActiveTextEditor
+      2x  vscode.workspace.getConfiguration
+      2x  vscode.workspace.onDidCloseTextDocument
+      2x  vscode.DiagnosticSeverity.Error
+      2x  vscode.StatusBarAlignment.Left
+      2x  vscode.window.createWebviewPanel
+      2x  vscode.ViewColumn.Two
+      1x  vscode.window.createQuickPick
+      1x  vscode.QuickInputButtons.Back
+      1x  vscode.window.showOpenDialog
+      1x  vscode.workspace
+      1x  vscode.languages.registerDocumentLinkProvider
+      1x  vscode.languages.registerReferenceProvider
+      1x  vscode.languages.registerDocumentSymbolProvider
+      1x  vscode.languages.setLanguageConfiguration
+      1x  vscode.ViewColumn.Beside
+      1x  vscode.languages.createDiagnosticCollection
+      1x  vscode.workspace.onDidOpenTextDocument
+      1x  vscode.workspace.onDidChangeTextDocument
+      1x  vscode.workspace.textDocuments.filter
+      1x  vscode.workspace.textDocuments
+      1x  vscode.DiagnosticSeverity.Information
+      1x  vscode.DiagnosticSeverity.Warning
+      1x  vscode.CompletionItemKind.Variable
+      1x  vscode.CompletionItemKind.Method
+      1x  vscode.CompletionItemKind.Property
+      1x  vscode.SymbolKind.Variable
+      1x  vscode.SymbolKind.Method
+      1x  vscode.env.asExternalUri
+      1x  vscode.env.openExternal
+      1x  vscode.StatusBarAlignment.Right
+      1x  vscode.languages.match
+      1x  vscode.window.showInputBox
+      1x  vscode.extensions.getExtension
+      1x  vscode.workspace.getWorkspaceFolder
+      1x  vscode.window.activeTextEditor.document
+      1x  vscode.languages.setTextDocumentLanguage
+      1x  vscode.window.showSaveDialog
+
+## vscode Types (type-only)
+     57x  vscode.TextDocument
+     16x  vscode.Range
+     14x  vscode.Position
+     12x  vscode.CancellationToken
+      8x  vscode.Uri
+      8x  vscode.WebviewPanel
+      7x  vscode.CodeLens
+      6x  vscode.ExtensionContext
+      6x  vscode.ViewColumn
+      5x  vscode.Clipboard
+      5x  vscode.Disposable
+      4x  vscode.QuickPickItem
+      4x  vscode.MarkdownString
+      3x  vscode.Event
+      3x  vscode.CodeLensProvider
+      3x  vscode.Command
+      3x  vscode.StatusBarItem
+      2x  vscode.CharacterPair
+      2x  vscode.DocumentLink
+      2x  vscode.HoverProvider
+      2x  vscode.Hover
+      2x  vscode.DefinitionProvider
+      2x  vscode.Definition
+      2x  vscode.CompletionItemProvider
+      2x  vscode.CompletionItem
+      2x  vscode.SymbolInformation
+      1x  vscode.OutputChannel
+      1x  vscode.SnippetString
+      1x  vscode.DiagnosticCollection
+      1x  vscode.ConfigurationChangeEvent
+      1x  vscode.Diagnostic
+      1x  vscode.DocumentLinkProvider
+      1x  vscode.ReferenceProvider
+      1x  vscode.ReferenceContext
+      1x  vscode.Location
+      1x  vscode.DocumentSymbolProvider
+      1x  vscode.QuickPickOptions
+      1x  vscode.TextEditor
+
+## Node.js Builtins
+     26x  path.join
+      8x  url.parse
+      5x  path.dirname
+      4x  fs.readFileSync
+      4x  path.isAbsolute
+      3x  url.resolve
+      3x  fs.existsSync
+      3x  os.EOL
+      2x  path.basename
+      2x  http.createServer
+      2x  crypto.createHash
+      1x  os.tmpdir
+      1x  https.createServer
+      1x  crypto.randomBytes
+      1x  path.parse
+      1x  os.homedir
+      1x  path.extname
+      1x  os.EOL.repeat
+      1x  path.resolve
+
+## Process/Environment
+      7x  process.env
+      2x  process.env.VSC_REST_CLIENT_HOME
+      2x  process.env.XDG_CACHE_HOME
+      2x  process.env.XDG_STATE_HOME
+      1x  process.platform
+      1x  process.cwd
+
+## Shell Execution
+
+## Network/HTTP
+      2x  globalThis.fetch
+      2x  node-fetch.fetch
+
+## Global Side Effects
+      3x  globalThis.setTimeout
+      1x  globalThis.setInterval
+
+## Activation Events
+  onLanguage:markdown
+
+## Contributes
+  commands: 19 entries
+  configuration: 1 entries
+  configurationDefaults: 1 entries
+  grammars: 1 entries
+  keybindings: 11 entries
+  languages: 1 entries
+  menus: 1 entries
+  snippets: 1 entries

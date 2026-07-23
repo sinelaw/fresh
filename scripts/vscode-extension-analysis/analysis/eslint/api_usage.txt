@@ -1,0 +1,70 @@
+═══ eslint ═══
+Files analyzed: 54
+
+Activation Events:
+  onStartupFinished
+
+Contributes:
+  commands: 6 entries
+  configuration: 1 entries
+  jsonValidation: 3 entries
+  languages: 2 entries
+  taskDefinitions: 1 entries
+
+Namespaces (by usage count):
+      9x  vscode.workspace
+      3x  vscode.window
+      2x  vscode.commands
+      1x  vscode.languages
+      1x  vscode.env
+      1x  vscode.tasks
+
+API Methods (by usage count):
+      2x  vscode.commands.executeCommand
+      2x  vscode.workspace.getConfiguration
+      2x  vscode.workspace.workspaceFolders
+      1x  vscode.env.DEBUG
+      1x  vscode.env.NODE
+      1x  vscode.commands.registerCommand
+      1x  vscode.workspace.changed
+      1x  vscode.workspace.onDidChangeWorkspaceFolders
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.tasks.registerTaskProvider
+      1x  vscode.window.showQuickPick
+
+Types/Classes (by usage count):
+      8x  vscode.Task
+      4x  vscode.WorkspaceFolder
+      3x  vscode.Disposable
+      1x  vscode.TaskDefinition
+      1x  vscode.ShellExecutionOptions
+      1x  vscode.ShellExecution
+
+Event Subscriptions:
+      1x  vscode.workspace.onDidChangeWorkspaceFolders
+      1x  vscode.workspace.onDidChangeConfiguration
+
+Destructured Imports:
+      3x  workspace
+      3x  window
+      2x  Uri
+      2x  TextDocument
+      2x  ConfigurationTarget
+      2x  WorkspaceConfiguration
+      2x  commands
+      2x  ExtensionContext
+      1x  languages
+      1x  CodeActionContext
+      1x  Diagnostic
+      1x  Command
+      1x  CodeAction
+      1x  MessageItem
+      1x  env
+      1x  CodeActionKind
+      1x  NotebookCell
+      1x  LanguageStatusItem
+      1x  LanguageStatusSeverity
+      1x  DocumentFilter
+      1x  Disposable
+      1x  QuickPickItem
+      1x  WorkspaceFolder

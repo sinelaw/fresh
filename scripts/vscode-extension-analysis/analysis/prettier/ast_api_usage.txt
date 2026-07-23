@@ -1,0 +1,96 @@
+# prettier - Full API & Side Effects Report (AST)
+Files analyzed: 115
+
+## vscode API
+      6x  vscode.workspace.createFileSystemWatcher
+      4x  vscode.workspace.getWorkspaceFolder
+      3x  vscode.workspace.isTrusted
+      3x  vscode.Uri.file
+      3x  vscode.commands.executeCommand
+      3x  vscode.commands.registerCommand
+      2x  vscode.CodeActionKind.SourceFixAll.append
+      2x  vscode.CodeActionKind.SourceFixAll
+      2x  vscode.workspace.getConfiguration
+      2x  vscode.workspace.onDidChangeConfiguration
+      2x  vscode.window.activeTextEditor
+      2x  vscode.languages.forEach
+      1x  vscode.window.createOutputChannel
+      1x  vscode.window.showWarningMessage
+      1x  vscode.Uri.parse
+      1x  vscode.window.onDidChangeActiveTextEditor
+      1x  vscode.languages.match
+      1x  vscode.languages.registerDocumentRangeFormattingEditProvider
+      1x  vscode.languages.registerDocumentFormattingEditProvider
+      1x  vscode.languages.registerCodeActionsProvider
+      1x  vscode.TextEdit.replace
+      1x  vscode.window.createStatusBarItem
+      1x  vscode.StatusBarAlignment.Right
+      1x  vscode.languages.createLanguageStatusItem
+      1x  vscode.LanguageStatusSeverity.Warning
+      1x  vscode.LanguageStatusSeverity.Error
+      1x  vscode.LanguageStatusSeverity.Information
+      1x  vscode.Uri.joinPath
+      1x  vscode.workspace.fs.writeFile
+      1x  vscode.workspace.fs
+      1x  vscode.window.showOpenDialog
+      1x  vscode.workspace.workspaceFolders
+
+## vscode Types (type-only)
+     13x  vscode.TextDocument
+      7x  vscode.Uri
+      6x  vscode.TextEdit
+      6x  vscode.DocumentFilter
+      6x  vscode.Disposable
+      3x  vscode.CancellationToken
+      2x  vscode.Range
+      2x  vscode.FormattingOptions
+      2x  vscode.TextEditor
+      1x  vscode.CodeActionProvider
+      1x  vscode.CodeActionContext
+      1x  vscode.CodeAction
+      1x  vscode.DocumentRangeFormattingEditProvider
+      1x  vscode.DocumentFormattingEditProvider
+      1x  vscode.StatusBarItem
+      1x  vscode.LanguageStatusItem
+      1x  vscode.DocumentSelector
+      1x  vscode.ExtensionContext
+
+## Node.js Builtins
+     14x  path.join
+      6x  path.dirname
+      5x  fs.promises
+      5x  url.pathToFileURL
+      4x  path.isAbsolute
+      2x  fs.promises.stat
+      2x  path.resolve
+      2x  os.homedir
+      1x  fs.promises.readdir
+      1x  fs.promises.readFile
+      1x  path.extname
+      1x  path.basename
+      1x  child_process.spawn
+      1x  path.parse
+      1x  fs.promises.access
+
+## Process/Environment
+      3x  process.platform
+      2x  process.env
+      1x  process.env.EXTENSION_NAME
+      1x  process.env.EXTENSION_VERSION
+
+## Shell Execution
+      1x  child_process.spawn
+
+## Network/HTTP
+
+## Global Side Effects
+      1x  globalThis.setTimeout
+
+## Activation Events
+  onStartupFinished
+
+## Contributes
+  commands: 2 entries
+  configuration: 1 entries
+  jsonValidation: 3 entries
+  languages: 5 entries

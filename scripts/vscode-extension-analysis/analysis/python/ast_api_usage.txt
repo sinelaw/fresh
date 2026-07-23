@@ -1,0 +1,425 @@
+# python - Full API & Side Effects Report (AST)
+Files analyzed: 469
+
+## vscode API
+    313x  vscode.l10n.t
+     43x  vscode.workspace.workspaceFolders
+     40x  vscode.Uri.file
+     33x  vscode.workspace
+     20x  vscode.Uri
+     20x  vscode.workspace.workspaceFolders.length
+     17x  vscode.ConfigurationTarget.Global
+     17x  vscode.ConfigurationTarget.WorkspaceFolder
+     14x  vscode.Uri.parse
+     12x  vscode.ConfigurationTarget.Workspace
+     12x  vscode.workspace.getWorkspaceFolder
+     12x  vscode.env
+     10x  vscode.commands.executeCommand
+     10x  vscode.QuickInputButtons.Back
+      9x  vscode.extensions.getExtension
+      8x  vscode.DiagnosticSeverity.Error
+      8x  vscode.workspace.isTrusted
+      7x  vscode.DiagnosticSeverity.Warning
+      6x  vscode.extensions
+      6x  vscode.lm.registerTool
+      6x  vscode.QuickPickItemKind.Separator
+      5x  vscode.ProgressLocation.Window
+      5x  vscode.window.activeTextEditor
+      5x  vscode.ProgressLocation.Notification
+      5x  vscode.FileSystemError
+      4x  vscode.window.withProgress
+      4x  vscode.Uri.joinPath
+      4x  vscode.commands.registerCommand
+      4x  vscode.window.createOutputChannel
+      4x  vscode.extensions.all
+      3x  vscode.extensions.onDidChange
+      3x  vscode.lm.invokeTool
+      3x  vscode.env.appName
+      3x  vscode.window.showErrorMessage
+      3x  vscode.window.showTextDocument
+      3x  vscode.env.openExternal
+      3x  vscode.window.createQuickPick
+      3x  vscode.workspace.onDidChangeConfiguration
+      3x  vscode.workspace.onDidChangeWorkspaceFolders
+      3x  vscode.workspace.getConfiguration
+      3x  vscode.workspace.createFileSystemWatcher
+      3x  vscode.workspace.fs
+      2x  vscode.env.uiKind
+      2x  vscode.window.setStatusBarMessage
+      2x  vscode.DiagnosticSeverity.Information
+      2x  vscode.languages
+      2x  vscode.languages.createLanguageStatusItem
+      2x  vscode.LanguageStatusSeverity.Warning
+      2x  vscode.workspace.notebookDocuments
+      2x  vscode.env.remoteName
+      2x  vscode.env.shell
+      2x  vscode.EventEmitter
+      2x  vscode.window.showInformationMessage
+      2x  vscode.window.showWarningMessage
+      2x  vscode.window.showQuickPick
+      2x  vscode.window.showInputBox
+      2x  vscode.window.createStatusBarItem
+      2x  vscode.env.clipboard
+      2x  vscode.debug.registerDebugConfigurationProvider
+      2x  vscode.workspace.textDocuments
+      2x  vscode.window.onDidChangeActiveTextEditor
+      2x  vscode.workspace.onDidChangeTextDocument
+      2x  vscode.workspace.onDidOpenTextDocument
+      2x  vscode.workspace.onDidCloseTextDocument
+      2x  vscode.workspace.onDidSaveTextDocument
+      2x  vscode.workspace.openTextDocument
+      2x  vscode.workspace.applyEdit
+      2x  vscode.window.onDidChangeTerminalState
+      2x  vscode.workspace.findFiles
+      2x  vscode.workspace.workspaceFolders.every
+      2x  vscode.workspace.onDidGrantWorkspaceTrust
+      2x  vscode.workspace.workspaceFolders.map
+      2x  vscode.LanguageStatusSeverity.Information
+      2x  vscode.IndentAction.Indent
+      2x  vscode.window.tabGroups
+      1x  vscode.UIKind.Web
+      1x  vscode.languages.registerHoverProvider
+      1x  vscode.commands
+      1x  vscode.LanguageStatusSeverity
+      1x  vscode.workspace.notebookDocuments.find
+      1x  vscode.version
+      1x  vscode.env.appRoot
+      1x  vscode.env.language
+      1x  vscode.env.sessionId
+      1x  vscode.env.machineId
+      1x  vscode.env.onDidChangeShell
+      1x  vscode.env.uriScheme
+      1x  vscode.window.onDidChangeWindowState
+      1x  vscode.window.showOpenDialog
+      1x  vscode.window.showSaveDialog
+      1x  vscode.window.showWorkspaceFolderPick
+      1x  vscode.StatusBarAlignment.Left
+      1x  vscode.window.createInputBox
+      1x  vscode.window.createTreeView
+      1x  vscode.window.onDidWriteTerminalData
+      1x  vscode.window.onDidExecuteTerminalCommand
+      1x  vscode.env.clipboard.readText
+      1x  vscode.env.clipboard.writeText
+      1x  vscode.commands.registerTextEditorCommand
+      1x  vscode.commands.getCommands
+      1x  vscode.debug.activeDebugConsole
+      1x  vscode.debug.activeDebugSession
+      1x  vscode.debug.breakpoints
+      1x  vscode.debug.onDidChangeActiveDebugSession
+      1x  vscode.debug.onDidStartDebugSession
+      1x  vscode.debug.onDidReceiveDebugSessionCustomEvent
+      1x  vscode.debug.onDidTerminateDebugSession
+      1x  vscode.debug.onDidChangeBreakpoints
+      1x  vscode.debug.registerDebugAdapterTrackerFactory
+      1x  vscode.debug.startDebugging
+      1x  vscode.debug.addBreakpoints
+      1x  vscode.debug.removeBreakpoints
+      1x  vscode.debug.registerDebugAdapterDescriptorFactory
+      1x  vscode.window.visibleTextEditors
+      1x  vscode.window.onDidChangeVisibleTextEditors
+      1x  vscode.window.onDidChangeTextEditorSelection
+      1x  vscode.window.onDidChangeTextEditorOptions
+      1x  vscode.window.onDidChangeTextEditorViewColumn
+      1x  vscode.window.createTextEditorDecorationType
+      1x  vscode.languages.registerCompletionItemProvider
+      1x  vscode.window.onDidOpenTerminal
+      1x  vscode.window.onDidCloseTerminal
+      1x  vscode.window.createTerminal
+      1x  vscode.window.onDidChangeTerminalShellIntegration
+      1x  vscode.window.onDidEndTerminalShellExecution
+      1x  vscode.workspace.workspaceFile
+      1x  vscode.workspace.asRelativePath
+      1x  vscode.workspace.save
+      1x  vscode.FileSystemError.FileNotFound
+      1x  vscode.FileSystemError.FileExists
+      1x  vscode.FileSystemError.FileIsADirectory
+      1x  vscode.FileSystemError.FileNotADirectory
+      1x  vscode.FileSystemError.NoPermissions
+      1x  vscode.env.appName.includes
+      1x  vscode.languages.createDiagnosticCollection
+      1x  vscode.languages.onDidChangeDiagnostics
+      1x  vscode.window.showNotebookDocument
+      1x  vscode.window.onDidStartTerminalShellExecution
+      1x  vscode.window.registerTerminalLinkProvider
+      1x  vscode.workspace.onDidCloseNotebookDocument
+      1x  vscode.workspace.fs.createDirectory
+      1x  vscode.workspace.openNotebookDocument
+      1x  vscode.workspace.fs.copy
+      1x  vscode.languages.setLanguageConfiguration
+      1x  vscode.window.activeTerminal
+      1x  vscode.StatusBarAlignment.Right
+      1x  vscode.workspace.notebookDocuments.some
+      1x  vscode.IndentAction.None
+      1x  vscode.IndentAction.Outdent
+      1x  vscode.CodeActionKind.QuickFix
+      1x  vscode.Disposable.from
+      1x  vscode.DiagnosticSeverity.Hint
+      1x  vscode.ViewColumn.Beside
+      1x  vscode.NotebookCellKind.Code
+      1x  vscode.NotebookEdit.insertCells
+      1x  vscode.notebooks.createNotebookController
+      1x  vscode.notebooks
+      1x  vscode.NotebookCellOutput
+      1x  vscode.NotebookCellOutputItem.text
+      1x  vscode.NotebookCellOutputItem
+      1x  vscode.window.tabGroups.all
+
+## vscode Types (type-only)
+    347x  vscode.Uri
+    126x  vscode.Event
+    108x  vscode.Disposable
+    100x  vscode.CancellationToken
+     80x  vscode.WorkspaceFolder
+     47x  vscode.Terminal
+     45x  vscode.TextDocument
+     41x  vscode.QuickPickItem
+     30x  vscode.TextEditor
+     23x  vscode.DebugConfiguration
+     18x  vscode.MessageOptions
+     18x  vscode.MessageItem
+     17x  vscode.DebugSession
+     16x  vscode.ConfigurationTarget
+     16x  vscode.ConfigurationChangeEvent
+     13x  vscode.EventEmitter
+     11x  vscode.QuickPick
+     10x  vscode.Extension
+      9x  vscode.LanguageModelToolResult
+      9x  vscode.ProgressOptions
+      8x  vscode.LanguageModelToolInvocationOptions
+      8x  vscode.LanguageModelToolInvocationPrepareOptions
+      8x  vscode.PreparedToolInvocation
+      8x  vscode.LogOutputChannel
+      8x  vscode.Memento
+      8x  vscode.NotebookDocument
+      7x  vscode.Progress
+      7x  vscode.LanguageModelTool
+      7x  vscode.GlobPattern
+      7x  vscode.MarkdownString
+      6x  vscode.Diagnostic
+      6x  vscode.QuickPickOptions
+      6x  vscode.Breakpoint
+      5x  vscode.Position
+      5x  vscode.ViewColumn
+      5x  vscode.DebugAdapterTrackerFactory
+      5x  vscode.Variable
+      5x  vscode.VariablesResult
+      4x  vscode.DiagnosticSeverity
+      4x  vscode.DocumentSelector
+      4x  vscode.DebugSessionCustomEvent
+      4x  vscode.WorkspaceFoldersChangeEvent
+      4x  vscode.WorkspaceConfiguration
+      4x  vscode.TerminalShellExecution
+      4x  vscode.QuickInputButton
+      4x  vscode.NotebookEditor
+      4x  vscode.DebugAdapterTracker
+      3x  vscode.vscodeTypes
+      3x  vscode.StatusBarItem
+      3x  vscode.LanguageStatusItem
+      3x  vscode.DebugSessionOptions
+      3x  vscode.DebugAdapterDescriptorFactory
+      3x  vscode.TextDocumentShowOptions
+      3x  vscode.TerminalOptions
+      3x  vscode.FileSystemWatcher
+      3x  vscode.DebugConfigurationProvider
+      3x  vscode.ExtensionContext
+      3x  vscode.TerminalShellExecutionStartEvent
+      3x  vscode.ProviderResult
+      2x  vscode.WindowState
+      2x  vscode.OpenDialogOptions
+      2x  vscode.SaveDialogOptions
+      2x  vscode.InputBoxOptions
+      2x  vscode.StatusBarAlignment
+      2x  vscode.WorkspaceFolderPickOptions
+      2x  vscode.InputBox
+      2x  vscode.TreeViewOptions
+      2x  vscode.TreeView
+      2x  vscode.TextEditorEdit
+      2x  vscode.DebugConsole
+      2x  vscode.BreakpointsChangeEvent
+      2x  vscode.TextDocumentChangeEvent
+      2x  vscode.TextEditorSelectionChangeEvent
+      2x  vscode.TextEditorOptionsChangeEvent
+      2x  vscode.TextEditorViewColumnChangeEvent
+      2x  vscode.WorkspaceEdit
+      2x  vscode.DecorationRenderOptions
+      2x  vscode.TextEditorDecorationType
+      2x  vscode.CompletionItemProvider
+      2x  vscode.TerminalShellIntegrationChangeEvent
+      2x  vscode.TerminalShellExecutionEndEvent
+      2x  vscode.OutputChannel
+      2x  vscode.Range
+      2x  vscode.DiagnosticCollection
+      2x  vscode.QuickPickItemButtonEvent
+      2x  vscode.TerminalLinkProvider
+      2x  vscode.CodeAction
+      2x  vscode.NotebookController
+      1x  vscode.CompletionContext
+      1x  vscode.CompletionItem
+      1x  vscode.CompletionList
+      1x  vscode.TestItem
+      1x  vscode.UIKind
+      1x  vscode.DocumentSymbolProvider
+      1x  vscode.QuickInput
+      1x  vscode.DiagnosticChangeEvent
+      1x  vscode.NotebookDocumentShowOptions
+      1x  vscode.DebugAdapterExecutable
+      1x  vscode.DebugAdapterDescriptor
+      1x  vscode.ThemeIcon
+      1x  vscode.TaskExecution
+      1x  vscode.FileChangeType
+      1x  vscode.LanguageConfiguration
+      1x  vscode.CodeActionProvider
+      1x  vscode.CodeActionContext
+      1x  vscode.TabInputNotebook
+      1x  vscode.NotebookVariableProvider
+      1x  vscode.NotebookVariablesRequestKind
+      1x  vscode.EnvironmentVariableMutatorOptions
+      1x  vscode.EnvironmentVariableScope
+      1x  vscode.GlobalEnvironmentVariableCollection
+      1x  vscode.TerminalLink
+      1x  vscode.TerminalLinkContext
+
+## Node.js Builtins
+    180x  path.join
+     70x  path.dirname
+     48x  path.basename
+     21x  path.normalize
+     14x  path.sep
+      9x  path.resolve
+      9x  path.delimiter
+      8x  os.EOL
+      7x  path.isAbsolute
+      7x  util.format
+      6x  child_process.spawn
+      6x  worker_threads.parentPort.postMessage
+      5x  fs.promises
+      4x  os.release
+      3x  crypto.randomBytes
+      3x  net.createServer
+      3x  timers.clearTimeout
+      3x  path.relative
+      3x  fs.promises.readdir
+      2x  fs.existsSync
+      2x  os.tmpdir
+      2x  fs.unlinkSync
+      2x  fs.readdirSync
+      2x  os.homedir
+      2x  crypto.createHash
+      2x  child_process.exec
+      2x  child_process.execSync
+      2x  worker_threads.workerData.options
+      2x  timers.setTimeout
+      2x  path.extname
+      2x  path.posix.normalize
+      2x  path.posix
+      1x  fs.readFileSync
+      1x  fs.readFile
+      1x  fs.writeFile
+      1x  fs.mkdirSync
+      1x  fs.writeFileSync
+      1x  fs.lstatSync
+      1x  fs.rmdirSync
+      1x  querystring.stringify
+      1x  net.Socket
+      1x  util.promisify
+      1x  worker_threads.workerData.file
+      1x  worker_threads.workerData.args
+      1x  worker_threads.workerData.command
+      1x  worker_threads.workerData.defaultEnv
+      1x  fs.promises.access
+      1x  fs.constants.X_OK
+      1x  fs.constants
+      1x  fs.promises.lstat
+      1x  path.parse
+      1x  path.win32.dirname
+      1x  path.win32
+
+## Process/Environment
+     61x  process.env
+     10x  process.platform
+      5x  process.env.PYTHONPATH
+      4x  process.cwd
+      3x  process.env.TRAVIS
+      3x  process.env.TF_BUILD
+      3x  process.env.CI_PYTHON_PATH
+      3x  process.kill
+      2x  process.env.APPDATA
+      2x  process.env.VSC_PYTHON_CI_TEST
+      2x  process.exec
+      2x  process.execPath
+      2x  process.env.CONDA_AUTO_ACTIVATE_BASE
+      2x  process.env.VSC_PYTHON_LOG_FILE
+      2x  process.env.VSC_PYTHON_INTERPRETER_INFO_TIMEOUT
+      1x  process.env.VSC_PYTHON_CI_TEST_PARALLEL
+      1x  process.pid
+      1x  process.exitCode
+      1x  process.env.VSC_PYTHON_FORCE_ANALYZER
+      1x  process.env.Path
+      1x  process.env.PATH
+      1x  process.env.CI_DISABLE_AUTO_SELECTION
+      1x  process.env.GITHUB_ACTIONS
+      1x  process.env.VSC_PYTHON_UNIT_TEST
+      1x  process.on
+      1x  process.argv
+      1x  process.stdout
+      1x  process.stdin
+      1x  process.env.UITEST_DISABLE_PROCESS_LOGGING
+      1x  process.arch
+      1x  process.env.VSCODE_CLI
+      1x  process.env.VIRTUAL_ENV
+      1x  process.env.CONDA_AUTO_ACTIVATE_BASE.toLowerCase
+      1x  process.env.CONDA_PREFIX
+      1x  process.env.CONDA_SHLVL
+      1x  process.env.VSC_PYTHON_LOG_TELEMETRY
+
+## Shell Execution
+      6x  child_process.spawn
+      2x  child_process.exec
+      2x  child_process.execSync
+
+## Network/HTTP
+
+## Global Side Effects
+     17x  globalThis.setTimeout
+      2x  globalThis.setInterval
+      2x  globalThis.setImmediate
+
+## Activation Events
+  onDebugInitialConfigurations
+  onLanguage:python
+  onDebugResolve:python
+  onCommand:python.copilotSetupTests
+  workspaceContains:mspythonconfig.json
+  workspaceContains:pyproject.toml
+  workspaceContains:Pipfile
+  workspaceContains:setup.py
+  workspaceContains:requirements.txt
+  workspaceContains:pylock.toml
+  workspaceContains:**/pylock.*.toml
+  workspaceContains:manage.py
+  workspaceContains:app.py
+  workspaceContains:.venv
+  workspaceContains:.conda
+  onLanguageModelTool:get_python_environment_details
+  onLanguageModelTool:get_python_executable_details
+  onLanguageModelTool:install_python_packages
+  onLanguageModelTool:configure_python_environment
+  onLanguageModelTool:create_virtual_environment
+  onTerminalShellIntegration:python
+
+## Contributes
+  breakpoints: 5 entries
+  commands: 23 entries
+  configuration: 1 entries
+  debuggers: 1 entries
+  grammars: 1 entries
+  jsonValidation: 3 entries
+  keybindings: 4 entries
+  languageModelTools: 6 entries
+  languages: 6 entries
+  menus: 1 entries
+  problemMatchers: 1 entries
+  submenus: 2 entries
+  viewsWelcome: 1 entries
+  walkthroughs: 2 entries
+  yamlValidation: 3 entries

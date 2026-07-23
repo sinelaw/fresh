@@ -1,0 +1,344 @@
+═══ python ═══
+Files analyzed: 469
+
+Activation Events:
+  onDebugInitialConfigurations
+  onLanguage:python
+  onDebugResolve:python
+  onCommand:python.copilotSetupTests
+  workspaceContains:mspythonconfig.json
+  workspaceContains:pyproject.toml
+  workspaceContains:Pipfile
+  workspaceContains:setup.py
+  workspaceContains:requirements.txt
+  workspaceContains:pylock.toml
+  workspaceContains:**/pylock.*.toml
+  workspaceContains:manage.py
+  workspaceContains:app.py
+  workspaceContains:.venv
+  workspaceContains:.conda
+  onLanguageModelTool:get_python_environment_details
+  onLanguageModelTool:get_python_executable_details
+  onLanguageModelTool:install_python_packages
+  onLanguageModelTool:configure_python_environment
+  onLanguageModelTool:create_virtual_environment
+  onTerminalShellIntegration:python
+
+Contributes:
+  breakpoints: 5 entries
+  commands: 23 entries
+  configuration: 1 entries
+  debuggers: 1 entries
+  grammars: 1 entries
+  jsonValidation: 3 entries
+  keybindings: 4 entries
+  languageModelTools: 6 entries
+  languages: 6 entries
+  menus: 1 entries
+  problemMatchers: 1 entries
+  submenus: 2 entries
+  viewsWelcome: 1 entries
+  walkthroughs: 2 entries
+  yamlValidation: 3 entries
+
+Namespaces (by usage count):
+     50x  vscode.workspace
+     22x  vscode.l10n
+     19x  vscode.env
+     12x  vscode.extensions
+     12x  vscode.window
+     11x  vscode.commands
+     10x  vscode.languages
+      2x  vscode.lm
+      2x  vscode.debug
+      1x  vscode.notebooks
+
+API Methods (by usage count):
+    313x  vscode.l10n.t
+     43x  vscode.workspace.workspaceFolders
+     13x  vscode.commands.executeCommand
+     12x  vscode.workspace.getWorkspaceFolder
+     10x  vscode.extensions.getExtension
+      8x  vscode.workspace.isTrusted
+      7x  vscode.commands.registerCommand
+      6x  vscode.lm.registerTool
+      5x  vscode.window.activeTextEditor
+      5x  vscode.workspace.fs
+      4x  vscode.window.withProgress
+      4x  vscode.window.createOutputChannel
+      4x  vscode.extensions.all
+      3x  vscode.languages.createLanguageStatusItem
+      3x  vscode.extensions.onDidChange
+      3x  vscode.lm.invokeTool
+      3x  vscode.env.appName
+      3x  vscode.env.openExternal
+      3x  vscode.window.showErrorMessage
+      3x  vscode.window.showTextDocument
+      3x  vscode.window.createQuickPick
+      3x  vscode.workspace.onDidChangeConfiguration
+      3x  vscode.workspace.onDidChangeWorkspaceFolders
+      3x  vscode.workspace.getConfiguration
+      3x  vscode.workspace.createFileSystemWatcher
+      2x  vscode.env.uiKind
+      2x  vscode.window.setStatusBarMessage
+      2x  vscode.workspace.notebookDocuments
+      2x  vscode.env.remoteName
+      2x  vscode.env.shell
+      2x  vscode.window.showInformationMessage
+      2x  vscode.window.showWarningMessage
+      2x  vscode.window.showQuickPick
+      2x  vscode.window.showInputBox
+      2x  vscode.window.createStatusBarItem
+      2x  vscode.env.clipboard
+      2x  vscode.debug.registerDebugConfigurationProvider
+      2x  vscode.window.onDidChangeActiveTextEditor
+      2x  vscode.workspace.textDocuments
+      2x  vscode.workspace.onDidChangeTextDocument
+      2x  vscode.workspace.onDidOpenTextDocument
+      2x  vscode.workspace.onDidCloseTextDocument
+      2x  vscode.workspace.onDidSaveTextDocument
+      2x  vscode.workspace.openTextDocument
+      2x  vscode.workspace.applyEdit
+      2x  vscode.window.onDidChangeTerminalState
+      2x  vscode.workspace.findFiles
+      2x  vscode.workspace.onDidGrantWorkspaceTrust
+      2x  vscode.window.tabGroups
+      1x  vscode.languages.registerHoverProvider
+      1x  vscode.env.appRoot
+      1x  vscode.env.language
+      1x  vscode.env.sessionId
+      1x  vscode.env.machineId
+      1x  vscode.env.onDidChangeShell
+      1x  vscode.env.uriScheme
+      1x  vscode.window.onDidChangeWindowState
+      1x  vscode.window.showOpenDialog
+      1x  vscode.window.showSaveDialog
+      1x  vscode.window.showWorkspaceFolderPick
+      1x  vscode.window.createInputBox
+      1x  vscode.window.createTreeView
+      1x  vscode.window.onDidWriteTerminalData
+      1x  vscode.window.onDidExecuteTerminalCommand
+      1x  vscode.commands.registerTextEditorCommand
+      1x  vscode.commands.getCommands
+      1x  vscode.debug.activeDebugConsole
+      1x  vscode.debug.activeDebugSession
+      1x  vscode.debug.breakpoints
+      1x  vscode.debug.onDidChangeActiveDebugSession
+      1x  vscode.debug.onDidStartDebugSession
+      1x  vscode.debug.onDidReceiveDebugSessionCustomEvent
+      1x  vscode.debug.onDidTerminateDebugSession
+      1x  vscode.debug.onDidChangeBreakpoints
+      1x  vscode.debug.registerDebugAdapterTrackerFactory
+      1x  vscode.debug.startDebugging
+      1x  vscode.debug.addBreakpoints
+      1x  vscode.debug.removeBreakpoints
+      1x  vscode.debug.registerDebugAdapterDescriptorFactory
+      1x  vscode.window.visibleTextEditors
+      1x  vscode.window.onDidChangeVisibleTextEditors
+      1x  vscode.window.onDidChangeTextEditorSelection
+      1x  vscode.window.onDidChangeTextEditorOptions
+      1x  vscode.window.onDidChangeTextEditorViewColumn
+      1x  vscode.window.createTextEditorDecorationType
+      1x  vscode.extensions.node
+      1x  vscode.languages.registerCompletionItemProvider
+      1x  vscode.window.onDidOpenTerminal
+      1x  vscode.window.onDidCloseTerminal
+      1x  vscode.window.createTerminal
+      1x  vscode.window.onDidChangeTerminalShellIntegration
+      1x  vscode.window.onDidEndTerminalShellExecution
+      1x  vscode.workspace.workspaceFile
+      1x  vscode.workspace.asRelativePath
+      1x  vscode.workspace.save
+      1x  vscode.languages.createDiagnosticCollection
+      1x  vscode.languages.onDidChangeDiagnostics
+      1x  vscode.window.showNotebookDocument
+      1x  vscode.window.onDidStartTerminalShellExecution
+      1x  vscode.window.registerTerminalLinkProvider
+      1x  vscode.workspace.onDidCloseNotebookDocument
+      1x  vscode.workspace.openNotebookDocument
+      1x  vscode.languages.setLanguageConfiguration
+      1x  vscode.window.activeTerminal
+      1x  vscode.languages.registerCodeActionsProvider
+      1x  vscode.notebooks.createNotebookController
+
+Types/Classes (by usage count):
+     40x  vscode.Uri
+     12x  vscode.Disposable
+      5x  vscode.Extension
+      5x  vscode.FileSystemError
+      4x  vscode.TextDocument
+      4x  vscode.NotebookDocument
+      3x  vscode.ExtensionContext
+      3x  vscode.WorkspaceFolder
+      3x  vscode.GlobPattern
+      2x  vscode.LanguageStatusSeverity
+      2x  vscode.EventEmitter
+      2x  vscode.FileType
+      2x  vscode.ConfigurationChangeEvent
+      2x  vscode.NotebookData
+      1x  vscode.UIKind
+      1x  vscode.Event
+      1x  vscode.FileStat
+      1x  vscode.ConfigurationScope
+      1x  vscode.WorkspaceConfiguration
+      1x  vscode.WorkspaceEdit
+      1x  vscode.CancellationToken
+      1x  vscode.TextDocumentChangeEvent
+      1x  vscode.FileSystemWatcher
+      1x  vscode.WorkspaceFoldersChangeEvent
+      1x  vscode.CodeActionKind
+      1x  vscode.NotebookController
+      1x  vscode.NotebookCellOutput
+      1x  vscode.NotebookCellOutputItem
+
+Event Subscriptions:
+      2x  vscode.workspace.onDidChangeConfiguration
+      2x  vscode.workspace.onDidChangeWorkspaceFolders
+      1x  vscode.extensions.onDidChange
+      1x  vscode.env.onDidChangeShell
+      1x  vscode.workspace.onDidCloseTextDocument
+      1x  vscode.workspace.onDidSaveTextDocument
+      1x  vscode.workspace.onDidOpenTextDocument
+      1x  vscode.workspace.onDidChangeTextDocument
+      1x  vscode.workspace.onDidCloseNotebookDocument
+      1x  vscode.workspace.onDidGrantWorkspaceTrust
+
+Destructured Imports:
+    120x  Uri
+     52x  Disposable
+     49x  Event
+     42x  CancellationToken
+     36x  WorkspaceFolder
+     27x  EventEmitter
+     23x  ConfigurationTarget
+     22x  l10n
+     22x  Terminal
+     15x  QuickPickItem
+     14x  TextDocument
+     14x  DiagnosticSeverity
+     14x  workspace
+     12x  window
+     12x  DebugConfiguration
+     10x  ProgressLocation
+      9x  TextEditor
+      9x  ConfigurationChangeEvent
+      8x  LanguageModelToolResult
+      8x  ProgressOptions
+      7x  env
+      7x  LanguageModelTool
+      7x  LanguageModelToolInvocationOptions
+      7x  LanguageModelToolInvocationPrepareOptions
+      7x  PreparedToolInvocation
+      7x  commands
+      7x  LogOutputChannel
+      7x  DebugSession
+      6x  LanguageModelTextPart
+      5x  extensions
+      5x  Extension
+      5x  Position
+      5x  Progress
+      5x  languages
+      5x  CancellationTokenSource
+      5x  QuickPick
+      5x  ViewColumn
+      5x  QuickInputButtons
+      5x  Range
+      5x  NotebookDocument
+      4x  Diagnostic
+      4x  CancellationError
+      4x  DebugSessionCustomEvent
+      4x  WorkspaceEdit
+      4x  DebugAdapterTrackerFactory
+      4x  WorkspaceConfiguration
+      4x  WorkspaceFoldersChangeEvent
+      4x  Memento
+      3x  DocumentSelector
+      3x  LanguageStatusItem
+      3x  MessageItem
+      3x  MessageOptions
+      3x  QuickPickOptions
+      3x  StatusBarAlignment
+      3x  StatusBarItem
+      3x  DebugAdapterDescriptorFactory
+      3x  DebugSessionOptions
+      3x  TerminalOptions
+      3x  DebugConfigurationProvider
+      3x  FileSystemWatcher
+      3x  GlobPattern
+      3x  RelativePattern
+      3x  TerminalShellExecution
+      3x  TerminalShellExecutionStartEvent
+      3x  ProviderResult
+      3x  MarkdownString
+      3x  ThemeIcon
+      2x  UIKind
+      2x  lm
+      2x  QuickPickItemKind
+      2x  InputBox
+      2x  InputBoxOptions
+      2x  OpenDialogOptions
+      2x  SaveDialogOptions
+      2x  TreeView
+      2x  TreeViewOptions
+      2x  WindowState
+      2x  WorkspaceFolderPickOptions
+      2x  TextEditorEdit
+      2x  Breakpoint
+      2x  BreakpointsChangeEvent
+      2x  debug
+      2x  DebugConsole
+      2x  DecorationRenderOptions
+      2x  TextDocumentChangeEvent
+      2x  TextDocumentShowOptions
+      2x  TextEditorDecorationType
+      2x  TextEditorOptionsChangeEvent
+      2x  TextEditorSelectionChangeEvent
+      2x  TextEditorViewColumnChangeEvent
+      2x  CompletionItemProvider
+      2x  TerminalShellExecutionEndEvent
+      2x  TerminalShellIntegrationChangeEvent
+      2x  OutputChannel
+      2x  ExtensionContext
+      2x  QuickInputButton
+      2x  DiagnosticCollection
+      2x  QuickPickItemButtonEvent
+      2x  TerminalLinkProvider
+      2x  NotebookEditor
+      2x  DebugAdapterTracker
+      2x  Variable
+      2x  VariablesResult
+      1x  CompletionContext
+      1x  CompletionItem
+      1x  CompletionList
+      1x  Hover
+      1x  TestItem
+      1x  DocumentSymbolProvider
+      1x  QuickInput
+      1x  DiagnosticChangeEvent
+      1x  NotebookDocumentShowOptions
+      1x  DebugAdapterDescriptor
+      1x  DebugAdapterExecutable
+      1x  DebugAdapterServer
+      1x  FileChangeType
+      1x  TaskExecution
+      1x  LanguageStatusSeverity
+      1x  ThemeColor
+      1x  IndentAction
+      1x  LanguageConfiguration
+      1x  CodeAction
+      1x  CodeActionContext
+      1x  CodeActionKind
+      1x  CodeActionProvider
+      1x  NotebookController
+      1x  NotebookCellData
+      1x  NotebookCellKind
+      1x  NotebookEdit
+      1x  Selection
+      1x  TabInputNotebook
+      1x  NotebookVariablesRequestKind
+      1x  NotebookVariableProvider
+      1x  GlobalEnvironmentVariableCollection
+      1x  EnvironmentVariableScope
+      1x  EnvironmentVariableMutatorOptions
+      1x  TerminalLink
+      1x  TerminalLinkContext

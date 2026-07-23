@@ -1,0 +1,58 @@
+# material-icon-theme - Full API & Side Effects Report (AST)
+Files analyzed: 105
+
+## vscode API
+      6x  vscode.window.showQuickPick
+      4x  vscode.window.showInputBox
+      1x  vscode.window.showInformationMessage
+      1x  vscode.env.language
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.window.createOutputChannel
+      1x  vscode.workspace.getConfiguration
+      1x  vscode.extensions.getExtension
+      1x  vscode.commands.registerCommand
+
+## vscode Types (type-only)
+     15x  vscode.QuickPickItem
+      4x  vscode.ExtensionContext
+      1x  vscode.OutputChannel
+      1x  vscode.ConfigurationChangeEvent
+
+## Node.js Builtins
+     16x  path.join
+      5x  fs.existsSync
+      4x  fs/promises.readFile
+      4x  fs/promises.readdir
+      3x  path.dirname
+      2x  fs/promises.lstat
+      2x  path.parse
+      2x  fs.readdir
+      2x  child_process.execSync
+      1x  path.basename
+      1x  fs/promises.rm
+      1x  fs/promises.mkdir
+      1x  fs.readdirSync
+      1x  fs.unlinkSync
+      1x  fs.renameSync
+      1x  fs/promises.writeFile
+      1x  fs/promises.copyFile
+
+## Process/Environment
+      6x  process.exit
+      2x  process.cwd
+
+## Shell Execution
+      2x  child_process.execSync
+
+## Network/HTTP
+      1x  axios.request
+
+## Global Side Effects
+
+## Activation Events
+  onStartupFinished
+
+## Contributes
+  commands: 11 entries
+  configuration: 1 entries
+  iconThemes: 1 entries

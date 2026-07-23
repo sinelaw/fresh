@@ -1,0 +1,17 @@
+═══ docker ═══
+Files analyzed: 0
+
+Activation Events:
+  (none / uses *)
+
+Contributes:
+
+Namespaces (by usage count):
+
+API Methods (by usage count):
+
+Types/Classes (by usage count):
+
+Event Subscriptions:
+
+Destructured Imports:

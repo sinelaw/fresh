@@ -1,0 +1,123 @@
+# eslint - Full API & Side Effects Report (AST)
+Files analyzed: 54
+
+## vscode API
+     14x  vscode.workspace.getConfiguration
+     11x  vscode.commands.registerCommand
+      7x  vscode.window.showInformationMessage
+      6x  vscode.workspace.workspaceFolders
+      6x  vscode.ConfigurationTarget.Global
+      6x  vscode.workspace
+      5x  vscode.window.showErrorMessage
+      5x  vscode.Uri.parse
+      5x  vscode.ConfigurationTarget.Workspace
+      5x  vscode.ConfigurationTarget.WorkspaceFolder
+      4x  vscode.window.activeTextEditor
+      4x  vscode.workspace.createFileSystemWatcher
+      4x  vscode.languages.match
+      3x  vscode.workspace.onDidChangeConfiguration
+      3x  vscode.workspace.textDocuments
+      3x  vscode.workspace.getWorkspaceFolder
+      3x  vscode.window.activeTextEditor.document
+      3x  vscode.LanguageStatusSeverity.Warning
+      2x  vscode.CodeActionKind.SourceFixAll.value
+      2x  vscode.CodeActionKind.SourceFixAll
+      2x  vscode.commands.executeCommand
+      2x  vscode.LanguageStatusSeverity.Information
+      2x  vscode.LanguageStatusSeverity.Error
+      1x  vscode.CodeActionKind.Source.value
+      1x  vscode.CodeActionKind.Source
+      1x  vscode.CodeActionKind.QuickFix.value
+      1x  vscode.CodeActionKind.QuickFix
+      1x  vscode.languages.createLanguageStatusItem
+      1x  vscode.window.onDidChangeActiveTextEditor
+      1x  vscode.workspace.onDidCloseTextDocument
+      1x  vscode.workspace.isTrusted
+      1x  vscode.Uri.joinPath
+      1x  vscode.env.openExternal
+      1x  vscode.window.createTerminal
+      1x  vscode.workspace.onDidOpenTextDocument
+      1x  vscode.Task
+      1x  vscode.ShellExecution
+      1x  vscode.workspace.onDidChangeWorkspaceFolders
+      1x  vscode.Disposable.from
+      1x  vscode.Disposable
+      1x  vscode.tasks.registerTaskProvider
+      1x  vscode.tasks
+      1x  vscode.window.showQuickPick
+
+## vscode Types (type-only)
+      8x  vscode.Uri
+      6x  vscode.TextDocument
+      6x  vscode.WorkspaceConfiguration
+      4x  vscode.DocumentFilter
+      3x  vscode.ExtensionContext
+      3x  vscode.Disposable
+      3x  vscode.WorkspaceFolder
+      2x  vscode.MessageItem
+      2x  vscode.ConfigurationTarget
+      1x  vscode.LanguageStatusItem
+      1x  vscode.Command
+      1x  vscode.CodeAction
+      1x  vscode.Diagnostic
+      1x  vscode.CodeActionContext
+      1x  vscode.NotebookCell
+      1x  vscode.LanguageStatusSeverity
+      1x  vscode.TaskDefinition
+      1x  vscode.QuickPickItem
+
+## Node.js Builtins
+     31x  path.join
+     11x  path.dirname
+      5x  path.sep
+      4x  path.posix
+      4x  fs.existsSync
+      3x  path.replace
+      2x  fs.stat
+      2x  path.isAbsolute
+      2x  path.posix.sep
+      1x  child_process.spawnSync
+      1x  fs.readdir
+      1x  fs.mkdir
+      1x  fs.exists
+      1x  fs.unlink
+      1x  path.normalize
+      1x  path.basename
+      1x  path.posix.isAbsolute
+      1x  path.posix.join
+      1x  crypto.createHash
+      1x  child_process.execSync
+      1x  path.extname
+      1x  fs.realpathSync.native
+      1x  fs.realpathSync
+
+## Process/Environment
+     10x  process.platform
+      6x  process.cwd
+      4x  process.chdir
+      2x  process.argv
+      2x  process.env
+      2x  process.exit
+      1x  process.argv.slice
+      1x  process.on
+      1x  process.version
+
+## Shell Execution
+      1x  child_process.spawnSync
+      1x  child_process.execSync
+
+## Network/HTTP
+
+## Global Side Effects
+      1x  globalThis.setImmediate
+      1x  globalThis.setTimeout
+
+## Activation Events
+  onStartupFinished
+
+## Contributes
+  commands: 6 entries
+  configuration: 1 entries
+  jsonValidation: 3 entries
+  languages: 2 entries
+  taskDefinitions: 1 entries

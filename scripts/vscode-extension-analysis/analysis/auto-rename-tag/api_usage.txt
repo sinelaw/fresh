@@ -1,0 +1,45 @@
+═══ auto-rename-tag ═══
+Files analyzed: 22
+
+Activation Events:
+  (none / uses *)
+
+Contributes:
+
+Namespaces (by usage count):
+     39x  vscode.window
+     11x  vscode.workspace
+      9x  vscode.commands
+      1x  vscode.extensions
+
+API Methods (by usage count):
+     36x  vscode.window.activeTextEditor
+      9x  vscode.commands.executeCommand
+      3x  vscode.workspace.getConfiguration
+      2x  vscode.workspace.onDidChangeTextDocument
+      2x  vscode.workspace.workspaceFolders
+      1x  vscode.window.createOutputChannel
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.window.onDidChangeActiveTextEditor
+      1x  vscode.extensions.getExtension
+      1x  vscode.window.showTextDocument
+      1x  vscode.workspace.fs
+      1x  vscode.workspace.openTextDocument
+
+Types/Classes (by usage count):
+      3x  vscode.Range
+      3x  vscode.Uri
+      2x  vscode.ExtensionContext
+      2x  vscode.TextDocument
+      2x  vscode.CancellationTokenSource
+      2x  vscode.TextEditor
+      2x  vscode.Selection
+      1x  vscode.Extension
+      1x  vscode.SnippetString
+
+Event Subscriptions:
+      2x  vscode.workspace.onDidChangeTextDocument
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.window.onDidChangeActiveTextEditor
+
+Destructured Imports:

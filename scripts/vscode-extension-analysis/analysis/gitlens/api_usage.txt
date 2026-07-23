@@ -1,0 +1,223 @@
+═══ gitlens ═══
+Files analyzed: 1101
+
+Activation Events:
+  onFileSystem:gitlens
+  onStartupFinished
+  onTerminalShellIntegration:bash
+  onTerminalShellIntegration:cmd
+  onTerminalShellIntegration:csh
+  onTerminalShellIntegration:fish
+  onTerminalShellIntegration:gitbash
+  onTerminalShellIntegration:julia
+  onTerminalShellIntegration:ksh
+  onTerminalShellIntegration:node
+  onTerminalShellIntegration:nu
+  onTerminalShellIntegration:pwsh
+  onTerminalShellIntegration:python
+  onTerminalShellIntegration:sh
+  onTerminalShellIntegration:wsl
+  onTerminalShellIntegration:zsh
+  onUri
+  onWebviewPanel:gitlens.graph
+  onWebviewPanel:gitlens.patchDetails
+  onWebviewPanel:gitlens.composer
+  onWebviewPanel:gitlens.settings
+  onWebviewPanel:gitlens.timeline
+
+Contributes:
+  colors: 69 entries
+  commands: 1000 entries
+  configuration: 44 entries
+  configurationDefaults: 1 entries
+  customEditors: 1 entries
+  icons: 1 entries
+  keybindings: 59 entries
+  mcpServerDefinitionProviders: 1 entries
+  menus: 1 entries
+  resourceLabelFormatters: 2 entries
+  submenus: 57 entries
+  views: 1 entries
+  viewsContainers: 1 entries
+  viewsWelcome: 61 entries
+  walkthroughs: 1 entries
+
+Namespaces (by usage count):
+    154x  vscode.window
+     45x  vscode.env
+     43x  vscode.workspace
+     10x  vscode.commands
+      6x  vscode.extensions
+      5x  vscode.authentication
+      4x  vscode.languages
+      3x  vscode.lm
+      1x  vscode.chat
+
+API Methods (by usage count):
+    129x  vscode.window.showErrorMessage
+     75x  vscode.window.showWarningMessage
+     60x  vscode.window.showInformationMessage
+     48x  vscode.window.withProgress
+     43x  vscode.workspace.fs
+     38x  vscode.window.activeTextEditor
+     30x  vscode.env.clipboard
+     24x  vscode.window.tabGroups
+     21x  vscode.window.createQuickPick
+     18x  vscode.workspace.workspaceFolders
+     16x  vscode.window.activeColorTheme
+     15x  vscode.window.showQuickPick
+     14x  vscode.commands.executeCommand
+     14x  vscode.env.uriScheme
+     13x  vscode.workspace.isTrusted
+     13x  vscode.env.appName
+     12x  vscode.window.visibleTextEditors
+     12x  vscode.workspace.getConfiguration
+     10x  vscode.window.showOpenDialog
+     10x  vscode.workspace.getWorkspaceFolder
+     10x  vscode.workspace.name
+      9x  vscode.workspace.id
+      8x  vscode.window.createTextEditorDecorationType
+      8x  vscode.window.createInputBox
+      8x  vscode.env.appRoot
+      7x  vscode.extensions.getExtension
+      7x  vscode.window.onDidChangeWindowState
+      7x  vscode.workspace.provider
+      6x  vscode.window.onDidChangeActiveTextEditor
+      6x  vscode.env.openExternal
+      6x  vscode.workspace.openTextDocument
+      6x  vscode.window.state
+      6x  vscode.window.createStatusBarItem
+      5x  vscode.workspace.onDidCloseTextDocument
+      5x  vscode.commands.js
+      5x  vscode.window.showTextDocument
+      5x  vscode.env.language
+      5x  vscode.env.asExternalUri
+      5x  vscode.workspace.workspaceFile
+      5x  vscode.workspace.getRepositoryDescriptors
+      5x  vscode.workspace.applyEdit
+      4x  vscode.languages.registerHoverProvider
+      4x  vscode.window.showInputBox
+      4x  vscode.env.machineId
+      4x  vscode.workspace.onDidGrantWorkspaceTrust
+      4x  vscode.authentication.onDidChangeSessions
+      4x  vscode.workspace.localId
+      4x  vscode.commands.registerCommand
+      4x  vscode.env.remoteName
+      4x  vscode.workspace.onDidChangeTextDocument
+      3x  vscode.workspace.decode
+      3x  vscode.env.sessionId
+      3x  vscode.env.appHost
+      3x  vscode.workspace.setLocalPath
+      3x  vscode.workspace.localPath
+      2x  vscode.window.onDidChangeTextEditorSelection
+      2x  vscode.window.onDidChangeActiveColorTheme
+      2x  vscode.window.onDidChangeVisibleTextEditors
+      2x  vscode.window.onDidChangeTextEditorVisibleRanges
+      2x  vscode.window.showSaveDialog
+      2x  vscode.window.createOutputChannel
+      2x  vscode.lm.registerMcpServerDefinitionProvider
+      2x  vscode.env.uiKind
+      2x  vscode.window.focused
+      2x  vscode.workspace.onDidChangeWorkspaceFolders
+      2x  vscode.lm.selectChatModels
+      2x  vscode.workspace.organization
+      2x  vscode.workspace.azure
+      2x  vscode.workspace.current
+      2x  vscode.workspace.updateWorkspaceFolders
+      2x  vscode.workspace.getRepositoriesByName
+      2x  vscode.workspace.textDocuments
+      2x  vscode.workspace.onDidSaveTextDocument
+      2x  vscode.window.createTreeView
+      1x  vscode.window.onDidChangeTextEditorViewColumn
+      1x  vscode.languages.registerCodeLensProvider
+      1x  vscode.commands.map
+      1x  vscode.commands.registerTextEditorCommand
+      1x  vscode.workspace.registerTextDocumentContentProvider
+      1x  vscode.workspace.registerFileSystemProvider
+      1x  vscode.workspace.createFileSystemWatcher
+      1x  vscode.window.createTerminal
+      1x  vscode.extensions.onDidChange
+      1x  vscode.extensions.installExtension
+      1x  vscode.lm.onDidChangeChatModels
+      1x  vscode.chat.js
+      1x  vscode.authentication.getSession
+      1x  vscode.workspace.repo
+      1x  vscode.workspace.repositories
+      1x  vscode.workspace.addRepositories
+      1x  vscode.workspace.removeRepositories
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.env.onDidChangeTelemetryEnabled
+      1x  vscode.env.isTelemetryEnabled
+      1x  vscode.env.shell
+      1x  vscode.window.registerTerminalLinkProvider
+      1x  vscode.workspace.onDidOpenTextDocument
+      1x  vscode.window.registerUriHandler
+      1x  vscode.window.registerFileDecorationProvider
+      1x  vscode.window.registerCustomEditorProvider
+      1x  vscode.window.bootstrap
+      1x  vscode.window.registerWebviewViewProvider
+      1x  vscode.window.createWebviewPanel
+      1x  vscode.window.registerWebviewPanelSerializer
+
+Types/Classes (by usage count):
+      3x  vscode.Uri
+      1x  vscode.FileType
+      1x  vscode.CancellationError
+
+Event Subscriptions:
+
+Destructured Imports:
+    154x  window
+     87x  Uri
+     71x  Disposable
+     66x  TreeItemCollapsibleState
+     64x  TreeItem
+     58x  ThemeIcon
+     45x  env
+     43x  workspace
+     34x  EventEmitter
+     26x  ProgressLocation
+     25x  MarkdownString
+     14x  ThemeColor
+     14x  CancellationTokenSource
+     13x  ViewColumn
+     12x  Range
+     10x  commands
+      9x  version
+      7x  ConfigurationTarget
+      6x  QuickInputButtons
+      6x  extensions
+      5x  StatusBarAlignment
+      5x  authentication
+      4x  languages
+      4x  ColorThemeKind
+      4x  ExtensionMode
+      4x  FileType
+      3x  Hover
+      3x  Position
+      3x  TabInputCustom
+      3x  lm
+      2x  OverviewRulerLane
+      2x  Selection
+      2x  TabInputNotebook
+      2x  TabInputNotebookDiff
+      2x  TabInputText
+      2x  TabInputTextDiff
+      2x  InputBoxValidationSeverity
+      2x  cursor
+      2x  TreeItemCheckboxState
+      1x  DecorationRangeBehavior
+      1x  TextEditorRevealType
+      1x  CodeLens
+      1x  Location
+      1x  SymbolInformation
+      1x  SymbolKind
+      1x  McpStdioServerDefinition
+      1x  UIKind
+      1x  LogLevel
+      1x  FileSystemError
+      1x  RelativePattern
+      1x  LanguageModelChatMessage
+      1x  QuickPickItemKind
+      1x  EndOfLine
+      1x  WorkspaceEdit

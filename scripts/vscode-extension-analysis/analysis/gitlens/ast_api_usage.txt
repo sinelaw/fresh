@@ -1,0 +1,423 @@
+# gitlens - Full API & Side Effects Report (AST)
+Files analyzed: 1101
+
+## vscode API
+    128x  vscode.window.showErrorMessage
+     87x  vscode.Disposable.from
+     83x  vscode.Uri.file
+     76x  vscode.Uri.parse
+     75x  vscode.window.showWarningMessage
+     62x  vscode.window.showInformationMessage
+     48x  vscode.window.withProgress
+     44x  vscode.TreeItemCollapsibleState.Collapsed
+     43x  vscode.ProgressLocation.Notification
+     42x  vscode.workspace.fs
+     39x  vscode.Uri.joinPath
+     38x  vscode.window.activeTextEditor
+     38x  vscode.TreeItemCollapsibleState.Expanded
+     30x  vscode.env.clipboard
+     26x  vscode.env.clipboard.writeText
+     24x  vscode.window.tabGroups
+     22x  vscode.TreeItemCollapsibleState.None
+     21x  vscode.window.createQuickPick
+     18x  vscode.workspace.workspaceFolders
+     18x  vscode.ViewColumn.Beside
+     16x  vscode.window.activeColorTheme
+     15x  vscode.window.showQuickPick
+     15x  vscode.workspace.fs.stat
+     14x  vscode.window.activeColorTheme.kind
+     14x  vscode.commands.executeCommand
+     14x  vscode.env.uriScheme
+     14x  vscode.workspace.getConfiguration
+     13x  vscode.ConfigurationTarget.Global
+     13x  vscode.env.appName
+     13x  vscode.workspace.fs.readFile
+     13x  vscode.ColorThemeKind.Dark
+     12x  vscode.window.visibleTextEditors
+     12x  vscode.QuickInputButtons.Back
+     12x  vscode.workspace.isTrusted
+     10x  vscode.window.showOpenDialog
+     10x  vscode.workspace.getWorkspaceFolder
+     10x  vscode.workspace.fs.writeFile
+     10x  vscode.workspace.name
+      9x  vscode.ViewColumn.Active
+      9x  vscode.workspace.id
+      8x  vscode.window.createTextEditorDecorationType
+      8x  vscode.window.tabGroups.all
+      8x  vscode.workspace.workspaceFolders.length
+      8x  vscode.window.createInputBox
+      8x  vscode.Uri.from
+      8x  vscode.env.appRoot
+      7x  vscode.FileType.Directory
+      7x  vscode.extensions.getExtension
+      7x  vscode.window.onDidChangeWindowState
+      7x  vscode.window.tabGroups.activeTabGroup
+      6x  vscode.window.onDidChangeActiveTextEditor
+      6x  vscode.env.openExternal
+      6x  vscode.window.state
+      6x  vscode.window.createStatusBarItem
+      6x  vscode.workspace.provider
+      5x  vscode.workspace.onDidCloseTextDocument
+      5x  vscode.window.tabGroups.close
+      5x  vscode.workspace.openTextDocument
+      5x  vscode.window.showTextDocument
+      5x  vscode.window.state.focused
+      5x  vscode.FileType.File
+      5x  vscode.env.language
+      5x  vscode.FileSystemError.NoPermissions
+      5x  vscode.window.tabGroups.activeTabGroup.activeTab
+      5x  vscode.env.asExternalUri
+      5x  vscode.StatusBarAlignment.Left
+      5x  vscode.StatusBarAlignment.Right
+      5x  vscode.workspace.workspaceFile
+      5x  vscode.workspace.getRepositoryDescriptors
+      5x  vscode.ThemeIcon.File
+      5x  vscode.workspace.applyEdit
+      4x  vscode.languages.registerHoverProvider
+      4x  vscode.window.visibleTextEditors.some
+      4x  vscode.SymbolKind.File
+      4x  vscode.env.clipboard.readText
+      4x  vscode.window.showInputBox
+      4x  vscode.env.machineId
+      4x  vscode.authentication.onDidChangeSessions
+      4x  vscode.workspace.localId
+      4x  vscode.ThemeIcon.Folder
+      4x  vscode.ConfigurationTarget.Workspace
+      4x  vscode.env.remoteName
+      3x  vscode.window.tabGroups.onDidChangeTabs
+      3x  vscode.ColorThemeKind.Light
+      3x  vscode.OverviewRulerLane.Left
+      3x  vscode.TextEditorRevealType.InCenterIfOutsideViewport
+      3x  vscode.window.activeTextEditor.document
+      3x  vscode.ExtensionMode.Development
+      3x  vscode.workspace.decode
+      3x  vscode.cursor.mcp
+      3x  vscode.env.sessionId
+      3x  vscode.workspace.onDidGrantWorkspaceTrust
+      3x  vscode.FileSystemError.FileNotFound
+      3x  vscode.env.appHost
+      3x  vscode.workspace.setLocalPath
+      3x  vscode.workspace.localPath
+      3x  vscode.commands.registerCommand
+      3x  vscode.ConfigurationTarget.WorkspaceFolder
+      3x  vscode.workspace.onDidChangeTextDocument
+      2x  vscode.window.onDidChangeTextEditorSelection
+      2x  vscode.window.onDidChangeActiveColorTheme
+      2x  vscode.window.onDidChangeVisibleTextEditors
+      2x  vscode.ColorThemeKind.HighContrast
+      2x  vscode.DecorationRangeBehavior.OpenOpen
+      2x  vscode.window.onDidChangeTextEditorVisibleRanges
+      2x  vscode.SymbolKind.Package
+      2x  vscode.SymbolKind.Class
+      2x  vscode.SymbolKind.Interface
+      2x  vscode.SymbolKind.Module
+      2x  vscode.SymbolKind.Namespace
+      2x  vscode.SymbolKind.Constructor
+      2x  vscode.SymbolKind.Enum
+      2x  vscode.SymbolKind.Function
+      2x  vscode.SymbolKind.Method
+      2x  vscode.InputBoxValidationSeverity.Error
+      2x  vscode.window.createOutputChannel
+      2x  vscode.workspace.fs.delete
+      2x  vscode.cursor.mcp.registerServer
+      2x  vscode.lm.registerMcpServerDefinitionProvider
+      2x  vscode.env.uiKind
+      2x  vscode.workspace.onDidChangeWorkspaceFolders
+      2x  vscode.lm.selectChatModels
+      2x  vscode.workspace.organization.id
+      2x  vscode.workspace.organization
+      2x  vscode.workspace.current
+      2x  vscode.workspace.updateWorkspaceFolders
+      2x  vscode.workspace.getRepositoriesByName
+      2x  vscode.workspace.textDocuments
+      2x  vscode.window.visibleTextEditors.find
+      2x  vscode.window.tabGroups.activeTabGroup.viewColumn
+      2x  vscode.ViewColumn.Nine
+      2x  vscode.ViewColumn.One
+      2x  vscode.window.tabGroups.all.some
+      2x  vscode.ExtensionMode.Production
+      2x  vscode.workspace.onDidSaveTextDocument
+      2x  vscode.TreeItemCheckboxState.Checked
+      2x  vscode.window.createTreeView
+      1x  vscode.OverviewRulerLane.Center
+      1x  vscode.ProgressLocation.Window
+      1x  vscode.window.onDidChangeTextEditorViewColumn
+      1x  vscode.OverviewRulerLane.Right
+      1x  vscode.languages.registerCodeLensProvider
+      1x  vscode.SymbolKind.Struct
+      1x  vscode.SymbolKind.Property
+      1x  vscode.SymbolKind.String
+      1x  vscode.commands.map
+      1x  vscode.commands.registerTextEditorCommand
+      1x  vscode.window.activeTextEditor.document.uri.toString
+      1x  vscode.window.activeTextEditor.document.uri
+      1x  vscode.InputBoxValidationSeverity.Info
+      1x  vscode.workspace.registerTextDocumentContentProvider
+      1x  vscode.workspace.fs.createDirectory
+      1x  vscode.cursor.mcp.unregisterServer
+      1x  vscode.UIKind.Web
+      1x  vscode.LogLevel.Off
+      1x  vscode.LogLevel.Debug
+      1x  vscode.workspace.registerFileSystemProvider
+      1x  vscode.FileType.Unknown
+      1x  vscode.workspace.fs.readDirectory
+      1x  vscode.window.state.active
+      1x  vscode.workspace.workspaceFolders.map
+      1x  vscode.workspace.createFileSystemWatcher
+      1x  vscode.window.createTerminal
+      1x  vscode.extensions.onDidChange
+      1x  vscode.lm.onDidChangeChatModels
+      1x  vscode.LanguageModelChatMessage.Assistant
+      1x  vscode.LanguageModelChatMessage.User
+      1x  vscode.authentication.getSession
+      1x  vscode.workspace.provider_data.repositories.nodes
+      1x  vscode.workspace.provider_data.repositories
+      1x  vscode.workspace.provider_data
+      1x  vscode.workspace.repo_relation
+      1x  vscode.workspace.azure_organization_id
+      1x  vscode.workspace.azure_project
+      1x  vscode.workspace.repositories.map
+      1x  vscode.workspace.repositories
+      1x  vscode.workspace.workspaceFile.fsPath
+      1x  vscode.workspace.type
+      1x  vscode.workspace.addRepositories
+      1x  vscode.workspace.removeRepositories
+      1x  vscode.window.showSaveDialog
+      1x  vscode.QuickPickItemKind.Separator
+      1x  vscode.workspace.onDidChangeConfiguration
+      1x  vscode.workspace.textDocuments.find
+      1x  vscode.window.activeTextEditor.viewColumn
+      1x  vscode.window.visibleTextEditors.filter
+      1x  vscode.window.tabGroups.all.flatMap
+      1x  vscode.ExtensionMode.Test
+      1x  vscode.ColorThemeKind.HighContrastLight
+      1x  vscode.env.onDidChangeTelemetryEnabled
+      1x  vscode.env.isTelemetryEnabled
+      1x  vscode.env.shell
+      1x  vscode.window.registerTerminalLinkProvider
+      1x  vscode.workspace.onDidOpenTextDocument
+      1x  vscode.workspace.textDocuments.filter
+      1x  vscode.env.language.startsWith
+      1x  vscode.EndOfLine.LF
+      1x  vscode.window.registerUriHandler
+      1x  vscode.TreeItemCheckboxState.Unchecked
+      1x  vscode.window.registerFileDecorationProvider
+      1x  vscode.workspace.workspaceFolders.some
+      1x  vscode.window.tabGroups.onDidChangeTabGroups
+      1x  vscode.window.registerCustomEditorProvider
+      1x  vscode.window.tabGroups.all.find
+      1x  vscode.window.registerWebviewViewProvider
+      1x  vscode.window.createWebviewPanel
+      1x  vscode.window.registerWebviewPanelSerializer
+
+## vscode Types (type-only)
+    656x  vscode.Uri
+    301x  vscode.Disposable
+    157x  vscode.CancellationToken
+    141x  vscode.TextEditor
+    105x  vscode.TreeItem
+     77x  vscode.MessageItem
+     74x  vscode.QuickInputButton
+     67x  vscode.TextDocumentShowOptions
+     55x  vscode.QuickPickItem
+     51x  vscode.Event
+     50x  vscode.ConfigurationChangeEvent
+     47x  vscode.TextDocument
+     38x  vscode.DecorationOptions
+     35x  vscode.AuthenticationSession
+     23x  vscode.Range
+     21x  vscode.QuickPick
+     19x  vscode.ThemeIcon
+     18x  vscode.TextEditorDecorationType
+     18x  vscode.Command
+     17x  vscode.ConfigurationScope
+     16x  vscode.EventEmitter
+     15x  vscode.ProgressOptions
+     14x  vscode.CancellationTokenSource
+     14x  vscode.ViewColumn
+     12x  vscode.Position
+     12x  vscode.Selection
+     12x  vscode.SymbolInformation
+     12x  vscode.WorkspaceFolder
+     11x  vscode.CodeLens
+     11x  vscode.MarkdownString
+     11x  vscode.FileDecoration
+     10x  vscode.ExtensionContext
+      8x  vscode.DocumentSymbol
+      8x  vscode.SourceControl
+      7x  vscode.Tab
+      7x  vscode.StatusBarItem
+      7x  vscode.WebviewPanel
+      6x  vscode.ColorTheme
+      6x  vscode.GitTimelineItem
+      6x  vscode.SourceControlResourceGroup
+      6x  vscode.TreeViewVisibilityChangeEvent
+      6x  vscode.Webview
+      5x  vscode.QuickInput
+      5x  vscode.TextDocumentChangeEvent
+      5x  vscode.TreeCheckboxChangeEvent
+      5x  vscode.ViewBadge
+      4x  vscode.ThemableDecorationAttachmentRenderOptions
+      4x  vscode.Hover
+      4x  vscode.TabChangeEvent
+      4x  vscode.TextEditorEdit
+      4x  vscode.SourceControlResourceState
+      4x  vscode.TextDocumentContentChangeEvent
+      4x  vscode.TreeItemCollapsibleState
+      3x  vscode.InputBox
+      3x  vscode.Extension
+      3x  vscode.AuthenticationProviderAuthenticationSessionsChangeEvent
+      3x  vscode.SecretStorageChangeEvent
+      3x  vscode.TimelineItem
+      3x  vscode.TextLine
+      3x  vscode.TreeView
+      3x  vscode.TreeViewExpansionEvent
+      3x  vscode.TreeViewSelectionChangeEvent
+      3x  vscode.WebviewView
+      3x  vscode.WebviewOptions
+      2x  vscode.TextEditorSelectionChangeEvent
+      2x  vscode.Progress
+      2x  vscode.ExtensionMode
+      2x  vscode.FileChangeEvent
+      2x  vscode.FileType
+      2x  vscode.WindowState
+      2x  vscode.WorkspaceFoldersChangeEvent
+      2x  vscode.LanguageModelChat
+      2x  vscode.AuthenticationSessionsChangeEvent
+      2x  vscode.ThemeColor
+      2x  vscode.ConfigurationTarget
+      2x  vscode.TreeItemCheckboxState
+      2x  vscode.WebviewPanelOptions
+      1x  vscode.TextEditorViewColumnChangeEvent
+      1x  vscode.CodeLensProvider
+      1x  vscode.DocumentSelector
+      1x  vscode.TextDocumentContentProvider
+      1x  vscode.McpServerDefinitionProvider
+      1x  vscode.McpServerDefinition
+      1x  vscode.McpStdioServerDefinition
+      1x  vscode.FileSystemProvider
+      1x  vscode.FileStat
+      1x  vscode.LanguageModelChatSelector
+      1x  vscode.AuthenticationProvider
+      1x  vscode.TerminalLink
+      1x  vscode.TerminalLinkProvider
+      1x  vscode.TerminalLinkContext
+      1x  vscode.EndOfLine
+      1x  vscode.UriHandler
+      1x  vscode.TreeDataProvider
+      1x  vscode.FileDecorationProvider
+      1x  vscode.TabGroupChangeEvent
+      1x  vscode.CustomTextEditorProvider
+      1x  vscode.WebviewViewResolveContext
+
+## Node.js Builtins
+     15x  path.join
+     12x  process.env
+      7x  os.homedir
+      5x  path.dirname
+      5x  path.resolve
+      4x  fs/promises.stat
+      4x  os.tmpdir
+      3x  process.platform
+      3x  fs.promises.rm
+      3x  path.basename
+      3x  process.env.NODE_TLS_REJECT_UNAUTHORIZED
+      2x  path.isAbsolute
+      2x  path.relative
+      2x  child_process.spawn
+      2x  os.hostname
+      2x  fs.promises.mkdir
+      2x  fs.promises.stat
+      2x  fs.readdir
+      2x  fs/promises.readFile
+      2x  child_process.exec
+      2x  crypto.createHash
+      2x  process.env.SYSTEMROOT
+      2x  fs/promises.mkdir
+      2x  fs/promises.writeFile
+      1x  process.env.GIT_AUTHOR_NAME
+      1x  process.env.GIT_COMMITTER_NAME
+      1x  os.userInfo
+      1x  process.env.GIT_AUTHOR_EMAIL
+      1x  process.env.GIT_COMMITTER_EMAIL
+      1x  process.env.EMAIL
+      1x  fs.promises.writeFile
+      1x  fs.promises.mkdtemp
+      1x  fs.promises.copyFile
+      1x  crypto.randomBytes
+      1x  crypto.randomUUID
+      1x  process.env.PATH
+      1x  process.getgid
+      1x  process.getuid
+      1x  process.execPath
+      1x  child_process.execFile
+      1x  fs.access
+      1x  fs.constants.F_OK
+      1x  fs/promises.realpath
+      1x  process.env.HTTPS_PROXY
+      1x  process.env.HTTP_PROXY
+      1x  fs.realpath.native
+      1x  fs.realpath
+      1x  fs/promises.unlink
+      1x  http.createServer
+      1x  fs/promises.chmod
+      1x  process.env.XDG_DATA_HOME
+      1x  process.env.LOCALAPPDATA
+      1x  os.networkInterfaces
+      1x  process.env.WSL_DISTRO_NAME
+
+## Process/Environment
+
+## Shell Execution
+      2x  child_process.spawn
+      2x  child_process.exec
+      1x  child_process.execFile
+
+## Network/HTTP
+     12x  globalThis.fetch
+
+## Global Side Effects
+     97x  globalThis.setTimeout
+     66x  globalThis.queueMicrotask
+      3x  globalThis.setInterval
+
+## Activation Events
+  onFileSystem:gitlens
+  onStartupFinished
+  onTerminalShellIntegration:bash
+  onTerminalShellIntegration:cmd
+  onTerminalShellIntegration:csh
+  onTerminalShellIntegration:fish
+  onTerminalShellIntegration:gitbash
+  onTerminalShellIntegration:julia
+  onTerminalShellIntegration:ksh
+  onTerminalShellIntegration:node
+  onTerminalShellIntegration:nu
+  onTerminalShellIntegration:pwsh
+  onTerminalShellIntegration:python
+  onTerminalShellIntegration:sh
+  onTerminalShellIntegration:wsl
+  onTerminalShellIntegration:zsh
+  onUri
+  onWebviewPanel:gitlens.graph
+  onWebviewPanel:gitlens.patchDetails
+  onWebviewPanel:gitlens.composer
+  onWebviewPanel:gitlens.settings
+  onWebviewPanel:gitlens.timeline
+
+## Contributes
+  colors: 69 entries
+  commands: 1000 entries
+  configuration: 44 entries
+  configurationDefaults: 1 entries
+  customEditors: 1 entries
+  icons: 1 entries
+  keybindings: 59 entries
+  mcpServerDefinitionProviders: 1 entries
+  menus: 1 entries
+  resourceLabelFormatters: 2 entries
+  submenus: 57 entries
+  views: 1 entries
+  viewsContainers: 1 entries
+  viewsWelcome: 61 entries
+  walkthroughs: 1 entries

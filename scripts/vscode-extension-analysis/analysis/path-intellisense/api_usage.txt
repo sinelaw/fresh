@@ -1,0 +1,44 @@
+═══ path-intellisense ═══
+Files analyzed: 14
+
+Activation Events:
+  *
+
+Contributes:
+  configuration: 1 entries
+
+Namespaces (by usage count):
+     12x  vscode.workspace
+      1x  vscode.languages
+
+API Methods (by usage count):
+      4x  vscode.workspace.fs
+      3x  vscode.workspace.getWorkspaceFolder
+      2x  vscode.workspace.createFileSystemWatcher
+      1x  vscode.workspace.getConfiguration
+      1x  vscode.workspace.workspaceFolders
+      1x  vscode.workspace.findFiles
+      1x  vscode.languages.registerCompletionItemProvider
+
+Types/Classes (by usage count):
+     12x  vscode.WorkspaceFolder
+      7x  vscode.CompletionItem
+      5x  vscode.Uri
+      5x  vscode.TextDocument
+      5x  vscode.Position
+      4x  vscode.RelativePattern
+      4x  vscode.Range
+      3x  vscode.FileType
+      2x  vscode.CompletionItemKind
+      1x  vscode.WorkspaceConfiguration
+      1x  vscode.ExtensionContext
+      1x  vscode.Disposable
+      1x  vscode.FileStat
+
+Event Subscriptions:
+
+Destructured Imports:
+      1x  ExtensionContext
+      1x  languages
+      1x  CompletionItemProvider
+      1x  DocumentSelector

@@ -1,0 +1,51 @@
+# path-intellisense - Full API & Side Effects Report (AST)
+Files analyzed: 14
+
+## vscode API
+     12x  vscode.workspace
+      4x  vscode.RelativePattern
+      4x  vscode.workspace.fs
+      3x  vscode.workspace.getWorkspaceFolder
+      3x  vscode.FileType
+      3x  vscode.Uri.file
+      3x  vscode.Uri
+      2x  vscode.workspace.createFileSystemWatcher
+      2x  vscode.workspace.fs.stat
+      2x  vscode.CompletionItemKind
+      2x  vscode.FileType.File
+      1x  vscode.workspace.getConfiguration
+      1x  vscode.workspace.workspaceFolders
+      1x  vscode.FileType.Directory
+      1x  vscode.workspace.findFiles
+      1x  vscode.workspace.fs.readFile
+      1x  vscode.languages.registerCompletionItemProvider
+      1x  vscode.CompletionItemKind.Folder
+      1x  vscode.CompletionItemKind.File
+      1x  vscode.Position
+      1x  vscode.Range
+      1x  vscode.workspace.fs.readDirectory
+
+## vscode Types (type-only)
+      1x  vscode.ExtensionContext
+      1x  vscode.DocumentSelector
+      1x  vscode.CompletionItemProvider
+
+## Node.js Builtins
+      6x  path.join
+      3x  path.normalize
+      2x  path.dirname
+      1x  path.sep
+
+## Process/Environment
+
+## Shell Execution
+
+## Network/HTTP
+
+## Global Side Effects
+
+## Activation Events
+  *
+
+## Contributes
+  configuration: 1 entries

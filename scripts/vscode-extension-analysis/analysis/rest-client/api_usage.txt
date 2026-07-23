@@ -1,0 +1,125 @@
+═══ rest-client ═══
+Files analyzed: 79
+
+Activation Events:
+  onLanguage:markdown
+
+Contributes:
+  commands: 19 entries
+  configuration: 1 entries
+  configurationDefaults: 1 entries
+  grammars: 1 entries
+  keybindings: 11 entries
+  languages: 1 entries
+  menus: 1 entries
+  snippets: 1 entries
+
+Namespaces (by usage count):
+     26x  vscode.window
+      8x  vscode.workspace
+      6x  vscode.env
+      6x  vscode.commands
+      5x  vscode.languages
+      1x  vscode.extensions
+
+API Methods (by usage count):
+     20x  vscode.commands.registerCommand
+     10x  vscode.window.showInformationMessage
+      9x  vscode.window.showErrorMessage
+      8x  vscode.window.showWarningMessage
+      6x  vscode.window.activeTextEditor
+      6x  vscode.window.showTextDocument
+      5x  vscode.env.clipboard
+      5x  vscode.workspace.openTextDocument
+      5x  vscode.commands.executeCommand
+      4x  vscode.window.showQuickPick
+      3x  vscode.languages.registerCodeLensProvider
+      3x  vscode.window.createStatusBarItem
+      2x  vscode.languages.registerCompletionItemProvider
+      2x  vscode.languages.registerHoverProvider
+      2x  vscode.languages.registerDefinitionProvider
+      2x  vscode.window.createOutputChannel
+      2x  vscode.window.onDidChangeActiveTextEditor
+      2x  vscode.workspace.onDidChangeConfiguration
+      2x  vscode.workspace.getConfiguration
+      2x  vscode.workspace.onDidCloseTextDocument
+      2x  vscode.window.createWebviewPanel
+      1x  vscode.window.createQuickPick
+      1x  vscode.window.showOpenDialog
+      1x  vscode.languages.registerDocumentLinkProvider
+      1x  vscode.languages.registerReferenceProvider
+      1x  vscode.languages.registerDocumentSymbolProvider
+      1x  vscode.languages.setLanguageConfiguration
+      1x  vscode.languages.createDiagnosticCollection
+      1x  vscode.workspace.onDidOpenTextDocument
+      1x  vscode.workspace.onDidChangeTextDocument
+      1x  vscode.workspace.textDocuments
+      1x  vscode.env.asExternalUri
+      1x  vscode.env.openExternal
+      1x  vscode.languages.match
+      1x  vscode.window.showInputBox
+      1x  vscode.extensions.getExtension
+      1x  vscode.workspace.getWorkspaceFolder
+      1x  vscode.window.scroll
+      1x  vscode.languages.setTextDocumentLanguage
+      1x  vscode.window.showSaveDialog
+      1x  vscode.window.scrollTo
+
+Types/Classes (by usage count):
+      3x  vscode.QuickPickItem
+      1x  vscode.ExtensionContext
+      1x  vscode.OpenDialogOptions
+
+Event Subscriptions:
+
+Destructured Imports:
+     27x  TextDocument
+     20x  window
+     12x  Range
+     12x  Position
+     12x  CancellationToken
+      9x  Uri
+      7x  workspace
+      6x  env
+      6x  ExtensionContext
+      6x  commands
+      5x  Clipboard
+      5x  ViewColumn
+      5x  languages
+      5x  MarkdownString
+      5x  Location
+      4x  EventEmitter
+      3x  QuickPickItem
+      3x  Event
+      3x  Disposable
+      3x  CodeLens
+      3x  CodeLensProvider
+      3x  Command
+      3x  WebviewPanel
+      2x  SnippetString
+      2x  Hover
+      2x  HoverProvider
+      2x  Definition
+      2x  DefinitionProvider
+      2x  CompletionItem
+      2x  CompletionItemKind
+      2x  CompletionItemProvider
+      2x  StatusBarAlignment
+      2x  StatusBarItem
+      1x  QuickInputButtons
+      1x  OutputChannel
+      1x  CharacterPair
+      1x  ConfigurationChangeEvent
+      1x  Diagnostic
+      1x  DiagnosticCollection
+      1x  DiagnosticSeverity
+      1x  DocumentLink
+      1x  DocumentLinkProvider
+      1x  ReferenceContext
+      1x  ReferenceProvider
+      1x  DocumentSymbolProvider
+      1x  SymbolInformation
+      1x  SymbolKind
+      1x  QuickPickOptions
+      1x  TextEditor
+      1x  extensions

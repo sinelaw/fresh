@@ -1,0 +1,3106 @@
+{
+  "generated": "2026-04-03T09:16:56.388Z",
+  "extensionCount": 12,
+  "namespaces": {
+    "workspace": {
+      "extensionCount": 11,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "eslint",
+        "gitlens",
+        "live-server",
+        "material-icon-theme",
+        "path-intellisense",
+        "prettier",
+        "python",
+        "rest-client"
+      ],
+      "methods": [
+        {
+          "method": "vscode.workspace.getConfiguration",
+          "extensionCount": 11,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "live-server",
+            "material-icon-theme",
+            "path-intellisense",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.workspaceFolders",
+          "extensionCount": 9,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "live-server",
+            "path-intellisense",
+            "prettier",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidChangeConfiguration",
+          "extensionCount": 8,
+          "extensions": [
+            "auto-rename-tag",
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "material-icon-theme",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.getWorkspaceFolder",
+          "extensionCount": 7,
+          "extensions": [
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "path-intellisense",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.fs",
+          "extensionCount": 6,
+          "extensions": [
+            "auto-rename-tag",
+            "cpptools",
+            "gitlens",
+            "path-intellisense",
+            "prettier",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.openTextDocument",
+          "extensionCount": 6,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidChangeTextDocument",
+          "extensionCount": 5,
+          "extensions": [
+            "auto-rename-tag",
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.createFileSystemWatcher",
+          "extensionCount": 5,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "path-intellisense",
+            "prettier",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidChangeWorkspaceFolders",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidOpenTextDocument",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidCloseTextDocument",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.textDocuments",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.workspace.applyEdit",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidSaveTextDocument",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.isTrusted",
+          "extensionCount": 3,
+          "extensions": [
+            "gitlens",
+            "prettier",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.findFiles",
+          "extensionCount": 3,
+          "extensions": [
+            "live-server",
+            "path-intellisense",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.saveAll",
+          "extensionCount": 2,
+          "extensions": [
+            "code-runner",
+            "live-server"
+          ]
+        },
+        {
+          "method": "vscode.workspace.registerTextDocumentContentProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidGrantWorkspaceTrust",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.workspaceFile",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.changed",
+          "extensionCount": 1,
+          "extensions": [
+            "eslint"
+          ]
+        },
+        {
+          "method": "vscode.workspace.decode",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.registerFileSystemProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.id",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.organization",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.provider",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.name",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.repo",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.azure",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.localId",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.repositories",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.current",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.updateWorkspaceFolders",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.getRepositoryDescriptors",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.getRepositoriesByName",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.addRepositories",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.removeRepositories",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.setLocalPath",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.localPath",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.workspace.js",
+          "extensionCount": 1,
+          "extensions": [
+            "prettier"
+          ]
+        },
+        {
+          "method": "vscode.workspace.notebookDocuments",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.asRelativePath",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.save",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.onDidCloseNotebookDocument",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.workspace.openNotebookDocument",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "window": {
+      "extensionCount": 10,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "eslint",
+        "gitlens",
+        "live-server",
+        "material-icon-theme",
+        "prettier",
+        "python",
+        "rest-client"
+      ],
+      "methods": [
+        {
+          "method": "vscode.window.createOutputChannel",
+          "extensionCount": 8,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "material-icon-theme",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.activeTextEditor",
+          "extensionCount": 8,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "live-server",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showQuickPick",
+          "extensionCount": 7,
+          "extensions": [
+            "code-runner",
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "live-server",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeActiveTextEditor",
+          "extensionCount": 6,
+          "extensions": [
+            "auto-rename-tag",
+            "cpptools",
+            "gitlens",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showInformationMessage",
+          "extensionCount": 6,
+          "extensions": [
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "live-server",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showTextDocument",
+          "extensionCount": 5,
+          "extensions": [
+            "auto-rename-tag",
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showErrorMessage",
+          "extensionCount": 5,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "live-server",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showWarningMessage",
+          "extensionCount": 5,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "live-server",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showOpenDialog",
+          "extensionCount": 5,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.createStatusBarItem",
+          "extensionCount": 5,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.createTerminal",
+          "extensionCount": 4,
+          "extensions": [
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.createQuickPick",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.showInputBox",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidCloseTerminal",
+          "extensionCount": 3,
+          "extensions": [
+            "code-runner",
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.withProgress",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.visibleTextEditors",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.createTextEditorDecorationType",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeTextEditorSelection",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeVisibleTextEditors",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.createTreeView",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.createWebviewPanel",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeWindowState",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.createInputBox",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.showSaveDialog",
+          "extensionCount": 3,
+          "extensions": [
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeTextEditorVisibleRanges",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidWriteTerminalData",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeTextEditorViewColumn",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.tabGroups",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.registerTerminalLinkProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.registerTreeDataProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeActiveColorTheme",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.activeColorTheme",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.state",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.focused",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.registerUriHandler",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.registerFileDecorationProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.registerCustomEditorProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.bootstrap",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.registerWebviewViewProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.registerWebviewPanelSerializer",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.window.setStatusBarMessage",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.showWorkspaceFolderPick",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidExecuteTerminalCommand",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeTextEditorOptions",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidOpenTerminal",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeTerminalShellIntegration",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidEndTerminalShellExecution",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidChangeTerminalState",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.showNotebookDocument",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.onDidStartTerminalShellExecution",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.activeTerminal",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.window.scroll",
+          "extensionCount": 1,
+          "extensions": [
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.window.scrollTo",
+          "extensionCount": 1,
+          "extensions": [
+            "rest-client"
+          ]
+        }
+      ]
+    },
+    "commands": {
+      "extensionCount": 10,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "eslint",
+        "gitlens",
+        "live-server",
+        "material-icon-theme",
+        "prettier",
+        "python",
+        "rest-client"
+      ],
+      "methods": [
+        {
+          "method": "vscode.commands.executeCommand",
+          "extensionCount": 8,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.commands.registerCommand",
+          "extensionCount": 8,
+          "extensions": [
+            "code-runner",
+            "cpptools",
+            "eslint",
+            "gitlens",
+            "material-icon-theme",
+            "prettier",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.commands.registerTextEditorCommand",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.commands.js",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "prettier"
+          ]
+        },
+        {
+          "method": "vscode.commands.map",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.commands.getCommands",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "extensions": {
+      "extensionCount": 8,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "gitlens",
+        "live-server",
+        "material-icon-theme",
+        "python",
+        "rest-client"
+      ],
+      "methods": [
+        {
+          "method": "vscode.extensions.getExtension",
+          "extensionCount": 8,
+          "extensions": [
+            "auto-rename-tag",
+            "code-runner",
+            "cpptools",
+            "gitlens",
+            "live-server",
+            "material-icon-theme",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.extensions.all",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.extensions.onDidChange",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.extensions.installExtension",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.extensions.node",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "env": {
+      "extensionCount": 7,
+      "extensions": [
+        "code-runner",
+        "cpptools",
+        "eslint",
+        "gitlens",
+        "material-icon-theme",
+        "python",
+        "rest-client"
+      ],
+      "methods": [
+        {
+          "method": "vscode.env.openExternal",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.env.clipboard",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.env.shell",
+          "extensionCount": 3,
+          "extensions": [
+            "code-runner",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.remoteName",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.machineId",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.uiKind",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.appName",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.language",
+          "extensionCount": 3,
+          "extensions": [
+            "gitlens",
+            "material-icon-theme",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.uriScheme",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.sessionId",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.asExternalUri",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.env.appRoot",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.env.DEBUG",
+          "extensionCount": 1,
+          "extensions": [
+            "eslint"
+          ]
+        },
+        {
+          "method": "vscode.env.NODE",
+          "extensionCount": 1,
+          "extensions": [
+            "eslint"
+          ]
+        },
+        {
+          "method": "vscode.env.appHost",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.env.onDidChangeTelemetryEnabled",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.env.isTelemetryEnabled",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.env.onDidChangeShell",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "languages": {
+      "extensionCount": 7,
+      "extensions": [
+        "cpptools",
+        "eslint",
+        "gitlens",
+        "path-intellisense",
+        "prettier",
+        "python",
+        "rest-client"
+      ],
+      "methods": [
+        {
+          "method": "vscode.languages.registerCompletionItemProvider",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "path-intellisense",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerHoverProvider",
+          "extensionCount": 4,
+          "extensions": [
+            "cpptools",
+            "gitlens",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.createDiagnosticCollection",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerCodeActionsProvider",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "prettier",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.languages.setLanguageConfiguration",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "python",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.createLanguageStatusItem",
+          "extensionCount": 3,
+          "extensions": [
+            "cpptools",
+            "prettier",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerReferenceProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerDocumentSymbolProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerDocumentFormattingEditProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "prettier"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerDocumentRangeFormattingEditProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "prettier"
+          ]
+        },
+        {
+          "method": "vscode.languages.setTextDocumentLanguage",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerCodeLensProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "gitlens",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.match",
+          "extensionCount": 2,
+          "extensions": [
+            "prettier",
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerInlayHintsProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerRenameProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerWorkspaceSymbolProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerCallHierarchyProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerOnTypeFormattingEditProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerFoldingRangeProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerDocumentSemanticTokensProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.getDiagnostics",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.languages.forEach",
+          "extensionCount": 1,
+          "extensions": [
+            "prettier"
+          ]
+        },
+        {
+          "method": "vscode.languages.onDidChangeDiagnostics",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerDocumentLinkProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "rest-client"
+          ]
+        },
+        {
+          "method": "vscode.languages.registerDefinitionProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "rest-client"
+          ]
+        }
+      ]
+    },
+    "lm": {
+      "extensionCount": 3,
+      "extensions": [
+        "cpptools",
+        "gitlens",
+        "python"
+      ],
+      "methods": [
+        {
+          "method": "vscode.lm.registerTool",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.lm.registerMcpServerDefinitionProvider",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.lm.onDidChangeChatModels",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.lm.selectChatModels",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.lm.invokeTool",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "debug": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ],
+      "methods": [
+        {
+          "method": "vscode.debug.startDebugging",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.registerDebugConfigurationProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.registerDebugAdapterDescriptorFactory",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.activeDebugSession",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.activeDebugConsole",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.breakpoints",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.onDidChangeActiveDebugSession",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.onDidStartDebugSession",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.onDidReceiveDebugSessionCustomEvent",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.onDidTerminateDebugSession",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.onDidChangeBreakpoints",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.registerDebugAdapterTrackerFactory",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.addBreakpoints",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        },
+        {
+          "method": "vscode.debug.removeBreakpoints",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "tasks": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "eslint"
+      ],
+      "methods": [
+        {
+          "method": "vscode.tasks.registerTaskProvider",
+          "extensionCount": 2,
+          "extensions": [
+            "cpptools",
+            "eslint"
+          ]
+        },
+        {
+          "method": "vscode.tasks.json",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.tasks.find",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.tasks.forEach",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.tasks.push",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.tasks.executeTask",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.tasks.onDidEndTask",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        },
+        {
+          "method": "vscode.tasks.onDidStartTask",
+          "extensionCount": 1,
+          "extensions": [
+            "cpptools"
+          ]
+        }
+      ]
+    },
+    "chat": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ],
+      "methods": [
+        {
+          "method": "vscode.chat.js",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        }
+      ]
+    },
+    "authentication": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ],
+      "methods": [
+        {
+          "method": "vscode.authentication.getSession",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        },
+        {
+          "method": "vscode.authentication.onDidChangeSessions",
+          "extensionCount": 1,
+          "extensions": [
+            "gitlens"
+          ]
+        }
+      ]
+    },
+    "l10n": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ],
+      "methods": [
+        {
+          "method": "vscode.l10n.t",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    },
+    "notebooks": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ],
+      "methods": [
+        {
+          "method": "vscode.notebooks.createNotebookController",
+          "extensionCount": 1,
+          "extensions": [
+            "python"
+          ]
+        }
+      ]
+    }
+  },
+  "types": {
+    "vscode.ExtensionContext": {
+      "extensionCount": 6,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "path-intellisense",
+        "python",
+        "rest-client"
+      ]
+    },
+    "vscode.Uri": {
+      "extensionCount": 6,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "gitlens",
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.Disposable": {
+      "extensionCount": 6,
+      "extensions": [
+        "code-runner",
+        "cpptools",
+        "eslint",
+        "live-server",
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.TextDocument": {
+      "extensionCount": 5,
+      "extensions": [
+        "auto-rename-tag",
+        "code-runner",
+        "cpptools",
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.WorkspaceConfiguration": {
+      "extensionCount": 4,
+      "extensions": [
+        "code-runner",
+        "cpptools",
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.WorkspaceFolder": {
+      "extensionCount": 4,
+      "extensions": [
+        "cpptools",
+        "eslint",
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.Range": {
+      "extensionCount": 3,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools",
+        "path-intellisense"
+      ]
+    },
+    "vscode.Extension": {
+      "extensionCount": 3,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.FileType": {
+      "extensionCount": 3,
+      "extensions": [
+        "gitlens",
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.CancellationTokenSource": {
+      "extensionCount": 2,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools"
+      ]
+    },
+    "vscode.TextEditor": {
+      "extensionCount": 2,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools"
+      ]
+    },
+    "vscode.Selection": {
+      "extensionCount": 2,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools"
+      ]
+    },
+    "vscode.OutputChannel": {
+      "extensionCount": 2,
+      "extensions": [
+        "code-runner",
+        "cpptools"
+      ]
+    },
+    "vscode.Terminal": {
+      "extensionCount": 2,
+      "extensions": [
+        "code-runner",
+        "cpptools"
+      ]
+    },
+    "vscode.QuickPickItem": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "rest-client"
+      ]
+    },
+    "vscode.CancellationToken": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.CompletionItem": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "path-intellisense"
+      ]
+    },
+    "vscode.CompletionItemKind": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "path-intellisense"
+      ]
+    },
+    "vscode.Position": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "path-intellisense"
+      ]
+    },
+    "vscode.ConfigurationChangeEvent": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.CancellationError": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "gitlens"
+      ]
+    },
+    "vscode.CodeActionKind": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.WorkspaceEdit": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.EventEmitter": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.Event": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.TextDocumentChangeEvent": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.FileSystemWatcher": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.WorkspaceFoldersChangeEvent": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.UIKind": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.FileStat": {
+      "extensionCount": 2,
+      "extensions": [
+        "path-intellisense",
+        "python"
+      ]
+    },
+    "vscode.SnippetString": {
+      "extensionCount": 1,
+      "extensions": [
+        "auto-rename-tag"
+      ]
+    },
+    "vscode.QuickInputButton": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.QuickPick": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.QuickPickOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugConfigurationProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ProgressLocation": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.MessageItem": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugConfiguration": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CompletionItemProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CompletionContext": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CompletionList": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugAdapterDescriptorFactory": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugSession": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugAdapterExecutable": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ProviderResult": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugAdapterDescriptor": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DebugConfigurationProviderTriggerKind": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextEditorEdit": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DocumentSelector": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.HoverProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelChat": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.Hover": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.MarkdownString": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.SymbolKind": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CallHierarchyProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CallHierarchyItem": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CallHierarchyIncomingCall": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CallHierarchyOutgoingCall": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CodeActionProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CodeActionContext": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.Command": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.CodeAction": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DocumentFormattingEditProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.FormattingOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextEdit": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextLine": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DocumentRangeFormattingEditProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DocumentSymbolProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DocumentSymbol": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.SymbolInformation": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ReferenceProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ReferenceContext": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.Location": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.FoldingRange": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.FoldingRangeProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.FoldingContext": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.FoldingRangeKind": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.InlayHint": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.InlayHintsProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.InlayHintKind": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.OnTypeFormattingEditProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.RenameProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.WorkspaceEditEntryMetadata": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.SemanticTokens": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.SemanticTokensBuilder": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DocumentSemanticTokensProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.WorkspaceSymbolProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DiagnosticCollection": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.SemanticTokensLegend": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.Diagnostic": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DiagnosticRelatedInformation": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextEditorDecorationType": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DiagnosticSeverity": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextDocumentSaveReason": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ViewColumn": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.QuickPickItemKind": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.DecorationRangeBehavior": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.EndOfLine": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.EnvironmentVariableMutator": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TaskScope": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextEditorVisibleRangesChangeEvent": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextEditorSelectionChangeEvent": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelChatMessage": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelChatResponse": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelError": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.OnEnterRule": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.IndentAction": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageConfiguration": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelTool": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelToolInvocationOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelToolResult": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageModelTextPart": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.Memento": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ProgressOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.Progress": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TreeDataProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TreeItem": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TreeItemCollapsibleState": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ThemeIcon": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ConfigurationTarget": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.WebviewPanel": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.WebviewPanelOnDidChangeViewStateEvent": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.WindowState": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.LanguageStatusItem": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.StatusBarItem": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.StatusBarAlignment": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.ThemeColor": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TerminalOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.InputBox": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TerminalDataWriteEvent": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TextDocumentContentProvider": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.TaskDefinition": {
+      "extensionCount": 1,
+      "extensions": [
+        "eslint"
+      ]
+    },
+    "vscode.Task": {
+      "extensionCount": 1,
+      "extensions": [
+        "eslint"
+      ]
+    },
+    "vscode.ShellExecutionOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "eslint"
+      ]
+    },
+    "vscode.ShellExecution": {
+      "extensionCount": 1,
+      "extensions": [
+        "eslint"
+      ]
+    },
+    "vscode.RelativePattern": {
+      "extensionCount": 1,
+      "extensions": [
+        "path-intellisense"
+      ]
+    },
+    "vscode.LanguageStatusSeverity": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.FileSystemError": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.ConfigurationScope": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.GlobPattern": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.NotebookDocument": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.NotebookData": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.NotebookController": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.NotebookCellOutput": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.NotebookCellOutputItem": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.OpenDialogOptions": {
+      "extensionCount": 1,
+      "extensions": [
+        "rest-client"
+      ]
+    }
+  },
+  "events": {
+    "vscode.workspace.onDidChangeConfiguration": {
+      "extensionCount": 4,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools",
+        "eslint",
+        "python"
+      ]
+    },
+    "vscode.workspace.onDidChangeTextDocument": {
+      "extensionCount": 3,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.workspace.onDidChangeWorkspaceFolders": {
+      "extensionCount": 3,
+      "extensions": [
+        "cpptools",
+        "eslint",
+        "python"
+      ]
+    },
+    "vscode.window.onDidChangeActiveTextEditor": {
+      "extensionCount": 2,
+      "extensions": [
+        "auto-rename-tag",
+        "cpptools"
+      ]
+    },
+    "vscode.window.onDidCloseTerminal": {
+      "extensionCount": 2,
+      "extensions": [
+        "code-runner",
+        "cpptools"
+      ]
+    },
+    "vscode.workspace.onDidOpenTextDocument": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.workspace.onDidCloseTextDocument": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.workspace.onDidSaveTextDocument": {
+      "extensionCount": 2,
+      "extensions": [
+        "cpptools",
+        "python"
+      ]
+    },
+    "vscode.window.onDidChangeTextEditorVisibleRanges": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.window.onDidChangeTextEditorSelection": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.window.onDidChangeVisibleTextEditors": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.tasks.onDidStartTask": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.tasks.onDidEndTask": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.window.onDidChangeWindowState": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.window.onDidWriteTerminalData": {
+      "extensionCount": 1,
+      "extensions": [
+        "cpptools"
+      ]
+    },
+    "vscode.extensions.onDidChange": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.env.onDidChangeShell": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.workspace.onDidCloseNotebookDocument": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "vscode.workspace.onDidGrantWorkspaceTrust": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "extensionCount": 9,
+      "extensions": [
+        "code-runner",
+        "eslint",
+        "gitlens",
+        "live-server",
+        "material-icon-theme",
+        "path-intellisense",
+        "prettier",
+        "python",
+        "rest-client"
+      ]
+    },
+    "commands": {
+      "extensionCount": 8,
+      "extensions": [
+        "code-runner",
+        "eslint",
+        "gitlens",
+        "live-server",
+        "material-icon-theme",
+        "prettier",
+        "python",
+        "rest-client"
+      ]
+    },
+    "keybindings": {
+      "extensionCount": 5,
+      "extensions": [
+        "code-runner",
+        "gitlens",
+        "live-server",
+        "python",
+        "rest-client"
+      ]
+    },
+    "menus": {
+      "extensionCount": 5,
+      "extensions": [
+        "code-runner",
+        "gitlens",
+        "live-server",
+        "python",
+        "rest-client"
+      ]
+    },
+    "languages": {
+      "extensionCount": 5,
+      "extensions": [
+        "code-runner",
+        "eslint",
+        "prettier",
+        "python",
+        "rest-client"
+      ]
+    },
+    "grammars": {
+      "extensionCount": 3,
+      "extensions": [
+        "code-runner",
+        "python",
+        "rest-client"
+      ]
+    },
+    "jsonValidation": {
+      "extensionCount": 3,
+      "extensions": [
+        "eslint",
+        "prettier",
+        "python"
+      ]
+    },
+    "configurationDefaults": {
+      "extensionCount": 2,
+      "extensions": [
+        "gitlens",
+        "rest-client"
+      ]
+    },
+    "submenus": {
+      "extensionCount": 2,
+      "extensions": [
+        "gitlens",
+        "python"
+      ]
+    },
+    "viewsWelcome": {
+      "extensionCount": 2,
+      "extensions": [
+        "gitlens",
+        "python"
+      ]
+    },
+    "walkthroughs": {
+      "extensionCount": 2,
+      "extensions": [
+        "gitlens",
+        "python"
+      ]
+    },
+    "taskDefinitions": {
+      "extensionCount": 1,
+      "extensions": [
+        "eslint"
+      ]
+    },
+    "mcpServerDefinitionProviders": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "colors": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "icons": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "customEditors": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "resourceLabelFormatters": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "viewsContainers": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "views": {
+      "extensionCount": 1,
+      "extensions": [
+        "gitlens"
+      ]
+    },
+    "iconThemes": {
+      "extensionCount": 1,
+      "extensions": [
+        "material-icon-theme"
+      ]
+    },
+    "problemMatchers": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "breakpoints": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "debuggers": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "yamlValidation": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "languageModelTools": {
+      "extensionCount": 1,
+      "extensions": [
+        "python"
+      ]
+    },
+    "snippets": {
+      "extensionCount": 1,
+      "extensions": [
+        "rest-client"
+      ]
+    }
+  },
+  "extensions": [
+    {
+      "name": "python",
+      "fileCount": 469,
+      "uniqueMethods": 106,
+      "uniqueTypes": 28,
+      "uniqueEvents": 10,
+      "contributeKeys": 15,
+      "activationEvents": [
+        "onDebugInitialConfigurations",
+        "onLanguage:python",
+        "onDebugResolve:python",
+        "onCommand:python.copilotSetupTests",
+        "workspaceContains:mspythonconfig.json",
+        "workspaceContains:pyproject.toml",
+        "workspaceContains:Pipfile",
+        "workspaceContains:setup.py",
+        "workspaceContains:requirements.txt",
+        "workspaceContains:pylock.toml",
+        "workspaceContains:**/pylock.*.toml",
+        "workspaceContains:manage.py",
+        "workspaceContains:app.py",
+        "workspaceContains:.venv",
+        "workspaceContains:.conda",
+        "onLanguageModelTool:get_python_environment_details",
+        "onLanguageModelTool:get_python_executable_details",
+        "onLanguageModelTool:install_python_packages",
+        "onLanguageModelTool:configure_python_environment",
+        "onLanguageModelTool:create_virtual_environment",
+        "onTerminalShellIntegration:python"
+      ]
+    },
+    {
+      "name": "gitlens",
+      "fileCount": 1101,
+      "uniqueMethods": 104,
+      "uniqueTypes": 3,
+      "uniqueEvents": 0,
+      "contributeKeys": 15,
+      "activationEvents": [
+        "onFileSystem:gitlens",
+        "onStartupFinished",
+        "onTerminalShellIntegration:bash",
+        "onTerminalShellIntegration:cmd",
+        "onTerminalShellIntegration:csh",
+        "onTerminalShellIntegration:fish",
+        "onTerminalShellIntegration:gitbash",
+        "onTerminalShellIntegration:julia",
+        "onTerminalShellIntegration:ksh",
+        "onTerminalShellIntegration:node",
+        "onTerminalShellIntegration:nu",
+        "onTerminalShellIntegration:pwsh",
+        "onTerminalShellIntegration:python",
+        "onTerminalShellIntegration:sh",
+        "onTerminalShellIntegration:wsl",
+        "onTerminalShellIntegration:zsh",
+        "onUri",
+        "onWebviewPanel:gitlens.graph",
+        "onWebviewPanel:gitlens.patchDetails",
+        "onWebviewPanel:gitlens.composer",
+        "onWebviewPanel:gitlens.settings",
+        "onWebviewPanel:gitlens.timeline"
+      ]
+    },
+    {
+      "name": "cpptools",
+      "fileCount": 161,
+      "uniqueMethods": 84,
+      "uniqueTypes": 128,
+      "uniqueEvents": 15,
+      "contributeKeys": 0,
+      "activationEvents": []
+    },
+    {
+      "name": "rest-client",
+      "fileCount": 79,
+      "uniqueMethods": 41,
+      "uniqueTypes": 3,
+      "uniqueEvents": 0,
+      "contributeKeys": 8,
+      "activationEvents": [
+        "onLanguage:markdown"
+      ]
+    },
+    {
+      "name": "prettier",
+      "fileCount": 115,
+      "uniqueMethods": 22,
+      "uniqueTypes": 0,
+      "uniqueEvents": 0,
+      "contributeKeys": 4,
+      "activationEvents": [
+        "onStartupFinished"
+      ]
+    },
+    {
+      "name": "code-runner",
+      "fileCount": 5,
+      "uniqueMethods": 15,
+      "uniqueTypes": 7,
+      "uniqueEvents": 1,
+      "contributeKeys": 6,
+      "activationEvents": [
+        "onCommand:code-runner.run",
+        "onCommand:code-runner.runCustomCommand",
+        "onCommand:code-runner.runByLanguage",
+        "onStartupFinished"
+      ]
+    },
+    {
+      "name": "auto-rename-tag",
+      "fileCount": 22,
+      "uniqueMethods": 12,
+      "uniqueTypes": 9,
+      "uniqueEvents": 3,
+      "contributeKeys": 0,
+      "activationEvents": []
+    },
+    {
+      "name": "eslint",
+      "fileCount": 54,
+      "uniqueMethods": 11,
+      "uniqueTypes": 6,
+      "uniqueEvents": 2,
+      "contributeKeys": 5,
+      "activationEvents": [
+        "onStartupFinished"
+      ]
+    },
+    {
+      "name": "live-server",
+      "fileCount": 11,
+      "uniqueMethods": 10,
+      "uniqueTypes": 1,
+      "uniqueEvents": 0,
+      "contributeKeys": 4,
+      "activationEvents": [
+        "onStartupFinished"
+      ]
+    },
+    {
+      "name": "path-intellisense",
+      "fileCount": 14,
+      "uniqueMethods": 7,
+      "uniqueTypes": 13,
+      "uniqueEvents": 0,
+      "contributeKeys": 1,
+      "activationEvents": [
+        "*"
+      ]
+    },
+    {
+      "name": "material-icon-theme",
+      "fileCount": 105,
+      "uniqueMethods": 6,
+      "uniqueTypes": 0,
+      "uniqueEvents": 0,
+      "contributeKeys": 3,
+      "activationEvents": [
+        "onStartupFinished"
+      ]
+    },
+    {
+      "name": "docker",
+      "fileCount": 0,
+      "uniqueMethods": 0,
+      "uniqueTypes": 0,
+      "uniqueEvents": 0,
+      "contributeKeys": 0,
+      "activationEvents": []
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+═══ code-runner ═══
+Files analyzed: 5
+
+Activation Events:
+  onCommand:code-runner.run
+  onCommand:code-runner.runCustomCommand
+  onCommand:code-runner.runByLanguage
+  onStartupFinished
+
+Contributes:
+  commands: 4 entries
+  configuration: 1 entries
+  grammars: 1 entries
+  keybindings: 4 entries
+  languages: 1 entries
+  menus: 1 entries
+
+Namespaces (by usage count):
+     12x  vscode.window
+      9x  vscode.workspace
+      8x  vscode.commands
+      2x  vscode.env
+      1x  vscode.extensions
+
+API Methods (by usage count):
+      4x  vscode.workspace.getConfiguration
+      4x  vscode.window.showInformationMessage
+      4x  vscode.window.activeTextEditor
+      4x  vscode.commands.executeCommand
+      4x  vscode.commands.registerCommand
+      2x  vscode.workspace.workspaceFolders
+      2x  vscode.env.shell
+      1x  vscode.window.createOutputChannel
+      1x  vscode.workspace.openTextDocument
+      1x  vscode.window.showQuickPick
+      1x  vscode.workspace.getWorkspaceFolder
+      1x  vscode.workspace.saveAll
+      1x  vscode.window.createTerminal
+      1x  vscode.window.onDidCloseTerminal
+      1x  vscode.extensions.getExtension
+
+Types/Classes (by usage count):
+      3x  vscode.TextDocument
+      3x  vscode.WorkspaceConfiguration
+      3x  vscode.Uri
+      1x  vscode.Disposable
+      1x  vscode.OutputChannel
+      1x  vscode.Terminal
+      1x  vscode.ExtensionContext
+
+Event Subscriptions:
+      1x  vscode.window.onDidCloseTerminal
+
+Destructured Imports:
