@@ -331,15 +331,17 @@ impl Editor {
                         // `SelfUpdateFinished` when the child exits.
                         let log_dir = crate::services::log_dirs::log_dir().clone();
                         match self.async_bridge.as_ref().map(|b| b.sender()) {
-                            Some(sender) => match crate::services::updater::spawn_background_update(
-                                &log_dir, sender,
-                            ) {
-                                Ok(path) => self.begin_self_update(path),
-                                Err(e) => {
-                                    tracing::error!("failed to launch background update: {e}");
-                                    self.finish_self_update(false);
+                            Some(sender) => {
+                                match crate::services::updater::spawn_background_update(
+                                    &log_dir, sender,
+                                ) {
+                                    Ok(path) => self.begin_self_update(path),
+                                    Err(e) => {
+                                        tracing::error!("failed to launch background update: {e}");
+                                        self.finish_self_update(false);
+                                    }
                                 }
-                            },
+                            }
                             None => {
                                 tracing::error!(
                                     "no async bridge available; cannot launch background update"
