@@ -1068,16 +1068,20 @@ function markSessionActiveToday(s: AgentSession): void {
   saveLastActive();
 }
 
-// The most recent day this session was active — the persisted value folded
-// together with the live in-memory signals, so a session active *this* run
-// sorts correctly even before its day-change write has landed. Discovered
-// on-disk rows report 0 (oldest) so they sink below live sessions.
+// The most recent day this session was active, at day granularity. Prefer
+// the persisted value — it's the real last-active day, updated on every
+// output / activation — so a workspace last used days ago sorts below one
+// used today even though both are live *now* (`createdAt` is stamped at
+// reconcile time and would otherwise pin every restored session to "today").
+// A session with no persisted day yet (never active this run, no history)
+// falls back to today, so a brand-new workspace still sorts as current. A
+// discovered on-disk row is keyed by the same root as the live session it
+// becomes, so opening it never changes its day — hence never its position.
 function sessionLastActiveDay(s: AgentSession): number {
-  if (s.discovered) return 0;
-  const stored = loadLastActive()[normRoot(s.root)] ?? 0;
+  const stored = loadLastActive()[normRoot(s.root)];
+  if (stored !== undefined) return stored;
   const liveMs = Math.max(s.lastOutputAt ?? 0, s.activatedAt ?? 0, s.createdAt ?? 0);
-  const liveDay = liveMs > 0 ? Math.floor(liveMs / MS_PER_DAY) : 0;
-  return Math.max(stored, liveDay);
+  return liveMs > 0 ? Math.floor(liveMs / MS_PER_DAY) : todayDayNumber();
 }
 
 // ── Workspace names: manual rename + terminal-tracking auto-name ─────────
@@ -1998,14 +2002,13 @@ function filterSessions(needle: string): number[] {
     // The dock orders by recency at DAY granularity: most-recently-active
     // workspaces first, older ones below. Ties within a day (the common
     // case) fall back to newest-created-first, then to each session's
-    // permanent first-seen slot — all three keys are stable through the day,
-    // so the list holds still as the active window switches or a session's
+    // permanent first-seen slot — both keys are stable through the day, so
+    // the list holds still as the active window switches or a session's
     // sub-day fields change, and only reorders when a workspace crosses a
-    // day boundary or a new one is created. Folder grouping (which folder a
-    // session sits under, and the folders' own name order) is applied later
-    // in `buildDockTree`; this only orders sessions *within* a group. The
-    // modal picker (opened fresh each time) keeps the grouped,
-    // current-project-first browse order.
+    // day boundary. Folder grouping (which folder a session sits under, and
+    // the folders' own name order) is applied later in `buildDockTree`; this
+    // only orders sessions *within* a group. The modal picker (opened fresh
+    // each time) keeps the grouped, current-project-first browse order.
     const comparator = dockMode
       ? (a: number, b: number) => {
           const sa = orchestratorSessions.get(a)!;
@@ -2013,11 +2016,13 @@ function filterSessions(needle: string): number[] {
           const da = sessionLastActiveDay(sa);
           const db = sessionLastActiveDay(sb);
           if (da !== db) return db - da; // more recent active-day first
-          // Same day (the common case): newest-first-seen first. The slot is
-          // a strictly-increasing per-root counter, so this is deterministic
-          // and — like the day key — fixed for a given root, never shifting
-          // on activation or output within the day.
-          return stableOrderKey(sb) - stableOrderKey(sa);
+          // Same day (the common case): fall back to the permanent first-seen
+          // slot — the dock's long-standing stable order. Keeping this
+          // *ascending* means within-day order is unchanged from before the
+          // recency feature, so a discovered worktree keeps its position when
+          // it opens and the persistent dock never reshuffles intra-day; only
+          // a genuine cross-day change floats a workspace up.
+          return stableOrderKey(sa) - stableOrderKey(sb);
         }
       : byProjectThenStable;
     const ids = allIds.slice().sort(comparator);

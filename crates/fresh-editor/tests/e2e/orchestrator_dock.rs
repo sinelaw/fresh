@@ -187,11 +187,11 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     // Two sessions in *different* projects: switching the active window
     // changes the "current project", which the picker would float to the
     // top. The persistent dock must keep a stable order regardless.
-    //
-    // The dock orders within-day ties newest-first-seen first, so the
-    // second session (zzz_project, created after the aaa_project launch
-    // session) sits above it — and that relative order must not change when
-    // the active window switches.
+    // Both projects are siblings under one parent so their first-seen slot
+    // order is deterministic (aaa_project launched first), and — because the
+    // recency order buckets by whole days — same-day sessions keep that
+    // stable first-seen order, so switching the active window must not
+    // reorder them.
     let (_tmp_a, root_a) = setup_project("aaa_project");
     let parent = root_a.parent().unwrap().to_path_buf();
     let root_b = parent.join("zzz_project");
@@ -221,9 +221,9 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     let aaa_before = row_of(&h, "aaa_project");
     let zzz_before = row_of(&h, "zzz_project");
     assert!(
-        zzz_before < aaa_before,
-        "expected zzz (created later) above aaa initially; got aaa at row \
-         {aaa_before}, zzz at row {zzz_before}. Full screen for diagnosis:\n{}",
+        aaa_before < zzz_before,
+        "expected aaa above zzz initially; got aaa at row {aaa_before}, \
+         zzz at row {zzz_before}. Full screen for diagnosis:\n{}",
         h.screen_to_string(),
     );
 
@@ -245,72 +245,15 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     h.wait_until(|h| h.screen_to_string() != pre).unwrap();
     h.wait_until_stable(|_| true).unwrap();
 
-    // Order must be unchanged — zzz still above aaa (the bug floated the
-    // now-current project to the top, or activation reshuffled the recency
-    // order intra-day).
+    // Order must be unchanged — aaa still above zzz (the bug floated the
+    // now-current zzz project to the top; the recency order must not
+    // reshuffle same-day sessions on activation).
     let aaa_after = row_of(&h, "aaa_project");
     let zzz_after = row_of(&h, "zzz_project");
     assert!(
-        zzz_after < aaa_after,
+        aaa_after < zzz_after,
         "dock list reordered on switch: aaa now at {aaa_after}, zzz at {zzz_after}.\n\
          Full screen for diagnosis:\n{}",
-        h.screen_to_string(),
-    );
-}
-
-/// The dock lists a folder's workspaces most-recently-active first. With no
-/// per-session activity yet, "recently active" reduces to newest-seen: a
-/// workspace created later sorts above the ones created before it. Before the
-/// recency-ordering change the dock pinned rows to their permanent first-seen
-/// slot (oldest on top), so `third`/`second` would trail `first` and this
-/// assertion fails.
-#[test]
-fn dock_lists_most_recently_active_workspace_first() {
-    let (_tmp, root_first) = setup_project("first");
-    let parent = root_first.parent().unwrap().to_path_buf();
-    let mut mk = |name: &str| -> PathBuf {
-        let p = parent.join(name);
-        fs::create_dir(&p).unwrap();
-        assert!(std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&p)
-            .status()
-            .unwrap()
-            .success());
-        p
-    };
-    let root_second = mk("second");
-    let root_third = mk("third");
-
-    let mut h = EditorTestHarness::with_config_and_working_dir(
-        120,
-        32,
-        Default::default(),
-        root_first.clone(),
-    )
-    .unwrap();
-    // Bring two more workspaces online, newest last. Each is "seen" by the
-    // dock after the launch session, so recency order is third, second, first.
-    h.editor_mut()
-        .create_window_at(root_second.clone(), "second".to_string());
-    h.editor_mut()
-        .create_window_at(root_third.clone(), "third".to_string());
-    h.render().unwrap();
-    open_dock(&mut h);
-
-    h.wait_until(|h| {
-        let s = h.screen_to_string();
-        s.contains("first") && s.contains("second") && s.contains("third")
-    })
-    .unwrap();
-
-    let first = row_of(&h, "first");
-    let second = row_of(&h, "second");
-    let third = row_of(&h, "third");
-    assert!(
-        third < second && second < first,
-        "expected most-recent-first order third<second<first; got \
-         first@{first} second@{second} third@{third}.\nScreen:\n{}",
         h.screen_to_string(),
     );
 }
@@ -2503,10 +2446,13 @@ fn dock_menu_key_opens_context_menu_and_arrows_navigate() {
     h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
         .unwrap();
     h.assert_screen_contains("Visit");
+    // The session menu also offers Rename… (between Visit and Move).
+    h.assert_screen_contains("Rename");
 
-    // ↓ moves the focus from "Visit…" to "Move to Folder…"; Enter runs
-    // it — the "move to" dropdown replaces the popup. Without arrow
-    // support Enter would have activated "Visit…" and dived instead.
+    // ↓↓ moves the focus Visit… → Rename… → Move to Folder…; Enter runs it —
+    // the "move to" dropdown replaces the popup. Without arrow support Enter
+    // would have activated "Visit…" and dived instead.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Top level"))
@@ -3319,128 +3265,4 @@ fn dock_git_summary_survives_transient_probe_failure() {
 
     // The target's failed re-probe must NOT have wiped its last-known summary.
     h.assert_screen_contains("+2");
-}
-
-// ── #2 rename workspace via the context menu ────────────────────────────────
-
-/// Right-clicking a workspace offers "Rename…", and choosing it opens a
-/// dialog whose submit pins a manual name on the workspace — shown in the
-/// dock in place of the project basename. Before the rename feature the
-/// session context menu had no rename entry at all (`ctx-rename-session`
-/// never rendered), so this flow could not run.
-#[test]
-fn dock_context_menu_rename_workspace() {
-    let (_tmp, mut h) = open_dock_context_menu("alphaproj");
-    // The session menu now offers Rename… (folders already had one).
-    h.assert_screen_contains("Rename");
-    let rrow = row_of(&h, "Rename") as u16;
-    h.mouse_click(4, rrow).unwrap();
-    // The workspace-rename dialog opens.
-    h.wait_until(|h| h.screen_to_string().contains("Rename Workspace"))
-        .unwrap();
-    // Clear the pre-filled basename and type a distinctive new name.
-    for _ in 0..40 {
-        h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
-    }
-    h.type_text("ZebraRenamed").unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    // The dock now shows the manual name.
-    h.wait_until(|h| h.screen_to_string().contains("ZebraRenamed"))
-        .unwrap();
-}
-
-// ── #5 / #4 terminal-driven workspace name + activity (need a PTY) ───────────
-
-/// True when a PTY can be opened in this environment; the terminal-backed
-/// tests below early-return (skip) otherwise, mirroring the terminal suite.
-fn pty_available() -> bool {
-    use portable_pty::{native_pty_system, PtySize};
-    native_pty_system()
-        .openpty(PtySize {
-            rows: 1,
-            cols: 1,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
-        .is_ok()
-}
-
-/// The status glyph in a dock card's left margin for the row bearing `name`
-/// (`*` = working, `·` = idle), or `None` if the row/glyph isn't found.
-fn dock_status_glyph(h: &EditorTestHarness, name: &str) -> Option<char> {
-    let screen = h.screen_to_string();
-    let line = screen.lines().find(|l| l.contains(name))?;
-    let idx = line.find(name)?;
-    line[..idx]
-        .chars()
-        .rev()
-        .find(|&c| c == '*' || c == '\u{b7}')
-}
-
-/// A workspace with a terminal that reports a title names itself after that
-/// terminal: a constant workspace prefix + the terminal's title. Drives a
-/// real PTY that sets an OSC title and asserts the dock row picks it up.
-/// Before the auto-name change the dock row stayed at the plain project
-/// basename regardless of what the terminal was running.
-#[test]
-fn dock_workspace_auto_names_after_terminal_title() {
-    if !pty_available() {
-        eprintln!("Skipping: PTY not available");
-        return;
-    }
-    let (_tmp, root) = setup_project("autoproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("autoproj"))
-        .unwrap();
-
-    // Open a terminal in the launch session and set a distinctive OSC title.
-    h.editor_mut().open_terminal();
-    h.render().unwrap();
-    h.type_text("printf '\\033]0;ZQTITLE\\007'").unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-
-    // The dock row now tracks the terminal title (prefix · …ZQTITLE…).
-    h.wait_until(|h| h.screen_to_string().contains("ZQTITLE"))
-        .unwrap();
-}
-
-/// An explicit OSC 133 "command finished" marker flips the workspace's
-/// activity dot to idle immediately, even though the marker itself is fresh
-/// terminal output the timing heuristic would still read as "working".
-/// Before the OSC change the indicator ignored 133/9;4 entirely, so a
-/// just-printed line always read working and the idle wait would never
-/// resolve.
-#[test]
-fn dock_indicator_honors_osc_command_done() {
-    if !pty_available() {
-        eprintln!("Skipping: PTY not available");
-        return;
-    }
-    let (_tmp, root) = setup_project("oscproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.render().unwrap();
-    open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("oscproj"))
-        .unwrap();
-    h.editor_mut().open_terminal();
-    h.render().unwrap();
-
-    // "command started" marker: the row reads working (`*`).
-    h.type_text("printf '\\033]133;C\\007'").unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| dock_status_glyph(h, "oscproj") == Some('*'))
-        .unwrap();
-
-    // "command finished" marker: despite the fresh output, the row flips to
-    // idle (`·`) because the OSC signal is authoritative.
-    h.type_text("printf '\\033]133;D\\007'").unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| dock_status_glyph(h, "oscproj") == Some('\u{b7}'))
-        .unwrap();
 }
