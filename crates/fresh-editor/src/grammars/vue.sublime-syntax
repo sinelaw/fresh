@@ -1,5 +1,12 @@
 %YAML 1.2
 ---
+# Vue single-file components. Template markup is highlighted here; the
+# contents of <script> and <style> blocks are deliberately left unstyled
+# raw regions scoped `meta.embedded.block.{script,style}.vue`, with the
+# `lang` attribute value scoped `constant.other.language-name.vue` — the
+# highlight engine's embedded-language-region mechanism (see
+# docs/internal/embedded-language-highlighting.md) parses those regions
+# with the named language's grammar (default: js / css).
 name: Vue
 file_extensions: [vue]
 scope: text.html.vue
@@ -19,35 +26,57 @@ contexts:
         1: punctuation.definition.tag.begin.vue
         2: entity.name.tag.vue
   script_tag:
-    - match: '(<)(script)\b([^>]*)(>)'
+    - match: '(<)(script)\b'
       captures:
         1: punctuation.definition.tag.begin.vue
         2: entity.name.tag.vue
-        3: entity.other.attribute-name.vue
-        4: punctuation.definition.tag.end.vue
-      push:
-        - include: js_content
-        - match: '(</)(script)(>)'
-          captures:
-            1: punctuation.definition.tag.begin.vue
-            2: entity.name.tag.vue
-            3: punctuation.definition.tag.end.vue
-          pop: true
+      push: script_tag_attrs
+  script_tag_attrs:
+    - meta_scope: meta.embedded.block.script.vue
+    - match: 'lang=(["''])([\w.+-]+)\1'
+      captures:
+        2: constant.other.language-name.vue
+    - match: '/>'
+      scope: punctuation.definition.tag.end.vue
+      pop: true
+    - match: '>'
+      scope: punctuation.definition.tag.end.vue
+      set: script_content
+    - include: html_attributes
+  script_content:
+    - meta_scope: meta.embedded.block.script.vue
+    - match: '(</)(script)\s*(>)'
+      captures:
+        1: punctuation.definition.tag.begin.vue
+        2: entity.name.tag.vue
+        3: punctuation.definition.tag.end.vue
+      pop: true
   style_tag:
-    - match: '(<)(style)\b([^>]*)(>)'
+    - match: '(<)(style)\b'
       captures:
         1: punctuation.definition.tag.begin.vue
         2: entity.name.tag.vue
-        3: entity.other.attribute-name.vue
-        4: punctuation.definition.tag.end.vue
-      push:
-        - include: css_content
-        - match: '(</)(style)(>)'
-          captures:
-            1: punctuation.definition.tag.begin.vue
-            2: entity.name.tag.vue
-            3: punctuation.definition.tag.end.vue
-          pop: true
+      push: style_tag_attrs
+  style_tag_attrs:
+    - meta_scope: meta.embedded.block.style.vue
+    - match: 'lang=(["''])([\w.+-]+)\1'
+      captures:
+        2: constant.other.language-name.vue
+    - match: '/>'
+      scope: punctuation.definition.tag.end.vue
+      pop: true
+    - match: '>'
+      scope: punctuation.definition.tag.end.vue
+      set: style_content
+    - include: html_attributes
+  style_content:
+    - meta_scope: meta.embedded.block.style.vue
+    - match: '(</)(style)\s*(>)'
+      captures:
+        1: punctuation.definition.tag.begin.vue
+        2: entity.name.tag.vue
+        3: punctuation.definition.tag.end.vue
+      pop: true
   html_tags:
     - match: '(</)(\w[\w-]*)(>)'
       captures:
@@ -74,38 +103,3 @@ contexts:
       scope: string.quoted.double.vue
     - match: "'[^']*'"
       scope: string.quoted.single.vue
-  js_content:
-    - match: '//.*$'
-      scope: comment.line.double-slash.vue
-    - match: '/\*'
-      push: [{meta_scope: comment.block.vue}, {match: '\*/', pop: true}]
-    - match: "'[^']*'"
-      scope: string.quoted.single.vue
-    - match: '"[^"]*"'
-      scope: string.quoted.double.vue
-    - match: '`'
-      push:
-        - meta_scope: string.quoted.template.vue
-        - match: '\$\{[^}]+\}'
-          scope: variable.interpolation.vue
-        - match: '`'
-          pop: true
-    - match: '\b(import|export|from|default|const|let|var|function|class|return|if|else|for|while|switch|case|break|continue|try|catch|finally|throw|new|delete|typeof|instanceof|void|this|super|extends|implements|interface|type|enum|async|await|yield|of|in|as)\b'
-      scope: keyword.control.vue
-    - match: '\b(true|false|null|undefined|NaN|Infinity)\b'
-      scope: constant.language.vue
-    - match: '\b(ref|computed|reactive|watch|watchEffect|onMounted|onUnmounted|defineProps|defineEmits|defineExpose|withDefaults|toRef|toRefs|nextTick|provide|inject)\b'
-      scope: support.function.vue
-    - match: '\b\d+(\.\d+)?\b'
-      scope: constant.numeric.vue
-  css_content:
-    - match: '/\*'
-      push: [{meta_scope: comment.block.vue}, {match: '\*/', pop: true}]
-    - match: '\.[a-zA-Z_][\w-]*'
-      scope: entity.other.attribute-name.class.vue
-    - match: '#[a-zA-Z_][\w-]*'
-      scope: entity.other.attribute-name.id.vue
-    - match: '#[0-9a-fA-F]{3,8}\b'
-      scope: constant.other.color.vue
-    - match: '\b\d+(\.\d+)?(px|em|rem|%|vh|vw|pt)?\b'
-      scope: constant.numeric.vue

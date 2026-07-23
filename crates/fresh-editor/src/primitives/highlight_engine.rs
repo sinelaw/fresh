@@ -272,9 +272,9 @@ pub struct TextMateEngine {
     last_buffer_len: usize,
     ts_language: Option<Language>,
     stats: HighlightStats,
-    // Set when this syntax hosts embedded-language regions (see
-    // `EMBEDDING_SPECS`); None for the vast majority of syntaxes.
-    embedding: Option<EmbeddingSpec>,
+    // Region kinds this syntax hosts (see `EMBEDDING_SPECS`); empty for
+    // the vast majority of syntaxes.
+    embedding: Vec<EmbeddingSpec>,
     // Fence-language-token → syntax index memo (None = unrecognized).
     embedded_syntax_memo: HashMap<String, Option<usize>>,
     // Reusable per-line span buffers for embedding hosts, so region
@@ -331,13 +331,41 @@ struct EmbeddingSpecDef {
     /// Scope (prefix) the host grammar assigns to the language token on
     /// the region's opening line.
     language_scope: &'static str,
+    /// Language token used when the opening line names no language, or
+    /// names one that doesn't resolve to a syntax (e.g. `lang="ts"` in a
+    /// Vue `<script>` — there is no TextMate TS grammar in the set, and
+    /// JS is the standard approximation). `None` = keep the host's own
+    /// styling for such regions (Markdown's raw-code look).
+    default_language: Option<&'static str>,
 }
 
-const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[EmbeddingSpecDef {
-    host_syntax: "Markdown",
-    region_scope: "markup.raw.code-fence",
-    language_scope: "constant.other.language-name",
-}];
+/// A host may declare several region kinds (Vue: `<script>` and
+/// `<style>`), each with its own default language. Region scopes of one
+/// host must not be prefixes of each other.
+const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[
+    EmbeddingSpecDef {
+        host_syntax: "Markdown",
+        region_scope: "markup.raw.code-fence",
+        language_scope: "constant.other.language-name",
+        default_language: None,
+    },
+    EmbeddingSpecDef {
+        host_syntax: "Vue",
+        region_scope: "meta.embedded.block.script",
+        language_scope: "constant.other.language-name",
+        default_language: Some("js"),
+    },
+    EmbeddingSpecDef {
+        host_syntax: "Vue",
+        region_scope: "meta.embedded.block.style",
+        language_scope: "constant.other.language-name",
+        default_language: Some("css"),
+    },
+];
+
+/// Cap on watched language scopes per host; far above any real spec
+/// table (Vue, the largest host, has one distinct language scope).
+const MAX_WATCH_SCOPES: usize = 8;
 
 /// `EmbeddingSpecDef` with its scope selectors interned as syntect `Scope`
 /// atoms for cheap prefix matching in the per-line parse loop.
@@ -345,15 +373,22 @@ const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[EmbeddingSpecDef {
 struct EmbeddingSpec {
     region_scope: syntect::parsing::Scope,
     language_scope: syntect::parsing::Scope,
+    default_language: Option<&'static str>,
 }
 
 impl EmbeddingSpec {
-    fn for_syntax_name(name: &str) -> Option<Self> {
-        let def = EMBEDDING_SPECS.iter().find(|d| d.host_syntax == name)?;
-        Some(Self {
-            region_scope: syntect::parsing::Scope::new(def.region_scope).ok()?,
-            language_scope: syntect::parsing::Scope::new(def.language_scope).ok()?,
-        })
+    fn compile_for_syntax(name: &str) -> Vec<Self> {
+        EMBEDDING_SPECS
+            .iter()
+            .filter(|d| d.host_syntax == name)
+            .filter_map(|d| {
+                Some(Self {
+                    region_scope: syntect::parsing::Scope::new(d.region_scope).ok()?,
+                    language_scope: syntect::parsing::Scope::new(d.language_scope).ok()?,
+                    default_language: d.default_language,
+                })
+            })
+            .collect()
     }
 }
 
@@ -479,7 +514,8 @@ impl TextMateEngine {
         syntax_index: usize,
         ts_language: Option<Language>,
     ) -> Self {
-        let embedding = EmbeddingSpec::for_syntax_name(&syntax_set.syntaxes()[syntax_index].name);
+        let embedding =
+            EmbeddingSpec::compile_for_syntax(&syntax_set.syntaxes()[syntax_index].name);
         Self {
             syntax_set,
             syntax_index,
@@ -595,10 +631,10 @@ impl TextMateEngine {
     /// been mutated mid-parse but is left as-is, matching prior
     /// behaviour).
     ///
-    /// When `watch_scope` is set, additionally returns the absolute byte
-    /// range of the first contiguous run where that scope was on the
-    /// stack (used to locate the language token on a region-opening
-    /// line).
+    /// When `watch_scopes` is non-empty, additionally returns the
+    /// absolute byte range of the first contiguous run where any of
+    /// those scopes was on the stack (used to locate the language token
+    /// on a region-opening line).
     ///
     /// Span emission is in two passes: the op iterator emits the
     /// segment between consecutive ops with the scope-stack-active
@@ -610,7 +646,7 @@ impl TextMateEngine {
         current_scopes: &mut syntect::parsing::ScopeStack,
         prepared: &PreparedLine,
         current_offset: usize,
-        watch_scope: Option<syntect::parsing::Scope>,
+        watch_scopes: &[syntect::parsing::Scope],
         mut on_span: impl FnMut(usize, usize, HighlightCategory),
     ) -> (bool, Option<Range<usize>>) {
         let ops = match state.parse_line(&prepared.line_for_syntect, &self.syntax_set) {
@@ -637,17 +673,17 @@ impl TextMateEngine {
             syntect_offset = clamped_op_offset;
             #[allow(clippy::let_underscore_must_use)]
             let _ = current_scopes.apply(&op);
-            if let Some(watch) = watch_scope {
-                if watched_range.is_none() {
-                    let active = scopes_contain(current_scopes, watch);
-                    match (watch_run_start, active) {
-                        (None, true) => watch_run_start = Some(clamped_op_offset),
-                        (Some(start), false) => {
-                            watched_range =
-                                Some(current_offset + start..current_offset + clamped_op_offset);
-                        }
-                        _ => {}
+            if !watch_scopes.is_empty() && watched_range.is_none() {
+                let active = watch_scopes
+                    .iter()
+                    .any(|w| scopes_contain(current_scopes, *w));
+                match (watch_run_start, active) {
+                    (None, true) => watch_run_start = Some(clamped_op_offset),
+                    (Some(start), false) => {
+                        watched_range =
+                            Some(current_offset + start..current_offset + clamped_op_offset);
                     }
+                    _ => {}
                 }
             }
         }
@@ -676,14 +712,15 @@ impl TextMateEngine {
     /// Line classification is driven purely by the host grammar's scope
     /// stack (no second lexer that could disagree with what the host
     /// grammar recognizes as a region):
-    /// - region scope absent before and after → plain host line;
-    /// - absent before, present after → region opened: host-styled, and
-    ///   the language token (located by `language_scope`) selects the
-    ///   child syntax for subsequent lines;
-    /// - present before and after → region content: parsed by the child
-    ///   (host spans for the line are suppressed); when the language was
-    ///   not recognized the host's own styling (e.g. `markup.raw`) is
-    ///   kept;
+    /// - no region scope before or after → plain host line;
+    /// - none before, one after → region opened: host-styled, and the
+    ///   language token (located by `language_scope`), or the spec's
+    ///   `default_language` when absent/unresolvable, selects the child
+    ///   syntax for subsequent lines;
+    /// - same region before and after → region content: parsed by the
+    ///   child (host spans for the line are suppressed); with no child
+    ///   (no default and no recognizable token) the host's own styling
+    ///   (e.g. `markup.raw`) is kept;
     /// - present before, absent after → closing delimiter: host-styled.
     ///
     /// The host parser always consumes the line first — inside a region
@@ -697,20 +734,36 @@ impl TextMateEngine {
         current_offset: usize,
         mut on_span: impl FnMut(usize, usize, HighlightCategory),
     ) -> bool {
-        let Some(spec) = self.embedding else {
+        if self.embedding.is_empty() {
             return self
                 .parse_line_into_spans(
                     &mut snapshot.state,
                     &mut snapshot.scopes,
                     prepared,
                     current_offset,
-                    None,
+                    &[],
                     on_span,
                 )
                 .0;
-        };
+        }
 
-        let was_in_region = scopes_contain(&snapshot.scopes, spec.region_scope);
+        let was_in = self.active_region_spec(&snapshot.scopes);
+        // Watch for a language token only on lines that could open a
+        // region. Copy the (deduplicated) language scopes to the stack so
+        // no borrow of self outlives the parse call below.
+        let mut watch_buf = [self.embedding[0].language_scope; MAX_WATCH_SCOPES];
+        let mut watch_len = 0;
+        if was_in.is_none() {
+            for spec in &self.embedding {
+                if watch_len < MAX_WATCH_SCOPES
+                    && !watch_buf[..watch_len].contains(&spec.language_scope)
+                {
+                    watch_buf[watch_len] = spec.language_scope;
+                    watch_len += 1;
+                }
+            }
+        }
+
         let mut host_spans = std::mem::take(&mut self.host_span_scratch);
         host_spans.clear();
         let (parse_ok, language_range) = self.parse_line_into_spans(
@@ -718,7 +771,7 @@ impl TextMateEngine {
             &mut snapshot.scopes,
             prepared,
             current_offset,
-            (!was_in_region).then_some(spec.language_scope),
+            &watch_buf[..watch_len],
             |start, end, category| host_spans.push((start, end, category)),
         );
         if !parse_ok {
@@ -731,71 +784,105 @@ impl TextMateEngine {
             self.host_span_scratch = host_spans;
             return false;
         }
-        let in_region = scopes_contain(&snapshot.scopes, spec.region_scope);
+        let now_in = self.active_region_spec(&snapshot.scopes);
 
         // NOTE for future `EMBEDDING_SPECS` hosts: classification is
         // line-granular, so a host whose regions can close AND reopen
-        // within one line reads as continuous region content here.
-        // Markdown fence delimiters occupy whole lines, so this cannot
-        // arise for it.
-        let content_line = was_in_region && in_region;
-        if content_line && snapshot.embedded.is_some() {
-            let mut embedded = snapshot
-                .embedded
-                .take()
-                .expect("checked embedded.is_some() above");
-            let mut child_spans = std::mem::take(&mut self.child_span_scratch);
-            child_spans.clear();
-            let (child_ok, _) = self.parse_line_into_spans(
-                &mut embedded.state,
-                &mut embedded.scopes,
-                prepared,
-                current_offset,
-                None,
-                |start, end, category| child_spans.push((start, end, category)),
-            );
-            // On a child parse error, fall back to the host's raw
-            // styling for the line rather than leaving it unstyled.
-            let chosen = if child_ok { &child_spans } else { &host_spans };
-            for &(start, end, category) in chosen {
-                on_span(start, end, category);
+        // within one line reads as continuous region content (same kind)
+        // or as a default-language restart (different kind). Markdown
+        // fences and Vue script/style tags occupy whole lines, so
+        // neither arises for the current hosts.
+        if let (Some(i), Some(j)) = (was_in, now_in) {
+            if i == j {
+                // Region content line.
+                if snapshot.embedded.is_some() {
+                    let mut embedded = snapshot
+                        .embedded
+                        .take()
+                        .expect("checked embedded.is_some() above");
+                    let mut child_spans = std::mem::take(&mut self.child_span_scratch);
+                    child_spans.clear();
+                    let (child_ok, _) = self.parse_line_into_spans(
+                        &mut embedded.state,
+                        &mut embedded.scopes,
+                        prepared,
+                        current_offset,
+                        &[],
+                        |start, end, category| child_spans.push((start, end, category)),
+                    );
+                    // On a child parse error, fall back to the host's
+                    // raw styling for the line rather than leaving it
+                    // unstyled.
+                    let chosen = if child_ok { &child_spans } else { &host_spans };
+                    for &(start, end, category) in chosen {
+                        on_span(start, end, category);
+                    }
+                    snapshot.embedded = Some(embedded);
+                    self.child_span_scratch = child_spans;
+                    self.host_span_scratch = host_spans;
+                    return true;
+                }
+                // No child (no default and no recognizable token): the
+                // line keeps the host's own styling below.
             }
-            snapshot.embedded = Some(embedded);
-            self.child_span_scratch = child_spans;
-            self.host_span_scratch = host_spans;
-            return true;
         }
-        // A content line in a region with an unrecognized language falls
-        // through: it keeps the host's own styling.
 
         for &(start, end, category) in &host_spans {
             on_span(start, end, category);
         }
-        match (was_in_region, in_region) {
-            (false, true) => {
+        match (was_in, now_in) {
+            (None, Some(j)) => {
+                // Region opened: language token if the grammar scoped
+                // one, else the spec default.
                 snapshot.embedded =
-                    self.embedded_state_for_region(prepared, current_offset, language_range);
+                    self.embedded_state_for_region(prepared, current_offset, language_range, j);
             }
-            (true, false) => snapshot.embedded = None,
+            (Some(i), Some(j)) if i != j => {
+                // One region kind closed and another opened on the same
+                // line; the opening token wasn't watched, so start the
+                // new region with its default language.
+                snapshot.embedded =
+                    self.embedded_state_for_region(prepared, current_offset, None, j);
+            }
+            (Some(_), None) => snapshot.embedded = None,
             _ => {}
         }
         self.host_span_scratch = host_spans;
         true
     }
 
+    /// Index of the spec whose region scope is on the host stack, if any.
+    fn active_region_spec(&self, scopes: &syntect::parsing::ScopeStack) -> Option<usize> {
+        self.embedding
+            .iter()
+            .position(|spec| scopes_contain(scopes, spec.region_scope))
+    }
+
     /// Build the child parser for a region that just opened, from the
-    /// language token the host grammar scoped on the opening line.
+    /// language token the host grammar scoped on the opening line, or
+    /// the spec's `default_language` when the token is absent or doesn't
+    /// resolve to a syntax.
     fn embedded_state_for_region(
         &mut self,
         prepared: &PreparedLine,
         current_offset: usize,
         language_range: Option<Range<usize>>,
+        spec_index: usize,
     ) -> Option<EmbeddedParseState> {
-        let range = language_range?;
-        let rel =
-            range.start.checked_sub(current_offset)?..range.end.checked_sub(current_offset)?;
-        let token = prepared.line_for_syntect.get(rel)?;
-        let syntax_index = self.resolve_embedded_syntax(token)?;
+        let explicit = language_range
+            .and_then(|range| {
+                let rel = range.start.checked_sub(current_offset)?
+                    ..range.end.checked_sub(current_offset)?;
+                prepared.line_for_syntect.get(rel)
+            })
+            .and_then(|token| self.resolve_embedded_syntax(token));
+        let syntax_index = match explicit {
+            Some(index) => index,
+            None => {
+                let default = self.embedding[spec_index].default_language?;
+                self.resolve_embedded_syntax(default)?
+            }
+        };
         Some(EmbeddedParseState {
             syntax_index,
             state: syntect::parsing::ParseState::new(&self.syntax_set.syntaxes()[syntax_index]),
@@ -2169,6 +2256,93 @@ mod tests {
             "a fence starting past MAX_PARSE_BYTES must still get embedded \
              highlighting once reached via scrolling — a size-based cutoff \
              here means the mechanism bypassed the windowed engine"
+        );
+    }
+
+    /// Vue `<script>`/`<style>` blocks with no `lang` attribute are
+    /// parsed with the spec's default languages (js / css) — proving the
+    /// embedding mechanism generalizes beyond Markdown with nothing but
+    /// spec-table entries and grammar scopes.
+    #[test]
+    fn test_vue_script_and_style_default_languages() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("App.vue"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = "<template>\n  <p>hi</p>\n</template>\n\n<script>\nconst answer = 42;\n</script>\n\n<style>\n.foo { color: red; }\n</style>\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let category_at = |needle: &str| {
+            let position = content.find(needle).unwrap();
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category)
+        };
+
+        assert_eq!(
+            category_at("const"),
+            Some(HighlightCategory::Keyword),
+            "script block without lang must be parsed as JavaScript"
+        );
+        assert_eq!(category_at("42"), Some(HighlightCategory::Number));
+        assert_eq!(
+            category_at("color"),
+            Some(HighlightCategory::Type),
+            "style block without lang must be parsed as CSS"
+        );
+        // Delimiter lines stay host-styled (tag names).
+        assert_eq!(category_at("script>"), Some(HighlightCategory::Property));
+    }
+
+    /// A `lang` attribute dynamically selects the embedded language.
+    #[test]
+    fn test_vue_lang_attribute_selects_language() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("App.vue"), None, &registry);
+        let content = "<style lang=\"scss\">\n$width: 10px;\n.a { width: $width; }\n</style>\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let position = content.find("$width").unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::Variable),
+            "lang=\"scss\" must switch the style block to the SCSS grammar \
+             ($variables are not CSS syntax)"
+        );
+    }
+
+    /// A `lang` naming a language with no syntect grammar (TypeScript is
+    /// tree-sitter-only in fresh) falls back to the region's default
+    /// language rather than dropping highlighting entirely — `<script
+    /// lang=\"ts\">` is the dominant real-world Vue pattern.
+    #[test]
+    fn test_vue_unresolvable_lang_falls_back_to_default() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("App.vue"), None, &registry);
+        let content = "<script setup lang=\"ts\">\nconst answer = 42;\n</script>\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let position = content.find("const").unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::Keyword),
+            "unresolvable lang token must fall back to the spec default (js)"
         );
     }
 

@@ -1,10 +1,12 @@
-//! E2E: Markdown fenced code blocks are highlighted with the fenced
-//! language's grammar (issue #2689), driven end-to-end through rendering.
+//! E2E: embedded-language regions are highlighted with the named
+//! language's grammar, driven end-to-end through rendering — Markdown
+//! fenced code blocks (issue #2689) and Vue `<script>`/`<style>` blocks.
 //!
-//! Before the embedded-language-region mechanism, the whole fence body was
-//! painted uniformly with the raw-code (string) color, so keyword/number/
-//! string tokens inside a ```rust block all had the same foreground.
-//! These tests assert on rendered cell styles only.
+//! Before the embedded-language-region mechanism, a fence body was
+//! painted uniformly with the raw-code (string) color, and Vue blocks
+//! were styled by a hand-rolled keyword list that left identifiers and
+//! CSS properties unstyled. These tests assert on rendered cell styles
+//! only.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -80,6 +82,47 @@ fn test_markdown_unknown_fence_language_stays_uniform() {
     assert_eq!(
         fg_fn, fg_num,
         "unknown fence language must keep uniform raw-code styling"
+    );
+}
+
+/// Vue `<script>`/`<style>` blocks are parsed with real JS/CSS grammars.
+/// The fixture's script is `lang="ts"` (no TextMate TS grammar exists),
+/// exercising the fall-back-to-default-language path end-to-end. On the
+/// old hand-rolled Vue grammar, function names and CSS property names
+/// rendered with the default foreground.
+#[test]
+fn test_vue_script_and_style_blocks_are_language_highlighted() {
+    let mut harness = create_harness();
+    harness.open_file(&fixture_path("hello.vue")).unwrap();
+    harness.render().unwrap();
+
+    // Reference color: plain template text, unstyled by any grammar.
+    let plain_fg = fg_at(&harness, "Click me");
+
+    // `function greet() {` — the *name* is entity.name.function under the
+    // real JS grammar; find the unique "function greet" occurrence and
+    // probe the name's first cell.
+    let (col, row) = harness
+        .find_text_on_screen("function greet")
+        .expect("script content not on screen");
+    let name_col = col + "function ".len() as u16;
+    let name_fg = harness
+        .get_cell_style(name_col, row)
+        .and_then(|s| s.fg)
+        .expect("no fg at function name");
+    assert_ne!(
+        name_fg, plain_fg,
+        "JS function name inside <script lang=\"ts\"> must be highlighted \
+         (default-language fallback); default fg means the block wasn't \
+         parsed by a real grammar"
+    );
+
+    // `color: blue;` — property names are support.type under the real CSS
+    // grammar; the old grammar left them unstyled.
+    let css_fg = fg_at(&harness, "color: blue");
+    assert_ne!(
+        css_fg, plain_fg,
+        "CSS property name inside <style> must be highlighted"
     );
 }
 

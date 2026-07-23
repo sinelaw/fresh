@@ -2,8 +2,11 @@
 
 > _AI-generated: describes Fresh's architecture and design rationale, not implementation details; where it disagrees with the source, the source is authoritative._
 
-**Status: IMPLEMENTED** for TextMate-engine hosts, with Markdown fenced code
-blocks as the first (and motivating) case — issue #2689. Companion to
+**Status: IMPLEMENTED** for TextMate-engine hosts: Markdown fenced code
+blocks (the motivating case — issue #2689) and Vue `<script>`/`<style>`
+blocks (the proof of generality: two region kinds in one host, `lang`
+attributes, and default languages, added with spec-table entries plus
+grammar scopes and no engine control-flow changes). Companion to
 [`syntax-highlighting.md`](syntax-highlighting.md), which describes the
 checkpoint/incremental engine this mechanism extends.
 
@@ -43,7 +46,10 @@ There are now three ways to get a second language highlighted, and they are
    can enumerate it statically. Markdown fences are the canonical case:
    the info string ("```rust", "```py", "~~~{.python}") can name any of
    the ~140 syntaxes in the set, including user/plugin-registered ones.
-   Block-delimited, line-granular regions only.
+   Vue single-file components are the second: `<script lang="...">` /
+   `<style lang="...">` name the language, with js/css as per-region
+   defaults when no `lang` is given. Block-delimited, line-granular
+   regions only.
 
 3. **`highlight_string`**: one-shot highlighting of a detached string
    (hover popups, the markdown *preview* renderer). Never use it for
@@ -62,12 +68,19 @@ checkpoint into the middle of a region, forward extension while scrolling,
 partial update with convergence after edits, and the streaming-tail rules.
 
 Region detection is driven by the **host grammar's own scopes**, not by a
-second lexer. A small per-host spec table declares two scope selectors:
+second lexer. A host declares one spec per region *kind* (Vue has two:
+script and style), each with two scope selectors and an optional default:
 
 - `region_scope` — the scope the host grammar keeps on the stack for the
-  whole region (Markdown: `markup.raw.code-fence`);
+  whole region (Markdown: `markup.raw.code-fence`; Vue:
+  `meta.embedded.block.script` / `meta.embedded.block.style`);
 - `language_scope` — the scope the host grammar puts on the language
-  token of the opening line (Markdown: `constant.other.language-name`).
+  token of the opening line (`constant.other.language-name` for both);
+- `default_language` — used when the opening line names no language *or*
+  names one that doesn't resolve to a syntax in the set. Vue uses js/css
+  (so `lang="ts"` — TypeScript has no TextMate grammar in fresh — gets
+  the standard JS approximation instead of nothing); Markdown uses
+  `None`, meaning such regions keep the host's own raw-code styling.
 
 Per line, the host parser runs first (inside a region it is in a cheap
 "raw" context — it must run regardless, because only the host knows where
@@ -118,13 +131,17 @@ string color), so nothing regresses.
 
 ### Adding a new host
 
-Add one `EmbeddingSpecDef` entry (host syntax name + the two scope
-selectors) in the engine, and unit tests mirroring the Markdown ones:
+Add one `EmbeddingSpecDef` entry per region kind (host syntax name, the
+two scope selectors, and the optional default language) in the engine,
+and unit tests mirroring the Markdown/Vue ones:
 recognized region, unrecognized language fallback, an edit to the
 language token restyling the whole region, and a region past
 `MAX_PARSE_BYTES`. If the host grammar doesn't scope a language token or
 region, fix the grammar first (tool 1) — the engine mechanism assumes the
-host grammar tells the truth about regions.
+host grammar tells the truth about regions. That is exactly what the Vue
+grammar needed: its hand-rolled pseudo-JS/CSS contexts were replaced with
+honestly-scoped raw regions (`meta.embedded.block.*`) plus a scoped `lang`
+attribute value, and the engine does the rest.
 
 ### Non-goals / future
 
