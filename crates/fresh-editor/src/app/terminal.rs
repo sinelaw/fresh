@@ -71,7 +71,7 @@ pub(crate) const FG_POLL_INTERVAL: std::time::Duration = std::time::Duration::fr
 /// Returns `None` only when both are absent, so the caller falls back to the
 /// default name. When the OSC title already names the command (e.g. vim's
 /// `file - VIM`), the command isn't prepended again to avoid `vim — … VIM`.
-fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String> {
+pub(crate) fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String> {
     match (pty, osc) {
         (Some(p), Some(o)) => {
             if o.to_lowercase().contains(&p.to_lowercase()) {

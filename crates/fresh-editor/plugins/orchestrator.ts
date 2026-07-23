@@ -72,9 +72,22 @@ type CompletionItem = { value: string; kind?: "history" };
 interface AgentSession {
   // Editor's stable session id.
   id: number;
-  // Display label (defaults to root basename — Orchestrator never
-  // renames externally-created sessions).
+  // Resolved display name shown in the dock / picker. Computed by
+  // `workspaceDisplayName` from three sources, most-specific first: a
+  // manual rename (`renameWorkspace`, persisted per root), else an
+  // auto-name tracking the terminal's tab title (constant workspace
+  // prefix + the terminal/process title), else `hostLabel`.
   label: string;
+  // The raw label the host reports for this window (root basename for a
+  // fresh session). The stable fallback when there's no manual rename and
+  // no terminal to track — kept separate from `label` so the resolver can
+  // recompute the display name without losing the host's own name.
+  hostLabel: string;
+  // Last-seen terminal tab title (combined foreground process + OSC title,
+  // the same string shown on the terminal's tab). Drives the auto-name
+  // when the workspace hasn't been manually renamed. `undefined` until the
+  // session's terminal reports a non-default title.
+  terminalTitle?: string;
   // Absolute filesystem root.
   root: string;
   // Canonical project root this session belongs to (set at
@@ -521,6 +534,11 @@ interface CreateFolderDialogState {
   // create and rename the same UX rather than bouncing rename through
   // the bottom minibuffer prompt. null ⇒ create mode.
   renameId: string | null;
+  // Workspace-rename mode: the session id this dialog renames. Mutually
+  // exclusive with `renameId` (a folder rename). When set, the dialog
+  // prompts for a workspace name and submit pins a manual name on the
+  // session's root. null ⇒ not a workspace rename.
+  renameSessionId: number | null;
 }
 let createFolderDialog: CreateFolderDialogState | null = null;
 let createFolderPanel: FloatingWidgetPanel | null = null;
@@ -1054,6 +1072,78 @@ function sessionLastActiveDay(s: AgentSession): number {
   return Math.max(stored, liveDay);
 }
 
+// ── Workspace names: manual rename + terminal-tracking auto-name ─────────
+//
+// A workspace's display name comes from three sources, most-specific first:
+//   1. a manual rename (persisted per canonical root, survives restarts),
+//   2. else, when it has a terminal that reports a title, an auto-name that
+//      tracks that terminal: a constant prefix (the workspace's own name, so
+//      you can still tell which workspace it is) + the changing terminal/
+//      process title (the same string the terminal tab shows),
+//   3. else the host's own label (root basename).
+// Manual rename always wins, so naming a workspace pins it against the
+// auto-name (which would otherwise keep overwriting it as the tab title
+// shifts).
+const WORKSPACE_NAMES_KEY = "orchestrator.dock.names";
+// Separator between the constant workspace prefix and the changing terminal
+// title in an auto-name (e.g. `proj · bash — root@host: ~/proj`).
+const WORKSPACE_AUTONAME_SEP = " \u{b7} ";
+let dockNames: Record<string, string> | null = null;
+
+function loadNames(): Record<string, string> {
+  if (dockNames) return dockNames;
+  const raw = editor.getGlobalState(WORKSPACE_NAMES_KEY);
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof v === "string" && v.length > 0) out[k] = v;
+    }
+  }
+  dockNames = out;
+  return out;
+}
+
+function saveNames(): void {
+  editor.setGlobalState(WORKSPACE_NAMES_KEY, (dockNames ?? {}) as unknown as object);
+}
+
+// The manual name pinned to this session's root, if any.
+function workspaceCustomName(s: AgentSession): string | undefined {
+  return loadNames()[normRoot(s.root)];
+}
+
+// Compute the display name for a session from the three sources above.
+function workspaceDisplayName(s: AgentSession): string {
+  const manual = workspaceCustomName(s);
+  if (manual) return manual;
+  const title = (s.terminalTitle ?? "").trim();
+  if (title && !s.discovered) {
+    const prefix = (s.hostLabel || editor.pathBasename(s.root) || "workspace").trim();
+    return prefix + WORKSPACE_AUTONAME_SEP + title;
+  }
+  return s.hostLabel;
+}
+
+// Recompute and store `s.label` from the current sources. Called whenever an
+// input changes: reconcile (host label), terminal output (title), or a
+// manual rename.
+function applyResolvedLabel(s: AgentSession): void {
+  s.label = workspaceDisplayName(s);
+}
+
+// Set (or, with an empty name, clear) the manual name for a session and
+// refresh its resolved label. Clearing lets the auto-name / host label take
+// over again.
+function renameWorkspace(s: AgentSession, name: string): void {
+  const key = normRoot(s.root);
+  const store = loadNames();
+  const trimmed = name.trim();
+  if (trimmed) store[key] = trimmed;
+  else delete store[key];
+  saveNames();
+  applyResolvedLabel(s);
+}
+
 // Delete a folder. Its child folders and member sessions reparent to the
 // deleted folder's own parent so nothing is orphaned — the subtree
 // bubbles up one level rather than disappearing.
@@ -1472,7 +1562,8 @@ function reconcileSessions(): void {
       if (remote) pendingRemoteFacet = null;
       orchestratorSessions.set(s.id, {
         id: s.id,
-        label: s.label,
+        label: loadNames()[normRoot(s.root)] ?? s.label,
+        hostLabel: s.label,
         root: s.root,
         projectPath: s.project_path,
         sharedWorktree: s.shared_worktree ?? false,
@@ -1486,7 +1577,10 @@ function reconcileSessions(): void {
         remote: remote ?? backendFacet(s),
       });
     } else {
-      existing.label = s.label;
+      // Track the host's raw label, then re-resolve the display name (a
+      // manual rename or terminal auto-name overrides it).
+      existing.hostLabel = s.label;
+      applyResolvedLabel(existing);
       existing.root = s.root;
       existing.projectPath = s.project_path;
       if (s.shared_worktree != null) existing.sharedWorktree = s.shared_worktree;
@@ -1595,14 +1689,16 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
         const label = wt.branch || editor.pathBasename(wt.path);
         const existing = orchestratorSessions.get(id);
         if (existing) {
-          existing.label = label;
+          existing.hostLabel = label;
+          applyResolvedLabel(existing);
           existing.root = wt.path;
           existing.projectPath = listed.mainRoot;
           existing.branch = wt.branch;
         } else {
           orchestratorSessions.set(id, {
             id,
-            label,
+            label: loadNames()[normRoot(wt.path)] ?? label,
+            hostLabel: label,
             root: wt.path,
             projectPath: listed.mainRoot,
             sharedWorktree: false,
@@ -1887,10 +1983,11 @@ function filterSessions(needle: string): number[] {
   if (!needle) {
     // The dock orders by recency at DAY granularity: most-recently-active
     // workspaces first, older ones below. Ties within a day (the common
-    // case) fall back to newest-first-seen (a stable per-root slot), so the
-    // list holds still as the active window switches or a session's sub-day
-    // fields change, and only reorders when a workspace crosses a day
-    // boundary or a new one is created. Folder grouping (which folder a
+    // case) fall back to newest-created-first, then to each session's
+    // permanent first-seen slot — all three keys are stable through the day,
+    // so the list holds still as the active window switches or a session's
+    // sub-day fields change, and only reorders when a workspace crosses a
+    // day boundary or a new one is created. Folder grouping (which folder a
     // session sits under, and the folders' own name order) is applied later
     // in `buildDockTree`; this only orders sessions *within* a group. The
     // modal picker (opened fresh each time) keeps the grouped,
@@ -1902,10 +1999,10 @@ function filterSessions(needle: string): number[] {
           const da = sessionLastActiveDay(sa);
           const db = sessionLastActiveDay(sb);
           if (da !== db) return db - da; // more recent active-day first
-          // Same day: newest-first-seen first. The slot is a strictly-
-          // increasing per-root counter, so this is deterministic and — like
-          // the day key — fixed for a given root, never shifting on
-          // activation or output within the day.
+          // Same day (the common case): newest-first-seen first. The slot is
+          // a strictly-increasing per-root counter, so this is deterministic
+          // and — like the day key — fixed for a given root, never shifting
+          // on activation or output within the day.
           return stableOrderKey(sb) - stableOrderKey(sa);
         }
       : byProjectThenStable;
@@ -4367,6 +4464,7 @@ function openCreateFolderDialog(
     parent,
     sessionId,
     renameId: null,
+    renameSessionId: null,
   };
   mountFolderDialog();
 }
@@ -4397,6 +4495,28 @@ function openRenameFolderDialog(id: string): void {
     parent: null,
     sessionId: null,
     renameId: id,
+    renameSessionId: null,
+  };
+  mountFolderDialog();
+}
+
+// Open the shared centered dialog in workspace-rename mode for a session.
+// Pre-fills the current display name so the user edits it in place; an
+// emptied-out name clears the manual rename and restores the auto-name /
+// host label.
+function openRenameWorkspaceDialog(id: number): void {
+  const s = orchestratorSessions.get(id);
+  if (!s) return;
+  // Seed with the manual name if one exists, else the plain host label
+  // (root basename) — a cleaner starting point than the long auto-name.
+  const current = workspaceCustomName(s) ?? s.hostLabel;
+  createFolderDialog = {
+    name: { value: current, cursor: utf8Len(current) },
+    organizeCurrent: false,
+    parent: null,
+    sessionId: null,
+    renameId: null,
+    renameSessionId: id,
   };
   mountFolderDialog();
 }
@@ -4409,7 +4529,12 @@ function mountFolderDialog(): void {
     dockBlurred = true;
     editor.floatingPanelControl(openPanel.id(), "blur", 0);
   }
-  const renaming = createFolderDialog!.renameId !== null;
+  const d0 = createFolderDialog!;
+  const title = d0.renameSessionId !== null
+    ? editor.t("dock.rename_workspace_dialog_title")
+    : d0.renameId !== null
+      ? editor.t("dock.rename_folder_dialog_title")
+      : editor.t("dock.new_folder_dialog_title");
   createFolderPanel = new FloatingWidgetPanel();
   createFolderPanel.mount(buildCreateFolderSpec(), {
     widthPct: 50,
@@ -4418,9 +4543,7 @@ function mountFolderDialog(): void {
     // The dialog's title + border are now native modal-frame chrome
     // (drawn by the host around the WidgetSpec), and `closable` renders
     // a native `[×]` that dismisses via the same cancel path as Esc.
-    title: renaming
-      ? editor.t("dock.rename_folder_dialog_title")
-      : editor.t("dock.new_folder_dialog_title"),
+    title,
     closable: true,
   });
   editor.floatingPanelControl(createFolderPanel.id(), "fullscreen", 1);
@@ -4436,21 +4559,25 @@ function mountFolderDialog(): void {
 // Cancel / Create Folder buttons.
 function buildCreateFolderSpec(): WidgetSpec {
   const d = createFolderDialog!;
-  const renaming = d.renameId !== null;
+  const renamingSession = d.renameSessionId !== null;
+  const renaming = d.renameId !== null || renamingSession;
   const sess = d.sessionId != null ? orchestratorSessions.get(d.sessionId) : undefined;
+  const promptLabel = renamingSession
+    ? editor.t("dock.rename_workspace_prompt")
+    : editor.t("dock.new_folder_prompt");
   const children: WidgetSpec[] = [
-    // Render the label inline ("Folder name: ") so the ": " separator
-    // appears the same way in the TUI and the web UI.
+    // Render the label inline ("Folder name: " / "Workspace name: ") so the
+    // ": " separator appears the same way in the TUI and the web UI.
     row(
       raw([
         styledRow([
-          { text: editor.t("dock.new_folder_prompt") + ": ", style: { fg: "ui.menu_disabled_fg" } },
+          { text: promptLabel + ": ", style: { fg: "ui.menu_disabled_fg" } },
         ]),
       ]),
       text({
         value: d.name.value,
         cursorByte: d.name.cursor,
-        placeholder: editor.t("dock.new_folder_default"),
+        placeholder: renamingSession ? "" : editor.t("dock.new_folder_default"),
         fieldWidth: 32,
         key: "folder-name",
       }),
@@ -4486,6 +4613,15 @@ function buildCreateFolderSpec(): WidgetSpec {
 function submitCreateFolder(): void {
   const d = createFolderDialog;
   if (!d) return;
+  if (d.renameSessionId !== null) {
+    // Workspace rename: an empty name clears the manual name and lets the
+    // auto-name / host label take back over.
+    const s = orchestratorSessions.get(d.renameSessionId);
+    if (s) renameWorkspace(s, d.name.value);
+    closeCreateFolderDialog();
+    if (openPanel && dockMode) refreshOpenDialog();
+    return;
+  }
   if (d.renameId !== null) {
     // Rename mode: an emptied-out name keeps the current one (renaming
     // to nothing is never what the user meant).
@@ -4644,6 +4780,7 @@ function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
       styledRow([{ text: `${label}`, style: { bold: true } }]),
     ] },
     button(editor.t("dock.ctx_visit"), { intent: "primary", key: "ctx-visit" }),
+    button(editor.t("dock.ctx_rename"), { key: "ctx-rename-session" }),
     button(editor.t("dock.ctx_move"), { key: "ctx-move" }),
     button(editor.t("dock.ctx_archive"), { key: "ctx-archive", disabled: !canArchive }),
     button(editor.t("dock.ctx_delete"), { intent: "danger", key: "ctx-delete", disabled: !canDelete }),
@@ -5053,6 +5190,7 @@ async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
     orchestratorSessions.set(result.windowId, {
       id: result.windowId,
       label,
+      hostLabel: label,
       root: projectRoot,
       projectPath: projectRoot,
       sharedWorktree: false,
@@ -8021,6 +8159,7 @@ function startPendingWorkspace(
     // one persisted alongside the spec); a fresh row starts from the spec's
     // capture-time display label.
     label: opts?.label || spec.displayLabel,
+    hostLabel: opts?.label || spec.displayLabel,
     // Synthetic root — a placeholder owns no real directory yet, and a unique
     // key keeps it in its own stable dock-order slot.
     root: `pending:${id}`,
@@ -8428,7 +8567,8 @@ async function runLocalCreate(id: number): Promise<void> {
     savePendingSpecs();
     orchestratorSessions.set(winId, {
       id: winId,
-      label: sessionName,
+      label: loadNames()[normRoot(root)] ?? sessionName,
+      hostLabel: sessionName,
       root,
       projectPath: effectiveProjectPath,
       sharedWorktree,
@@ -8657,7 +8797,8 @@ async function attachToWorktree(opts: {
     }
     orchestratorSessions.set(id, {
       id,
-      label: opts.label,
+      label: loadNames()[normRoot(opts.root)] ?? opts.label,
+      hostLabel: opts.label,
       root: opts.root,
       projectPath: opts.projectPath,
       sharedWorktree: false,
@@ -9494,6 +9635,12 @@ editor.on("widget_event", (e) => {
         // Visit dives into the editor — no dock refocus.
         closeDockContextMenu();
         dockMenuVisit(id);
+        return;
+      }
+      if (e.widget_key === "ctx-rename-session") {
+        // Same centered dialog as folder rename; it blurs the dock itself.
+        closeDockContextMenuAndRestoreDock();
+        openRenameWorkspaceDialog(id);
         return;
       }
       if (e.widget_key === "ctx-move") {
@@ -10469,6 +10616,19 @@ editor.on("terminal_output", (payload) => {
     // Terminal output is activity — feed the dock's day-granularity recency
     // order (persists at most once per session per day).
     markSessionActiveToday(s);
+    // Track the terminal's tab title so an un-renamed workspace names itself
+    // after whatever it's running. Only adopt the session's own agent
+    // terminal (when it has one) so a second shell the user opened in the
+    // same window can't hijack the workspace name.
+    const title = (payload.terminal_title ?? "").trim();
+    if (
+      title &&
+      (s.terminalId === null || s.terminalId === payload.terminal_id) &&
+      s.terminalTitle !== title
+    ) {
+      s.terminalTitle = title;
+      applyResolvedLabel(s);
+    }
     refreshOpenDialog();
     // Ensure the row flips back to idle once output stops, even if no
     // further event arrives to trigger a render.

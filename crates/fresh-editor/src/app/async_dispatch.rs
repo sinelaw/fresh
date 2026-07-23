@@ -802,12 +802,23 @@ impl Editor {
             .and_then(|w| w.terminal_manager.get(terminal_id))
             .and_then(|handle| handle.state.lock().ok().map(|s| s.last_visible_line()))
             .unwrap_or_default();
+        // The terminal's current tab title, so a plugin can name a workspace
+        // after whatever it's running. The auto-numbered default
+        // (`*Terminal N*`) carries no signal, so pass it through as empty and
+        // let the plugin fall back to its own naming.
+        let terminal_title = self
+            .windows
+            .get(&owner)
+            .and_then(|w| w.terminal_tab_title(terminal_id))
+            .filter(|t| !(t.starts_with("*Terminal ") && t.ends_with('*')))
+            .unwrap_or_default();
         self.plugin_manager.read().unwrap().run_hook(
             "terminal_output",
             crate::services::plugins::hooks::HookArgs::TerminalOutput {
                 terminal_id: terminal_id.0 as u64,
                 window_id: owner.0,
                 last_line,
+                terminal_title,
             },
         );
     }

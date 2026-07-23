@@ -430,6 +430,14 @@ pub enum HookArgs {
         /// is preserved because prompt detection often depends on it
         /// (e.g. `"... (Y/n): "` ends in a space).
         last_line: String,
+        /// The terminal's current tab title — the same combined
+        /// foreground-process + OSC-title string shown on the terminal's
+        /// tab (see `Window::sync_terminal_titles`). Empty when the
+        /// terminal has no meaningful title yet (the default
+        /// `*Terminal N*`). Lets a plugin name a workspace after whatever
+        /// the terminal is running, tracking the tab, without re-reading
+        /// the PTY. Explicit (plugin-set) tab titles are surfaced too.
+        terminal_title: String,
     },
 
     /// PTY terminal's spawned process has ended. Fires once per
@@ -737,6 +745,7 @@ mod tests {
             terminal_id: 7,
             window_id: 2,
             last_line: "Do you want me to attempt a fix? (Y/n): ".into(),
+            terminal_title: "bash \u{2014} root@host: ~/proj".into(),
         })
         .unwrap();
         assert_eq!(json["terminal_id"], 7);
@@ -745,6 +754,7 @@ mod tests {
             json["last_line"],
             "Do you want me to attempt a fix? (Y/n): "
         );
+        assert_eq!(json["terminal_title"], "bash \u{2014} root@host: ~/proj");
     }
 
     #[test]

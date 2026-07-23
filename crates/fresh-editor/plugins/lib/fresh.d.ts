@@ -4114,6 +4114,13 @@ interface HookEventMap {
 		terminal_id: number;
 		window_id: number;
 		last_line: string;
+		/**
+		 * The terminal's current tab title — the combined foreground-process
+		 * + OSC-title string shown on its tab. Empty when the terminal has no
+		 * meaningful title yet (the auto-numbered `*Terminal N*` default). Lets
+		 * a plugin name a workspace after whatever the terminal is running.
+		 */
+		terminal_title: string;
 	};
 	terminal_exit: {
 		terminal_id: number;

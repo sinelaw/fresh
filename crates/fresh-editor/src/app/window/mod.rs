@@ -2496,6 +2496,45 @@ impl Window {
         self.terminal_buffer(buffer_id).map(|tb| tb.terminal_id)
     }
 
+    /// The current tab title of the terminal with `terminal_id` in this
+    /// window — the same combined foreground-process + OSC-title string that
+    /// [`Self::sync_terminal_titles`] paints on the tab. `None` when no
+    /// terminal buffer in this window owns that id.
+    ///
+    /// Computed live from the foreground-name cache + the terminal's current
+    /// OSC title (via the shared [`combine_terminal_title`]), rather than the
+    /// buffer's `display_name`, because `display_name` is only refreshed
+    /// during render — so at `terminal_output` time it can lag a frame behind
+    /// a title the program just set. An explicitly-titled tab (plugin/command
+    /// named) keeps that stored name.
+    ///
+    /// This is the readback the `terminal_output` hook ships to plugins so
+    /// they can name a workspace after whatever the terminal is running
+    /// (Orchestrator's terminal-tracking workspace names).
+    pub(crate) fn terminal_tab_title(
+        &self,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) -> Option<String> {
+        let buffer_id = self
+            .terminal_buffers
+            .iter()
+            .find(|(_, tb)| tb.terminal_id == terminal_id)
+            .map(|(bid, _)| *bid)?;
+        if self.terminal_explicit_titles.contains(&buffer_id) {
+            return self
+                .buffer_metadata
+                .get(&buffer_id)
+                .map(|meta| meta.display_name.clone());
+        }
+        let pty = self.terminal_fg_cache.get(&buffer_id).cloned();
+        let osc = self.terminal_manager.get(terminal_id).and_then(|handle| {
+            let raw = handle.state.lock().ok()?.title().to_string();
+            let sanitized = crate::services::terminal_title::sanitize_title(&raw);
+            (!sanitized.is_empty()).then_some(sanitized)
+        });
+        crate::app::terminal::combine_terminal_title(pty.as_deref(), osc.as_deref())
+    }
+
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.
     /// `false` for a live terminal split, and for any non-terminal buffer.
     /// The single read of the per-split live↔scrollback source of truth.
