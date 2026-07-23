@@ -65,3 +65,4 @@ bun.lockb
 dist
 .amp/
 .worktrees/
+.claude/
