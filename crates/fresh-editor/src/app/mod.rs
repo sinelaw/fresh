@@ -3910,6 +3910,55 @@ mod tests {
         assert!(view_state.tab_scroll_offset <= total_width);
     }
 
+    /// Regression for sinelaw/fresh#2650 (Part 2).
+    ///
+    /// In a vertical split each pane's tab bar is only as wide as the pane,
+    /// but `ensure_active_tab_visible` used to be fed `effective_tabs_width`
+    /// (the whole editor width), so the scroll math ran against ~2x the real
+    /// width. `split_tabs_width` must report the focused split's real pane
+    /// width instead — roughly half the editor after a vertical split.
+    #[test]
+    fn split_tabs_width_reports_per_split_pane_width() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+
+        let full_width = editor.active_window().effective_tabs_width();
+
+        // Split vertically into two side-by-side panes.
+        editor.split_pane_vertical();
+
+        let panes: Vec<(crate::model::event::LeafId, u16)> = editor
+            .split_manager()
+            .get_visible_buffers(editor.active_window().editor_content_area())
+            .into_iter()
+            .map(|(leaf, _buf, area)| (leaf, area.width))
+            .collect();
+        assert_eq!(panes.len(), 2, "vertical split should yield two panes");
+
+        for (leaf, pane_width) in &panes {
+            let w = editor.active_window().split_tabs_width(*leaf);
+            assert_eq!(
+                w, *pane_width,
+                "split_tabs_width must equal the pane's real width"
+            );
+            assert!(
+                w < full_width,
+                "each pane width ({}) must be narrower than the whole editor ({})",
+                w,
+                full_width
+            );
+        }
+    }
+
     /// Regression for sinelaw/fresh#2229.
     ///
     /// When the tab strip is scrolled (many tabs open) and the user invokes

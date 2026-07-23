@@ -1201,6 +1201,136 @@ mod tests {
         }
     }
 
+    // --- Tab name elision (issue #2650) ---------------------------------
+
+    #[test]
+    fn elided_tab_name_leaves_short_names_untouched() {
+        assert_eq!(elided_tab_name("main.rs", TAB_NAME_MAX_COLS), "main.rs");
+        // Exactly at the cap is not truncated.
+        let exact = "a".repeat(TAB_NAME_MAX_COLS);
+        assert_eq!(elided_tab_name(&exact, TAB_NAME_MAX_COLS), exact);
+    }
+
+    #[test]
+    fn elided_tab_name_caps_long_name_and_ends_with_ellipsis() {
+        let name = "a".repeat(151);
+        let out = elided_tab_name(&name, TAB_NAME_MAX_COLS);
+        assert!(
+            str_width(&out) <= TAB_NAME_MAX_COLS,
+            "elided width {} exceeds cap {}",
+            str_width(&out),
+            TAB_NAME_MAX_COLS
+        );
+        assert!(out.ends_with('…'), "elided label must end with U+2026");
+    }
+
+    #[test]
+    fn elided_tab_name_multibyte_stays_within_cap_without_panic() {
+        // Wide CJK glyphs (2 cols each) plus multi-codepoint emoji, well over
+        // the cap: must truncate on whole characters and never split a
+        // codepoint (which would panic) or exceed the display-width cap.
+        let name = format!("{}🎉🎊🚀", "日本語のファイル".repeat(6));
+        let out = elided_tab_name(&name, TAB_NAME_MAX_COLS);
+        assert!(
+            str_width(&out) <= TAB_NAME_MAX_COLS,
+            "elided width {} exceeds cap {}",
+            str_width(&out),
+            TAB_NAME_MAX_COLS
+        );
+        assert!(out.ends_with('…'));
+    }
+
+    /// Build `TabTarget::Group` inputs (one per name) so the label builders can
+    /// be exercised without constructing real buffers/`EditorState`.
+    fn build_group_inputs(names: &[&str]) -> (Vec<TabTarget>, HashMap<LeafId, String>) {
+        let mut group_names = HashMap::new();
+        let mut targets = Vec::new();
+        for (i, n) in names.iter().enumerate() {
+            let leaf = LeafId(crate::model::event::SplitId(i));
+            group_names.insert(leaf, n.to_string());
+            targets.push(TabTarget::Group(leaf));
+        }
+        (targets, group_names)
+    }
+
+    #[test]
+    fn long_tab_name_bounded_and_builders_stay_in_sync() {
+        let long = "a".repeat(151);
+        let (targets, group_names) = build_group_inputs(&[long.as_str()]);
+        let buffers = HashMap::new();
+        let meta = HashMap::new();
+        let comp = HashMap::new();
+
+        // calculate_tab_widths: single tab, no separator.
+        let (widths, rendered) =
+            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None);
+        assert_eq!(rendered.len(), 1);
+        assert_eq!(widths.len(), 1);
+        // Full tab width = leading+trailing pad (2) + name (<=cap) + "× " (2).
+        assert!(
+            widths[0] <= TAB_NAME_MAX_COLS + 4,
+            "tab width {} exceeds cap {} + indicators",
+            widths[0],
+            TAB_NAME_MAX_COLS
+        );
+
+        // build_tab_spans must compute the identical width for the same input,
+        // or hit-testing/scroll drift.
+        let resolved = resolve_tab_names(&targets, &buffers, &meta, &comp, &group_names);
+        let theme =
+            crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let (_spans, ranges, rendered2) = build_tab_spans(
+            &targets, &resolved, &buffers, &meta, &comp, targets[0], None, None, true, &theme,
+        );
+        assert_eq!(rendered2.len(), 1);
+        let span_width = ranges[0].1 - ranges[0].0;
+        assert_eq!(
+            span_width, widths[0],
+            "build_tab_spans width ({}) must match calculate_tab_widths ({})",
+            span_width, widths[0]
+        );
+    }
+
+    #[test]
+    fn over_long_tabs_are_elided_and_scroll_into_view() {
+        let long = "z".repeat(151);
+        let (targets, group_names) =
+            build_group_inputs(&[long.as_str(), "short.rs", long.as_str(), "other.txt"]);
+        let buffers = HashMap::new();
+        let meta = HashMap::new();
+        let comp = HashMap::new();
+        let (tab_widths, rendered) =
+            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None);
+
+        let max_width = 40;
+        let total: usize = tab_widths.iter().sum();
+        for i in 0..rendered.len() {
+            let width_idx = if i == 0 { 0 } else { i * 2 };
+            let w = tab_widths[width_idx];
+            assert!(
+                w <= TAB_NAME_MAX_COLS + 4,
+                "tab {} width {} exceeds cap",
+                i,
+                w
+            );
+            // With names bounded, the active tab always fully scrolls into view.
+            let offset = scroll_to_show_tab(&tab_widths, width_idx, 0, max_width);
+            let (vis_start, vis_end) = visible_range(offset, total, max_width);
+            let start: usize = tab_widths[..width_idx].iter().sum();
+            let end = start + w;
+            assert!(
+                start >= vis_start && end <= vis_end,
+                "tab {} ({}..{}) not fully visible in {}..{} (offset={})",
+                i,
+                start,
+                end,
+                vis_start,
+                vis_end,
+                offset
+            );
+        }
+    }
+
     #[test]
     fn test_tab_layout_hit_test() {
         let bar_area = Rect::new(0, 0, 80, 1);
