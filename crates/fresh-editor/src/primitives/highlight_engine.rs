@@ -265,13 +265,17 @@ pub struct TextMateEngine {
     syntax_set: Arc<SyntaxSet>,
     syntax_index: usize,
     checkpoint_markers: MarkerList,
-    checkpoint_states:
-        HashMap<MarkerId, (syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
+    checkpoint_states: HashMap<MarkerId, ParseSnapshot>,
     dirty_from: Option<usize>,
     cache: Option<TextMateCache>,
     last_buffer_len: usize,
     ts_language: Option<Language>,
     stats: HighlightStats,
+    // Set when this syntax hosts embedded-language regions (see
+    // `EMBEDDING_SPECS`); None for the vast majority of syntaxes.
+    embedding: Option<EmbeddingSpec>,
+    // Fence-language-token → syntax index memo (None = unrecognized).
+    embedded_syntax_memo: HashMap<String, Option<usize>>,
     // Scope→Category memo. Syntect Scope atoms are append-only-interned
     // globally, so entries never need invalidation.
     scope_category_cache: HashMap<syntect::parsing::Scope, Option<HighlightCategory>>,
@@ -298,13 +302,92 @@ struct TextMateCache {
     spans: Vec<CachedSpan>,
     // Parse state at `range.end`; powers forward extension. None when the
     // last mutation didn't end at `range.end`.
-    tail_state: Option<(syntect::parsing::ParseState, syntect::parsing::ScopeStack)>,
+    tail_state: Option<ParseSnapshot>,
 }
 
 #[derive(Debug, Clone)]
 struct CachedSpan {
     range: Range<usize>,
     category: crate::primitives::highlighter::HighlightCategory,
+}
+
+/// Declares how a host syntax delimits embedded-language regions whose
+/// language is named *by the document* (e.g. Markdown code fences). The
+/// host grammar itself must scope both the region and the language name;
+/// the engine then runs a child parser over region content lines. Hosts
+/// whose embedded language is known statically (HTML `<style>` → CSS)
+/// don't belong here — the grammar embeds those directly via the
+/// `SyntaxSet`. See `docs/internal/embedded-language-highlighting.md`.
+struct EmbeddingSpecDef {
+    host_syntax: &'static str,
+    /// Scope (prefix) the host grammar keeps on the stack for the whole
+    /// region, including its delimiter lines.
+    region_scope: &'static str,
+    /// Scope (prefix) the host grammar assigns to the language token on
+    /// the region's opening line.
+    language_scope: &'static str,
+}
+
+const EMBEDDING_SPECS: &[EmbeddingSpecDef] = &[EmbeddingSpecDef {
+    host_syntax: "Markdown",
+    region_scope: "markup.raw.code-fence",
+    language_scope: "constant.other.language-name",
+}];
+
+/// `EmbeddingSpecDef` with its scope selectors interned as syntect `Scope`
+/// atoms for cheap prefix matching in the per-line parse loop.
+#[derive(Debug, Clone, Copy)]
+struct EmbeddingSpec {
+    region_scope: syntect::parsing::Scope,
+    language_scope: syntect::parsing::Scope,
+}
+
+impl EmbeddingSpec {
+    fn for_syntax_name(name: &str) -> Option<Self> {
+        let def = EMBEDDING_SPECS.iter().find(|d| d.host_syntax == name)?;
+        Some(Self {
+            region_scope: syntect::parsing::Scope::new(def.region_scope).ok()?,
+            language_scope: syntect::parsing::Scope::new(def.language_scope).ok()?,
+        })
+    }
+}
+
+/// True when any scope on the stack has `scope` as a prefix.
+fn scopes_contain(stack: &syntect::parsing::ScopeStack, scope: syntect::parsing::Scope) -> bool {
+    stack.as_slice().iter().any(|s| scope.is_prefix_of(*s))
+}
+
+/// Parse state of an embedded-language region's child parser.
+#[derive(Debug, Clone, PartialEq)]
+struct EmbeddedParseState {
+    /// Index of the embedded syntax in the shared `SyntaxSet`. Part of the
+    /// state identity: two parses that entered the same region with
+    /// different fence languages must not be considered converged.
+    syntax_index: usize,
+    state: syntect::parsing::ParseState,
+    scopes: syntect::parsing::ScopeStack,
+}
+
+/// Complete resumable parse state: the host parser plus, while inside an
+/// embedded-language region with a recognized language, the child parser.
+/// This is what checkpoints, the cache tail, and convergence comparison
+/// carry, so all incremental paths (resume-from-checkpoint, forward
+/// extension, partial update) work identically inside embedded regions.
+#[derive(Debug, Clone, PartialEq)]
+struct ParseSnapshot {
+    state: syntect::parsing::ParseState,
+    scopes: syntect::parsing::ScopeStack,
+    embedded: Option<EmbeddedParseState>,
+}
+
+impl ParseSnapshot {
+    fn new(syntax: &syntect::parsing::SyntaxReference) -> Self {
+        Self {
+            state: syntect::parsing::ParseState::new(syntax),
+            scopes: syntect::parsing::ScopeStack::new(),
+            embedded: None,
+        }
+    }
 }
 
 /// Small/large file threshold (whole-file cache vs viewport window).
@@ -382,18 +465,7 @@ fn prepare_line_at(content_bytes: &[u8], pos: usize) -> (usize, usize, Option<Pr
 impl TextMateEngine {
     /// Create a new TextMate engine for the given syntax
     pub fn new(syntax_set: Arc<SyntaxSet>, syntax_index: usize) -> Self {
-        Self {
-            syntax_set,
-            syntax_index,
-            checkpoint_markers: MarkerList::new(),
-            checkpoint_states: HashMap::new(),
-            dirty_from: None,
-            cache: None,
-            last_buffer_len: 0,
-            ts_language: None,
-            stats: HighlightStats::default(),
-            scope_category_cache: HashMap::new(),
-        }
+        Self::with_language(syntax_set, syntax_index, None)
     }
 
     /// Create a new TextMate engine with a tree-sitter language for non-highlighting features
@@ -402,6 +474,7 @@ impl TextMateEngine {
         syntax_index: usize,
         ts_language: Option<Language>,
     ) -> Self {
+        let embedding = EmbeddingSpec::for_syntax_name(&syntax_set.syntaxes()[syntax_index].name);
         Self {
             syntax_set,
             syntax_index,
@@ -412,6 +485,8 @@ impl TextMateEngine {
             last_buffer_len: 0,
             ts_language,
             stats: HighlightStats::default(),
+            embedding,
+            embedded_syntax_memo: HashMap::new(),
             scope_category_cache: HashMap::new(),
         }
     }
@@ -495,28 +570,28 @@ impl TextMateEngine {
     /// (which would shadow it). Callers gate on
     /// `bytes_since_checkpoint >= CHECKPOINT_INTERVAL` to control
     /// spacing.
-    fn maybe_create_checkpoint(
-        &mut self,
-        current_offset: usize,
-        state: &syntect::parsing::ParseState,
-        current_scopes: &syntect::parsing::ScopeStack,
-    ) {
+    fn maybe_create_checkpoint(&mut self, current_offset: usize, snapshot: &ParseSnapshot) {
         let nearby = self.checkpoint_markers.query_range(
             current_offset.saturating_sub(CHECKPOINT_INTERVAL / 2),
             current_offset + CHECKPOINT_INTERVAL / 2,
         );
         if nearby.is_empty() {
             let marker_id = self.checkpoint_markers.create(current_offset, true);
-            self.checkpoint_states
-                .insert(marker_id, (state.clone(), current_scopes.clone()));
+            self.checkpoint_states.insert(marker_id, snapshot.clone());
         }
     }
 
     /// Drive `state.parse_line(prepared.line_for_syntect)` and emit one
     /// span per category-carrying byte range via `on_span(start, end,
-    /// category)`. Returns `false` when `parse_line` errored — caller
-    /// should advance past the line and continue (state may have been
-    /// mutated mid-parse but is left as-is, matching prior behaviour).
+    /// category)`. Returns `(false, None)` when `parse_line` errored —
+    /// caller should advance past the line and continue (state may have
+    /// been mutated mid-parse but is left as-is, matching prior
+    /// behaviour).
+    ///
+    /// When `watch_scope` is set, additionally returns the absolute byte
+    /// range of the first contiguous run where that scope was on the
+    /// stack (used to locate the language token on a region-opening
+    /// line).
     ///
     /// Span emission is in two passes: the op iterator emits the
     /// segment between consecutive ops with the scope-stack-active
@@ -528,15 +603,18 @@ impl TextMateEngine {
         current_scopes: &mut syntect::parsing::ScopeStack,
         prepared: &PreparedLine,
         current_offset: usize,
+        watch_scope: Option<syntect::parsing::Scope>,
         mut on_span: impl FnMut(usize, usize, HighlightCategory),
-    ) -> bool {
+    ) -> (bool, Option<Range<usize>>) {
         let ops = match state.parse_line(&prepared.line_for_syntect, &self.syntax_set) {
             Ok(ops) => ops,
-            Err(_) => return false,
+            Err(_) => return (false, None),
         };
 
         let line_content_len = prepared.line_content_len;
         let mut syntect_offset = 0;
+        let mut watch_run_start: Option<usize> = None;
+        let mut watched_range: Option<Range<usize>> = None;
 
         for (op_offset, op) in ops {
             let clamped_op_offset = op_offset.min(line_content_len);
@@ -552,6 +630,19 @@ impl TextMateEngine {
             syntect_offset = clamped_op_offset;
             #[allow(clippy::let_underscore_must_use)]
             let _ = current_scopes.apply(&op);
+            if let Some(watch) = watch_scope {
+                if watched_range.is_none() {
+                    let active = scopes_contain(current_scopes, watch);
+                    match (watch_run_start, active) {
+                        (None, true) => watch_run_start = Some(clamped_op_offset),
+                        (Some(start), false) => {
+                            watched_range =
+                                Some(current_offset + start..current_offset + clamped_op_offset);
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
 
         if syntect_offset < line_content_len {
@@ -563,7 +654,152 @@ impl TextMateEngine {
                 );
             }
         }
-        true
+        if let (Some(start), None) = (watch_run_start, watched_range.as_ref()) {
+            watched_range = Some(current_offset + start..current_offset + line_content_len);
+        }
+        (true, watched_range)
+    }
+
+    /// Parse one line advancing the composite `snapshot` (host parser +
+    /// optional embedded-language child parser). This is the single
+    /// per-line entry point for all parse paths, so embedded regions
+    /// behave identically under cold start, forward extension, and
+    /// partial update.
+    ///
+    /// Line classification is driven purely by the host grammar's scope
+    /// stack (no second lexer that could disagree with what the host
+    /// grammar recognizes as a region):
+    /// - region scope absent before and after → plain host line;
+    /// - absent before, present after → region opened: host-styled, and
+    ///   the language token (located by `language_scope`) selects the
+    ///   child syntax for subsequent lines;
+    /// - present before and after → region content: parsed by the child
+    ///   (host spans for the line are suppressed); when the language was
+    ///   not recognized the host's own styling (e.g. `markup.raw`) is
+    ///   kept;
+    /// - present before, absent after → closing delimiter: host-styled.
+    ///
+    /// The host parser always consumes the line first — inside a region
+    /// it is in a cheap "raw" context — because only it knows where the
+    /// region ends. Content lines therefore cost one extra (trivial)
+    /// host `parse_line` on top of the child parse.
+    fn parse_snapshot_line(
+        &mut self,
+        snapshot: &mut ParseSnapshot,
+        prepared: &PreparedLine,
+        current_offset: usize,
+        mut on_span: impl FnMut(usize, usize, HighlightCategory),
+    ) -> bool {
+        let Some(spec) = self.embedding else {
+            return self
+                .parse_line_into_spans(
+                    &mut snapshot.state,
+                    &mut snapshot.scopes,
+                    prepared,
+                    current_offset,
+                    None,
+                    on_span,
+                )
+                .0;
+        };
+
+        let was_in_region = scopes_contain(&snapshot.scopes, spec.region_scope);
+        let mut host_spans: Vec<(usize, usize, HighlightCategory)> = Vec::new();
+        let (parse_ok, language_range) = self.parse_line_into_spans(
+            &mut snapshot.state,
+            &mut snapshot.scopes,
+            prepared,
+            current_offset,
+            (!was_in_region).then_some(spec.language_scope),
+            |start, end, category| host_spans.push((start, end, category)),
+        );
+        let in_region = parse_ok && scopes_contain(&snapshot.scopes, spec.region_scope);
+
+        let content_line = was_in_region && in_region;
+        if content_line {
+            if let Some(mut embedded) = snapshot.embedded.take() {
+                let syntax_valid = embedded.syntax_index < self.syntax_set.syntaxes().len();
+                if syntax_valid {
+                    let _ = self.parse_line_into_spans(
+                        &mut embedded.state,
+                        &mut embedded.scopes,
+                        prepared,
+                        current_offset,
+                        None,
+                        &mut on_span,
+                    );
+                }
+                snapshot.embedded = Some(embedded);
+                return parse_ok;
+            }
+            // Region with an unrecognized language: keep host styling.
+        }
+
+        for (start, end, category) in host_spans {
+            on_span(start, end, category);
+        }
+        match (was_in_region, in_region) {
+            (false, true) => {
+                snapshot.embedded =
+                    self.embedded_state_for_region(prepared, current_offset, language_range);
+            }
+            (true, false) => snapshot.embedded = None,
+            _ => {}
+        }
+        parse_ok
+    }
+
+    /// Build the child parser for a region that just opened, from the
+    /// language token the host grammar scoped on the opening line.
+    fn embedded_state_for_region(
+        &mut self,
+        prepared: &PreparedLine,
+        current_offset: usize,
+        language_range: Option<Range<usize>>,
+    ) -> Option<EmbeddedParseState> {
+        let range = language_range?;
+        let rel =
+            range.start.checked_sub(current_offset)?..range.end.checked_sub(current_offset)?;
+        let token = prepared.line_for_syntect.get(rel)?;
+        let syntax_index = self.resolve_embedded_syntax(token)?;
+        Some(EmbeddedParseState {
+            syntax_index,
+            state: syntect::parsing::ParseState::new(&self.syntax_set.syntaxes()[syntax_index]),
+            scopes: syntect::parsing::ScopeStack::new(),
+        })
+    }
+
+    /// Resolve a fence-style language token ("rust", "py",
+    /// "language-c++", "{.python}") to a syntax index, memoised. Plain
+    /// text resolves to None so unrecognized fences keep the host's raw
+    /// styling instead of losing it to a no-op child parse.
+    fn resolve_embedded_syntax(&mut self, raw_token: &str) -> Option<usize> {
+        let token = raw_token.trim();
+        let token = token
+            .strip_prefix("{.")
+            .and_then(|t| t.strip_suffix('}'))
+            .unwrap_or(token);
+        let token = token.strip_prefix("language-").unwrap_or(token);
+        if token.is_empty() {
+            return None;
+        }
+        if let Some(cached) = self.embedded_syntax_memo.get(token) {
+            return *cached;
+        }
+        let plain = self.syntax_set.find_syntax_plain_text();
+        let resolved = self
+            .syntax_set
+            .find_syntax_by_token(token)
+            .filter(|found| !std::ptr::eq(*found, plain))
+            .and_then(|found| {
+                self.syntax_set
+                    .syntaxes()
+                    .iter()
+                    .position(|s| std::ptr::eq(s, found))
+            });
+        self.embedded_syntax_memo
+            .insert(token.to_string(), resolved);
+        resolved
     }
 
     /// Highlight the visible viewport. Path selection is documented in the
@@ -710,22 +946,18 @@ impl TextMateEngine {
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
 
         // Find checkpoint before the dirty point (bounded search)
-        let (actual_start, mut state, mut current_scopes) = {
+        let (actual_start, mut snapshot) = {
             let search_start = dirty_pos.saturating_sub(MAX_PARSE_BYTES);
             let markers = self.checkpoint_markers.query_range(search_start, dirty_pos);
             let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
             if let Some((id, cp_pos, _)) = nearest {
-                if let Some((s, sc)) = self.checkpoint_states.get(&id) {
-                    (cp_pos, s.clone(), sc.clone())
+                if let Some(snap) = self.checkpoint_states.get(&id) {
+                    (cp_pos, snap.clone())
                 } else {
                     return None; // orphan, fall back
                 }
             } else if parse_end <= MAX_PARSE_BYTES {
-                (
-                    0,
-                    syntect::parsing::ParseState::new(syntax),
-                    syntect::parsing::ScopeStack::new(),
-                )
+                (0, ParseSnapshot::new(syntax))
             } else {
                 return None; // large file, no nearby checkpoint, fall back
             }
@@ -763,7 +995,7 @@ impl TextMateEngine {
         while pos < content_bytes.len() {
             // Create checkpoints in new territory
             if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                self.maybe_create_checkpoint(current_offset, &state, &current_scopes);
+                self.maybe_create_checkpoint(current_offset, &snapshot);
                 bytes_since_checkpoint = 0;
             }
 
@@ -772,9 +1004,8 @@ impl TextMateEngine {
             let collect_spans =
                 current_offset + line_byte_len > desired_parse_start.max(actual_start);
             if let Some(prepared) = prepared {
-                let _ = self.parse_line_into_spans(
-                    &mut state,
-                    &mut current_scopes,
+                let _ = self.parse_snapshot_line(
+                    &mut snapshot,
                     &prepared,
                     current_offset,
                     |byte_start, byte_end, category| {
@@ -802,15 +1033,14 @@ impl TextMateEngine {
                 let (marker_id, _) = markers_ahead[marker_idx];
                 marker_idx += 1;
                 if let Some(stored) = self.checkpoint_states.get(&marker_id) {
-                    if *stored == (state.clone(), current_scopes.clone()) {
+                    if *stored == snapshot {
                         self.stats.convergences += 1;
                         converged_at = Some(current_offset);
                         break;
                     }
                 }
                 self.stats.checkpoints_updated += 1;
-                self.checkpoint_states
-                    .insert(marker_id, (state.clone(), current_scopes.clone()));
+                self.checkpoint_states.insert(marker_id, snapshot.clone());
             }
 
             if converged_at.is_some() {
@@ -877,17 +1107,17 @@ impl TextMateEngine {
         let buf_len = buffer.len();
         let parse_end = parse_end.min(buf_len);
 
-        let (extension_start, mut state, mut current_scopes) = {
+        let (extension_start, mut snapshot) = {
             let cache = self
                 .cache
                 .as_ref()
                 .expect("extend_cache_forward: cache must exist");
-            let (s, sc) = cache
+            let snap = cache
                 .tail_state
                 .as_ref()
                 .expect("extend_cache_forward: tail_state must exist")
                 .clone();
-            (cache.range.end, s, sc)
+            (cache.range.end, snap)
         };
 
         if parse_end <= extension_start {
@@ -915,21 +1145,19 @@ impl TextMateEngine {
         // inside `+` lines. Re-parsing the trailing partial line on every
         // refresh costs at most one extra `parse_line` and is correct.
         let mut safe_offset = extension_start;
-        let mut safe_state = state.clone();
-        let mut safe_scopes = current_scopes.clone();
+        let mut safe_snapshot = snapshot.clone();
 
         while pos < content_bytes.len() {
             if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                self.maybe_create_checkpoint(current_offset, &state, &current_scopes);
+                self.maybe_create_checkpoint(current_offset, &snapshot);
                 bytes_since_checkpoint = 0;
             }
 
             let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
             let mut newline_terminated = false;
             if let Some(prepared) = prepared {
-                let parse_ok = self.parse_line_into_spans(
-                    &mut state,
-                    &mut current_scopes,
+                let parse_ok = self.parse_snapshot_line(
+                    &mut snapshot,
                     &prepared,
                     current_offset,
                     |byte_start, byte_end, category| {
@@ -950,8 +1178,7 @@ impl TextMateEngine {
 
             if newline_terminated {
                 safe_offset = current_offset;
-                safe_state = state.clone();
-                safe_scopes = current_scopes.clone();
+                safe_snapshot = snapshot.clone();
             }
         }
 
@@ -975,7 +1202,7 @@ impl TextMateEngine {
         cache.spans.extend(safe_spans);
         Self::merge_adjacent_spans(&mut cache.spans);
         cache.range.end = safe_offset;
-        cache.tail_state = Some((safe_state, safe_scopes));
+        cache.tail_state = Some(safe_snapshot);
         self.last_buffer_len = buf_len;
 
         let mut result = self.filter_cached_spans(viewport_start, viewport_end, theme);
@@ -1014,7 +1241,7 @@ impl TextMateEngine {
         }
 
         let syntax = &self.syntax_set.syntaxes()[self.syntax_index];
-        let (actual_start, mut state, mut current_scopes, create_checkpoints) =
+        let (actual_start, mut snapshot, create_checkpoints) =
             self.find_parse_resume_point(desired_parse_start, parse_end, syntax);
 
         let content = buffer.slice_bytes(actual_start..parse_end);
@@ -1034,12 +1261,11 @@ impl TextMateEngine {
         // start of the trailing partial line otherwise so the next
         // refresh re-parses it from scratch.
         let mut safe_offset = actual_start;
-        let mut safe_state = state.clone();
-        let mut safe_scopes = current_scopes.clone();
+        let mut safe_snapshot = snapshot.clone();
 
         while pos < content_bytes.len() {
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
-                self.maybe_create_checkpoint(current_offset, &state, &current_scopes);
+                self.maybe_create_checkpoint(current_offset, &snapshot);
                 bytes_since_checkpoint = 0;
             }
 
@@ -1050,9 +1276,8 @@ impl TextMateEngine {
             let collect_spans = current_offset + line_byte_len > desired_parse_start;
             let mut newline_terminated = false;
             if let Some(prepared) = prepared {
-                let parse_ok = self.parse_line_into_spans(
-                    &mut state,
-                    &mut current_scopes,
+                let parse_ok = self.parse_snapshot_line(
+                    &mut snapshot,
                     &prepared,
                     current_offset,
                     |byte_start, byte_end, category| {
@@ -1079,8 +1304,7 @@ impl TextMateEngine {
 
             if newline_terminated {
                 safe_offset = current_offset;
-                safe_state = state.clone();
-                safe_scopes = current_scopes.clone();
+                safe_snapshot = snapshot.clone();
             }
 
             // Update checkpoint states as we pass them. Done after the
@@ -1094,8 +1318,7 @@ impl TextMateEngine {
                 .map(|(id, start, _)| (id, start))
                 .collect();
             for (marker_id, _) in markers_here {
-                self.checkpoint_states
-                    .insert(marker_id, (state.clone(), current_scopes.clone()));
+                self.checkpoint_states.insert(marker_id, snapshot.clone());
             }
         }
 
@@ -1118,7 +1341,7 @@ impl TextMateEngine {
         self.cache = Some(TextMateCache {
             range: desired_parse_start..cache_range_end,
             spans: cached_spans,
-            tail_state: Some((safe_state, safe_scopes)),
+            tail_state: Some(safe_snapshot),
         });
         self.last_buffer_len = buffer.len();
 
@@ -1143,14 +1366,7 @@ impl TextMateEngine {
         desired_start: usize,
         parse_end: usize,
         syntax: &syntect::parsing::SyntaxReference,
-    ) -> (
-        usize,
-        syntect::parsing::ParseState,
-        syntect::parsing::ScopeStack,
-        bool,
-    ) {
-        use syntect::parsing::{ParseState, ScopeStack};
-
+    ) -> (usize, ParseSnapshot, bool) {
         // Look for a checkpoint near the desired start. For large files, only
         // consider checkpoints that are within MAX_PARSE_BYTES of desired_start
         // to avoid parsing hundreds of MB from a distant checkpoint.
@@ -1161,23 +1377,18 @@ impl TextMateEngine {
         let nearest = markers.into_iter().max_by_key(|(_, start, _)| *start);
 
         if let Some((id, cp_pos, _)) = nearest {
-            if let Some((s, sc)) = self.checkpoint_states.get(&id) {
-                return (cp_pos, s.clone(), sc.clone(), true);
+            if let Some(snap) = self.checkpoint_states.get(&id) {
+                return (cp_pos, snap.clone(), true);
             }
         }
 
         if parse_end <= MAX_PARSE_BYTES {
             // File is small enough to parse from byte 0
-            (0, ParseState::new(syntax), ScopeStack::new(), true)
+            (0, ParseSnapshot::new(syntax), true)
         } else {
             // Large file, no nearby checkpoint — start fresh from desired_start.
             // Still create checkpoints so future visits to this region can resume.
-            (
-                desired_start,
-                ParseState::new(syntax),
-                ScopeStack::new(),
-                true,
-            )
+            (desired_start, ParseSnapshot::new(syntax), true)
         }
     }
 
@@ -1668,6 +1879,262 @@ mod tests {
         assert_eq!(
             engine.category_at_position(column_zero_end),
             Some(HighlightCategory::Keyword)
+        );
+    }
+
+    /// A recognized Markdown fence language must be highlighted with that
+    /// language's grammar instead of the uniform `markup.raw` string color.
+    #[test]
+    fn test_markdown_fence_embedded_language_highlighting() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = "# Example\n\n```rust\nfn answer() -> u32 { 42 }\n```\n\ntext\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let category_at = |needle: &str| {
+            let position = content.find(needle).unwrap();
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category)
+        };
+
+        assert_eq!(
+            category_at("fn answer"),
+            Some(HighlightCategory::Keyword),
+            "rust keyword inside the fence must use the rust grammar"
+        );
+        assert_eq!(category_at("42"), Some(HighlightCategory::Number));
+        // The fence delimiter lines still belong to the host grammar.
+        assert_eq!(category_at("```rust"), Some(HighlightCategory::String));
+        assert_eq!(
+            engine.category_at_position(content.find("fn answer").unwrap()),
+            Some(HighlightCategory::Keyword),
+            "category lookups must agree with the returned spans"
+        );
+    }
+
+    /// Fences naming an unknown language keep the host's raw-code styling.
+    #[test]
+    fn test_markdown_unknown_fence_language_keeps_raw_style() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let content = "```definitely-not-a-language\nfn answer() { 42 }\n```\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let position = content.find("fn answer").unwrap();
+
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::String)
+        );
+    }
+
+    /// CRLF fences must produce correctly-offset embedded spans.
+    #[test]
+    fn test_markdown_fence_crlf_offsets() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let content = "```rust\r\nfn answer() -> u32 { 42 }\r\n```\r\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let position = content.find("fn answer").unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::Keyword)
+        );
+    }
+
+    /// A fence left open at EOF (streaming, or mid-typing) still gets
+    /// embedded highlighting for the content streamed in so far.
+    #[test]
+    fn test_markdown_fence_unclosed_at_eof() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let content = "```rust\nfn answer() -> u32 { 42 }\n";
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let position = content.find("fn answer").unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::Keyword)
+        );
+    }
+
+    /// Editing the fence's language token must re-style the whole region.
+    ///
+    /// This pins the reason checkpoints and convergence carry the
+    /// *composite* snapshot (host + embedded child state): inside a fence
+    /// the host parser's state is identical no matter which language the
+    /// fence names, so host-only convergence could falsely converge at
+    /// the first checkpoint inside the region and leave stale spans from
+    /// the old language beyond it. The fence here is longer than
+    /// CHECKPOINT_INTERVAL to guarantee such a checkpoint exists.
+    #[test]
+    fn test_markdown_fence_language_edit_restyles_whole_region() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let code_line = "fn deep_in_the_fence() -> u32 { 42 }\n";
+        let lines = 2 * CHECKPOINT_INTERVAL / code_line.len() + 2;
+        let fence_body = code_line.repeat(lines);
+        let before = format!("```rust\n{fence_body}```\n\nafter\n");
+        let buffer = Buffer::from_str(&before, 0, test_fs());
+        let _ = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        // A position in the fence's *last* code line — past any checkpoint
+        // created inside the region.
+        let last_line_pos = before.rfind("fn deep_in_the_fence").unwrap();
+        assert_eq!(
+            engine.category_at_position(last_line_pos),
+            Some(HighlightCategory::Keyword),
+            "precondition: rust highlighting active deep in the fence"
+        );
+
+        // Delete "rust" from the opening fence line.
+        let lang_pos = before.find("rust").unwrap();
+        let after = before.replacen("rust", "", 1);
+        let buffer = Buffer::from_str(&after, 0, test_fs());
+        engine.notify_delete(lang_pos, "rust".len());
+        let spans = engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let position = after.rfind("fn deep_in_the_fence").unwrap();
+        assert_eq!(
+            spans
+                .iter()
+                .find(|span| span.range.start <= position && position < span.range.end)
+                .and_then(|span| span.category),
+            Some(HighlightCategory::String),
+            "after removing the language token the whole region must fall \
+             back to raw-code styling — stale rust spans past a checkpoint \
+             inside the fence mean convergence ignored the embedded state"
+        );
+    }
+
+    /// Typing inside a fence must stay on the incremental partial-update
+    /// path — no whole-file rescan per edit (the flaw that motivated
+    /// replacing full-buffer fence detection).
+    ///
+    /// Convergence granularity note: syntect parse states carrying regex
+    /// captures (which the fence context does, for its close-marker
+    /// backreference) never compare equal across parses — `onig::Region`
+    /// equality is allocation identity, a pre-existing syntect/onig
+    /// limitation that master's tuple comparison had too. So an edit
+    /// inside a fence re-parses to the end of the *region* and converges
+    /// at the first checkpoint after it, rather than 256 bytes after the
+    /// edit. This test pins exactly that contract: the long tail after
+    /// the fence must not be re-parsed.
+    #[test]
+    fn test_markdown_fence_edit_reparses_region_not_file() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let mut content = String::from("# Doc\n\n```rust\n");
+        for i in 0..40 {
+            content.push_str(&format!("fn f_{i}() -> u32 {{ {i} }}\n"));
+        }
+        content.push_str("```\n\n");
+        let fence_end = content.len();
+        for i in 0..400 {
+            content.push_str(&format!("plain prose line {i}\n"));
+        }
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .md");
+        };
+        let _ = tm.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+        let bytes_before = tm.stats().bytes_parsed;
+
+        // Simulate typing one character in the middle of the fence.
+        let edit_pos = fence_end / 2;
+        tm.notify_insert(edit_pos, 1);
+        let _ = tm.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        let stats = tm.stats();
+        let parsed = stats.bytes_parsed - bytes_before;
+        let slack = 2 * CHECKPOINT_INTERVAL;
+        assert!(
+            parsed < fence_end + slack,
+            "an edit inside a fence must converge shortly after the region \
+             ends instead of re-parsing the rest of the file \
+             (parsed {parsed}, fence ends at {fence_end}, file {} bytes)",
+            content.len()
+        );
+        assert!(
+            stats.convergences >= 1,
+            "the edit must converge at a checkpoint after the fence"
+        );
+    }
+
+    /// Embedded highlighting must keep working past MAX_PARSE_BYTES — the
+    /// whole point of integrating regions into the windowed/checkpointed
+    /// engine instead of a full-buffer scan with a size cutoff.
+    #[test]
+    fn test_markdown_fence_beyond_max_parse_bytes_no_size_cliff() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let mut content = "plain prose line\n".repeat(MAX_PARSE_BYTES / 16);
+        assert!(content.len() > MAX_PARSE_BYTES);
+        let fence_pos = content.len();
+        content.push_str("```rust\nfn deep() -> u32 { 42 }\n```\n");
+        let buffer = Buffer::from_str(&content, 0, test_fs());
+
+        let HighlightEngine::TextMate(ref mut tm) = engine else {
+            panic!("expected TextMate engine for .md");
+        };
+
+        // Scroll from the top to the fence in steps small enough for the
+        // forward-extension path (mirrors a user paging through the file,
+        // building checkpoints along the way).
+        let context = 10_000;
+        let step = 16_000;
+        let mut viewport_start = 0;
+        loop {
+            let viewport_end = (viewport_start + 1_000).min(buffer.len());
+            let _ = tm.highlight_viewport(&buffer, viewport_start, viewport_end, &theme, context);
+            if viewport_end == buffer.len() {
+                break;
+            }
+            viewport_start += step;
+        }
+
+        let position = fence_pos + "```rust\n".len();
+        assert_eq!(
+            tm.category_at_position(position),
+            Some(HighlightCategory::Keyword),
+            "a fence starting past MAX_PARSE_BYTES must still get embedded \
+             highlighting once reached via scrolling — a size-based cutoff \
+             here means the mechanism bypassed the windowed engine"
         );
     }
 
