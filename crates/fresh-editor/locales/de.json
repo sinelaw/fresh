@@ -1604,5 +1604,16 @@
   "action.prompt_promote_macro": "Makro zu init.ts-Befehl hochstufen (fragt nach Register)",
   "macro.init_write_failed": "init.ts konnte nicht geschrieben werden: %{error}",
   "macro.promoted_to_init": "Makro '%{key}' zu einem bearbeitbaren Befehl in init.ts hochgestuft (neu geladen)",
-  "macro.saved_to_init": "Makro '%{key}' in init.ts gespeichert (neu geladen)"
+  "macro.saved_to_init": "Makro '%{key}' in init.ts gespeichert (neu geladen)",
+  "action.update_fresh": "Update fresh",
+  "cmd.update_fresh": "Update fresh",
+  "cmd.update_fresh_desc": "Install the available update for fresh",
+  "prompt.update_confirm": "Update to fresh v%{version}? Runs locally in the background. (y)es, (N)o ",
+  "update.cancelled": "Update cancelled.",
+  "update.disabled": "In-editor update is disabled (editor.self_update = false).",
+  "update.failed": "Could not start update: %{error}",
+  "update.manual": "fresh v%{version} is available. See https://github.com/sinelaw/fresh/releases",
+  "update.started": "Updating fresh in the background. Log: %{path}. Restart fresh when it finishes.",
+  "update.unsupported": "This build has no self-update support; download from https://github.com/sinelaw/fresh/releases",
+  "update.up_to_date": "fresh is already up to date."
 }
