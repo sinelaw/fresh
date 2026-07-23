@@ -1153,6 +1153,9 @@ impl Editor {
             Action::ToggleAutoRevert => {
                 self.toggle_auto_revert();
             }
+            Action::ToggleOverwriteMode => {
+                self.toggle_overwrite_mode();
+            }
             Action::FormatBuffer => {
                 if self.refuse_if_editing_disabled() {
                     return Ok(());

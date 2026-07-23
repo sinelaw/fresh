@@ -60,6 +60,21 @@ impl crate::app::window::Window {
         }
 
         let buffer_id = self.active_buffer();
+
+        // Overwrite (type-over) mode replaces the character under each cursor
+        // instead of inserting; it deliberately bypasses auto-close /
+        // auto-surround, whose pairing behavior contradicts type-over editing.
+        if self.overwrite_mode {
+            if let Action::InsertChar(ch) = action {
+                return self
+                    .buffers
+                    .with_buffer_and_split(buffer_id, active_split, |state, vs| {
+                        crate::input::actions::overwrite_insert_char_events(state, &vs.cursors, ch)
+                    })
+                    .expect("active window must have a populated split layout");
+            }
+        }
+
         self.buffers
             .with_buffer_and_split(buffer_id, active_split, |state, vs| {
                 let tab_size = state.buffer_settings.tab_size;

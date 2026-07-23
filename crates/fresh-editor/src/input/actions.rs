@@ -1185,6 +1185,64 @@ fn insert_char_events(
     }
 }
 
+/// Handle InsertChar in overwrite mode - replace the character under each
+/// cursor instead of inserting before it.
+///
+/// Classic overwrite semantics:
+/// - With a selection, the selection is replaced (same as insert mode).
+/// - At end of line (or end of buffer), the character is appended — the line
+///   ending is never consumed, so lines grow instead of merging.
+/// - Otherwise the character (grapheme, CRLF pair excluded) under the cursor
+///   is deleted and the typed character inserted in its place.
+///
+/// Auto-close / auto-surround / skip-over are intentionally bypassed: pairing
+/// behavior contradicts type-over editing.
+pub fn overwrite_insert_char_events(
+    state: &mut EditorState,
+    cursors: &Cursors,
+    ch: char,
+) -> Option<Vec<Event>> {
+    if !state.show_cursors {
+        return None;
+    }
+
+    let cursor_data = collect_insert_cursor_data(state, cursors);
+    let buffer_len = state.buffer.len();
+    let mut events = Vec::new();
+
+    for data in cursor_data {
+        if let (Some(range), Some(text)) = (data.selection, data.deleted_text) {
+            // Selection: replace it, exactly like insert mode.
+            events.push(Event::Delete {
+                range,
+                deleted_text: text,
+                cursor_id: data.cursor_id,
+            });
+        } else if !matches!(data.char_after, None | Some(b'\n') | Some(b'\r')) {
+            // Type over the character under the cursor. Line endings are
+            // excluded above so typing at end of line appends instead of
+            // swallowing the newline.
+            let delete_to = next_position_for_crlf(&state.buffer, data.insert_position, buffer_len);
+            if delete_to > data.insert_position {
+                let deleted_text = state.get_text_range(data.insert_position, delete_to);
+                events.push(Event::Delete {
+                    range: data.insert_position..delete_to,
+                    deleted_text,
+                    cursor_id: data.cursor_id,
+                });
+            }
+        }
+
+        events.push(Event::Insert {
+            position: data.insert_position,
+            text: ch.to_string(),
+            cursor_id: data.cursor_id,
+        });
+    }
+
+    Some(events)
+}
+
 /// Calculate the maximum valid cursor position in the buffer.
 /// This is the end of the last line (excluding trailing newline).
 /// For empty buffers, returns 0.
@@ -3356,6 +3414,7 @@ pub fn action_to_events(
         | Action::SelectLocale
         | Action::Revert
         | Action::ToggleAutoRevert
+        | Action::ToggleOverwriteMode
         | Action::FormatBuffer
         | Action::TrimTrailingWhitespace
         | Action::EnsureFinalNewline
@@ -3449,6 +3508,114 @@ mod tests {
     use crate::model::cursor::Cursors;
     use crate::model::event::{CursorId, Event};
     use crate::state::EditorState;
+
+    /// Build a state containing `text` with the primary cursor at `cursor_pos`.
+    fn overwrite_test_state(text: &str, cursor_pos: usize) -> (EditorState, Cursors) {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        let old_position = cursors.primary().position;
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position,
+                new_position: cursor_pos,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
+        (state, cursors)
+    }
+
+    /// Convert an overwrite-mode keypress to events and apply them.
+    fn apply_overwrite_char(state: &mut EditorState, cursors: &mut Cursors, ch: char) {
+        let events = overwrite_insert_char_events(state, cursors, ch).expect("cursors are visible");
+        for event in &events {
+            state.apply(cursors, event);
+        }
+    }
+
+    #[test]
+    fn test_overwrite_replaces_char_under_cursor() {
+        let (mut state, mut cursors) = overwrite_test_state("abcdef", 0);
+        apply_overwrite_char(&mut state, &mut cursors, 'X');
+        assert_eq!(state.buffer.to_string().unwrap(), "Xbcdef");
+        assert_eq!(cursors.primary().position, 1);
+    }
+
+    #[test]
+    fn test_overwrite_appends_at_end_of_line() {
+        // Cursor on the newline: the line ending must not be consumed.
+        let (mut state, mut cursors) = overwrite_test_state("abc\ndef", 3);
+        apply_overwrite_char(&mut state, &mut cursors, 'X');
+        assert_eq!(state.buffer.to_string().unwrap(), "abcX\ndef");
+    }
+
+    #[test]
+    fn test_overwrite_appends_at_end_of_buffer() {
+        let (mut state, mut cursors) = overwrite_test_state("abc", 3);
+        apply_overwrite_char(&mut state, &mut cursors, 'X');
+        assert_eq!(state.buffer.to_string().unwrap(), "abcX");
+    }
+
+    #[test]
+    fn test_overwrite_appends_before_crlf() {
+        // Cursor on the \r of a CRLF pair: append, don't swallow the pair.
+        let (mut state, mut cursors) = overwrite_test_state("ab\r\ncd", 2);
+        apply_overwrite_char(&mut state, &mut cursors, 'X');
+        assert_eq!(state.buffer.to_string().unwrap(), "abX\r\ncd");
+    }
+
+    #[test]
+    fn test_overwrite_replaces_multibyte_char() {
+        // 'é' is two bytes; the whole character must be replaced.
+        let (mut state, mut cursors) = overwrite_test_state("héllo", 1);
+        apply_overwrite_char(&mut state, &mut cursors, 'x');
+        assert_eq!(state.buffer.to_string().unwrap(), "hxllo");
+    }
+
+    #[test]
+    fn test_overwrite_replaces_selection() {
+        // With a selection, overwrite behaves exactly like insert mode.
+        let (mut state, mut cursors) = overwrite_test_state("abcdef", 0);
+        state.apply(
+            &mut cursors,
+            &Event::MoveCursor {
+                cursor_id: CursorId(0),
+                old_position: 0,
+                new_position: 3,
+                old_anchor: None,
+                new_anchor: Some(0),
+                old_sticky_column: 0,
+                new_sticky_column: 0,
+            },
+        );
+        apply_overwrite_char(&mut state, &mut cursors, 'X');
+        assert_eq!(state.buffer.to_string().unwrap(), "Xdef");
+    }
+
+    #[test]
+    fn test_overwrite_multi_cursor() {
+        let (mut state, mut cursors) = overwrite_test_state("abc\nabc", 0);
+        cursors.add(Cursor::new(4));
+        apply_overwrite_char(&mut state, &mut cursors, 'X');
+        assert_eq!(state.buffer.to_string().unwrap(), "Xbc\nXbc");
+    }
 
     #[test]
     fn test_backspace_deletes_newline() {

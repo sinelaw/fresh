@@ -449,6 +449,14 @@
       "when": "normal"
     },
     {
+      "comment": "Insert - toggle overwrite (type-over) mode",
+      "key": "Insert",
+      "modifiers": [],
+      "action": "toggle_overwrite_mode",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "key": "Enter",
       "modifiers": [],
       "action": "insert_newline",

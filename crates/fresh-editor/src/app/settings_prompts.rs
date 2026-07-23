@@ -772,17 +772,8 @@ impl Editor {
             // Update the config in memory
             self.config_mut().editor.cursor_style = style;
 
-            // Apply the cursor style to the terminal
-            if self.session_mode {
-                // In session mode, queue the escape sequence to be sent to the client
-                self.queue_escape_sequences(style.to_escape_sequence());
-            } else {
-                // In normal mode, write directly to stdout
-                use std::io::stdout;
-                // Best-effort cursor style change to stdout.
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = crossterm::execute!(stdout(), style.to_crossterm_style());
-            }
+            // Apply the (possibly overwrite-adjusted) style to the terminal
+            self.apply_effective_cursor_style();
 
             // Persist to config file
             self.save_cursor_style_to_config();
@@ -798,6 +789,48 @@ impl Editor {
             self.set_status_message(
                 t!("view.cursor_style_changed", style = description).to_string(),
             );
+        }
+    }
+
+    /// Toggle overwrite (type-over) mode for the active window and switch
+    /// the terminal cursor shape so the mode is visible at a glance
+    /// (issue #1300).
+    pub(crate) fn toggle_overwrite_mode(&mut self) {
+        let enabled = !self.active_window().overwrite_mode;
+        self.active_window_mut().overwrite_mode = enabled;
+
+        self.apply_effective_cursor_style();
+
+        self.set_status_message(
+            if enabled {
+                t!("status.overwrite_enabled")
+            } else {
+                t!("status.overwrite_disabled")
+            }
+            .to_string(),
+        );
+    }
+
+    /// Send the terminal the cursor style that reflects the current editing
+    /// state: the configured style in insert mode, or its overwrite variant
+    /// when overwrite mode is active.
+    fn apply_effective_cursor_style(&mut self) {
+        let style = self.config().editor.cursor_style;
+        let style = if self.active_window().overwrite_mode {
+            style.overwrite_variant()
+        } else {
+            style
+        };
+
+        if self.session_mode {
+            // In session mode, queue the escape sequence to be sent to the client
+            self.queue_escape_sequences(style.to_escape_sequence());
+        } else {
+            // In normal mode, write directly to stdout
+            use std::io::stdout;
+            // Best-effort cursor style change to stdout.
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = crossterm::execute!(stdout(), style.to_crossterm_style());
         }
     }
 
