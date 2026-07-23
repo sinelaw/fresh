@@ -7097,6 +7097,21 @@ function formIsSubmittable(): boolean {
   if (!form) return false;
   switch (form.backend) {
     case "local":
+      // Mirror `captureCreateSpec`'s fallback chain EXACTLY: a local
+      // workspace can always be created against `localProjectDefault()`
+      // (the cwd) even before the async canonical-root probe
+      // (`probeProjectPathDefaults`) has filled `defaultProjectPath`.
+      // Omitting that same fallback here — while capture uses it — let a
+      // Ctrl+Enter / Create that arrived during the probe window fail this
+      // gate and be silently dropped (`if (!formIsSubmittable()) return`).
+      // The dialog then never advanced and an unbounded `wait_until` hung
+      // until the CI timeout; the probe's `git` round-trip is slow enough
+      // under load (macOS CI) to widen that window into the common case.
+      return !!(
+        form.projectPath.value.trim() ||
+        form.defaultProjectPath ||
+        localProjectDefault()
+      );
     case "devcontainer":
       return !!(form.projectPath.value.trim() || form.defaultProjectPath);
     case "ssh":
