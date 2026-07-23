@@ -22,6 +22,23 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Default GitHub releases API URL for the fresh editor
 pub const DEFAULT_RELEASES_URL: &str = "https://api.github.com/repos/sinelaw/fresh/releases/latest";
 
+/// Lifecycle of an interactive in-editor self-update, surfaced through the
+/// status-bar update indicator (never a transient status message). Stays
+/// [`SelfUpdatePhase::Idle`] unless the `self-update` feature actually launches
+/// a background update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelfUpdatePhase {
+    /// No update running; the indicator shows "Update: vX.Y.Z" when one is available.
+    #[default]
+    Idle,
+    /// A background `fresh --cmd update --yes` is in flight.
+    Running,
+    /// The background update finished successfully; a restart applies it.
+    Succeeded,
+    /// The background update failed; the log has details.
+    Failed,
+}
+
 /// Result of checking for a new release
 #[derive(Debug, Clone)]
 pub struct ReleaseCheckResult {

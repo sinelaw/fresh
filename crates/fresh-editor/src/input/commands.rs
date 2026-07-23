@@ -1322,6 +1322,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.open_update_log",
+        desc_key: "cmd.open_update_log_desc",
+        action: || Action::OpenUpdateLog,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.show_remote_indicator_menu",
         desc_key: "cmd.show_remote_indicator_menu_desc",
         action: || Action::ShowRemoteIndicatorMenu,

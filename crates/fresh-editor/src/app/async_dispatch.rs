@@ -385,6 +385,10 @@ impl Editor {
                     self.handle_terminal_exited(terminal, exit_code);
                 }
 
+                AsyncMessage::SelfUpdateFinished { success } => {
+                    self.finish_self_update(success);
+                }
+
                 AsyncMessage::LspServerRequest {
                     language,
                     server_command,

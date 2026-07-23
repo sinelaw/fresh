@@ -1253,6 +1253,51 @@ impl Editor {
         }
     }
 
+    /// Current phase of an interactive in-editor self-update (drives the
+    /// status-bar update indicator).
+    pub fn self_update_phase(&self) -> crate::services::release_checker::SelfUpdatePhase {
+        self.self_update_phase
+    }
+
+    /// Mark that a background self-update has started, pointing the indicator at
+    /// its (local) log.
+    pub fn begin_self_update(&mut self, log_path: std::path::PathBuf) {
+        self.self_update_phase = crate::services::release_checker::SelfUpdatePhase::Running;
+        self.self_update_log = Some(log_path);
+    }
+
+    /// Move the update indicator to its terminal state when the background
+    /// process exits.
+    pub fn finish_self_update(&mut self, success: bool) {
+        use crate::services::release_checker::SelfUpdatePhase;
+        self.self_update_phase = if success {
+            SelfUpdatePhase::Succeeded
+        } else {
+            SelfUpdatePhase::Failed
+        };
+    }
+
+    /// Open the background self-update log. Like the status log, this file is
+    /// always **local** (the update runs on this host, not through the window's
+    /// authority), so it's opened with `open_local_file` regardless of any
+    /// remote authority attached to the window.
+    pub fn open_self_update_log(&mut self) {
+        if let Some(path) = self.self_update_log.clone() {
+            match self.active_window_mut().open_local_file(&path) {
+                Ok(buffer_id) => {
+                    self.active_window_mut()
+                        .mark_buffer_read_only(buffer_id, true);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to open self-update log: {}", e);
+                    self.set_status_message(t!("update.log_unavailable").to_string());
+                }
+            }
+        } else {
+            self.set_status_message(t!("update.log_unavailable").to_string());
+        }
+    }
+
     /// Check for and handle any new warnings in the warning log
     ///
     /// Updates the general warning domain for the status bar.

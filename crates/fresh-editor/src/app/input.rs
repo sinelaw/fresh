@@ -1153,8 +1153,17 @@ impl Editor {
             Action::ToggleAutoRevert => {
                 self.toggle_auto_revert();
             }
+            Action::OpenUpdateLog => {
+                self.open_self_update_log();
+            }
             Action::UpdateFresh => {
-                if !self.config().self_update {
+                // Once an update is running or finished, the indicator's job is
+                // to surface the log, not to re-offer the update.
+                if self.self_update_phase()
+                    != crate::services::release_checker::SelfUpdatePhase::Idle
+                {
+                    self.open_self_update_log();
+                } else if !self.config().self_update {
                     self.set_status_message(t!("update.disabled").to_string());
                 } else if !self.is_update_available() {
                     self.set_status_message(t!("update.up_to_date").to_string());

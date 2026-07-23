@@ -25,8 +25,14 @@
 >   update indicator is clickable (and an "Update fresh" command exists);
 >   clicking prompts "Update now?", and confirming runs the update **locally**
 >   in the background (never on the window's remote `Authority`), logging to
->   `<log_dir>/self-update.log`. Gated by the `self_update` config
->   (default on).
+>   `<log_dir>/self-update.log`. Gated by the `self_update` config (default on).
+>   The **indicator itself relays state** (no transient status line): it shows
+>   `Updating…` while the child runs, then `Updated — restart fresh` or
+>   `Update failed — click for log` when a watcher thread reaps the process.
+>   Clicking the indicator once an update is under way (or the "Open update log"
+>   command) opens that log — read from the **local** filesystem via
+>   `open_local_file`, so a window bound to a remote authority still shows the
+>   right machine's log.
 >
 > **Not yet done:** GitHub build-attestation verification (SHA-256 is enforced;
 > attestation is still a follow-up), and an optional `auto_update` (no-prompt)
@@ -598,9 +604,19 @@ does the same. When `self_update` is on and an update is available, it prompts
 re-invokes `fresh --cmd update --yes` as a **local** detached child (never the
 window's `Authority`) and streams its output to `<log_dir>/self-update.log`.
 The editor keeps running on the old inode until restart. Unknown/source
-installs point at the releases page instead of prompting. Still remaining:
-GitHub build-attestation verification alongside SHA-256, and an optional
-no-prompt `auto_update` mode.
+installs point at the releases page instead of prompting.
+
+The result is surfaced on the **indicator**, not a transient status message
+(which would scroll away and can't relay a "restart now" cue). App state
+carries a `SelfUpdatePhase` (`Idle`/`Running`/`Succeeded`/`Failed`); on launch
+it flips to `Running` (indicator: `Updating…`), and a watcher thread reaps the
+child and posts `AsyncMessage::SelfUpdateFinished { success }`, moving the
+indicator to `Updated — restart fresh` or `Update failed — click for log`.
+Once a run has started, clicking the indicator — or the **"Open update log"**
+command (`Action::OpenUpdateLog`) — opens the log via `open_local_file`, i.e.
+from the machine `fresh` runs on, never the window's (possibly remote)
+authority. Still remaining: GitHub build-attestation verification alongside
+SHA-256, and an optional no-prompt `auto_update` mode.
 
 ---
 

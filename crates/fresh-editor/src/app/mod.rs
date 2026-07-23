@@ -974,6 +974,15 @@ pub struct Editor {
     /// Periodic update checker (checks for new releases every hour)
     update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 
+    /// Lifecycle of an interactive in-editor self-update, reflected by the
+    /// status-bar update indicator (see `SelfUpdatePhase`).
+    self_update_phase: crate::services::release_checker::SelfUpdatePhase,
+
+    /// Path to the background self-update log, set when an update is launched.
+    /// Always a **local** path — opened via `open_local_file`, never the
+    /// window's (possibly remote) authority.
+    self_update_log: Option<PathBuf>,
+
     // Terminal subsystem moved onto `Window` (Step 0d). PTYs and
     // their backing files belong to the window that spawned them, so
     // closeWindow joins the threads. Access through methods on Window

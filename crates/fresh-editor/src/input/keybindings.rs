@@ -547,6 +547,8 @@ pub enum Action {
     ShowReadOnlyMenu,
     /// Offer/confirm an in-editor update when a new version is available.
     UpdateFresh,
+    /// Open the background self-update log (always the local copy).
+    OpenUpdateLog,
     ClearWarnings,
     CommandPalette, // Alias for QuickOpen — kept for keymap/plugin compatibility
     /// Quick Open - unified prompt with prefix-based provider routing
@@ -1086,6 +1088,7 @@ impl Action {
             "show_remote_indicator_menu" => ShowRemoteIndicatorMenu,
             "show_read_only_menu" => ShowReadOnlyMenu,
             "update_fresh" => UpdateFresh,
+            "open_update_log" => OpenUpdateLog,
             "clear_warnings" => ClearWarnings,
             "command_palette" => CommandPalette,
             "quick_open" => QuickOpen,
@@ -2616,6 +2619,7 @@ impl KeybindingResolver {
             Action::ShowRemoteIndicatorMenu => t!("action.show_remote_indicator_menu"),
             Action::ShowReadOnlyMenu => t!("action.show_read_only_menu"),
             Action::UpdateFresh => t!("action.update_fresh"),
+            Action::OpenUpdateLog => t!("action.open_update_log"),
             Action::ClearWarnings => t!("action.clear_warnings"),
             Action::CommandPalette => t!("action.command_palette"),
             Action::QuickOpen => t!("action.quick_open"),

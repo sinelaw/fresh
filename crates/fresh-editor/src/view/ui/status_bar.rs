@@ -253,6 +253,10 @@ pub struct StatusBarContext<'a> {
     pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
     pub chord_state: &'a [(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
     pub update_available: Option<&'a str>,
+    /// Lifecycle of an in-progress in-editor self-update; overrides the
+    /// "Update: vX" text with progress/outcome so the indicator itself relays
+    /// the result (no transient status message).
+    pub update_phase: crate::services::release_checker::SelfUpdatePhase,
     pub warning_level: WarningLevel,
     pub general_warning_count: usize,
     /// The clickable status-bar segment the mouse is currently over, if any.
@@ -1208,9 +1212,21 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Update => {
-                let version = ctx.update_available?;
+                use crate::services::release_checker::SelfUpdatePhase;
+                // A running/finished update owns the indicator text even though
+                // `update_available` is still set (the running process still
+                // sees itself as out of date until a restart).
+                let text = match ctx.update_phase {
+                    SelfUpdatePhase::Running => t!("status.update_running").to_string(),
+                    SelfUpdatePhase::Succeeded => t!("status.update_done").to_string(),
+                    SelfUpdatePhase::Failed => t!("status.update_failed").to_string(),
+                    SelfUpdatePhase::Idle => {
+                        let version = ctx.update_available?;
+                        t!("status.update_available", version = version).to_string()
+                    }
+                };
                 Some(RenderedElement {
-                    text: t!("status.update_available", version = version).to_string(),
+                    text,
                     kind: ElementKind::Update,
                     token_key: None,
                 })

@@ -15,6 +15,7 @@
 // those intentional fire-and-forget calls (same convention as release_checker).
 #![allow(clippy::let_underscore_must_use)]
 
+use super::async_bridge::AsyncMessage;
 use super::http;
 use super::release_checker::CURRENT_VERSION;
 use fresh_update::registry::UpdateKind;
@@ -111,48 +112,67 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
     }
 }
 
-/// Launch the update in the background on the **local** machine and stream its
-/// output to a log file. Returns the log path.
+/// Launch the update in the background on the **local** machine, stream its
+/// output to a log file, and report completion through `sender`. Returns the
+/// log path so the caller can point the update indicator at it.
 ///
 /// This is what the interactive "Update now" flow calls. It re-invokes the
 /// current executable as `fresh --cmd update --yes` via `std::process` — i.e.
 /// on the host where `fresh` actually runs — deliberately *not* through the
 /// window's `Authority` (a remote SSH/container authority would try to update a
-/// binary on the wrong machine). The child is detached; the editor keeps
-/// running on the old inode until the user restarts.
-pub fn spawn_background_update(log_dir: &Path) -> Result<PathBuf, String> {
+/// binary on the wrong machine). The child keeps running independently of the
+/// editor; a lightweight watcher thread reaps it and fires
+/// [`AsyncMessage::SelfUpdateFinished`] so the indicator can move to its
+/// terminal state. If the editor exits first the watcher thread simply dies
+/// with it — the detached child (a separate process) is unaffected.
+pub fn spawn_background_update(
+    log_dir: &Path,
+    sender: std::sync::mpsc::Sender<AsyncMessage>,
+) -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("cannot find current exe: {e}"))?;
-    spawn_logged(
+    let (log_path, child) = spawn_logged(
         &exe,
         &["--cmd", "update", "--yes"],
         log_dir,
         "self-update.log",
-    )
+    )?;
+    std::thread::spawn(move || {
+        let success = wait_success(child);
+        let _ = sender.send(AsyncMessage::SelfUpdateFinished { success });
+    });
+    Ok(log_path)
 }
 
-/// Spawn `program args...` detached, redirecting stdout+stderr to
-/// `<log_dir>/<log_name>`. Returns the log path. Shared by
-/// [`spawn_background_update`] and tests.
+/// Block on the child and report whether it exited successfully. A `wait()`
+/// error (already reaped, signal, etc.) counts as failure — the log has the
+/// detail either way.
+fn wait_success(mut child: std::process::Child) -> bool {
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Spawn `program args...`, redirecting stdout+stderr to `<log_dir>/<log_name>`.
+/// Returns the log path and the live [`Child`](std::process::Child) so the
+/// caller can watch it. Shared by [`spawn_background_update`] and tests.
 fn spawn_logged(
     program: &Path,
     args: &[&str],
     log_dir: &Path,
     log_name: &str,
-) -> Result<PathBuf, String> {
+) -> Result<(PathBuf, std::process::Child), String> {
     std::fs::create_dir_all(log_dir).map_err(|e| format!("create log dir: {e}"))?;
     let log_path = log_dir.join(log_name);
     let out = std::fs::File::create(&log_path).map_err(|e| format!("create log file: {e}"))?;
     let err = out
         .try_clone()
         .map_err(|e| format!("clone log handle: {e}"))?;
-    std::process::Command::new(program)
+    let child = std::process::Command::new(program)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(out))
         .stderr(std::process::Stdio::from(err))
         .spawn()
         .map_err(|e| format!("failed to launch background updater: {e}"))?;
-    Ok(log_path)
+    Ok((log_path, child))
 }
 
 /// Run a delegated package-manager command (e.g. `brew upgrade fresh-editor`).
@@ -481,13 +501,15 @@ mod tests {
     fn spawn_logged_redirects_output_to_file() {
         use std::time::{Duration, Instant};
         let dir = tempfile::tempdir().unwrap();
-        let log = spawn_logged(
+        let (log, mut child) = spawn_logged(
             Path::new("/bin/sh"),
             &["-c", "echo hello-updater"],
             dir.path(),
             "test.log",
         )
         .expect("spawn failed");
+        // Reap the child so the assertion below isn't racing a zombie.
+        let _ = child.wait();
         // Child is detached; poll the log until it flushes.
         let start = Instant::now();
         loop {

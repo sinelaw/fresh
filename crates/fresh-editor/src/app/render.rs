@@ -1786,6 +1786,7 @@ impl Editor {
 
         // Get update availability info
         let update_available = self.latest_version().map(|v| v.to_string());
+        let self_update_phase = self.self_update_phase();
 
         // Render status bar (hidden when toggled off, or when suggestions/file browser popup is shown)
         if self.active_window().status_bar_visible && !has_suggestions && !has_file_browser {
@@ -1897,6 +1898,7 @@ impl Editor {
                         keybindings,
                         chord_state: &chord_state_cloned,
                         update_available: update_available.as_deref(),
+                        update_phase: self_update_phase,
                         warning_level,
                         general_warning_count,
                         hovered: status_bar_hovered,
