@@ -1,11 +1,20 @@
 # Packaging & Self-Update Paradigm
 
-> Status: **design / proposal**. This document specifies a new packaging
+> Status: **design + Phase 1 landed**. This document specifies a new packaging
 > paradigm for `fresh` whose defining property is **deterministic install
 > provenance**: every distribution channel records — at install time — exactly
 > which mechanism installed the binary, so the editor can self-update through
 > the *same* mechanism without ever guessing. It supersedes the path-based
 > heuristic in `services/release_checker.rs`.
+>
+> **Implemented (Phase 1):** the `fresh-update` subcrate — the `Channel`
+> registry, the `install-receipt.toml` format, the layered `resolve()` with
+> confidence levels, the update-command registry, checksum verification and the
+> atomic binary swap, plus version comparison — all unit-tested. Its build
+> script embeds the target triple; `release_checker::detect_install_method()`
+> now delegates to it. **Not yet done:** writing receipts from each packaging
+> pipeline (Phase 2), the `fresh update` subcommand + networked download/extract
+> (Phase 3), and the one-key-update UX (Phase 4). See §15.
 
 ---
 
@@ -465,17 +474,41 @@ No change to the privacy posture documented in `README.md`/`docs/privacy.md`:
 
 ## 14. Rust module design
 
+The paradigm ships as its own workspace subcrate, **`fresh-update`**, so the
+provenance/update logic is reusable (CLI, installers, tests) and testable in
+isolation without compiling the whole editor:
+
 ```
+crates/fresh-update/
+  build.rs        // emits FRESH_UPDATE_TARGET (target triple);
+                  // rerun-if-env-changed FRESH_BUILD_CHANNEL
+  src/
+    lib.rs        // re-exports + TARGET_TRIPLE + embedded_channel()
+    channel.rs    // Channel enum <-> stable string ids (+ aliases)
+    confidence.rs // Confidence ladder (Unknown<Heuristic<Embedded<Authoritative<Overridden)
+    receipt.rs    // InstallReceipt + Hints (serde/toml), candidate_paths(), find()
+    registry.rs   // Channel -> UpdateKind + UpdatePlan command templating
+    provenance.rs // Provenance + resolve_from() (pure) + resolve() (env/fs)
+    heuristic.rs  // the demoted path-based detection (Layer D)
+    self_update.rs// verify_sha256 + atomic_replace (+ Windows deferred delete)
+    version.rs    // is_newer() + parse_tag_name()
+
 crates/fresh-editor/src/services/
-  provenance/
-    mod.rs        // Provenance, Confidence, resolve()
-    receipt.rs    // InstallReceipt (serde), read/search/write
-    registry.rs   // channel id -> UpdateStrategy + command templates
-    heuristic.rs  // the demoted path-based detection (moved from release_checker)
-  self_update.rs  // download + verify + atomic swap (SelfContained)
-  release_checker.rs  // keep version-check + notification; delegate method
-                      // detection to provenance::resolve()
+  release_checker.rs  // keeps version-check + notification; its
+                      // detect_install_method() now delegates to
+                      // fresh_update::resolve(), falling back to the legacy
+                      // path heuristic only when provenance is Unknown.
 ```
+
+Dependencies are deliberately minimal (`serde`, `toml`, `sha2`, `tracing`) so
+the crate builds fast and offline. **Extraction and network I/O stay out of the
+crate**: the caller (the editor, which already has a `ureq`/`rustls` stack in
+`services::http`) fetches the release asset and, for `.tar.xz`/`.zip`, extracts
+the inner binary, then hands the verified executable bytes to
+`self_update::atomic_replace`. AppImages need no extraction, so the flow is
+usable end-to-end for them today.
+
+Key types:
 
 Key types:
 
@@ -504,13 +537,14 @@ path heuristic.
 
 ## 15. Rollout plan
 
-**Phase 1 — provenance plumbing (no behaviour change).**
-`build.rs` emits `FRESH_BUILD_CHANNEL` + `FRESH_TARGET_TRIPLE`; add
-`services::provenance` (receipt schema, resolver, registry); move the heuristic
-into `provenance::heuristic`; `release_checker` reads `provenance::resolve()`.
-Update notification now shows the *resolved* command. Ship it — even with zero
-receipts written yet, this is already strictly better (embedded channel + more
-honest confidence).
+**Phase 1 — provenance plumbing (no behaviour change). ✅ landed.**
+Added the `fresh-update` subcrate: receipt schema, layered resolver, registry,
+confidence, the demoted heuristic, checksum verify + atomic swap, and version
+compare — all unit-tested. `build.rs` embeds the target triple and reruns on
+`FRESH_BUILD_CHANNEL`; `release_checker::detect_install_method()` delegates to
+`fresh_update::resolve()` and only falls back to the legacy path heuristic when
+provenance is Unknown. Even with zero receipts written yet, this is already
+strictly better (embedded channel + honest confidence).
 
 **Phase 2 — receipts everywhere.**
 Teach each packaging pipeline (§7) to write its receipt. Extend

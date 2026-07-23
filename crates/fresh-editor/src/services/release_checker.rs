@@ -272,8 +272,46 @@ fn parse_version_from_json(json: &str) -> Result<String, String> {
     Ok(tag.strip_prefix('v').unwrap_or(tag).to_string())
 }
 
-/// Detect the installation method based on the current executable path
+/// Map a `fresh-update` provenance channel onto the coarser `InstallMethod`
+/// used by the notification UI.
+fn channel_to_install_method(channel: fresh_update::Channel) -> InstallMethod {
+    use fresh_update::Channel;
+    match channel {
+        Channel::Homebrew => InstallMethod::Homebrew,
+        Channel::Cargo | Channel::CargoBinstall => InstallMethod::Cargo,
+        Channel::Npm => InstallMethod::Npm,
+        Channel::Aur | Channel::AurBin => InstallMethod::Aur,
+        Channel::Apt
+        | Channel::Dnf
+        | Channel::Zypper
+        | Channel::Pacman
+        | Channel::Flatpak
+        | Channel::Snap
+        | Channel::Winget
+        | Channel::Scoop
+        | Channel::Chocolatey
+        | Channel::Nix
+        | Channel::FreebsdPkg
+        | Channel::Mise => InstallMethod::PackageManager,
+        Channel::Tarball | Channel::Appimage | Channel::Source | Channel::Prebuilt
+        | Channel::Unknown => InstallMethod::Unknown,
+    }
+}
+
+/// Detect the installation method.
+///
+/// Prefers deterministic provenance from the `fresh-update` crate (an install
+/// receipt, or the compile-time `FRESH_BUILD_CHANNEL`), and only falls back to
+/// the legacy executable-path heuristic when provenance is unknown. See
+/// `docs/internal/packaging-self-update.md`.
 pub fn detect_install_method() -> InstallMethod {
+    let method = channel_to_install_method(fresh_update::resolve().channel);
+    if method != InstallMethod::Unknown {
+        return method;
+    }
+    // Fall back to the legacy path heuristic (it still recognises generic
+    // system paths as a package-manager install, which the resolver leaves
+    // as Unknown pending a receipt).
     match env::current_exe() {
         Ok(path) => detect_install_method_from_path(&path),
         Err(_) => InstallMethod::Unknown,

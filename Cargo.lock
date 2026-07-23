@@ -1416,6 +1416,7 @@ dependencies = [
  "fresh-parser-js",
  "fresh-plugin-api-macros",
  "fresh-plugin-runtime",
+ "fresh-update",
  "fresh-winterm",
  "ignore",
  "include_dir",
@@ -1549,6 +1550,17 @@ dependencies = [
  "tokio",
  "tracing",
  "ts-rs",
+]
+
+[[package]]
+name = "fresh-update"
+version = "0.4.4"
+dependencies = [
+ "serde",
+ "sha2",
+ "tempfile",
+ "toml 0.8.23",
+ "tracing",
 ]
 
 [[package]]

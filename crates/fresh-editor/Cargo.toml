@@ -152,6 +152,7 @@ wasm = [
 [dependencies]
 # Local crates
 fresh-core.workspace = true
+fresh-update.workspace = true
 fresh-parser-js = { workspace = true, optional = true }
 # Provides the shared `Language` / `HighlightCategory` types (small, always
 # needed by the syntect grammar catalog). The heavy tree-sitter grammar
