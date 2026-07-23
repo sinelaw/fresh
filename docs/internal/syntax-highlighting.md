@@ -121,7 +121,10 @@ order from a known `(ParseState, ScopeStack)` to correctly track multi-line
 constructs (comments, strings) and embedded-language transitions (CSS-in-HTML,
 code-in-markdown-fences). The engine makes scrolling and editing cheap with a
 span cache + periodic parse-state checkpoints + convergence-based incremental
-re-highlight. This is the **implemented v2 design**; the source design doc
+re-highlight. Mixed-language files (Markdown fences and friends) are handled
+by an embedded-region layer on top of this state machine — see
+[embedded-language-highlighting.md](embedded-language-highlighting.md) for
+that mechanism and for when to use grammar-level embedding instead. This is the **implemented v2 design**; the source design doc
 describes both the superseded v1 (a flat checkpoint vector at a coarse byte
 interval, discarded after every edit) and the v2 approach the code now realizes.
 
