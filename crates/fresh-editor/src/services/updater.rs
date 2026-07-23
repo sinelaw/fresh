@@ -9,6 +9,12 @@
 //! crate stays dependency-light; the crate owns the parts that must be correct
 //! (checksum verification + the atomic swap).
 
+// This module does a lot of best-effort filesystem cleanup (removing staged
+// temp files / rollback dirs) where a failed unlink is genuinely ignorable.
+// The crate denies `let_underscore_must_use` at the root; allow it here for
+// those intentional fire-and-forget calls (same convention as release_checker).
+#![allow(clippy::let_underscore_must_use)]
+
 use super::http;
 use super::release_checker::CURRENT_VERSION;
 use fresh_update::registry::UpdateKind;
