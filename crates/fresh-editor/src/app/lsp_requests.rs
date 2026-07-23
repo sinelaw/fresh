@@ -4229,4 +4229,69 @@ mod tests {
         let result = space_doc_paragraphs(input);
         assert_eq!(result, "Just a single line of docs.");
     }
+
+    fn timer_test_editor() -> Editor {
+        use crate::config::Config;
+        use crate::config_io::DirectoryContext;
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        let mut config = Config::default();
+        config.editor.enable_inlay_hints = true;
+        Editor::for_test(
+            config,
+            80,
+            24,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_check_inlay_hints_timer_fires_and_clears_slot_after_deadline() {
+        // With the debounce slot's deadline already in the past, the consumer
+        // must clear the slot (the request is dispatched, but arrives async).
+        let mut editor = timer_test_editor();
+        let buffer_id = editor.active_buffer();
+        editor.active_window_mut().scheduled_inlay_hints_request = Some((
+            buffer_id,
+            std::time::Instant::now() - std::time::Duration::from_millis(1),
+        ));
+
+        editor.check_inlay_hints_timer();
+
+        assert!(
+            editor
+                .active_window()
+                .scheduled_inlay_hints_request
+                .is_none(),
+            "consumer should clear the debounce slot after the deadline passes"
+        );
+    }
+
+    #[test]
+    fn test_check_inlay_hints_timer_noop_before_deadline() {
+        // A future deadline must be left untouched so the debounce actually
+        // debounces instead of firing on the first idle tick.
+        let mut editor = timer_test_editor();
+        let buffer_id = editor.active_buffer();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        editor.active_window_mut().scheduled_inlay_hints_request = Some((buffer_id, deadline));
+
+        editor.check_inlay_hints_timer();
+
+        assert_eq!(
+            editor.active_window().scheduled_inlay_hints_request,
+            Some((buffer_id, deadline)),
+            "consumer must be a no-op while the deadline is still in the future"
+        );
+    }
 }

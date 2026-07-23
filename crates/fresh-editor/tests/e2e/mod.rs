@@ -128,6 +128,7 @@ pub mod lsp_goto_implementation;
 pub mod lsp_indicator_click_bugs;
 pub mod lsp_indicator_click_to_open;
 pub mod lsp_inlay_hints_capability;
+pub mod lsp_inlay_hints_refresh_on_edit;
 pub mod lsp_lifecycle_visibility;
 pub mod lsp_missing_binary_and_dismiss;
 pub mod lsp_multi_semantic_tokens;
