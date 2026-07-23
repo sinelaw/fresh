@@ -345,9 +345,12 @@
       "type": "string",
       "enum": [
         "dark",
-        "light",
+        "dracula",
         "high-contrast",
+        "light",
+        "nord",
         "nostalgia",
+        "solarized-dark",
         "terminal"
       ]
     },

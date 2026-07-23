@@ -14,9 +14,22 @@ use std::path::Path;
 pub struct ThemeName(pub String);
 
 impl ThemeName {
-    /// Built-in theme options shown in the settings dropdown
-    pub const BUILTIN_OPTIONS: &'static [&'static str] =
-        &["dark", "light", "high-contrast", "nostalgia", "terminal"];
+    /// Built-in theme options shown in the settings dropdown.
+    ///
+    /// Must list every built-in root (empty-pack) theme in the same
+    /// alphabetical order the "Select Theme" picker uses (see the auto-generated
+    /// `BUILTIN_THEMES` registry). Kept in sync by the parity test in the
+    /// theme loader tests.
+    pub const BUILTIN_OPTIONS: &'static [&'static str] = &[
+        "dark",
+        "dracula",
+        "high-contrast",
+        "light",
+        "nord",
+        "nostalgia",
+        "solarized-dark",
+        "terminal",
+    ];
 }
 
 impl Deref for ThemeName {
@@ -8409,6 +8422,42 @@ mod tests {
             let keymap = Config::load_builtin_keymap(name);
             assert!(keymap.is_some(), "Failed to load builtin keymap '{}'", name);
         }
+    }
+
+    /// Regression test for #2738: the committed config schema (which drives the
+    /// settings theme dropdown at runtime) must stay in sync with
+    /// `ThemeName::BUILTIN_OPTIONS`, and expose all 8 themes in sorted order.
+    #[test]
+    fn test_config_schema_theme_enum_matches_builtin_options() {
+        const SCHEMA_JSON: &str = include_str!("../plugins/config-schema.json");
+        let schema: serde_json::Value =
+            serde_json::from_str(SCHEMA_JSON).expect("config-schema.json must be valid JSON");
+
+        let enum_values = schema["$defs"]["ThemeOptions"]["enum"]
+            .as_array()
+            .expect("ThemeOptions.enum must be an array");
+        let schema_themes: Vec<String> = enum_values
+            .iter()
+            .map(|v| v.as_str().expect("theme enum values are strings").to_string())
+            .collect();
+
+        let options: Vec<String> = ThemeName::BUILTIN_OPTIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        assert_eq!(
+            schema_themes, options,
+            "config-schema.json ThemeOptions enum is out of sync with ThemeName::BUILTIN_OPTIONS; \
+             regenerate with scripts/gen_schema.sh"
+        );
+
+        let mut sorted = schema_themes.clone();
+        sorted.sort();
+        assert_eq!(
+            schema_themes, sorted,
+            "config-schema.json theme enum must be sorted alphabetically"
+        );
     }
 
     #[test]
