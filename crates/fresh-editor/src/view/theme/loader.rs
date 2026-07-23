@@ -611,6 +611,49 @@ mod tests {
         assert!(list.iter().any(|t| t.name == "light"));
     }
 
+    /// Regression test for #2738: the settings theme dropdown is schema-driven
+    /// from the static `ThemeName::BUILTIN_OPTIONS` list, while "Select Theme"
+    /// reads the auto-generated `BUILTIN_THEMES` registry. If the static list
+    /// drifts, the dropdown silently omits (or misorders) themes. Guard that the
+    /// static list exactly equals the set of root (empty-pack) built-in themes
+    /// and that it is sorted alphabetically (matching the picker order).
+    #[test]
+    fn test_builtin_options_match_registry_and_sorted() {
+        use crate::config::ThemeName;
+
+        let loader = ThemeLoader::embedded_only();
+        let registry = loader.load_all(&[]);
+
+        // Root built-in theme names (empty pack), sorted for a stable compare.
+        let mut root_builtins: Vec<String> = registry
+            .list()
+            .iter()
+            .filter(|info| info.pack.is_empty())
+            .map(|info| info.name.clone())
+            .collect();
+        root_builtins.sort();
+        root_builtins.dedup();
+
+        let options: Vec<String> = ThemeName::BUILTIN_OPTIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        // Parity: the dropdown lists exactly the root built-in themes.
+        assert_eq!(
+            options, root_builtins,
+            "ThemeName::BUILTIN_OPTIONS must match the root built-in themes from the registry"
+        );
+
+        // The dropdown must be alphabetically sorted (same order as Select Theme).
+        let mut sorted = options.clone();
+        sorted.sort();
+        assert_eq!(
+            options, sorted,
+            "ThemeName::BUILTIN_OPTIONS must be sorted alphabetically"
+        );
+    }
+
     #[test]
     fn test_theme_registry_contains() {
         let loader = ThemeLoader::embedded_only();
