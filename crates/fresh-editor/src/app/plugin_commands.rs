@@ -1048,16 +1048,32 @@ impl Editor {
         }
     }
 
-    /// Handle SetSplitRatio command
-    pub(super) fn handle_set_split_ratio(&mut self, split_id: SplitId, ratio: f32) {
+    /// Handle SetSplitRatio command.
+    ///
+    /// Returns `true` if `split_id` resolved to a resizable split
+    /// container and the ratio was applied, `false` if it pointed at a
+    /// leaf, grouped, or unknown node. Every plugin-visible split id is
+    /// a leaf, so a plugin calling `setSplitRatio` on one must be a
+    /// graceful no-op that reports failure — never a panic that aborts
+    /// the editor (issue #2770).
+    pub(super) fn handle_set_split_ratio(&mut self, split_id: SplitId, ratio: f32) -> bool {
         // Plugin sends arbitrary SplitId — convert to ContainerId at the boundary
         let container_id = ContainerId(split_id);
-        self.windows
+        let applied = self
+            .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())
             .expect("active window must have a populated split layout")
             .set_ratio(container_id, ratio);
-        tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
+        if applied {
+            tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
+        } else {
+            tracing::debug!(
+                "setSplitRatio: split {:?} is not a resizable container; ignoring",
+                split_id
+            );
+        }
+        applied
     }
 
     /// Handle DistributeSplitsEvenly command

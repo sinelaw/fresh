@@ -3301,7 +3301,11 @@ impl Editor {
                 .get_ratio(split_id.into())
                 .is_some()
             {
-                self.windows
+                // Guarded by the `get_ratio(..).is_some()` check above, so
+                // this id resolves to a resizable Split; the bool result is
+                // not actionable here (the drag can only target a container).
+                let _resized = self
+                    .windows
                     .get_mut(&self.active_window)
                     .and_then(|w| w.split_manager_mut())
                     .expect("active window must have a populated split layout")

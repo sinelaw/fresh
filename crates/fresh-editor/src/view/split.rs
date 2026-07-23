@@ -1533,21 +1533,20 @@ impl SplitManager {
         }
     }
 
-    /// Set the exact ratio of a split container
-    pub fn set_ratio(&mut self, container_id: ContainerId, new_ratio: f32) {
-        match self.root.find_mut(container_id.into()) {
-            Some(SplitNode::Split { ratio, .. }) => {
-                *ratio = new_ratio.clamp(0.1, 0.9);
-            }
-            Some(SplitNode::Leaf { .. }) => {
-                unreachable!("ContainerId {:?} points to a leaf", container_id)
-            }
-            Some(SplitNode::Grouped { .. }) => {
-                unreachable!("ContainerId {:?} points to a Grouped node", container_id)
-            }
-            None => {
-                unreachable!("ContainerId {:?} not found in split tree", container_id)
-            }
+    /// Set the exact ratio of a split container.
+    ///
+    /// Returns `true` if `container_id` resolved to a resizable `Split`
+    /// node and the ratio was applied, `false` otherwise (a leaf,
+    /// grouped, or unknown id). Plugin-supplied split ids are always
+    /// leaves, so this must never panic on a non-`Split` node — it
+    /// mirrors `set_fixed_size`'s graceful `if let` no-op (issue #2770).
+    #[must_use]
+    pub fn set_ratio(&mut self, container_id: ContainerId, new_ratio: f32) -> bool {
+        if let Some(SplitNode::Split { ratio, .. }) = self.root.find_mut(container_id.into()) {
+            *ratio = new_ratio.clamp(0.1, 0.9);
+            true
+        } else {
+            false
         }
     }
 
@@ -1907,6 +1906,49 @@ mod tests {
 
         let result = manager.close_split(manager.active_split());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_ratio_on_leaf_is_graceful_noop() {
+        // Regression for #2770: a plugin's `setSplitRatio` always arrives
+        // with a *leaf* split id (every plugin-visible split id is a leaf).
+        // `handle_set_split_ratio` wraps it in a `ContainerId` and calls
+        // `set_ratio`, which used to `unreachable!` on a non-Split node and
+        // abort the whole editor. It must instead be a graceful no-op that
+        // reports failure — mirroring `set_fixed_size`.
+        let mut manager = SplitManager::new(BufferId(0));
+        let leaf_id: SplitId = manager.active_split().into();
+
+        assert!(
+            !manager.set_ratio(ContainerId(leaf_id), 0.7),
+            "set_ratio on a leaf split id must return false, not panic"
+        );
+
+        // An id that isn't in the tree at all is equally graceful.
+        assert!(
+            !manager.set_ratio(ContainerId(SplitId(9999)), 0.7),
+            "set_ratio on an unknown split id must return false, not panic"
+        );
+    }
+
+    #[test]
+    fn test_set_ratio_on_container_applies_and_clamps() {
+        let mut manager = SplitManager::new(BufferId(0));
+        manager
+            .split_active(SplitDirection::Horizontal, BufferId(1), 0.5)
+            .unwrap();
+
+        // After a split the root is a resizable Split container.
+        let container_id = manager.root().id();
+        assert!(
+            manager.set_ratio(ContainerId(container_id), 0.7),
+            "set_ratio on a real container must return true"
+        );
+        assert_eq!(manager.get_ratio(container_id), Some(0.7));
+
+        // Ratios are clamped to [0.1, 0.9].
+        assert!(manager.set_ratio(ContainerId(container_id), 0.99));
+        assert_eq!(manager.get_ratio(container_id), Some(0.9));
     }
 
     #[test]
