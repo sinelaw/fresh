@@ -79,7 +79,8 @@ legitimately starts a new sequence.
 | Ss3 | After `ESC O`; the next byte is the final (cursor, F1–F4, application keypad) | Always → Ground |
 | X10 | Collecting the three raw coordinate bytes of a legacy mouse report | Three bytes → mouse event; any byte `< 0x20` → abandon and reprocess |
 | Utf8 | Accumulating a multi-byte character; each byte must be a continuation byte | Continuation byte fails eager check → abandon and reprocess; width reached → decode |
-| Paste | Inside bracketed paste, accumulating content | End marker → `Paste` event; over `MAX_PASTE` bytes → flush and resync |
+| Paste | Inside bracketed paste, accumulating content | End marker → `Paste` event; over `MAX_PASTE` bytes → flush what accumulated and enter PasteOverflow |
+| PasteOverflow | Discarding the runaway tail of an over-long paste | Any byte → discard; `ESC` → resync from ground |
 | StringSeq | Inside a DCS/OSC/APC/PM/SOS string, discarding content | `ST` (`ESC \`) or `BEL` → drop and return to ground; a non-`ST` `ESC` → resync from Escape |
 
 Two resync rules do the heavy lifting on malformed input:
@@ -193,9 +194,14 @@ parser exists to prevent — each is covered by a test that fails without the fi
 ### Robustness
 
 - **The paste buffer is bounded.** On an unterminated or oversized paste (over
-  `MAX_PASTE`), the accumulated content is flushed as a `Paste` event and the
-  parser resyncs to ground, so it can neither grow without limit nor swallow
-  every subsequent keystroke.
+  `MAX_PASTE`, 64 MiB), the accumulated content is flushed as a `Paste` event
+  and the machine enters `PasteOverflow`, discarding the runaway tail until an
+  `ESC` lets it resync — so the buffer can neither grow without limit nor
+  swallow every keystroke, and the tail is not sprayed out as text. Accumulating
+  parsers that skip this bound get bitten: crossterm buffers an unterminated
+  paste forever, and readline once overran a heap buffer on `ESC [ 200 ~` with
+  no terminator. (Ghostty's OSC parser takes the same shape — cap, then discard
+  to an invalid/resync state.)
 - **The UTF-8 collector validates continuation bytes eagerly** (the X10
   validity-floor pattern): a non-continuation byte abandons the partial
   character and is reprocessed from ground, so an `ESC` mid-character resyncs

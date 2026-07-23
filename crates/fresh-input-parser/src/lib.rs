@@ -51,9 +51,11 @@ const MAX_CSI_PARAMS: usize = 128;
 /// Upper bound on buffered bracketed-paste content. A paste-start (`ESC [ 200 ~`)
 /// whose terminator never arrives would otherwise grow memory without limit and
 /// swallow every subsequent keystroke. On reaching this bound the accumulated
-/// content is emitted as a `Paste` event and the parser resyncs to ground. The
-/// bound is far above any realistic interactive paste.
-const MAX_PASTE: usize = 4 * 1024 * 1024;
+/// content is emitted as a `Paste` event and the parser enters `PasteOverflow`,
+/// discarding the runaway tail until an `ESC` lets it resync (so the tail is
+/// neither buffered nor sprayed out as keystrokes). The bound is a pure safety
+/// valve — far above any realistic interactive paste.
+const MAX_PASTE: usize = 64 * 1024 * 1024;
 
 /// The parser's current state. Mirrors the relevant sub-states of the DEC/ANSI
 /// state machine; printable/UTF-8 handling lives in `Ground`/`Utf8`.
@@ -82,6 +84,10 @@ enum State {
     /// Inside a bracketed paste (`ESC [ 200 ~` … `ESC [ 201 ~`); content
     /// accumulates in `self.paste`.
     Paste,
+    /// A bracketed paste that overran `MAX_PASTE`: its content has already been
+    /// emitted, and the runaway tail is now discarded (not buffered, not
+    /// emitted as keystrokes) until an `ESC` lets the machine resync.
+    PasteOverflow,
     /// Inside a string-type control sequence — DCS (`ESC P`), OSC (`ESC ]`),
     /// APC (`ESC _`), PM (`ESC ^`) or SOS (`ESC X`). Content is discarded until
     /// the terminator: `ST` (`ESC \`) or a legacy `BEL`. `saw_esc` records that
@@ -201,6 +207,11 @@ impl InputParser {
                     }
                 }
                 State::Paste => self.feed_paste(byte, out),
+                State::PasteOverflow => {
+                    if !self.feed_paste_overflow(byte) {
+                        continue;
+                    }
+                }
                 State::StringSeq { saw_esc } => {
                     if !self.feed_string(byte, saw_esc) {
                         continue;
@@ -489,14 +500,27 @@ impl InputParser {
             return;
         }
         if self.paste.len() >= MAX_PASTE {
-            // Unterminated/oversized paste: emit what we have and resync to
-            // ground, so the buffer is bounded and later keystrokes are not
-            // swallowed indefinitely.
+            // Unterminated/oversized paste: emit what we have, then discard the
+            // runaway tail (in `PasteOverflow`) until an `ESC` lets us resync.
+            // Emitting here bounds memory; discarding rather than returning to
+            // ground keeps the tail from being sprayed out as keystrokes.
             tracing::trace!("InputParser: paste exceeded {} bytes, flushing", MAX_PASTE);
             let text = sanitize_paste(&self.paste);
             self.paste.clear();
-            self.state = State::Ground;
+            self.state = State::PasteOverflow;
             out.push(Event::Paste(text));
+        }
+    }
+
+    /// `PasteOverflow` state: discard the runaway tail of an over-long paste,
+    /// emitting nothing, until an `ESC` arrives. Returns `false` on that `ESC`
+    /// so it is reprocessed from ground and starts a clean new sequence.
+    fn feed_paste_overflow(&mut self, byte: u8) -> bool {
+        if byte == 0x1b {
+            self.state = State::Ground;
+            false
+        } else {
+            true // discard
         }
     }
 

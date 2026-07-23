@@ -1030,22 +1030,26 @@ fn csi_reply_lists_are_discarded() {
 // ---- §5.3 Robustness ----
 
 #[test]
-fn unterminated_paste_is_bounded_and_resyncs() {
+fn unterminated_paste_is_bounded_then_discards_until_resync() {
     // A paste-start with no terminator must not grow without limit or swallow
-    // keystrokes forever: on exceeding the cap it flushes as a `Paste` event and
-    // returns to ground, so a following key registers.
+    // keystrokes forever: on exceeding the cap it flushes what it has as a
+    // `Paste` event, then discards the runaway tail until an `ESC` lets it
+    // resync — so the tail is neither buffered nor sprayed out as keystrokes.
     let mut p = InputParser::new();
-    let mut input = b"\x1b[200~".to_vec();
-    input.resize(input.len() + MAX_PASTE + 16, b'a');
-    let ev = p.parse(&input);
-    assert!(
-        ev.iter().any(|e| matches!(e, Event::Paste(_))),
-        "expected a bounded Paste flush"
-    );
-    // Back in ground: a normal key now parses.
+    assert!(p.parse(b"\x1b[200~").is_empty());
+    // Feed just past the cap in 1 MiB chunks (avoids one huge input buffer).
+    let chunk = vec![b'a'; 1 << 20];
+    let mut flushed = false;
+    for _ in 0..(MAX_PASTE / chunk.len() + 1) {
+        flushed |= p.parse(&chunk).iter().any(|e| matches!(e, Event::Paste(_)));
+    }
+    assert!(flushed, "expected a bounded Paste flush");
+    // The runaway tail is discarded, not surfaced as keys...
+    assert!(p.parse(b"aaaa").is_empty(), "overflow tail leaked as keys");
+    // ...until an `ESC`-introduced sequence resyncs the parser.
     assert_eq!(
-        keys(&p.parse(b"z")),
-        vec![(KeyCode::Char('z'), KeyModifiers::empty())]
+        keys(&p.parse(b"\x1b[A")),
+        vec![(KeyCode::Up, KeyModifiers::empty())]
     );
 }
 
