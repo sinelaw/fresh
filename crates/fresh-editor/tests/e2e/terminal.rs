@@ -4627,3 +4627,89 @@ fn test_terminal_double_click_selects_word_and_copy_resumes() {
         "copying the double-click selection should resume the live terminal"
     );
 }
+
+/// fresh#2649: a single logical line taller than the terminal pane.
+///
+/// Symptom 1 (data loss): the leading `XXXXXXXX` of an in-progress wrapped
+/// line scrolls into grid history while its terminator is still on screen, so
+/// it reaches scrollback via NEITHER capture path and is unreachable at any
+/// scroll position. After the fix `append_visible_screen` re-attaches the
+/// in-history head, so scrolling to the top of scrollback reveals it.
+///
+/// Symptom 2 (scroll corruption): terminal scroll-back is non-wrapping, but
+/// the entry path used to flip the scroll-math wrap flag on — disagreeing with
+/// the non-wrapping renderer so scrolling up then back down got stuck. With
+/// the flag consistent, a scroll round-trip returns to a stable bottom frame.
+#[test]
+#[cfg(not(windows))] // Uses a Unix shell to emit the long line
+fn test_bug_2649_tall_line_scrollback_reachable_and_stable() {
+    let mut harness = harness_or_return!(100, 24);
+
+    harness.editor_mut().open_terminal();
+    // Keep the focused split parked in scroll-back instead of snapping back to
+    // the live tail when the shell prompt redraws after our command.
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Emit ONE logical line far taller than the ~22-row pane: 8 'X', then 3600
+    // 'A', then an 8-'Z' tail — all one line, terminated. Each run is built via
+    // `head`/`tr` (shell-portable, no python/seq) specifically so the echoed
+    // COMMAND text contains none of the literal marker strings — only the
+    // program OUTPUT does, keeping the screen assertions unambiguous. The 'Z'
+    // tail stays on the live grid (just above the returning prompt) so the line
+    // is still "in progress" when we enter scroll-back — exactly the case where
+    // the in-history head (`XXXXXXXX`) used to be lost (fresh#2649).
+    harness.editor_mut().active_window_mut().send_terminal_input(
+        b"head -c 8 /dev/zero | tr '\\0' 'X'; head -c 3600 /dev/zero | tr '\\0' 'A'; head -c 8 /dev/zero | tr '\\0' 'Z'; printf '\\n'\n",
+    );
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZZZZZZZ"))
+        .unwrap();
+
+    // The leading X's are above the live pane (the line is taller than it).
+    harness.assert_screen_not_contains("XXXXXXXX");
+
+    // Drop into read-only scroll-back and jump to the very top of history.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Symptom 1: the leading XXXXXXXX is now reachable in scroll-back.
+    assert!(
+        harness.screen_to_string().contains("XXXXXXXX"),
+        "leading XXXXXXXX of the tall line must be reachable at the top of \
+         scroll-back (fresh#2649 symptom 1). Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Symptom 2: scrolling to the bottom and back to the top must round-trip
+    // cleanly — terminal scroll-back is non-wrapping and the scroll math now
+    // agrees with the renderer, so this doesn't get stuck or collapse the
+    // content. After the round-trip the head is still reachable at the top.
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("XXXXXXXX"),
+        "after scrolling to the bottom and back up, the tall line's head must \
+         still be reachable — scroll-back must not get stuck or collapse \
+         (fresh#2649 symptom 2). Screen:\n{}",
+        harness.screen_to_string()
+    );
+}

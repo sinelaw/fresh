@@ -1872,15 +1872,21 @@ impl Window {
                     let buf_state = vs.ensure_buffer_state(buffer_id);
                     buf_state.show_line_numbers = false;
                     buf_state.highlight_current_line = false;
-                    // Scrollback is stored as unwrapped logical lines, so soft-wrap
-                    // the read-only view to reflow long lines to the current width.
-                    // (Visible-screen rows are ≤ the view width and so never wrap,
-                    // keeping the exit frame aligned with the live grid.)
-                    buf_state.viewport.line_wrap_enabled = true;
+                    // Terminal scroll-back must NOT soft-wrap. The renderer,
+                    // `resolve_line_wrap_for_buffer`, and the workspace-restore
+                    // path (`install_terminal_buffer_state`) all treat terminal
+                    // buffers as non-wrapping (column-formatted output must keep
+                    // its alignment, and wrapping a huge scrollback re-walks the
+                    // whole buffer every frame — fresh#2608/#2610). Setting the
+                    // scroll-math flag to match keeps the mouse-wheel / scrollbar
+                    // scroll path (which branches on this flag) in lock-step with
+                    // the non-wrapping render, so scrolling up then back down is
+                    // stable instead of getting stuck (fresh#2649, symptom 2).
+                    buf_state.viewport.line_wrap_enabled = false;
                 }
             }
             if let Some(view_state) = view_states.get_mut(&active_split) {
-                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.line_wrap_enabled = false;
                 view_state.viewport.set_skip_ensure_visible();
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
