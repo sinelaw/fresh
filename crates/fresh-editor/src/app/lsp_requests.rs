@@ -938,9 +938,11 @@ impl Editor {
         self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
 
         if !sent_ids.is_empty() {
-            self.active_window_mut()
-                .hover
-                .record_requests(&sent_ids, line as u32, character as u32);
+            self.active_window_mut().hover.record_requests(
+                &sent_ids,
+                line as u32,
+                character as u32,
+            );
         }
 
         Ok(())
@@ -1020,9 +1022,11 @@ impl Editor {
         self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
 
         if !sent_ids.is_empty() {
-            self.active_window_mut()
-                .hover
-                .record_requests(&sent_ids, line as u32, character as u32);
+            self.active_window_mut().hover.record_requests(
+                &sent_ids,
+                line as u32,
+                character as u32,
+            );
         }
 
         Ok(!sent_ids.is_empty())

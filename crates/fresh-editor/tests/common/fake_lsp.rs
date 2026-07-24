@@ -2557,11 +2557,7 @@ done
     /// Spawn a fake LSP server that returns a distinctive hover body
     /// ("HoverBeta content") WITH a range.
     pub fn spawn_hover_beta(dir: &std::path::Path) -> anyhow::Result<Self> {
-        Self::spawn_hover_with_body(
-            dir,
-            &Self::hover_beta_script_path(dir),
-            "HoverBeta content",
-        )
+        Self::spawn_hover_with_body(dir, &Self::hover_beta_script_path(dir), "HoverBeta content")
     }
 
     /// Get the path to the "HoverBeta" fake LSP server script.
