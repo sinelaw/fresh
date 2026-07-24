@@ -10,6 +10,9 @@ pub const NEW_TAB_MENU_WIDTH: u16 = 18;
 /// "Extract to New Workspace" + padding).
 pub const TAB_CONTEXT_MENU_WIDTH: u16 = 28;
 
+/// Width of the close-split confirmation popup (fits "Close split" + padding).
+pub const CLOSE_SPLIT_MENU_WIDTH: u16 = 16;
+
 /// Shared geometry + navigation + hit-testing core for the native context
 /// menus.
 ///
@@ -140,6 +143,8 @@ pub enum ContextMenuKind {
     NewTab,
     /// The file-explorer right-click context menu.
     FileExplorer,
+    /// The close-split confirmation popup (clicking the split's `×` button).
+    CloseSplit,
 }
 
 /// Tab context menu items
@@ -288,6 +293,68 @@ impl NewTabMenu {
     }
 }
 
+/// Items in the close-split confirmation popup (shown when clicking the split
+/// tab bar's `×` button). Closing a split is not immediately reversible, so the
+/// click pops this two-item confirm instead of acting at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseSplitMenuItem {
+    /// Confirm: close the split.
+    CloseSplit,
+    /// Dismiss without closing.
+    Cancel,
+}
+
+impl CloseSplitMenuItem {
+    /// Get all menu items in order (confirm first, then cancel).
+    pub fn all() -> &'static [Self] {
+        &[Self::CloseSplit, Self::Cancel]
+    }
+
+    /// Get the display label for this menu item.
+    pub fn label(&self) -> String {
+        match self {
+            Self::CloseSplit => t!("action.close_split").to_string(),
+            Self::Cancel => t!("confirm.cancel").to_string(),
+        }
+    }
+}
+
+/// State for the close-split confirmation popup (left-click on a split tab
+/// bar's `×` button).
+#[derive(Debug, Clone)]
+pub struct CloseSplitMenu {
+    /// The split whose `×` button was clicked (the split to close on confirm).
+    pub split_id: LeafId,
+    /// Shared geometry + navigation core (position, highlight, width, items).
+    pub menu: ContextMenu,
+}
+
+impl CloseSplitMenu {
+    /// Create a new close-split confirmation popup anchored at the given
+    /// screen position.
+    pub fn new(split_id: LeafId, x: u16, y: u16) -> Self {
+        Self {
+            split_id,
+            menu: ContextMenu::new(
+                x,
+                y,
+                CLOSE_SPLIT_MENU_WIDTH,
+                CloseSplitMenuItem::all().len(),
+            ),
+        }
+    }
+
+    /// The items this menu presents, in display order.
+    pub fn items(&self) -> &'static [CloseSplitMenuItem] {
+        CloseSplitMenuItem::all()
+    }
+
+    /// Get the currently highlighted item.
+    pub fn highlighted_item(&self) -> CloseSplitMenuItem {
+        CloseSplitMenuItem::all()[self.menu.highlighted]
+    }
+}
+
 /// File explorer context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileExplorerContextMenuItem {
@@ -404,5 +471,42 @@ impl FileExplorerContextMenu {
     /// Get the currently highlighted item.
     pub fn highlighted_item(&self) -> FileExplorerContextMenuItem {
         self.items()[self.menu.highlighted]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::event::SplitId;
+
+    #[test]
+    fn close_split_menu_presents_confirm_then_cancel() {
+        // The confirm popup offers exactly two choices, "Close split" first
+        // (the default highlight) and "Cancel" second. The order is what the
+        // renderer and hit-test rely on (fresh#2768).
+        assert_eq!(
+            CloseSplitMenuItem::all(),
+            &[CloseSplitMenuItem::CloseSplit, CloseSplitMenuItem::Cancel]
+        );
+        assert!(!CloseSplitMenuItem::CloseSplit.label().is_empty());
+        assert!(!CloseSplitMenuItem::Cancel.label().is_empty());
+
+        let split_id = LeafId(SplitId(7));
+        let menu = CloseSplitMenu::new(split_id, 10, 4);
+        assert_eq!(menu.split_id, split_id);
+        assert_eq!(menu.menu.item_count, 2);
+        // Default highlight is the first item — "Close split".
+        assert_eq!(menu.highlighted_item(), CloseSplitMenuItem::CloseSplit);
+        assert_eq!(menu.items().len(), 2);
+    }
+
+    #[test]
+    fn close_split_menu_navigation_reaches_cancel() {
+        let mut menu = CloseSplitMenu::new(LeafId(SplitId(1)), 0, 0);
+        menu.menu.next_item();
+        assert_eq!(menu.highlighted_item(), CloseSplitMenuItem::Cancel);
+        menu.menu.next_item();
+        // Wraps back to the confirm item.
+        assert_eq!(menu.highlighted_item(), CloseSplitMenuItem::CloseSplit);
     }
 }

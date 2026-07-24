@@ -2535,48 +2535,25 @@ impl Editor {
     }
 
     fn handle_click_split_controls(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let close_split_id = self
+        let close_split_hit = self
             .active_layout()
             .close_split_areas
             .iter()
             .find(|(_, btn_row, start_col, end_col)| {
                 row == *btn_row && col >= *start_col && col < *end_col
             })
-            .map(|(split_id, _, _, _)| *split_id);
-        if let Some(split_id) = close_split_id {
-            if let Err(e) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_manager_mut())
-                .expect("active window must have a populated split layout")
-                .close_split(split_id)
-            {
-                self.set_status_message(
-                    t!("error.cannot_close_split", error = e.to_string()).to_string(),
-                );
-            } else {
-                // Drop the closed split from every terminal's scrollback set.
-                self.active_window_mut()
-                    .forget_split_terminal_modes(split_id);
-                let new_active = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .buffer_for_split(new_active)
-                {
-                    self.set_active_buffer(buffer_id);
-                }
-                self.set_status_message(t!("split.closed").to_string());
-            }
+            .map(|(split_id, btn_row, start_col, _)| (*split_id, *btn_row, *start_col));
+        if let Some((split_id, btn_row, start_col)) = close_split_hit {
+            // Closing a split isn't undoable, so don't act on the raw click —
+            // pop a small confirmation just below the `×` button offering
+            // "Close split" / "Cancel". Dismiss any other native menu first so
+            // only one popup is visible.
+            self.active_window_mut().close_context_menus();
+            self.active_window_mut().close_split_menu = Some(super::types::CloseSplitMenu::new(
+                split_id,
+                start_col,
+                btn_row + 1,
+            ));
             return Some(Ok(()));
         }
 
@@ -3323,9 +3300,10 @@ impl Editor {
 
     /// Handle right-click event
     pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        // A right-click anywhere dismisses the "+" new-tab popup (it's a
-        // left-click-only menu).
+        // A right-click anywhere dismisses the left-click-only popups (the "+"
+        // new-tab menu and the close-split confirmation).
         self.active_window_mut().new_tab_menu = None;
+        self.active_window_mut().close_split_menu = None;
 
         // Right-click inside the orchestrator dock column → let the plugin
         // raise a per-session context menu. Mirrors the left-click path:
@@ -3587,8 +3565,73 @@ impl Editor {
                     self.execute_file_explorer_context_menu_action(item);
                 }
             }
+            ContextMenuKind::CloseSplit => {
+                let selected = self
+                    .active_window()
+                    .close_split_menu
+                    .as_ref()
+                    .map(|m| (m.highlighted_item(), m.split_id));
+                self.active_window_mut().close_context_menus();
+                if let Some((item, split_id)) = selected {
+                    self.execute_close_split_menu_action(item, split_id);
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Execute a close-split confirmation choice. "Cancel" is a no-op (the menu
+    /// was already dismissed by the caller); "Close split" runs the actual
+    /// close.
+    fn execute_close_split_menu_action(
+        &mut self,
+        item: super::types::CloseSplitMenuItem,
+        split_id: LeafId,
+    ) {
+        use super::types::CloseSplitMenuItem;
+        match item {
+            CloseSplitMenuItem::Cancel => {}
+            CloseSplitMenuItem::CloseSplit => self.close_split_confirmed(split_id),
+        }
+    }
+
+    /// Close a split for real (after the confirmation popup). Mirrors the
+    /// keyboard "Close Split" command: close the pane, forget its terminal
+    /// scrollback modes, and refocus whichever split becomes active.
+    fn close_split_confirmed(&mut self, split_id: LeafId) {
+        if let Err(e) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_manager_mut())
+            .expect("active window must have a populated split layout")
+            .close_split(split_id)
+        {
+            self.set_status_message(
+                t!("error.cannot_close_split", error = e.to_string()).to_string(),
+            );
+            return;
+        }
+        // Drop the closed split from every terminal's scrollback set.
+        self.active_window_mut()
+            .forget_split_terminal_modes(split_id);
+        let new_active = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(buffer_id) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .buffer_for_split(new_active)
+        {
+            self.set_active_buffer(buffer_id);
+        }
+        self.set_status_message(t!("split.closed").to_string());
     }
 
     fn execute_file_explorer_context_menu_action(

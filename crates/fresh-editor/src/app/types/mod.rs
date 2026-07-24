@@ -23,8 +23,9 @@ pub use context_menu::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
 pub use context_menu::NEW_TAB_MENU_WIDTH;
 pub use context_menu::TAB_CONTEXT_MENU_WIDTH;
 pub use context_menu::{
-    ContextMenu, ContextMenuHit, ContextMenuKind, FileExplorerContextMenu,
-    FileExplorerContextMenuItem, NewTabMenu, NewTabMenuItem, TabContextMenu, TabContextMenuItem,
+    CloseSplitMenu, CloseSplitMenuItem, ContextMenu, ContextMenuHit, ContextMenuKind,
+    FileExplorerContextMenu, FileExplorerContextMenuItem, NewTabMenu, NewTabMenuItem,
+    TabContextMenu, TabContextMenuItem,
 };
 
 // drag re-exports

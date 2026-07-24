@@ -1084,6 +1084,7 @@ impl Editor {
             ContextMenuKind::FileExplorer => "fileExplorer",
             ContextMenuKind::NewTab => "newTab",
             ContextMenuKind::Tab => "tab",
+            ContextMenuKind::CloseSplit => "closeSplit",
         };
         Some(ContextMenuView {
             kind,

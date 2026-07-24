@@ -885,6 +885,10 @@ pub struct Window {
     /// File-explorer context menu state (right-click in the explorer).
     pub file_explorer_context_menu: Option<crate::app::types::FileExplorerContextMenu>,
 
+    /// Close-split confirmation popup state (left-click on a split tab bar's
+    /// `×` button). Offers "Close split" / "Cancel".
+    pub close_split_menu: Option<crate::app::types::CloseSplitMenu>,
+
     /// Theme inspector popup (Ctrl+Right-Click) anchored in this window.
     pub theme_info_popup: Option<crate::app::types::ThemeInfoPopup>,
 
@@ -1089,6 +1093,9 @@ impl Window {
         if let Some(m) = &self.tab_context_menu {
             return Some((ContextMenuKind::Tab, &m.menu));
         }
+        if let Some(m) = &self.close_split_menu {
+            return Some((ContextMenuKind::CloseSplit, &m.menu));
+        }
         None
     }
 
@@ -1108,6 +1115,9 @@ impl Window {
             return Some(&mut m.menu);
         }
         if let Some(m) = self.tab_context_menu.as_mut() {
+            return Some(&mut m.menu);
+        }
+        if let Some(m) = self.close_split_menu.as_mut() {
             return Some(&mut m.menu);
         }
         None
@@ -1141,6 +1151,13 @@ impl Window {
                 .iter()
                 .map(|i| i.label())
                 .collect(),
+            ContextMenuKind::CloseSplit => self
+                .close_split_menu
+                .as_ref()?
+                .items()
+                .iter()
+                .map(|i| i.label())
+                .collect(),
         })
     }
 
@@ -1150,6 +1167,7 @@ impl Window {
         self.tab_context_menu = None;
         self.new_tab_menu = None;
         self.file_explorer_context_menu = None;
+        self.close_split_menu = None;
     }
 
     /// Apply LSP folding ranges to the named buffer's `folding_ranges`
@@ -2125,6 +2143,7 @@ impl Window {
             tab_context_menu: None,
             new_tab_menu: None,
             file_explorer_context_menu: None,
+            close_split_menu: None,
             theme_info_popup: None,
             event_debug: None,
             file_open_state: None,

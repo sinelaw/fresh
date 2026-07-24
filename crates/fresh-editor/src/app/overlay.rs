@@ -57,6 +57,11 @@ pub(crate) enum LayerKind {
     /// dispatcher, transparent to `KeyContext` resolution but blocking PTY
     /// routing while open.
     FileExplorerContextMenu,
+    /// The close-split confirmation popup (`active_window().close_split_menu`),
+    /// same treatment as the other native context menus: a modal chrome menu
+    /// with a custom key dispatcher, transparent to `KeyContext` resolution but
+    /// blocking PTY routing while open.
+    CloseSplitMenu,
     /// The centered widget modal (`floating_widget_panel`).
     FloatingModal,
     /// The editor-global left dock (`dock`).

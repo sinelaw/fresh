@@ -393,6 +393,17 @@ impl Editor {
                 blocks_terminal_input: true,
             });
         }
+        // The close-split confirmation popup gets the same treatment as the
+        // other native context menus: a custom key dispatcher owns the keyboard
+        // while it's open and it blocks PTY routing.
+        if self.active_window().close_split_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::CloseSplitMenu,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
         // The centered widget modal (picker / new-session form / plugin
         // overlay) owns the keyboard when focused. It resolves as `Normal`
         // regardless of the underlying buffer's (possibly stale) context so

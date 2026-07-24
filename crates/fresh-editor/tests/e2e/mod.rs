@@ -233,6 +233,7 @@ pub mod shift_backspace;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;
+pub mod split_close_confirm;
 pub mod split_focus_tab_click;
 pub mod split_tabs;
 pub mod split_view;

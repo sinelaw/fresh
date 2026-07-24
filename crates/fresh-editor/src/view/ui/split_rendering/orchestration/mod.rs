@@ -760,10 +760,14 @@ fn render_split_tab_bar(
     //   Close: shown when multiple splits exist AND not maximized.
     let show_maximize_btn = has_multiple_splits || is_maximized;
     let show_close_btn = has_multiple_splits && !is_maximized;
+    // When a split has any control button the whole right cluster
+    // (`□ + [sep] > ×`) is owned here (drawn on top after the tabs); the tab
+    // renderer then skips its own `+`/`>`. A single, unmaximized split has no
+    // cluster and lets the tab renderer draw its own inline `+`/`>` (fresh#2768).
+    let external_controls = show_maximize_btn || show_close_btn;
 
-    // Reserve the control-button columns from the tab bar's width so the tab
-    // scroll indicators (`<` / `>`) and the pinned "+" never render underneath
-    // the buttons (fresh#2768). The buttons are painted on top afterwards.
+    // Reserve the cluster columns from the tab bar's width so the scrolling
+    // tabs and the `<` left indicator never render underneath the cluster.
     let reserve = crate::view::ui::tabs::split_control_reserve(show_maximize_btn, show_close_btn);
     let tabs_area = Rect::new(
         layout.tabs_rect.x,
@@ -776,7 +780,7 @@ fn render_split_tab_bar(
     // theme-key runs into a local vec as it paints; apply them to the per-cell
     // map afterward (the map isn't borrowed here).
     let mut tab_runs: Vec<crate::app::types::ThemeRun> = Vec::new();
-    let tab_layout = {
+    let mut tab_layout = {
         let mut rec = crate::app::types::CellThemeRecorder::new(&mut tab_runs);
         TabsRenderer::render_for_split(
             buf,
@@ -794,34 +798,41 @@ fn render_split_tab_bar(
             preview_buffer,
             Some(&mut rec),
             draw_tab_bar,
+            external_controls,
         )
     };
     crate::app::types::apply_theme_runs(cell_theme_map, screen_width, &tab_runs);
 
-    tab_layouts.insert(split_id, tab_layout);
     let tab_row = layout.tabs_rect.y;
 
-    if !show_maximize_btn && !show_close_btn {
+    // Single, unmaximized split: no cluster — the tab renderer already drew its
+    // own `+`/`<`/`>`. Record the layout and stop.
+    if !external_controls {
+        tab_layouts.insert(split_id, tab_layout);
         return;
     }
 
-    // Grouped at the right edge, close outermost: [maximize][close][blank]. The
-    // buttons sit adjacent (no gap) so they read as one control cluster; the
-    // reserve above keeps a 1-column gap between them and the tab content.
-    let mut btn_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(2);
-    if show_close_btn {
-        let is_hovered = hovered_close_split == Some(split_id);
-        let close_fg = if is_hovered {
-            theme.tab_close_hover_fg
-        } else {
-            theme.line_number_fg
-        };
-        let close_button =
-            Paragraph::new("×").style(Style::default().fg(close_fg).bg(theme.tab_separator_bg));
-        close_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
-        close_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
-        btn_x = btn_x.saturating_sub(1); // adjacent to the maximize button
-    }
+    // Draw the right-side control cluster on top of the reserved columns, in
+    // visual order `□ + [sep] > ×` (fresh#2768):
+    //
+    //   [gap] □ + [sep] > ×  [trail]
+    //
+    // `□` (maximize) is present only when `show_maximize_btn`, `×` (close) only
+    // when `show_close_btn`, `+` (new buffer) is always present, and the `>`
+    // right-overflow indicator is drawn only when the tabs overflow (its column
+    // is reserved either way). Hit areas are stored so a click on each glyph
+    // routes to its action: `+` → `new_tab_area`, `>` → `right_scroll_area`,
+    // `□` → `maximize_split_areas`, `×` → `close_split_areas` (which now pops a
+    // confirm menu rather than closing immediately).
+    let overflow = tab_layout.right_overflow;
+    let cluster_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(reserve);
+    // Paint the whole cluster background first (separator surface) so the gap /
+    // separator / trailing columns are clean regardless of prior cell content.
+    Paragraph::new(" ".repeat(reserve as usize))
+        .style(Style::default().bg(theme.tab_separator_bg))
+        .render(Rect::new(cluster_x, tab_row, reserve, 1), buf);
+
+    let mut cx = cluster_x + 1; // skip the leading gap
     if show_maximize_btn {
         let is_hovered = hovered_maximize_split == Some(split_id);
         let max_fg = if is_hovered {
@@ -831,11 +842,53 @@ fn render_split_tab_bar(
         };
         // □ = maximize, ⧉ = unmaximize (restore).
         let icon = if is_maximized { "⧉" } else { "□" };
-        let max_button =
-            Paragraph::new(icon).style(Style::default().fg(max_fg).bg(theme.tab_separator_bg));
-        max_button.render(Rect::new(btn_x, tab_row, 1, 1), buf);
-        maximize_split_areas.push((split_id, tab_row, btn_x, btn_x + 1));
+        Paragraph::new(icon)
+            .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg))
+            .render(Rect::new(cx, tab_row, 1, 1), buf);
+        maximize_split_areas.push((split_id, tab_row, cx, cx + 1));
+        cx += 1;
     }
+    // "+" new-buffer button — styled like an inactive tab so it reads as a
+    // button, immediately to the right of the maximize glyph.
+    Paragraph::new("+")
+        .style(
+            Style::default()
+                .fg(theme.tab_inactive_fg)
+                .bg(theme.tab_inactive_bg),
+        )
+        .render(Rect::new(cx, tab_row, 1, 1), buf);
+    tab_layout.new_tab_area = Some(Rect::new(cx, tab_row, 1, 1));
+    cx += 1;
+    // Separator gap so `+` is visually distinct from the `> ×` group.
+    cx += 1;
+    // ">" right-overflow indicator — glyph only when tabs overflow; the column
+    // is reserved either way so the cluster never shifts as you scroll.
+    if overflow {
+        let gt_rect = Rect::new(cx, tab_row, 1, 1);
+        Paragraph::new(">")
+            .style(
+                Style::default()
+                    .fg(theme.line_number_fg)
+                    .bg(theme.tab_separator_bg),
+            )
+            .render(gt_rect, buf);
+        tab_layout.right_scroll_area = Some(gt_rect);
+    }
+    cx += 1;
+    if show_close_btn {
+        let is_hovered = hovered_close_split == Some(split_id);
+        let close_fg = if is_hovered {
+            theme.tab_close_hover_fg
+        } else {
+            theme.line_number_fg
+        };
+        Paragraph::new("×")
+            .style(Style::default().fg(close_fg).bg(theme.tab_separator_bg))
+            .render(Rect::new(cx, tab_row, 1, 1), buf);
+        close_split_areas.push((split_id, tab_row, cx, cx + 1));
+    }
+
+    tab_layouts.insert(split_id, tab_layout);
 }
 
 /// Render a composite (side-by-side panes) buffer for one split, plus its
