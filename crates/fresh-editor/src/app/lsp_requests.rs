@@ -979,9 +979,11 @@ impl Editor {
             );
         }
 
-        let buffer_id = self.active_buffer();
-
-        // Fan out to every capable server (see `request_hover`).
+        // Fan out to every capable server (see `request_hover`). Query the
+        // buffer the pointer is over (the `buffer_id` argument), not the active
+        // buffer, so the hover card never leaks in from another buffer (#2572).
+        // (Reassigning `buffer_id` to `self.active_buffer()` here was the source
+        // of that leak.)
         let base_request_id = self.active_window_mut().next_lsp_request_id;
         let counter = std::sync::atomic::AtomicU64::new(0);
 
