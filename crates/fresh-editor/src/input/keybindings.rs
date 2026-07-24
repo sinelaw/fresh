@@ -2003,7 +2003,21 @@ impl KeybindingResolver {
             context
         );
 
-        // Check Global bindings first (highest priority - work in all contexts)
+        // === User (custom) bindings take precedence over ALL built-in defaults ===
+        //
+        // A keybinding present in the user's config must win over the built-in
+        // keymap for the same chord — including default *global* entries such as
+        // the menu-bar Alt-letter mnemonics (`Alt+H → menu_open Help`). We
+        // therefore probe every custom source (global, then the active context,
+        // then its parent context) BEFORE any default source. Previously the
+        // default-global tier was checked between custom-global and
+        // custom-context, so a user's e.g. `alt+h → command_palette` (which
+        // loads into the Normal context when it has no `when` clause) was
+        // shadowed by the default-global mnemonic and never reached dispatch —
+        // it either opened the Help menu (mnemonics on) or silently no-op'd
+        // (mnemonics off). See issue #2720.
+
+        // Custom Global bindings (highest priority — work in all contexts).
         if let Some(global_bindings) = self.bindings.get(&KeyContext::Global) {
             if let Some(action) = global_bindings.get(norm) {
                 tracing::trace!("  -> Found in custom global bindings: {:?}", action);
@@ -2011,14 +2025,7 @@ impl KeybindingResolver {
             }
         }
 
-        if let Some(global_bindings) = self.default_bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(norm) {
-                tracing::trace!("  -> Found in default global bindings: {:?}", action);
-                return action.clone();
-            }
-        }
-
-        // Try context-specific custom bindings
+        // Custom context-specific bindings.
         if let Some(context_bindings) = self.bindings.get(&context) {
             if let Some(action) = context_bindings.get(norm) {
                 tracing::trace!(
@@ -2030,7 +2037,28 @@ impl KeybindingResolver {
             }
         }
 
-        // Try context-specific default bindings
+        // Custom parent-context bindings (e.g. SearchPrompt → Prompt) so a
+        // narrowed context inherits its parent's user overrides too.
+        if let Some(parent) = context.parent_context() {
+            if let Some(parent_bindings) = self.bindings.get(&parent) {
+                if let Some(action) = parent_bindings.get(norm) {
+                    tracing::trace!("  -> Found in custom parent bindings: {:?}", action);
+                    return action.clone();
+                }
+            }
+        }
+
+        // === Built-in default bindings (only after every custom source) ===
+
+        // Default Global bindings.
+        if let Some(global_bindings) = self.default_bindings.get(&KeyContext::Global) {
+            if let Some(action) = global_bindings.get(norm) {
+                tracing::trace!("  -> Found in default global bindings: {:?}", action);
+                return action.clone();
+            }
+        }
+
+        // Default context-specific bindings.
         if let Some(context_bindings) = self.default_bindings.get(&context) {
             if let Some(action) = context_bindings.get(norm) {
                 tracing::trace!(
@@ -2042,7 +2070,7 @@ impl KeybindingResolver {
             }
         }
 
-        // Try plugin default bindings (mode bindings from defineMode)
+        // Plugin default bindings (mode bindings from defineMode).
         if let Some(plugin_bindings) = self.plugin_defaults.get(&context) {
             if let Some(action) = plugin_bindings.get(norm) {
                 tracing::trace!(
@@ -2054,19 +2082,12 @@ impl KeybindingResolver {
             }
         }
 
-        // Fall through to the parent context's bindings (e.g. SearchPrompt →
-        // Prompt) so a narrowed context inherits all of its parent's keys and
-        // only owns/overrides the few it declares. Checked after this context's
-        // own bindings but before the Normal fallthrough below, so the parent's
-        // editing/navigation keys outrank Normal.
+        // Default parent-context bindings (e.g. SearchPrompt → Prompt): the
+        // parent's editing/navigation keys outrank the Normal fallthrough below.
         if let Some(parent) = context.parent_context() {
-            if let Some(parent_bindings) = self.bindings.get(&parent) {
-                if let Some(action) = parent_bindings.get(norm) {
-                    return action.clone();
-                }
-            }
             if let Some(parent_bindings) = self.default_bindings.get(&parent) {
                 if let Some(action) = parent_bindings.get(norm) {
+                    tracing::trace!("  -> Found in default parent bindings: {:?}", action);
                     return action.clone();
                 }
             }
@@ -3799,6 +3820,80 @@ mod tests {
         assert_eq!(
             resolver.resolve(&ctrl_k, KeyContext::Normal),
             Action::DeleteToLineEnd
+        );
+    }
+
+    /// Regression guard for issue #2720: a user-defined binding for an
+    /// Alt+letter chord must take precedence over the built-in menu-bar
+    /// mnemonic, which lives in the default keymap as a *global* binding
+    /// (`Alt+H → menu_open Help`). A user binding with no `when` clause loads
+    /// into the Normal context; before the fix the default-global tier was
+    /// checked ahead of the custom-context tier, so the override was shadowed
+    /// (opening the Help menu, or silently no-op'ing when mnemonics were off).
+    #[test]
+    fn test_user_alt_letter_binding_overrides_menu_mnemonic() {
+        use crate::config::Keybinding;
+
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+
+        // Baseline: with no user override, Alt+H is the Help menu mnemonic
+        // (a default *global* binding).
+        let default_resolver = KeybindingResolver::new(&Config::default());
+        assert_eq!(
+            default_resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::MenuOpen("Help".to_string()),
+            "unbound Alt+H must still open the Help menu by default"
+        );
+
+        // User binds Alt+H → command_palette (no `when` clause → Normal context).
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "h".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        assert_eq!(
+            resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::CommandPalette,
+            "a user Alt+H binding must win over the default-global Help mnemonic"
+        );
+
+        // Other unbound Alt-letter mnemonics must remain intact.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::MenuOpen("File".to_string()),
+            "unrelated Alt+F mnemonic must not regress when Alt+H is overridden"
+        );
+    }
+
+    /// A user override placed explicitly in the `global` context must also win
+    /// over the default-global mnemonic for the same chord.
+    #[test]
+    fn test_user_global_binding_overrides_default_global() {
+        use crate::config::Keybinding;
+
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "h".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: Some("global".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::CommandPalette,
+            "a user global Alt+H binding must win over the default-global mnemonic"
         );
     }
 
