@@ -13,6 +13,7 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
 ### Features
 
 * **Syntax highlighting inside embedded code blocks** - a fenced code block in a Markdown file (e.g. ```` ```rust ```` ) now highlights with that language's own grammar instead of one flat color; the same mechanism also fixes Vue's `<script>`/`<style>` blocks (#2689, requested by @asukaminato0721).
+* **Better Bazel/Starlark highlighting** - functions, operators, punctuation, and built-ins are now highlighted, and `.bazel`/`MODULE.bazel` files are recognized (contributed by @asukaminato0721).
 * **Orchestrator: agents & workspaces**
   * **`Run Agent…` command** launches a terminal or a coding agent (`claude`, `codex`, `opencode`, `aider`) in your current workspace or a new one, without the full New Workspace dialog.
   * **Non-blocking workspace creation** - creating a workspace no longer freezes the editor; choose **Create & Visit** or **Create in Background** and keep working while it comes up.
