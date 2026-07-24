@@ -22,12 +22,34 @@ pub enum LineEnding {
 }
 
 impl LineEnding {
-    /// Get the string representation of this line ending
+    /// Get the on-disk string representation of this line ending.
+    ///
+    /// This is the byte sequence written to the file on save. Use
+    /// [`insertion_str`](Self::insertion_str) for text inserted into the
+    /// in-memory buffer.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::LF => "\n",
             Self::CRLF => "\r\n",
             Self::CR => "\r",
+        }
+    }
+
+    /// The line-ending sequence to insert into the *in-memory* buffer.
+    ///
+    /// The buffer's line model splits on `\n`, so every mode must insert a
+    /// `\n` to create a new logical line. LF and CRLF map to their on-disk
+    /// form (`\n` / `\r\n`), but Classic-Mac CR has no `\n` on disk — its
+    /// `\r` separators are normalized to `\n` on load and only turned back
+    /// into `\r` on save (see [`normalize_line_endings`] and
+    /// `convert_line_endings_to`). So CR inserts a bare `\n`, not `\r`;
+    /// inserting `\r` would leave a literal control char that never splits
+    /// the line (issue #2736).
+    pub fn insertion_str(&self) -> &'static str {
+        match self {
+            Self::LF => "\n",
+            Self::CRLF => "\r\n",
+            Self::CR => "\n",
         }
     }
 
@@ -186,8 +208,8 @@ pub fn convert_to_encoding(utf8_bytes: &[u8], target_encoding: Encoding) -> Vec<
 /// Normalize line endings in the given bytes to LF only.
 ///
 /// Converts CRLF (\r\n) and CR (\r) to LF (\n) for internal
-/// representation. Kept for tests and potential future use.
-#[allow(dead_code)]
+/// representation. Used on load to normalize Classic-Mac (CR) files so
+/// the `\n`-based line model can split them into rows (issue #2736).
 pub fn normalize_line_endings(bytes: Vec<u8>) -> Vec<u8> {
     let mut normalized = Vec::with_capacity(bytes.len());
     let mut i = 0;

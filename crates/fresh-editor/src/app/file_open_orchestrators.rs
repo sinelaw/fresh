@@ -1067,11 +1067,23 @@ impl crate::app::window::Window {
             EditorState::from_buffer_with_language(buffer, detected)
         } else {
             // File doesn't exist - create empty buffer with the file path set
-            EditorState::new_with_path(
+            let mut state = EditorState::new_with_path(
                 self.resources.config.editor.large_file_threshold_bytes as usize,
                 Arc::clone(&self.authority().filesystem),
                 path.to_path_buf(),
-            )
+            );
+            // Honor the configured default line ending for the file the
+            // user is about to create — without this the buffer keeps the
+            // hard-coded LF default and saving a brand-new file ignored
+            // `editor.default_line_ending` (issue #2736).
+            state.buffer.set_default_line_ending(
+                self.resources
+                    .config
+                    .editor
+                    .default_line_ending
+                    .to_line_ending(),
+            );
+            state
         };
         // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
 

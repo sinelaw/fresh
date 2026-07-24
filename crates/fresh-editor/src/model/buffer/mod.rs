@@ -194,6 +194,23 @@ pub struct BufferSnapshot {
     pub next_buffer_id: usize,
 }
 
+/// Normalize loaded content for the internal `\n`-based line model.
+///
+/// The buffer splits lines on `\n`. Classic-Mac (CR) files use `\r` as
+/// the separator and contain no `\n`, so without this they load as a
+/// single line with literal `<0D>` glyphs (issue #2736). When the
+/// detected ending is CR, rewrite every `\r` (and any stray `\r\n`) to
+/// `\n`; the CR ending is preserved in `BufferFormat` and reconstructed
+/// on save. LF and CRLF content is returned untouched so their raw bytes
+/// (including the `\r` of a CRLF pair) round-trip exactly as before.
+fn normalize_for_line_ending(content: Vec<u8>, line_ending: LineEnding) -> Vec<u8> {
+    if line_ending == LineEnding::CR {
+        format::normalize_line_endings(content)
+    } else {
+        content
+    }
+}
+
 impl TextBuffer {
     /// Create a new text buffer with the given filesystem implementation.
     /// Note: large_file_threshold is ignored in the new implementation
@@ -289,10 +306,16 @@ impl TextBuffer {
         // Auto-detect encoding and convert to UTF-8 if needed
         let (encoding, utf8_content) = format::detect_and_convert_encoding(&content);
 
-        let bytes = utf8_content.len();
-
         // Auto-detect line ending format from content
         let line_ending = format::detect_line_ending(&utf8_content);
+
+        // Classic-Mac (CR) files use `\r` as the separator, but the line
+        // model splits on `\n`. Normalize CR (and any stray CRLF) to `\n`
+        // so the file splits into rows; the CR ending is remembered in
+        // BufferFormat and reconstructed on save (issue #2736).
+        let utf8_content = normalize_for_line_ending(utf8_content, line_ending);
+
+        let bytes = utf8_content.len();
 
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, utf8_content);
@@ -327,10 +350,14 @@ impl TextBuffer {
         // Convert from specified encoding to UTF-8
         let utf8_content = encoding::convert_to_utf8(&content, encoding);
 
-        let bytes = utf8_content.len();
-
         // Auto-detect line ending format from content
         let line_ending = format::detect_line_ending(&utf8_content);
+
+        // Normalize CR separators to `\n` for the `\n`-based line model
+        // (see `from_bytes`; issue #2736).
+        let utf8_content = normalize_for_line_ending(utf8_content, line_ending);
+
+        let bytes = utf8_content.len();
 
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, utf8_content);
@@ -560,6 +587,21 @@ impl TextBuffer {
 
         // UTF-8/ASCII files can use lazy loading
         let line_ending = format::detect_line_ending(&sample);
+
+        // Classic-Mac (CR) files must be normalized to `\n` in memory so
+        // the line model can split them (issue #2736). Lazy loading keeps
+        // the raw on-disk bytes, which would leave the `\r` separators
+        // unsplit, so fall back to a full normalizing load for CR files
+        // (same escape hatch the non-UTF-8 branch above uses).
+        if line_ending == LineEnding::CR {
+            let contents = fs.read_file(path)?;
+            let mut buffer = Self::from_bytes(contents, fs);
+            buffer.persistence.set_file_path(path.to_path_buf());
+            buffer.persistence.clear_modified();
+            buffer.file_kind.set_large_file(true);
+            buffer.file_kind.set_binary(is_binary);
+            return Ok(buffer);
+        }
 
         // Create an unloaded buffer that references the entire file
         let buffer = StringBuffer {

@@ -963,7 +963,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 
     // Collect cursor IDs and positions
     let vs_mode = state.buffer_settings.virtual_space;
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let cursor_info: Vec<_> = cursor_vec
         .iter()
         .map(|(cursor_id, cursor)| {
@@ -1283,7 +1283,7 @@ fn handle_insert_newline(
     }
 
     // Now process insertions
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     for (cursor_id, indent_position) in indent_positions {
         // Calculate indent for new line
         let mut text = line_ending.to_string();
@@ -1626,7 +1626,7 @@ fn handle_insert_tab(
 
         // Insert tabs (materializing any virtual-space gap first)
         let vs_mode = state.buffer_settings.virtual_space;
-        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending = state.buffer.line_ending().insertion_str();
         for (cursor_id, cursor) in cursor_vec {
             let gap = crate::model::virtual_space::virtual_gap_text(
                 vs_mode,
@@ -2202,7 +2202,7 @@ fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &m
 /// `MoveCursor` cancels the advance `apply_insert` would otherwise make,
 /// which is what distinguishes OpenLine from Enter.
 fn handle_open_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let len = line_ending.len();
     for (cursor_id, cursor) in cursors.iter() {
         events.push(Event::Insert {
@@ -2394,7 +2394,7 @@ fn handle_toggle_case(state: &mut EditorState, cursors: &Cursors, events: &mut V
 fn handle_sort_lines(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
     // Sort selected lines alphabetically
     // Process cursors in reverse order to avoid position shifts
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let mut selections: Vec<_> = cursors
         .iter()
         .filter_map(|(cursor_id, cursor)| cursor.selection_range().map(|range| (cursor_id, range)))
@@ -2476,7 +2476,7 @@ fn handle_duplicate_line(
 
     for (cursor_id, line_start, line_end) in cursor_data {
         let line_text = state.get_text_range(line_start, line_end);
-        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending = state.buffer.line_ending().insertion_str();
         // If the line doesn't end with a newline, prepend one
         let has_trailing_newline = line_text.ends_with('\n') || line_text.ends_with("\r\n");
         let insert_text = if has_trailing_newline {

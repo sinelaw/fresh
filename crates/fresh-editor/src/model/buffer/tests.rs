@@ -1264,6 +1264,149 @@ fn test_normalize_empty() {
     assert_eq!(output, Vec::<u8>::new());
 }
 
+// ===== Classic-Mac (CR) line-ending support (issue #2736) =====
+
+#[test]
+fn test_detect_cr() {
+    assert_eq!(
+        super::format::detect_line_ending(b"Line 1\rLine 2\rLine 3\r"),
+        LineEnding::CR
+    );
+}
+
+#[test]
+fn test_line_ending_insertion_str_vs_as_str() {
+    // The in-memory line model splits on `\n`, so CR must *insert* a bare
+    // `\n` (normalized form) even though its on-disk representation is `\r`.
+    assert_eq!(LineEnding::LF.insertion_str(), "\n");
+    assert_eq!(LineEnding::CRLF.insertion_str(), "\r\n");
+    assert_eq!(LineEnding::CR.insertion_str(), "\n");
+    // On-disk representation is unchanged.
+    assert_eq!(LineEnding::CR.as_str(), "\r");
+}
+
+#[test]
+fn test_cr_file_splits_into_lines_on_load() {
+    // A Classic-Mac file must split into rows (not render as one line
+    // full of <0D> glyphs) — issue #2736, existing-file case.
+    let buffer = TextBuffer::from_bytes(b"Line 1\rLine 2\rLine 3".to_vec(), test_fs());
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert_eq!(buffer.line_count(), Some(3));
+    // Internally normalized to `\n`; no literal CR survives to render.
+    let text = buffer.get_all_text().unwrap();
+    assert_eq!(&text, b"Line 1\nLine 2\nLine 3");
+    assert!(
+        !text.contains(&b'\r'),
+        "CR file must not keep a literal \\r in the buffer"
+    );
+}
+
+#[test]
+fn test_cr_only_separators_split_into_blank_rows() {
+    // `printf '\r\r'` is two CR separators -> three (empty) rows.
+    let buffer = TextBuffer::from_bytes(b"\r\r".to_vec(), test_fs());
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert_eq!(&buffer.get_all_text().unwrap(), b"\n\n");
+    assert_eq!(buffer.line_count(), Some(3));
+}
+
+#[test]
+fn test_cr_file_roundtrips_on_save() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("classic_mac.txt");
+    std::fs::write(&file_path, b"Line 1\rLine 2\rLine 3\r").unwrap();
+
+    let mut buffer = TextBuffer::load_from_file(
+        &file_path,
+        crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        test_fs(),
+    )
+    .unwrap();
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    // 3 CR separators -> 3 `\n` -> 4 rows (trailing empty line).
+    assert_eq!(buffer.line_count(), Some(4));
+
+    // Saving an unchanged CR buffer must write `\r`, never `\n`.
+    buffer.save_to_file(&file_path).unwrap();
+    let saved = std::fs::read(&file_path).unwrap();
+    assert_eq!(&saved, b"Line 1\rLine 2\rLine 3\r");
+    assert!(
+        !saved.contains(&b'\n'),
+        "CR file must not gain LF bytes on save; got {saved:?}"
+    );
+}
+
+#[test]
+fn test_cr_enter_inserts_row_and_saves_cr() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("cr_edit.txt");
+    std::fs::write(&file_path, b"Line 1\rLine 2").unwrap();
+
+    let mut buffer = TextBuffer::load_from_file(
+        &file_path,
+        crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+        test_fs(),
+    )
+    .unwrap();
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert_eq!(buffer.line_count(), Some(2));
+
+    // Simulate pressing Enter at end of "Line 1" (offset 6). Enter inserts
+    // the buffer's insertion_str, which for CR is a bare `\n`.
+    let ending = buffer.line_ending().insertion_str().to_string();
+    buffer.insert(6, &ending);
+    assert_eq!(
+        buffer.line_count(),
+        Some(3),
+        "Enter in a CR buffer must create a new row"
+    );
+
+    buffer.save_to_file(&file_path).unwrap();
+    let saved = std::fs::read(&file_path).unwrap();
+    assert_eq!(&saved, b"Line 1\r\rLine 2");
+}
+
+#[test]
+fn test_new_buffer_default_cr_saves_cr_separators() {
+    // Brand-new buffer created with default_line_ending = CR must save its
+    // rows with `\r` separators — issue #2736, new-file case.
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("new_cr.txt");
+
+    let mut buffer = TextBuffer::empty(test_fs());
+    buffer.set_default_line_ending(LineEnding::CR);
+    assert_eq!(buffer.line_ending(), LineEnding::CR);
+    assert!(!buffer.is_modified());
+
+    let ending = buffer.line_ending().insertion_str().to_string();
+    buffer.insert(0, &format!("line one{ending}line two"));
+    // The buffer split into two rows despite being CR mode.
+    assert_eq!(buffer.line_count(), Some(2));
+
+    buffer.save_to_file(&file_path).unwrap();
+    let saved = std::fs::read(&file_path).unwrap();
+    assert_eq!(&saved, b"line one\rline two");
+}
+
+#[test]
+fn test_lf_and_crlf_load_unchanged() {
+    // Regression guard: the CR normalization must not touch LF/CRLF files.
+    let lf = TextBuffer::from_bytes(b"a\nb\n".to_vec(), test_fs());
+    assert_eq!(lf.line_ending(), LineEnding::LF);
+    assert_eq!(&lf.get_all_text().unwrap(), b"a\nb\n");
+
+    let crlf = TextBuffer::from_bytes(b"a\r\nb\r\n".to_vec(), test_fs());
+    assert_eq!(crlf.line_ending(), LineEnding::CRLF);
+    // CRLF keeps its raw `\r` bytes in the buffer.
+    assert_eq!(&crlf.get_all_text().unwrap(), b"a\r\nb\r\n");
+}
+
 /// Regression test: get_all_text() returns empty for large files with unloaded regions
 ///
 /// This was the root cause of a bug where recovery auto-save would save 0 bytes

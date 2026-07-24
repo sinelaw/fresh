@@ -1273,7 +1273,7 @@ impl Editor {
         let vs_mode = self.active_state().buffer_settings.virtual_space;
         let mut cursor_data: Vec<_> = {
             let state = self.active_state();
-            let line_ending = state.buffer.line_ending().as_str();
+            let line_ending = state.buffer.line_ending().insertion_str();
             self.active_cursors()
                 .iter()
                 .map(|(cursor_id, cursor)| {

@@ -505,6 +505,85 @@ fn migrated_cr_in_lf_file_is_visible_as_0d() {
 }
 
 #[test]
+fn migrated_cr_buffer_splits_into_rows_and_hides_cr() {
+    // Classic-Mac (CR) file must split into rows and NOT surface the CR
+    // separators as <0D> glyphs — issue #2736, existing-file case.
+    let content = "Line 1\rLine 2\rLine 3\r";
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = harness
+        .load_buffer_from_text_named("classic_mac.txt", content)
+        .unwrap();
+    harness.render().unwrap();
+
+    assert_any_row_contains(&mut harness, "Line 1");
+    assert_any_row_contains(&mut harness, "Line 2");
+    assert_any_row_contains(&mut harness, "Line 3");
+    // CR separators must not leak as glyphs in a CR-detected file.
+    assert_no_row_contains(&mut harness, "<0D>");
+    assert_no_row_contains(&mut harness, "^M");
+    drop(fixture);
+}
+
+#[test]
+fn migrated_cr_cursor_moves_forward_across_rows() {
+    // Down must advance the byte offset across CR-separated rows — proves
+    // CR is a real line break in the model, not one long line (#2736).
+    let content = "First\rSecond\rThird\r";
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = harness
+        .load_buffer_from_text_named("cr_cursor.txt", content)
+        .unwrap();
+
+    let initial = harness.cursor_position();
+    assert_eq!(initial, 0, "Should start at byte 0");
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    let after_down = harness.cursor_position();
+    assert!(
+        after_down > initial,
+        "Down should advance past the first CR row (got {after_down})"
+    );
+    drop(fixture);
+}
+
+#[test]
+fn migrated_cr_enter_creates_row_and_saves_cr() {
+    // Enter in a CR buffer must create a new row (not insert a literal CR
+    // into the same line) and the save must round-trip `\r` — issue #2736.
+    let content = "Line 1\rLine 3\r";
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = harness
+        .load_buffer_from_text_named("cr_newline.txt", content)
+        .unwrap();
+
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("Line 2").unwrap();
+    harness.render().unwrap();
+
+    assert_any_row_contains(&mut harness, "Line 1");
+    assert_any_row_contains(&mut harness, "Line 2");
+    assert_any_row_contains(&mut harness, "Line 3");
+    assert_no_row_contains(&mut harness, "<0D>");
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.editor().active_state().buffer.is_modified())
+        .unwrap();
+
+    let saved = std::fs::read(&fixture.path).unwrap();
+    assert_eq!(
+        saved, b"Line 1\rLine 2\rLine 3\r",
+        "CR file must keep Classic-Mac endings end-to-end; saved={saved:?}"
+    );
+}
+
+#[test]
 fn migrated_crlf_cursor_visibility_across_grown_buffer() {
     // Source: `test_crlf_cursor_visibility`. Java buffer → switch to
     // CRLF → grow via paste 2x → walk every line forward and back,
