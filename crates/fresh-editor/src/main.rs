@@ -3795,7 +3795,15 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             allow_downgrade: args.update_allow_downgrade,
             ..Default::default()
         };
-        fresh::services::updater::run(&opts).map_err(|e| anyhow::anyhow!("update failed: {e}"))
+        // Print a clean, single-line error and exit non-zero on failure — no
+        // anyhow stack backtrace. The editor's update terminal keys the update
+        // indicator off this exit status, and a backtrace in that terminal is
+        // pure noise (this is the path a failed `yay`/manual update hits).
+        if let Err(e) = fresh::services::updater::run(&opts) {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+        Ok(())
     }
     #[cfg(not(feature = "self-update"))]
     {

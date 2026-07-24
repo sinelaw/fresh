@@ -104,9 +104,23 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
             }
         }
         UpdateKind::Manual => {
-            println!("An update is available.");
-            println!("Download it from: https://github.com/{REPO}/releases/tag/v{latest}");
-            Ok(())
+            let url = format!("https://github.com/{REPO}/releases/tag/v{latest}");
+            if opts.check_only {
+                // `--check` only reports availability; a manual install still
+                // "has an update", so this is informational, not a failure.
+                println!("An update is available. Download it from: {url}");
+                Ok(())
+            } else {
+                // Unknown / source install: there is no in-place update
+                // mechanism. Point at the releases page and *fail*, so callers
+                // that key off the exit status (the editor's update indicator)
+                // don't report a phantom "Updated" that never happened.
+                println!(
+                    "An update is available, but this install has no automatic update mechanism."
+                );
+                println!("Download it from: {url}");
+                Err("no automatic update mechanism for this install".to_string())
+            }
         }
     }
 }
