@@ -978,6 +978,18 @@ impl Editor {
             PluginCommand::CloseWindow { id } => {
                 let _ = self.close_window(id);
             }
+            PluginCommand::DeleteWorkspace { root } => {
+                // Permanently forget this directory's persisted session so
+                // boot-time discovery can't rediscover it. Best-effort, like
+                // discovery's own GC: a failed unlink just leaves the file to
+                // be retried next launch rather than aborting the delete.
+                if let Err(e) = crate::workspace::Workspace::delete(&root) {
+                    tracing::warn!(
+                        "DeleteWorkspace: could not forget workspace for {:?}: {e}",
+                        root
+                    );
+                }
+            }
             PluginCommand::PrewarmWindow { id } => {
                 self.prewarm_window(id);
             }

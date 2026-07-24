@@ -3249,6 +3249,16 @@ interface EditorAPI {
 	*/
 	closeWindow(id: number): boolean;
 	/**
+	* Forget a directory's persisted workspace so a permanently deleted
+	* or archived in-place session does not reappear on the next launch.
+	* `closeWindow` only drops the live window — this removes the on-disk
+	* registry file the session discovery would otherwise rediscover.
+	* Call it *after* `closeWindow` for a session whose directory stays
+	* on disk (a worktree-owning session is forgotten by removing its
+	* worktree instead). No-op if nothing is persisted for `root`.
+	*/
+	deleteWorkspace(root: string): boolean;
+	/**
 	* Eagerly initialise an inactive session's per-session state
 	* (file tree walk, ignore matcher, etc.) without diving.
 	* No-op for the active session or unknown id.

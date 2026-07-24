@@ -5330,6 +5330,10 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
       orchestratorSessions.delete(id);
       discoveredIdByPath.delete(s.root);
     }
+    // The worktree moved to the graveyard, so the original root is gone;
+    // forget its now-dangling persisted workspace explicitly rather than
+    // leaning on boot-time GC to notice the directory vanished.
+    editor.deleteWorkspace(s.root);
     return { ok: true, repoRoot };
   }
 
@@ -5349,6 +5353,11 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
   });
   saveArchiveManifest(repoRoot, manifest);
   orchestratorSessions.delete(id);
+  // In-place archive leaves the directory on disk, so its persisted
+  // workspace must be forgotten too — otherwise discovery re-adds it as a
+  // live session on the next launch, double-listed with its archive entry.
+  // Unarchive reopens from the manifest, so the dropped layout is expendable.
+  editor.deleteWorkspace(s.root);
   return { ok: true, repoRoot };
 }
 
@@ -5625,6 +5634,13 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
     // could linger in the model and "come back" when the dialog reopens.
     orchestratorSessions.delete(id);
   }
+  // Permanently forget the persisted workspace so boot-time session
+  // discovery can't resurrect this row on the next launch. A worktree
+  // session already had its directory removed above (discovery GCs the
+  // now-dangling file), but an in-place / launch session keeps its
+  // directory, so its `workspaces/<root>.json` must be dropped explicitly
+  // or the row reappears after a restart.
+  editor.deleteWorkspace(s.root);
   return { ok: true, repoRoot };
 }
 

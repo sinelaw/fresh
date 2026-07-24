@@ -2686,6 +2686,19 @@ pub enum PluginCommand {
     /// first. Fires `session_closed` on success.
     CloseWindow { id: WindowId },
 
+    /// Forget a directory's persisted workspace registry entry (the
+    /// `workspaces/<encoded-root>.json` file(s) the boot-time session
+    /// discovery scans). `CloseWindow` only drops the in-memory window;
+    /// without this the on-disk file survives and — because discovery
+    /// garbage-collects only entries whose directory is *gone* — an
+    /// in-place session (one that keeps its directory, unlike a worktree
+    /// the caller `git worktree remove`s) is rediscovered on the next
+    /// launch and "comes back". The orchestrator sends this when Delete
+    /// or Archive permanently forgets such a session. Removes every
+    /// co-tenant file at `root`; a still-open co-tenant window re-writes
+    /// its own file on its next checkpoint.
+    DeleteWorkspace { root: PathBuf },
+
     /// Eagerly initialise an inactive session's per-session state
     /// (file tree walk, ignore matcher, etc.) without diving. The
     /// only thing that's actually pre-warmed today is the file
