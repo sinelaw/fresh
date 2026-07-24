@@ -207,9 +207,14 @@ async function isGitTracked(filePath: string): Promise<boolean> {
 async function getGitDiff(filePath: string): Promise<string> {
   const cwd = getFileDirectory(filePath);
 
-  // Diff against HEAD to show all changes (staged + unstaged) vs last commit
+  // Diff against HEAD to show all changes (staged + unstaged) vs last commit.
+  // Force Git's native unified format: user-configured external diff/textconv
+  // tools can emit side-by-side or ANSI output that this parser cannot consume.
   const result = await editor.spawnProcess("git", [
+    "--no-pager",
     "diff",
+    "--no-ext-diff",
+    "--no-textconv",
     "HEAD",
     "--no-color",
     "--unified=0", // No context lines for cleaner parsing

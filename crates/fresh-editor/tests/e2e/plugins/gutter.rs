@@ -4,6 +4,7 @@ use crate::common::git_test_helper::{DirGuard, GitTestRepo};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use ratatui::style::Color;
 
 // =============================================================================
 // Test Helpers
@@ -264,6 +265,26 @@ fn test_git_gutter_updates_after_save() {
 
     let screen = harness.screen_to_string();
     println!("After save screen:\n{}", screen);
+
+    let (row, added_line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("// New comment"))
+        .expect("New comment should be visible after save");
+    assert_eq!(
+        added_line.chars().next(),
+        Some('│'),
+        "Saved Git gutter indicator should remain in its original position"
+    );
+
+    let indicator_style = harness
+        .get_cell_style(0, row as u16)
+        .expect("Git gutter indicator cell should have a style");
+    assert_eq!(
+        indicator_style.fg,
+        Some(Color::Rgb(80, 250, 123)),
+        "Saved Git gutter indicator should turn green"
+    );
 }
 
 /// Test that git gutter shows added lines indicator
