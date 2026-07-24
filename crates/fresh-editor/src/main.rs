@@ -3795,15 +3795,22 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             allow_downgrade: args.update_allow_downgrade,
             ..Default::default()
         };
-        // Print a clean, single-line error and exit non-zero on failure — no
-        // anyhow stack backtrace. The editor's update terminal keys the update
-        // indicator off this exit status, and a backtrace in that terminal is
-        // pure noise (this is the path a failed `yay`/manual update hits).
-        if let Err(e) = fresh::services::updater::run(&opts) {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
+        // Map the outcome to a process exit code without an anyhow backtrace
+        // (the editor's update terminal keys the indicator off this exit
+        // status, and a backtrace there is pure noise):
+        //   - Done            -> exit 0
+        //   - ManualRequired  -> exit non-zero, but run() already printed
+        //                        friendly guidance, so add nothing here
+        //   - Err             -> clean one-line "Error: <msg>", exit non-zero
+        use fresh::services::updater::UpdateStatus;
+        match fresh::services::updater::run(&opts) {
+            Ok(UpdateStatus::Done) => Ok(()),
+            Ok(UpdateStatus::ManualRequired) => std::process::exit(1),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
         }
-        Ok(())
     }
     #[cfg(not(feature = "self-update"))]
     {

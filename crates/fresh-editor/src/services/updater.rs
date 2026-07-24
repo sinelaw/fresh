@@ -51,9 +51,24 @@ impl Default for UpdateOptions {
     }
 }
 
-/// Run `fresh update`. Prints human-readable progress and returns an error
-/// string on failure. Never escalates privilege itself.
-pub fn run(opts: &UpdateOptions) -> Result<(), String> {
+/// The outcome of a successful [`run`], for callers that map it to a process
+/// exit code.
+pub enum UpdateStatus {
+    /// The update was performed / delegated, or `--check` reported status.
+    /// Nothing more to do — exit success.
+    Done,
+    /// An update exists but this install has no in-place update mechanism
+    /// (unknown / source). `run` already printed friendly guidance; the caller
+    /// should exit **non-zero** so status-driven callers (the editor's update
+    /// indicator) don't treat it as a successful update — but *without* printing
+    /// an error, because this isn't one.
+    ManualRequired,
+}
+
+/// Run `fresh update`. Prints human-readable progress; returns an error string
+/// on genuine failure, or an [`UpdateStatus`] otherwise. Never escalates
+/// privilege itself.
+pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
     let prov = fresh_update::resolve();
     println!(
         "Installed via: {} (confidence: {:?})",
@@ -70,7 +85,7 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
 
     if !check.update_available && !opts.allow_downgrade {
         println!("You are already on the latest version.");
-        return Ok(());
+        return Ok(UpdateStatus::Done);
     }
 
     let plan = fresh_update::plan(&prov);
@@ -81,18 +96,18 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
                 println!(
                     "An update is available. Run `fresh --cmd update` to install it in place."
                 );
-                return Ok(());
+                return Ok(UpdateStatus::Done);
             }
-            self_contained_update(&prov, &latest, opts)
+            self_contained_update(&prov, &latest, opts).map(|()| UpdateStatus::Done)
         }
         UpdateKind::Delegated | UpdateKind::Toolchain => {
             let cmd = plan.command.clone().unwrap_or_default();
             if opts.check_only {
                 println!("An update is available. Update with: {}", plan.human);
-                return Ok(());
+                return Ok(UpdateStatus::Done);
             }
             if opts.yes && !plan.needs_privilege && !cmd.is_empty() {
-                run_delegated(&cmd)
+                run_delegated(&cmd).map(|()| UpdateStatus::Done)
             } else {
                 if plan.needs_privilege {
                     println!("An update is available. Run (with the required privileges):");
@@ -100,7 +115,7 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
                     println!("An update is available. Run:");
                 }
                 println!("    {}", plan.human);
-                Ok(())
+                Ok(UpdateStatus::Done)
             }
         }
         UpdateKind::Manual => {
@@ -108,18 +123,23 @@ pub fn run(opts: &UpdateOptions) -> Result<(), String> {
             if opts.check_only {
                 // `--check` only reports availability; a manual install still
                 // "has an update", so this is informational, not a failure.
-                println!("An update is available. Download it from: {url}");
-                Ok(())
-            } else {
-                // Unknown / source install: there is no in-place update
-                // mechanism. Point at the releases page and *fail*, so callers
-                // that key off the exit status (the editor's update indicator)
-                // don't report a phantom "Updated" that never happened.
-                println!(
-                    "An update is available, but this install has no automatic update mechanism."
-                );
+                println!("A new version of Fresh is available: {CURRENT_VERSION} → {latest}");
                 println!("Download it from: {url}");
-                Err("no automatic update mechanism for this install".to_string())
+                Ok(UpdateStatus::Done)
+            } else {
+                // Unknown / source install: no in-place mechanism. Friendly
+                // guidance — deliberately not phrased as an error — but the
+                // caller still exits non-zero so the editor's update indicator
+                // doesn't report a phantom "Updated" that never happened.
+                println!("A new version of Fresh is available: {CURRENT_VERSION} → {latest}");
+                println!();
+                println!("This copy of Fresh was installed manually, so it can't update itself.");
+                println!("To update, download the latest release:");
+                println!();
+                println!("    {url}");
+                println!();
+                println!("and replace your current fresh binary with the new one.");
+                Ok(UpdateStatus::ManualRequired)
             }
         }
     }
