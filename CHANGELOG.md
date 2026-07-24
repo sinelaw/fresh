@@ -6,6 +6,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 > Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
+### ⚠️ Terminal input parsing was rewritten
+
+Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate instead of crossterm, to work around crossterm limitations that caused real bugs: dropped modified F1-F4 keys (`Shift+F3` did nothing, #699), unchecked mouse-coordinate math (a crash, #2732), and desyncing on input split across reads (mouse sequences leaking into terminals, #2745). This touches core input handling broadly, so if anything feels off with keyboard or mouse input, please report it.
+
 ### Features
 
 * **Syntax highlighting inside embedded code blocks** - a fenced code block in a Markdown file (e.g. ```` ```rust ```` ) now highlights with that language's own grammar instead of one flat color; the same mechanism also fixes Vue's `<script>`/`<style>` blocks (#2689, @asukaminato0721).
@@ -24,9 +28,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Dock rows are fully clickable in compact (list) view, ordered by recency, and auto-name themselves from their terminal.
   * Fixed a crash when navigating to an unreachable remote workspace.
   * Closing the last editor tab no longer swallows the Utility Dock into the main tab bar (#2283, @lizdeika).
-* **Terminal & mouse input**
-  * A mouse escape sequence split across reads no longer leaks as literal keystrokes into the focused terminal (#2745, @RetributionByRevenue).
-  * A malformed mouse coordinate no longer crashes the editor (#2732).
+* **Terminal**
   * Scrollback no longer loses output or gets stuck mid-scroll (#2649, @dmknght).
 * **Tabs & splits**
   * A long filename no longer hides other tabs, and per-split scrolling is fixed (#2650, @dmknght).
@@ -42,7 +44,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * Fixed a spurious devcontainer parse error on startup (#2709, @720720).
   * The ruler now draws past the last written line (#2631, @akarinotomoshibi).
   * Edit menu's "Replace..." is now correctly labeled "Query Replace..." (#2135).
-  * `Shift+F3` (Find Previous) works again (#699, @mandolyte).
 
 ### Internals
 
