@@ -175,10 +175,10 @@ pub const NEW_TAB_BUTTON_WIDTH: usize = 3;
 /// Columns reserved at the right edge of a split's tab row for the whole
 /// right-side control cluster, drawn on top of the row afterwards by the
 /// orchestration layer. When a split has any control button the cluster reads
-/// `□ + [sep] > ×` (fresh#2768):
+/// `+ [sep] > □ ×` (fresh#2768):
 ///
 /// ```text
-///   [gap] □ + [sep] > ×
+///   [gap] + [sep] > □ ×
 /// ```
 ///
 /// where `□` (maximize) is present only when `show_maximize`, `×` (close) only
@@ -196,9 +196,9 @@ pub fn split_control_reserve(show_maximize: bool, show_close: bool) -> u16 {
     if !show_maximize && !show_close {
         return 0;
     }
-    // gap(1) + maximize + plus(1) + sep(1) + right-overflow slot(1) + close
+    // gap(1) + plus(1) + sep(1) + right-overflow slot(1) + maximize + close
     // + trailing blank(1).
-    1 + show_maximize as u16 + 1 + 1 + 1 + show_close as u16 + 1
+    1 + 1 + 1 + 1 + show_maximize as u16 + show_close as u16 + 1
 }
 
 /// Glyph drawn at the left edge when earlier tabs are scrolled off.
@@ -950,7 +950,7 @@ impl TabsRenderer {
         // cells — the web renders the tab bar natively from `tab_bar_view`. The
         // TUI always passes `true`.
         draw: bool,
-        // When true the split-control cluster (`□ + [sep] > ×`) is owned by the
+        // When true the split-control cluster (`+ [sep] > □ ×`) is owned by the
         // orchestration layer, so this renderer skips its own trailing `+` and
         // right-overflow `>` (the orchestration draws them in the reserved
         // cluster instead). It still draws the `<` left indicator and the
@@ -1046,7 +1046,7 @@ impl TabsRenderer {
         // column) and drawn on top after the main paragraph render below.
         //
         // With `external_controls` the orchestration layer owns the whole right
-        // cluster (`□ + [sep] > ×`), so this renderer draws no `+` of its own
+        // cluster (`+ [sep] > □ ×`), so this renderer draws no `+` of its own
         // and the full bar width is available to the tabs.
         let tabs_total: usize = final_spans.iter().map(|(_, w)| w).sum();
         let (max_width, pin_plus) = if external_controls {
@@ -1513,11 +1513,11 @@ mod tests {
         // No buttons (single pane): no reservation — the tab renderer draws its
         // own inline/pinned `+` and `<`/`>` indicators.
         assert_eq!(split_control_reserve(false, false), 0);
-        // Maximized single pane: cluster is `□ + [sep] >` (no close), i.e.
-        // gap + □ + `+` + sep + `>` slot + trail = 6.
+        // Maximized single pane: cluster is `+ [sep] > □` (no close), i.e.
+        // gap + `+` + sep + `>` slot + □ + trail = 6.
         assert_eq!(split_control_reserve(true, false), 6);
-        // Multiple splits, not maximized: full cluster `□ + [sep] > ×`, i.e.
-        // gap + □ + `+` + sep + `>` slot + × + trail = 7.
+        // Multiple splits, not maximized: full cluster `+ [sep] > □ ×`, i.e.
+        // gap + `+` + sep + `>` slot + □ + × + trail = 7.
         assert_eq!(split_control_reserve(true, true), 7);
     }
 

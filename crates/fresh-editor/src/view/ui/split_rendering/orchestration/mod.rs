@@ -761,7 +761,7 @@ fn render_split_tab_bar(
     let show_maximize_btn = has_multiple_splits || is_maximized;
     let show_close_btn = has_multiple_splits && !is_maximized;
     // When a split has any control button the whole right cluster
-    // (`□ + [sep] > ×`) is owned here (drawn on top after the tabs); the tab
+    // (`+ [sep] > □ ×`) is owned here (drawn on top after the tabs); the tab
     // renderer then skips its own `+`/`>`. A single, unmaximized split has no
     // cluster and lets the tab renderer draw its own inline `+`/`>` (fresh#2768).
     let external_controls = show_maximize_btn || show_close_btn;
@@ -813,9 +813,9 @@ fn render_split_tab_bar(
     }
 
     // Draw the right-side control cluster on top of the reserved columns, in
-    // visual order `□ + [sep] > ×` (fresh#2768):
+    // visual order `+ [sep] > □ ×` (fresh#2768):
     //
-    //   [gap] □ + [sep] > ×  [trail]
+    //   [gap] + [sep] > □ ×  [trail]
     //
     // `□` (maximize) is present only when `show_maximize_btn`, `×` (close) only
     // when `show_close_btn`, `+` (new buffer) is always present, and the `>`
@@ -832,24 +832,10 @@ fn render_split_tab_bar(
         .style(Style::default().bg(theme.tab_separator_bg))
         .render(Rect::new(cluster_x, tab_row, reserve, 1), buf);
 
-    let mut cx = cluster_x + 1; // skip the leading gap
-    if show_maximize_btn {
-        let is_hovered = hovered_maximize_split == Some(split_id);
-        let max_fg = if is_hovered {
-            theme.tab_close_hover_fg
-        } else {
-            theme.line_number_fg
-        };
-        // □ = maximize, ⧉ = unmaximize (restore).
-        let icon = if is_maximized { "⧉" } else { "□" };
-        Paragraph::new(icon)
-            .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg))
-            .render(Rect::new(cx, tab_row, 1, 1), buf);
-        maximize_split_areas.push((split_id, tab_row, cx, cx + 1));
-        cx += 1;
-    }
+    // Skip the leading gap.
+    let mut cx = cluster_x + 1;
     // "+" new-buffer button — styled like an inactive tab so it reads as a
-    // button, immediately to the right of the maximize glyph.
+    // button, at the left of the cluster.
     Paragraph::new("+")
         .style(
             Style::default()
@@ -859,7 +845,7 @@ fn render_split_tab_bar(
         .render(Rect::new(cx, tab_row, 1, 1), buf);
     tab_layout.new_tab_area = Some(Rect::new(cx, tab_row, 1, 1));
     cx += 1;
-    // Separator gap so `+` is visually distinct from the `> ×` group.
+    // Separator gap so `+` is visually distinct from the `> □ ×` group.
     cx += 1;
     // ">" right-overflow indicator — glyph only when tabs overflow; the column
     // is reserved either way so the cluster never shifts as you scroll.
@@ -875,6 +861,21 @@ fn render_split_tab_bar(
         tab_layout.right_scroll_area = Some(gt_rect);
     }
     cx += 1;
+    // "□" maximize / "⧉" unmaximize (restore) — just before the close button.
+    if show_maximize_btn {
+        let is_hovered = hovered_maximize_split == Some(split_id);
+        let max_fg = if is_hovered {
+            theme.tab_close_hover_fg
+        } else {
+            theme.line_number_fg
+        };
+        let icon = if is_maximized { "⧉" } else { "□" };
+        Paragraph::new(icon)
+            .style(Style::default().fg(max_fg).bg(theme.tab_separator_bg))
+            .render(Rect::new(cx, tab_row, 1, 1), buf);
+        maximize_split_areas.push((split_id, tab_row, cx, cx + 1));
+        cx += 1;
+    }
     if show_close_btn {
         let is_hovered = hovered_close_split == Some(split_id);
         let close_fg = if is_hovered {

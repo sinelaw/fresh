@@ -32,8 +32,8 @@ fn leaf_count(harness: &EditorTestHarness) -> usize {
 }
 
 /// Locate the left pane's close-split `×` button by finding the cluster's
-/// maximize glyph `□`. The cluster is laid out `[gap] □ + [sep] > ×`, so the
-/// `×` sits four columns to the right of the `□` (fresh#2768).
+/// maximize glyph `□`. The cluster is laid out `[gap] + [sep] > □ ×`, so the
+/// `×` sits immediately to the right of the `□` (fresh#2768).
 fn close_button_pos(harness: &EditorTestHarness) -> (u16, u16) {
     let height = harness.buffer().area.height;
     for row in 0..height {
@@ -43,7 +43,7 @@ fn close_button_pos(harness: &EditorTestHarness) -> (u16, u16) {
             // (everything left of the cluster is ASCII, so this equals the
             // display column).
             let col = text[..idx].chars().count() as u16;
-            return (col + 4, row);
+            return (col + 1, row);
         }
     }
     panic!("could not find the maximize glyph (□) in any row");
