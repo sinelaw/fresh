@@ -12,12 +12,12 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
 
 ### Features
 
+* **In-editor self-update** - update Fresh from the status-bar indicator, or via `fresh --cmd update`.
 * **Syntax highlighting inside embedded code blocks** - a fenced code block in a Markdown file (e.g. ```` ```rust ```` ) now highlights with that language's own grammar instead of one flat color; the same mechanism also fixes Vue's `<script>`/`<style>` blocks (#2689, requested by @asukaminato0721).
 * **Better Bazel/Starlark highlighting** - functions, operators, punctuation, and built-ins are now highlighted, and `.bazel`/`MODULE.bazel` files are recognized (contributed by @asukaminato0721).
 * **Orchestrator: agents & workspaces**
   * **`Run Agent…` command** launches a terminal or a coding agent (`claude`, `codex`, `opencode`, `aider`) in your current workspace or a new one, without the full New Workspace dialog.
   * **Non-blocking workspace creation** - creating a workspace no longer freezes the editor; choose **Create & Visit** or **Create in Background** and keep working while it comes up.
-* **In-editor self-update** - update Fresh from the status-bar indicator, or via `fresh --cmd update`.
 * **Classic Mac (CR) line endings** are now fully supported (#2736, requested by @720720).
 * **`.editorconfig` support** - `indent_style`/`indent_size`/`tab_width` are picked up automatically (#959, requested by @nyurik).
 * **Save All** - save every modified buffer at once from the File menu (#2289, requested by @alspaughb).
@@ -28,12 +28,12 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
   * Codex "Auto mode" works again (it was passing a flag recent Codex CLI rejects).
   * Dock rows are fully clickable in compact (list) view, ordered by recency, and auto-name themselves from their terminal.
   * Fixed a crash when navigating to an unreachable remote workspace.
-  * Closing the last editor tab no longer swallows the Utility Dock into the main tab bar (#2283, reported by @lizdeika).
 * **Terminal**
   * Scrollback no longer loses output or gets stuck mid-scroll (#2649, reported by @dmknght).
 * **Tabs & splits**
   * A long filename no longer hides other tabs, and per-split scrolling is fixed (#2650, reported by @dmknght).
   * Closing a split now asks for confirmation first.
+  * Closing the last editor tab no longer swallows the Utility Dock into the main tab bar (#2283, reported by @lizdeika).
   * Plugin split APIs (`setSplitRatio`, `openFileInSplit`) no longer crash or silently no-op on an invalid split (#2769, #2770, #2783, reported by @RetributionByRevenue).
 * **LSP**
   * Hover now merges results from every configured server instead of only the first (#2635, reported by @hkngoc).
