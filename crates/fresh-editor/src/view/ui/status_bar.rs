@@ -1449,9 +1449,18 @@ impl StatusBarRenderer {
                 }
                 style
             }
-            ElementKind::Update => Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.menu_dropdown_bg),
+            ElementKind::Update => {
+                // Keep the indicator's distinctive palette, but underline on
+                // hover to signal it's clickable — matching the LSP / read-only
+                // indicators.
+                let mut style = Style::default()
+                    .fg(theme.menu_highlight_fg)
+                    .bg(theme.menu_dropdown_bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
             // The palette shortcut hint is purely informational — driven
             // by the dedicated `status_palette_*` theme keys (default
             // to the neutral status-bar palette so it blends into the

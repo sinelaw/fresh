@@ -1128,6 +1128,39 @@ impl Editor {
     /// running) — or to dismiss. Toggles closed on a second click, mirroring the
     /// LSP / remote / read-only menus.
     pub fn show_update_popup(&mut self, version: &str) {
+        use crate::view::popup::PopupListItem;
+        let items = vec![PopupListItem::new(format!(
+            "    {}",
+            t!("update.popup_update", version = version)
+        ))
+        .with_data("update".to_string())];
+        self.push_update_menu(t!("update.available_title").to_string(), items);
+    }
+
+    /// Show the update-*failed* menu, offered when the indicator is clicked
+    /// after an update terminal exited non-zero: retry the update, view the
+    /// update terminal ("Show log"), or dismiss.
+    pub fn show_update_failed_popup(&mut self) {
+        use crate::view::popup::PopupListItem;
+        let items = vec![
+            PopupListItem::new(format!("    {}", t!("update.retry")))
+                .with_data("update".to_string()),
+            PopupListItem::new(format!("    {}", t!("update.show_log")))
+                .with_data("show_log".to_string()),
+        ];
+        self.push_update_menu(t!("update.failed_title").to_string(), items);
+    }
+
+    /// Build + show a status-bar update menu titled `title` with the given
+    /// action rows (a "Dismiss" row is appended automatically). Anchored to the
+    /// `{update}` segment and toggles closed on a repeat click, mirroring the
+    /// LSP / remote / read-only menus. Shared by `show_update_popup` and
+    /// `show_update_failed_popup`.
+    fn push_update_menu(
+        &mut self,
+        title: String,
+        mut items: Vec<crate::view::popup::PopupListItem>,
+    ) {
         use crate::view::popup::{
             Popup, PopupContent, PopupKind, PopupListItem, PopupPosition, PopupResolver,
         };
@@ -1158,16 +1191,10 @@ impl Editor {
                 )
             })
             .unwrap_or_else(|| "Esc".to_string());
-
-        let items: Vec<PopupListItem> = vec![
-            PopupListItem::new(format!(
-                "    {}",
-                t!("update.popup_update", version = version)
-            ))
-            .with_data("update".to_string()),
+        items.push(
             PopupListItem::new(format!("    Dismiss ({})", cancel_binding))
                 .with_data("cancel_popup".to_string()),
-        ];
+        );
 
         let position = self
             .active_chrome()
@@ -1190,7 +1217,7 @@ impl Editor {
 
         let popup = Popup {
             kind: PopupKind::List,
-            title: Some(t!("update.available_title").to_string()),
+            title: Some(title),
             description: None,
             transient: false,
             content: PopupContent::List { items, selected: 0 },
@@ -1220,12 +1247,14 @@ impl Editor {
         }
     }
 
-    /// Handle a click/confirm on the update-available menu. "update" launches
-    /// the local update terminal; any other key just dismisses (already done by
-    /// the caller).
+    /// Handle a click/confirm on an update menu. "update" launches the local
+    /// update terminal (fresh run or retry); "show_log" switches to the update
+    /// terminal buffer; anything else just dismisses (already done by caller).
     pub fn handle_update_menu_action(&mut self, action_key: &str) {
-        if action_key == "update" {
-            self.start_self_update();
+        match action_key {
+            "update" => self.start_self_update(),
+            "show_log" => self.show_self_update_output(),
+            _ => {}
         }
     }
 

@@ -1158,8 +1158,14 @@ impl Editor {
             }
             Action::UpdateFresh => {
                 // Once an update is running or finished, the indicator's job is
-                // to surface the update terminal, not to re-offer the update.
+                // to surface the update terminal, not to re-offer the update —
+                // except after a failure, where it offers retry / show-log /
+                // cancel.
                 if self.self_update_phase()
+                    == crate::services::release_checker::SelfUpdatePhase::Failed
+                {
+                    self.show_update_failed_popup();
+                } else if self.self_update_phase()
                     != crate::services::release_checker::SelfUpdatePhase::Idle
                 {
                     self.show_self_update_output();
