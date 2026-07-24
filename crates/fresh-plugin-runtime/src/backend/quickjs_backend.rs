@@ -4907,7 +4907,18 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Set the ratio of a split (0.0 to 1.0, 0.5 = equal)
+    /// Resize the split that `split_id` lives in.
+    ///
+    /// `split_id` is a leaf id (as returned by `getActiveSplitId`,
+    /// `listSplits`, `BufferInfo.splits`, `createTerminal`); the editor
+    /// resolves it to its parent split container and sets that container's
+    /// ratio, moving the divider between this pane and its sibling. `ratio`
+    /// is the fraction of space given to the container's FIRST child
+    /// (0.0–1.0, 0.5 = equal), clamped to [0.1, 0.9]. A leaf with no parent
+    /// container (the only pane) is a no-op.
+    ///
+    /// Note: this is fire-and-forget — the returned bool only reports that
+    /// the command was queued, not whether the resize succeeded.
     pub fn set_split_ratio(&self, split_id: u32, ratio: f32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitRatio {

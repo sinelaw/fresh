@@ -1,18 +1,23 @@
-//! Regression for #2770: `editor.setSplitRatio(leafSplitId, ratio)` used
-//! to hit `unreachable!` inside `SplitManager::set_ratio` and abort the
-//! whole editor. Every plugin-visible split id is a *leaf*, while
-//! `set_ratio` only accepts resizable *container* ids, so any plugin
-//! calling `setSplitRatio` crashed the editor.
+//! Regression for #2770 and follow-up to #2774.
 //!
-//! After the fix the plugin path is a graceful no-op: no panic, and a
-//! leaf id leaves the layout untouched (the internal handler reports
-//! `false` — see the `set_ratio` unit tests in `view::split`).
+//! History: `editor.setSplitRatio(leafSplitId, ratio)` first hit
+//! `unreachable!` inside `SplitManager::set_ratio` and aborted the whole
+//! editor (#2770). PR #2774 made that a graceful no-op. But every
+//! plugin-visible split id is a *leaf* (`getActiveSplitId`, `listSplits`,
+//! `BufferInfo.splits`, `createTerminal` all return leaf ids), while
+//! `set_ratio` only mutates a resizable *container*, so `setSplitRatio`
+//! could never actually resize anything — it always no-op'd.
+//!
+//! This follow-up makes it work: `handle_set_split_ratio` resolves a leaf
+//! id to its parent split container and sets that container's ratio. These
+//! tests assert (a) a lone top-level leaf with no parent is still a graceful
+//! no-op (no panic), and (b) a leaf inside a split now resizes its parent.
 
 #![cfg(feature = "plugins")]
 
 use crate::common::harness::EditorTestHarness;
 use fresh::services::plugins::api::PluginCommand;
-use fresh_core::SplitId;
+use fresh_core::{LeafId, SplitId};
 use std::fs;
 
 fn snapshot_active_split(harness: &EditorTestHarness) -> Option<usize> {
@@ -21,11 +26,11 @@ fn snapshot_active_split(harness: &EditorTestHarness) -> Option<usize> {
     Some(snapshot.active_split_id)
 }
 
-/// Driving `SetSplitRatio` with a leaf split id (the only kind a plugin
-/// ever holds) must not panic/abort the editor, and must leave the
-/// layout unchanged.
+/// Driving `SetSplitRatio` with a *lone* top-level leaf (no parent
+/// container to resize) must not panic/abort the editor, and must leave
+/// the layout unchanged.
 #[test]
-fn set_split_ratio_on_leaf_does_not_panic() {
+fn set_split_ratio_on_lone_leaf_does_not_panic() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("hello.txt");
     fs::write(&path, "hi\n").unwrap();
@@ -57,11 +62,12 @@ fn set_split_ratio_on_leaf_does_not_panic() {
     );
 }
 
-/// Even when a real resizable container exists in the tree, targeting a
-/// *leaf* id is still a no-op (the container's ratio is untouched) — the
-/// handler does not accidentally resolve a leaf to its parent.
+/// When a leaf sits inside a split, `setSplitRatio` on that *leaf* id
+/// resolves to the parent container and actually resizes it — the whole
+/// point of the follow-up fix. Every id a plugin holds is a leaf, so this
+/// is the real plugin path.
 #[test]
-fn set_split_ratio_on_leaf_leaves_container_untouched() {
+fn set_split_ratio_on_leaf_resizes_parent_container() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("hello.txt");
     fs::write(&path, "hi\n").unwrap();
@@ -78,21 +84,91 @@ fn set_split_ratio_on_leaf_leaves_container_untouched() {
 
     let leaf = snapshot_active_split(&harness).expect("active split is a leaf after splitting");
 
+    // The parent container of the active leaf, and its ratio before.
+    let parent = harness
+        .editor()
+        .split_manager_for_tests()
+        .parent_container_of(LeafId(SplitId(leaf)))
+        .expect("a split leaf must have a parent container");
+    let ratio_before = harness
+        .editor()
+        .split_manager_for_tests()
+        .get_ratio(parent.into())
+        .expect("parent container has a ratio");
+    assert_ne!(
+        ratio_before, 0.8,
+        "precondition: parent ratio differs from the value we will set"
+    );
+
+    // Drive the real plugin command with the LEAF id.
     harness
         .editor_mut()
         .handle_plugin_command(PluginCommand::SetSplitRatio {
             split_id: SplitId(leaf),
             ratio: 0.8,
         })
-        .expect("setSplitRatio on a leaf must be a graceful no-op, not an error");
+        .expect("setSplitRatio on a leaf resolves to its parent container");
 
     harness.tick_and_render().unwrap();
 
-    // Both splits are still present — the editor did not crash and the
-    // leaf id did not resize its parent.
+    // The parent container's ratio was actually updated (clamped range).
+    let ratio_after = harness
+        .editor()
+        .split_manager_for_tests()
+        .get_ratio(parent.into())
+        .expect("parent container still has a ratio");
+    assert_eq!(
+        ratio_after, 0.8,
+        "setSplitRatio on a leaf must resize its parent container"
+    );
+
+    // Editor is still alive and the active split id is unchanged.
     assert_eq!(
         snapshot_active_split(&harness),
         Some(leaf),
-        "editor must survive setSplitRatio on a leaf even with a container present"
+        "editor must survive setSplitRatio and keep the same active leaf"
+    );
+}
+
+/// Clamping still applies when resolving through a leaf: an out-of-range
+/// ratio is pinned to [0.1, 0.9] on the parent container.
+#[test]
+fn set_split_ratio_on_leaf_clamps_parent_ratio() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("hello.txt");
+    fs::write(&path, "hi\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.editor_mut().open_file(&path).unwrap();
+    harness.tick_and_render().unwrap();
+
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(fresh::input::keybindings::Action::SplitHorizontal);
+    harness.tick_and_render().unwrap();
+
+    let leaf = snapshot_active_split(&harness).expect("active split is a leaf after splitting");
+    let parent = harness
+        .editor()
+        .split_manager_for_tests()
+        .parent_container_of(LeafId(SplitId(leaf)))
+        .expect("a split leaf must have a parent container");
+
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::SetSplitRatio {
+            split_id: SplitId(leaf),
+            ratio: 5.0,
+        })
+        .expect("setSplitRatio on a leaf resolves to its parent container");
+    harness.tick_and_render().unwrap();
+
+    assert_eq!(
+        harness
+            .editor()
+            .split_manager_for_tests()
+            .get_ratio(parent.into()),
+        Some(0.9),
+        "an out-of-range ratio must clamp to 0.9 on the parent container"
     );
 }

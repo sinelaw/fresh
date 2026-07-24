@@ -1952,6 +1952,47 @@ mod tests {
     }
 
     #[test]
+    fn test_leaf_resolves_to_parent_container_for_ratio() {
+        // Follow-up to #2774 (#2770): plugins only ever hold *leaf* split
+        // ids, so `setSplitRatio` must resolve a leaf to its parent
+        // container. Here we exercise the building blocks
+        // (`parent_container_of` + `set_ratio`) that `handle_set_split_ratio`
+        // composes.
+        let mut manager = SplitManager::new(BufferId(0));
+        let new_leaf = manager
+            .split_active(SplitDirection::Horizontal, BufferId(1), 0.5)
+            .unwrap();
+        let new_leaf_id: SplitId = new_leaf.into();
+
+        // The leaf itself is not a container: setting its ratio directly fails.
+        assert!(
+            !manager.set_ratio(ContainerId(new_leaf_id), 0.75),
+            "a leaf split id is not a resizable container"
+        );
+
+        // But it resolves to the parent Split container...
+        let parent = manager
+            .parent_container_of(LeafId(new_leaf_id))
+            .expect("a split leaf must have a parent container");
+
+        // ...and setting the parent's ratio applies and clamps.
+        assert!(manager.set_ratio(parent, 0.75));
+        assert_eq!(manager.get_ratio(parent.into()), Some(0.75));
+        assert!(manager.set_ratio(parent, 0.99));
+        assert_eq!(manager.get_ratio(parent.into()), Some(0.9));
+    }
+
+    #[test]
+    fn test_lone_top_level_leaf_has_no_parent_container() {
+        // A single un-split pane has no parent container, so there is no
+        // resizable divider — resolution must yield `None` (a graceful
+        // `false` no-op in `handle_set_split_ratio`), never a panic.
+        let manager = SplitManager::new(BufferId(0));
+        let lone_leaf: SplitId = manager.active_split().into();
+        assert_eq!(manager.parent_container_of(LeafId(lone_leaf)), None);
+    }
+
+    #[test]
     fn test_split_rect_horizontal() {
         let rect = Rect {
             x: 0,

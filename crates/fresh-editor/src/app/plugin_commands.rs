@@ -1050,26 +1050,50 @@ impl Editor {
 
     /// Handle SetSplitRatio command.
     ///
-    /// Returns `true` if `split_id` resolved to a resizable split
-    /// container and the ratio was applied, `false` if it pointed at a
-    /// leaf, grouped, or unknown node. Every plugin-visible split id is
-    /// a leaf, so a plugin calling `setSplitRatio` on one must be a
-    /// graceful no-op that reports failure — never a panic that aborts
-    /// the editor (issue #2770).
+    /// Every split id a plugin can obtain is a *leaf* id (`getActiveSplitId`,
+    /// `listSplits`, `BufferInfo.splits`, `createTerminal` all return leaf
+    /// ids), but only a `SplitNode::Split` *container* carries a resizable
+    /// `ratio`. So we resolve the leaf to its parent container and set the
+    /// parent's ratio — that is exactly "resize the pane the plugin is
+    /// pointing at" (it moves the divider between that leaf and its sibling).
+    ///
+    /// Ratio orientation: a parent `Split`'s `ratio` is the fraction of space
+    /// given to its FIRST child (larger ratio => bigger first child, smaller
+    /// second child). A plugin asking to resize "its" leaf resizes that
+    /// parent split; whether the leaf is the first or second child, adjusting
+    /// the parent ratio is the single, well-defined knob for that divider, and
+    /// the value is clamped to `[0.1, 0.9]`. Callers wanting a specific pane to
+    /// grow should account for which side it sits on.
+    ///
+    /// Returns `true` if the ratio was applied:
+    /// - a leaf id with a resizable parent `Split` → set the parent's ratio;
+    /// - a container id (rare for plugins) → set it directly (legacy behavior);
+    /// - a lone top-level leaf (no parent container) or unknown id → no-op,
+    ///   `false`. Never panics (issue #2770, follow-up to #2774).
     pub(super) fn handle_set_split_ratio(&mut self, split_id: SplitId, ratio: f32) -> bool {
-        // Plugin sends arbitrary SplitId — convert to ContainerId at the boundary
-        let container_id = ContainerId(split_id);
-        let applied = self
+        let manager = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_ratio(container_id, ratio);
+            .expect("active window must have a populated split layout");
+
+        // Try the id as a container directly first (preserves behavior for a
+        // real container id); `set_ratio` is a no-op returning `false` on a
+        // leaf/grouped/unknown node. If that fails, resolve the (leaf) id to
+        // its parent container and set that.
+        let applied = if manager.set_ratio(ContainerId(split_id), ratio) {
+            true
+        } else if let Some(parent) = manager.parent_container_of(LeafId(split_id)) {
+            manager.set_ratio(parent, ratio)
+        } else {
+            false
+        };
+
         if applied {
             tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
         } else {
             tracing::debug!(
-                "setSplitRatio: split {:?} is not a resizable container; ignoring",
+                "setSplitRatio: split {:?} has no resizable parent container; ignoring",
                 split_id
             );
         }
