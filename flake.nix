@@ -64,6 +64,12 @@
               (lib.fileset.fileFilter (file: file.hasExt "ttf") unfilteredRoot)
               # Icon files (used by include_bytes! in fresh-gui)
               (lib.fileset.fileFilter (file: file.hasExt "png") unfilteredRoot)
+              # Web UI assets assembled by crates/fresh-editor/build.rs
+              # (shell.html + css/*.css + js/*.js concatenated into the
+              # embedded webui-index.html). The .js filter above already
+              # catches web-ui/js, but shell.html and the css/ parts are
+              # not covered by any extension filter, so include the tree.
+              ./web-ui
               # Runtime assets in crates/fresh-editor
               ./crates/fresh-editor/docs
               ./crates/fresh-editor/keymaps
