@@ -647,7 +647,8 @@ impl Editor {
             warning_log: None,
             status_log_path: None,
             self_update_phase: crate::services::release_checker::SelfUpdatePhase::default(),
-            self_update_log: None,
+            self_update_terminal: None,
+            self_update_output: None,
             #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             path_changes_for_test: Vec::new(),

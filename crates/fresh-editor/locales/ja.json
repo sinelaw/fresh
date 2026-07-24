@@ -1616,11 +1616,14 @@
   "update.started": "Updating fresh in the background. Log: %{path}. Restart fresh when it finishes.",
   "update.unsupported": "This build has no self-update support; download from https://github.com/sinelaw/fresh/releases",
   "update.up_to_date": "fresh is already up to date.",
-  "action.open_update_log": "Open update log",
-  "cmd.open_update_log": "Open update log",
-  "cmd.open_update_log_desc": "View the background self-update log",
-  "update.log_unavailable": "Update log not available.",
+  "action.open_update_log": "Show update output",
+  "cmd.open_update_log": "Show update output",
+  "cmd.open_update_log_desc": "Switch to the update terminal buffer",
+  "update.log_unavailable": "Update output not available.",
+  "update.available_title": "Update available",
+  "update.popup_update": "Update to v%{version}",
+  "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for log"
+  "status.update_failed": "Update failed — click for details"
 }

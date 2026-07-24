@@ -367,11 +367,6 @@ pub enum AsyncMessage {
         exit_code: Option<i32>,
     },
 
-    /// A background self-update process (spawned by the interactive "Update
-    /// now" flow) exited. Drives the status-bar update indicator to its
-    /// terminal state; `success` is the child's exit status.
-    SelfUpdateFinished { success: bool },
-
     /// LSP progress notification ($/progress)
     LspProgress {
         language: String,

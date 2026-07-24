@@ -321,43 +321,6 @@ impl Editor {
                     self.set_status_message(t!("buffer.revert_cancelled").to_string());
                 }
             }
-            PromptType::ConfirmUpdate => {
-                let input_lower = input.trim().to_lowercase();
-                if matches!(input_lower.as_str(), "y" | "yes" | "update") {
-                    #[cfg(feature = "self-update")]
-                    {
-                        // Report progress/outcome through the update indicator,
-                        // not a transient status line. The watcher thread sends
-                        // `SelfUpdateFinished` when the child exits.
-                        let log_dir = crate::services::log_dirs::log_dir().clone();
-                        match self.async_bridge.as_ref().map(|b| b.sender()) {
-                            Some(sender) => {
-                                match crate::services::updater::spawn_background_update(
-                                    &log_dir, sender,
-                                ) {
-                                    Ok(path) => self.begin_self_update(path),
-                                    Err(e) => {
-                                        tracing::error!("failed to launch background update: {e}");
-                                        self.finish_self_update(false);
-                                    }
-                                }
-                            }
-                            None => {
-                                tracing::error!(
-                                    "no async bridge available; cannot launch background update"
-                                );
-                                self.finish_self_update(false);
-                            }
-                        }
-                    }
-                    #[cfg(not(feature = "self-update"))]
-                    {
-                        self.set_status_message(t!("update.unsupported").to_string());
-                    }
-                } else {
-                    self.set_status_message(t!("update.cancelled").to_string());
-                }
-            }
             PromptType::ConfirmSaveConflict => {
                 let input_lower = input.trim().to_lowercase();
                 if input_lower == "o" || input_lower == "overwrite" {

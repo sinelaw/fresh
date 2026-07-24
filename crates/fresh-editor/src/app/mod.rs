@@ -978,10 +978,15 @@ pub struct Editor {
     /// status-bar update indicator (see `SelfUpdatePhase`).
     self_update_phase: crate::services::release_checker::SelfUpdatePhase,
 
-    /// Path to the background self-update log, set when an update is launched.
-    /// Always a **local** path — opened via `open_local_file`, never the
-    /// window's (possibly remote) authority.
-    self_update_log: Option<PathBuf>,
+    /// The local terminal running an interactive self-update, if one is in
+    /// flight — matched against `TerminalExited` to move the indicator to its
+    /// terminal state. `None` once reaped.
+    self_update_terminal: Option<fresh_core::TerminalId>,
+
+    /// The (window, buffer) of the update terminal, so the indicator can switch
+    /// back to it on click. The update always runs locally, so this is a local
+    /// terminal buffer regardless of the window's authority.
+    self_update_output: Option<(fresh_core::WindowId, fresh_core::BufferId)>,
 
     // Terminal subsystem moved onto `Window` (Step 0d). PTYs and
     // their backing files belong to the window that spawned them, so

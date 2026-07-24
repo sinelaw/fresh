@@ -382,11 +382,13 @@ impl Editor {
                     terminal,
                     exit_code,
                 } => {
+                    // If this is the interactive self-update terminal, move the
+                    // status-bar indicator to its terminal state (success = exit 0).
+                    if self.self_update_terminal == Some(terminal.terminal) {
+                        self.finish_self_update(exit_code == Some(0));
+                        self.self_update_terminal = None;
+                    }
                     self.handle_terminal_exited(terminal, exit_code);
-                }
-
-                AsyncMessage::SelfUpdateFinished { success } => {
-                    self.finish_self_update(success);
                 }
 
                 AsyncMessage::LspServerRequest {

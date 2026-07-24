@@ -1121,6 +1121,114 @@ impl Editor {
         }
     }
 
+    /// Show the update-available menu, anchored to the status bar's `{update}`
+    /// segment. Offers to run the update — which opens a **local** terminal
+    /// buffer running `fresh --cmd update --yes` (so package-manager / sudo
+    /// prompts work and the binary that gets updated is the one actually
+    /// running) — or to dismiss. Toggles closed on a second click, mirroring the
+    /// LSP / remote / read-only menus.
+    pub fn show_update_popup(&mut self, version: &str) {
+        use crate::view::popup::{
+            Popup, PopupContent, PopupKind, PopupListItem, PopupPosition, PopupResolver,
+        };
+        use ratatui::style::Style;
+
+        // Second click on the indicator closes the menu instead of rebuilding.
+        if self
+            .active_state()
+            .popups
+            .top()
+            .is_some_and(|p| matches!(p.resolver, PopupResolver::Update))
+        {
+            self.hide_popup();
+            return;
+        }
+        // Clear any *other* status-bar menu left open before building this one
+        // (done after the toggle check so it never closes our own popup).
+        self.dismiss_menu_popups_for_prompt();
+
+        let cancel_binding = self
+            .keybindings
+            .read()
+            .ok()
+            .and_then(|kb| {
+                kb.get_keybinding_for_action(
+                    &crate::input::keybindings::Action::PopupCancel,
+                    crate::input::keybindings::KeyContext::Popup,
+                )
+            })
+            .unwrap_or_else(|| "Esc".to_string());
+
+        let items: Vec<PopupListItem> = vec![
+            PopupListItem::new(format!(
+                "    {}",
+                t!("update.popup_update", version = version)
+            ))
+            .with_data("update".to_string()),
+            PopupListItem::new(format!("    Dismiss ({})", cancel_binding))
+                .with_data("cancel_popup".to_string()),
+        ];
+
+        let position = self
+            .active_chrome()
+            .status_bar
+            .clickable_area(crate::view::ui::status_bar::StatusBarClickable::Update)
+            .map(
+                |(status_row, col_start, _)| PopupPosition::AboveStatusBarAt {
+                    x: col_start,
+                    status_row,
+                },
+            )
+            .unwrap_or(PopupPosition::BottomRight);
+
+        let popup_width = (items
+            .iter()
+            .map(|i| unicode_width::UnicodeWidthStr::width(i.text.as_str()))
+            .max()
+            .unwrap_or(24)
+            + 4) as u16;
+
+        let popup = Popup {
+            kind: PopupKind::List,
+            title: Some(t!("update.available_title").to_string()),
+            description: None,
+            transient: false,
+            content: PopupContent::List { items, selected: 0 },
+            position,
+            width: popup_width.clamp(28, 50),
+            max_height: 10,
+            bordered: true,
+            border_style: Style::default().fg(self.theme.read().unwrap().popup_border_fg),
+            background_style: Style::default().bg(self.theme.read().unwrap().popup_bg),
+            scroll_offset: 0,
+            text_selection: None,
+            accept_key_hint: None,
+            resolver: PopupResolver::Update,
+            focused: true,
+            focus_key_hint: None,
+        };
+
+        let buffer_id = self.active_buffer();
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        {
+            state.popups.show(popup);
+        }
+    }
+
+    /// Handle a click/confirm on the update-available menu. "update" launches
+    /// the local update terminal; any other key just dismisses (already done by
+    /// the caller).
+    pub fn handle_update_menu_action(&mut self, action_key: &str) {
+        if action_key == "update" {
+            self.start_self_update();
+        }
+    }
+
     /// Dispatch the action selected from the Remote Indicator popup.
     ///
     /// - `"detach"` — `clear_authority()` (falls back to local).

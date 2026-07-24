@@ -1154,15 +1154,15 @@ impl Editor {
                 self.toggle_auto_revert();
             }
             Action::OpenUpdateLog => {
-                self.open_self_update_log();
+                self.show_self_update_output();
             }
             Action::UpdateFresh => {
                 // Once an update is running or finished, the indicator's job is
-                // to surface the log, not to re-offer the update.
+                // to surface the update terminal, not to re-offer the update.
                 if self.self_update_phase()
                     != crate::services::release_checker::SelfUpdatePhase::Idle
                 {
-                    self.open_self_update_log();
+                    self.show_self_update_output();
                 } else if !self.config().self_update {
                     self.set_status_message(t!("update.disabled").to_string());
                 } else if !self.is_update_available() {
@@ -1183,10 +1183,7 @@ impl Editor {
                         })
                         .unwrap_or(false);
                     if actionable {
-                        self.start_prompt(
-                            t!("prompt.update_confirm", version = version).to_string(),
-                            PromptType::ConfirmUpdate,
-                        );
+                        self.show_update_popup(&version);
                     } else {
                         self.set_status_message(t!("update.manual", version = version).to_string());
                     }

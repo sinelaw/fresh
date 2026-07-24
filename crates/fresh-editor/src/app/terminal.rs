@@ -149,6 +149,22 @@ pub(crate) fn agent_command_env(
     env
 }
 
+/// Build a [`TerminalWrapper`] that runs `argv` directly as a local PTY child,
+/// mirroring `Authority::terminal_command`'s `CommandWrap::Direct` arm but
+/// unconditionally local — it consults no window authority. Used for terminals
+/// that must run on the host where `fresh` itself runs (the self-update flow),
+/// never on a window's remote backend.
+fn local_direct_wrapper(argv: &[String]) -> TerminalWrapper {
+    match argv.split_first() {
+        Some((cmd, rest)) => TerminalWrapper {
+            command: cmd.clone(),
+            args: rest.to_vec(),
+            manages_cwd: false,
+        },
+        None => TerminalWrapper::host_shell(),
+    }
+}
+
 impl Window {
     /// Resolve the terminal wrapper used to spawn a new integrated
     /// terminal in this window, applying the `terminal.shell` config
@@ -250,6 +266,32 @@ impl Window {
         command_override: Option<Vec<String>>,
         extra_env: HashMap<String, String>,
     ) -> Option<TerminalId> {
+        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, false)
+    }
+
+    /// Like [`Self::spawn_terminal_session`] but builds the command wrapper from
+    /// the **local host** rather than this window's authority, so `argv` runs
+    /// where the editor process itself runs even when the window is attached to
+    /// a remote (SSH / container) authority. Used by the self-update flow, whose
+    /// in-place binary swap must target the local `fresh`.
+    pub fn spawn_local_terminal_session(
+        &mut self,
+        cwd: Option<PathBuf>,
+        persistent: bool,
+        command_override: Option<Vec<String>>,
+        extra_env: HashMap<String, String>,
+    ) -> Option<TerminalId> {
+        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, true)
+    }
+
+    fn spawn_terminal_session_impl(
+        &mut self,
+        cwd: Option<PathBuf>,
+        persistent: bool,
+        command_override: Option<Vec<String>>,
+        extra_env: HashMap<String, String>,
+        force_local: bool,
+    ) -> Option<TerminalId> {
         let (cols, rows) = self.get_terminal_dimensions();
 
         // Per-window async bridge — terminal output flows back through
@@ -289,12 +331,24 @@ impl Window {
         // prepends `docker exec -it … <id>` so an agent terminal runs in the
         // container rather than on the host (see `Authority::terminal_command`).
         // Empty argv falls back to the interactive shell.
+        //
+        // `force_local` bypasses the window's authority so the command runs on
+        // this host regardless of any remote backend (see `local_direct_wrapper`).
         let wrapper = match command_override {
+            Some(argv) if !argv.is_empty() && force_local => local_direct_wrapper(&argv),
             Some(argv) if !argv.is_empty() => self.authority().terminal_command(&argv),
             _ => self.resolved_terminal_wrapper(),
         };
-        let wrapper = self.apply_remote_terminal_env(wrapper);
-        let env_delta = self.terminal_env_delta(&wrapper);
+        // A forced-local command must not inherit a remote authority's activated
+        // env (venv/direnv living on another host); it runs on this host and
+        // inherits this editor process's real environment instead.
+        let (wrapper, env_delta) = if force_local {
+            (wrapper, crate::services::env_provider::EnvDelta::default())
+        } else {
+            let wrapper = self.apply_remote_terminal_env(wrapper);
+            let env_delta = self.terminal_env_delta(&wrapper);
+            (wrapper, env_delta)
+        };
         match self.terminal_manager.spawn(
             cols,
             rows,
@@ -814,6 +868,34 @@ impl Window {
         Some((terminal_id, buffer_id))
     }
 
+    /// Open a **local** terminal running `argv` (bypassing this window's
+    /// authority), attached as a tab in the active split and named `title`.
+    /// Used by the self-update flow so the updater always runs where the
+    /// `fresh` binary lives, even when the window is attached to a remote
+    /// authority. Mirrors [`Self::open_terminal_in_window`] but forces local
+    /// execution and an explicit command + title.
+    pub fn open_local_command_terminal(
+        &mut self,
+        argv: Vec<String>,
+        title: String,
+    ) -> Option<(TerminalId, BufferId)> {
+        let terminal_id =
+            self.spawn_local_terminal_session(None, true, Some(argv), HashMap::new())?;
+        let split_id = self
+            .buffers
+            .splits()
+            .map(|(mgr, _)| mgr.active_split())
+            .expect("window must have a populated split layout");
+        let buffer_id = self.create_terminal_buffer_attached(terminal_id, split_id);
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = title;
+        }
+        self.set_active_buffer(buffer_id);
+        self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        self.resize_visible_terminals();
+        Some((terminal_id, buffer_id))
+    }
+
     /// Create a buffer for a terminal session in this window without
     /// attaching to any split (used during session restore).
     pub fn create_terminal_buffer_detached(&mut self, terminal_id: TerminalId) -> BufferId {
@@ -1037,6 +1119,50 @@ impl Editor {
     /// Window-side body lives in `Window::open_terminal_in_window`;
     /// this router adds only the cross-cutting effects that require
     /// editor-level state (the plugin hook + status message).
+    /// Launch an interactive self-update in a **local** terminal buffer and
+    /// point the status-bar indicator at it. The terminal runs
+    /// `fresh --cmd update --yes` as a local PTY child — never through the
+    /// window's authority — so package-manager / sudo prompts work interactively
+    /// and the binary that gets swapped is the one actually running. Completion
+    /// is reported via `TerminalExited` (see `handle`/`finish_self_update`),
+    /// which moves the indicator to its `Succeeded`/`Failed` state.
+    pub fn start_self_update(&mut self) {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("cannot find current exe for self-update: {e}");
+                self.finish_self_update(false);
+                return;
+            }
+        };
+        let argv = vec![
+            exe.to_string_lossy().into_owned(),
+            "--cmd".to_string(),
+            "update".to_string(),
+            "--yes".to_string(),
+        ];
+        let title = t!("update.terminal_title").to_string();
+        let window = self.active_window;
+        let Some((terminal_id, buffer_id)) = self
+            .active_window_mut()
+            .open_local_command_terminal(argv, title)
+        else {
+            self.finish_self_update(false);
+            return;
+        };
+        self.begin_self_update(terminal_id, window, buffer_id);
+
+        // Editor-wide: refresh the plugin-state snapshot and fire
+        // `buffer_activated`, matching `open_terminal`.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+        #[cfg(feature = "plugins")]
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
+    }
+
     pub fn open_terminal(&mut self) {
         let Some((terminal_id, buffer_id)) = self.active_window_mut().open_terminal_in_window()
         else {

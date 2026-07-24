@@ -1259,15 +1259,22 @@ impl Editor {
         self.self_update_phase
     }
 
-    /// Mark that a background self-update has started, pointing the indicator at
-    /// its (local) log.
-    pub fn begin_self_update(&mut self, log_path: std::path::PathBuf) {
+    /// Mark that an interactive self-update has started in a local terminal
+    /// buffer, remembering the terminal (to match its `TerminalExited`) and the
+    /// (window, buffer) so the indicator can switch back to it.
+    pub fn begin_self_update(
+        &mut self,
+        terminal: fresh_core::TerminalId,
+        window: fresh_core::WindowId,
+        buffer: fresh_core::BufferId,
+    ) {
         self.self_update_phase = crate::services::release_checker::SelfUpdatePhase::Running;
-        self.self_update_log = Some(log_path);
+        self.self_update_terminal = Some(terminal);
+        self.self_update_output = Some((window, buffer));
     }
 
-    /// Move the update indicator to its terminal state when the background
-    /// process exits.
+    /// Move the update indicator to its terminal state when the update terminal
+    /// exits.
     pub fn finish_self_update(&mut self, success: bool) {
         use crate::services::release_checker::SelfUpdatePhase;
         self.self_update_phase = if success {
@@ -1277,25 +1284,23 @@ impl Editor {
         };
     }
 
-    /// Open the background self-update log. Like the status log, this file is
-    /// always **local** (the update runs on this host, not through the window's
-    /// authority), so it's opened with `open_local_file` regardless of any
-    /// remote authority attached to the window.
-    pub fn open_self_update_log(&mut self) {
-        if let Some(path) = self.self_update_log.clone() {
-            match self.active_window_mut().open_local_file(&path) {
-                Ok(buffer_id) => {
-                    self.active_window_mut()
-                        .mark_buffer_read_only(buffer_id, true);
-                }
-                Err(e) => {
-                    tracing::error!("Failed to open self-update log: {}", e);
-                    self.set_status_message(t!("update.log_unavailable").to_string());
-                }
+    /// Switch to the update terminal buffer so the user can watch progress or
+    /// read the outcome. The update always runs locally, so this is a local
+    /// terminal buffer regardless of any remote authority attached to the
+    /// window. If the buffer has since been closed, report that instead.
+    pub fn show_self_update_output(&mut self) {
+        if let Some((window, buffer)) = self.self_update_output {
+            let exists = self
+                .windows
+                .get(&window)
+                .is_some_and(|w| w.buffers.get(&buffer).is_some());
+            if exists {
+                self.active_window = window;
+                self.active_window_mut().set_active_buffer(buffer);
+                return;
             }
-        } else {
-            self.set_status_message(t!("update.log_unavailable").to_string());
         }
+        self.set_status_message(t!("update.log_unavailable").to_string());
     }
 
     /// Check for and handle any new warnings in the warning log
