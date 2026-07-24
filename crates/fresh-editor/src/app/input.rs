@@ -1174,25 +1174,13 @@ impl Editor {
                 } else if !self.is_update_available() {
                     self.set_status_message(t!("update.up_to_date").to_string());
                 } else {
+                    // An update is available — offer it via the popup regardless
+                    // of install method. Choosing "Update" opens the local update
+                    // terminal (`fresh --cmd update --yes`); for unknown/source
+                    // installs that terminal just prints the releases page and
+                    // exits, but the UX stays consistent with every other state.
                     let version = self.latest_version().unwrap_or("").to_string();
-                    // Only prompt when there's actually something to run; for
-                    // unknown/source installs, point at the releases page.
-                    let actionable = self
-                        .get_update_result()
-                        .map(|r| {
-                            let plan = r.update_plan();
-                            plan.command.is_some()
-                                || matches!(
-                                    plan.kind,
-                                    crate::services::release_checker::UpdateKind::SelfContained
-                                )
-                        })
-                        .unwrap_or(false);
-                    if actionable {
-                        self.show_update_popup(&version);
-                    } else {
-                        self.set_status_message(t!("update.manual", version = version).to_string());
-                    }
+                    self.show_update_popup(&version);
                 }
             }
             Action::FormatBuffer => {
