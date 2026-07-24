@@ -4823,8 +4823,19 @@ fn test_bug_2775_scrollback_entry_is_seamless_grid_wrap() {
         );
     }
 
-    // And the round trip back to the bottom is stable: scroll up, return,
-    // and the same rows must still read identically.
+    // And the scroll round trip is stable. Establish the bottom frame with
+    // Ctrl+End first — it moves the cursor to EOF, whose trailing empty
+    // line sits one row below the entry frame's last grid row, so the
+    // bottom frame legitimately differs from the entry frame by that one
+    // row (same as in non-wrap mode). The invariant under test is that
+    // scrolling away and returning reproduces the SAME bottom frame —
+    // grid scroll math clamping to a stable maximum instead of drifting
+    // or sticking (fresh#2649 symptom 2).
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    let bottom1 = harness.screen_to_string();
     for _ in 0..3 {
         harness
             .send_key(KeyCode::PageUp, KeyModifiers::NONE)
@@ -4834,13 +4845,18 @@ fn test_bug_2775_scrollback_entry_is_seamless_grid_wrap() {
         .send_key(KeyCode::End, KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    let after = harness.screen_to_string();
-    let after_rows: Vec<&str> = after.lines().collect();
-    for &i in &marker_rows {
+    let bottom2 = harness.screen_to_string();
+    let b1_rows: Vec<&str> = bottom1.lines().collect();
+    let b2_rows: Vec<&str> = bottom2.lines().collect();
+    assert_eq!(b1_rows.len(), b2_rows.len());
+    // Compare every row except the status bar (it shows the cursor
+    // position, which Ctrl+End pins to EOF both times anyway — but keep
+    // the comparison to content rows for robustness).
+    for i in 0..b1_rows.len().saturating_sub(2) {
         assert_eq!(
-            prefix(sb_rows[i]),
-            prefix(after_rows[i]),
-            "row {i} unstable after PageUp x3 + Ctrl+End round trip.\nBEFORE:\n{scrollback}\nAFTER:\n{after}"
+            prefix(b1_rows[i]),
+            prefix(b2_rows[i]),
+            "row {i} unstable after PageUp x3 + Ctrl+End round trip.\nBEFORE:\n{bottom1}\nAFTER:\n{bottom2}"
         );
     }
 }
