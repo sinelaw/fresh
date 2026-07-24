@@ -1,14 +1,50 @@
 # Release Notes
 
-## Unreleased
+## 0.4.5
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
 ### Features
 
 * **`Run Agent…` command — start a coding agent from anywhere** - a new command-palette command opens a compact picker to launch any of the starting processes the New-Workspace dialogue offers (a bare terminal or an agent: `claude`, `codex`, `opencode`, `aider`) without the full dialogue. Choose whether it runs in your **current workspace** (a terminal in the window you're already in, alongside your open buffers — no new worktree) or a **new workspace** (a fresh worktree + window), toggle auto mode, and optionally hand it a first prompt; the picker remembers your last choice. Either way the launch reuses the dialogue's exact logic — session-id pinning, auto-mode flags, Fresh-CLI system-prompt injection, the `FRESH_CMD_TOKEN` capability, and environment — so an agent started this way is indistinguishable from a dialogue-launched one.
+* **Non-blocking workspace creation** - creating a workspace from **Orchestrator: New Workspace** no longer freezes the editor behind a modal "Creating…/Connecting…" dialog. The form now offers two submit buttons — **Create & Visit** (focus follows into the new workspace once it is ready) and **Create in Background** (stay put on your current workspace) — and in both cases the new workspace appears immediately in the dock with its own scoped status (`Creating…` for a local worktree, `Connecting…` for a remote SSH/Kubernetes host that may not be reachable yet), and you can keep working or switch to other workspaces while it comes up. A failed create becomes an error row you can retry or dismiss from the row's context menu, and a workspace still being created when the editor quits is restored (paused, one keystroke to resume) on the next launch. A remote host that requires an interactive password (or key passphrase) now fails cleanly into that error row instead of silently wedging the UI — previously the underlying `ssh` grabbed the editor's terminal to prompt where no answer could reach it, painting over the screen and scrambling keystrokes.
+* **In-editor self-update** - the status-bar update indicator is now clickable, opening a popup that runs the update in a local terminal (so sudo/AUR/package-manager prompts work) and tracks running/succeeded/failed state with a retry/show-log popup on failure. The new `fresh --cmd update [--check] [--yes]` command drives the same engine: a verified, SHA-256-checked in-place swap for self-contained installs, or the right package-manager command for managed ones (deb/rpm/AUR/brew/flatpak/npm/nix/…). Disable with `self_update: false`.
+* **Classic Mac (CR) line endings** - carriage-return-only files are now a first-class line ending alongside LF and CRLF: detected, edited, and saved without corruption (#2736, reported by @720720).
+* **`.editorconfig` support** - Fresh now reads `.editorconfig` files and applies `indent_style`/`indent_size`/`tab_width` to the buffer's settings (#959, requested by @nyurik).
+* **Save All** - a new File-menu command and action saves every modified buffer at once instead of one at a time (#2289, requested by @alspaughb).
+* **Embedded code regions use the named language's own grammar** - Markdown fenced code blocks and Vue `<script>`/`<style>` blocks are now highlighted with their real language grammar instead of a flat color or a hand-rolled keyword list (#2689, requested by @asukaminato0721).
 
 ### Bug Fixes
 
 * **Codex "Auto mode" now actually engages** - the checkbox previously passed `--full-auto`, which recent Codex CLI rejects outright (the flag was removed from the root command). Auto mode now launches Codex with `--sandbox workspace-write --ask-for-approval never` — its self-approving posture inside the workspace-write sandbox — on both launch and resume.
+* **Orchestrator dock: the whole row is clickable in compact (list) view** - left-clicking a session row past the end of its (short) label now selects and dives into it, instead of doing nothing; the empty space to the right of the text is part of the row, matching card view and the right-click menu. Every click path now shares one row-aware hit resolver so left- and right-click can't drift apart.
+* **Terminal input parsing was hardened against split reads** - a mouse escape sequence arriving across two reads no longer desyncs into literal keystrokes leaked to the focused terminal (#2745, reported by @RetributionByRevenue), and an out-of-spec mouse report with a `0` coordinate no longer panics the editor (#2732).
+* **Plugin split APIs no longer crash or silently no-op** - `setSplitRatio` on a leaf split id now resizes its parent instead of crashing the editor (#2770, reported by @RetributionByRevenue), split sizing is bounded by an absolute minimum pane size instead of a fixed ratio percentage so an extreme ratio can't collapse a pane (#2783), and `openFileInSplit` against a closed split now returns `false` instead of reporting success while showing nothing (#2769, reported by @RetributionByRevenue).
+* **LSP hover now merges results from every capable server** instead of only the first, so e.g. a Tailwind class hover isn't swallowed by a `null` response from `vtsls` (#2635, reported by @hkngoc).
+* **Hover queries the buffer under the pointer again**, not the active buffer - hovering a non-active buffer (e.g. the Search/Replace panel) had started leaking the active code buffer's hover card (#2572, reported by @asukaminato0721).
+* **User `Alt`+letter keybindings now take precedence over menu mnemonics** - a custom binding like `alt+h` used to be shadowed by the built-in Help-menu mnemonic (#2720, reported by @pancsta).
+* **On-save actions (trim whitespace, ensure final newline, format) no longer desync from disk** - rapid saves no longer trigger a spurious "File changed on disk" prompt or an unprompted revert-to-LF on a CRLF buffer (#2711, #2706, reported by @720720).
+* **Terminal scrollback no longer loses output or gets stuck scrolling** - entering scroll-back on a pane shorter than a long line's wrapped output now reproduces the live grid exactly with no dropped prefix, and scrolling up then back down no longer gets stuck (#2649, reported by @dmknght).
+* **Tab bar fixes** - an overlong filename no longer hides every other tab, and per-split scrolling now uses that split's real width instead of the whole window's (#2650, reported by @dmknght); the split tab bar's maximize/close buttons were regrouped, and closing a split now asks for confirmation first.
+* **Settings' Theme dropdown lists every installed theme**, in the same order as **Select Theme**, instead of a hardcoded, incomplete, unsorted subset (#2738, reported by @720720).
+* **Devcontainer plugin no longer logs a spurious parse error on startup** - config file reads now resolve through the workspace's authority instead of erroring on a raw local path like `/root/.devcontainer.json` (#2709, reported by @720720).
+* **Inlay hints refresh after an edit** instead of freezing at the values from when the file was opened, or disappearing entirely after Format On Save (#2744, reported by @P1C4550).
+* **The ruler now draws consistently past the last written line**, not just alongside existing text (#2631, requested by @akarinotomoshibi).
+* **Closing the last editor tab no longer swallows the Utility Dock** - its terminals used to get promoted into the main tab bar instead of staying in their own dock (#2283, reported by @lizdeika).
+* **Edit menu's "Replace..." is now correctly labeled "Query Replace..."** - it always opened the interactive query-replace prompt, not plain Replace (#2135).
+* **`Shift+F3` (Find Previous) works again** - modified F1-F4 chords were silently dropped (#699, reported by @mandolyte).
+* **Orchestrator dock workspace list improvements**:
+  * Workspaces are ordered by recency within each folder instead of a fixed first-seen slot.
+  * A workspace auto-names itself from its terminal's title (manual rename always wins).
+  * The working/idle activity dot is now driven by shell-integration (OSC 133/9;4) signals instead of output-timing alone.
+  * Every workspace, including empty ones, is shown by default.
+  * Arrowing onto an unreachable remote workspace no longer crashes the plugin thread.
+
+### Internals
+
+* A large refactor split the monolithic plugin-dispatch and update/release-checking code into focused modules (a new `fresh-update` crate for install provenance and self-update, a new `fresh-input-parser` crate for terminal input), alongside a CPU-contention test-reproduction harness and a round of flaky-e2e stabilization.
 
 ## 0.4.4
 
@@ -28,7 +64,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **More languages highlighted** - new grammars for gettext PO, m4, Xcode pbxproj, Metal, CUDA, HIP, Fortran, LLVM IR, and MLIR (#2593), plus fixed GLSL/HLSL/WGSL highlighting (#2553); both by @asukaminato0721.
 * **`NextPane` / `PrevPane`** - cycle through every split+tab pane as one flat list, distinct from `NextSplit`/`PrevSplit` and `NextWindow`/`PrevWindow`; landing on a terminal now also switches it into terminal mode (#2562, by @masmu).
 * **Orchestrator dock: organize workspaces into custom folders** - create/rename/delete folders and move workspaces between them ("Move to Folder…" via the context menu, `F2`, right-click, or the palette); the layout survives a crash. The toolbar is condensed to a "New Task…" dropdown and a search field, with other filters in a collapsible section (#2703).
-* **Non-blocking workspace creation** - creating a workspace from **Orchestrator: New Workspace** no longer freezes the editor behind a modal "Creating…/Connecting…" dialog. The form now offers two submit buttons — **Create & Visit** (focus follows into the new workspace once it is ready) and **Create in Background** (stay put on your current workspace) — and in both cases the new workspace appears immediately in the dock with its own scoped status (`Creating…` for a local worktree, `Connecting…` for a remote SSH/Kubernetes host that may not be reachable yet), and you can keep working or switch to other workspaces while it comes up. A failed create becomes an error row you can retry or dismiss from the row's context menu, and a workspace still being created when the editor quits is restored (paused, one keystroke to resume) on the next launch. A remote host that requires an interactive password (or key passphrase) now fails cleanly into that error row instead of silently wedging the UI — previously the underlying `ssh` grabbed the editor's terminal to prompt where no answer could reach it, painting over the screen and scrambling keystrokes.
 * **Search in Project: file filter** - a new **Files** field limits project search & replace to comma-separated globs like `*.rs` or `src/**` (#2699, by @asukaminato0721).
 
 ### Bug Fixes
@@ -52,7 +87,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **File Explorer fixes**: the context menu now grabs the keyboard while open, so keys no longer leak into the tree underneath (#2587); and git decorations now cover nested sub-repos even when the workspace root is itself a git repo (#2592).
 * **Git Grep no-match is reported as "No matches"**, not an error (#2591).
 * **Orchestrator remembers workspaces after a crash** and shows "Cancel" instead of "Quit" on the trust prompt (#2658).
-* **Orchestrator dock: the whole row is clickable in compact (list) view** - left-clicking a session row past the end of its (short) label now selects and dives into it, instead of doing nothing; the empty space to the right of the text is part of the row, matching card view and the right-click menu. Every click path now shares one row-aware hit resolver so left- and right-click can't drift apart.
 * **Command palette names no longer truncate at the start** - the name column sizes to the longest visible name; only an overlong name is trimmed, at its tail (#2703).
 * **Compose mode: cursor movement no longer lags in large files** - arrow keys used to re-run wrapping and concealment over the whole buffer on every keypress.
 * **Per-language settings now apply everywhere** - language-dependent buffer settings (tab size, auto-close, whitespace indicators, word characters, etc.) were applied inconsistently depending on how a buffer was created, and didn't refresh when a buffer's language changed. They now resolve uniformly and re-apply on any language change.
