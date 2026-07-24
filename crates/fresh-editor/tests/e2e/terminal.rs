@@ -4313,24 +4313,40 @@ fn test_terminal_mode_hides_scrollbar_and_reclaims_width() {
     );
 }
 
-/// Terminal buffers must never line-wrap, even with global line wrap enabled.
-/// Wrapping a large terminal scrollback turns the scrollbar's visual-row index
-/// into an O(all-lines) scan on every frame, freezing the UI (fresh#2608).
+/// Terminal buffers always line-wrap in *grid* mode (fresh#2649): scroll-back
+/// lays out exactly like the live PTY grid — regardless of the global
+/// line-wrap setting — so entering scroll-back never reflows. The fresh#2608
+/// freeze does not return with it: grid row counting is allocation-free and
+/// viewport-local, and the whole-buffer visual-row index keeps its size gates.
 #[test]
-fn test_terminal_buffers_never_line_wrap() {
+fn test_terminal_buffers_always_grid_wrap() {
     let mut harness = harness_or_return!(80, 24);
     harness.editor_mut().open_terminal();
     let term_id = harness.editor().active_buffer();
 
-    // Global line wrap on: a regular buffer would wrap; a terminal must not.
-    harness.editor_mut().config_mut().editor.line_wrap = true;
+    // Regardless of the global setting, terminals resolve to (grid) wrap —
+    // no toggle or override may flip them to word wrap or to non-wrap.
+    for global in [false, true] {
+        harness.editor_mut().config_mut().editor.line_wrap = global;
+        assert!(
+            harness
+                .editor()
+                .active_window()
+                .resolve_line_wrap_for_buffer(term_id),
+            "terminal buffers must resolve to grid line-wrap (global line_wrap={global})"
+        );
+    }
 
+    // The per-frame healer pins the terminal viewport to grid-wrap mode.
+    harness.render().unwrap();
+    let win = harness.editor().active_window();
+    let (mgr, view_states) = win.buffers.splits().unwrap();
+    let vp = &view_states.get(&mgr.active_split()).unwrap().viewport;
     assert!(
-        !harness
-            .editor()
-            .active_window()
-            .resolve_line_wrap_for_buffer(term_id),
-        "terminal buffers must never resolve to line-wrap even when global line wrap is on"
+        vp.line_wrap_enabled && vp.grid_wrap,
+        "terminal viewport must be healed into grid-wrap mode (line_wrap_enabled={}, grid_wrap={})",
+        vp.line_wrap_enabled,
+        vp.grid_wrap
     );
 }
 
@@ -4747,7 +4763,7 @@ fn test_bug_2775_scrollback_entry_is_seamless_grid_wrap() {
         .editor_mut()
         .active_window_mut()
         .send_terminal_input(
-        b"head -c 8 /dev/zero | tr '\0' 'Q'; head -c 260 /dev/zero | tr '\0' 'W'; printf '\n'\n",
+        b"head -c 8 /dev/zero | tr '\\0' 'Q'; head -c 260 /dev/zero | tr '\\0' 'W'; printf '\\n'\n",
     );
     harness
         .wait_until(|h| h.screen_to_string().contains("WWWWWWWW"))
