@@ -51,6 +51,14 @@ jobs:
           mkdir -p crates/fresh-editor/docs/icons/linux
           cp -r docs/icons/linux/hicolor crates/fresh-editor/docs/icons/linux/
 
+      - name: Copy install-receipt script into Flatpak source tree
+        run: |
+          # The manifest runs scripts/write-install-receipt.sh relative to the
+          # source root (crates/fresh-editor, via `path: ..`), but the script
+          # lives at the repo root. Copy it in like the icons above.
+          mkdir -p crates/fresh-editor/scripts
+          cp scripts/write-install-receipt.sh crates/fresh-editor/scripts/
+
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
