@@ -856,7 +856,10 @@ impl crate::app::window::Window {
         use crate::view::split::SplitNode;
         for node in self.grouped_subtrees.values_mut() {
             if let Some(SplitNode::Split { ratio, .. }) = node.find_mut(container.into()) {
-                *ratio = new_ratio.clamp(0.1, 0.9);
+                // Raw-storage clamp only: the sibling is kept usable by the
+                // layout-time min-pane-size guard (see `clamp_first_to_min`),
+                // matching `SplitManager::set_ratio` — not a fixed percentage floor.
+                *ratio = new_ratio.clamp(0.0, 1.0);
                 return true;
             }
         }

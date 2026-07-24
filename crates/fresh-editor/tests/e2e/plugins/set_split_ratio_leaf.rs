@@ -130,10 +130,18 @@ fn set_split_ratio_on_leaf_resizes_parent_container() {
     );
 }
 
-/// Clamping still applies when resolving through a leaf: an out-of-range
-/// ratio is pinned to [0.1, 0.9] on the parent container.
+/// An out-of-range ratio resolved through a leaf is handled safely under the
+/// min-pane-size model.
+///
+/// The stored ratio is no longer pinned to a fixed `0.1/0.9` percentage window;
+/// it is only clamped to the raw `[0.0, 1.0]` range (so `5.0` stores as `1.0`).
+/// The real guarantee — a sibling pane never collapsing — moved to layout time,
+/// where `clamp_first_to_min` keeps every rendered pane at least `MIN_PANE_*`.
+/// This test asserts both facets: the raw ratio clamp *and* the rendered floor.
 #[test]
 fn set_split_ratio_on_leaf_clamps_parent_ratio() {
+    use fresh::view::split::MIN_PANE_HEIGHT;
+
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("hello.txt");
     fs::write(&path, "hi\n").unwrap();
@@ -163,12 +171,34 @@ fn set_split_ratio_on_leaf_clamps_parent_ratio() {
         .expect("setSplitRatio on a leaf resolves to its parent container");
     harness.tick_and_render().unwrap();
 
+    // (a) Raw-storage clamp: an out-of-range 5.0 is pinned to the [0.0, 1.0]
+    // range, i.e. stored as 1.0 (no longer to the old 0.9 percentage floor).
     assert_eq!(
         harness
             .editor()
             .split_manager_for_tests()
             .get_ratio(parent.into()),
-        Some(0.9),
-        "an out-of-range ratio must clamp to 0.9 on the parent container"
+        Some(1.0),
+        "an out-of-range ratio must clamp to the raw [0.0, 1.0] range (5.0 -> 1.0)"
+    );
+
+    // (b) The real guarantee: even with the parent ratio pushed to the extreme,
+    // the layout-time min-size clamp keeps *both* rendered panes at least
+    // MIN_PANE_HEIGHT rows tall — the sibling never collapses.
+    let (content_first, content_last) = harness.content_area_rows();
+    // A pane's split rectangle starts one row above where its text begins (the
+    // tab bar); the bottom pane has no tab bar below it, so `content_last`
+    // already aligns with the split-area bottom.
+    let split_area_top = content_first.saturating_sub(1);
+    let sep_y = harness.editor().get_separator_areas()[0].3 as usize;
+    let first_pane_height = sep_y.saturating_sub(split_area_top);
+    let second_pane_height = content_last.saturating_sub(sep_y);
+    assert!(
+        first_pane_height >= MIN_PANE_HEIGHT as usize,
+        "first pane must stay at least {MIN_PANE_HEIGHT} rows, got {first_pane_height}"
+    );
+    assert!(
+        second_pane_height >= MIN_PANE_HEIGHT as usize,
+        "sibling pane must stay at least {MIN_PANE_HEIGHT} rows after an extreme ratio, got {second_pane_height}"
     );
 }

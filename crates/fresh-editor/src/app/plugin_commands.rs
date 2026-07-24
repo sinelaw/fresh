@@ -1062,8 +1062,10 @@ impl Editor {
     /// second child). A plugin asking to resize "its" leaf resizes that
     /// parent split; whether the leaf is the first or second child, adjusting
     /// the parent ratio is the single, well-defined knob for that divider, and
-    /// the value is clamped to `[0.1, 0.9]`. Callers wanting a specific pane to
-    /// grow should account for which side it sits on.
+    /// the stored value is clamped only to the raw `[0.0, 1.0]` range; a sibling
+    /// pane is kept usable by the layout-time min-pane-size guard rather than a
+    /// fixed percentage floor. Callers wanting a specific pane to grow should
+    /// account for which side it sits on.
     ///
     /// Returns `true` if the ratio was applied:
     /// - a leaf id with a resizable parent `Split` → set the parent's ratio;
