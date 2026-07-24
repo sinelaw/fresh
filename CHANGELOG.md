@@ -28,6 +28,7 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
 * **Classic Mac (CR) line endings** are now fully supported (#2736, requested by @720720).
 * **`.editorconfig` support** - `indent_style`/`indent_size`/`tab_width` are picked up automatically (#959, requested by @nyurik).
 * **Save All** - save every modified buffer at once from the File menu (#2289, requested by @alspaughb).
+* **File Explorer sticky parents** - scrolling inside a nested folder now keeps its expanded ancestor folders stacked at the top of the sidebar, matching VS Code (#2705).
 
 ### Bug Fixes
 

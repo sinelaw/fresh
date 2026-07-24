@@ -720,6 +720,8 @@ pub struct FileExplorerView {
     pub scroll_offset: usize,
     pub viewport_height: usize,
     pub selected: Option<usize>,
+    /// Flattened-row indices in screen order, including sticky ancestors.
+    pub viewport_rows: Vec<usize>,
     pub rows: Vec<FileRow>,
 }
 
@@ -755,6 +757,7 @@ impl Editor {
             scroll_offset: view.get_scroll_offset(),
             viewport_height: view.viewport_height,
             selected: view.get_selected_index(),
+            viewport_rows: view.viewport_display_indices(),
             rows,
         })
     }

@@ -1136,11 +1136,6 @@ fn test_scroll_allows_cursor_to_top() {
     let initial_screen = harness.screen_to_string();
     println!("Initial screen:\n{}", initial_screen);
 
-    // Get the viewport height (number of visible rows in file explorer)
-    // Terminal height is 10, minus menu bar (1), status bar (1), prompt line (1), tab bar (1) = 6 main area
-    // File explorer has borders (1 top) and may share space, so content area is ~5 rows
-    let viewport_height = 5;
-
     // Navigate down to the bottom of the list
     // This will cause the explorer to scroll down
     for _ in 0..25 {
@@ -1152,10 +1147,18 @@ fn test_scroll_allows_cursor_to_top() {
 
     let screen_at_bottom = harness.screen_to_string();
     println!("Screen at bottom (scrolled down):\n{}", screen_at_bottom);
+    assert!(
+        screen_at_bottom
+            .lines()
+            .any(|line| line.starts_with('│') && line.contains("project_root")),
+        "the project root should remain pinned while its children scroll"
+    );
 
     // Now we're at the bottom and the view has scrolled down.
     // The test: when we press Up, the cursor should move WITHIN the viewport
-    // for (viewport_height - 1) times before the view scrolls.
+    // for (visible ordinary rows - 1) times before the view scrolls. Sticky
+    // ancestor rows (the project root here) intentionally consume part of
+    // the viewport and are not included in `get_visible_files`.
 
     // Track which files are visible to detect scrolling. Only scan rows
     // that start with the explorer's left border so the tab bar and
@@ -1179,9 +1182,9 @@ fn test_scroll_allows_cursor_to_top() {
     let initial_visible = get_visible_files(&screen_at_bottom);
     println!("Initially visible files: {:?}", initial_visible);
 
-    // Press Up multiple times (less than viewport_height times)
+    // Press Up while there are still earlier ordinary rows in the viewport.
     // The visible files should stay the same (no scrolling yet)
-    for i in 0..(viewport_height - 1) {
+    for i in 0..initial_visible.len().saturating_sub(1) {
         harness
             .send_key(KeyCode::Up, KeyModifiers::empty())
             .unwrap();

@@ -1113,12 +1113,9 @@ impl Editor {
                 // Determine which item is at this row
                 if let Some(explorer) = self.file_explorer().as_ref() {
                     let relative_row = row.saturating_sub(content_start_y) as usize;
-                    let scroll_offset = explorer.get_scroll_offset();
-                    let item_index = relative_row + scroll_offset;
-                    let display_nodes = explorer.get_display_nodes();
-
-                    if item_index < display_nodes.len() {
-                        let (node_id, indent) = display_nodes[item_index];
+                    if let Some((node_id, indent)) =
+                        explorer.get_display_node_at_viewport_row(relative_row)
+                    {
                         if let Some(node) = explorer.tree().get_node(node_id) {
                             let theme = self.theme.read().unwrap();
                             let neutral_fg = if node
@@ -3369,12 +3366,10 @@ impl Editor {
                 let relative_row = row.saturating_sub(explorer_area.y + 1);
                 let (is_multi, is_root_selected) =
                     if let Some(explorer) = self.file_explorer_mut().as_mut() {
-                        let display_nodes = explorer.get_display_nodes();
-                        let scroll_offset = explorer.get_scroll_offset();
-                        let clicked_index = (relative_row as usize) + scroll_offset;
                         let mut clicked_is_root = false;
-                        if clicked_index < display_nodes.len() {
-                            let (node_id, _) = display_nodes[clicked_index];
+                        if let Some((node_id, _)) =
+                            explorer.get_display_node_at_viewport_row(relative_row as usize)
+                        {
                             explorer.set_selected(Some(node_id));
                             clicked_is_root = node_id == explorer.tree().root_id();
                         }

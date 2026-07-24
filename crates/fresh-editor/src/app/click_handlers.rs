@@ -616,13 +616,9 @@ impl Editor {
         let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
 
         if let Some(explorer) = self.file_explorer_mut().as_mut() {
-            let display_nodes = explorer.get_display_nodes();
-            let scroll_offset = explorer.get_scroll_offset();
-            let clicked_index = (relative_row as usize) + scroll_offset;
-
-            if clicked_index < display_nodes.len() {
-                let (node_id, _indent) = display_nodes[clicked_index];
-
+            if let Some((node_id, _indent)) =
+                explorer.get_display_node_at_viewport_row(relative_row as usize)
+            {
                 // Select this node
                 explorer.set_selected(Some(node_id));
 
