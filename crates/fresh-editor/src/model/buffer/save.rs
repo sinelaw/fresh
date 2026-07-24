@@ -148,13 +148,19 @@ pub(super) fn build_write_recipe(
     // 2. The source file exists
     // 3. No line ending conversion is needed
     // 4. No encoding conversion is needed
-    // Classic-Mac (CR) buffers are stored with `\n` separators internally
-    // (normalized on load / inserted on Enter), so saving CR always needs
-    // the `\n` -> `\r` conversion even when the ending is unchanged since
-    // load (issue #2736). LF and CRLF keep their raw bytes, so they only
-    // convert when the user actually changed the ending.
+    // A genuine Classic-Mac (CR) *text* buffer stores its line breaks as
+    // `\n` internally (normalized on load / inserted on Enter), so saving it
+    // needs the `\n` -> `\r` conversion even when the ending is unchanged
+    // since load (issue #2736). This is gated on `line_endings_normalized`:
+    // a CR-detected buffer whose raw `\r` bytes were preserved verbatim
+    // (binary, mixed endings, or a large/lazy CR load) is NOT normalized, so
+    // it must be written byte-for-byte — reconstructing `\r` there would
+    // corrupt any real `\n` in the content and break round-trips. LF and
+    // CRLF keep their raw bytes and only convert when the user actually
+    // changed the ending.
     let needs_line_ending_conversion = format.line_ending_changed_since_load()
-        || format.line_ending() == super::format::LineEnding::CR;
+        || (format.line_ending() == super::format::LineEnding::CR
+            && format.line_endings_normalized());
     // We need encoding conversion if:
     // - NOT a binary file (binary files preserve raw bytes), AND
     // - Either the encoding changed from the original, OR

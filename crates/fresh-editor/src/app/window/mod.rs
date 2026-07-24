@@ -3094,7 +3094,7 @@ impl Window {
 
         // Load from canonical path (for I/O and dedup), detect language from
         // display path (for glob pattern matching against user-visible names).
-        let buffer = crate::model::buffer::Buffer::load_from_file(
+        let buffer = crate::model::buffer::Buffer::load_from_file_for_editing(
             &canonical_path,
             self.config().editor.large_file_threshold_bytes as usize,
             std::sync::Arc::clone(&self.resources.local_filesystem),

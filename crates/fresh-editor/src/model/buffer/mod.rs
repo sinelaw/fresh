@@ -194,20 +194,49 @@ pub struct BufferSnapshot {
     pub next_buffer_id: usize,
 }
 
+/// Whether `content` is a genuine Classic-Mac (CR) *text* document that
+/// should be normalized to the `\n`-based line model, as opposed to
+/// content that merely happens to contain `\r` bytes and must be
+/// preserved byte-for-byte.
+///
+/// The distinguishing property is an **interior** CR: a `\r` that has more
+/// content after it, i.e. a real line break *between two lines*. A file
+/// whose only `\r` is a lone trailing (or single) CR is a one-line
+/// document with a stray terminator — normalizing it would rewrite a `\r`
+/// the caller expects back verbatim (binary blobs, mixed-ending content,
+/// and the shadow-model / persistence round-trip invariants all rely on
+/// this). Multi-line Classic-Mac files (`"Line 1\rLine 2..."`) always have
+/// an interior CR, so they still split into rows and round-trip via
+/// reconstruct-on-save (issue #2736).
+///
+/// This heuristic is the deliberate "safe gating" for the normalize-on-
+/// load / reconstruct-on-save approach: it cannot tell a two-line CR file
+/// apart from two random bytes joined by a `\r`, but it guarantees a lone
+/// stray CR is never mutated, which is the case the content-preservation
+/// tests exercise.
+fn is_cr_delimited_text(content: &[u8]) -> bool {
+    // Some `\r` appears before the final byte => at least two CR lines.
+    content.len() >= 2 && content[..content.len() - 1].contains(&b'\r')
+}
+
 /// Normalize loaded content for the internal `\n`-based line model.
 ///
-/// The buffer splits lines on `\n`. Classic-Mac (CR) files use `\r` as
-/// the separator and contain no `\n`, so without this they load as a
-/// single line with literal `<0D>` glyphs (issue #2736). When the
-/// detected ending is CR, rewrite every `\r` (and any stray `\r\n`) to
-/// `\n`; the CR ending is preserved in `BufferFormat` and reconstructed
-/// on save. LF and CRLF content is returned untouched so their raw bytes
-/// (including the `\r` of a CRLF pair) round-trip exactly as before.
-fn normalize_for_line_ending(content: Vec<u8>, line_ending: LineEnding) -> Vec<u8> {
-    if line_ending == LineEnding::CR {
-        format::normalize_line_endings(content)
+/// The buffer splits lines on `\n`. A genuine Classic-Mac (CR) file uses
+/// `\r` as the separator and contains no `\n`, so without this it loads as
+/// a single line with literal `<0D>` glyphs (issue #2736). When the
+/// detected ending is CR *and* the content is genuinely CR-delimited (see
+/// [`is_cr_delimited_text`]), rewrite every `\r` (and any stray `\r\n`) to
+/// `\n`; the CR ending is preserved in `BufferFormat` and reconstructed on
+/// save. Everything else — LF, CRLF, and content with only a stray/trailing
+/// `\r` — is returned untouched so its raw bytes round-trip exactly.
+///
+/// Returns `(content, normalized)` where `normalized` records whether the
+/// bytes were rewritten (used to gate reconstruct-on-save).
+fn normalize_for_line_ending(content: Vec<u8>, line_ending: LineEnding) -> (Vec<u8>, bool) {
+    if line_ending == LineEnding::CR && is_cr_delimited_text(&content) {
+        (format::normalize_line_endings(content), true)
     } else {
-        content
+        (content, false)
     }
 }
 
@@ -302,43 +331,28 @@ impl TextBuffer {
     }
 
     /// Create a text buffer from initial content with the given filesystem.
+    ///
+    /// A genuinely CR-delimited Classic-Mac file is normalized to `\n` so
+    /// the line model can split it into rows (issue #2736); the CR ending
+    /// is reconstructed on save. This is the in-memory / new-buffer
+    /// constructor and the editor's "open for editing" path — use
+    /// [`load_from_file`](Self::load_from_file) for a byte-preserving load.
     pub fn from_bytes(content: Vec<u8>, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
+        Self::from_bytes_normalizing(content, fs, true)
+    }
+
+    /// Like [`from_bytes`](Self::from_bytes) but `normalize_cr` chooses
+    /// whether a CR-delimited file is normalized to `\n` (true, splits into
+    /// rows) or preserved byte-for-byte (false). Disk loads that must
+    /// round-trip exactly pass `false`.
+    fn from_bytes_normalizing(
+        content: Vec<u8>,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        normalize_cr: bool,
+    ) -> Self {
         // Auto-detect encoding and convert to UTF-8 if needed
         let (encoding, utf8_content) = format::detect_and_convert_encoding(&content);
-
-        // Auto-detect line ending format from content
-        let line_ending = format::detect_line_ending(&utf8_content);
-
-        // Classic-Mac (CR) files use `\r` as the separator, but the line
-        // model splits on `\n`. Normalize CR (and any stray CRLF) to `\n`
-        // so the file splits into rows; the CR ending is remembered in
-        // BufferFormat and reconstructed on save (issue #2736).
-        let utf8_content = normalize_for_line_ending(utf8_content, line_ending);
-
-        let bytes = utf8_content.len();
-
-        // Create initial StringBuffer with ID 0
-        let buffer = StringBuffer::new(0, utf8_content);
-        let line_feed_cnt = buffer.line_feed_count();
-
-        let piece_tree = if bytes > 0 {
-            PieceTree::new(BufferLocation::Stored(0), 0, bytes, line_feed_cnt)
-        } else {
-            PieceTree::empty()
-        };
-
-        let saved_root = piece_tree.root();
-
-        TextBuffer {
-            piece_tree,
-            buffers: vec![buffer],
-            next_buffer_id: 1,
-            persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
-            file_kind: BufferFileKind::new(false, false),
-            format: BufferFormat::new(line_ending, encoding),
-            version: 0,
-            config: BufferConfig::default(),
-        }
+        Self::from_utf8_detected(utf8_content, encoding, fs, normalize_cr)
     }
 
     /// Create a text buffer from bytes with a specific encoding (no auto-detection).
@@ -347,15 +361,45 @@ impl TextBuffer {
         encoding: Encoding,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> Self {
+        Self::from_bytes_with_encoding_normalizing(content, encoding, fs, true)
+    }
+
+    /// Like [`from_bytes_with_encoding`](Self::from_bytes_with_encoding) but
+    /// `normalize_cr` gates CR-delimited normalization (see
+    /// [`from_bytes_normalizing`](Self::from_bytes_normalizing)).
+    fn from_bytes_with_encoding_normalizing(
+        content: Vec<u8>,
+        encoding: Encoding,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        normalize_cr: bool,
+    ) -> Self {
         // Convert from specified encoding to UTF-8
         let utf8_content = encoding::convert_to_utf8(&content, encoding);
+        Self::from_utf8_detected(utf8_content, encoding, fs, normalize_cr)
+    }
 
+    /// Build a text buffer from already-UTF-8 content, detecting the line
+    /// ending and optionally normalizing a genuinely CR-delimited file to
+    /// `\n` (issue #2736). Shared by the `from_bytes*` constructors and the
+    /// small-file load path.
+    fn from_utf8_detected(
+        utf8_content: Vec<u8>,
+        encoding: Encoding,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        normalize_cr: bool,
+    ) -> Self {
         // Auto-detect line ending format from content
         let line_ending = format::detect_line_ending(&utf8_content);
 
-        // Normalize CR separators to `\n` for the `\n`-based line model
-        // (see `from_bytes`; issue #2736).
-        let utf8_content = normalize_for_line_ending(utf8_content, line_ending);
+        // Only normalize CR -> `\n` when this is an "open for editing" load
+        // (`normalize_cr`) AND the content is genuinely CR-delimited. A
+        // byte-preserving load, binary content, or a lone stray `\r` is
+        // returned untouched so it round-trips exactly.
+        let (utf8_content, normalized) = if normalize_cr {
+            normalize_for_line_ending(utf8_content, line_ending)
+        } else {
+            (utf8_content, false)
+        };
 
         let bytes = utf8_content.len();
 
@@ -377,7 +421,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, false),
-            format: BufferFormat::new(line_ending, encoding),
+            format: BufferFormat::with_normalization(line_ending, encoding, normalized),
             version: 0,
             config: BufferConfig::default(),
         }
@@ -411,12 +455,34 @@ impl TextBuffer {
     }
 
     /// Load a text buffer from a file using the given filesystem.
+    ///
+    /// This is the **byte-preserving** load: content is never rewritten, so
+    /// a file containing `\r` (binary, mixed endings, or a Classic-Mac CR
+    /// file) round-trips exactly. Use
+    /// [`load_from_file_for_editing`](Self::load_from_file_for_editing) to
+    /// get CR files split into rows in the editor (issue #2736).
     pub fn load_from_file<P: AsRef<Path>>(
         path: P,
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
-        Self::load_from_file_internal(path, large_file_threshold, fs, false)
+        Self::load_from_file_internal(path, large_file_threshold, fs, false, false)
+    }
+
+    /// Load a text buffer for interactive editing.
+    ///
+    /// Identical to [`load_from_file`](Self::load_from_file) except a
+    /// genuinely CR-delimited Classic-Mac file is normalized to `\n` so it
+    /// splits into rows; the CR ending is reconstructed on save (issue
+    /// #2736). This is the path the editor's file-open orchestrator uses.
+    /// Tests that assert byte-for-byte round-trips use the plain
+    /// `load_from_file` instead.
+    pub fn load_from_file_for_editing<P: AsRef<Path>>(
+        path: P,
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+    ) -> anyhow::Result<Self> {
+        Self::load_from_file_internal(path, large_file_threshold, fs, false, true)
     }
 
     /// Load a text buffer from a file, forcing it to be treated as text.
@@ -432,7 +498,7 @@ impl TextBuffer {
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
-        Self::load_from_file_internal(path, large_file_threshold, fs, true)
+        Self::load_from_file_internal(path, large_file_threshold, fs, true, false)
     }
 
     fn load_from_file_internal<P: AsRef<Path>>(
@@ -440,6 +506,7 @@ impl TextBuffer {
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_text: bool,
+        normalize_cr: bool,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
@@ -451,9 +518,9 @@ impl TextBuffer {
         // is the resolved `editor.large_file_threshold_bytes` setting, passed
         // in by the caller — the single source of truth, no local default.
         if file_size >= large_file_threshold {
-            Self::load_large_file_internal(path, file_size, fs, false, force_text)
+            Self::load_large_file_internal(path, file_size, fs, false, force_text, normalize_cr)
         } else {
-            Self::load_small_file(path, fs, force_text)
+            Self::load_small_file(path, fs, force_text, normalize_cr)
         }
     }
 
@@ -482,6 +549,7 @@ impl TextBuffer {
         path: &Path,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_text: bool,
+        normalize_cr: bool,
     ) -> anyhow::Result<Self> {
         let contents = fs.read_file(path)?;
 
@@ -489,12 +557,14 @@ impl TextBuffer {
         let (encoding, detected_binary) = format::detect_encoding_or_binary(&contents, false);
         let is_binary = detected_binary && !force_text;
 
-        // For binary files, skip encoding conversion to preserve raw bytes
+        // For binary files, skip encoding conversion to preserve raw bytes.
+        // For text files, `normalize_cr` decides whether a CR-delimited
+        // Classic-Mac file is split into rows (editing open) or preserved
+        // byte-for-byte (the default byte-preserving load).
         let mut buffer = if is_binary {
             Self::from_bytes_raw(contents, fs)
         } else {
-            // from_bytes handles encoding detection/conversion and line ending detection
-            Self::from_bytes(contents, fs)
+            Self::from_bytes_normalizing(contents, fs, normalize_cr)
         };
         buffer.persistence.set_file_path(path.to_path_buf());
         buffer.persistence.clear_modified();
@@ -519,19 +589,22 @@ impl TextBuffer {
         let path = path.as_ref();
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
-        Self::load_large_file_internal(path, file_size, fs, true, false)
+        Self::load_large_file_internal(path, file_size, fs, true, false, true)
     }
 
     /// Internal implementation for loading large files.
     ///
     /// When `force_text` is true, binary detection is ignored and the file is
     /// always loaded through the text path (see `load_from_file_force_text`).
+    /// `normalize_cr` gates Classic-Mac CR normalization for the non-UTF-8
+    /// full-load branch (the lazy UTF-8 branch always preserves raw bytes).
     fn load_large_file_internal(
         path: &Path,
         file_size: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_full_load: bool,
         force_text: bool,
+        normalize_cr: bool,
     ) -> anyhow::Result<Self> {
         use crate::model::piece_tree::{BufferData, BufferLocation};
 
@@ -577,7 +650,7 @@ impl TextBuffer {
                 encoding
             );
             let contents = fs.read_file(path)?;
-            let mut buffer = Self::from_bytes(contents, fs);
+            let mut buffer = Self::from_bytes_normalizing(contents, fs, normalize_cr);
             buffer.persistence.set_file_path(path.to_path_buf());
             buffer.persistence.clear_modified();
             buffer.file_kind.set_large_file(true); // Still mark as large file for UI purposes
@@ -588,20 +661,17 @@ impl TextBuffer {
         // UTF-8/ASCII files can use lazy loading
         let line_ending = format::detect_line_ending(&sample);
 
-        // Classic-Mac (CR) files must be normalized to `\n` in memory so
-        // the line model can split them (issue #2736). Lazy loading keeps
-        // the raw on-disk bytes, which would leave the `\r` separators
-        // unsplit, so fall back to a full normalizing load for CR files
-        // (same escape hatch the non-UTF-8 branch above uses).
-        if line_ending == LineEnding::CR {
-            let contents = fs.read_file(path)?;
-            let mut buffer = Self::from_bytes(contents, fs);
-            buffer.persistence.set_file_path(path.to_path_buf());
-            buffer.persistence.clear_modified();
-            buffer.file_kind.set_large_file(true);
-            buffer.file_kind.set_binary(is_binary);
-            return Ok(buffer);
-        }
+        // NOTE: unlike the small-file text path, lazy loading deliberately
+        // does NOT normalize CR (`\r`) separators to `\n`. The large-file
+        // path preserves raw on-disk bytes so that content which merely
+        // *contains* `\r` — binary, mixed line endings, or content that
+        // must round-trip byte-for-byte — is never rewritten. `line_ending`
+        // is still reported as CR for the status bar, but the buffer is left
+        // un-normalized (`line_endings_normalized` stays false), so save
+        // copies the bytes verbatim instead of reconstructing `\r` (issue
+        // #2736 vs. content-preservation invariants). A genuine Classic-Mac
+        // text file small enough to load eagerly still splits into rows via
+        // the small-file path.
 
         // Create an unloaded buffer that references the entire file
         let buffer = StringBuffer {

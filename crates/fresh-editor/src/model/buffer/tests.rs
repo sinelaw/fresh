@@ -1318,7 +1318,9 @@ fn test_cr_file_roundtrips_on_save() {
     let file_path = temp_dir.path().join("classic_mac.txt");
     std::fs::write(&file_path, b"Line 1\rLine 2\rLine 3\r").unwrap();
 
-    let mut buffer = TextBuffer::load_from_file(
+    // Open for editing: a genuine Classic-Mac file is normalized to `\n`
+    // so it splits into rows (the plain `load_from_file` preserves bytes).
+    let mut buffer = TextBuffer::load_from_file_for_editing(
         &file_path,
         crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
         test_fs(),
@@ -1346,7 +1348,7 @@ fn test_cr_enter_inserts_row_and_saves_cr() {
     let file_path = temp_dir.path().join("cr_edit.txt");
     std::fs::write(&file_path, b"Line 1\rLine 2").unwrap();
 
-    let mut buffer = TextBuffer::load_from_file(
+    let mut buffer = TextBuffer::load_from_file_for_editing(
         &file_path,
         crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
         test_fs(),
