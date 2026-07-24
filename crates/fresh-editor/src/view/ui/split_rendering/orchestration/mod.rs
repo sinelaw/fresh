@@ -760,10 +760,11 @@ fn render_split_tab_bar(
     //   Close: shown when multiple splits exist AND not maximized.
     let show_maximize_btn = has_multiple_splits || is_maximized;
     let show_close_btn = has_multiple_splits && !is_maximized;
-    // When a split has any control button the whole right cluster
-    // (`+ [sep] > □ ×`) is owned here (drawn on top after the tabs); the tab
-    // renderer then skips its own `+`/`>`. A single, unmaximized split has no
-    // cluster and lets the tab renderer draw its own inline `+`/`>` (fresh#2768).
+    // When a split has any control button the right cluster (`> □ ×`) is owned
+    // here (drawn on top after the tabs); the tab renderer then skips only its
+    // own right-overflow `>`, but still draws the `+` inline right after the
+    // last tab. A single, unmaximized split has no cluster and lets the tab
+    // renderer draw its own inline `+`/`>` (fresh#2768 follow-up).
     let external_controls = show_maximize_btn || show_close_btn;
 
     // Reserve the cluster columns from the tab bar's width so the scrolling
@@ -813,40 +814,28 @@ fn render_split_tab_bar(
     }
 
     // Draw the right-side control cluster on top of the reserved columns, in
-    // visual order `+ [sep] > □ ×` (fresh#2768):
+    // visual order `> □ ×` (fresh#2768 follow-up):
     //
-    //   [gap] + [sep] > □ ×  [trail]
+    //   [gap] > □ ×  [trail]
     //
     // `□` (maximize) is present only when `show_maximize_btn`, `×` (close) only
-    // when `show_close_btn`, `+` (new buffer) is always present, and the `>`
-    // right-overflow indicator is drawn only when the tabs overflow (its column
-    // is reserved either way). Hit areas are stored so a click on each glyph
-    // routes to its action: `+` → `new_tab_area`, `>` → `right_scroll_area`,
-    // `□` → `maximize_split_areas`, `×` → `close_split_areas` (which now pops a
-    // confirm menu rather than closing immediately).
+    // when `show_close_btn`, and the `>` right-overflow indicator is drawn only
+    // when the tabs overflow (its column is reserved either way). The `+`
+    // new-buffer button is *not* part of this cluster — the tab renderer already
+    // drew it inline right after the last tab and set `new_tab_area`. Hit areas
+    // are stored so a click on each glyph routes to its action: `>` →
+    // `right_scroll_area`, `□` → `maximize_split_areas`, `×` → `close_split_areas`
+    // (which pops a confirm menu rather than closing immediately).
     let overflow = tab_layout.right_overflow;
     let cluster_x = layout.tabs_rect.x + layout.tabs_rect.width.saturating_sub(reserve);
     // Paint the whole cluster background first (separator surface) so the gap /
-    // separator / trailing columns are clean regardless of prior cell content.
+    // trailing columns are clean regardless of prior cell content.
     Paragraph::new(" ".repeat(reserve as usize))
         .style(Style::default().bg(theme.tab_separator_bg))
         .render(Rect::new(cluster_x, tab_row, reserve, 1), buf);
 
     // Skip the leading gap.
     let mut cx = cluster_x + 1;
-    // "+" new-buffer button — styled like an inactive tab so it reads as a
-    // button, at the left of the cluster.
-    Paragraph::new("+")
-        .style(
-            Style::default()
-                .fg(theme.tab_inactive_fg)
-                .bg(theme.tab_inactive_bg),
-        )
-        .render(Rect::new(cx, tab_row, 1, 1), buf);
-    tab_layout.new_tab_area = Some(Rect::new(cx, tab_row, 1, 1));
-    cx += 1;
-    // Separator gap so `+` is visually distinct from the `> □ ×` group.
-    cx += 1;
     // ">" right-overflow indicator — glyph only when tabs overflow; the column
     // is reserved either way so the cluster never shifts as you scroll.
     if overflow {

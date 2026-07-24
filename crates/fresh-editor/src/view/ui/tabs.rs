@@ -172,22 +172,25 @@ const NEW_TAB_BUTTON_TEXT: &str = " + ";
 /// Display width (columns) of [`NEW_TAB_BUTTON_TEXT`].
 pub const NEW_TAB_BUTTON_WIDTH: usize = 3;
 
-/// Columns reserved at the right edge of a split's tab row for the whole
+/// Columns reserved at the right edge of a split's tab row for the
 /// right-side control cluster, drawn on top of the row afterwards by the
 /// orchestration layer. When a split has any control button the cluster reads
-/// `+ [sep] > □ ×` (fresh#2768):
+/// `> □ ×`:
 ///
 /// ```text
-///   [gap] + [sep] > □ ×
+///   [gap] > □ ×
 /// ```
 ///
 /// where `□` (maximize) is present only when `show_maximize`, `×` (close) only
-/// when `show_close`, `+` (new buffer) is always present, and the `>`
-/// right-overflow slot is always reserved (the glyph is drawn only when the
-/// tabs actually overflow, but the column is held so the layout doesn't jump as
-/// you scroll). The tab bar lays out — and the tab-scroll math measures against
-/// — the pane width *minus* this reserve, so the scrolling tabs and the `<`
-/// left-overflow indicator never end up underneath the cluster.
+/// when `show_close`, and the `>` right-overflow slot is always reserved (the
+/// glyph is drawn only when the tabs actually overflow, but the column is held
+/// so the layout doesn't jump as you scroll). The `+` new-buffer button is
+/// *not* part of this cluster: it is drawn inline by `render_for_split` right
+/// after the last (visible) tab, exactly as in a single split (fresh#2768
+/// follow-up). The tab bar lays out — and the tab-scroll math measures against
+/// — the pane width *minus* this reserve, so the scrolling tabs, the inline
+/// `+`, and the `<` left-overflow indicator never end up underneath the
+/// cluster.
 ///
 /// A pane with no control buttons (a single, unmaximized split) reserves
 /// nothing: there is no cluster, and `render_for_split` draws its own inline /
@@ -196,9 +199,8 @@ pub fn split_control_reserve(show_maximize: bool, show_close: bool) -> u16 {
     if !show_maximize && !show_close {
         return 0;
     }
-    // gap(1) + plus(1) + sep(1) + right-overflow slot(1) + maximize + close
-    // + trailing blank(1).
-    1 + 1 + 1 + 1 + show_maximize as u16 + show_close as u16 + 1
+    // gap(1) + right-overflow slot(1) + maximize + close + trailing blank(1).
+    1 + 1 + show_maximize as u16 + show_close as u16 + 1
 }
 
 /// Glyph drawn at the left edge when earlier tabs are scrolled off.
@@ -950,13 +952,14 @@ impl TabsRenderer {
         // cells — the web renders the tab bar natively from `tab_bar_view`. The
         // TUI always passes `true`.
         draw: bool,
-        // When true the split-control cluster (`+ [sep] > □ ×`) is owned by the
-        // orchestration layer, so this renderer skips its own trailing `+` and
-        // right-overflow `>` (the orchestration draws them in the reserved
-        // cluster instead). It still draws the `<` left indicator and the
-        // scrolling tabs, and reports overflow via `TabLayout::right_overflow`.
-        // A pane with no control buttons passes `false` and keeps the original
-        // inline/pinned `+` and `>` behaviour.
+        // When true the split-control cluster (`> □ ×`) is owned by the
+        // orchestration layer, so this renderer skips only its own
+        // right-overflow `>` (the orchestration draws it in the reserved cluster
+        // instead) and reports overflow via `TabLayout::right_overflow`. The
+        // trailing `+` new-buffer button is *still* drawn here — inline after
+        // the last tab (or pinned to the right edge of this reduced area when
+        // the tabs overflow) — exactly as a single split does. It also still
+        // draws the `<` left indicator and the scrolling tabs.
         external_controls: bool,
     ) -> TabLayout {
         let mut layout = TabLayout::new(area);
@@ -1042,22 +1045,19 @@ impl TabsRenderer {
         // Decide where the trailing "+" new-tab button goes. When the tabs
         // plus an inline "+" fit, the "+" is appended into the scroll flow and
         // sits right after the last tab. When they overflow, the "+" is pinned
-        // to the right edge of the bar (`tabs_render_width` reserves its
+        // to the right edge of this area (`tabs_render_width` reserves its
         // column) and drawn on top after the main paragraph render below.
         //
-        // With `external_controls` the orchestration layer owns the whole right
-        // cluster (`+ [sep] > □ ×`), so this renderer draws no `+` of its own
-        // and the full bar width is available to the tabs.
+        // With `external_controls` the orchestration layer owns the `> □ ×`
+        // cluster (reserved out of `area` by the caller), but the `+` still
+        // belongs to the tab row here — inline or pinned — so it renders right
+        // after the last (visible) tab rather than in the fixed right cluster.
         let tabs_total: usize = final_spans.iter().map(|(_, w)| w).sum();
-        let (max_width, pin_plus) = if external_controls {
-            (area.width as usize, false)
-        } else {
-            let mw = tabs_render_width(tabs_total, area.width as usize);
-            (mw, mw < area.width as usize)
-        };
+        let max_width = tabs_render_width(tabs_total, area.width as usize);
+        let pin_plus = max_width < area.width as usize;
 
         let mut inline_plus_range: Option<(usize, usize)> = None;
-        if !external_controls && !pin_plus {
+        if !pin_plus {
             let plus_start = if !rendered_targets.is_empty() {
                 // Separator between the last real tab and the "+" button
                 final_spans.push((
@@ -1513,12 +1513,12 @@ mod tests {
         // No buttons (single pane): no reservation — the tab renderer draws its
         // own inline/pinned `+` and `<`/`>` indicators.
         assert_eq!(split_control_reserve(false, false), 0);
-        // Maximized single pane: cluster is `+ [sep] > □` (no close), i.e.
-        // gap + `+` + sep + `>` slot + □ + trail = 6.
-        assert_eq!(split_control_reserve(true, false), 6);
-        // Multiple splits, not maximized: full cluster `+ [sep] > □ ×`, i.e.
-        // gap + `+` + sep + `>` slot + □ + × + trail = 7.
-        assert_eq!(split_control_reserve(true, true), 7);
+        // Maximized single pane: cluster is `> □` (no close, no `+` — the `+` is
+        // drawn inline with the tabs), i.e. gap + `>` slot + □ + trail = 4.
+        assert_eq!(split_control_reserve(true, false), 4);
+        // Multiple splits, not maximized: full cluster `> □ ×`, i.e.
+        // gap + `>` slot + □ + × + trail = 5.
+        assert_eq!(split_control_reserve(true, true), 5);
     }
 
     #[test]
@@ -1670,10 +1670,12 @@ mod tests {
     }
 
     #[test]
-    fn external_controls_suppress_plus_and_right_indicator() {
-        // With `external_controls`, the orchestration layer owns the `+`/`>`
-        // cluster, so the tab renderer draws neither glyph itself even when the
-        // tabs overflow — it only reports overflow via `right_overflow`.
+    fn external_controls_suppress_right_indicator_but_keep_plus() {
+        // With `external_controls`, the orchestration layer owns the `> □ ×`
+        // cluster, so the tab renderer suppresses only the `>` right-overflow
+        // glyph (reporting overflow via `right_overflow` instead). The `+`
+        // new-buffer button still belongs to the tab row and is drawn inline /
+        // pinned right after the last visible tab.
         let names = [
             "alpha.rs",
             "bravo.rs",
@@ -1688,28 +1690,53 @@ mod tests {
         let (row, layout) = render_row0_ext(area, &targets, &group_names, targets[2], 14, true);
         // Overflow is reported so the caller can draw `>` in its cluster.
         assert!(layout.right_overflow, "expected overflow to be reported");
-        // But this renderer painted no `>` and pinned no `+`.
+        // This renderer painted no `>` (the cluster owns it) ...
         assert!(
             !row.contains('>'),
             "external controls must not draw the `>` indicator here, got {row:?}"
         );
         assert!(
-            !row.contains('+'),
-            "external controls must not draw the `+` button here, got {row:?}"
-        );
-        assert!(
-            layout.new_tab_area.is_none(),
-            "no pinned `+` in external mode"
-        );
-        assert!(
             layout.right_scroll_area.is_none(),
             "no `>` hit area in external mode (the cluster owns it)"
+        );
+        // ... but the `+` button IS drawn (pinned to the right edge of the
+        // reduced tab area when overflowing) and its hit area recorded.
+        assert!(
+            row.contains('+'),
+            "external controls keep the inline/pinned `+` button, got {row:?}"
+        );
+        assert!(
+            layout.new_tab_area.is_some(),
+            "the `+` hit area must be recorded in external mode"
         );
         // The `<` left indicator is still owned by the tab renderer.
         assert!(
             row.contains('<'),
             "left indicator stays with the tab renderer, got {row:?}"
         );
+    }
+
+    #[test]
+    fn external_controls_plus_inline_after_last_tab_when_fitting() {
+        // A couple of short tabs in a wide bar with `external_controls`: the `+`
+        // sits inline right after the last tab (not pinned to the far right, and
+        // not in the reserved cluster which the caller draws separately).
+        let (targets, group_names) = build_group_inputs(&["a.rs", "b.rs"]);
+        let area = Rect::new(0, 0, 40, 1);
+        let (row, layout) = render_row0_ext(area, &targets, &group_names, targets[0], 0, true);
+        assert!(!layout.right_overflow, "tabs fit, so no overflow");
+        let plus = layout.new_tab_area.expect("inline `+` must be present");
+        // The `+` glyph sits right after the last tab's close button, well left
+        // of the bar's right edge (there is trailing empty space after it).
+        let last_tab = layout.tabs.last().expect("at least one tab");
+        let last_tab_right = last_tab.tab_area.x + last_tab.tab_area.width;
+        assert!(
+            plus.x >= last_tab_right && plus.x < area.width - 3,
+            "`+` at x={} should follow the last tab (ends at {}) and not hug the right edge",
+            plus.x,
+            last_tab_right
+        );
+        assert!(row.contains('+'), "`+` glyph painted, got {row:?}");
     }
 
     #[test]
