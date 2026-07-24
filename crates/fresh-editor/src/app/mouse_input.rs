@@ -3286,7 +3286,11 @@ impl Editor {
         // The ratio represents the fraction of space the first split gets
         if total_size > 0 {
             let ratio_delta = delta as f32 / total_size as f32;
-            let new_ratio = (start_ratio + ratio_delta).clamp(0.1, 0.9);
+            // Store the raw fraction; the absolute minimum-pane-size guard is
+            // enforced at layout time, so dragging the separator toward the
+            // edge stops when the sibling would drop below the minimum size
+            // rather than at a fixed 10%/90%.
+            let new_ratio = (start_ratio + ratio_delta).clamp(0.0, 1.0);
 
             // Update the split ratio. The container may live in the main
             // split tree or inside a stashed Grouped subtree (buffer group

@@ -944,9 +944,15 @@ fn test_vertical_split_separator_drag_resize() {
     );
 }
 
-/// Test that separator drag respects minimum and maximum ratios
+/// Test that separator drag keeps both panes at least the absolute minimum
+/// pane size. The stored ratio is now free to reach the extremes (it is only
+/// clamped to `[0, 1]`); the real guard is applied at layout time, so an
+/// extreme drag pins the *rendered* sibling pane to `MIN_PANE_HEIGHT` rather
+/// than stopping the ratio at a fixed 0.1/0.9.
 #[test]
 fn test_split_separator_drag_respects_limits() {
+    use fresh::view::split::MIN_PANE_HEIGHT;
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Delay to avoid double-click detection (use config value * 2 for safety margin)
@@ -964,46 +970,47 @@ fn test_split_separator_drag_respects_limits() {
         .unwrap();
     harness.render().unwrap();
 
+    let (content_first, content_last) = harness.content_area_rows();
+    // `content_first` is where buffer *text* begins; a pane's split rectangle
+    // starts one row higher, at its tab bar. The bottom pane has no tab bar
+    // below it, so `content_last` already aligns with the split-area bottom.
+    let split_area_top = content_first.saturating_sub(1);
     let separators = harness.editor().get_separator_areas().to_vec();
-    let (split_id, _, sep_x, sep_y, sep_length) = separators[0];
+    let (_split_id, _, sep_x, sep_y, sep_length) = separators[0];
 
     // Try to drag separator way beyond reasonable limits
     let start_col = sep_x + sep_length / 2;
 
-    // Drag extremely far down (should clamp to max 0.9)
+    // Drag extremely far down: the first pane grows, but the second pane must
+    // still render at least MIN_PANE_HEIGHT rows (the separator cannot reach
+    // the bottom of the content area).
     harness
         .mouse_drag(start_col, sep_y, start_col, sep_y + 100)
         .unwrap();
+    harness.render().unwrap();
 
-    let max_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
+    let sep_y_down = harness.editor().get_separator_areas()[0].3 as usize;
+    let second_pane_height = content_last.saturating_sub(sep_y_down);
     assert!(
-        max_ratio <= 0.9,
-        "Ratio should not exceed 0.9, got {max_ratio}"
-    );
-    assert!(
-        max_ratio >= 0.8,
-        "Ratio should be close to maximum after extreme drag down, got {max_ratio}"
+        second_pane_height >= MIN_PANE_HEIGHT as usize,
+        "After extreme drag down the sibling pane must keep at least {MIN_PANE_HEIGHT} rows, got {second_pane_height}"
     );
 
     // Wait to avoid double-click detection
     std::thread::sleep(double_click_delay);
 
-    // Drag extremely far up (should clamp to min 0.1)
-    let separators_after = harness.editor().get_separator_areas().to_vec();
-    let (_, _, _, sep_y_after, _) = separators_after[0];
-
+    // Drag extremely far up: now the first pane is pinned to the minimum.
+    let sep_y_after = harness.editor().get_separator_areas()[0].3;
     harness
         .mouse_drag(start_col, sep_y_after, start_col, 0)
         .unwrap();
+    harness.render().unwrap();
 
-    let min_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
+    let sep_y_up = harness.editor().get_separator_areas()[0].3 as usize;
+    let first_pane_height = sep_y_up.saturating_sub(split_area_top);
     assert!(
-        min_ratio >= 0.1,
-        "Ratio should not be less than 0.1, got {min_ratio}"
-    );
-    assert!(
-        min_ratio <= 0.2,
-        "Ratio should be close to minimum after extreme drag up, got {min_ratio}"
+        first_pane_height >= MIN_PANE_HEIGHT as usize,
+        "After extreme drag up the first pane must keep at least {MIN_PANE_HEIGHT} rows, got {first_pane_height}"
     );
 }
 
