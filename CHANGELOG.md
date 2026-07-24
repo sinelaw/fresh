@@ -12,7 +12,7 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
 
 ### Features
 
-* **In-editor self-update** - update Fresh from the status-bar indicator, or via `fresh --cmd update`.
+* **Option for in-editor self-update** - update Fresh from the status-bar indicator, or via `fresh --cmd update`. Detects your install method and runs the appropriate, platform specific, update command.
 * **Syntax highlighting inside embedded code blocks** - a fenced code block in a Markdown file (e.g. ```` ```rust ```` ) now highlights with that language's own grammar instead of one flat color; the same mechanism also fixes Vue's `<script>`/`<style>` blocks (#2689, requested by @asukaminato0721).
 * **Better Bazel/Starlark highlighting** - functions, operators, punctuation, and built-ins are now highlighted, and `.bazel`/`MODULE.bazel` files are recognized (contributed by @asukaminato0721).
 * **Orchestrator: agents & workspaces**
