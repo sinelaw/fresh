@@ -52,8 +52,26 @@ fn ensure_index(
     state: &mut EditorState,
     wrap_width: usize,
     show_line_numbers: bool,
+    grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
 ) {
+    // Terminal-grid wrap (fresh#2649): exact-column rows at the grid
+    // width, no gutter, no hanging indent — the same row model the
+    // renderer and viewport scroll math use for terminal scroll-back.
+    if let Some(cols) = grid_cols {
+        let key = VisualRowIndexKey {
+            pipeline_inputs_version: pipeline_inputs_ver,
+            view_mode: CacheViewMode::Source,
+            effective_width: cols.max(1) as u32,
+            gutter_width: 0,
+            wrap_column: None,
+            hanging_indent: false,
+            line_wrap_enabled: true,
+            grid_wrap: true,
+        };
+        ensure_built(state, &key);
+        return;
+    }
     let gutter_width = estimated_gutter_width(&state.buffer, show_line_numbers);
     let wrap_config = WrapConfig::new(wrap_width, gutter_width, true, true);
     let effective_width = wrap_config
@@ -72,6 +90,7 @@ fn ensure_index(
         wrap_column: None,
         hanging_indent: wrap_config.hanging_indent,
         line_wrap_enabled: true,
+        grid_wrap: false,
     };
     ensure_built(state, &key);
 }
@@ -87,13 +106,20 @@ pub(crate) fn scrollbar_jump_visual(
     viewport_height: usize,
     wrap_width: usize,
     show_line_numbers: bool,
+    grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 {
         return (0, 0);
     }
 
-    ensure_index(state, wrap_width, show_line_numbers, pipeline_inputs_ver);
+    ensure_index(
+        state,
+        wrap_width,
+        show_line_numbers,
+        grid_cols,
+        pipeline_inputs_ver,
+    );
     let total_visual_rows = state.visual_row_index.total_rows() as usize;
     if total_visual_rows == 0 {
         return (0, 0);
@@ -128,13 +154,20 @@ pub(crate) fn scrollbar_drag_relative_visual(
     viewport_height: usize,
     wrap_width: usize,
     show_line_numbers: bool,
+    grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 
-    ensure_index(state, wrap_width, show_line_numbers, pipeline_inputs_ver);
+    ensure_index(
+        state,
+        wrap_width,
+        show_line_numbers,
+        grid_cols,
+        pipeline_inputs_ver,
+    );
     let total_visual_rows = state.visual_row_index.total_rows() as usize;
     if total_visual_rows == 0 {
         return (0, 0);

@@ -249,14 +249,22 @@ impl crate::app::window::Window {
         // what the renderer uses or `max_scroll_row` ends up wrong on
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
-        let (wrap_width, show_line_numbers) = self
+        let (wrap_width, show_line_numbers, grid_cols) = self
             .buffers
             .splits()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
-            .unwrap_or((80, true));
+            .map(|vs| {
+                (
+                    vs.viewport.effective_width() as usize,
+                    vs.show_line_numbers,
+                    // Terminal-grid wrap (fresh#2649): scroll-back rows
+                    // break at the capture-time PTY width.
+                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                )
+            })
+            .unwrap_or((80, true, None));
 
         // Snapshot config values up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -293,6 +301,7 @@ impl crate::app::window::Window {
                         viewport_height,
                         wrap_width,
                         show_line_numbers,
+                        grid_cols,
                         pipeline_inputs_ver,
                     )
                 } else {
@@ -456,14 +465,22 @@ impl crate::app::window::Window {
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
-        let (wrap_width, show_line_numbers) = self
+        let (wrap_width, show_line_numbers, grid_cols) = self
             .buffers
             .splits()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
-            .unwrap_or((80, true));
+            .map(|vs| {
+                (
+                    vs.viewport.effective_width() as usize,
+                    vs.show_line_numbers,
+                    // Terminal-grid wrap (fresh#2649): scroll-back rows
+                    // break at the capture-time PTY width.
+                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                )
+            })
+            .unwrap_or((80, true, None));
 
         // Snapshot config up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -493,6 +510,7 @@ impl crate::app::window::Window {
                         viewport_height,
                         wrap_width,
                         show_line_numbers,
+                        grid_cols,
                         pipeline_inputs_ver,
                     )
                 } else {

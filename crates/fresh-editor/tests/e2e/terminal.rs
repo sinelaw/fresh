@@ -4636,10 +4636,12 @@ fn test_terminal_double_click_selects_word_and_copy_resumes() {
 /// scroll position. After the fix `append_visible_screen` re-attaches the
 /// in-history head, so scrolling to the top of scrollback reveals it.
 ///
-/// Symptom 2 (scroll corruption): terminal scroll-back is non-wrapping, but
-/// the entry path used to flip the scroll-math wrap flag on — disagreeing with
-/// the non-wrapping renderer so scrolling up then back down got stuck. With
-/// the flag consistent, a scroll round-trip returns to a stable bottom frame.
+/// Symptom 2 (scroll corruption): the scroll math and the renderer used to
+/// disagree about how scroll-back rows lay out, so scrolling up then back
+/// down got stuck. Terminal scroll-back now *grid-wraps* — exact-column rows
+/// at the capture-time PTY width — and the renderer and every scroll path
+/// share that one row model, so a scroll round-trip returns to a stable
+/// bottom frame.
 #[test]
 #[cfg(not(windows))] // Uses a Unix shell to emit the long line
 fn test_bug_2649_tall_line_scrollback_reachable_and_stable() {
@@ -4712,4 +4714,117 @@ fn test_bug_2649_tall_line_scrollback_reachable_and_stable() {
          (fresh#2649 symptom 2). Screen:\n{}",
         harness.screen_to_string()
     );
+}
+
+/// fresh#2775 UX regression: entering scroll-back must not reflow the pane.
+///
+/// The live grid soft-wraps long lines at exact column boundaries (mid-word,
+/// at the PTY width). The scroll-back view now wraps the same way — grid
+/// wrap at the capture-time width — so the transition Ctrl+Space makes is
+/// seamless: every content row of the last live frame reads identically in
+/// the first scroll-back frame. The old behaviour (non-wrapping scroll-back)
+/// collapsed each wrapped line onto one long row with horizontal overflow;
+/// word-boundary wrapping would reshuffle rows around the spaces. Both would
+/// fail the row-for-row comparison below.
+#[test]
+#[cfg(not(windows))] // Uses a Unix shell to emit the long lines
+fn test_bug_2775_scrollback_entry_is_seamless_grid_wrap() {
+    let mut harness = harness_or_return!(100, 24);
+
+    harness.editor_mut().open_terminal();
+    harness
+        .editor_mut()
+        .set_terminal_jump_to_end_on_output(false);
+
+    // Two wrapped logical lines, built so the echoed COMMAND text contains
+    // none of the literal markers (only the OUTPUT does):
+    //  - a solid 8-'Q' + 260-'W' run (no spaces): wraps mid-run at exactly
+    //    the grid width;
+    //  - 40 space-separated words "w00xx " .. "w39xx" (~240 cells): the grid
+    //    splits these MID-WORD at the column boundary, which word-boundary
+    //    wrapping would never do — pinning the grid-wrap semantics.
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(
+        b"head -c 8 /dev/zero | tr '\0' 'Q'; head -c 260 /dev/zero | tr '\0' 'W'; printf '\n'\n",
+    );
+    harness
+        .wait_until(|h| h.screen_to_string().contains("WWWWWWWW"))
+        .unwrap();
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(b"awk 'BEGIN{for(i=0;i<40;i++)printf \"w%02dxx \",i; print \"\"}'\n");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("w39xx"))
+        .unwrap();
+
+    let live = harness.screen_to_string();
+    let live_rows: Vec<&str> = live.lines().collect();
+
+    // Rows carrying our wrapped output (not the echoed commands, which
+    // contain neither marker).
+    let marker_rows: Vec<usize> = live_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.contains("WWWWWWWW") || l.contains("w07xx") || l.contains("w39xx"))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        marker_rows.len() >= 4,
+        "expected the two long lines to wrap across >= 4 rows on the live \
+         grid, got {} marker rows. Screen:\n{}",
+        marker_rows.len(),
+        live
+    );
+
+    // Enter read-only scroll-back.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    assert!(!harness.editor().is_terminal_mode());
+    harness.render().unwrap();
+    let scrollback = harness.screen_to_string();
+    let sb_rows: Vec<&str> = scrollback.lines().collect();
+
+    // Seamless transition: each content row reads the same before and
+    // after, at the same screen row. Only the far-right columns may differ
+    // (the scroll-back view draws a scrollbar over the grid's last column),
+    // so compare the first 96 of the 100 screen columns.
+    let prefix = |l: &str| {
+        l.chars()
+            .take(96)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    };
+    for &i in &marker_rows {
+        assert_eq!(
+            prefix(live_rows[i]),
+            prefix(sb_rows[i]),
+            "row {i} reflowed when entering scroll-back.\nLIVE:\n{live}\nSCROLLBACK:\n{scrollback}"
+        );
+    }
+
+    // And the round trip back to the bottom is stable: scroll up, return,
+    // and the same rows must still read identically.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::PageUp, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    let after = harness.screen_to_string();
+    let after_rows: Vec<&str> = after.lines().collect();
+    for &i in &marker_rows {
+        assert_eq!(
+            prefix(sb_rows[i]),
+            prefix(after_rows[i]),
+            "row {i} unstable after PageUp x3 + Ctrl+End round trip.\nBEFORE:\n{scrollback}\nAFTER:\n{after}"
+        );
+    }
 }

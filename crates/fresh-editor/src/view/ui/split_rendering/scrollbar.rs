@@ -85,18 +85,24 @@ pub(super) fn scrollbar_visual_row_counts(
         return (1, 0);
     }
 
-    let gutter_width = viewport.gutter_width(&state.buffer);
-    let wrap_config = WrapConfig::new(
-        viewport.width as usize,
-        gutter_width,
-        true,
-        viewport.wrap_indent,
-    );
-    let effective_width = wrap_config
-        .first_line_width
-        .saturating_add(gutter_width)
-        .max(2);
-    let hanging_indent = wrap_config.hanging_indent;
+    // Terminal-grid wrap (fresh#2649): count exact-column rows at the grid
+    // width — same row model as the renderer and the viewport scroll math.
+    let (effective_width, gutter_width, hanging_indent) = if viewport.grid_wrap {
+        (viewport.grid_cols(), 0usize, false)
+    } else {
+        let gutter_width = viewport.gutter_width(&state.buffer);
+        let wrap_config = WrapConfig::new(
+            viewport.width as usize,
+            gutter_width,
+            true,
+            viewport.wrap_indent,
+        );
+        let effective_width = wrap_config
+            .first_line_width
+            .saturating_add(gutter_width)
+            .max(2);
+        (effective_width, gutter_width, wrap_config.hanging_indent)
+    };
     let pipeline_inputs_ver = pipeline_inputs_version(
         state.buffer.version(),
         state.soft_breaks.version(),
@@ -112,6 +118,7 @@ pub(super) fn scrollbar_visual_row_counts(
         wrap_column: None,
         hanging_indent,
         line_wrap_enabled: viewport.line_wrap_enabled,
+        grid_wrap: viewport.grid_wrap,
     };
     ensure_built(state, &key);
 

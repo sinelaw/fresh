@@ -146,6 +146,133 @@ fn back_up_to_prior_space(
     })
 }
 
+/// Terminal-grid wrap: break the token stream at **exact column
+/// boundaries** every `cols` columns, the way the live PTY grid lays out
+/// its rows (fresh#2649).
+///
+/// Differences from [`apply_wrapping_transform`]:
+///   - no word-boundary preference — a row breaks exactly when the next
+///     visible grapheme would not fit, even mid-word;
+///   - no gutter and no hanging indent — terminal scroll-back renders
+///     without a line-number column and continuation rows start at
+///     column 0, like the grid;
+///   - ANSI-aware — terminal scroll-back text carries SGR color codes,
+///     which are zero-width and never trigger a break (they stay attached
+///     to the row they follow, matching how `append_row_cells` joins grid
+///     rows into a logical line).
+///
+/// Must agree row-for-row with `line_wrap_cache::for_each_grid_row_start`
+/// (the count/segment side used by scroll math): both walk grapheme
+/// clusters with the same width rules, so a logical line of N visible
+/// cells splits into identical rows in the renderer and in the scroll
+/// position math — the disagreement that made scroll-back stick is
+/// structurally impossible (fresh#2649 symptom 2).
+pub(crate) fn apply_grid_wrapping_transform(
+    tokens: Vec<ViewTokenWire>,
+    cols: usize,
+) -> Vec<ViewTokenWire> {
+    use crate::primitives::ansi::AnsiParser;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    if cols == 0 {
+        return tokens;
+    }
+
+    let mut wrapped: Vec<ViewTokenWire> = Vec::with_capacity(tokens.len());
+    let mut col: usize = 0;
+    let mut parser = AnsiParser::new();
+
+    let emit_break = |wrapped: &mut Vec<ViewTokenWire>, col: &mut usize| {
+        wrapped.push(ViewTokenWire {
+            source_offset: None,
+            kind: ViewTokenWireKind::Break,
+            style: None,
+        });
+        *col = 0;
+    };
+
+    for token in tokens {
+        match &token.kind {
+            ViewTokenWireKind::Newline => {
+                wrapped.push(token);
+                col = 0;
+                // Escape sequences never span logical lines in captured
+                // scroll-back; start each line with a clean parser so a
+                // malformed trailing escape can't leak zero-width state.
+                parser.reset();
+            }
+            ViewTokenWireKind::Break => {
+                wrapped.push(token);
+                col = 0;
+            }
+            ViewTokenWireKind::Space => {
+                if col > 0 && col + 1 > cols {
+                    emit_break(&mut wrapped, &mut col);
+                }
+                col += 1;
+                wrapped.push(token);
+            }
+            ViewTokenWireKind::BinaryByte(_) => {
+                // Rendered as `<XX>` (width 4), same accounting as the
+                // word-wrap transform.
+                if col > 0 && col + 4 > cols {
+                    emit_break(&mut wrapped, &mut col);
+                }
+                col += 4;
+                wrapped.push(token);
+            }
+            ViewTokenWireKind::Text(text) => {
+                // Split the token at every grid row boundary. `seg_start`
+                // is the byte offset (within `text`) where the pending
+                // sub-token begins.
+                let mut seg_start = 0usize;
+                for (byte_offset, grapheme) in text.grapheme_indices(true) {
+                    // Escape-sequence chars are zero width; keep the
+                    // parser fed (mirrors ViewLineIterator).
+                    let mut chars = grapheme.chars();
+                    let first = chars.next().unwrap_or('\0');
+                    if parser.parse_char(first).is_none() {
+                        for ch in chars {
+                            let _ = parser.parse_char(ch);
+                        }
+                        continue;
+                    }
+                    let width = if grapheme == "\t" {
+                        visual_layout::tab_expansion_width(col)
+                    } else {
+                        display_width::str_width(grapheme)
+                    };
+                    if col > 0 && col + width > cols {
+                        if byte_offset > seg_start {
+                            wrapped.push(ViewTokenWire {
+                                source_offset: token.source_offset.map(|s| s + seg_start),
+                                kind: ViewTokenWireKind::Text(
+                                    text[seg_start..byte_offset].to_string(),
+                                ),
+                                style: token.style.clone(),
+                            });
+                            seg_start = byte_offset;
+                        }
+                        emit_break(&mut wrapped, &mut col);
+                    }
+                    col += width;
+                }
+                if seg_start == 0 {
+                    wrapped.push(token);
+                } else if seg_start < text.len() {
+                    wrapped.push(ViewTokenWire {
+                        source_offset: token.source_offset.map(|s| s + seg_start),
+                        kind: ViewTokenWireKind::Text(text[seg_start..].to_string()),
+                        style: token.style,
+                    });
+                }
+            }
+        }
+    }
+
+    wrapped
+}
+
 pub(crate) fn apply_wrapping_transform(
     tokens: Vec<ViewTokenWire>,
     content_width: usize,

@@ -355,10 +355,11 @@ impl super::Editor {
     /// Live terminals have no cursor/selection model of their own, so the
     /// split is dropped into read-only scrollback first — exactly the
     /// Ctrl+Space / scroll-up transition. `sync_terminal_to_buffer` pins the
-    /// scrollback viewport to the first byte of the just-appended visible
-    /// screen, making the scrollback view pixel-identical to the grid the
-    /// user aimed at: grid row r is buffer line `top_line + r` and grid
-    /// columns map 1:1 (wrap off, no gutter). That lets both the press
+    /// scrollback viewport to the just-appended visible screen, making the
+    /// scrollback view pixel-identical to the grid the user aimed at: the
+    /// view grid-wraps at the capture-time PTY width (fresh#2649), so grid
+    /// row r is visual row r of the anchored viewport and grid columns map
+    /// 1:1 within a row (no gutter). That lets both the press
     /// origin and the current drag position resolve to exact byte positions
     /// without waiting for a re-render; the standard text-selection drag
     /// machinery then takes over (Ctrl+C copies through the editor
@@ -565,6 +566,46 @@ impl super::Editor {
         // explicit scrollback view may have been scrolled right).
         let grid_col =
             col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+
+        // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
+        // wrap segments of the logical lines, so walk the segments from the
+        // viewport anchor to the clicked row instead of assuming one buffer
+        // line per grid row (which was only ever true for unwrapped lines —
+        // a grid row that continued a wrapped line used to resolve to the
+        // wrong buffer line entirely).
+        if vs.viewport.grid_wrap && vs.viewport.line_wrap_enabled {
+            let cols = vs.viewport.grid_cols();
+            let mut remaining = vs.viewport.top_view_line_offset + grid_row;
+            let mut line_idx = top_line;
+            loop {
+                let Some(bytes) = state.buffer.get_line(line_idx) else {
+                    // Clicked past the buffer's tail: clamp to the end.
+                    return Some(state.buffer.len());
+                };
+                let text = String::from_utf8_lossy(&bytes);
+                let trimmed = text.trim_end_matches(['\n', '\r']);
+                let rows =
+                    crate::view::line_wrap_cache::count_visual_rows_for_text_grid(trimmed, cols)
+                        as usize;
+                if remaining < rows {
+                    let line_start = state.buffer.line_col_to_position(line_idx, 0);
+                    let layout =
+                        crate::view::line_wrap_cache::layout_for_plain_text_grid(trimmed, cols, 4);
+                    let byte_in_line = layout
+                        .get(remaining)
+                        .and_then(|r| r.source_byte_at_visual_col(grid_col))
+                        .unwrap_or(trimmed.len());
+                    return Some(
+                        state
+                            .buffer
+                            .snap_to_char_boundary(line_start + byte_in_line.min(trimmed.len())),
+                    );
+                }
+                remaining -= rows;
+                line_idx += 1;
+            }
+        }
+
         let pos = state
             .buffer
             .line_col_to_position(top_line + grid_row, grid_col);

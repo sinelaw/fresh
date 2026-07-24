@@ -22,18 +22,35 @@ use super::Editor;
 impl crate::app::window::Window {
     /// Resolve the effective line_wrap setting for a buffer, considering language overrides.
     pub fn resolve_line_wrap_for_buffer(&self, buffer_id: BufferId) -> bool {
-        // Terminal buffers never wrap. Their content is column-formatted (ANSI,
-        // aligned output), so wrapping is wrong — and wrapping a large scrollback
-        // makes the scrollbar's visual-row index an O(all-lines) scan on every
-        // frame, freezing the UI (fresh#2608). Forced off here so no global
-        // toggle, language override, or per-buffer pin can turn it on.
+        // Terminal buffers always wrap — in *grid* mode (exact-column rows
+        // at the PTY width, `Viewport::grid_wrap`), so scroll-back lays out
+        // identically to the live grid and entering it never reflows
+        // (fresh#2649). Column alignment is preserved because rows break at
+        // exactly the grid width, and the fresh#2608/#2610 freeze doesn't
+        // return: grid row counting is allocation-free and viewport-local,
+        // and the whole-buffer visual-row index keeps its size gates.
+        // Forced on here so no global toggle, language override, or
+        // per-buffer pin can turn it off (which would reflow scroll-back
+        // into one-row logical lines).
         if self.is_terminal_buffer(buffer_id) {
-            return false;
+            return true;
         }
         match self.buffers.get(&buffer_id) {
             Some(state) => buffer_config_resolve::line_wrap(&state.language, self.config()),
             None => self.config().editor.line_wrap,
         }
+    }
+
+    /// Grid-wrap column count for a terminal buffer: the PTY's current
+    /// width. `None` for non-terminal buffers (or when the terminal state
+    /// is unavailable). Scroll-back entry (`sync_terminal_to_buffer`)
+    /// captures this at sync time; generic paths use it as the fallback.
+    pub(crate) fn terminal_grid_cols(&self, buffer_id: BufferId) -> Option<usize> {
+        let terminal_id = self.get_terminal_id(buffer_id)?;
+        let handle = self.terminal_manager.get(terminal_id)?;
+        let state = handle.state.lock().ok()?;
+        let (cols, _) = state.size();
+        Some(cols as usize)
     }
 
     /// Resolve page view settings for a buffer from its language config.
@@ -47,6 +64,12 @@ impl crate::app::window::Window {
 
     /// Resolve the effective wrap_column for a buffer, considering language overrides.
     pub(crate) fn resolve_wrap_column_for_buffer(&self, buffer_id: BufferId) -> Option<usize> {
+        // Terminal buffers wrap at the PTY grid width (fresh#2649). Best
+        // effort: paths that enter scroll-back overwrite this with the
+        // capture-time width in `sync_terminal_to_buffer`.
+        if self.is_terminal_buffer(buffer_id) {
+            return self.terminal_grid_cols(buffer_id);
+        }
         match self.buffers.get(&buffer_id) {
             Some(state) => buffer_config_resolve::wrap_column(&state.language, self.config()),
             None => self.config().editor.wrap_column,

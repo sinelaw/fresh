@@ -38,8 +38,9 @@
 
 use crate::state::EditorState;
 use crate::view::line_wrap_cache::{
-    count_visual_rows_for_text, count_visual_rows_for_text_with_soft_breaks,
-    pipeline_inputs_version, CacheViewMode, LineWrapKey, WrapGeometry,
+    count_visual_rows_for_text, count_visual_rows_for_text_grid,
+    count_visual_rows_for_text_with_soft_breaks, pipeline_inputs_version, CacheViewMode,
+    LineWrapKey, WrapGeometry,
 };
 
 /// All inputs that determine the per-line visual row counts a buffer
@@ -55,6 +56,9 @@ pub struct VisualRowIndexKey {
     pub wrap_column: Option<u32>,
     pub hanging_indent: bool,
     pub line_wrap_enabled: bool,
+    /// Terminal-grid wrap (fresh#2649): per-line counts use exact-column
+    /// breaks at `effective_width` instead of the word-boundary wrap.
+    pub grid_wrap: bool,
 }
 
 impl VisualRowIndexKey {
@@ -74,6 +78,7 @@ impl VisualRowIndexKey {
             wrap_column: self.wrap_column,
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
+            grid_wrap: self.grid_wrap,
             cursor_sig: 0,
         }
     }
@@ -302,7 +307,11 @@ pub fn ensure_built(state: &mut EditorState, key: &VisualRowIndexKey) {
             };
             let line_content = String::from_utf8_lossy(&bytes);
             let trimmed = line_content.trim_end_matches('\n').trim_end_matches('\r');
-            if line_breaks.is_empty() {
+            if key.grid_wrap {
+                // Terminal-grid wrap: exact-column, allocation-free count
+                // (soft breaks / conceals don't apply to terminal buffers).
+                count_visual_rows_for_text_grid(trimmed, effective_width)
+            } else if line_breaks.is_empty() {
                 count_visual_rows_for_text(trimmed, effective_width, gutter_width, hanging_indent)
             } else {
                 count_visual_rows_for_text_with_soft_breaks(
@@ -359,6 +368,7 @@ pub fn ensure_built_from_geom(state: &mut EditorState, geom: &WrapGeometry) {
         wrap_column: geom.wrap_column,
         hanging_indent: geom.hanging_indent,
         line_wrap_enabled: geom.line_wrap_enabled,
+        grid_wrap: geom.grid_wrap,
     };
     ensure_built(state, &key);
 }
@@ -377,6 +387,7 @@ mod tests {
                 wrap_column: None,
                 hanging_indent: false,
                 line_wrap_enabled: true,
+                grid_wrap: false,
             }),
             prefix_sums: prefix,
             line_starts: starts,

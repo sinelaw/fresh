@@ -81,6 +81,13 @@ pub struct LineWrapKey {
     pub wrap_column: Option<u32>,
     pub hanging_indent: bool,
     pub line_wrap_enabled: bool,
+    /// Terminal-grid wrap mode (fresh#2649): rows break at exact column
+    /// boundaries (`effective_width` columns) with no word-boundary
+    /// preference, no hanging indent, and no gutter — matching the live
+    /// PTY grid so entering scroll-back doesn't reflow. Only terminal
+    /// buffers set this; it keys separately from word-wrap entries at the
+    /// same geometry.
+    pub grid_wrap: bool,
     /// Signature of the cursor positions inside this line (see
     /// [`cursor_sig_for_line`]). Cursor-dependent conceal/soft-break
     /// activation makes the cursor line's layout a function of where the
@@ -448,6 +455,10 @@ pub struct WrapGeometry {
     pub hanging_indent: bool,
     pub wrap_column: Option<u32>,
     pub line_wrap_enabled: bool,
+    /// Terminal-grid wrap (see [`LineWrapKey::grid_wrap`]): exact-column
+    /// breaks at `effective_width`, ignoring `gutter_width` /
+    /// `hanging_indent` / `wrap_column`.
+    pub grid_wrap: bool,
     pub view_mode: CacheViewMode,
 }
 
@@ -471,6 +482,7 @@ impl WrapGeometry {
             wrap_column: self.wrap_column,
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
+            grid_wrap: self.grid_wrap,
             cursor_sig,
         }
     }
@@ -557,12 +569,21 @@ pub fn compute_line_layout(
     // disabled, pass tokens through unchanged; ViewLineIterator will
     // still yield one ViewLine per Newline boundary.
     if geom.line_wrap_enabled {
-        tokens = apply_wrapping_transform(
-            tokens,
-            geom.effective_width,
-            geom.gutter_width,
-            geom.hanging_indent,
-        );
+        if geom.grid_wrap {
+            // Terminal-grid wrap: exact-column breaks at effective_width,
+            // matching the live PTY grid's row layout (fresh#2649).
+            tokens = crate::view::ui::split_rendering::transforms::apply_grid_wrapping_transform(
+                tokens,
+                geom.effective_width,
+            );
+        } else {
+            tokens = apply_wrapping_transform(
+                tokens,
+                geom.effective_width,
+                geom.gutter_width,
+                geom.hanging_indent,
+            );
+        }
     }
 
     // Materialise the ViewLines.  `build_base_tokens` may emit tokens
@@ -830,6 +851,124 @@ pub fn count_visual_rows_for_text(
     rows.max(1)
 }
 
+/// Walk `line_text` with the terminal-grid wrap rule and call `f` with the
+/// byte offset (within `line_text`) of every visual-row start, including 0.
+///
+/// The grid rule is the one the live PTY grid uses: rows break at **exact
+/// column boundaries** — no word-boundary preference, no hanging indent, no
+/// gutter. ANSI escape sequences are zero-width (terminal scroll-back text
+/// carries SGR color codes), tabs expand per `tab_expansion_width`, and
+/// widths are measured per grapheme cluster exactly like `ViewLineIterator`
+/// so the row split agrees with the rendered visual columns.
+///
+/// A grapheme is pushed to the next row when the current row has content
+/// (`col > 0`) and the grapheme's width no longer fits in `cols`. Zero-width
+/// graphemes (escapes) never trigger a break, so an SGR sequence at a row
+/// boundary stays attached to the row it followed — the same attachment
+/// `append_row_cells` produces when it joins grid rows into a logical line.
+///
+/// Single source of truth for terminal grid wrapping: the renderer's
+/// `apply_grid_wrapping_transform`, the row counters, and the segment-byte
+/// mapping below all reduce to this walk, so scroll math and the renderer
+/// can never disagree on row boundaries (fresh#2649).
+fn for_each_grid_row_start<F: FnMut(usize)>(line_text: &str, cols: usize, mut f: F) {
+    use crate::primitives::ansi::AnsiParser;
+    use crate::primitives::display_width::str_width;
+    use crate::primitives::visual_layout::tab_expansion_width;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    f(0);
+    if cols == 0 {
+        return;
+    }
+
+    let mut parser = line_text.contains('\x1b').then(AnsiParser::new);
+    let mut col: usize = 0;
+    for (byte_offset, grapheme) in line_text.grapheme_indices(true) {
+        // Escape-sequence chars are zero width (mirrors ViewLineIterator's
+        // push_text_token: the first char decides, the rest keep the parser
+        // state machine fed).
+        if let Some(p) = parser.as_mut() {
+            let mut chars = grapheme.chars();
+            let first = chars.next().unwrap_or('\0');
+            if p.parse_char(first).is_none() {
+                for ch in chars {
+                    let _ = p.parse_char(ch);
+                }
+                continue;
+            }
+        }
+        let width = if grapheme == "\t" {
+            tab_expansion_width(col)
+        } else {
+            str_width(grapheme)
+        };
+        if col > 0 && col + width > cols {
+            f(byte_offset);
+            col = 0;
+        }
+        col += width;
+    }
+}
+
+/// Visual-row count for one logical line under terminal-grid wrapping at
+/// `cols` columns. Allocation-free — used by scroll math and the
+/// `VisualRowIndex` build for terminal scroll-back buffers, where the old
+/// word-wrap counter's per-line transform allocations were part of what made
+/// whole-buffer scans expensive (fresh#2608).
+pub fn count_visual_rows_for_text_grid(line_text: &str, cols: usize) -> u32 {
+    let mut rows: u32 = 0;
+    for_each_grid_row_start(line_text, cols, |_| rows += 1);
+    rows.max(1)
+}
+
+/// Byte offset (relative to `line_start`) of each grid-wrap visual row of
+/// `line_text` at `cols` columns. Grid-mode counterpart of
+/// `viewport::wrap_segment_source_bytes` — PageUp/PageDown use it to find
+/// the byte of the visual row at the top of the viewport.
+pub fn grid_segment_source_bytes(line_text: &str, line_start: usize, cols: usize) -> Vec<usize> {
+    let mut rows = Vec::new();
+    for_each_grid_row_start(line_text, cols, |b| rows.push(line_start + b));
+    if rows.is_empty() {
+        rows.push(line_start);
+    }
+    rows
+}
+
+/// Grid-mode counterpart of [`layout_for_plain_text`]: materialise a line's
+/// layout as `Vec<ViewLine>` under terminal-grid wrapping at `cols` columns.
+/// Matches the renderer's `apply_grid_wrapping_transform` output for the
+/// same text, so row counts and cursor mappings agree with what is drawn.
+pub fn layout_for_plain_text_grid(line_text: &str, cols: usize, tab_size: usize) -> Vec<ViewLine> {
+    use crate::view::ui::split_rendering::transforms::apply_grid_wrapping_transform;
+    use crate::view::ui::view_pipeline::LineStart;
+    use fresh_core::api::ViewTokenWire;
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let wrapped = apply_grid_wrapping_transform(tokens, cols);
+    let mut lines: Vec<ViewLine> =
+        ViewLineIterator::new(&wrapped, false, true, tab_size, false).collect();
+    if lines.is_empty() {
+        lines.push(ViewLine {
+            text: String::new(),
+            source_start_byte: Some(0),
+            char_source_bytes: Vec::new(),
+            char_styles: Vec::new(),
+            char_visual_cols: Vec::new(),
+            visual_to_char: Vec::new(),
+            tab_starts: std::collections::HashSet::new(),
+            line_start: LineStart::Beginning,
+            ends_with_newline: false,
+            virtual_gutter_glyph: None,
+            virtual_line_style: None,
+        });
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -845,6 +984,7 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            grid_wrap: false,
             cursor_sig: 0,
         }
     }
@@ -1156,6 +1296,102 @@ mod tests {
         }
     }
 
+    // -------------------------------------------------------------------
+    // Terminal-grid wrap (fresh#2649).
+    // -------------------------------------------------------------------
+
+    /// Grid counting basics: exact-column breaks, no word-boundary
+    /// preference, ANSI escapes zero-width, wide chars two cells.
+    #[test]
+    fn grid_count_basics() {
+        // Empty line is one row at any width.
+        assert_eq!(count_visual_rows_for_text_grid("", 20), 1);
+        // Exact fit stays one row; one more char wraps.
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(20), 20), 1);
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(21), 20), 2);
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(40), 20), 2);
+        assert_eq!(count_visual_rows_for_text_grid(&"a".repeat(41), 20), 3);
+        // Words are split mid-word at the exact column — 6 words of 5
+        // chars minus the trailing space = 29 visible cells at width 10.
+        assert_eq!(
+            count_visual_rows_for_text_grid("word1 word2 word3 word4 word5", 10),
+            3
+        );
+        // SGR color codes are zero width.
+        let colored = format!("\x1b[31m{}\x1b[0m", "x".repeat(20));
+        assert_eq!(count_visual_rows_for_text_grid(&colored, 20), 1);
+        // Wide chars take two cells: 10 CJK chars = 20 cells.
+        let cjk = "\u{4e16}".repeat(10);
+        assert_eq!(count_visual_rows_for_text_grid(&cjk, 20), 1);
+        assert_eq!(count_visual_rows_for_text_grid(&cjk, 19), 2);
+    }
+
+    /// A wide char that would straddle the boundary moves to the next row
+    /// whole (like the grid's early wrap) — the count follows the same
+    /// walk, not a `ceil(total/cols)` shortcut.
+    #[test]
+    fn grid_count_wide_char_straddles_boundary() {
+        // 19 narrow cells then a wide char at width 20: the wide char
+        // doesn't fit in the single remaining cell → next row.
+        let text = format!("{}\u{4e16}", "a".repeat(19));
+        assert_eq!(count_visual_rows_for_text_grid(&text, 20), 2);
+    }
+
+    /// The transform-backed layout (what the renderer draws), the
+    /// allocation-free count (what scroll math uses), and the segment
+    /// byte map (what PageUp/Down use) must agree row-for-row — the
+    /// single-row-model invariant that keeps terminal scroll-back
+    /// scrolling stable (fresh#2649 symptom 2).
+    #[test]
+    fn grid_layout_count_and_segments_agree() {
+        let texts: Vec<String> = vec![
+            String::new(),
+            "short".into(),
+            "a".repeat(99),
+            "a".repeat(100),
+            "a".repeat(101),
+            "word1 word2 word3 word4 word5 word6 word7 word8".into(),
+            format!("\x1b[31mred{}\x1b[0m tail", "x".repeat(50)),
+            format!("{}{}", "\u{4e16}".repeat(13), "mixed latin \u{e9}\u{5d0}"),
+            format!("prompt$ {}", "argword ".repeat(30)),
+        ];
+        for text in &texts {
+            for cols in [7usize, 10, 20, 33, 99] {
+                let count = count_visual_rows_for_text_grid(text, cols) as usize;
+                let layout = layout_for_plain_text_grid(text, cols, 4);
+                assert_eq!(
+                    layout.len(),
+                    count,
+                    "layout rows != counted rows for cols={cols} text={text:?}"
+                );
+                let segs = grid_segment_source_bytes(text, 0, cols);
+                assert_eq!(
+                    segs.len(),
+                    count,
+                    "segment starts != counted rows for cols={cols} text={text:?}"
+                );
+                // Each row's first source byte must match the segment map.
+                for (i, row) in layout.iter().enumerate() {
+                    if let Some(first) = row.char_source_bytes.iter().find_map(|b| *b) {
+                        assert_eq!(
+                            first, segs[i],
+                            "row {i} first byte mismatch for cols={cols} text={text:?}"
+                        );
+                    }
+                    // No visible row is wider than the grid... except a
+                    // trailing newline cell which ViewLine carries.
+                    let vis = row
+                        .visual_width()
+                        .saturating_sub(usize::from(row.ends_with_newline));
+                    assert!(
+                        vis <= cols,
+                        "row {i} wider than grid ({vis} > {cols}) for text={text:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// A soft-break offset that lands inside a multi-byte char must be
     /// skipped like the other malformed break positions, not panic the
     /// slice.  This happens when the break list is stale: the plugin
@@ -1347,6 +1583,7 @@ mod tests {
                 wrap_column: None,
                 hanging_indent: false,
                 line_wrap_enabled: true,
+                grid_wrap: false,
                 cursor_sig: 0,
             };
             let real_val = real.get_or_insert_with(key, || dummy_lines(shadow_rows));
@@ -1380,6 +1617,7 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            grid_wrap: false,
             cursor_sig: 0,
         };
         cache.get_or_insert_with(key_v0, || dummy_lines(5));
@@ -1423,11 +1661,12 @@ mod tests {
             wrap_column: None,
             hanging_indent: false,
             line_wrap_enabled: true,
+            grid_wrap: false,
             cursor_sig: 0,
         };
 
         // Vary each field in turn; each variation must be a distinct key.
-        let variations: [LineWrapKey; 8] = [
+        let variations: [LineWrapKey; 9] = [
             LineWrapKey {
                 pipeline_inputs_version: 2,
                 ..base
@@ -1459,6 +1698,10 @@ mod tests {
             LineWrapKey {
                 line_wrap_enabled: false,
                 cursor_sig: 0,
+                ..base
+            },
+            LineWrapKey {
+                grid_wrap: true,
                 ..base
             },
         ];

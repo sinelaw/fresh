@@ -394,9 +394,13 @@ impl Window {
         if let Some(view_states) = self.split_view_states_mut() {
             if let Some(view_state) = view_states.get_mut(&split_id) {
                 view_state.add_buffer(buffer_id);
-                // Terminal buffers should not wrap lines so escape
-                // sequences stay intact.
-                view_state.viewport.line_wrap_enabled = false;
+                // Terminal buffers grid-wrap: exact-column rows at the PTY
+                // width so scroll-back lays out like the live grid
+                // (fresh#2649). The width is filled in on scroll-back entry
+                // / by the per-frame healer once the PTY reports its size.
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
+                view_state.viewport.wrap_indent = false;
                 // Disable line numbers + current-line highlight for the
                 // terminal buffer's per-buffer view state so exiting
                 // terminal mode doesn't suddenly add a gutter / row
@@ -408,7 +412,9 @@ impl Window {
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
-                buf_state.viewport.line_wrap_enabled = false;
+                buf_state.viewport.line_wrap_enabled = true;
+                buf_state.viewport.grid_wrap = true;
+                buf_state.viewport.wrap_indent = false;
             }
         }
 
@@ -529,10 +535,11 @@ impl Window {
                                     scroll_offset: 0,
                                 },
                             );
-                            // Terminal output is ANSI-sequenced and
-                            // assumes a fixed column count; wrapping
-                            // would mangle cursor positioning.
-                            view_state.viewport.line_wrap_enabled = false;
+                            // Terminal buffers grid-wrap at the PTY
+                            // width (fresh#2649); the per-frame healer
+                            // fills in the column count.
+                            view_state.viewport.line_wrap_enabled = true;
+                            view_state.viewport.grid_wrap = true;
                             self.split_view_states_mut()
                                 .expect("active split implies populated layout")
                                 .insert(new_split_id, view_state);
@@ -555,7 +562,8 @@ impl Window {
                                 .and_then(|m| m.get_mut(&parent))
                             {
                                 view_state.add_buffer(buffer_id);
-                                view_state.viewport.line_wrap_enabled = false;
+                                view_state.viewport.line_wrap_enabled = true;
+                                view_state.viewport.grid_wrap = true;
                             }
                             self.set_active_buffer(buffer_id);
                             (buffer_id, None)
@@ -574,7 +582,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = false;
+                    vs.viewport.line_wrap_enabled = true;
+                    vs.viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -602,7 +611,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = false;
+                    vs.viewport.line_wrap_enabled = true;
+                    vs.viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -1131,8 +1141,10 @@ impl Editor {
             rulers: self.config.editor.rulers.clone(),
             scroll_offset: 0,
         });
-        // Terminals don't wrap — keep escape sequences intact.
-        view_state.viewport.line_wrap_enabled = false;
+        // Terminals grid-wrap at the PTY width (fresh#2649).
+        view_state.viewport.line_wrap_enabled = true;
+        view_state.viewport.grid_wrap = true;
+        view_state.viewport.wrap_indent = false;
 
         self.windows
             .get_mut(&self.active_window)
@@ -1449,7 +1461,11 @@ impl Editor {
             }
             let __active_split = self.split_manager().active_split();
             if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split) {
-                view_state.viewport.line_wrap_enabled = false;
+                // Keep the grid-wrap config (fresh#2649) — the live grid
+                // overlays the buffer view, but scroll math still reads
+                // these flags until the next scroll-back visit re-syncs.
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
                 // A selection made in the scrollback view must not outlive
                 // the visit: the anchor would otherwise re-materialize as a
                 // phantom selection on the next scrollback entry (the sync
@@ -1753,9 +1769,20 @@ impl Window {
         // the visible screen we're about to append, which is exactly
         // where the live PTY grid drew its row 0.
         let mut history_end_byte: Option<u64> = None;
+        // In-history head of a still-in-progress line taller than the pane
+        // that `append_visible_screen` re-attaches to the first appended
+        // logical line (fresh#2649): the viewport starts `rows` visual rows
+        // into that line so the exit frame is exactly the live grid.
+        let mut prepended = crate::services::terminal::PrependedHead::default();
+        // Grid width at capture time — the scroll-back view wraps at this
+        // exact column count so it lays out identically to the live grid.
+        let mut grid_cols: Option<usize> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
                 use std::io::BufWriter;
+
+                let (cols, _) = state.size();
+                grid_cols = Some(cols as usize);
 
                 // Flush any scrollback that has scrolled off but isn't in the
                 // file yet — in particular the lines a resize spilled from the
@@ -1779,8 +1806,14 @@ impl Window {
                 // Open backing file in append mode to add visible screen
                 if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
-                    if let Err(e) = state.append_visible_screen(&mut writer) {
-                        tracing::error!("Failed to append visible screen to backing file: {}", e);
+                    match state.append_visible_screen(&mut writer) {
+                        Ok(head) => prepended = head,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to append visible screen to backing file: {}",
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -1821,9 +1854,17 @@ impl Window {
             if let Some((mgr, view_states)) = self.buffers.splits_mut() {
                 let active_split = mgr.active_split();
                 if let Some(view_state) = view_states.get_mut(&active_split) {
-                    view_state.cursors.primary_mut().position = anchor_byte;
+                    // The anchor line may carry a re-attached in-history
+                    // head (a tall in-progress line, fresh#2649): the grid
+                    // view starts `prepended.rows` visual rows into it so
+                    // row 0 on screen is the live grid's row 0, with the
+                    // head reachable by scrolling up. The cursor lands on
+                    // the first visible cell (`prepended.bytes` past the
+                    // line start), not on the line start hidden above.
+                    let cursor_byte = anchor_byte.saturating_add(prepended.bytes).min(total_bytes);
+                    view_state.cursors.primary_mut().position = cursor_byte;
                     view_state.viewport.top_byte = anchor_byte;
-                    view_state.viewport.top_view_line_offset = 0;
+                    view_state.viewport.top_view_line_offset = prepended.rows;
                     view_state.viewport.left_column = 0;
                 }
             }
@@ -1872,21 +1913,32 @@ impl Window {
                     let buf_state = vs.ensure_buffer_state(buffer_id);
                     buf_state.show_line_numbers = false;
                     buf_state.highlight_current_line = false;
-                    // Terminal scroll-back must NOT soft-wrap. The renderer,
-                    // `resolve_line_wrap_for_buffer`, and the workspace-restore
-                    // path (`install_terminal_buffer_state`) all treat terminal
-                    // buffers as non-wrapping (column-formatted output must keep
-                    // its alignment, and wrapping a huge scrollback re-walks the
-                    // whole buffer every frame — fresh#2608/#2610). Setting the
-                    // scroll-math flag to match keeps the mouse-wheel / scrollbar
-                    // scroll path (which branches on this flag) in lock-step with
-                    // the non-wrapping render, so scrolling up then back down is
-                    // stable instead of getting stuck (fresh#2649, symptom 2).
-                    buf_state.viewport.line_wrap_enabled = false;
+                    // Terminal scroll-back soft-wraps in *grid* mode
+                    // (fresh#2649): exact-column rows at the capture-time
+                    // PTY width, so the view lays out identically to the
+                    // live grid and entering scroll-back never reflows.
+                    // The renderer and the mouse-wheel / scrollbar scroll
+                    // math both branch on these flags and share the grid
+                    // row model, so scrolling up then back down stays
+                    // stable (symptom 2). Grid row counting is
+                    // allocation-free and viewport-local, and the
+                    // whole-buffer visual-row index keeps its size gates,
+                    // so the fresh#2608/#2610 freeze doesn't return.
+                    buf_state.viewport.line_wrap_enabled = true;
+                    buf_state.viewport.grid_wrap = true;
+                    buf_state.viewport.wrap_indent = false;
+                    if let Some(cols) = grid_cols {
+                        buf_state.viewport.wrap_column = Some(cols);
+                    }
                 }
             }
             if let Some(view_state) = view_states.get_mut(&active_split) {
-                view_state.viewport.line_wrap_enabled = false;
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
+                view_state.viewport.wrap_indent = false;
+                if let Some(cols) = grid_cols {
+                    view_state.viewport.wrap_column = Some(cols);
+                }
                 view_state.viewport.set_skip_ensure_visible();
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;

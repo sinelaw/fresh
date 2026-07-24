@@ -308,6 +308,18 @@ pub struct TerminalState {
     osc7: Osc7Scanner,
 }
 
+/// What `append_visible_screen` re-attached ahead of the first visible
+/// logical line: the in-history wrapped rows (and their byte length in the
+/// emitted stream) of a line taller than the pane that is still in
+/// progress (fresh#2649). `rows` lets the scroll-back viewport start at
+/// the live grid's row 0 (`top_view_line_offset`), `bytes` locates that
+/// row's first cell in the backing file (cursor anchor).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PrependedHead {
+    pub rows: usize,
+    pub bytes: usize,
+}
+
 impl TerminalState {
     /// Create a new terminal state
     pub fn new(cols: u16, rows: u16) -> Self {
@@ -803,7 +815,7 @@ impl TerminalState {
     /// file. The returned count lets the caller offset the scroll-back anchor
     /// past the prepended rows so the exit frame still lands on the live grid's
     /// row 0.
-    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<usize> {
+    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<PrependedHead> {
         use alacritty_terminal::grid::Dimensions;
 
         let rows = self.rows as i32;
@@ -825,6 +837,7 @@ impl TerminalState {
         let mut start = 0i32;
         let mut row = 0i32;
         let mut first_logical = true;
+        let mut prefix_bytes = 0usize;
         while row < rows {
             if self.row_wraps(Line(row)) && row + 1 < rows {
                 row += 1;
@@ -833,7 +846,8 @@ impl TerminalState {
             if first_logical && prefix_rows > 0 {
                 // The first visible logical line continues a line whose head
                 // rows are in history; prepend them so the full line is stored.
-                self.write_prefixed_visible_logical_line(writer, prefix_rows, start, row)?;
+                prefix_bytes =
+                    self.write_prefixed_visible_logical_line(writer, prefix_rows, start, row)?;
             } else {
                 // `write_logical_line` indexes via the history convention, so
                 // pass visible rows through directly (offset 0 == oldest here
@@ -844,7 +858,10 @@ impl TerminalState {
             row += 1;
             start = row;
         }
-        Ok(prefix_rows)
+        Ok(PrependedHead {
+            rows: prefix_rows,
+            bytes: prefix_bytes,
+        })
     }
 
     /// True if the last cell of `line` carries the `WRAPLINE` flag, i.e. the row
@@ -907,7 +924,7 @@ impl TerminalState {
         prefix_rows: usize,
         vis_start: i32,
         vis_end: i32,
-    ) -> io::Result<()> {
+    ) -> io::Result<usize> {
         let mut sgr = SgrState::default();
         let mut out = String::with_capacity(
             (prefix_rows + (vis_end - vis_start) as usize + 1) * self.cols as usize * 2,
@@ -916,11 +933,16 @@ impl TerminalState {
         for j in (1..=prefix_rows).rev() {
             self.append_row_cells(Line(-(j as i32)), &mut sgr, &mut out);
         }
+        // Everything before this offset is prepended in-history content;
+        // the byte at `prefix_bytes` (relative to the line start in the
+        // backing file) is the first cell of the live grid's row 0.
+        let prefix_bytes = out.len();
         for row in vis_start..=vis_end {
             self.append_row_cells(Line(row), &mut sgr, &mut out);
         }
         Self::finish_logical_line(&mut out, &sgr);
-        writeln!(writer, "{}", out)
+        writeln!(writer, "{}", out)?;
+        Ok(prefix_bytes)
     }
 
     /// Close out an in-progress logical line: emit a final SGR reset if any
@@ -1600,8 +1622,16 @@ mod tests {
         // Appending the visible screen must re-attach the in-history head.
         let prepended = state.append_visible_screen(&mut sink).unwrap();
         assert_eq!(
-            prepended, history_rows,
+            prepended.rows, history_rows,
             "prepended rows must equal the in-history wrapped rows"
+        );
+        // The prepended head is plain uncolored text here, so its byte
+        // length is exactly the prepended cell count: `rows` full-width
+        // rows of 20 columns each.
+        assert_eq!(
+            prepended.bytes,
+            history_rows * 20,
+            "prepended byte length must cover exactly the in-history rows"
         );
 
         let text = String::from_utf8_lossy(&sink);
@@ -1630,7 +1660,8 @@ mod tests {
         state.process_output(b"Line A\r\nLine B\r\nLine C\r\n");
         let mut sink: Vec<u8> = Vec::new();
         let prepended = state.append_visible_screen(&mut sink).unwrap();
-        assert_eq!(prepended, 0, "no in-history head to re-attach");
+        assert_eq!(prepended.rows, 0, "no in-history head to re-attach");
+        assert_eq!(prepended.bytes, 0, "no in-history bytes to re-attach");
     }
 
     #[test]

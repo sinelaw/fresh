@@ -34,6 +34,13 @@ pub struct Viewport {
     /// When true, horizontal scrolling is disabled
     pub line_wrap_enabled: bool,
 
+    /// Terminal-grid wrap mode (fresh#2649): with `line_wrap_enabled`,
+    /// rows break at exact column boundaries every `wrap_column` columns
+    /// (no word-boundary preference, no gutter, no hanging indent),
+    /// matching the live PTY grid so entering terminal scroll-back never
+    /// reflows. Only terminal buffers set this.
+    pub grid_wrap: bool,
+
     /// Whether wrapped continuation lines should be indented to match leading whitespace
     pub wrap_indent: bool,
 
@@ -131,6 +138,7 @@ impl Viewport {
             scroll_offset: 3,
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
+            grid_wrap: false,
             wrap_indent: true,
             wrap_column: None,
             compose_width: None,
@@ -278,6 +286,14 @@ impl Viewport {
         let v_lo = virtual_lines.partition_point(|p| *p < line_start);
         let v_hi = virtual_lines.partition_point(|p| *p < line_end);
         let extra_virtual_rows = v_hi - v_lo;
+        // Terminal-grid wrap: exact-column count, allocation-free. Soft
+        // breaks / the shared cache don't apply to terminal buffers, and
+        // the count is cheap enough to recompute per call (fresh#2649).
+        if let Some(cols) = wrap_config.grid_cols {
+            return crate::view::line_wrap_cache::count_visual_rows_for_text_grid(line_text, cols)
+                as usize
+                + extra_virtual_rows;
+        }
         let lo = soft_breaks.partition_point(|p| p.0 < line_start);
         let hi = soft_breaks.partition_point(|p| p.0 < line_end);
         let line_breaks = &soft_breaks[lo..hi];
@@ -355,6 +371,8 @@ impl Viewport {
                     wrap_column: None,
                     hanging_indent: wrap_config.hanging_indent,
                     line_wrap_enabled: true,
+                    // Grid mode returns before this cache path.
+                    grid_wrap: false,
                     // Scroll math is cursor-blind by convention (matches
                     // `VisualRowIndex` and its own cursor-free inputs).
                     cursor_sig: 0,
@@ -535,24 +553,22 @@ impl Viewport {
             return self.top_byte;
         }
 
-        let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(
-            self.effective_width() as usize,
-            gutter_width,
-            true,
-            self.wrap_indent,
-        );
-        let effective_width = wrap_config
-            .first_line_width
-            .saturating_add(wrap_config.gutter_width)
-            .max(2);
-        let seg_bytes = wrap_segment_source_bytes(
-            &line_content,
-            line_start,
-            effective_width,
-            wrap_config.gutter_width,
-            wrap_config.hanging_indent,
-        );
+        let wrap_config = self.make_wrap_config(buffer);
+        let seg_bytes = if let Some(cols) = wrap_config.grid_cols {
+            crate::view::line_wrap_cache::grid_segment_source_bytes(&line_content, line_start, cols)
+        } else {
+            let effective_width = wrap_config
+                .first_line_width
+                .saturating_add(wrap_config.gutter_width)
+                .max(2);
+            wrap_segment_source_bytes(
+                &line_content,
+                line_start,
+                effective_width,
+                wrap_config.gutter_width,
+                wrap_config.hanging_indent,
+            )
+        };
         let idx = self
             .top_view_line_offset
             .min(seg_bytes.len().saturating_sub(1));
@@ -620,13 +636,7 @@ impl Viewport {
         // wrapped lines above).
         let line = buffer.get_line_number(position);
         let line_start = buffer.line_start_offset(line).unwrap_or(position);
-        let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(
-            self.effective_width() as usize,
-            gutter_width,
-            true,
-            self.wrap_indent,
-        );
+        let wrap_config = self.make_wrap_config(buffer);
         let match_row_in_line = if position > line_start {
             let prefix = buffer
                 .get_text_range_mut(line_start, position - line_start)
@@ -694,13 +704,7 @@ impl Viewport {
         }
 
         let buffer_version = buffer.version();
-        let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(
-            self.effective_width() as usize,
-            gutter_width,
-            true,
-            self.wrap_indent,
-        );
+        let wrap_config = self.make_wrap_config(buffer);
 
         // We need to move backwards through visual rows
         // Start from current top_byte and count backwards
@@ -782,13 +786,7 @@ impl Viewport {
         }
 
         let buffer_version = buffer.version();
-        let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(
-            self.effective_width() as usize,
-            gutter_width,
-            true,
-            self.wrap_indent,
-        );
+        let wrap_config = self.make_wrap_config(buffer);
         let buffer_len = buffer.len();
 
         let mut rows_remaining = visual_rows;
@@ -1655,13 +1653,7 @@ impl Viewport {
         viewport_height: usize,
     ) {
         let buffer_version = buffer.version();
-        let gutter_width = self.gutter_width(buffer);
-        let wrap_config = WrapConfig::new(
-            self.effective_width() as usize,
-            gutter_width,
-            true,
-            self.wrap_indent,
-        );
+        let wrap_config = self.make_wrap_config(buffer);
 
         let mut iter = buffer.line_iterator(proposed_top_byte, 80);
         let mut visual_rows = 0;
@@ -2035,7 +2027,13 @@ impl Viewport {
     }
 
     /// Build the `WrapConfig` used by visibility and scroll helpers.
+    /// In terminal-grid mode (fresh#2649) this is the exact-column grid
+    /// config at `wrap_column` columns; every scroll/visibility helper
+    /// funnels through here so they all share one row model.
     fn make_wrap_config(&self, buffer: &mut Buffer) -> WrapConfig {
+        if self.grid_wrap {
+            return WrapConfig::grid(self.grid_cols());
+        }
         let gutter_width = self.gutter_width(buffer);
         WrapConfig::new(
             self.effective_width() as usize,
@@ -2045,11 +2043,20 @@ impl Viewport {
         )
     }
 
+    /// Grid-wrap column count: the capture-time terminal width stored in
+    /// `wrap_column`, falling back to the viewport width.
+    pub(crate) fn grid_cols(&self) -> usize {
+        self.wrap_column.unwrap_or(self.width as usize).max(1)
+    }
+
     /// Compute the line-wrap layout for `line_text` using `wrap_config`.
     fn compute_line_layout(
         line_text: &str,
         wrap_config: &WrapConfig,
     ) -> Vec<crate::view::ui::view_pipeline::ViewLine> {
+        if let Some(cols) = wrap_config.grid_cols {
+            return crate::view::line_wrap_cache::layout_for_plain_text_grid(line_text, cols, 4);
+        }
         let effective_width = wrap_config
             .first_line_width
             .saturating_add(wrap_config.gutter_width)
@@ -2077,15 +2084,7 @@ impl Viewport {
         effective_offset: usize,
         hidden_ranges: &[(usize, usize)],
     ) -> (bool, bool) {
-        let wrap_config = {
-            let gutter_width = self.gutter_width(buffer);
-            WrapConfig::new(
-                self.effective_width() as usize,
-                gutter_width,
-                true,
-                self.wrap_indent,
-            )
-        };
+        let wrap_config = self.make_wrap_config(buffer);
         let mut iter = buffer.line_iterator(self.top_byte, 80);
         let mut visual_rows: usize = 0;
         let mut cursor_near_top = false;
@@ -2503,13 +2502,7 @@ impl Viewport {
         // Wrap config used for both visual-row counting (lines above the
         // cursor) and the cursor's own intra-line position. Built once.
         let wrap_config = if self.line_wrap_enabled {
-            let gutter_width = self.gutter_width(buffer);
-            Some(WrapConfig::new(
-                self.effective_width() as usize,
-                gutter_width,
-                true,
-                self.wrap_indent,
-            ))
+            Some(self.make_wrap_config(buffer))
         } else {
             None
         };
@@ -2557,17 +2550,7 @@ impl Viewport {
             // Wrap the line via the renderer's word-boundary wrap so the
             // returned screen coordinates match where the renderer draws
             // the cursor.
-            let effective_width = config
-                .first_line_width
-                .saturating_add(config.gutter_width)
-                .max(2);
-            let layout = crate::view::line_wrap_cache::layout_for_plain_text(
-                &line_text,
-                effective_width,
-                config.gutter_width,
-                config.hanging_indent,
-                4,
-            );
+            let layout = Self::compute_line_layout(&line_text, config);
 
             // Find which ViewLine the cursor is in and its visual column.
             let (segment_idx, col_in_segment) =

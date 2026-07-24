@@ -9,8 +9,8 @@ use super::base_tokens::build_base_tokens;
 use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
-    apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, inject_virtual_lines,
-    splice_inline_virtual_text,
+    apply_conceal_ranges, apply_grid_wrapping_transform, apply_soft_breaks,
+    apply_wrapping_transform, inject_virtual_lines, splice_inline_virtual_text,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
@@ -156,16 +156,29 @@ pub(super) fn build_view_data(
     // keeps this safe at very small widths where the guard inside
     // `apply_wrapping_transform` will short-circuit anyway.
     let effective_width = if line_wrap_enabled {
-        let base = if let Some(col) = viewport.wrap_column {
-            col.min(content_width)
+        if viewport.grid_wrap {
+            // Terminal-grid wrap (fresh#2649): wrap at exactly the
+            // capture-time PTY column count. No EOL-cursor column is
+            // reserved and no clamp to the content width — the grid is one
+            // column wider than the scroll-back content area (the live view
+            // reclaims the scrollbar column), and clamping or reserving
+            // would re-wrap every full-width grid row one cell early,
+            // reflowing the whole view on entry. Full rows render with
+            // their last cell under the scrollbar, exactly like the
+            // non-wrapped exit frame always has.
+            viewport.grid_cols()
         } else {
-            content_width
-        };
-        base.saturating_sub(1).max(1)
+            let base = if let Some(col) = viewport.wrap_column {
+                col.min(content_width)
+            } else {
+                content_width
+            };
+            base.saturating_sub(1).max(1)
+        }
     } else {
         MAX_SAFE_LINE_WIDTH
     };
-    let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
+    let hanging_indent = line_wrap_enabled && viewport.wrap_indent && !viewport.grid_wrap;
 
     // Splice inline virtual text (inlay hints) into the stream BEFORE
     // wrapping so its display width participates in wrap boundaries, the
@@ -194,7 +207,13 @@ pub(super) fn build_view_data(
             splice_inline_virtual_text(tokens, state, Some(theme), viewport.top_byte, viewport_end);
     }
 
-    tokens = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+    tokens = if line_wrap_enabled && viewport.grid_wrap {
+        // Exact-column grid wrap — must stay row-for-row identical to the
+        // scroll math's `for_each_grid_row_start` (fresh#2649 symptom 2).
+        apply_grid_wrapping_transform(tokens, effective_width)
+    } else {
+        apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent)
+    };
 
     // Convert tokens to display lines using the view pipeline.
     let is_binary = state.buffer.is_binary();
@@ -279,6 +298,7 @@ pub(super) fn build_view_data(
             wrap_column: viewport.wrap_column.map(|c| c as u32),
             hanging_indent,
             line_wrap_enabled: true,
+            grid_wrap: viewport.grid_wrap,
             cursor_sig,
         };
 

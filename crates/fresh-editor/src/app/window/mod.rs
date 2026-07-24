@@ -1724,14 +1724,21 @@ impl Window {
     }
 
     /// Configure `leaf_id`'s viewport for a terminal-buffer
-    /// scrollback view: disable line wrap, clear any pending
-    /// skip-ensure-visible flag, then scroll so the buffer's primary
-    /// cursor (positioned at end-of-buffer when entering scrollback)
-    /// is visible. No-op if the buffer or split is missing.
+    /// scrollback view: enable grid wrap (exact-column rows at the PTY
+    /// width, fresh#2649), clear any pending skip-ensure-visible flag,
+    /// then scroll so the buffer's primary cursor (positioned at
+    /// end-of-buffer when entering scrollback) is visible. No-op if the
+    /// buffer or split is missing.
     pub fn enter_terminal_scrollback_view(&mut self, buffer_id: BufferId, leaf_id: LeafId) {
+        let grid_cols = self.terminal_grid_cols(buffer_id);
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
-                view_state.viewport.line_wrap_enabled = false;
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
+                view_state.viewport.wrap_indent = false;
+                if let Some(cols) = grid_cols {
+                    view_state.viewport.wrap_column = Some(cols);
+                }
                 view_state.viewport.clear_skip_ensure_visible();
                 view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
             });
@@ -1767,7 +1774,13 @@ impl Window {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.show_line_numbers = false;
                         buf_state.highlight_current_line = false;
-                        buf_state.viewport.line_wrap_enabled = false;
+                        // Grid wrap (fresh#2649): restored scroll-back lays
+                        // out at the grid width like the live view. The
+                        // width is filled in by `enforce_terminal_grid_wrap`
+                        // once the respawned PTY reports its size.
+                        buf_state.viewport.line_wrap_enabled = true;
+                        buf_state.viewport.grid_wrap = true;
+                        buf_state.viewport.wrap_indent = false;
                     }
                 }
                 state.buffer.set_modified(false);
@@ -2449,24 +2462,43 @@ impl Window {
         self.terminal_buffer(buffer_id).is_some()
     }
 
-    /// Terminal buffers never line-wrap (see `resolve_line_wrap_for_buffer`):
-    /// their content is column-formatted, and wrapping a large scrollback turns
-    /// the scrollbar's visual-row index into an O(all-lines) scan every frame,
-    /// freezing the UI (fresh#2608). Heal any per-buffer viewport a global
-    /// line-wrap toggle (or restored state) left enabled — cheap enough to run
-    /// each frame, and a no-op when the window has no terminals.
-    pub(crate) fn enforce_terminal_no_wrap(&mut self) {
-        let terminals = &self.terminal_buffers;
-        if terminals.is_empty() {
+    /// Terminal buffers always line-wrap in *grid* mode (see
+    /// `resolve_line_wrap_for_buffer`): exact-column rows at the PTY grid
+    /// width so scroll-back lays out identically to the live grid
+    /// (fresh#2649). Heal any per-buffer viewport a global line-wrap
+    /// toggle (or restored state) left in another mode — cheap enough to
+    /// run each frame, and a no-op when the window has no terminals.
+    ///
+    /// `wrap_column` (the grid width) is only *filled in* when missing —
+    /// scroll-back entry (`sync_terminal_to_buffer`) sets the capture-time
+    /// width, which must win over the instantaneous PTY width (a split
+    /// that entered scroll-back reserves a scrollbar column, so the PTY
+    /// may be resized one column narrower afterwards while the captured
+    /// content still lays out at the width it was captured at).
+    pub(crate) fn enforce_terminal_grid_wrap(&mut self) {
+        if self.terminal_buffers.is_empty() {
             return;
         }
+        // Snapshot grid widths first — `terminal_grid_cols` borrows self
+        // immutably while the healing loop needs the view states mutably.
+        let cols_by_buffer: std::collections::HashMap<BufferId, Option<usize>> = self
+            .terminal_buffers
+            .keys()
+            .map(|&b| (b, self.terminal_grid_cols(b)))
+            .collect();
         let Some(vs_map) = self.buffers.split_view_states_mut() else {
             return;
         };
         for vs in vs_map.values_mut() {
             for (buffer_id, buffer_state) in vs.keyed_states.iter_mut() {
-                if terminals.contains_key(buffer_id) {
-                    buffer_state.viewport.line_wrap_enabled = false;
+                if let Some(cols) = cols_by_buffer.get(buffer_id) {
+                    let vp = &mut buffer_state.viewport;
+                    vp.line_wrap_enabled = true;
+                    vp.grid_wrap = true;
+                    vp.wrap_indent = false;
+                    if vp.wrap_column.is_none() {
+                        vp.wrap_column = *cols;
+                    }
                 }
             }
         }
