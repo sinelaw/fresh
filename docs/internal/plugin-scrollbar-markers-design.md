@@ -26,6 +26,18 @@ surface: **colored markers painted on the vertical scrollbar track at
 positions proportional to their location in the buffer** — the "overview
 ruler" familiar from VSCode (search matches, diagnostics, diff hunks).
 
+`markdown_compose` marking headings, so the document's structure is visible on
+the track and off-screen sections can be located without scrolling. Note the
+cell where the thumb and a marker coincide: both stay readable, which is what
+the half-block glyph buys in a one-column track (§5.1).
+
+![Heading markers on the scrollbar](../public/images/scrollbar-markers-headings.png)
+
+`live_diff` marking hunks — green added, orange modified, red removed — using
+the same palette as its gutter glyphs, so a hunk's two decorations match.
+
+![Live-diff hunks on the scrollbar](../public/images/scrollbar-markers-live-diff.png)
+
 The design goal stated by the request: robust, elegant, clean, and performant
 — working identically for a 10-line file and a 10M-line file.
 
