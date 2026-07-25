@@ -31,6 +31,7 @@ const editor = getEditor();
 const NS_GUTTER = "live-diff";
 const NS_VLINE = "live-diff-vlines";
 const NS_OVERLAY = "live-diff-overlay";
+const NS_SCROLL = "live-diff-scroll";
 
 // Lower priority than git_gutter (10) so live-diff loses if both are active
 // on the same line — but in practice users will run one or the other.
@@ -791,6 +792,7 @@ function clearDecorations(bufferId: number): void {
   editor.clearLineIndicators(bufferId, NS_GUTTER);
   editor.clearVirtualTextNamespace(bufferId, NS_VLINE);
   editor.clearNamespace(bufferId, NS_OVERLAY);
+  editor.clearScrollbarMarkers(bufferId, NS_SCROLL);
 }
 
 /**
@@ -868,6 +870,44 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
       GUTTER_COLORS.modified[0], GUTTER_COLORS.modified[1], GUTTER_COLORS.modified[2], PRIORITY,
     );
   }
+
+  // Scrollbar marks, one per hunk — so unsaved changes elsewhere in the file
+  // are visible without scrolling to find them.
+  //
+  // Whole-namespace replace (not the range-scoped form) is right here: unlike
+  // a `lines_changed` producer, this pass recomputes the diff for the *entire*
+  // buffer every time, so the hunk list it holds is complete and authoritative.
+  // Sending it in one command also means the marks swap atomically.
+  //
+  // Added/modified hunks span their new-side lines, so they carry an `end` and
+  // paint a proportional streak. A removed hunk has no new-side line of its
+  // own (`newCount === 0`) — its content is gone — so it marks the seam where
+  // the deletion happened, matching where the virtual deletion line renders.
+  // Colours reuse the gutter palette deliberately: a hunk's gutter glyph and
+  // its scrollbar mark are then the same colour.
+  const scrollMarkers = [];
+  for (const h of state.hunks) {
+    if (h.newStart >= lineCount) continue;
+    const color = h.kind === "added"
+      ? GUTTER_COLORS.added
+      : h.kind === "modified"
+        ? GUTTER_COLORS.modified
+        : GUTTER_COLORS.removed;
+    const start = lineStarts[h.newStart];
+    // Byte offsets, not line numbers: exact at any file size, and the editor
+    // anchors them so marks ride subsequent edits until the next recompute.
+    const marker: { position: number; end?: number; color: [number, number, number]; priority: number } = {
+      position: start,
+      color,
+      priority: PRIORITY,
+    };
+    if (h.newCount > 0) {
+      const lastLine = Math.min(h.newStart + h.newCount - 1, lineCount - 1);
+      marker.end = lineEndExclusive(lastLine);
+    }
+    scrollMarkers.push(marker);
+  }
+  editor.setScrollbarMarkers(bid, NS_SCROLL, scrollMarkers);
 
   // Background highlights and virtual lines, all sync now.
   for (const h of state.hunks) {
