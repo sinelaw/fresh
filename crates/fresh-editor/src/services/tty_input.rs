@@ -31,10 +31,19 @@ use std::time::Duration;
 use crossterm::event::{Event as CrosstermEvent, MouseEventKind};
 use fresh_input_parser::InputParser;
 
-/// How long a buffered lone `ESC` waits for a continuation before being
-/// reported as the Escape key. Terminals emit a sequence in one write, so the
-/// continuation (if any) is already queued; this only has to cover a read
-/// landing mid-sequence, and must stay well below human key-repeat latency.
+/// How long a buffered lone `ESC` waits for a continuation before it is
+/// resolved as the Escape key. This bounds two waits: the in-`drain_stdin`
+/// window that lets a sequence split across a read boundary complete as one
+/// event, and the idle wait in [`TtyReader::poll`] before a genuinely lone
+/// `ESC` is emitted as the Escape key. It must stay well below human
+/// key-repeat latency so Escape still registers promptly.
+///
+/// Crucially the grace is only ever a *wait*, never — as it once was — a
+/// deadline that flushes the `ESC` mid-stream: a continuation arriving after
+/// the window elapses (a mouse report split across a slow pty/socket boundary)
+/// must still be parsed as the control sequence it is, not torn into an Escape
+/// key plus literal keystrokes that fresh forwards into a focused embedded
+/// terminal (sinelaw/fresh#2793, a residue of #2745).
 const ESC_GRACE: Duration = Duration::from_millis(15);
 
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
@@ -128,15 +137,34 @@ impl TtyReader {
     /// promptly without blocking.
     ///
     /// A lone trailing `ESC` is ambiguous — the Escape key, or the head of a
-    /// sequence split across reads — so it is held back until either the rest
-    /// arrives within [`ESC_GRACE`] or the grace window expires, at which point
-    /// it is flushed as an Escape key press.
+    /// sequence split across reads. If a continuation arrives within
+    /// [`ESC_GRACE`] it is pulled in so the sequence completes as one event;
+    /// otherwise the `ESC` is left *buffered* (not emitted) and only resolved
+    /// as the Escape key by [`flush_pending_escape`](Self::flush_pending_escape)
+    /// once stdin actually goes idle. Flushing it here — as a previous version
+    /// did on grace expiry — tore a slowly-split control sequence into an
+    /// Escape key followed by its remainder as literal keystrokes, which fresh
+    /// then forwarded verbatim into a focused embedded terminal
+    /// (sinelaw/fresh#2793).
     pub fn drain_stdin(&mut self) {
         while self.read_once() {
             if !self.parser.escape_pending() || !poll_readable(self.stdin_fd, ESC_GRACE) {
                 break;
             }
         }
+    }
+
+    /// Resolve a buffered lone `ESC` as the Escape key press, queueing the
+    /// event. A no-op when no `ESC` is pending.
+    ///
+    /// The caller invokes this only when stdin has gone idle — a blocking
+    /// [`poll`](Self::poll) that timed out with no further bytes. At that point
+    /// a pending `ESC` has no continuation in flight, so it is unambiguously the
+    /// Escape key. Keeping the decision here (rather than at the end of every
+    /// [`drain_stdin`](Self::drain_stdin)) is what makes the leak in
+    /// sinelaw/fresh#2793 structurally impossible: while bytes are still
+    /// arriving the `ESC` stays buffered and combines with its continuation.
+    pub fn flush_pending_escape(&mut self) {
         for ev in self.parser.flush() {
             self.push_coalesced(ev);
         }
@@ -188,8 +216,22 @@ impl TtyReader {
         if let Some(ev) = self.take_resize() {
             return Ok(Some(ev));
         }
-        if poll_readable(self.stdin_fd, timeout) {
+        // While a lone `ESC` is buffered, cap the wait to `ESC_GRACE`: if a
+        // continuation arrives it completes the sequence, and if the stream
+        // stays idle we resolve the `ESC` as the Escape key promptly instead of
+        // blocking for the caller's full timeout. When nothing is pending the
+        // caller's timeout is honoured as before.
+        let wait = if self.parser.escape_pending() {
+            timeout.min(ESC_GRACE)
+        } else {
+            timeout
+        };
+        if poll_readable(self.stdin_fd, wait) {
             self.drain_stdin();
+        } else {
+            // stdin idle for the whole wait: a buffered lone `ESC` is now
+            // unambiguously the Escape key (no-op when nothing is pending).
+            self.flush_pending_escape();
         }
         Ok(self.next_buffered().or_else(|| self.take_resize()))
     }
@@ -210,5 +252,124 @@ impl TtyReader {
 impl Drop for TtyReader {
     fn drop(&mut self) {
         RAW_INPUT_ACTIVE.store(false, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+impl TtyReader {
+    /// Construct a reader over an arbitrary (pipe) fd for tests, without
+    /// installing the `SIGWINCH` handler or touching the global raw-input flag,
+    /// so cases can be driven deterministically by writing bytes to the pipe.
+    fn for_test(fd: RawFd) -> Self {
+        Self {
+            parser: InputParser::new(),
+            queue: VecDeque::new(),
+            stdin_fd: fd,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+
+    /// A blocking pipe; `.0` is the read end fed to the reader, `.1` the write
+    /// end the test injects bytes on.
+    struct Pipe(RawFd, RawFd);
+    impl Pipe {
+        fn new() -> Self {
+            let mut fds = [0 as RawFd; 2];
+            // SAFETY: `fds` is a valid 2-element array for `pipe(2)` to fill.
+            assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe() failed");
+            Pipe(fds[0], fds[1])
+        }
+        fn write(&self, bytes: &[u8]) {
+            // SAFETY: writing `bytes.len()` bytes from a valid slice to the
+            // write end of our own pipe.
+            let n =
+                unsafe { libc::write(self.1, bytes.as_ptr() as *const libc::c_void, bytes.len()) };
+            assert_eq!(n, bytes.len() as isize, "short pipe write");
+        }
+    }
+    impl Drop for Pipe {
+        fn drop(&mut self) {
+            // SAFETY: closing our own pipe fds exactly once.
+            unsafe {
+                libc::close(self.0);
+                libc::close(self.1);
+            }
+        }
+    }
+
+    fn drain_events(r: &mut TtyReader) -> Vec<CrosstermEvent> {
+        let mut out = Vec::new();
+        while let Some(ev) = r.next_buffered() {
+            out.push(ev);
+        }
+        out
+    }
+
+    /// #2793: an X10 mouse report split so the first read ends on the lone `ESC`
+    /// must arrive as a single `Mouse` event, never the Escape key followed by
+    /// its remainder (`[ M C H 4`) as literal keystrokes. Before the fix
+    /// `drain_stdin` flushed the `ESC` as soon as no continuation arrived within
+    /// `ESC_GRACE`, so this split leaked six key events and zero mouse events.
+    #[test]
+    fn split_x10_mouse_across_reads_is_one_mouse_event_not_leaked_keys() {
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        // Read boundary lands right after the introducing ESC.
+        pipe.write(b"\x1b");
+        reader.drain_stdin();
+        assert!(
+            drain_events(&mut reader).is_empty(),
+            "lone ESC surfaced before its continuation arrived",
+        );
+
+        // The rest of the report (`[ M C H 4` = X10 button 35 @ 40,20) follows
+        // on a later read; the buffered ESC must complete it as a mouse event.
+        pipe.write(b"[MCH4");
+        reader.drain_stdin();
+        let events = drain_events(&mut reader);
+        assert_eq!(
+            events.len(),
+            1,
+            "expected exactly one event, got {events:?}",
+        );
+        assert!(
+            matches!(events[0], CrosstermEvent::Mouse(_)),
+            "expected a single Mouse event, got {:?}",
+            events[0],
+        );
+    }
+
+    /// A genuinely lone `ESC` (nothing follows) still resolves to the Escape
+    /// key — but only once stdin goes idle, which the caller signals by calling
+    /// `flush_pending_escape` after a poll times out with no more bytes.
+    #[test]
+    fn lone_escape_resolves_to_escape_key_on_idle() {
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        pipe.write(b"\x1b");
+        reader.drain_stdin();
+        assert!(
+            drain_events(&mut reader).is_empty(),
+            "ESC must stay buffered while a continuation could still arrive",
+        );
+
+        reader.flush_pending_escape();
+        let events = drain_events(&mut reader);
+        assert_eq!(events.len(), 1, "expected the Escape key, got {events:?}");
+        assert!(
+            matches!(
+                events[0],
+                CrosstermEvent::Key(k) if k.code == KeyCode::Esc,
+            ),
+            "expected Esc key, got {:?}",
+            events[0],
+        );
     }
 }
