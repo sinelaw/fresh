@@ -53,6 +53,14 @@ function fillPane(c,p){
     const th=document.createElement("div"); th.className="thumb";
     th.style.top=px(p.thumbStart,CH)+"px"; th.style.height=Math.max(CH, px(Math.max(1,p.thumbEnd-p.thumbStart),CH))+"px";
     sb.appendChild(th);
+    // Plugin scrollbar markers, painted over the thumb as a half-width bar so
+    // both the mark and the scroll position stay readable (matching the TUI's
+    // half-block glyph).
+    for(const m of (p.vscrollMarkers||[])){
+      const mk=document.createElement("div"); mk.className="scrollbar-marker";
+      mk.style.top=px(m.row,CH)+"px"; mk.style.height=CH+"px"; mk.style.background=m.color;
+      sb.appendChild(mk);
+    }
   }
 }
 function renderPane(i){

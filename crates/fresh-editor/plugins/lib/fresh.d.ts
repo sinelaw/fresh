@@ -2055,6 +2055,31 @@ type RemoteIndicatorStatePayload = {
 	kind: "disconnected";
 	label?: string | null;
 };
+type ScrollbarMarker = {
+	/**
+	* Byte offset of the marked location. Preferred over `line`.
+	*/
+	position?: number;
+	/**
+	* 0-based logical line number, converted to a byte anchor at set time.
+	* Ignored when `position` is present.
+	*/
+	line?: number;
+	/**
+	* Optional exclusive end byte offset, making this a range marker.
+	*/
+	end?: number;
+	/**
+	* Marker color — RGB array or theme key. Theme keys resolve at render
+	* time, so markers follow theme changes.
+	*/
+	color: OverlayColorSpec;
+	/**
+	* Priority when several markers land on the same track cell (higher
+	* wins). Defaults to 0.
+	*/
+	priority: number;
+};
 type SpawnResult = {
 	/**
 	* Complete stdout as string
@@ -3314,7 +3339,18 @@ interface EditorAPI {
 	*/
 	setSplitScroll(splitId: number, topByte: number): boolean;
 	/**
-	* Set the ratio of a split (0.0 to 1.0, 0.5 = equal)
+	* Resize the split that `split_id` lives in.
+	* 
+	* `split_id` is a leaf id (as returned by `getActiveSplitId`,
+	* `listSplits`, `BufferInfo.splits`, `createTerminal`); the editor
+	* resolves it to its parent split container and sets that container's
+	* ratio, moving the divider between this pane and its sibling. `ratio`
+	* is the fraction of space given to the container's FIRST child
+	* (0.0–1.0, 0.5 = equal), clamped to [0.1, 0.9]. A leaf with no parent
+	* container (the only pane) is a no-op.
+	* 
+	* Note: this is fire-and-forget — the returned bool only reports that
+	* the command was queued, not whether the resize succeeded.
 	*/
 	setSplitRatio(splitId: number, ratio: number): boolean;
 	/**
@@ -3358,6 +3394,34 @@ interface EditorAPI {
 	* Clear line indicators in a namespace
 	*/
 	clearLineIndicators(bufferId: number, namespace: string): boolean;
+	/**
+	* Replace this namespace's scrollbar markers for a buffer.
+	* 
+	* Markers are painted on the vertical scrollbar track at positions
+	* proportional to their location in the buffer, so marked content is
+	* visible at a glance even when it is scrolled off screen. Each marker is
+	* positioned by byte offset (`position`, preferred — it is exact on files
+	* of any size) or by 0-based `line`, optionally spans to `end`, and
+	* carries an RGB triple or a theme key as its `color`.
+	* 
+	* The set is replaced atomically, so a refresh never renders a partially
+	* rebuilt set.
+	*/
+	setScrollbarMarkers(bufferId: number, namespace: string, markers: ScrollbarMarker[]): boolean;
+	/**
+	* Replace only the scrollbar markers currently anchored in
+	* `[start, end)`, leaving this namespace's markers elsewhere in the
+	* buffer untouched.
+	* 
+	* This is the primitive for plugins that decorate the viewport as it
+	* scrolls (a `lines_changed` producer): publish the region you just
+	* scanned without resending — or losing — the rest of the file.
+	*/
+	setScrollbarMarkersInRange(bufferId: number, namespace: string, start: number, end: number, markers: ScrollbarMarker[]): boolean;
+	/**
+	* Remove all scrollbar markers in a namespace
+	*/
+	clearScrollbarMarkers(bufferId: number, namespace: string): boolean;
 	/**
 	* Enable or disable line numbers for a buffer
 	*/
@@ -4124,22 +4188,6 @@ interface HookEventMap {
 		terminal_id: number;
 		window_id: number;
 		last_line: string;
-		/**
-		 * The terminal's current tab title — the combined foreground-process
-		 * + OSC-title string shown on its tab. Empty when the terminal has no
-		 * meaningful title yet (the auto-numbered `*Terminal N*` default). Lets
-		 * a plugin name a workspace after whatever the terminal is running.
-		 */
-		terminal_title: string;
-		/**
-		 * The program's most recent out-of-band activity signal, sniffed from
-		 * the raw PTY stream: `true` while a command/task is running (OSC 133
-		 * command markers, OSC 9;4 progress), `false` when it has finished,
-		 * `null` when the program never emitted such a marker. Lets a plugin
-		 * drive a workspace's working/idle indicator off an explicit signal
-		 * instead of output timing.
-		 */
-		osc_activity: boolean | null;
 	};
 	terminal_exit: {
 		terminal_id: number;

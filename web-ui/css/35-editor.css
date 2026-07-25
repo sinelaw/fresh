@@ -26,5 +26,8 @@
   .scrollbar{background:transparent}
   .thumb{position:absolute;right:1px;width:8px;border-radius:4px;background:#5a5a5a}
   .thumb:hover{background:#7a7a7a}
+  /* Plugin scrollbar markers sit on the left half of the track so the thumb
+     stays visible underneath — the DOM counterpart of the TUI half-block. */
+  .scrollbar-marker{position:absolute;left:0;width:5px;z-index:1;pointer-events:none}
   .caret{position:absolute;background:#aeafad;width:2px;z-index:40;animation:blink 1.05s steps(1) infinite}
   @keyframes blink{50%{opacity:0}}

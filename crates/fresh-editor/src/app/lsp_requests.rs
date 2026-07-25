@@ -3150,16 +3150,24 @@ impl Editor {
                         if ins_len > del_len {
                             state.marker_list.adjust_for_insert(pos, ins_len - del_len);
                             state.margins.adjust_for_insert(pos, ins_len - del_len);
+                            state
+                                .scrollbar_markers
+                                .adjust_for_insert(pos, ins_len - del_len);
                         } else if del_len > ins_len {
                             state.marker_list.adjust_for_delete(pos, del_len - ins_len);
                             state.margins.adjust_for_delete(pos, del_len - ins_len);
+                            state
+                                .scrollbar_markers
+                                .adjust_for_delete(pos, del_len - ins_len);
                         }
                     } else if del_len > 0 {
                         state.marker_list.adjust_for_delete(pos, del_len);
                         state.margins.adjust_for_delete(pos, del_len);
+                        state.scrollbar_markers.adjust_for_delete(pos, del_len);
                     } else if ins_len > 0 {
                         state.marker_list.adjust_for_insert(pos, ins_len);
                         state.margins.adjust_for_insert(pos, ins_len);
+                        state.scrollbar_markers.adjust_for_insert(pos, ins_len);
                     }
                 }
 
