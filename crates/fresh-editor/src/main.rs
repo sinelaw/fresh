@@ -5057,7 +5057,11 @@ fn poll_with_gpm(
     let ready = poll(&mut poll_fds, poll_timeout).unwrap_or(0);
 
     if ready == 0 {
-        return Ok(reader.take_resize());
+        // stdin (and GPM) idle for the whole wait: resolve a buffered lone
+        // `ESC` as the Escape key, mirroring the no-GPM `reader.poll` path so a
+        // pending Escape still registers here (no-op when nothing is pending).
+        reader.flush_pending_escape();
+        return Ok(reader.next_buffered().or_else(|| reader.take_resize()));
     }
 
     let stdin_revents = poll_fds[0].revents();
