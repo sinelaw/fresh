@@ -5,6 +5,8 @@
 use crate::model::buffer::Buffer;
 use crate::state::EditorState;
 use crate::view::overlay::{Overlay, OverlayFace, OverlayNamespace};
+use crate::view::scrollbar_marker::ResolvedMarker;
+use fresh_core::api::OverlayColorSpec;
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -214,11 +216,29 @@ pub fn diagnostic_to_overlay(
     Some((start_byte..end_byte, face, priority, theme_key))
 }
 
+/// Namespace for the scrollbar markers mirroring the diagnostic overlays.
+pub const LSP_DIAGNOSTIC_SCROLLBAR_NS: &str = "lsp-diagnostics";
+
+/// Theme key for the scrollbar mark of a diagnostic of this severity.
+///
+/// The overlays paint a `*_bg` wash behind the offending span; a scrollbar
+/// mark is a foreground glyph, so it uses the matching `*_fg` key instead.
+fn diagnostic_scrollbar_theme_key(severity: Option<DiagnosticSeverity>) -> &'static str {
+    match severity {
+        Some(DiagnosticSeverity::ERROR) => "diagnostic.error_fg",
+        Some(DiagnosticSeverity::WARNING) => "diagnostic.warning_fg",
+        Some(DiagnosticSeverity::INFORMATION) => "diagnostic.info_fg",
+        _ => "diagnostic.hint_fg",
+    }
+}
+
 /// Apply LSP diagnostics to editor state as overlays
 ///
 /// This function:
 /// 1. Clears all existing LSP diagnostic overlays (using namespace)
 /// 2. Adds overlays for all current diagnostics
+/// 3. Mirrors them onto the scrollbar so errors elsewhere in the file are
+///    visible without scrolling to find them
 pub fn apply_diagnostics_to_state(
     state: &mut EditorState,
     diagnostics: &[Diagnostic],
@@ -231,11 +251,30 @@ pub fn apply_diagnostics_to_state(
 
     // Add overlays for all current diagnostics
     let mut added_count = 0;
+    // Scrollbar marks are built from the same byte ranges as the overlays, in
+    // the same pass, so the two can never describe different spans. This is a
+    // whole-file republish (a `publishDiagnostics` notification replaces the
+    // file's entire diagnostic set), so the whole-namespace replace is the
+    // right form — and it swaps atomically with no empty frame.
+    let mut scrollbar_markers: Vec<ResolvedMarker> = Vec::new();
     for diagnostic in diagnostics {
         if let Some((range, face, priority, theme_key)) =
             diagnostic_to_overlay(diagnostic, &state.buffer, theme)
         {
             let message = diagnostic.message.clone();
+
+            scrollbar_markers.push(ResolvedMarker {
+                start: range.start,
+                // A diagnostic spanning several lines marks a proportional
+                // streak; a single-line one collapses to a cell.
+                end: Some(range.end),
+                color: OverlayColorSpec::ThemeKey(
+                    diagnostic_scrollbar_theme_key(diagnostic.severity).to_string(),
+                ),
+                // Reuse the overlay priority ordering, so an error outranks a
+                // warning on a shared track cell just as it does on a line.
+                priority,
+            });
 
             let overlay = Overlay::with_namespace(&mut state.marker_list, range, face, ns.clone())
                 .with_priority_value(priority)
@@ -246,6 +285,10 @@ pub fn apply_diagnostics_to_state(
             added_count += 1;
         }
     }
+
+    state
+        .scrollbar_markers
+        .set_markers(LSP_DIAGNOSTIC_SCROLLBAR_NS, scrollbar_markers);
 
     if added_count > 0 {
         tracing::debug!("Applied {} diagnostic overlays", added_count);
