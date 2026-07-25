@@ -1,0 +1,11 @@
+# This is the CMakeCache file.
+//Path to the C compiler.
+CMAKE_C_COMPILER:FILEPATH=/usr/bin/cc
+
+//Build shared libraries.
+BUILD_SHARED_LIBS:BOOL=OFF
+
+//Project version.
+PROJECT_VERSION:STRING=1.2.3
+
+LIBRARY_PATH-ADVANCED:INTERNAL=1

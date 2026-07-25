@@ -1,0 +1,10 @@
+# latexmk configuration uses Perl syntax
+$pdf_mode = 1;
+$interaction = 'nonstopmode';
+$out_dir = 'build';
+
+add_cus_dep('glo', 'gls', 0, 'makeglossaries');
+
+sub makeglossaries {
+    system("makeglossaries \"$_[0]\"");
+}
