@@ -1,0 +1,33 @@
+%YAML 1.2
+---
+name: CMake Cache
+scope: source.cmake-cache
+
+contexts:
+  main:
+    - include: comments
+    - include: entries
+
+  comments:
+    - match: '^\s*(?://|#).*$'
+      scope: comment.line.cmake-cache
+
+  entries:
+    - match: '^([^#/:][^:=]*)(:)(BOOL|FILEPATH|PATH|STRING|INTERNAL|STATIC|UNINITIALIZED)(=)'
+      captures:
+        1: variable.other.key.cmake-cache
+        2: punctuation.separator.type.cmake-cache
+        3: storage.type.cmake-cache
+        4: keyword.operator.assignment.cmake-cache
+      push:
+        - include: values
+        - match: '$'
+          pop: true
+
+  values:
+    - match: '\b(?:ON|OFF|YES|NO|TRUE|FALSE|Y|N|IGNORE|NOTFOUND)\b'
+      scope: constant.language.cmake-cache
+    - match: '\b[-+]?(?:\d+\.\d*|\.\d+|\d+)\b'
+      scope: constant.numeric.cmake-cache
+    - match: '\$\{[^}]+\}'
+      scope: variable.other.cmake-cache

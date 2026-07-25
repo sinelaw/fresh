@@ -1,0 +1,10 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{hello}[2026/07/27 Greeting helpers]
+
+\newcommand{\hello}[1]{%
+  \textbf{Hello, #1!}%
+}
+
+\newenvironment{greeting}
+  {\begin{quote}\itshape}
+  {\end{quote}}

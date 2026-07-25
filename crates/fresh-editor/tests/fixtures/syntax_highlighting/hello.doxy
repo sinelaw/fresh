@@ -1,0 +1,10 @@
+/**
+ * @file hello.doxy
+ * @brief Doxygen documentation fixture.
+ *
+ * @section overview Overview
+ *
+ * Use `hello()` to produce a greeting.
+ *
+ * @return the generated greeting
+ */

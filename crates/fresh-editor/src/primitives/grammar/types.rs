@@ -178,6 +178,22 @@ pub const DOCKERFILE_GRAMMAR: &str = include_str!("../../grammars/dockerfile.sub
 pub const INI_GRAMMAR: &str = include_str!("../../grammars/ini.sublime-syntax");
 /// Embedded CMake grammar
 pub const CMAKE_GRAMMAR: &str = include_str!("../../grammars/cmake.sublime-syntax");
+/// Embedded CMake cache grammar
+pub const CMAKE_CACHE_GRAMMAR: &str = include_str!("../../grammars/cmake-cache.sublime-syntax");
+/// Embedded pkg-config metadata grammar
+pub const PKG_CONFIG_GRAMMAR: &str = include_str!("../../grammars/pkg-config.sublime-syntax");
+/// Embedded Wavefront OBJ mesh grammar
+pub const WAVEFRONT_OBJ_GRAMMAR: &str = include_str!("../../grammars/wavefront-obj.sublime-syntax");
+/// Embedded Doxygen documentation grammar
+pub const DOXYGEN_GRAMMAR: &str = include_str!("../../grammars/doxygen.sublime-syntax");
+/// Embedded Doxygen configuration grammar
+pub const DOXYGEN_CONFIG_GRAMMAR: &str =
+    include_str!("../../grammars/doxygen-config.sublime-syntax");
+/// Embedded BibTeX style language grammar
+pub const BIBTEX_STYLE_GRAMMAR: &str = include_str!("../../grammars/bibtex-style.sublime-syntax");
+/// Embedded Windows resource script grammar
+pub const WINDOWS_RESOURCE_GRAMMAR: &str =
+    include_str!("../../grammars/windows-resource.sublime-syntax");
 /// Embedded SCSS grammar
 pub const SCSS_GRAMMAR: &str = include_str!("../../grammars/scss.sublime-syntax");
 /// Embedded LESS grammar
@@ -535,6 +551,14 @@ impl GrammarRegistry {
         // CMake
         let cmake_scope = "source.cmake".to_string();
         map.insert("CMakeLists.txt".to_string(), cmake_scope);
+        let cmake_cache_scope = "source.cmake-cache".to_string();
+        map.insert("CMakeCache.txt".to_string(), cmake_cache_scope.clone());
+        map.insert("cmakecache.txt".to_string(), cmake_cache_scope);
+
+        // Doxygen configuration and CMake/autoconf template
+        let doxygen_config_scope = "source.doxygen-config".to_string();
+        map.insert("Doxyfile".to_string(), doxygen_config_scope.clone());
+        map.insert("Doxyfile.in".to_string(), doxygen_config_scope);
 
         // Starlark/Bazel
         let starlark_scope = "source.starlark".to_string();
@@ -730,6 +754,13 @@ impl GrammarRegistry {
             (DOCKERFILE_GRAMMAR, "Dockerfile"),
             (INI_GRAMMAR, "INI"),
             (CMAKE_GRAMMAR, "CMake"),
+            (CMAKE_CACHE_GRAMMAR, "CMake Cache"),
+            (PKG_CONFIG_GRAMMAR, "pkg-config"),
+            (WAVEFRONT_OBJ_GRAMMAR, "Wavefront OBJ"),
+            (DOXYGEN_GRAMMAR, "Doxygen"),
+            (DOXYGEN_CONFIG_GRAMMAR, "Doxygen Config"),
+            (BIBTEX_STYLE_GRAMMAR, "BibTeX Style"),
+            (WINDOWS_RESOURCE_GRAMMAR, "Windows Resource Script"),
             (SCSS_GRAMMAR, "SCSS"),
             (LESS_GRAMMAR, "LESS"),
             (POWERSHELL_GRAMMAR, "PowerShell"),
@@ -2381,6 +2412,70 @@ mod tests {
             assert_eq!(entry.display_name, name);
             assert!(entry.engines.syntect.is_some());
             assert!(entry.engines.tree_sitter.is_none());
+        }
+    }
+
+    #[test]
+    fn test_asset_and_build_metadata_grammars_load_and_resolve() {
+        for (grammar, name, path) in [
+            (GLSL_GRAMMAR, "GLSL", "shader.glslf"),
+            (GLSL_GRAMMAR, "GLSL", "shader.glslv"),
+            (WAVEFRONT_OBJ_GRAMMAR, "Wavefront OBJ", "mesh.obj"),
+            (PKG_CONFIG_GRAMMAR, "pkg-config", "library.pc"),
+            (CMAKE_CACHE_GRAMMAR, "CMake Cache", "CMakeCache.txt"),
+            (CMAKE_CACHE_GRAMMAR, "CMake Cache", "cmakecache.txt"),
+            (DOXYGEN_GRAMMAR, "Doxygen", "documentation.dox"),
+            (DOXYGEN_GRAMMAR, "Doxygen", "documentation.doxy"),
+            (DOXYGEN_CONFIG_GRAMMAR, "Doxygen Config", "Doxyfile.in"),
+            (
+                WINDOWS_RESOURCE_GRAMMAR,
+                "Windows Resource Script",
+                "Info.rc",
+            ),
+            (BIBTEX_STYLE_GRAMMAR, "BibTeX Style", "plain.bst"),
+        ] {
+            SyntaxDefinition::load_from_str(grammar, true, Some(name))
+                .unwrap_or_else(|e| panic!("{name} grammar should parse: {e}"));
+
+            let registry = GrammarRegistry::default();
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, name, "{path} resolved incorrectly");
+            assert!(entry.engines.syntect.is_some());
+            assert!(entry.engines.tree_sitter.is_none());
+        }
+    }
+
+    #[test]
+    fn test_latex_related_default_language_mappings() {
+        let mut registry = GrammarRegistry::default();
+        let config = crate::config::Config::default();
+        registry.apply_language_config(&config.languages);
+
+        for (path, expected) in [
+            ("document.tex", "LaTeX"),
+            ("document.tex.in", "LaTeX"),
+            ("package.sty", "TeX"),
+            ("package.dtx", "TeX"),
+            ("citations.bbx", "TeX"),
+            ("context.mkxl", "TeX"),
+            ("document.aux", "TeX"),
+            ("document.toc", "TeX"),
+            ("references.bib", "BibTeX"),
+            ("references.bib.in", "BibTeX"),
+            ("plain.bst", "BibTeX Style"),
+            ("latexmkrc", "Perl"),
+            (".latexmkrc", "Perl"),
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(
+                entry.display_name, expected,
+                "{path} should use {expected} highlighting"
+            );
+            assert!(entry.engines.syntect.is_some());
         }
     }
 
