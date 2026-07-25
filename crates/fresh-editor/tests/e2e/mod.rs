@@ -150,6 +150,7 @@ pub mod mark_mode_actions;
 pub mod markdown_compose;
 pub mod markdown_compose_diagnostics;
 pub mod markdown_compose_scroll_reach;
+#[cfg(feature = "plugins")]
 pub mod markdown_compose_scrollbar_markers;
 pub mod markdown_compose_table_border;
 pub mod markdown_fenced_code_highlighting;
@@ -201,6 +202,7 @@ pub mod restored_terminal_focus;
 pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
 pub mod scroll_clearing;
+#[cfg(feature = "plugins")]
 pub mod scrollbar_markers;
 pub mod scrolling;
 pub mod search;
