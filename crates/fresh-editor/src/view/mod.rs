@@ -37,6 +37,8 @@ pub mod overlay;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod scroll_sync;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod scrollbar_marker;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod soft_break;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod ui;

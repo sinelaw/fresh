@@ -1566,6 +1566,54 @@ fn rect_json(r: Rect) -> Value {
 }
 
 /// Slice the rendered cells inside `r` into rows of styled runs.
+/// Plugin scrollbar markers for one pane, as `[{row, color}]`.
+///
+/// Reads the projection the render pass just cached for this track height
+/// (see [`ScrollbarMarkerBuckets::latest_for_height`]) rather than
+/// re-projecting, so the web scrollbar shows exactly the rows the terminal
+/// painted. Theme keys are resolved to concrete hex here — the frontend has
+/// no theme-key resolver.
+fn scrollbar_markers_json(
+    editor: &Editor,
+    buffer_id: crate::model::event::BufferId,
+    scrollbar_rect: Rect,
+) -> Value {
+    let Some(state) = editor.active_window().buffer_state(buffer_id) else {
+        return json!([]);
+    };
+    let Some(cells) = state
+        .scrollbar_marker_buckets
+        .latest_for_height(scrollbar_rect.height as usize)
+    else {
+        return json!([]);
+    };
+
+    let theme = editor.theme.read().unwrap();
+    let out: Vec<Value> = cells
+        .iter()
+        .enumerate()
+        .filter_map(|(row, cell)| {
+            let cell = cell.as_ref()?;
+            let color = match &cell.color {
+                fresh_core::api::OverlayColorSpec::Rgb(r, g, b) => (*r, *g, *b),
+                fresh_core::api::OverlayColorSpec::ThemeKey(key) => {
+                    let resolved = crate::view::theme::named_color_from_str(key)
+                        .or_else(|| theme.resolve_theme_key(key))?;
+                    match resolved {
+                        ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
+                        _ => return None,
+                    }
+                }
+            };
+            Some(json!({
+                "row": row,
+                "color": format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2),
+            }))
+        })
+        .collect();
+    json!(out)
+}
+
 fn cells_json(buf: &Buffer, r: Rect) -> Value {
     let mut rows = Vec::with_capacity(r.height as usize);
     for y in r.y..r.y.saturating_add(r.height) {
@@ -1724,6 +1772,12 @@ fn scene_json(editor: &mut Editor, cols: u16, rows: u16) -> Value {
                     "vscroll": rect_json(*scrollbar_rect),
                     "thumbStart": thumb_s,
                     "thumbEnd": thumb_e,
+                    // Plugin scrollbar markers. The web frontend draws its own
+                    // scrollbar from `vscroll`/`thumb*` rather than reading the
+                    // painted cells, so markers must travel as data too.
+                    // Colours are resolved here — the frontend has no theme-key
+                    // resolver.
+                    "vscrollMarkers": scrollbar_markers_json(editor, *bufid, *scrollbar_rect),
                 })
             },
         )

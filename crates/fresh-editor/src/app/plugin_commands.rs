@@ -2068,6 +2068,113 @@ impl Editor {
         }
     }
 
+    // ==================== Scrollbar Marker Commands ====================
+
+    /// Convert plugin-supplied markers to byte anchors.
+    ///
+    /// Markers addressed by `line` on a buffer whose line count is not known
+    /// yet (a large file before the incremental line scan) are dropped rather
+    /// than anchored at byte 0 — a wrong position is worse than a missing
+    /// mark, and byte-addressed markers work in that regime.
+    fn resolve_scrollbar_markers(
+        state: &crate::state::EditorState,
+        markers: &[fresh_core::api::ScrollbarMarker],
+    ) -> Vec<crate::view::scrollbar_marker::ResolvedMarker> {
+        let buffer_len = state.buffer.len();
+        markers
+            .iter()
+            .filter_map(|m| {
+                crate::view::scrollbar_marker::ResolvedMarker::from_api(m, |line| {
+                    state.buffer.line_start_offset(line)
+                })
+            })
+            .map(|mut m| {
+                m.start = m.start.min(buffer_len);
+                m.end = m.end.map(|e| e.min(buffer_len));
+                m
+            })
+            .collect()
+    }
+
+    /// Handle SetScrollbarMarkers — replace a namespace's whole marker set.
+    pub(super) fn handle_set_scrollbar_markers(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+        markers: Vec<fresh_core::api::ScrollbarMarker>,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            let resolved = Self::resolve_scrollbar_markers(state, &markers);
+            let requested = resolved.len();
+            let stored = state.scrollbar_markers.set_markers(&namespace, resolved);
+            if stored < requested {
+                tracing::debug!(
+                    namespace = %namespace,
+                    requested,
+                    stored,
+                    "scrollbar markers truncated at the per-namespace cap"
+                );
+            }
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle SetScrollbarMarkersInRange — replace only the markers anchored
+    /// in `[start, end)`, so a viewport-driven producer can publish the region
+    /// it just scanned without disturbing what it learned elsewhere.
+    pub(super) fn handle_set_scrollbar_markers_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+        start: usize,
+        end: usize,
+        markers: Vec<fresh_core::api::ScrollbarMarker>,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            let resolved = Self::resolve_scrollbar_markers(state, &markers);
+            state
+                .scrollbar_markers
+                .set_markers_in_range(&namespace, start, end, resolved);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle ClearScrollbarMarkers
+    pub(super) fn handle_clear_scrollbar_markers(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            state.scrollbar_markers.clear_namespace(&namespace);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
     // ==================== Status/Prompt Commands ====================
 
     /// Handle SetStatus command
@@ -3221,16 +3328,24 @@ impl Editor {
                     if ins_len > del_len {
                         state.marker_list.adjust_for_insert(pos, ins_len - del_len);
                         state.margins.adjust_for_insert(pos, ins_len - del_len);
+                        state
+                            .scrollbar_markers
+                            .adjust_for_insert(pos, ins_len - del_len);
                     } else if del_len > ins_len {
                         state.marker_list.adjust_for_delete(pos, del_len - ins_len);
                         state.margins.adjust_for_delete(pos, del_len - ins_len);
+                        state
+                            .scrollbar_markers
+                            .adjust_for_delete(pos, del_len - ins_len);
                     }
                 } else if del_len > 0 {
                     state.marker_list.adjust_for_delete(pos, del_len);
                     state.margins.adjust_for_delete(pos, del_len);
+                    state.scrollbar_markers.adjust_for_delete(pos, del_len);
                 } else if ins_len > 0 {
                     state.marker_list.adjust_for_insert(pos, ins_len);
                     state.margins.adjust_for_insert(pos, ins_len);
+                    state.scrollbar_markers.adjust_for_insert(pos, ins_len);
                 }
             }
 

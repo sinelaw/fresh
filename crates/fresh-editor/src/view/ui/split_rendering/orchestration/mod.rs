@@ -25,8 +25,8 @@ use super::layout::{
     sync_viewport_to_content, SplitLayout,
 };
 use super::scrollbar::{
-    compute_max_line_length, render_composite_scrollbar, render_horizontal_scrollbar,
-    render_scrollbar, scrollbar_line_counts,
+    compute_max_line_length, project_scrollbar_markers, render_composite_scrollbar,
+    render_horizontal_scrollbar, render_scrollbar, scrollbar_line_counts,
 };
 use super::EditorRenderConfig;
 use crate::app::types::ViewLineMapping;
@@ -512,13 +512,21 @@ pub(crate) fn render_content(
             // For small files, count actual lines for accurate scrollbar
             // For large files, we'll use a constant thumb size
             let buffer_len = state.buffer.len();
-            let (total_lines, top_line) = {
+            let (total_lines, top_line, marker_basis) = {
                 let _span = tracing::trace_span!("scrollbar_line_counts").entered();
                 scrollbar_line_counts(state, &viewport, large_file_threshold_bytes, buffer_len)
             };
 
             // Render vertical scrollbar for this split and get thumb position
             let (thumb_start, thumb_end) = if panel_show_vscroll {
+                let marker_cells = {
+                    let _span = tracing::trace_span!("scrollbar_markers").entered();
+                    project_scrollbar_markers(
+                        state,
+                        marker_basis,
+                        layout.scrollbar_rect.height as usize,
+                    )
+                };
                 render_scrollbar(
                     buf,
                     state,
@@ -529,6 +537,7 @@ pub(crate) fn render_content(
                     large_file_threshold_bytes,
                     total_lines,
                     top_line,
+                    &marker_cells,
                 )
             } else {
                 (0, 0)

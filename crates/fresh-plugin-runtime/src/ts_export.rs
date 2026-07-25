@@ -23,9 +23,9 @@ use fresh_core::api::{
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
     LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
     PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo,
-    ReplaceResult, ScreenSize, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
-    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
-    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    ReplaceResult, ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot,
+    TerminalResult, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle,
+    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -149,6 +149,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Overlay/inline styling types
         "OverlayOptions" => Some(OverlayOptions::decl(&cfg)),
         "OverlayColorSpec" => Some(OverlayColorSpec::decl(&cfg)),
+        "ScrollbarMarker" => Some(ScrollbarMarker::decl(&cfg)),
         "InlineOverlay" => Some(InlineOverlay::decl(&cfg)),
         "OffsetUnit" => Some(fresh_core::text_property::OffsetUnit::decl(&cfg)),
         "StyledSegment" => Some(fresh_core::text_property::StyledSegment::decl(&cfg)),

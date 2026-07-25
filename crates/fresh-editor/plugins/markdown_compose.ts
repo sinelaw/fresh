@@ -101,6 +101,49 @@ type LineInfoLike = {
 // collide and a tall table needs no whole-table rebuild.
 const TABLE_BORDER_NS = "md-tb";
 
+// =============================================================================
+// Heading markers on the scrollbar
+// =============================================================================
+//
+// Headings are marked on the scrollbar track so a document's structure is
+// visible at a glance and off-screen sections can be located without
+// scrolling. This rides the same per-line pass as conceals and borders, and
+// uses the *range-scoped* form of the API for the same reason the conceal
+// clears are range-scoped:
+//
+//   * `lines_changed` only ever reports the lines the editor decided to
+//     (re)process — typically the viewport, or the lines an edit touched. A
+//     whole-namespace replace would therefore delete the markers for every
+//     heading currently off-screen, and the scrollbar would show only the
+//     headings near the viewport.
+//   * `setScrollbarMarkersInRange` replaces only the markers anchored inside
+//     the batch's byte span, so headings scrolled past keep their marks and
+//     coverage accumulates as the document is explored. Editor-side byte
+//     anchors then shift those accumulated markers through later edits, so
+//     nothing goes stale between batches.
+//
+// Marks are emitted for every batch — including batches with no headings —
+// so a line that stops being a heading loses its mark.
+const HEADING_MARKER_NS = "md-headings";
+
+// Heading level → marker color. Theme keys resolve at render time, so the
+// marks follow theme changes like the emphasis overlays do.
+const HEADING_MARKER_COLORS: string[] = [
+  "syntax.keyword",  // # h1
+  "syntax.function", // ## h2
+  "syntax.type",     // ### h3+
+];
+
+function headingMarkerColor(level: number): string {
+  return HEADING_MARKER_COLORS[Math.min(level, HEADING_MARKER_COLORS.length) - 1];
+}
+
+/** Heading level of a source line (1-6), or 0 when it isn't an ATX heading. */
+function headingLevel(content: string): number {
+  const m = content.match(/^\s*(#{1,6})\s+\S/);
+  return m ? m[1].length : 0;
+}
+
 // Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
 // every `lines_changed` pass (computeRowWidths) and read synchronously in the
 // same pass by the conceal and border code.
@@ -618,6 +661,7 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.clearNamespace(bufferId, "md-emphasis");
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
+    editor.clearScrollbarMarkers(bufferId, HEADING_MARKER_NS);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
@@ -1780,6 +1824,32 @@ editor.on("lines_changed", (data) => {
       const prevIsSep = prev !== undefined && isSepRowContent(prev.content);
       emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);
     }
+  }
+
+  // Publish this batch's heading marks. Range-scoped to the batch's byte span
+  // so headings outside it — already-visited parts of the document — keep
+  // their marks; see HEADING_MARKER_NS. Emitted even when the batch has no
+  // headings, so a line that stops being one loses its mark.
+  if (data.lines.length > 0) {
+    const batchStart = data.lines[0].byte_start;
+    const batchEnd = data.lines[data.lines.length - 1].byte_end;
+    const headingMarkers = [];
+    for (const line of data.lines) {
+      const level = headingLevel(line.content);
+      if (level === 0) continue;
+      headingMarkers.push({
+        // Byte offsets, not line numbers: they are exact regardless of file
+        // size, and the editor anchors them so later edits shift the marks.
+        position: line.byte_start,
+        color: headingMarkerColor(level),
+        priority: 10 - level, // shallower headings win a shared track cell
+      });
+    }
+    editor.setScrollbarMarkersInRange(
+      data.buffer_id, HEADING_MARKER_NS,
+      batchStart, Math.max(batchEnd, batchStart + 1),
+      headingMarkers,
+    );
   }
 
   if (tableWidthsGrew) {

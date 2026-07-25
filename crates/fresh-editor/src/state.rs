@@ -332,6 +332,16 @@ pub struct EditorState {
     /// stale coordinates that plugins echo back from fire-and-forget
     /// `lines_changed` hooks. See `crate::model::coord_map`.
     pub coord_map: crate::model::coord_map::CoordMap,
+
+    /// Plugin-owned markers painted on the vertical scrollbar track, and the
+    /// cached projection of those markers onto a track column. Byte-anchored
+    /// on their own marker list, so they ride edits like gutter indicators do;
+    /// see `crate::view::scrollbar_marker`.
+    pub scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager,
+
+    /// Cached marker→track-cell projection. Rebuilt only when the marker set,
+    /// buffer content, geometry, or coordinate basis changes.
+    pub scrollbar_marker_buckets: crate::view::scrollbar_marker::ScrollbarMarkerBuckets,
 }
 
 /// The fields of an [`Event::AddOverlay`], grouped so
@@ -418,6 +428,9 @@ impl EditorState {
             line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
             visual_row_index: crate::view::visual_row_index::VisualRowIndex::default(),
             coord_map: crate::model::coord_map::CoordMap::default(),
+            scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager::default(),
+            scrollbar_marker_buckets:
+                crate::view::scrollbar_marker::ScrollbarMarkerBuckets::default(),
         }
     }
 
@@ -583,6 +596,8 @@ impl EditorState {
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_insert(position, text.len());
         self.margins.adjust_for_insert(position, text.len());
+        self.scrollbar_markers
+            .adjust_for_insert(position, text.len());
 
         // Insert text into buffer
         self.buffer.insert(position, text);
@@ -665,6 +680,7 @@ impl EditorState {
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_delete(range.start, len);
         self.margins.adjust_for_delete(range.start, len);
+        self.scrollbar_markers.adjust_for_delete(range.start, len);
 
         // Delete from buffer
         self.buffer.delete(range.clone());
@@ -1169,19 +1185,23 @@ impl EditorState {
                     if i > d {
                         self.marker_list.adjust_for_insert(pos, i - d);
                         self.margins.adjust_for_insert(pos, i - d);
+                        self.scrollbar_markers.adjust_for_insert(pos, i - d);
                     } else if d > i {
                         self.marker_list.adjust_for_delete(pos, d - i);
                         self.margins.adjust_for_delete(pos, d - i);
+                        self.scrollbar_markers.adjust_for_delete(pos, d - i);
                     }
                     // Equal lengths: net delta 0, no adjustment needed.
                 }
                 (d, _) if d > 0 => {
                     self.marker_list.adjust_for_delete(pos, d);
                     self.margins.adjust_for_delete(pos, d);
+                    self.scrollbar_markers.adjust_for_delete(pos, d);
                 }
                 (_, i) if i > 0 => {
                     self.marker_list.adjust_for_insert(pos, i);
                     self.margins.adjust_for_insert(pos, i);
+                    self.scrollbar_markers.adjust_for_insert(pos, i);
                 }
                 _ => {}
             }

@@ -90,8 +90,8 @@ use anyhow::{anyhow, Result};
 use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
     GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
-    PluginCommand, PluginMarker, PluginResponse, SearchHandleRegistry, SearchHandleState,
-    SearchTakeResult,
+    PluginCommand, PluginMarker, PluginResponse, ScrollbarMarker, SearchHandleRegistry,
+    SearchHandleState, SearchTakeResult,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -662,6 +662,8 @@ pub struct PluginTrackedState {
     pub virtual_line_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, namespace) pairs used for line indicators
     pub line_indicator_namespaces: Vec<(BufferId, String)>,
+    /// (buffer_id, namespace) pairs used for scrollbar markers
+    pub scrollbar_marker_namespaces: Vec<(BufferId, String)>,
     /// (buffer_id, virtual_text_id) pairs
     pub virtual_text_ids: Vec<(BufferId, String)>,
     /// File explorer decoration namespaces
@@ -5090,6 +5092,80 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Replace this namespace's scrollbar markers for a buffer.
+    ///
+    /// Markers are painted on the vertical scrollbar track at positions
+    /// proportional to their location in the buffer, so marked content is
+    /// visible at a glance even when it is scrolled off screen. Each marker is
+    /// positioned by byte offset (`position`, preferred — it is exact on files
+    /// of any size) or by 0-based `line`, optionally spans to `end`, and
+    /// carries an RGB triple or a theme key as its `color`.
+    ///
+    /// The set is replaced atomically, so a refresh never renders a partially
+    /// rebuilt set.
+    pub fn set_scrollbar_markers(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        markers: Vec<ScrollbarMarker>,
+    ) -> bool {
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .scrollbar_marker_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+        self.command_sender
+            .send(PluginCommand::SetScrollbarMarkers {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+                markers,
+            })
+            .is_ok()
+    }
+
+    /// Replace only the scrollbar markers currently anchored in
+    /// `[start, end)`, leaving this namespace's markers elsewhere in the
+    /// buffer untouched.
+    ///
+    /// This is the primitive for plugins that decorate the viewport as it
+    /// scrolls (a `lines_changed` producer): publish the region you just
+    /// scanned without resending — or losing — the rest of the file.
+    pub fn set_scrollbar_markers_in_range(
+        &self,
+        buffer_id: u32,
+        namespace: String,
+        start: u32,
+        end: u32,
+        markers: Vec<ScrollbarMarker>,
+    ) -> bool {
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .scrollbar_marker_namespaces
+            .push((BufferId(buffer_id as usize), namespace.clone()));
+        self.command_sender
+            .send(PluginCommand::SetScrollbarMarkersInRange {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+                start: start as usize,
+                end: end as usize,
+                markers,
+            })
+            .is_ok()
+    }
+
+    /// Remove all scrollbar markers in a namespace
+    pub fn clear_scrollbar_markers(&self, buffer_id: u32, namespace: String) -> bool {
+        self.command_sender
+            .send(PluginCommand::ClearScrollbarMarkers {
+                buffer_id: BufferId(buffer_id as usize),
+                namespace,
+            })
+            .is_ok()
+    }
+
     /// Enable or disable line numbers for a buffer
     pub fn set_line_numbers(&self, buffer_id: u32, enabled: bool) -> bool {
         self.command_sender
@@ -7928,6 +8004,20 @@ impl QuickJsBackend {
                     let _ = self
                         .command_sender
                         .send(PluginCommand::ClearLineIndicators {
+                            buffer_id: *buf_id,
+                            namespace: ns.clone(),
+                        });
+                }
+            }
+
+            // Clear scrollbar marker namespaces
+            let mut seen_sb_ns: std::collections::HashSet<(usize, String)> =
+                std::collections::HashSet::new();
+            for (buf_id, ns) in &tracked.scrollbar_marker_namespaces {
+                if seen_sb_ns.insert((buf_id.0, ns.clone())) {
+                    let _ = self
+                        .command_sender
+                        .send(PluginCommand::ClearScrollbarMarkers {
                             buffer_id: *buf_id,
                             namespace: ns.clone(),
                         });

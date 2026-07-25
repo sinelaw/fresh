@@ -170,3 +170,68 @@ refreshLines(buffer_id: number): boolean
 | Name | Type | Description |
 |------|------|-------------|
 | `buffer_id` | `number` | The buffer ID |
+
+## Scrollbar Markers
+
+Paint colored marks on a split's vertical scrollbar at positions proportional
+to their location in the buffer — an "overview ruler". Use it alongside a line
+highlight (`addOverlay` with `extendToLineEnd`) and a gutter mark
+(`setLineIndicator`) so marked content is findable even when scrolled off
+screen.
+
+Markers are anchored by byte offset inside the editor, so they shift with edits
+and stay correct between refreshes. They work identically on a ten-line file and
+a multi-gigabyte one: on files too large for line numbers to be known, marks are
+positioned by byte ratio instead.
+
+#### `setScrollbarMarkers`
+
+Replace a namespace's entire marker set for a buffer. The swap is atomic, so a
+refresh never shows a partially rebuilt set.
+
+```typescript
+setScrollbarMarkers(bufferId: number, namespace: string, markers: ScrollbarMarker[]): boolean
+```
+
+A `ScrollbarMarker` is positioned by `position` (byte offset — preferred, and
+exact at any file size) or `line` (0-based, converted to a byte anchor when
+set). An optional `end` byte makes it a range marker that paints a proportional
+streak instead of a single cell. `color` takes an RGB triple or a theme key,
+resolved at render time so marks follow theme changes. `priority` breaks ties
+when several markers land on the same track cell.
+
+```typescript
+editor.setScrollbarMarkers(bufferId, "my-plugin", [
+  { position: 4096, color: "diagnostic.error" },
+  { position: 8192, end: 9000, color: [80, 200, 120], priority: 2 },
+]);
+```
+
+#### `setScrollbarMarkersInRange`
+
+Replace only the markers currently anchored in `[start, end)`, leaving this
+namespace's markers elsewhere in the buffer untouched.
+
+```typescript
+setScrollbarMarkersInRange(
+  bufferId: number, namespace: string,
+  start: number, end: number,
+  markers: ScrollbarMarker[],
+): boolean
+```
+
+This is the form to use from a `lines_changed` handler. That hook reports only
+the lines the editor decided to process — usually the viewport — so a
+whole-namespace replace would delete the marks for everything off screen. Range
+scoping publishes just the region you scanned, and coverage accumulates as the
+user explores the document. See `markdown_compose.ts`, which marks headings this
+way.
+
+#### `clearScrollbarMarkers`
+
+Remove all of a namespace's markers. Namespaces are also cleared automatically
+when the plugin unloads.
+
+```typescript
+clearScrollbarMarkers(bufferId: number, namespace: string): boolean
+```

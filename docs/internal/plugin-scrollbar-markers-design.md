@@ -1,7 +1,24 @@
 # Design: plugin API for colored scrollbar markers (issue #2713)
 
-Status: proposed
+Status: implemented
 Issue: https://github.com/sinelaw/fresh/issues/2713
+
+Implementation notes, where the built code differs from the original design:
+
+* **A third method shipped.** `setScrollbarMarkersInRange` was added after
+  working through the viewport-driven producer case (§2 covered only
+  replace-set). It is the form `markdown_compose` uses, and the form any
+  `lines_changed` producer should use: that hook reports only the lines the
+  editor chose to process, so a whole-namespace replace drops the marks for
+  everything off screen. `e2e/markdown_compose_scrollbar_markers.rs` fails
+  (2 marks → 1) if the plugin is switched to the whole-namespace form.
+* **`MarkerBasis` is returned by `scrollbar_line_counts`**, so the projection
+  is handed the same regime and totals the thumb just used. §4.1's "structurally
+  impossible to disagree" property is enforced by the type, not by convention.
+* **Per-marker handles were not added**, as §8 concluded. Plugin-supplied keys
+  remain the extension point if item-at-a-time churn ever needs one.
+* **`priority` is optional** in the TypeScript surface (`Option<i32>`), so
+  plugins can omit it.
 
 Plugins can already highlight a line (`addOverlay` with `extendToLineEnd`) and
 mark the gutter (`setLineIndicator`). This document designs the missing third

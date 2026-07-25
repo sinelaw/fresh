@@ -783,6 +783,30 @@ impl Editor {
             } => {
                 self.handle_clear_line_indicators(buffer_id, namespace);
             }
+            PluginCommand::SetScrollbarMarkers {
+                buffer_id,
+                namespace,
+                markers,
+            } => {
+                self.handle_set_scrollbar_markers(buffer_id, namespace, markers);
+            }
+            PluginCommand::SetScrollbarMarkersInRange {
+                buffer_id,
+                namespace,
+                start,
+                end,
+                markers,
+            } => {
+                self.handle_set_scrollbar_markers_in_range(
+                    buffer_id, namespace, start, end, markers,
+                );
+            }
+            PluginCommand::ClearScrollbarMarkers {
+                buffer_id,
+                namespace,
+            } => {
+                self.handle_clear_scrollbar_markers(buffer_id, namespace);
+            }
             PluginCommand::SetFileExplorerDecorations {
                 namespace,
                 decorations,

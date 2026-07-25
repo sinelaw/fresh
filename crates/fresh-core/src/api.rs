@@ -749,6 +749,60 @@ pub struct OverlayOptions {
     pub url: Option<String>,
 }
 
+/// One marker painted on a split's vertical scrollbar track, at a position
+/// proportional to its location in the buffer (an "overview ruler" mark).
+///
+/// Position is a **byte offset** (`position`), which is the only coordinate
+/// that is exact in every file-size regime — on a large file opened before the
+/// incremental line scan completes, line numbers do not exist yet. `line` is a
+/// convenience that the editor converts to a byte anchor when the marker is
+/// set; it is dropped if the line cannot be resolved. Supply exactly one.
+///
+/// `end` turns a point marker into a range marker, so a multi-line region
+/// (a diff hunk, a folded block) paints a proportional streak rather than a
+/// single cell.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct ScrollbarMarker {
+    /// Byte offset of the marked location. Preferred over `line`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub position: Option<u32>,
+
+    /// 0-based logical line number, converted to a byte anchor at set time.
+    /// Ignored when `position` is present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub line: Option<u32>,
+
+    /// Optional exclusive end byte offset, making this a range marker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub end: Option<u32>,
+
+    /// Marker color — RGB array or theme key. Theme keys resolve at render
+    /// time, so markers follow theme changes.
+    pub color: OverlayColorSpec,
+
+    /// Priority when several markers land on the same track cell (higher
+    /// wins). Defaults to 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub priority: Option<i32>,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for ScrollbarMarker {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "ScrollbarMarker",
+            message: Some(e.to_string()),
+        })
+    }
+}
+
 /// A run of text with optional styling. `style` reuses
 /// [`OverlayOptions`] — the same primitive plugins use for virtual
 /// text — so a hint is just `{ text: "Alt+P cycle", style: { fg:
@@ -3214,6 +3268,43 @@ pub enum PluginCommand {
     ClearLineIndicators {
         buffer_id: BufferId,
         /// Namespace to clear (e.g., "git-gutter")
+        namespace: String,
+    },
+
+    /// Replace this namespace's entire scrollbar-marker set for a buffer.
+    ///
+    /// Replace-set rather than add/remove: the swap happens inside one
+    /// command, so a plugin refreshing its markers never renders a frame with
+    /// a half-built set (the flicker that motivated the batched
+    /// [`SetLineIndicators`](Self::SetLineIndicators)).
+    SetScrollbarMarkers {
+        buffer_id: BufferId,
+        /// Namespace for grouping (e.g., "md-headings", "search").
+        namespace: String,
+        markers: Vec<ScrollbarMarker>,
+    },
+
+    /// Replace only the markers of this namespace whose anchors currently fall
+    /// in `[start, end)`, leaving markers elsewhere in the buffer untouched.
+    ///
+    /// This is the primitive for viewport-driven producers: a plugin that
+    /// recomputes decorations for the lines in a `lines_changed` batch can
+    /// publish that region's markers without resending — or losing — what it
+    /// learned about the rest of the file. Cost is O(k log n) in the region's
+    /// marker count, not in the accumulated total.
+    SetScrollbarMarkersInRange {
+        buffer_id: BufferId,
+        namespace: String,
+        /// Inclusive start byte of the region being republished.
+        start: usize,
+        /// Exclusive end byte of the region being republished.
+        end: usize,
+        markers: Vec<ScrollbarMarker>,
+    },
+
+    /// Remove all scrollbar markers in a namespace
+    ClearScrollbarMarkers {
+        buffer_id: BufferId,
         namespace: String,
     },
 
