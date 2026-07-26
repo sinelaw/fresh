@@ -332,16 +332,62 @@ ReviewSession {
 }
 ```
 
-Layout (today's three panels, kept):
+Layout (today's three panels, kept). Wireframes below use Fresh's real chrome
+(menu bar, tab bar, two-line hint bar, status bar, as captured in tmux); diff
+bodies are syntax-highlighted in reality, `›` marks the cursor row.
+
+**The container, stack (unified) layout — worktree source shown:**
 
 ```
-┌ hint bar (uniform, door-aware) ──────────────────────────────────────────┐
-│ FILES               │ DIFF (stack or split)              │ COMMENTS      │
-│ dir-grouped,        │ one scrollable stream of all       │ threads,      │
-│ ✓ viewed, *N notes, │ files (stack) or per-file SxS      │ jump/edit/    │
-│ +N -N, status       │ (split); same renderer either way  │ export        │
-└──────────────────────────────────────────────────────────────────────────┘
+ File   Edit   View   Selection   Go   LSP   Help
+ lexer.rs ×   *Review: Working Tree* ×   +
+ REVIEW CHANGES · working tree · 2/4 viewed ──────── [Tab] focus  [n p] hunk  [, .] file  [?] help
+ [s u d] stage/unstage/discard  [v] lines  [c] comment  [Space] viewed+next  [1 2 0] layout  [q] close
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ FILES                    │ ▾ STAGED (1)                                           │ COMMENTS (2)
+ STAGED (1)               │ ▾ src/parser.rs  +6 −1                       ✓ viewed  │ ● must-fix
+ ▾ src/                   │   ▾ fn parse_number · L212                             │   parser.rs:218
+  ✓ M parser.rs  +6 −1    │     212  212    while self.peek_digit() {              │   off-by-one on
+ UNSTAGED (2)             │     213  213        self.advance();                    │   empty input
+ ▾ src/                   │     214      −  let s = collect(start, self.pos);      │ ○ nit
+  ✓ M lexer.rs  +9 −2 *1  │          214 +  let s = collect(start, self.pos)?;     │   lexer.rs:31
+  › M eval.rs   +4 −0     │     215  215        s.parse().ok()                     │   naming
+ UNTRACKED (1)            │                                                        │
+ ▾ src/                   │ ▾ UNSTAGED (2)                                         │ [] ] next  [x] del
+    ? pretty.rs +12 −0    │ ▸ src/lexer.rs  +9 −2  *1  (folded)          ✓ viewed  │ [e] export
+                          │ ▾ src/eval.rs   +4 −0                                  │
+ [/] filter  [F] unseen   │ › ▾ pub fn eval · L4                                   │
+                          │       4    4    pub fn eval(tokens: &[Token]) -> i64 { │
+                          │            5 +      let mut acc: i64 = 0;              │
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ Trusted  Local  Ln 14   Review: Working Tree · 2/4 viewed · hunk 3/7           [RO]  LF  UTF-8  Diff
 ```
+
+Notes on what the frame encodes: hunk headers are enclosing-context lines
+("fn parse_number · L212"), not `@@` noise; the dual gutter carries old⋮new line
+numbers with no `+`/`-` prefixes on the code itself (copy-safe); `✓ viewed` and
+the `2/4` progress live in the FILES panel, hint bar, and status bar; `*1` is a
+comment badge; the comment entries show their severity tags; the status-bar
+counters are session-wide, not per-file.
+
+**Same session after pressing `1` — split layout (file under cursor):**
+
+```
+ REVIEW CHANGES · working tree · 2/4 viewed · split ─ [Tab] focus  [n p] hunk  [2] stack  [?] help
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ FILES                    │ src/eval.rs  +4 −0        OLD (HEAD) │ NEW (working)          │ COMMENTS (2)
+ STAGED (1)               │  1 //! Evaluator.                │  1 //! Evaluator.          │ ● must-fix
+  ✓ M parser.rs  +6 −1    │  2 use crate::lexer::Token;      │  2 use crate::lexer::Token;│   parser.rs:218
+ UNSTAGED (2)             │  3                               │  3                         │ ○ nit
+  ✓ M lexer.rs  +9 −2 *1  │  4 pub fn eval(tokens: …) {      │  4 pub fn eval(tokens: …) {│   lexer.rs:31
+  › M eval.rs   +4 −0     │                                  │  5     let mut acc = 0;    │
+ UNTRACKED (1)            │  5     for t in tokens {         │  6     for t in tokens {   │
+    ? pretty.rs +12 −0    │ ~                                │ ~                          │
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+```
+
+Same panels, same keys, same comments — only the center pane's projection
+changed. `0` picks stack/split automatically by terminal width.
 
 Key decisions:
 
@@ -417,6 +463,46 @@ per-commit lens one key away.
 Typed revspecs (`A..B`, `A...B`, sha, stash) remain the power-user path in the same
 prompt. (PR metadata import — threads, viewed-state sync — is Part II, §4.4.)
 
+**Flattened lens (default) — the whole branch as one reviewable diff:**
+
+```
+ File   Edit   View   Selection   Go   LSP   Help
+ lexer.rs ×   *Review: feature/eval vs main* ×   +
+ REVIEW BRANCH · main...feature/eval · 3 commits · 1/4 viewed ── [C] per-commit lens  [n p] hunk  [?] help
+ [Space] viewed+next  [c] comment  [v] lines  [1 2 0] layout  [z a/r] fold  [/] filter  [q] close
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ FILES                    │ ▾ src/eval.rs  (new file)  +14 −0            ✓ viewed  │ COMMENTS (1)
+ ▾ src/                   │   ▸ (folded — 1 hunk)                                  │ ? question
+  ✓ A eval.rs   +14 −0    │                                                        │   eval.rs:9
+  › M lexer.rs   +1 −1 *1 │ ▾ src/lexer.rs  +1 −1                                  │   overflow intent?
+    M parser.rs  +6 −1    │ › ▾ pub enum Token · L3                                │
+    M README.md  +2 −0    │       3        −  … Star, Slash, LParen, …             │ read-only source:
+                          │            3   +  … Star, Slash, Percent, LParen, …    │ no stage keys —
+ 1/4 viewed  [F] unseen   │           (word-level: only "Percent, " emphasized)    │ hint bar says so
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ Trusted  Local   Review: main...feature/eval · 1/4 viewed · hunk 2/6          [RO]  LF  UTF-8  Diff
+```
+
+**Per-commit lens (`C`) — the FILES panel swaps to a commit strip; selection
+drives the diff (tig-style); `[` `]` step commits without leaving the diff:**
+
+```
+ REVIEW BRANCH · main...feature/eval · commit 2/3 ──── [C] flattened  [[ ]] prev/next commit  [?] help
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ COMMITS (main..HEAD)     │ adc21a9 · lexer: add Percent token           2 files   │ COMMENTS (1)
+  778ff10 eval: naive sum │ ▾ src/lexer.rs  +1 −1                                  │ ? question
+ ›adc21a9 lexer: add Perc…│ › ▾ pub enum Token · L3                                │   eval.rs:9
+  bacff16 eval: wrapping …│       3        −  … Star, Slash, LParen, …             │   (anchored across
+                          │            3   +  … Star, Slash, Percent, LParen, …    │    lenses)
+ [Enter] pin  [y] hash    │ ▾ src/lexer.rs · doc comment  +1 −1                    │
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ Trusted  Local   Review: main...feature/eval · commit 2/3 (adc21a9)           [RO]  LF  UTF-8  Diff
+```
+
+The tab, the comments, the viewed state, and the layout toggle are the same
+session in both frames — the lens only changes what the left panel lists and
+what slice the center shows.
+
 **Door 3 — History** (today's Git Log, kept as the *browse* surface): the commit
 list stays a list — but its detail pane becomes **the shared renderer** (structured
 headers, folds, syntax colors, per-commit lens of a one-commit session) instead of
@@ -427,6 +513,28 @@ full Review Session on that commit (comments and all); a range selection (lazygi
 pivots. Git Log (Current File) stays as a scoped variant. This deletes zero
 functionality — it upgrades the detail pane and gives History a *pivot into* review
 rather than being a parallel review implementation.
+
+```
+ File   Edit   View   Selection   Go   LSP   Help
+ lexer.rs ×   *History* ×   +
+ HISTORY · all branches ─────── [Enter] review commit  [v] select range  [y] hash  [f] file scope  [?]
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ ›bacff16 11 min (TE) eval: wrapping add        [HEAD → feature/eval] │ bacff16 · eval: wrapping add
+  adc21a9 11 min (TE) lexer: add Percent token                        │ Test <test@test> · 11 min ago
+  778ff10 11 min (TE) eval: naive sum evaluator                       │
+  0bc313a 12 min (TE) lexer: clarify doc comment  [main]              │ ▾ src/eval.rs  +1 −1
+  cfb23ed 12 min (TE) docs: numbers feature                           │ › ▾ pub fn eval · L4
+  6d685b7 13 min (TE) initial: lexer, parser, readme                  │    7  −  … { acc += n; }
+                                                                      │    7  +  … { acc = acc.wra…
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ Trusted  Local   History · 6 commits · bacff16                                 LF  UTF-8
+```
+
+Scrubbing the list updates the right pane live (debounced; the in-flight
+`git show` is cancelled on move). The detail is the *shared renderer* —
+structured headers, folds, syntax — not raw `git show` text. `Enter` promotes
+the selected commit (or a `v`-selected range) into a full Review Session tab
+with comments and viewed marks; `Esc`/`q` returns here.
 
 **Door 4 — Review Agent Work** (new; the missing entry point): from an
 Orchestrator session card (key + click + palette), "Review Session's Changes" opens
@@ -450,6 +558,48 @@ awaiting-review state (Graphite's queue, scoped to the local farm). Reviewing th
 *combined* output of parallel sessions (jj-style megamerge) stays out of scope
 until worktree merging is itself a Fresh feature; the inbox plus per-session
 review is the honest v1.
+```
+ File   Edit   View   Selection   Go   LSP   Help
+ dock: auth-refactor ▸   *Review: agent "auth-refactor"* ×   +
+ REVIEW AGENT WORK · since session start (2h ago) · watch ON · 3/9 kept ── [k] keep  [x] reject  [?]
+ [K X] whole file  [v] lines  [Space] viewed+next  [c] comment  [b] baseline…  [1 2 0] layout  [q]
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ FILES                    │ ▾ src/auth/token.rs  +38 −12                 ✓ kept    │ COMMENTS (1)
+ ▾ src/auth/              │ ▾ src/auth/session.rs  +21 −4                          │ ● must-fix
+  ✓ M token.rs   +38 −12  │ › ▾ fn refresh · L88                                   │   session.rs:96
+  › M session.rs +21 −4   │      88   88   fn refresh(&mut self) -> Result<()> {   │   lock held across
+  ! M mod.rs     +6 −6    │           89 +     let tok = self.store.lock()?;       │   await point
+ ▾ tests/                 │           90 +     eprintln!("refresh: {tok:?}");      │
+    A session_test.rs +40 │                ⚠ debug print — leftover-noise scan     │
+                          │      89   91       self.renew(tok)                     │
+ 3/9 kept  [F] pending    │                                                        │
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ Trusted  auth-refactor   Review: agent session · baseline: session start · 3/9 kept   [RO]  Diff
+```
+
+`b` opens the baseline picker (the interdiff lens once checkpoint refs exist):
+
+```
+ ┌ Baseline for "auth-refactor" ──────────────────────────────┐
+ │ › since session start          2h ago        (default)     │
+ │   since my last review (v2)    14:32 · 3 files changed     │
+ │   vs HEAD                      uncommitted only            │
+ │   vs main (merge-base)         whole branch                │
+ └────────────────────────────────────────────────────────────┘
+```
+
+Rejecting a hunk whose siblings were kept triggers the related-changes nudge
+(file `mod.rs` above shows `!` — partially resolved with related hunks pending):
+
+```
+ ┌ Related changes remain ────────────────────────────────────┐
+ │ You rejected the change to `fn refresh` in session.rs,     │
+ │ but kept 2 hunks in mod.rs that call it.                   │
+ │   [Enter] review those hunks   [r] reject them too         │
+ │   [Esc] keep anyway                                        │
+ └────────────────────────────────────────────────────────────┘
+```
+
 Note the scope line: this door, as Part I, is *pure UI* — a baseline choice
 (the session's start ref), a verb set (keep/reject), and the same container.
 Everything that makes it *converse* with the agent — sending comments to the
@@ -464,14 +614,26 @@ interdiff lens** in the baseline picker — the gap no tool owns today (§2.4).
 A single **`Review…`** palette entry (the "review picker" already sketched in
 `search-and-diff.md`, upgraded to door-awareness):
 
+Rendered in Fresh's palette style (list above, typed prompt below, preview
+updating with the highlighted row):
+
 ```
-Review…
-  ★ This branch vs main (12 commits, +410 −102)     ← smart default (Door 2)
-  ● Working tree (3 files: 1 staged, 1 unstaged, 1 untracked)   (Door 1)
-  ▸ Agent sessions…  (2 with changes)                (Door 4)
-  ▸ Recent: HEAD~3..HEAD · stash@{0} · v0.4.0..HEAD  (re-open with state)
-  type a revspec: A..B · A...B · <sha> · stash@{N} · <branch>
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│ ★ This branch vs main         feature/eval · 3 commits · +56 −7          → Review Branch │
+│ ● Working tree                4 files: 1 staged, 2 unstaged, 1 untracked → Review Changes│
+│ ▸ Agent sessions…             2 with unreviewed changes                  → Review Agent  │
+│ ▸ Stash                       stash@{0} · "wip: tokenizer"                               │
+│ ⟳ Recent: HEAD~3..HEAD        reviewed yesterday · since then: 2 files changed           │
+│ ─────────────────────────────────────────────────────────────────────────────────────────│
+│ preview: main...feature/eval — 3 commits · 4 files · +56 −7 · last: eval: wrapping add   │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+  revspec: A..B | A...B | <sha> | stash@{N} | <branch>
+>Review: ▌
 ```
+
+Selecting a row opens the matching door; typing a revspec overrides everything.
+The "Recent" rows re-open with full state and show the "since you last
+reviewed" delta up front.
 
 Debounced live preview on selection (lazygit's selection-drives-preview), and
 re-opening a recent shows "since you last reviewed: N files changed" (the watermark
@@ -498,6 +660,27 @@ Merge the three in-buffer systems into one concept with one options surface:
   auto-swaps to the agent baseline while review is pending (Zed's baseline-override
   trick), so ordinary editing shows "what the agent changed" without opening
   anything.
+
+An ordinary editable buffer with the lens on, one hunk expanded in place:
+
+```
+ File   Edit   View   Selection   Go   LSP   Help
+ lexer.rs ●   +
+   9 │         match c {
+  10 │             '+' => { out.push(Token::Plus); chars.next(); }
+ ┌╴changed vs HEAD ── [s] stage  [d] discard  [n p] next/prev change  [Esc] collapse ╴┐
+  11 │             '-' => { out.push(Token::Minus); chars.next(); }
+ −   ┆             '-' => { out.push(Token::Minus); }              (old line, virtual)
+ └────────────────────────────────────────────────────────────────────────────────────┘
+ │12 │             '*' => { out.push(Token::Star); chars.next(); }      ← gutter mark
+  13 │             _ => { chars.next(); }
+──────────────────────────────────────────────────────────────────────────────────────
+ Trusted  Local  Ln 11, Col 14   changes vs HEAD: 2                LF  UTF-8  Rust
+```
+
+The buffer stays fully editable throughout — the expanded hunk is virtual lines
+plus a scoped action row, not a mode. With an agent baseline active, the action
+row's verbs read `[k] keep  [x] reject` instead.
 
 ### 3.7 Uniform vocabulary (the coherence contract)
 
