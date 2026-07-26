@@ -439,11 +439,7 @@ impl Editor {
         // a terminal-only on-disk workspace must NOT block this save.
         if workspace.has_no_real_content() && win.has_any_virtual_buffer() {
             let root = win.root.clone();
-            let on_disk = if let Some(ref session_name) = self.session_name {
-                Workspace::load_session(session_name, &root).ok().flatten()
-            } else {
-                Workspace::load(&root).ok().flatten()
-            };
+            let on_disk = Workspace::load(&root).ok().flatten();
             if let Some(existing) = on_disk {
                 if !existing.has_no_preservable_content() {
                     tracing::info!(
@@ -455,12 +451,11 @@ impl Editor {
             }
         }
 
-        // For a named daemon, save to the daemon-scoped workspace file
-        if let Some(ref session_name) = self.session_name {
-            workspace.save_session(session_name)
-        } else {
-            workspace.save()
-        }
+        // One store, whatever launched this editor. A daemon — named or not —
+        // is a host for workspaces, not an owner of a private set of them, so
+        // its windows persist exactly where a direct-mode run's do and boot
+        // discovery (which only ever scans this store) can see them all.
+        workspace.save()
     }
 
     /// Restore a specific window's workspace from disk into
@@ -486,9 +481,8 @@ impl Editor {
             return Ok(false);
         };
 
-        let workspace = if let Some(ref session_name) = self.session_name {
-            Workspace::load_session(session_name, &root)?
-        } else if stable_id.is_empty() {
+        // One store, whatever launched this editor — see `save_workspace_for`.
+        let workspace = if stable_id.is_empty() {
             // No durable id yet (a brand-new window): fall back to the
             // freshest file for the root.
             Workspace::load(&root)?
@@ -501,6 +495,7 @@ impl Editor {
             tracing::debug!("No workspace found for {:?}", root);
             return Ok(false);
         };
+
         tracing::info!("Found workspace for {:?}, applying...", root);
 
         // Editor-global config overrides (the shared `Config`).
