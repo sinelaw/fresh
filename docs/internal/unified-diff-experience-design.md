@@ -10,6 +10,18 @@ the best tools in the field do (terminal, IDE, web, and the new agent-era review
 and lays out a single coherent architecture — one renderer, one review container, one
 in-buffer lens — with task-focused entry points on top, and a phased migration.
 
+The doc is deliberately split in two:
+
+- **Part I — the review experience itself** (§3, phases 0–3): the UI/UX of
+  navigating a review — files, hunks, baselines, lenses, branches, layouts,
+  comments-as-notes, and the persistence that makes marathon reviews resumable.
+  This is the priority, and it ships identically in the TUI and the web UI —
+  every surface is a scene projection consumed by both renderers under the
+  existing parity discipline, so the web needs **no special treatment** here.
+- **Part II — talking to the outside world** (§4, phase 4): agent feedback
+  loops, comment dispatch, review IPC, forge/PR sync. Orthogonal by
+  construction and explicitly lower priority — nothing in Part I depends on it.
+
 Method: the current features were driven interactively in `tmux` (release build,
 scratch repo with staged/unstaged/untracked changes, a feature branch, and multi-commit
 history); the field research covers ~40 tools (magit, lazygit, gitui, tig, delta,
@@ -250,7 +262,7 @@ From Gerrit, Reviewable, GitHub's 2025-26 Files-Changed revamp, and CodeFlow lin
 
 ---
 
-## 3. The concept: one experience, four doors
+## 3. Part I — the review experience: one experience, four doors
 
 ### 3.1 Mental model
 
@@ -273,7 +285,7 @@ focused verb set), all opening the same container:
 | **Review Changes** | "What's in my working tree; stage and commit it" | worktree + index | stage / unstage / discard / commit |
 | **Review Branch / PR** | "Read this branch or PR like a reviewer" | merge-base three-dot vs base; commit-scoped lens | comment / viewed / export / approve-note |
 | **History** | "What happened; find and inspect commits" | log; any commit or range | read-only + pivot-to-review |
-| **Review Agent Work** | "What did the agent do; keep or reject it" | session checkpoint → worktree | keep / reject / comment-to-agent |
+| **Review Agent Work** | "What did the agent do; keep or reject it" | session checkpoint → worktree | keep / reject (agent dialogue: Part II) |
 
 The doors differ in *defaults and verbs*, never in rendering, navigation, or chrome.
 
@@ -403,8 +415,7 @@ this problem). Like Superset's diff-semantics doctrine, each source's exact git
 comparison gets documented and integration-tested. Flattened lens by default;
 per-commit lens one key away.
 Typed revspecs (`A..B`, `A...B`, sha, stash) remain the power-user path in the same
-prompt. Future (not v1): when the branch has an open PR and the GitHub plugin is
-present, import PR metadata — title, threads as comments, viewed-state sync.
+prompt. (PR metadata import — threads, viewed-state sync — is Part II, §4.4.)
 
 **Door 3 — History** (today's Git Log, kept as the *browse* surface): the commit
 list stays a list — but its detail pane becomes **the shared renderer** (structured
@@ -439,17 +450,14 @@ awaiting-review state (Graphite's queue, scoped to the local farm). Reviewing th
 *combined* output of parallel sessions (jj-style megamerge) stays out of scope
 until worktree merging is itself a Fresh feature; the inbox plus per-session
 review is the honest v1.
-Comments gain one extra action here: **"Send to session"** — serialize open comments
-(file:line + severity + text, the existing JSON/MD export shapes) into the session's
-agent terminal as a prompt (the diffhub "Copy as prompt" / cmux-hub pattern). When
-multiple sessions touch the same worktree, a session picker chooses the recipient
-(Superset's "Ask the AI about these lines"). Later phases: per-turn checkpoints
-recorded as refs enabling "what changed since I last reviewed" interdiff — the gap
-no tool owns today (§2.4); "pause agent while reviewing" (claude-squad's `c`); an
-optional **guided-review lens** — the agent that made the change emits a chapter
-outline (core change → consequences → glue, with purpose blurbs) that reorders the
-FILES panel narratively (Devin/Linear's answer to "alphabetical order ≠ the
-structure of the work").
+Note the scope line: this door, as Part I, is *pure UI* — a baseline choice
+(the session's start ref), a verb set (keep/reject), and the same container.
+Everything that makes it *converse* with the agent — sending comments to the
+session, agent-seeded notes, pause-on-review, guided-review outlines — lives in
+Part II and layers on later without changing the door. One later Part-I
+capability worth naming now because it's baseline UX, not communication:
+per-turn checkpoints recorded as refs enable a **"since I last reviewed"
+interdiff lens** in the baseline picker — the gap no tool owns today (§2.4).
 
 ### 3.5 One picker in front of the doors
 
@@ -520,22 +528,18 @@ key action is also a menu item (Fresh's identity is menus + palette + mouse; thi
 our answer to the TUI discoverability failure mode, and it's cheaper than it sounds
 because the verbs are defined once).
 
-### 3.8 The escape hatch: the same review in a browser tab
+### 3.8 Web: parity, not a feature
 
-The field's answer to TUI fatigue is a separate local web app (difit, Codiff,
-diffhub). Fresh doesn't need one: the web bridge already renders the *same*
-semantic scene in a browser (one model, two renderers, parity-tested, hosted in
-the session daemon — see `web-ui.md`). So the escape hatch is a single action in
-any Review Session: **"Open this review in the browser"** — same session, same
-state (comments, viewed marks, fold layout), richer typography and colors, mouse
-niceties for free, live over the existing WebSocket push. No second review
-implementation, no state divergence — the parity discipline guarantees the TUI
-and web views *are* the same surface. This turns Fresh's architecture into a
-direct answer to the strongest complaint driving users out of terminal review,
-and it composes with Door 4: an agent-farm user can keep sessions in the TUI dock
-and pop any individual review into a browser tab when the payload gets heavy.
-(Phase 2+; the main work is making the review panels' scene projections complete,
-which the parity tests then enforce.)
+The field builds separate local web apps to escape TUI fatigue (difit, Codiff,
+diffhub — the "TUI review became overwhelming" complaint in §2.4). Fresh's answer
+is structural, not a feature: every Part-I surface is a scene projection consumed
+by both the TUI and the web renderer under the existing parity discipline
+(`web-ui.md` — divergence is a test failure). The only work is making the review
+panels' projections complete; after that the entire experience — container,
+doors, picker, comments, viewed marks, fold state — is simply *also* in the
+browser, with no web-specific design, no second implementation, and no state
+divergence. This section exists only to state that constraint: **no review
+feature may land as TUI-only logic.**
 
 ### 3.9 Blame and merge (adjacent, aligned, not absorbed)
 
@@ -550,16 +554,24 @@ which the parity tests then enforce.)
 
 ---
 
-## 4. Agent/automation surface (differentiator, phased)
+## 4. Part II — talking to agents and outside systems (lower priority)
+
+Everything here is **orthogonal to Part I by construction**: it consumes the
+container, the comment store, and the door model but changes none of their UX.
+It is sequenced last deliberately — the UI must be nailed first, and each item
+below layers onto a finished Part I without reopening it.
 
 Fresh's unique position (from the hunk comparison docs): it can be both the *reader*
 (hunk-quality rendering) and the *actor* (staging, editing) — and, with the
 Orchestrator, the *host* of the agents whose work is being reviewed.
 
-1. **Comments-as-prompts** (Phase 2): "Send open comments to session" serializes the
-   comment set (existing JSON/MD exporters) into the agent terminal. Exit-state
-   convention à la revdiff (structured block, stable `file:line` anchors) so any
-   agent can parse it.
+1. **Comments-as-prompts**: "Send open comments to session" serializes the
+   comment set (file:line + severity + text, the existing JSON/MD export shapes)
+   into the session's agent terminal as a prompt (the diffhub "Copy as prompt" /
+   cmux-hub pattern). When multiple sessions touch the same worktree, a session
+   picker chooses the recipient (Superset's "Ask the AI about these lines").
+   Exit-state convention à la revdiff (structured block, stable `file:line`
+   anchors) so any agent can parse it.
 2. **Review IPC** (Phase 3): reuse the existing local-control IPC + native
    review-hunk state (host already exposes review-hunk state and
    `set-review-diff-hunks`) to let an agent open/inspect/annotate/navigate a review
@@ -572,11 +584,21 @@ Orchestrator, the *host* of the agents whose work is being reviewed.
    can always touch: comments out via a `.review/outbox.md` snapshot (regenerated
    on change), agent notes in via a watched `.review/inbox/` drop. Same schema,
    two transports, no opaque connection errors.
-3. **Iteration interdiff** (Phase 3+): record a lightweight ref per agent turn /
-   per review-open (`refs/fresh/review/<source-id>/v<N>` — Reviewable's GC-proof
-   pinning trick); "since I last reviewed" becomes a first-class lens with
-   base-drift noise suppressed via merge-base math. This is the open gap in the
-   entire field (§2.4) and composes from parts this plan already builds.
+3. **Agent-seeded reviews**: an agent pre-reviews and its notes arrive as inline
+   annotations for the human to triage (difit's `--comment` seeding); "pause
+   agent while reviewing" (claude-squad's `c`); an optional **guided-review
+   lens** — the agent that made the change emits a chapter outline (core change
+   → consequences → glue, with purpose blurbs) that reorders the FILES panel
+   narratively (Devin/Linear's answer to "alphabetical order ≠ the structure of
+   the work").
+4. **Forge/PR sync**: when a reviewed branch has an open PR and a forge plugin is
+   present, import PR metadata — title, review threads as comments, viewed-state
+   sync — and optionally publish local comments as a pending PR review.
+
+(The iteration-interdiff lens and its checkpoint refs
+(`refs/fresh/review/<source-id>/v<N>`, Reviewable's GC-proof pinning trick) are
+*Part I* — they're baseline-selection UX — and are scheduled in Phase 3; they're
+mentioned here only because agent turns are their richest source of versions.)
 
 ---
 
@@ -614,21 +636,26 @@ Sequenced so every phase ships a visible coherence win and nothing regresses.
   position, drafts) + "since last review" watermark.
 - Door 4: Orchestrator "Review Session's Changes" (base = recorded session start
   ref), keep/reject verbs (file-default granularity + related-changes nudge),
-  diffstat-pill-as-door, sessions review inbox in the picker, comments
-  "Send to session", leftover-noise scan.
+  diffstat-pill-as-door, sessions review inbox in the picker, leftover-noise
+  scan. (No agent communication yet — that's Phase 4.)
 - Buffer Lens unification: one reference picker (absorb git-gutter into the
   live-diff hunk model), agent-baseline auto-swap.
-- **"Open this review in the browser"** via the web bridge (§3.8): complete the
-  review panels' scene projections so the parity-tested web renderer carries the
-  same session — the TUI-fatigue escape hatch without a second implementation.
+- Web parity for the review panels (§3.8): complete their scene projections so
+  the whole experience is also in the web UI — enforced by the parity tests,
+  no web-specific design.
 
-**Phase 3 — depth**
+**Phase 3 — review depth (still Part I)**
 - Expand-hunk-in-place host primitive (Zed model) with hunk-scoped verbs.
-- Review IPC for agents; comment seeding.
-- Iteration refs + "since I last reviewed" interdiff with base-noise suppression.
+- Iteration refs + "since I last reviewed" interdiff lens with base-noise
+  suppression.
 - Renderer niceties: moved-code detection, formatting-only dimming, generated-file
   auto-collapse (gitattributes-driven), zdiff3 conflict rendering.
-- PR metadata import (threads ⇄ comments) when a forge plugin is present.
+
+**Phase 4 — Part II: agents and outside systems**
+- Comments-as-prompts ("Send to session", session picker, export conventions).
+- Review IPC for agents + file-based transport fallback; agent-seeded reviews;
+  pause-on-review; guided-review lens.
+- Forge/PR sync (threads ⇄ comments, viewed-state, pending-review publish).
 
 Explicit non-goals (for now): a commit-graph visualization (History stays a linear
 list; graph is additive later), interactive rebase UI, structural (AST) diffing as
