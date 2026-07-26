@@ -26,14 +26,15 @@
 //     WEB_THEME_FURNITURE and built by renderFurniture(). shell.html ships an
 //     empty #device, so a theme's title bars / readouts / knobs live with the
 //     theme instead of in the page.
-const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp"];
-const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic" };
+const WEB_THEMES = ["cosmos", "macos", "macos-dark", "compact", "winamp", "aero"];
+const WEB_THEME_LABELS = { cosmos: "Cosmos", macos: "macOS Light", "macos-dark": "macOS Dark", compact: "Compact", winamp: "Winamp Classic", aero: "Windows 7 Aero" };
 const WEB_THEME_DESC = {
   cosmos: "Wallpaper, glass & hardware bezel",
   macos: "Native macOS — light & vibrant",
   "macos-dark": "Native macOS — dark & vibrant",
   compact: "Dense, chrome-light IDE",
   winamp: "Brushed metal, bevels & LCD green",
+  aero: "Glass, gloss & Segoe UI",
 };
 // The macOS variants share one structural stylesheet (title bar, traffic
 // lights, system font, control shapes); only their colour tokens differ.
@@ -41,7 +42,7 @@ const MACOS_THEMES = ["macos", "macos-dark"];
 // Themes built on the COSMOS shell layout: the grid is inset inside the #device
 // bezel and the dock floats beside it as its own panel (Cosmos dresses that as
 // hardware, Winamp as a stack of skin windows). macOS / Compact run full-bleed.
-const SHELL_THEMES = ["cosmos", "winamp"];
+const SHELL_THEMES = ["cosmos", "winamp", "aero"];
 function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 // The inline custom properties applyTheme() (js/20-cells.js) owns. applyWebTheme
 // must NOT clear these when a theme leaves them unset — applyTheme just re-wrote
@@ -49,7 +50,7 @@ function shellTheme() { return SHELL_THEMES.includes(webTheme); }
 const THEME_KEYS = ["--bg", "--fg", "--accent", "--muted", "--bg2", "--bg3",
   "--menuhi", "--border", "--status-bg", "--status-fg", "--on-accent", "--on-sel", "--shell"];
 // Density multiplier per theme (layered under user zoom in measureMetrics).
-const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1 };
+const WEB_THEME_SCALE = { cosmos: 1, macos: 1, "macos-dark": 1, compact: 0.92, winamp: 1, aero: 1 };
 
 // Per-theme chrome palettes. Cosmos = {} (identity — inherit the TUI theme).
 // The macOS variants are fixed "System" palettes (light / dark) built from the
@@ -145,6 +146,31 @@ const WEB_THEME_VARS = {
     // SHELL reads these live (js/10-core.js), so #device + the grid re-fit.
     "--bezel-side": "17px", "--bezel-top": "42px", "--bezel-bot": "44px",
   },
+  // Windows 7 Aero — the system palette behind the glass: black label text on
+  // white/silver controls, the #f0f0f0 menu face, and Explorer's translucent
+  // #3399ff selection (which keeps a BLACK label, so --on-sel is dark). The
+  // glass, gloss and control gradients live in css/96-theme-windows7.css; the
+  // bezel geometry is an 8px frame under a 30px caption.
+  aero: {
+    "--fg": "#0b1622", "--muted": "#5a6672",
+    "--bg2": "#f0f0f0", "--bg3": "#f0f0f0",
+    "--menuhi": "#cfe6f8", "--border": "#9a9a9a",
+    "--status-bg": "#f0f2f4", "--status-fg": "#33404c",
+    "--shell": "#f0f0f0",
+    "--accent": "#1f6fb2", "--ui-accent": "#2b8fe0",
+    "--on-ui-accent": "#ffffff", "--on-accent": "#ffffff", "--on-sel": "#0b1622",
+    "--ok": "#2f9e2f",
+    "--surface": "#f7f8f9", "--surface-2": "#e9edf1",
+    "--hairline": "rgba(9,32,56,.14)", "--hairline-strong": "rgba(9,32,56,.26)",
+    "--hover": "rgba(51,153,255,.14)",
+    "--sel": "rgba(51,153,255,.28)",
+    "--sel-ring": "inset 0 0 0 1px rgba(125,162,206,.9)",
+    "--shadow": "0 8px 20px rgba(0,20,40,.28), 0 1px 3px rgba(0,20,40,.24)",
+    "--r-sm": "2px", "--r-md": "3px", "--r-lg": "4px",
+    // Aero window frame: an 8px glass border under a 30px caption bar. SHELL
+    // reads these live (js/10-core.js), so #device + the grid re-fit.
+    "--bezel-side": "8px", "--bezel-top": "30px", "--bezel-bot": "8px",
+  },
 };
 // ---- theme FURNITURE (declarative bezel decoration) ------------------------
 // Purely decorative DOM a theme wants inside #device — title bars, readouts,
@@ -177,6 +203,16 @@ const WEB_THEME_FURNITURE = {
     ["div.wa-title", ["i.wa-rail"], ["span.wa-title-text", "CODE STUDIO"], ["i.wa-rail"],
       ["span.wa-wbtns", ["i.wa-min"], ["i.wa-shade"], ["i.wa-close"]]],
     ["div.wa-edge.wa-l"], ["div.wa-edge.wa-r"], ["div.wa-foot", ["i.wa-rail"]],
+  ],
+  // Windows 7 Aero — a plain Aero window: glass caption with the app icon, the
+  // glowing caption text and the three caption buttons (minimise / maximise /
+  // close) hanging from the frame's top edge. No side rails or foot: the glass
+  // frame itself is the border. Shares the .wa-* class names with Winamp, each
+  // theme skinning them from its own stylesheet.
+  aero: [
+    ["div.dv-screen"],
+    ["div.wa-title", ["i.wa-ico"], ["span.wa-title-text", "Fresh — Code Studio"],
+      ["span.wa-wbtns", ["i.wa-min"], ["i.wa-shade"], ["i.wa-close"]]],
   ],
 };
 // Build a theme's furniture into #device. Called from applyWebTheme when the

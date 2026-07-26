@@ -570,3 +570,5 @@ selection, flat accent buttons, rounded translucent panels).
 | theme switcher | `91-theme-switch.css` | `15-theme.js` | — |
 | macOS theme | `92-theme-macos.css` | `15-theme.js` tokens | — |
 | Compact theme | `94-theme-compact.css` | `15-theme.js` tokens | — |
+| Winamp theme | `95-theme-winamp.css` | `15-theme.js` tokens + furniture | — |
+| Windows 7 Aero theme | `96-theme-windows7.css` | `15-theme.js` tokens + furniture | — |

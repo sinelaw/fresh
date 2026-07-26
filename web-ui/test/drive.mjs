@@ -936,7 +936,7 @@ console.log('\n[web-UI theme system: switch chrome look without touching the buf
 // it re-skins the native chrome and never reaches the editor. Default is Cosmos
 // (the hardware-bezel shell); macOS and Compact are the added looks.
 check('theme API is exposed (setWebTheme / webTheme / webThemes)', await page.evaluate(() =>
-  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 5));
+  typeof window.fresh.setWebTheme === 'function' && Array.isArray(window.fresh.webThemes) && window.fresh.webThemes.length === 6));
 check('default theme is Cosmos with the hardware bezel on', await page.evaluate(() =>
   window.fresh.webTheme === 'cosmos' && document.body.classList.contains('theme-cosmos') && document.getElementById('device').classList.contains('on')));
 // The buffer stays the TUI monospace stack regardless of the chrome font.
@@ -987,10 +987,25 @@ check('Winamp: chrome palette layered inline (navy selection + LCD-green accent)
     return r.getPropertyValue('--sel').trim() === '#313c90' && r.getPropertyValue('--accent').trim() === '#4ef07f';
   }) && (await svgFamily()) === cosmosBufFont);
 await page.screenshot({ path: `${SHOTS}/33b-theme-winamp.png` });
-// The floating switcher: clicking the pill opens a 3-row menu; a row switches.
+// → Windows 7 Aero: also a SHELL theme — the bezel host is dressed as an Aero
+// window (glass caption + caption buttons), the chrome palette is the Windows
+// system light palette (black label on Explorer's translucent blue selection),
+// and the chrome font is Segoe UI while the BUFFER stays monospace.
+await page.evaluate(() => window.fresh.setWebTheme('aero'));
+await page.waitForTimeout(400);
+check('Aero: theme class set, shell bezel ON, glass caption furniture built', await page.evaluate(() =>
+  document.body.classList.contains('theme-aero') && document.getElementById('device').classList.contains('on') &&
+  !!document.querySelector('#device .wa-title .wa-title-text')));
+check('Aero: Windows light palette layered inline, buffer stays monospace',
+  await page.evaluate(() => {
+    const r = document.documentElement.style;
+    return r.getPropertyValue('--on-sel').trim() === '#0b1622' && r.getPropertyValue('--bezel-top').trim() === '30px';
+  }) && (await svgFamily()) === cosmosBufFont);
+await page.screenshot({ path: `${SHOTS}/33c-theme-aero.png` });
+// The floating switcher: clicking the pill opens a row per theme; a row switches.
 await page.locator('#themebtn').click();
 await page.waitForTimeout(150);
-check('theme switcher menu opens with all five themes', (await page.locator('#thememenu.open .ts-row').count()) === 5);
+check('theme switcher menu opens with all six themes', (await page.locator('#thememenu.open .ts-row').count()) === 6);
 await page.locator('#thememenu .ts-row', { hasText: 'Cosmos' }).first().click();
 await page.waitForTimeout(400);
 check('picking Cosmos from the menu restores the bezel shell', await page.evaluate(() =>

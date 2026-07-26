@@ -1,0 +1,394 @@
+  /* Web theme: Windows 7 Aero — glass, gloss, silver gradients, Segoe UI.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Gated on body.theme-aero (set by js/15-theme.js). A SHELL theme, like
+     Cosmos / Winamp: the grid stays inset inside #device and the dock floats
+     beside it (SHELL_THEMES / layoutShell / widgetSurfaceEls) — but both are
+     dressed as Aero windows. #device is the "Fresh — Code Studio" glass
+     window (blurred caption frame, glowing caption text, wide caption
+     buttons) and the dock is a second glass window beside it. Its decoration
+     is DECLARED as theme furniture (WEB_THEME_FURNITURE.aero), not baked into
+     shell.html; COLOURS come from applyWebTheme()'s inline tokens and this
+     file owns the glass, the gloss and the control shapes.
+     Reference metrics from Windows 7 (Aero, 96dpi): ~30px caption, 8px glass
+     frame, ~9pt Segoe UI chrome, 3px control radius, silver push buttons with
+     a hard 50% highlight break, and the translucent #3399ff Explorer
+     selection with BLACK label text (never white-on-blue outside menus).
+     Anything painted over the cell grid uses colour + inset shadows only —
+     borders or padding on chrome rows would slide the DOM off the cell pitch.
+     ====================================================================== */
+
+  body.theme-aero{
+    /* Glass plate: a cool blue tint over whatever is behind it, plus the
+       bright inner rim and the outer hairline that make an Aero frame read as
+       a sheet of glass sitting on the desktop. */
+    --aero-tint:rgba(150,190,228,.34);
+    /* Aero frames are pale, not saturated: a milky white wash over the blurred
+       wallpaper (brightest along the top and bottom edges of the frame). */
+    --aero-sheen:linear-gradient(180deg,
+      rgba(255,255,255,.42) 0%,rgba(255,255,255,.26) 22%,
+      rgba(255,255,255,.2) 72%,rgba(255,255,255,.34) 100%);
+    --aero-rim:
+      inset 0 0 0 1px rgba(255,255,255,.5),
+      inset 0 1px 0 rgba(255,255,255,.85),
+      inset 0 -1px 0 rgba(255,255,255,.28);
+    --aero-seam:0 0 0 1px rgba(12,28,48,.55);
+    --aero-drop:0 18px 44px rgba(2,12,26,.5),0 4px 12px rgba(2,12,26,.35);
+    /* The classic caption gloss: a bright top half cut off hard at the middle
+       (the "reflection" break every Aero surface has). */
+    --aero-gloss:linear-gradient(180deg,
+      rgba(255,255,255,.55) 0%,rgba(255,255,255,.22) 45%,
+      rgba(255,255,255,.06) 46%,rgba(255,255,255,0) 100%);
+    /* Caption text on glass is BLACK with a soft white halo — Aero draws the
+       glow behind the glyphs so dark text survives a bright wallpaper. */
+    --aero-glow:0 0 3px #fff,0 0 6px #fff,0 0 10px #fff,0 0 18px rgba(255,255,255,.95);
+    /* Silver push button, with the hard 50% break Windows 7 uses. */
+    --w7-btn:linear-gradient(180deg,#f6f6f6 0%,#ebebeb 49%,#dcdcdc 50%,#cfcfcf 100%);
+    --w7-btn-hover:linear-gradient(180deg,#eaf6fd 0%,#d9f0fc 49%,#bee6fd 50%,#a7d9f5 100%);
+    --w7-btn-down:linear-gradient(180deg,#e5f4fc 0%,#c4e5fa 49%,#98d1ef 50%,#68b3db 100%);
+    --w7-btn-edge:#8e9298;
+    --w7-btn-edge-hot:#3c7fb1;
+    --w7-btn-rim:inset 0 1px 0 rgba(255,255,255,.95),0 1px 1px rgba(0,0,0,.06);
+    /* Explorer / list selection: a translucent blue wash inside a solid blue
+       hairline, black label. Hover is the same wash at a third the strength. */
+    --w7-sel:linear-gradient(180deg,rgba(220,240,252,.95),rgba(190,225,248,.95));
+    --w7-sel-edge:#7da2ce;
+    --w7-hover:linear-gradient(180deg,rgba(246,251,255,.95),rgba(226,241,253,.95));
+    --w7-hover-edge:#b8d6ee;
+    /* Sunken white control well (text fields, lists). */
+    --w7-well:#ffffff;
+    --w7-well-edge:#abadb3;
+    --w7-well-in:inset 0 1px 2px rgba(0,0,0,.12);
+    /* Native (non-glass) surfaces: menus, dialogs, toolstrips. */
+    --w7-face:#f0f0f0;
+    --w7-face-edge:#9a9a9a;
+    /* Aero window geometry: an 8px glass frame and a 30px caption. SHELL reads
+       these live (js/10-core.js), so #device + the grid re-fit. */
+    --bezel-side:8px;--bezel-top:30px;--bezel-bot:8px;
+    /* Segoe UI chrome; the buffer stays monospace (svg.cells is pinned to
+       --mono-family). letter-spacing:normal drops the grid's cell tracking,
+       which proportional text does not want. */
+    --font-family:"Segoe UI","Segoe UI Variable Text",Tahoma,"Noto Sans",Verdana,sans-serif;
+    letter-spacing:normal;font-size:13px}
+
+  /* ---- the desk: the Windows 7 default blue aurora ---- */
+  body.theme-aero:not(.mobile){background:
+    radial-gradient(60rem 30rem at 50% 112%,rgba(140,225,255,.45),transparent 60%),
+    radial-gradient(40rem 26rem at 22% 6%,rgba(180,235,255,.22),transparent 62%),
+    radial-gradient(130rem 78rem at 50% 38%,#2a9ad6 0%,#0f5f9c 46%,#06375f 76%,#031f38 100%)
+      #031f38}
+  /* Same clip as COSMOS: the menubar row spans the whole grid, so the strip
+     behind the floating dock is carved out (--clip-left = dock width). */
+  body.theme-aero:not(.mobile) .menubar{clip-path:inset(0 0 0 var(--clip-left,0px))}
+
+  /* ============ "CODE STUDIO" — the editor as an Aero window ============ */
+  /* letter-spacing:normal — the Cosmos bezel tracks its silkscreen labels out
+     (#device{letter-spacing:.16em}); Aero captions are plain Segoe UI. */
+  body.theme-aero #device{position:relative;border-radius:8px 8px 5px 5px;
+    letter-spacing:normal;
+    background:var(--aero-sheen),var(--aero-tint);
+    -webkit-backdrop-filter:blur(14px) saturate(135%);
+    backdrop-filter:blur(14px) saturate(135%);
+    box-shadow:var(--aero-drop),var(--aero-seam),var(--aero-rim)}
+  /* Caption gloss — painted ABOVE the frame but only over the caption band, so
+     the glass catches the light without tinting the code well below it. */
+  body.theme-aero #device::after{content:"";position:absolute;left:0;right:0;top:0;
+    height:var(--bezel-top);pointer-events:none;border-radius:8px 8px 0 0;
+    background:var(--aero-gloss);z-index:4}
+  /* The code well: a plain white window client area recessed into the glass,
+     framed by the 1px control edge Windows draws around client content. */
+  body.theme-aero #device .dv-screen{
+    top:var(--bezel-top);bottom:var(--bezel-bot);
+    left:var(--bezel-side);right:var(--bezel-side);
+    border-radius:0 0 3px 3px;background:#ffffff;z-index:5;
+    box-shadow:0 0 0 1px rgba(255,255,255,.6),0 0 0 2px rgba(60,90,120,.45),
+      0 -1px 3px rgba(0,0,0,.18)}
+
+  /* ---- caption bar: icon, glowing title, wide Aero window buttons ---- */
+  body.theme-aero #device .wa-title{position:absolute;left:0;right:0;top:0;
+    height:var(--bezel-top);display:flex;align-items:center;gap:7px;
+    padding:0 6px 0 9px;z-index:6}
+  body.theme-aero #device .wa-ico{flex:0 0 auto;width:15px;height:15px;border-radius:3px;
+    background:
+      radial-gradient(70% 60% at 50% 16%,rgba(255,255,255,.95),rgba(255,255,255,0) 62%),
+      linear-gradient(180deg,#8fd4ff 0%,#2b8fe0 48%,#0f5fae 52%,#3ba2ea 100%);
+    box-shadow:0 0 0 1px rgba(255,255,255,.75),0 1px 2px rgba(0,0,0,.4)}
+  body.theme-aero #device .wa-title-text{flex:1 1 auto;min-width:0;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;
+    font-size:12px;font-weight:400;color:#0b1622;text-shadow:var(--aero-glow)}
+  /* Aero caption buttons hang from the top edge of the frame: square-topped,
+     rounded at the bottom, glassy, with a wider Close. */
+  body.theme-aero #device .wa-wbtns{display:flex;gap:1px;flex:0 0 auto;
+    align-self:flex-start;height:21px}
+  body.theme-aero #device .wa-wbtns i{position:relative;width:29px;height:100%;
+    border-radius:0 0 4px 4px;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),inset 0 -1px 0 rgba(255,255,255,.5),
+      0 1px 2px rgba(0,0,0,.3);
+    transition:background .1s ease,box-shadow .1s ease}
+  body.theme-aero #device .wa-min,body.theme-aero #device .wa-shade{
+    background:linear-gradient(180deg,rgba(255,255,255,.62) 0%,rgba(226,238,250,.5) 49%,
+      rgba(160,196,228,.55) 50%,rgba(206,229,248,.62) 100%)}
+  body.theme-aero #device .wa-min:hover,body.theme-aero #device .wa-shade:hover{
+    background:linear-gradient(180deg,rgba(255,255,255,.9) 0%,rgba(226,246,255,.8) 49%,
+      rgba(158,216,252,.85) 50%,rgba(216,242,255,.9) 100%);
+    box-shadow:inset 0 0 6px rgba(255,255,255,.95),0 0 9px rgba(150,215,255,.85)}
+  body.theme-aero #device .wa-close{width:44px;
+    background:linear-gradient(180deg,rgba(244,150,146,.85) 0%,rgba(219,86,80,.9) 49%,
+      rgba(178,26,22,.92) 50%,rgba(214,62,56,.92) 100%)}
+  body.theme-aero #device .wa-close:hover{
+    background:linear-gradient(180deg,rgba(255,180,176,.95) 0%,rgba(236,102,96,.95) 49%,
+      rgba(206,34,28,1) 50%,rgba(246,86,80,1) 100%);
+    box-shadow:inset 0 0 6px rgba(255,255,255,.8),0 0 9px rgba(255,110,100,.85)}
+  /* Glyphs: 1px-ish white bars with a dark drop, drawn from the pseudo pair. */
+  body.theme-aero #device .wa-wbtns i::before,
+  body.theme-aero #device .wa-wbtns i::after{content:"";position:absolute;
+    background:#f7fbff;box-shadow:0 1px 1px rgba(0,0,0,.55)}
+  body.theme-aero #device .wa-min::before{left:9px;right:9px;bottom:5px;height:2px}
+  body.theme-aero #device .wa-min::after{display:none}
+  /* Maximise: a hollow rectangle with a thicker top edge (the Windows glyph). */
+  body.theme-aero #device .wa-shade::before{left:9px;right:9px;top:5px;height:2px}
+  body.theme-aero #device .wa-shade::after{left:9px;right:9px;top:5px;bottom:5px;
+    background:transparent;border:1px solid #f7fbff;box-shadow:0 1px 1px rgba(0,0,0,.45)}
+  body.theme-aero #device .wa-close::before,
+  body.theme-aero #device .wa-close::after{left:calc(50% - 1px);top:5px;bottom:5px;
+    width:2px;height:auto}
+  body.theme-aero #device .wa-close::before{transform:rotate(45deg)}
+  body.theme-aero #device .wa-close::after{transform:rotate(-45deg)}
+
+  /* ============ ORCHESTRATOR — the dock as a second Aero window ========= */
+  body.theme-aero:not(.mobile) .widget-surface.w-dock{position:relative;
+    background:var(--aero-sheen),var(--aero-tint);
+    -webkit-backdrop-filter:blur(14px) saturate(135%);
+    backdrop-filter:blur(14px) saturate(135%);
+    border:none;border-radius:8px;padding:6px 7px 8px;color:#0b1622;
+    box-shadow:var(--aero-drop),var(--aero-seam),var(--aero-rim)}
+  /* Caption gloss over the dock's own caption row (same band height as the
+     window's caption), above the frame but below the controls. */
+  body.theme-aero:not(.mobile) .w-dock::after{content:"";position:absolute;
+    left:0;right:0;top:0;height:30px;pointer-events:none;border-radius:8px 8px 0 0;
+    background:var(--aero-gloss);z-index:1}
+  /* The dock's first raw row is the window caption: glowing black on glass. */
+  body.theme-aero:not(.mobile) .w-dock>.w-col>.w-raw:first-child{
+    background:none;box-shadow:none;border-radius:0;
+    color:#0b1622;text-shadow:var(--aero-glow);
+    text-align:left;font-weight:400;text-transform:none;letter-spacing:normal;
+    margin:0 0 6px 2px;padding:1px 0;font-size:12px;position:relative;z-index:2}
+  /* Everything the dock puts on the glass sits above the gloss overlay. */
+  body.theme-aero .w-dock .w-button,body.theme-aero .w-dock .w-text,
+  body.theme-aero .w-dock .w-toggle,body.theme-aero .w-dock .w-divider,
+  body.theme-aero .w-dock .w-hintbar,body.theme-aero .w-dock .w-tree,
+  body.theme-aero .w-dock .w-list,body.theme-aero .w-dock .w-row,
+  body.theme-aero .w-dock .w-section{position:relative;z-index:2}
+
+  /* ---- Windows controls: fields, buttons, toggles ---- */
+  body.theme-aero .w-dock .w-text,body.theme-aero .palette .pinput,
+  body.theme-aero .settings-modal .set-field,body.theme-aero .settings-modal .set-search,
+  body.theme-aero .kbedit .kb-field,body.theme-aero .kbedit .kb-search{
+    background:var(--w7-well);color:#000;border:1px solid var(--w7-well-edge);
+    border-radius:2px;box-shadow:var(--w7-well-in)}
+  body.theme-aero .w-dock .w-text{flex:1 1 100%;padding:3px 7px;margin:3px 0}
+  /* Value chips / steppers / combo boxes — these default to var(--bg) (the
+     BUFFER background), which renders as a black chip on light chrome. Repoint
+     them at the Windows combo-box surface: a silver face with a sunken white
+     field edge. */
+  body.theme-aero .settings-modal .set-pill,body.theme-aero .settings-modal .set-step,
+  body.theme-aero .settings-modal .set-num-v,body.theme-aero .set-dd,
+  body.theme-aero .kbedit .kb-chip{
+    background:var(--w7-btn);color:#0b1622;border:1px solid var(--w7-btn-edge);
+    border-radius:3px;box-shadow:var(--w7-btn-rim)}
+  body.theme-aero .settings-modal .set-pill:hover,body.theme-aero .set-dd:hover{
+    background:var(--w7-btn-hover);border-color:var(--w7-btn-edge-hot)}
+  body.theme-aero .kbedit .kb-chip.on{background:var(--w7-btn-down);border-color:#2c628b;
+    color:#06263c}
+  body.theme-aero .settings-modal .set-dd-row{border-radius:3px;color:#0b1622}
+  body.theme-aero .settings-modal .set-dd-row.sel,
+  body.theme-aero .settings-modal .set-sresult.sel{
+    background:var(--w7-sel);color:#0b1622;
+    box-shadow:inset 0 0 0 1px var(--w7-sel-edge)}
+  body.theme-aero .settings-modal .set-section{color:#0d3a63;letter-spacing:normal}
+  body.theme-aero .settings-modal .set-list-head,
+  body.theme-aero .settings-modal .set-list-row{border-color:rgba(9,32,56,.12)}
+  body.theme-aero .settings-modal .set-list-add{color:#1f6fb2}
+  body.theme-aero .w-dock .w-text::before{content:"⌕";color:#6d7c8a;margin-right:4px}
+  body.theme-aero .w-dock .w-text-input::placeholder{color:#8b95a0}
+  /* Silver push buttons with the hard highlight break. */
+  body.theme-aero .w-dock .w-button,body.theme-aero .settings-modal .btn,
+  body.theme-aero .trustdialog .td-btn,body.theme-aero .kbedit .kb-btn,
+  body.theme-aero .settings-modal .set-dual-btn{
+    background:var(--w7-btn);color:#0b1622;border:1px solid var(--w7-btn-edge);
+    border-radius:3px;box-shadow:var(--w7-btn-rim);text-shadow:none;
+    transition:background .1s ease,border-color .1s ease}
+  body.theme-aero .w-dock .w-button:hover,body.theme-aero .settings-modal .btn:hover,
+  body.theme-aero .trustdialog .td-btn:hover,body.theme-aero .kbedit .kb-btn:hover,
+  body.theme-aero .settings-modal .set-dual-btn:hover{
+    background:var(--w7-btn-hover);border-color:var(--w7-btn-edge-hot);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 0 4px rgba(60,127,177,.35)}
+  body.theme-aero .w-dock .w-button:active,body.theme-aero .settings-modal .btn:active,
+  body.theme-aero .trustdialog .td-btn:active{
+    background:var(--w7-btn-down);border-color:#2c628b;
+    box-shadow:inset 0 1px 3px rgba(0,0,0,.22)}
+  /* Default (primary) button: the Aero "glowing" default, a blue-lit silver
+     chip with the pulsing highlight ring painted as a static glow. */
+  body.theme-aero .w-dock .w-button.primary,body.theme-aero .settings-modal .btn.primary,
+  body.theme-aero .trustdialog .td-btn.primary{
+    background:linear-gradient(180deg,#eaf6fd 0%,#d3edfc 49%,#b3e0fb 50%,#93cdf0 100%);
+    color:#06263c;border-color:#3c7fb1;font-weight:600;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.95),0 0 6px rgba(96,175,225,.85)}
+  body.theme-aero .w-dock .w-button.primary:hover,
+  body.theme-aero .settings-modal .btn.primary:hover,
+  body.theme-aero .trustdialog .td-btn.primary:hover{
+    background:linear-gradient(180deg,#f4fbff 0%,#e2f5ff 49%,#c8ebfe 50%,#a9dcf7 100%);
+    box-shadow:inset 0 1px 0 #fff,0 0 10px rgba(96,175,225,1)}
+  body.theme-aero .settings-modal .btn.danger{
+    background:linear-gradient(180deg,#fdeeee 0%,#f8dada 49%,#f0bfbf 50%,#e5a4a4 100%);
+    border-color:#b46a6a;color:#5b1111}
+  /* Toggles: the Windows slider track/knob shapes, silver on a sunken well. */
+  body.theme-aero .w-toggle{color:#0b1622}
+  body.theme-aero .w-toggle .w-box,body.theme-aero .settings-modal .set-switch{
+    background:linear-gradient(180deg,#e2e4e6,#f4f5f6);
+    border:1px solid var(--w7-well-edge);border-radius:3px;
+    box-shadow:inset 0 1px 2px rgba(0,0,0,.14)}
+  body.theme-aero .w-toggle .w-box::after,body.theme-aero .settings-modal .set-switch::after{
+    background:var(--w7-btn);border:1px solid var(--w7-btn-edge);border-radius:2px;
+    box-shadow:inset 0 1px 0 #fff,0 1px 1px rgba(0,0,0,.2)}
+  body.theme-aero .w-toggle.on .w-box,body.theme-aero .settings-modal .set-switch.on{
+    background:linear-gradient(180deg,#8dcbef,#4c9fd6);border-color:#2c628b;
+    border-radius:3px;box-shadow:inset 0 1px 2px rgba(0,0,0,.2),0 0 5px rgba(96,175,225,.7)}
+  body.theme-aero .w-toggle.on .w-box::after,
+  body.theme-aero .settings-modal .set-switch.on::after{
+    background:linear-gradient(180deg,#ffffff,#e4eef6)}
+  body.theme-aero .w-dock .w-divider{border-color:rgba(9,32,56,.22)}
+  body.theme-aero .w-dock .w-hintbar{color:#1d3348}
+  body.theme-aero .w-dock .w-hint b{color:#06345c;font-weight:600}
+
+  /* ---- lists & trees: white Explorer panes with blue-wash selection ---- */
+  body.theme-aero:not(.mobile) .w-dock>.w-col>.w-tree,
+  body.theme-aero:not(.mobile) .w-dock>.w-col>.w-list{
+    background:var(--w7-well);border:1px solid #7f9db9;border-radius:2px;
+    box-shadow:var(--w7-well-in);padding:2px}
+  body.theme-aero .w-dock .w-tree-row,body.theme-aero .w-dock .w-list-row{
+    border-radius:3px;padding:1px 6px;color:#111;border:1px solid transparent}
+  body.theme-aero .w-dock .w-tree-xrow{color:#5a6672}
+  body.theme-aero .w-dock .w-tree-row.sel,body.theme-aero .w-dock .w-list-row.sel,
+  body.theme-aero .w-dock .w-tree-xrow.sel,body.theme-aero .fileexplorer .fx-row.sel,
+  body.theme-aero .palette .prow.sel,body.theme-aero .ctxmenu .ctxitem.sel,
+  body.theme-aero .popup .popup-row.sel,body.theme-aero .settings-modal .set-cat.sel,
+  body.theme-aero .settings-modal .set-item.sel,body.theme-aero .kbedit .kb-row.sel,
+  body.theme-aero .auxmodal .am-line.sel{
+    background:var(--w7-sel);color:#0b1622;
+    box-shadow:inset 0 0 0 1px var(--w7-sel-edge),inset 0 1px 0 rgba(255,255,255,.8);
+    border-radius:3px}
+  body.theme-aero .w-dock .w-tree-row:not(.sel):hover,
+  body.theme-aero .w-dock .w-list-row:not(.sel):hover,
+  body.theme-aero .fileexplorer .fx-row:not(.sel):hover,
+  body.theme-aero .palette .prow:not(.sel):hover,
+  body.theme-aero .ctxmenu .ctxitem:not(.sel):hover{
+    background:var(--w7-hover);box-shadow:inset 0 0 0 1px var(--w7-hover-edge)}
+  body.theme-aero .w-dock .w-tree-disc,body.theme-aero .w-dock .w-tree-check{color:#40566b}
+  body.theme-aero .w-dock .w-tree-card{border:1px solid #dfe6ec;border-radius:3px;
+    background:#fbfcfd;margin:2px 0;padding:1px 0;box-shadow:none}
+  body.theme-aero .w-dock .w-tree-card.sel{background:var(--w7-sel);
+    border-color:var(--w7-sel-edge);box-shadow:inset 0 1px 0 rgba(255,255,255,.8)}
+  body.theme-aero .w-dock .w-tree-card.sel .w-tree-row.sel{background:none;box-shadow:none}
+  body.theme-aero .w-dock .w-tree-card.sel .w-tree-xrow{color:#3d5468}
+
+  /* ---- floating surfaces: Windows menus/dialogs are OPAQUE, not glass ---- */
+  body.theme-aero .w-dock .w-overlay,body.theme-aero .dropdown,body.theme-aero .popup,
+  body.theme-aero .ctxmenu,body.theme-aero .palette,body.theme-aero .palette.centered,
+  body.theme-aero .settings-modal,body.theme-aero .m-sheet,body.theme-aero .kbedit,
+  body.theme-aero .trustdialog,body.theme-aero .auxmodal,
+  body.theme-aero .widget-surface.w-floatingModal,body.theme-aero .pbrowser{
+    -webkit-backdrop-filter:none;backdrop-filter:none;
+    background:var(--w7-face);color:#0b1622;border:1px solid var(--w7-face-edge);
+    border-radius:3px;box-shadow:0 8px 20px rgba(0,20,40,.28),0 1px 3px rgba(0,20,40,.24)}
+  body.theme-aero .w-dock .w-overlay{padding:3px;margin:0;z-index:30}
+  body.theme-aero .w-dock .w-overlay .w-section{border:none;padding:1px}
+  body.theme-aero .w-dock .w-overlay .w-section-label,
+  body.theme-aero .palette .ptitle,body.theme-aero .palette .ptitlebar{
+    color:#0d3a63;font-weight:600;letter-spacing:normal}
+  body.theme-aero .palette .plist,body.theme-aero .palette .ppreview{background:#ffffff}
+  body.theme-aero .palette .pinput .q{color:#000}
+  body.theme-aero .palette .prow{color:#111;border-radius:3px}
+  body.theme-aero .palette .prow .pkey{border-radius:2px;border-color:#b6bcc3;
+    background:#e9ecef;color:#33404c}
+  body.theme-aero .palette .prow.sel .pkey{border-color:#7da2ce;background:#eaf5fd;color:#0b1622}
+  body.theme-aero .popup .popup-title{background:linear-gradient(180deg,#fbfbfb,#eef0f2);
+    color:#0b1622}
+  /* Dock dropdowns / anchored context menus are REAL menus: borderless rows on
+     the menu face, with the Windows hover band on the active one. */
+  body.theme-aero .w-dock .w-overlay .w-button,
+  body.theme-aero .widget-surface.w-floatingModal.anchored .w-button{
+    background:none;border:1px solid transparent;box-shadow:none;color:#0b1622;
+    padding:3px 10px;text-align:left}
+  body.theme-aero .w-dock .w-overlay .w-button.primary,
+  body.theme-aero .widget-surface.w-floatingModal.anchored .w-button.primary{
+    background:none;border-color:transparent;box-shadow:none;color:#0b1622;font-weight:400}
+  body.theme-aero .w-dock .w-overlay .w-button:hover,
+  body.theme-aero .widget-surface.w-floatingModal.anchored .w-button:hover,
+  body.theme-aero .mitem.hi{
+    background:var(--w7-sel);color:#0b1622;border-radius:3px;
+    box-shadow:inset 0 0 0 1px var(--w7-sel-edge),inset 0 1px 0 rgba(255,255,255,.8);
+    text-shadow:none}
+  body.theme-aero .mitem.hi .accel{color:#3d5468}
+  body.theme-aero .mitem.hi::before,body.theme-aero .ctxmenu .ctxitem.sel::before,
+  body.theme-aero .popup .popup-row.sel::before{display:none}
+  body.theme-aero .mitem.disabled{color:#9aa4ae}
+
+  /* ================== chrome inside the window client area ============== */
+  /* Cell-aligned rows: colour + inset shadows only, never box metrics. */
+  body.theme-aero .menubar{background:linear-gradient(180deg,#fdfdfd,#f1f3f5);
+    border-bottom:1px solid #d7dbe0;box-shadow:none}
+  body.theme-aero .menu{color:#0b1622;text-shadow:none}
+  body.theme-aero .menu:hover{background:var(--w7-hover);
+    box-shadow:inset 0 0 0 1px var(--w7-hover-edge)}
+  body.theme-aero .menu.open{background:var(--w7-sel);color:#0b1622;
+    box-shadow:inset 0 0 0 1px var(--w7-sel-edge)}
+  body.theme-aero .msep{background:#dfe2e6;box-shadow:0 1px 0 #fff}
+  /* Tabs: the Aero "document tab" strip — a pale blue trough, white active
+     tab merged into the client area below it. */
+  body.theme-aero .tabbar{background:linear-gradient(180deg,#eaf1f8,#dbe6f2);
+    border-bottom:1px solid #8ba0b6}
+  body.theme-aero .tab{color:#33404c;background:linear-gradient(180deg,#f7fafd,#e3ebf4);
+    border-right:1px solid #c2cfdc;box-shadow:inset 0 1px 0 rgba(255,255,255,.8)}
+  body.theme-aero .tab:not(.active):hover{
+    background:linear-gradient(180deg,#ffffff,#eaf4fd);color:#0b1622}
+  body.theme-aero .tab.active{background:#ffffff;color:#0b1622;
+    box-shadow:inset 0 2px 0 #3c9ada,inset 0 0 0 1px rgba(255,255,255,.9)}
+  body.theme-aero .tab.active::after{display:none}
+  body.theme-aero .tab .x:hover{background:linear-gradient(180deg,#f7c9c9,#e79a9a);
+    color:#7a1010;border-radius:2px}
+  /* Status bar: the Explorer details pane — a flat light strip. */
+  body.theme-aero .statusbar{background:linear-gradient(180deg,#f6f7f8,#eceff2);
+    color:#33404c;border-top:1px solid #d0d5da;box-shadow:none}
+  body.theme-aero .statusbar .txt{color:#0b1622;text-shadow:none}
+  body.theme-aero .statusbar .seg{border-radius:3px}
+  body.theme-aero .statusbar .seg:hover{background:var(--w7-hover);color:#0b1622;
+    box-shadow:inset 0 0 0 1px var(--w7-hover-edge)}
+  /* File explorer: the Windows navigation pane — white, with the classic
+     amber folder glyphs and the blue-wash selection above. */
+  body.theme-aero .fileexplorer{background:#ffffff;color:#111;
+    border-right:1px solid #cdd4db;box-shadow:none}
+  body.theme-aero .fileexplorer .fx-title{color:#0d3a63;font-weight:600;
+    text-transform:uppercase}
+  body.theme-aero .fileexplorer .fx-row{border-radius:3px;margin:0}
+  body.theme-aero .fileexplorer .fx-row.sel .fx-icon,
+  body.theme-aero .fileexplorer .fx-row.sel .fx-chev{color:#0b1622}
+  body.theme-aero .fileexplorer .fx-icon.dir,
+  body.theme-aero .fileexplorer .fx-row.sel .fx-icon.dir{color:#e0a734}
+
+  /* ---- Windows 7 scrollbars: silver troughs with rounded gradient thumbs ---- */
+  body.theme-aero *::-webkit-scrollbar{width:15px;height:15px;
+    background:linear-gradient(90deg,#f1f1f1,#f8f8f8);
+    border-left:1px solid #e3e5e8}
+  body.theme-aero *::-webkit-scrollbar-thumb{
+    background:linear-gradient(90deg,#f4f5f6,#d3d8dd 60%,#c3c9cf);
+    border:1px solid #a3abb3;border-radius:4px;background-clip:padding-box;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.9)}
+  body.theme-aero *::-webkit-scrollbar-thumb:hover{
+    background:linear-gradient(90deg,#eaf6fd,#bee6fd 60%,#a7d9f5);border-color:#3c7fb1}
+  body.theme-aero *::-webkit-scrollbar-thumb:active{
+    background:linear-gradient(90deg,#c4e5fa,#98d1ef 60%,#68b3db);border-color:#2c628b;
+    box-shadow:inset 0 1px 3px rgba(0,0,0,.25)}
+  body.theme-aero *::-webkit-scrollbar-corner{background:#f1f1f1}

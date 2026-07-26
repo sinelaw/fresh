@@ -124,7 +124,7 @@ selection, cursor) and is piped into the chrome's CSS variables by
 Layered on top is a **web theme**: a purely frontend choice of *chrome* look,
 in the same class as zoom / palette placement / Alt-selection — a view
 preference persisted in `localStorage` (`fresh.webtheme`), never sent to the
-editor. Four ship:
+editor. Six ship:
 
 - **Cosmos** (default) — the abstract wallpaper, `COSMOS-991` hardware bezel and
   frosted-glass dock (`90-cosmos.css`). Unchanged from before the theme system.
@@ -135,6 +135,13 @@ editor. Four ship:
   `body.macfam`; only their colour tokens differ.
 - **Compact** — a dense, chrome-light IDE: no wallpaper/bezel, a ~8% smaller
   measured grid, tight paddings, hairline rules and flat surfaces.
+- **Winamp Classic** — a SHELL theme (Cosmos layout): brushed copper metal,
+  hard bevels and LCD-green readouts; the editor is the "CODE STUDIO" skin
+  window and the dock its playlist editor (`95-theme-winamp.css`).
+- **Windows 7 Aero** — also a SHELL theme: the editor and the dock are two
+  Aero glass windows on the blue desktop — blurred glass frames, a glowing
+  caption with the wide Aero caption buttons, Segoe UI chrome, silver push
+  buttons and Explorer's translucent-blue selection (`96-theme-windows7.css`).
 
 `js/15-theme.js` is the whole mechanism. `applyWebTheme()` (called from
 `render()` right after `applyTheme()`) does two things: it sets the
