@@ -1075,7 +1075,11 @@ impl Window {
     ///
     /// Returns the new terminal id, or `None` when the spawn failed (logged;
     /// the old handle is left in place for the caller to report on).
-    fn respawn_terminal_pty(&mut self, buffer_id: BufferId, spec: RespawnSpec) -> Option<TerminalId> {
+    fn respawn_terminal_pty(
+        &mut self,
+        buffer_id: BufferId,
+        spec: RespawnSpec,
+    ) -> Option<TerminalId> {
         // The window's bridge may be unset on a window restored without ever
         // spawning through `spawn_terminal_session_impl`; setting it is idempotent.
         let bridge = self.bridge.clone();
@@ -1577,10 +1581,7 @@ impl Editor {
             return;
         }
 
-        let Some(terminal_id) = self
-            .active_window_mut()
-            .restart_terminal_buffer(buffer_id)
-        else {
+        let Some(terminal_id) = self.active_window_mut().restart_terminal_buffer(buffer_id) else {
             self.set_status_message(t!("terminal.restart_failed").to_string());
             return;
         };

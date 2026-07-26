@@ -1875,8 +1875,7 @@ impl Editor {
                 crate::view::ui::status_bar::TerminalRestartState {
                     program: e.program_name().map(str::to_string),
                     exit_code: e.exit_code,
-                    resumes_agent: e.resumes_agent()
-                        && self.config.terminal.resume_agents,
+                    resumes_agent: e.resumes_agent() && self.config.terminal.resume_agents,
                 }
             });
             // Single window borrow, split into buffers + cursors so the

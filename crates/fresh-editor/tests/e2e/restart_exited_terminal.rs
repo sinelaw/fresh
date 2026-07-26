@@ -281,7 +281,10 @@ fn test_restart_refuses_while_process_is_running() {
         .expect("the refusal should be reported on the status bar");
     // The running job was left alone — no second banner from a respawn.
     assert_eq!(
-        harness.screen_to_string().matches("LONG-JOB-STARTED").count(),
+        harness
+            .screen_to_string()
+            .matches("LONG-JOB-STARTED")
+            .count(),
         1,
         "the live process must not be respawned\nScreen:\n{}",
         harness.screen_to_string()
