@@ -289,7 +289,8 @@
     "err.ssh_host_required": "SSH: a host is required (host, user@host, or ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer workspaces are coming next.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Launch in"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -581,7 +582,8 @@
     "err.ssh_host_required": "SSH: hostitel je povinný (host, user@host, nebo ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: otevřete projekt a spusťte „Dev Containers: Reopen in Container“. (Pracovní prostory devcontaineru spravované Orchestratorem budou následovat.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Spustit v"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -873,7 +875,8 @@
     "err.ssh_host_required": "SSH: ein Host ist erforderlich (host, user@host oder ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: öffne das Projekt und führe „Dev Containers: Reopen in Container“ aus. (Orchestrator-verwaltete Devcontainer-Arbeitsbereiche folgen als Nächstes.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Starten in"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1165,7 +1168,8 @@
     "err.ssh_host_required": "SSH: se requiere un host (host, user@host o ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: abre el proyecto y ejecuta “Dev Containers: Reopen in Container”. (Los espacios de trabajo devcontainer gestionados por Orchestrator llegarán próximamente.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Lanzar en"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -1457,7 +1461,8 @@
     "err.ssh_host_required": "SSH : un hôte est requis (host, user@host, ou ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer : ouvrez le projet et exécutez « Dev Containers: Reopen in Container ». (Les espaces de travail devcontainer gérés par Orchestrator arrivent bientôt.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Lancer dans"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -1749,7 +1754,8 @@
     "err.ssh_host_required": "SSH: è obbligatorio un host (host, user@host, oppure ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: apri il progetto ed esegui “Dev Containers: Reopen in Container”. (Gli spazi di lavoro devcontainer gestiti da Orchestrator arriveranno presto.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Avvia in"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -2041,7 +2047,8 @@
     "err.ssh_host_required": "SSH: ホストが必要です (host、user@host、または ssh://host)。",
     "err.devcontainer_unsupported": "Devcontainer: プロジェクトを開いて “Dev Containers: Reopen in Container” を実行してください。（Orchestrator 管理の devcontainer ワークスペースは近日対応予定です。）",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "起動先"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -2333,7 +2340,8 @@
     "err.ssh_host_required": "SSH: host가 필요합니다 (host, user@host, 또는 ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: 프로젝트를 열고 “Dev Containers: Reopen in Container”를 실행하세요. (Orchestrator가 관리하는 devcontainer 워크스페이스는 곧 추가됩니다.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "실행 위치"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -2625,7 +2633,8 @@
     "err.ssh_host_required": "SSH: um host é obrigatório (host, user@host ou ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: abra o projeto e execute “Dev Containers: Reopen in Container”. (Espaços de trabalho devcontainer gerenciados pelo Orchestrator chegam em breve.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Iniciar em"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -2917,7 +2926,8 @@
     "err.ssh_host_required": "SSH: требуется хост (host, user@host или ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: откройте проект и выполните «Dev Containers: Reopen in Container». (Рабочие области devcontainer под управлением Orchestrator появятся в следующих версиях.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Запустить в"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -3209,7 +3219,8 @@
     "err.ssh_host_required": "SSH: ต้องระบุ host (host, user@host หรือ ssh://host)",
     "err.devcontainer_unsupported": "Devcontainer: เปิดโปรเจกต์แล้วรัน “Dev Containers: Reopen in Container” (พื้นที่ทำงาน devcontainer ที่จัดการโดย Orchestrator กำลังจะมาในเร็ว ๆ นี้)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "เริ่มใน"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -3501,7 +3512,8 @@
     "err.ssh_host_required": "SSH: потрібен хост (host, user@host, або ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: відкрийте проєкт і виконайте “Dev Containers: Reopen in Container”. (Робочі області devcontainer, керовані Orchestrator, з’являться згодом.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Запустити в"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -3793,7 +3805,8 @@
     "err.ssh_host_required": "SSH: cần một host (host, user@host, hoặc ssh://host).",
     "err.devcontainer_unsupported": "Devcontainer: mở dự án và chạy “Dev Containers: Reopen in Container”. (Không gian làm việc devcontainer do Orchestrator quản lý sẽ có ở bản tiếp theo.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "Chạy trong"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -4085,6 +4098,7 @@
     "err.ssh_host_required": "SSH：必须指定主机（host、user@host 或 ssh://host）。",
     "err.devcontainer_unsupported": "Devcontainer：请打开项目并运行 “Dev Containers: Reopen in Container”。（由 Orchestrator 管理的 devcontainer 工作区即将推出。）",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
-    "form.new_branch_worktree_only": "worktree only"
+    "form.new_branch_worktree_only": "worktree only",
+    "form.launch_in": "启动于"
   }
 }

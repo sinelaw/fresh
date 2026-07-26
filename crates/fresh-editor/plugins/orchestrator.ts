@@ -381,8 +381,21 @@ const SESSION_BACKENDS: { id: SessionBackend; label: string; key: string }[] = [
 ];
 
 interface NewSessionForm {
+  // Where the agent lands: a terminal in the CURRENT workspace, or a brand-new
+  // one. This is the dialog's top-level mode switch — "current" hides every
+  // workspace-creation control (backend tabs, Project Path, Workspace Name,
+  // the Advanced fold), leaving just "which agent, with what options", which
+  // is the whole of the old separate Run-Agent dialog. "new" reveals them all.
+  //
+  // Both entry points open *this* form; they differ only in what they default
+  // this field to (Run Agent → "current", New Workspace → "new"). Keeping one
+  // form is what stops the two launch paths drifting apart — they used to be
+  // separate dialogs with separate submit functions, and the current-workspace
+  // one silently dropped the agent-resume argv.
+  target: RunAgentTarget;
   // Which backend the session runs in (the "Run in:" tab selection). Drives
   // which field set `buildFormSpec` renders and which submit path runs.
+  // Only meaningful (and only rendered) when `target === "new"`.
   backend: SessionBackend;
   // --- SSH backend fields (rendered only when backend === "ssh") ---
   // Host as `host`, `user@host[:port]`, or a pasted `ssh://…` (user optional);
@@ -514,6 +527,12 @@ interface NewSessionForm {
 let form: NewSessionForm | null = null;
 let formPanel: FloatingWidgetPanel | null = null;
 
+// Where a launch lands: a terminal in the CURRENT workspace, or a fresh
+// worktree + window. The New-Workspace form's top-level switch (see
+// `NewSessionForm.target`); "Run Agent…" is that same form opened on
+// "current".
+type RunAgentTarget = "current" | "new";
+
 const NEW_SESSION_MODE = "orchestrator-new-form";
 
 // The "New Folder" dialog — a small centered floating panel with a name
@@ -569,25 +588,6 @@ let createFolderFocusKey = "folder-name";
 // palette-launched agent is indistinguishable from a dialogue-launched
 // one.
 // ---------------------------------------------------------------------
-const RUN_AGENT_MODE = "orchestrator-run-agent-dialog";
-// Where a Run-Agent launch lands: a terminal in the CURRENT window, or a
-// fresh worktree + window (the dialogue's classic path).
-type RunAgentTarget = "current" | "new";
-interface RunAgentDialogState {
-  // Index into `runAgentProcesses()` (0 = bare terminal, then agents).
-  agentIndex: number;
-  target: RunAgentTarget;
-  // Auto/bypass-approvals mode. Only meaningful (and only shown) for an
-  // agent whose registry entry has an `auto` flag.
-  auto: boolean;
-  // Optional first prompt handed to the agent at launch. Only shown for
-  // an agent that documents a prompt argument.
-  prompt: { value: string; cursor: number };
-}
-let runAgentDialog: RunAgentDialogState | null = null;
-let runAgentPanel: FloatingWidgetPanel | null = null;
-// Persisted last choice so the dialog reopens where the user left it.
-const RUN_AGENT_LAST_KEY = "orchestrator.run_agent.last";
 
 // Open dialog state. `null` ⇒ the picker isn't mounted. Lives
 // alongside the new-session form state but is independent of
@@ -5996,8 +5996,24 @@ function rebuildFormFocusCycle(): void {
   // backend's fields, then the shared Session Name / Agent Command,
   // then the buttons. ←/→ moves within the radio groups, never Tab —
   // so each group is a single Tab stop.
-  const activeBackend = SESSION_BACKENDS.find((b) => b.id === form.backend);
-  const cycle: string[] = activeBackend ? [activeBackend.key] : [];
+  // The target switch leads the cycle in both modes; everything
+  // workspace-shaped after it exists only while creating one.
+  const cycle: string[] = ["target_dropdown"];
+  // Bind once: `form` is a mutable module-level slot, so TypeScript drops the
+  // non-null narrowing across every call below.
+  const f = form;
+  if (f.target === "current") {
+    cycle.push("agent_dropdown");
+    const agent = activeAgentEntry();
+    if (agent?.auto) cycle.push("auto_mode");
+    if (agent?.prompt) cycle.push("start_prompt");
+    cycle.push("create-visit", "cancel");
+    formFocusCycle = cycle;
+    if (formFocusIndex >= cycle.length) formFocusIndex = 0;
+    return;
+  }
+  const activeBackend = SESSION_BACKENDS.find((b) => b.id === f.backend);
+  if (activeBackend) cycle.push(activeBackend.key);
   if (form.backend === "local") {
     const worktreeEnabled = form.projectPathIsGit !== false;
     const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
@@ -6858,6 +6874,21 @@ function firstBodyFieldKey(backend: SessionBackend): string {
 // "Run in:" tab row. One button per backend; the active one is `primary`. The
 // body below (`backendBodyFields`) swaps to match. The tab buttons carry keys
 // (`type-local` …) so they sit in the form's Tab cycle; ←/→ also switches.
+// The dialog's top-level switch: run the agent in the workspace you're in, or
+// make a new one for it. Everything workspace-shaped below is conditioned on
+// this, so "current" collapses the form down to the old Run-Agent dialog.
+function targetRow(): WidgetSpec {
+  const sel = form ? form.target : "new";
+  return dropdown(
+    [editor.t("run_agent.target_current"), editor.t("run_agent.target_new")],
+    {
+      selectedIndex: sel === "current" ? 0 : 1,
+      label: editor.t("form.launch_in").replace(/:\s*$/, ""),
+      key: "target_dropdown",
+    },
+  );
+}
+
 function backendTabsRow(): WidgetSpec {
   const sel: SessionBackend = form ? form.backend : "local";
   const parts: WidgetSpec[] = [
@@ -6935,7 +6966,9 @@ function cmdField(): WidgetSpec {
 }
 
 function agentOptionsFields(): WidgetSpec[] {
-  if (!form || form.backend !== "local") return [];
+  // Agent options are wired for the local backend and for "run in the current
+  // workspace" (which is always local to the window you're in).
+  if (!form || (form.target === "new" && form.backend !== "local")) return [];
   const entry = activeAgentEntry();
   if (!entry) return [];
   const fields: WidgetSpec[] = [];
@@ -7355,6 +7388,9 @@ function buildConnectingView(): WidgetSpec {
 // guards the submit paths so an empty form can't be submitted via Enter.
 function formIsSubmittable(): boolean {
   if (!form) return false;
+  // Running in the current workspace needs no input at all — worst case it
+  // opens a bare terminal here, which is always possible.
+  if (form.target === "current") return true;
   switch (form.backend) {
     case "local":
       // Mirror `captureCreateSpec`'s fallback chain EXACTLY: a local
@@ -7389,44 +7425,52 @@ function buildFormSpec(): WidgetSpec {
   // Disabled/connecting state: read-only summary + Cancel-only (item 3).
   if (form.submitting) return buildConnectingView();
 
+  const creating = form.target === "new";
   const children: WidgetSpec[] = [
-    // The title ("ORCHESTRATOR :: New Workspace") + border are now
-    // native modal-frame chrome drawn by the host (see `openForm`), so
-    // the spec starts straight at the "Run in:" session-type tabs.
-    // === "Run in:" session-type tabs. ============================
-    backendTabsRow(),
+    // The title + border are native modal-frame chrome drawn by the host
+    // (see `openForm`), so the spec starts straight at the target switch.
+    targetRow(),
     spacer(0),
-    // === Backend-specific top fields (swap with the tab). ========
-    ...backendBodyFields(),
-    // === Shared fields: Session Name + Agent Command. ============
-    // Labels are plain — the input's own focused-bg styling (set by
-    // the host based on the panel's focus_key) is the authoritative
-    // focus cue.
-    labeledSection({
-      label: editor.t("form.workspace_name"),
-      child: text({
-        value: form.name.value,
-        cursorByte: form.name.cursor,
-        // Concrete default (e.g. "session-3") rather than the
-        // literal `(auto-generated)` — the user sees the exact
-        // name an empty submit would create. Empty while the
-        // ref probe runs.
-        placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
-        fullWidth: true,
-        key: "name",
+  ];
+  if (creating) {
+    children.push(
+      // === "Run in:" session-type tabs. ==========================
+      backendTabsRow(),
+      spacer(0),
+      // === Backend-specific top fields (swap with the tab). ======
+      ...backendBodyFields(),
+      // === Workspace Name. ======================================
+      // Labels are plain — the input's own focused-bg styling (set by
+      // the host based on the panel's focus_key) is the authoritative
+      // focus cue.
+      labeledSection({
+        label: editor.t("form.workspace_name"),
+        child: text({
+          value: form.name.value,
+          cursorByte: form.name.cursor,
+          // Concrete default (e.g. "session-3") rather than the
+          // literal `(auto-generated)` — the user sees the exact
+          // name an empty submit would create. Empty while the
+          // ref probe runs.
+          placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
+          fullWidth: true,
+          key: "name",
+        }),
       }),
-    }),
+    );
+  }
+  children.push(
     agentPresetRow(),
     // On remote backends the command box stays inline (no Advanced fold to hold
     // it); on local it moves into Advanced (appended in `advancedSection`).
-    ...(form.backend === "local" ? [] : [cmdField()]),
+    ...(creating && form.backend !== "local" ? [cmdField()] : []),
     // Agent-specific controls (Auto mode / Start prompt), adaptive to the
     // resolved agent. Empty for a bare terminal / unknown command.
     ...agentOptionsFields(),
-  ];
-  // Worktree + branch controls are local-only and live behind the
-  // collapsible "Advanced…" fold.
-  if (form.backend === "local") {
+  );
+  // Worktree + branch controls create a workspace, so the whole Advanced fold
+  // is meaningless when running in the current one.
+  if (creating && form.backend === "local") {
     children.push(...advancedSection());
   }
   // Remote backends connect asynchronously and the dialog stays open until the
@@ -7455,22 +7499,34 @@ function buildFormSpec(): WidgetSpec {
     // on a narrow form instead of "Create Session" being clipped off the
     // right edge. The wrap path ignores the leading flex spacer (and
     // trims a blank that would lead a line), so the pair left-packs.
-    wrappingRow(
-      button(editor.t("form.btn_create"), {
-        intent: "primary",
-        key: "create-visit",
-        disabled: !formIsSubmittable(),
-        focusable: true,
-      }),
-      spacer(2),
-      button(editor.t("form.btn_create_bg"), {
-        key: "create-bg",
-        disabled: !formIsSubmittable(),
-        focusable: true,
-      }),
-      spacer(2),
-      button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
-    ),
+    // Running in the current workspace creates nothing, so there is no
+    // foreground/background distinction to offer — just "Run".
+    creating
+      ? wrappingRow(
+        button(editor.t("form.btn_create"), {
+          intent: "primary",
+          key: "create-visit",
+          disabled: !formIsSubmittable(),
+          focusable: true,
+        }),
+        spacer(2),
+        button(editor.t("form.btn_create_bg"), {
+          key: "create-bg",
+          disabled: !formIsSubmittable(),
+          focusable: true,
+        }),
+        spacer(2),
+        button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
+      )
+      : wrappingRow(
+        button(editor.t("run_agent.btn_run"), {
+          intent: "primary",
+          key: "create-visit",
+          focusable: true,
+        }),
+        spacer(2),
+        button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
+      ),
     spacer(0),
     // === Footer: keybinding helper, centered. ====================
     row(
@@ -7515,10 +7571,13 @@ function renderForm(): void {
   formPanel.update(buildFormSpec());
 }
 
-function openForm(options?: { fromPicker?: boolean }): void {
+function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): void {
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
+    // Defaults to creating a workspace; "Run Agent…" opens the same form
+    // pre-switched to the current one.
+    target: options?.target ?? "new",
     backend: "local",
     sshHost: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
@@ -7566,6 +7625,23 @@ function openForm(options?: { fromPicker?: boolean }): void {
     completion: { field: null, items: [], selectedIndex: 0, anchor: "", token: 0 },
   };
   formPanel = new FloatingWidgetPanel();
+  mountFormPanel();
+  // Kick off the placeholder probes (canonical repo root,
+  // default branch, next session name) against the editor's
+  // cwd. Each probe is async and re-renders on completion.
+  void probeProjectPathDefaults();
+}
+
+/// Mount (or re-mount) the form panel and land initial focus.
+///
+/// Re-mounted when the "Launch in" switch flips, because the frame *title*
+/// is mount-time chrome: leaving it alone would keep a form that now creates
+/// a workspace labelled "Run Agent". The form state itself is untouched, so
+/// the agent, auto mode and prompt survive the flip; only focus moves, to the
+/// first field of the shape the user just switched to.
+function mountFormPanel(focusKey?: string): void {
+  if (!form || !formPanel) return;
+  const creating = form.target === "new";
   // Width 60 / height 90: the host shrinks the panel to its actual
   // content height when content is shorter than the requested cap,
   // so a generous height ceiling doesn't waste space on tall
@@ -7584,7 +7660,9 @@ function openForm(options?: { fromPicker?: boolean }): void {
     // (drawn by the host around the WidgetSpec) rather than the in-body
     // "ORCHESTRATOR :: New Workspace" banner, and `closable` renders a
     // native `[×]` that dismisses via the same cancel path as Esc.
-    title: `${editor.t("form.header_keyword")} :: ${editor.t("form.header_label")}`,
+    title: `${editor.t("form.header_keyword")} :: ${
+      creating ? editor.t("form.header_label") : editor.t("run_agent.title")
+    }`,
     closable: true,
   });
   // The New-Session form is a global orchestrator feature too: center it
@@ -7599,14 +7677,15 @@ function openForm(options?: { fromPicker?: boolean }): void {
   // (`project_path` for Local), preserving the original "open and type"
   // behaviour; the tabs stay reachable via Shift+Tab / ←→ / click.
   rebuildFormFocusCycle();
-  const firstField = firstBodyFieldKey(form.backend);
-  formPanel.setFocusKey(firstField);
-  snapFormFocusTo(firstField);
-
-  // Kick off the placeholder probes (canonical repo root,
-  // default branch, next session name) against the editor's
-  // cwd. Each probe is async and re-renders on completion.
-  void probeProjectPathDefaults();
+  // Land on the first thing the user actually wants to set: the agent when
+  // running here (there is nothing else to fill in), the backend's first
+  // input when creating a workspace. A caller that re-mounts mid-edit passes
+  // `focusKey` to keep focus where the user left it — flipping the "Launch in"
+  // switch must not fling focus away from the control just used, or the next
+  // ←/→ silently lands on whatever inherited focus instead.
+  const field = focusKey ?? (creating ? firstBodyFieldKey(form.backend) : "agent_dropdown");
+  formPanel.setFocusKey(field);
+  snapFormFocusTo(field);
 }
 
 /// The local directory a brand-new *local* workspace should default to.
@@ -8798,6 +8877,22 @@ function recoverPendingWorkspaces(): void {
 // `!visit`: "Create in Background" — stay put. Both are non-blocking.
 async function submitForm(visit: boolean): Promise<void> {
   if (!form) return;
+  // "Run in the current workspace": no workspace to create, no spec to
+  // validate — just launch the chosen agent here. Same argv resolution
+  // (`resolveAgentLaunch`, including the resume spec) as the create path.
+  if (form.target === "current") {
+    const agent = activeAgentEntry();
+    const opts: RunAgentLaunchOpts = {
+      auto: !!agent?.auto && form.autoMode,
+      prompt: agent?.prompt ? form.startPrompt.value.trim() : "",
+      teachFreshCli: !!agent?.systemPrompt && form.teachFreshCli,
+    };
+    const cmd = form.cmd.value;
+    closeForm();
+    restoreDockAfterForm();
+    void launchAgentInCurrentWorkspace(cmd, opts);
+    return;
+  }
   // Resolve the form's inputs into a self-contained spec. A validation
   // failure (bad ssh host, missing pod) keeps the form open with the error;
   // otherwise the form closes and the create runs in the background.
@@ -8898,26 +8993,12 @@ function startNewSession(): void {
 }
 
 // =============================================================================
-// "Run Agent…" — launch a starting process from an existing session
+// "Run Agent…" — launch a starting process into the CURRENT workspace
+//
+// The dialog itself is the New-Workspace form with its "Launch in" switch set
+// to "current" (see `NewSessionForm.target`); only the launch below is
+// specific to this target.
 // =============================================================================
-
-// A starting process the Run-Agent dialog can launch: a bare terminal plus
-// every registered agent (the same non-custom presets the New-Workspace
-// dropdown lists). `cmd` is the argv the dialogue's Command field would hold.
-interface RunAgentProcess {
-  cmd: string;
-  label: string;
-  entry: AgentEntry | null;
-}
-function runAgentProcesses(): RunAgentProcess[] {
-  const list: RunAgentProcess[] = [
-    { cmd: "", label: editor.t("form.agent_terminal"), entry: null },
-  ];
-  for (const e of AGENT_REGISTRY) {
-    list.push({ cmd: e.id, label: e.label ?? e.id, entry: e });
-  }
-  return list;
-}
 
 // Options a Run-Agent launch carries, mirroring the dialogue's per-agent
 // controls. `auto`/`prompt`/`teachFreshCli` are only honoured for an agent
@@ -8979,234 +9060,6 @@ async function launchAgentInCurrentWorkspace(
   }
 }
 
-// Launch `cmd` in a fresh worktree + window — the dialogue's classic path,
-// reached without opening the form. Builds the same `CreateSpec` a default
-// submit would and runs it through `startPendingWorkspace` → `runLocalCreate`.
-async function launchAgentInNewWorkspace(
-  cmd: string,
-  opts: RunAgentLaunchOpts,
-): Promise<void> {
-  const trimmedCmd = cmd.trim();
-  // Resolve the Project Path the way the dialogue's probe does: the active
-  // window's local default, resolved to its canonical repo root when it sits
-  // inside a git tree. `runLocalCreate` re-resolves this itself, so the
-  // worktree fork point is identical either way — this is for the display row.
-  const localDefault = localProjectDefault();
-  const canonical = await resolveCanonicalRepoRoot(localDefault);
-  const projectPath = canonical || localDefault;
-  const entry = agentEntryForCmd(trimmedCmd);
-  startPendingWorkspace(
-    {
-      backend: "local",
-      projectPath,
-      name: "",
-      cmd: trimmedCmd,
-      auto: !!entry?.auto && opts.auto,
-      startPrompt: entry?.prompt ? opts.prompt.trim() : "",
-      teachFreshCli: !!entry?.systemPrompt && opts.teachFreshCli,
-      branch: "",
-      newBranch: "",
-      // A fresh worktree like the dialogue; `runLocalCreate` demotes this to an
-      // in-place open when the project path isn't a git tree.
-      createWorktree: true,
-      displayLabel: editor.pathBasename(projectPath) ||
-        editor.t("dock.pending_default_name"),
-      displayProject: projectPath,
-    },
-    // Land in the new workspace — an explicit "run this agent" reads as "take
-    // me there", matching the dialogue's "Create & Visit".
-    { visit: true },
-  );
-}
-
-// Persist the dialog's current choice (agent + target + auto) so the next open
-// starts where the user left off. The start prompt is deliberately not
-// persisted — it's a per-invocation message, not a setting.
-function saveRunAgentLast(cmd: string, target: RunAgentTarget, auto: boolean): void {
-  editor.setGlobalState(RUN_AGENT_LAST_KEY, { cmd, target, auto });
-}
-
-// The dialog's initial state, seeded from the last-used choice (falling back
-// to a bare terminal in the current workspace).
-function initialRunAgentState(): RunAgentDialogState {
-  const last = editor.getGlobalState(RUN_AGENT_LAST_KEY) as
-    | { cmd?: unknown; target?: unknown; auto?: unknown }
-    | undefined;
-  const procs = runAgentProcesses();
-  const lastCmd = typeof last?.cmd === "string" ? last.cmd : "";
-  const idx = Math.max(0, procs.findIndex((p) => p.cmd === lastCmd));
-  const target: RunAgentTarget = last?.target === "new" ? "new" : "current";
-  return {
-    agentIndex: idx,
-    target,
-    auto: last?.auto === true,
-    prompt: { value: "", cursor: 0 },
-  };
-}
-
-// Open the Run-Agent dialog. No-op if it (or another orchestrator dialog) is
-// already up.
-function openRunAgentDialog(): void {
-  if (runAgentDialog || form || createFolderDialog) return;
-  runAgentDialog = initialRunAgentState();
-  mountRunAgentDialog();
-}
-
-function mountRunAgentDialog(): void {
-  // Yield the dock's keyboard while the dialog owns it (mirrors the
-  // new-session form and the folder dialog).
-  if (openPanel && dockMode) {
-    dockBlurred = true;
-    editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  }
-  runAgentPanel = new FloatingWidgetPanel();
-  runAgentPanel.mount(buildRunAgentSpec(), {
-    widthPct: 55,
-    // A generous cap; both frontends size to the form's real content (the TUI
-    // shrinks to fit, the web modal uses `height:auto`), so this only bounds
-    // the dialog on a very short terminal.
-    heightPct: 60,
-    focusMarker: true,
-    title: `${editor.t("form.header_keyword")} :: ${editor.t("run_agent.title")}`,
-    closable: true,
-  });
-  editor.floatingPanelControl(runAgentPanel.id(), "fullscreen", 1);
-  editor.setEditorMode(RUN_AGENT_MODE);
-  // Land focus on the agent picker so ↑/↓ (with the list open) or Tab flow
-  // naturally from there.
-  runAgentPanel.setFocusKey("run-agent-agent");
-}
-
-// Shared label-column width for the form. Pads every label so the `:`
-// separators and value cells line up in a single column ("Auto mode" is the
-// longest label at 9 cols, so 11 leaves a two-space gutter before the colon).
-const RUN_AGENT_LABEL_WIDTH = 11;
-
-// A blank spacer row — one empty line — used to pad the top/bottom of the form
-// and separate the field groups, per the dialog layout.
-function runAgentBlankRow(): WidgetSpec {
-  return raw([styledRow([{ text: "" }])]);
-}
-
-// The dialog spec: a padded, single-column form — agent picker, target picker,
-// optional Auto-mode toggle (with a muted inline hint) and Start-prompt field
-// (both agent-dependent), then the centered Cancel / Run buttons. Every control
-// shares `RUN_AGENT_LABEL_WIDTH` so their `label :` columns and value cells
-// align; blank rows give the form vertical breathing room.
-function buildRunAgentSpec(): WidgetSpec {
-  const d = runAgentDialog!;
-  const procs = runAgentProcesses();
-  const proc = procs[d.agentIndex] ?? procs[0];
-  const lw = RUN_AGENT_LABEL_WIDTH;
-  const children: WidgetSpec[] = [
-    runAgentBlankRow(),
-    dropdown(procs.map((p) => p.label), {
-      selectedIndex: d.agentIndex,
-      label: editor.t("run_agent.agent_label"),
-      labelWidth: lw,
-      key: "run-agent-agent",
-    }),
-    runAgentBlankRow(),
-    dropdown(
-      [editor.t("run_agent.target_current"), editor.t("run_agent.target_new")],
-      {
-        selectedIndex: d.target === "new" ? 1 : 0,
-        label: editor.t("run_agent.target_label"),
-        labelWidth: lw,
-        key: "run-agent-target",
-      },
-    ),
-  ];
-  // Auto mode: only for an agent that documents a bypass/auto flag. Rendered
-  // form-style (`Auto mode : [v]`) so its chip aligns under the other value
-  // cells, with the rationale as a muted hint trailing the chip.
-  if (proc.entry?.auto) {
-    children.push(
-      runAgentBlankRow(),
-      row(
-        toggle(d.auto, editor.t("run_agent.auto_label"), {
-          labelFirst: true,
-          labelWidth: lw,
-          key: "run-agent-auto",
-        }),
-        raw([
-          styledRow([
-            { text: " (" + editor.t("run_agent.auto_help") + ")", style: { fg: "ui.menu_disabled_fg" } },
-          ]),
-        ]),
-      ),
-    );
-  }
-  // Start prompt: only for an agent that documents a prompt argument. Uses the
-  // text widget's own form label so its bracketed field aligns with the rest.
-  if (proc.entry?.prompt) {
-    children.push(
-      runAgentBlankRow(),
-      text({
-        value: d.prompt.value,
-        cursorByte: d.prompt.cursor,
-        placeholder: editor.t("run_agent.prompt_placeholder"),
-        label: editor.t("run_agent.prompt_label"),
-        labelWidth: lw,
-        fieldWidth: 26,
-        key: "run-agent-prompt",
-      }),
-    );
-  }
-  // Centered Cancel / Run group with a wide gutter, then bottom padding.
-  children.push(
-    runAgentBlankRow(),
-    row(
-      flexSpacer(),
-      button(editor.t("run_agent.btn_cancel"), { intent: "danger", key: "run-agent-cancel" }),
-      spacer(6),
-      button(editor.t("run_agent.btn_run"), { intent: "primary", key: "run-agent-run" }),
-      flexSpacer(),
-    ),
-    runAgentBlankRow(),
-  );
-  return col(...children);
-}
-
-// Commit the dialog: launch the selected process against the chosen target,
-// remember the choice, and close.
-function submitRunAgent(): void {
-  const d = runAgentDialog;
-  if (!d) return;
-  const procs = runAgentProcesses();
-  const proc = procs[d.agentIndex] ?? procs[0];
-  const opts: RunAgentLaunchOpts = {
-    auto: !!proc.entry?.auto && d.auto,
-    prompt: proc.entry?.prompt ? d.prompt.value.trim() : "",
-    // Teach Fresh CLI on by default (matches the dialogue), where supported.
-    teachFreshCli: !!proc.entry?.systemPrompt,
-  };
-  const target = d.target;
-  const cmd = proc.cmd;
-  saveRunAgentLast(cmd, target, d.auto);
-  closeRunAgentDialog();
-  if (target === "current") {
-    void launchAgentInCurrentWorkspace(cmd, opts);
-  } else {
-    void launchAgentInNewWorkspace(cmd, opts);
-  }
-}
-
-// Tear down the dialog and hand keyboard focus back to the dock (if up).
-function closeRunAgentDialog(): void {
-  if (runAgentPanel) {
-    runAgentPanel.unmount();
-    runAgentPanel = null;
-  }
-  runAgentDialog = null;
-  editor.setEditorMode(null);
-  if (openPanel && dockMode) {
-    dockBlurred = false;
-    editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
-    refreshOpenDialog();
-  }
-}
 
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`
@@ -9253,18 +9106,6 @@ const FOLDER_DIALOG_MODE_BINDINGS: [string, string][] = [
 ];
 editor.defineMode(CREATE_FOLDER_MODE, FOLDER_DIALOG_MODE_BINDINGS, true, true);
 
-// Run-Agent dialog: only Ctrl+Enter is bound (submit from anywhere). Plain
-// Enter, Tab, ↑/↓, Space and Esc all fall through to the panel's default
-// smart-key routing — so Enter opens/commits the focused dropdown or activates
-// the focused button, Tab cycles fields, and Esc closes an open dropdown (then,
-// with nothing open, fires the panel `cancel` event handled in `widget_event`).
-const RUN_AGENT_MODE_BINDINGS: [string, string][] = [
-  ["C-Enter", "orchestrator_run_agent_submit"],
-];
-editor.defineMode(RUN_AGENT_MODE, RUN_AGENT_MODE_BINDINGS, true, true);
-registerHandler("orchestrator_run_agent_submit", () => {
-  if (runAgentDialog) submitRunAgent();
-});
 
 registerHandler("orchestrator_folder_submit", () => {
   if (!createFolderDialog) return;
@@ -9584,61 +9425,6 @@ editor.on("widget_event", (e) => {
   // "Run Agent…" dialog: agent picker, target picker, Auto toggle,
   // Start-prompt field, Cancel / Run.
   // ---------------------------------------------------------------------
-  if (runAgentPanel && runAgentDialog && e.panel_id === runAgentPanel.id()) {
-    const d = runAgentDialog;
-    if (e.event_type === "cancel") {
-      // Esc / click-outside: the host already unmounted the panel, so just
-      // drop our handle and refocus the dock.
-      runAgentPanel = null;
-      runAgentDialog = null;
-      editor.setEditorMode(null);
-      if (openPanel && dockMode) {
-        dockBlurred = false;
-        editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        openPanel.setFocusKey("sessions");
-        refreshOpenDialog();
-      }
-      return;
-    }
-    if (e.event_type === "change" && e.widget_key === "run-agent-agent") {
-      const idx = (e.payload as { index?: unknown })?.index;
-      if (typeof idx === "number") {
-        d.agentIndex = idx;
-        // Rebuild: the Auto toggle and Start-prompt field appear/disappear
-        // with the selected agent's capabilities.
-        runAgentPanel.update(buildRunAgentSpec());
-      }
-      return;
-    }
-    if (e.event_type === "change" && e.widget_key === "run-agent-target") {
-      const idx = (e.payload as { index?: unknown })?.index;
-      if (typeof idx === "number") d.target = idx === 1 ? "new" : "current";
-      return;
-    }
-    if (e.event_type === "change" && e.widget_key === "run-agent-prompt") {
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      if (typeof payload.value === "string") d.prompt.value = payload.value;
-      if (typeof payload.cursorByte === "number") d.prompt.cursor = payload.cursorByte;
-      return;
-    }
-    if (e.event_type === "toggle" && e.widget_key === "run-agent-auto") {
-      const checked = (e.payload as { checked?: unknown })?.checked;
-      d.auto = typeof checked === "boolean" ? checked : !d.auto;
-      // Rebuild so the checkbox glyph reflects the new state (the toggle's
-      // visual comes from the spec, like the folder dialog's checkbox).
-      runAgentPanel.update(buildRunAgentSpec());
-      return;
-    }
-    if (e.event_type === "activate" && e.widget_key === "run-agent-cancel") {
-      closeRunAgentDialog();
-      return;
-    }
-    if (e.event_type === "activate" && e.widget_key === "run-agent-run") {
-      submitRunAgent();
-      return;
-    }
-    return;
-  }
   // ---------------------------------------------------------------------
   // Dock session context menu (right-click): Visit / Archive / Delete.
   // ---------------------------------------------------------------------
@@ -9771,6 +9557,22 @@ editor.on("widget_event", (e) => {
       // Host-authoritative open/closed signal for the option pop-over.
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       agentDropdownOpen = payload.open === true;
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "target_dropdown") {
+      // Flipping the target reshapes the whole form: "new" reveals the
+      // backend tabs, Project Path, Workspace Name and the Advanced fold;
+      // "current" hides them all, leaving the agent controls.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const index = payload.index;
+      if (typeof index === "number") {
+        const next: RunAgentTarget = index === 0 ? "current" : "new";
+        if (next !== form.target) {
+          form.target = next;
+          form.lastError = null;
+          mountFormPanel("target_dropdown");
+        }
+      }
       return;
     }
     if (e.event_type === "change" && e.widget_key === "agent_dropdown") {
@@ -10784,7 +10586,11 @@ editor.registerCommand(
 // what it does — start a coding agent — with no "workspace"/"orchestrator" in
 // the label. `terminalBypass` keeps it reachable from a keyboard-focused
 // terminal pane, like the other orchestrator commands.
-registerHandler("orchestrator_run_agent", openRunAgentDialog);
+// "Run Agent…" and "New Workspace" are the same dialog; they differ only in
+// which way its "Launch in" switch starts. One form, one submit path — the two
+// used to be separate dialogs, and the current-workspace one silently dropped
+// the agent-resume argv.
+registerHandler("orchestrator_run_agent", () => openForm({ target: "current" }));
 editor.registerCommand(
   "%cmd.run_agent",
   "%cmd.run_agent_desc",
