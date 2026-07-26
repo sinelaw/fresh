@@ -47,11 +47,22 @@ impl Editor {
         self.software_cursor_only = enabled;
     }
 
-    /// Set the session name for display in status bar.
+    /// Set the daemon name that scopes this editor's persistence.
     ///
-    /// When a session name is set, the recovery service is reinitialized
-    /// to use a session-scoped recovery directory so each named session's
-    /// recovery data is isolated.
+    /// `Some` means a *named* daemon (`fresh --cmd daemon new NAME`), which owns
+    /// its own workspace collection and recovery directory: two named daemons
+    /// over one project must not share a layout. It must stay `None` for an
+    /// unnamed working-directory daemon (`fresh -a`), which is the same editor
+    /// state a direct-mode `fresh` in that directory sees and therefore shares
+    /// its per-directory workspaces and recovery. Passing a directory *label*
+    /// here is what made `fresh -a` come up with empty workspaces.
+    ///
+    /// For the status-bar label — which every daemon has, named or not — see
+    /// [`Self::set_session_display_name`].
+    ///
+    /// When a name is set, the recovery service is reinitialized to use a
+    /// session-scoped recovery directory so each named daemon's recovery data is
+    /// isolated.
     pub fn set_session_name(&mut self, name: Option<String>) {
         if let Some(ref session_name) = name {
             let base_recovery_dir = self.dir_context.recovery_dir();
@@ -71,9 +82,28 @@ impl Editor {
         self.session_name = name;
     }
 
-    /// Get the session name (for status bar display)
+    /// Get the daemon name that scopes persistence (`None` for a
+    /// working-directory daemon and for direct mode).
     pub fn session_name(&self) -> Option<&str> {
         self.session_name.as_deref()
+    }
+
+    /// Set the label shown in the status bar for a daemon-backed editor.
+    ///
+    /// Purely cosmetic, and set for *every* daemon: a named one shows its name,
+    /// an unnamed working-directory one shows the directory. Deliberately
+    /// separate from [`Self::set_session_name`], which decides where workspaces
+    /// and recovery data live.
+    pub fn set_session_display_name(&mut self, name: Option<String>) {
+        self.session_display_name = name;
+    }
+
+    /// The status-bar label for a daemon-backed editor, falling back to the
+    /// persistence-scoping name when no distinct label was set.
+    pub fn session_display_name(&self) -> Option<&str> {
+        self.session_display_name
+            .as_deref()
+            .or_else(|| self.session_name.as_deref())
     }
 
     /// Queue escape sequences to be sent to the client (session mode only)

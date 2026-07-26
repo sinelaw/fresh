@@ -1842,8 +1842,10 @@ impl Editor {
                 .contains(&(u64::MAX - self.active_window_id().0))
                 && self.active_window().authority_spec.is_remote();
 
-            // Get session name for display (only in session mode)
-            let session_name = self.session_name().map(|s| s.to_string());
+            // Get session label for display (only in session mode). The display
+            // name, not `session_name`: an unnamed working-directory daemon has
+            // no daemon name but is still labelled with its directory.
+            let session_name = self.session_display_name().map(|s| s.to_string());
 
             let active_split = self.effective_active_split();
             let active_buf = self.active_buffer();

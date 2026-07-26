@@ -798,7 +798,17 @@ impl EditorServer {
         // Enable session mode - use hardware cursor only, no REVERSED software cursor
         editor.set_session_mode(true);
 
-        // Set session name for status bar display
+        // Only a *named* daemon scopes persistence to itself. An unnamed
+        // working-directory daemon is the same editor state a direct-mode
+        // `fresh` in that directory sees, so it must keep the per-directory
+        // workspaces and recovery — handing the directory's basename over as if
+        // it were a daemon name is what made `fresh -a` restore nothing: the
+        // per-directory workspaces boot discovery had enumerated were then
+        // looked up in a daemon-scoped store that nothing had ever written.
+        editor.set_session_name(self.config.session_name.clone());
+
+        // The status bar labels every daemon, named or not: its name, else the
+        // directory it serves.
         let session_display_name = self.config.session_name.clone().unwrap_or_else(|| {
             // Use the directory name as a short display name for unnamed daemons
             self.config
@@ -808,7 +818,7 @@ impl EditorServer {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "session".to_string())
         });
-        editor.set_session_name(Some(session_display_name));
+        editor.set_session_display_name(Some(session_display_name));
 
         Ok((editor, terminal))
     }
