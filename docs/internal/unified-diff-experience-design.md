@@ -18,7 +18,9 @@ gitlab.nvim, prr, gh-dash, tuicr, revdiff, difit, diffx, VS Code, JetBrains, Git
 Zed, Cursor, Xcode, Tower, GitHub, GitLab, Gerrit, Graphite, Reviewable, Phabricator,
 CodeFlow lineage, Conductor, Crystal, claude-squad, cmux, vibe-kanban, Sculptor,
 Codex, Devin, Claude Code, Copilot Workspace, Pierre/@pierre/diffs (diffs.com),
-diffhub, Superset, Linear Diffs).
+diffhub, Superset, Linear Diffs, ftdv, drft, Codiff, GitLab Rapid Diffs), plus a
+deep-research sentiment pass over the same landscape (what agent-era users
+praise, complain about, and churn over).
 
 ---
 
@@ -219,6 +221,29 @@ From Gerrit, Reviewable, GitHub's 2025-26 Files-Changed revamp, and CodeFlow lin
   noise." Web tools have the model but not the locality; local tools have the
   locality but flat state. An editor that holds the worktrees, the checkpoints, and
   the review state can own this.
+- **TUI fatigue is real, and the field's answer is a local-web escape hatch.**
+  A whole category (difit, Codiff, diffx, diffhub, cmux-hub) exists because —
+  in one author's words — "TUI review became overwhelming": parsing thousands of
+  machine-generated lines in a constrained palette depletes faster than the same
+  review in a browser. These tools all spawn a throwaway local web server showing
+  a GitHub-style view of the pre-push diff. Newer file-tree TUIs (ftdv, drft)
+  attack the same fatigue from the other side: persistent checkbox state written
+  to disk mid-review, because a 50-file agent review is "a marathon, not a
+  sprint" — progress, drafts, and read position must survive closing the app.
+- **Two feedback transports, each with a documented failure mode.** Structured
+  export (tuicr/Codiff/diffhub markdown with `file:line` anchors and severity
+  classes) is portable and agent-agnostic; direct daemon/MCP integration
+  (hunk's `session` CLI, difit's comment API) feels like pair programming when it
+  works — but breaks opaquely when sandboxes or container network isolation block
+  the agent from the local port. A robust design needs the rich path *and* a
+  file-based fallback that any sandboxed agent can reach.
+- **Verb model preference is stakes-dependent, not absolute.** Users favor
+  keep/reject overlays for minor or boilerplate edits and deliberately fall back
+  to comment-and-iterate for critical logic; and keep/reject has a documented
+  failure mode — **context blindness**: keeping a signature change in one hunk
+  while rejecting its call-site update in another breaks the build. The
+  review-then-commit model's failure mode is the mirror image: validating only
+  the combined result lets debug statements and scaffolding slip into commits.
 - **One cautionary tale**: Cursor's review pane held a stale second writable copy of
   a file and silently reverted user edits. Review views must be read-through to the
   live buffer or strictly read-only — never a second writable copy.
@@ -339,6 +364,11 @@ Key decisions:
    Fold state persists across refresh too (magit's underrated detail — a refresh
    must never destroy the user's fold layout), and depth presets
    (`1`..`4` ≈ sections / files / hunks / everything) complement `z a`/`z r`.
+   The whole bundle — viewed marks, fold layout, cursor/read position, and
+   *unsent comment drafts* — persists to disk with the session, because a 50-file
+   agent review is a marathon: closing the editor mid-review and resuming with
+   nothing lost is the trust-defining behavior (ftdv/tuicr's persisted-progress
+   lesson, and what `.review/` already does for comments).
 4. **Verbs are context-sensitive and door-scoped.** `s/u/d` in the worktree door
    (file or hunk under cursor, `v` for lines — unchanged from today); `k`/`x`
    keep/reject in the agent door with the same granularity ladder; read-only doors
@@ -395,7 +425,20 @@ Orchestrator creates/attaches the worktree; fallback: merge-base with the defaul
 branch), head = live worktree, watch mode ON by default (Conductor's live-diff-as-
 status), verbs = **keep / reject** (per hunk/file/line; reject = revert those lines
 in the worktree — implementable with the same `git apply`-style machinery staging
-uses today). The dock card's diffstat pill becomes a *door*: click → review.
+uses today). Two guardrails against keep/reject's documented failure modes:
+**file-level is the default granularity** (hunk/line reject is a deliberate act),
+and a partial keep/reject on a file whose *other* hunks touch the same symbols
+gets a "related changes remain" nudge — cheap protection against the
+keep-the-signature-reject-the-call-site build break. Agent diffs also get a
+lightweight **leftover-noise scan** (debug prints, `dbg!`/`console.log`, stray
+TODO/FIXME markers highlighted in the stream) — the review-then-commit model's
+classic leak. The dock card's diffstat pill becomes a *door*: click → review.
+Above the single session, the `Review…` picker's "Agent sessions" group is the
+**review inbox**: every session with unreviewed changes, sorted by
+awaiting-review state (Graphite's queue, scoped to the local farm). Reviewing the
+*combined* output of parallel sessions (jj-style megamerge) stays out of scope
+until worktree merging is itself a Fresh feature; the inbox plus per-session
+review is the honest v1.
 Comments gain one extra action here: **"Send to session"** — serialize open comments
 (file:line + severity + text, the existing JSON/MD export shapes) into the session's
 agent terminal as a prompt (the diffhub "Copy as prompt" / cmux-hub pattern). When
@@ -477,7 +520,24 @@ key action is also a menu item (Fresh's identity is menus + palette + mouse; thi
 our answer to the TUI discoverability failure mode, and it's cheaper than it sounds
 because the verbs are defined once).
 
-### 3.8 Blame and merge (adjacent, aligned, not absorbed)
+### 3.8 The escape hatch: the same review in a browser tab
+
+The field's answer to TUI fatigue is a separate local web app (difit, Codiff,
+diffhub). Fresh doesn't need one: the web bridge already renders the *same*
+semantic scene in a browser (one model, two renderers, parity-tested, hosted in
+the session daemon — see `web-ui.md`). So the escape hatch is a single action in
+any Review Session: **"Open this review in the browser"** — same session, same
+state (comments, viewed marks, fold layout), richer typography and colors, mouse
+niceties for free, live over the existing WebSocket push. No second review
+implementation, no state divergence — the parity discipline guarantees the TUI
+and web views *are* the same surface. This turns Fresh's architecture into a
+direct answer to the strongest complaint driving users out of terminal review,
+and it composes with Door 4: an agent-farm user can keep sessions in the TUI dock
+and pop any individual review into a browser tab when the payload gets heavy.
+(Phase 2+; the main work is making the review panels' scene projections complete,
+which the parity tests then enforce.)
+
+### 3.9 Blame and merge (adjacent, aligned, not absorbed)
 
 - **Blame** stays its own surface (it is an annotation of one file, not a changeset)
   but adopts the vocabulary: `Enter` opens the commit *in the shared renderer*
@@ -506,6 +566,12 @@ Orchestrator, the *host* of the agents whose work is being reviewed.
    session — hunk-daemon parity (`session review --json`, `comment add`,
    `navigate`), without a new daemon. An agent pre-reviews; the human triages the
    agent's inline notes in the same session (difit's `--comment` seeding pattern).
+   **Transport resilience**: the IPC socket is the rich path, but sandboxed agents
+   (containers, network-isolated harnesses) demonstrably fail to reach local
+   daemons — so the same exchange must also work through plain files the agent
+   can always touch: comments out via a `.review/outbox.md` snapshot (regenerated
+   on change), agent notes in via a watched `.review/inbox/` drop. Same schema,
+   two transports, no opaque connection errors.
 3. **Iteration interdiff** (Phase 3+): record a lightweight ref per agent turn /
    per review-open (`refs/fresh/review/<source-id>/v<N>` — Reviewable's GC-proof
    pinning trick); "since I last reviewed" becomes a first-class lens with
@@ -544,11 +610,17 @@ Sequenced so every phase ships a visible coherence win and nothing regresses.
 
 **Phase 2 — review state + the agent door**
 - Viewed marks (blob-hash-keyed), progress counters, Space=viewed-and-advance,
-  unreviewed filter; recents re-open with state + "since last review" watermark.
+  unreviewed filter; recents re-open with full state (marks, folds, read
+  position, drafts) + "since last review" watermark.
 - Door 4: Orchestrator "Review Session's Changes" (base = recorded session start
-  ref), keep/reject verbs, diffstat-pill-as-door, comments "Send to session".
+  ref), keep/reject verbs (file-default granularity + related-changes nudge),
+  diffstat-pill-as-door, sessions review inbox in the picker, comments
+  "Send to session", leftover-noise scan.
 - Buffer Lens unification: one reference picker (absorb git-gutter into the
   live-diff hunk model), agent-baseline auto-swap.
+- **"Open this review in the browser"** via the web bridge (§3.8): complete the
+  review panels' scene projections so the parity-tested web renderer carries the
+  same session — the TUI-fatigue escape hatch without a second implementation.
 
 **Phase 3 — depth**
 - Expand-hunk-in-place host primitive (Zed model) with hunk-scoped verbs.
