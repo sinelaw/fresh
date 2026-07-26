@@ -371,12 +371,13 @@ state* — same surface, scope bar focused, every row a clickable preset:
      ★  feature/eval vs main       3 commits · 4 files · +56 −7        [Enter Open]
      ⚙  agent: auth-refactor       ● waiting on you · 7 left  ▂▂▅▇     [Enter Open]
      ⚙  agent: docs-pass           ✓ idle · 2 left            ▂▁▁▂
+     ⇵  PR #482 "retry logic"      review requested · 9 files · +214 −40
      ●  working tree               1 staged · 2 unstaged · 1 untracked
      ⟳  HEAD~3..HEAD               reviewed yesterday · 2 files changed since
      ⌗  stash@{0}                  "wip: tokenizer"
      ⌂  history                    browse commits · any range · blame
 
-     revspec:  A..B · A...B · <sha> · stash@{N} · <branch>
+     revspec:  A..B · A...B · <sha> · stash@{N} · <branch> · PR # or URL
      > ▌
 ─────────────────────────────────────────────────────────────────────────────────────────
  ↑↓/click choose · a/b set an endpoint by hand · agent sessions sorted "waiting on you"
@@ -405,6 +406,48 @@ The **lens menu** (`l`, or click `⟨flat ▾⟩`):
 In the commits lens, a force-push does not destroy context: the commit strip
 grows a **`⇅ v2→v3 interdiff`** pseudo-commit — "what changed between the
 version I reviewed and this push" as just another selectable section.
+
+**Reviewing a GitHub PR is a first-class scope.** Clicking the `⇵ PR` preset
+(or typing a PR number/URL into the revspec prompt) opens the PR picker —
+open PRs from the repo's forge, review-requested first, then yours, then the
+rest:
+
+```
+ ┌ pull requests · sinelaw/fresh ─────────────────────────── [/ filter] ┐
+ │ › #482  retry logic for flaky networks     sam   ● review requested  │
+ │   #479  extract clock trait                ada   ✓ approved by you   │
+ │   #475  bump deps                          bot   3 checks failing    │
+ │   #468  token store groundwork             you   2 reviews pending   │
+ └ Enter/click review · no checkout needed — your worktree is untouched ┘
+```
+
+Selecting one fetches `refs/pull/N/head` (no checkout — the working tree is
+untouched), sets the scope to `merge-base(PR base) ⟶ PR head`, and titles
+the review: `⟨ ⇵ PR #482 · retry logic ⟩`. Existing PR review threads
+import as anchored comments (distinguished by author badge); your own
+comments are local drafts with severity, exactly as everywhere else. The
+commits lens, viewed marks, folds, and resume all work unchanged — and a
+force-push to the PR shows up as the `⇅` interdiff pseudo-commit rather
+than a reset review.
+
+**`C` conclude on a PR scope = submit the review to GitHub.** The conclude
+surface shows the verdict choice, the summary, and every draft that will be
+published (severity tags rendered into the comment bodies):
+
+```
+ ┌ conclude: submit review · PR #482 ──────────────────────────────────────┐
+ │  verdict:   (● Comment)  (○ Approve)  (○ Request changes)               │
+ │  summary:   solid overall — one deadlock risk noted inline▌             │
+ │  publishes: 3 inline comments (1 must-fix · 1 suggestion · 1 nit)       │
+ │             anchored to their lines on the GitHub diff                  │
+ │  [⏎ Submit to GitHub]        [e Export as Markdown instead]  [Esc Back] │
+ └─────────────────────────────────────────────────────────────────────────┘
+```
+
+Submission posts through the forge plugin and echoes the receipt in the
+command log like any other mutation. (Deeper bidirectional sync — replying
+to threads, resolving conversations, live thread updates, viewed-state
+sync — remains Part II, §4.4; the flow above is complete without it.)
 
 History is not a separate surface: **history = the commits lens over a wide
 scope** (the `⌂ history` preset). The commit strip fills the rail, the shared
@@ -502,6 +545,16 @@ into a to-do list of what's left; unmarking or clicking a collapsed header
 re-expands it. Scrolling itself is a first-class review motion: the sticky
 file header carries the file's own `[✓ Reviewed]` button and fold triangle,
 so scroll-and-mark never needs the rail or a jump back to the file's top.
+
+**Collapsed and reviewed are independent states.** The fold triangle (or
+`-`) collapses a file *without* marking it — it renders as
+`▸ src/parser.rs  +6 −1` (no ✓), still counts as unreviewed in the gauge,
+and still lands in the `Space` advance order ("I'll come back to this one"
+is a normal move, not a lie to the progress bar). Marking reviewed
+auto-collapses as a convenience; unfolding never unmarks. Both states
+persist independently per scope across sittings — reopening the same diff
+restores exactly which files were collapsed, which were reviewed, and
+which were both.
 
 - **`Space`** — mark the thing at point viewed (or *kept* in an agent scope)
   and advance: on a hunk, next hunk; on the last hunk of a file (or on a
@@ -987,9 +1040,11 @@ Orchestrator, the *host* of the agents whose work is being reviewed.
    → consequences → glue, with purpose blurbs) that reorders the FILES panel
    narratively (Devin/Linear's answer to "alphabetical order ≠ the structure of
    the work").
-4. **Forge/PR sync**: when a reviewed branch has an open PR and a forge plugin is
-   present, import PR metadata — title, review threads as comments, viewed-state
-   sync — and optionally publish local comments as a pending PR review.
+4. **Forge/PR sync beyond submit**: the PR flow's UX — picker, thread import,
+   `C` submit-to-GitHub — is specified in Part I (§3.3) and ships with the
+   workspace. This item is the deeper bidirectional machinery: replying to and
+   resolving threads from the notes rail, live thread updates while the review
+   is open, and syncing viewed-state with the forge.
 
 (The iteration-interdiff lens and its checkpoint refs
 (`refs/fresh/review/<source-id>/v<N>`, Reviewable's GC-proof pinning trick) are
