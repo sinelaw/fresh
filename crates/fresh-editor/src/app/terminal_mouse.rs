@@ -591,10 +591,23 @@ impl super::Editor {
                     let line_start = state.buffer.line_col_to_position(line_idx, 0);
                     let layout =
                         crate::view::line_wrap_cache::layout_for_plain_text_grid(trimmed, cols, 4);
-                    let byte_in_line = layout
-                        .get(remaining)
-                        .and_then(|r| r.source_byte_at_visual_col(grid_col))
-                        .unwrap_or(trimmed.len());
+                    // A column past the row's rendered content resolves to
+                    // the row segment's END (the next segment's start, or the
+                    // line end on the last row) — same as click_geometry's
+                    // past-content clamp for ordinary buffer views. It must
+                    // NOT go through `source_byte_at_visual_col`, whose
+                    // out-of-range fallback clamps to the LAST character's
+                    // start byte and would drop the final character from any
+                    // selection whose drag overshoots the text.
+                    let byte_in_line = match layout.get(remaining) {
+                        Some(seg) if grid_col < seg.visual_width() => seg
+                            .source_byte_at_visual_col(grid_col)
+                            .unwrap_or(trimmed.len()),
+                        _ => layout
+                            .get(remaining + 1)
+                            .and_then(|next| next.source_start_byte)
+                            .unwrap_or(trimmed.len()),
+                    };
                     return Some(
                         state
                             .buffer
