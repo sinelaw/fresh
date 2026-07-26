@@ -1044,6 +1044,7 @@ impl Editor {
                 .filter(|argv| !argv.is_empty())
                 .cloned(),
             ephemeral: window.ephemeral_terminals.contains(&terminal_id),
+            title: None,
         }
     }
 
@@ -1118,63 +1119,18 @@ impl Editor {
                     crate::input::keybindings::KeyContext::Normal;
             }
 
-            // Sync terminal content to buffer (final screen state)
+            // Sync terminal content to buffer (final screen state). This pins
+            // the viewport to the start of the visible screen, so the dead
+            // terminal is pixel-identical to its last live frame.
+            //
+            // Nothing is appended after it, deliberately. This used to write a
+            // "[Terminal process exited]" line into the backing file and then
+            // scroll past the pin to reveal it — which pushed the top of the
+            // screen out of view, and the first line of an agent's last answer
+            // is often the part you wanted. The exit is reported on the tab
+            // title and by the status-bar restart indicator instead, neither of
+            // which costs a row of output.
             self.active_window_mut().sync_terminal_to_buffer(buffer_id);
-
-            // Append exit message to the backing file and reload
-            let exit_msg = "\n[Terminal process exited]\n";
-
-            if let Some(backing_path) = self
-                .active_window()
-                .terminal_backing_files
-                .get(&terminal_id)
-                .cloned()
-            {
-                if let Ok(mut file) =
-                    crate::app::terminal::terminal_backing_fs().open_file_for_append(&backing_path)
-                {
-                    use std::io::Write;
-                    if let Err(e) = file.write_all(exit_msg.as_bytes()) {
-                        tracing::warn!("Failed to write terminal exit message: {}", e);
-                    }
-                }
-
-                // Force reload buffer from file to pick up the exit message
-                if let Err(e) = self.revert_buffer_by_id(buffer_id, &backing_path) {
-                    tracing::warn!("Failed to revert terminal buffer: {}", e);
-                }
-
-                // After revert, scroll the viewport so the just-
-                // appended exit message is visible. sync_terminal_to_buffer
-                // pinned the viewport to the start of the visible screen
-                // (so exit is pixel-identical to the last live frame); the
-                // exit message is appended *after* that pinned region,
-                // so we have to deliberately scroll past the pin to bring
-                // it on-screen. Move the cursor to the new end-of-buffer
-                // and clear the skip_ensure_visible flag the sync path
-                // armed; the next render's ensure_visible will then scroll
-                // the cursor (and the exit-message line above it) into
-                // view.
-                let new_total = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.get(&buffer_id))
-                    .map(|s| s.buffer.total_bytes())
-                    .unwrap_or(0);
-                if let Some((mgr, view_states)) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .map(|w| &mut w.buffers)
-                    .expect("active window present")
-                    .splits_mut()
-                {
-                    let active_split = mgr.active_split();
-                    if let Some(view_state) = view_states.get_mut(&active_split) {
-                        view_state.cursors.primary_mut().position = new_total;
-                        view_state.viewport.clear_skip_ensure_visible();
-                    }
-                }
-            }
 
             // Ensure buffer remains read-only with no line numbers
             if let Some(state) = self
@@ -1200,10 +1156,25 @@ impl Editor {
                 // same argv precedence a workspace restore would use. The
                 // reconnect path doesn't need this: it keeps the binding and
                 // respawns from the still-intact terminal-id-keyed maps.
-                let record = self.exited_terminal_record(terminal_id, exit_code);
-                self.active_window_mut()
-                    .exited_terminals
-                    .insert(buffer_id, record);
+                let mut record = self.exited_terminal_record(terminal_id, exit_code);
+                // Report the exit on the tab instead of in the output. An
+                // explicitly-titled tab (an agent, a named plugin terminal)
+                // keeps its name with a marker appended; an auto-named one has
+                // no live process left to read a name from, so it gets the
+                // marker on its current name and stops being auto-updated
+                // (`sync_terminal_titles` only walks live `terminal_buffers`).
+                let window = self.active_window_mut();
+                record.title = window
+                    .terminal_explicit_titles
+                    .contains(&buffer_id)
+                    .then(|| window.buffer_metadata.get(&buffer_id))
+                    .flatten()
+                    .map(|meta| meta.display_name.clone());
+                if let Some(meta) = window.buffer_metadata.get_mut(&buffer_id) {
+                    meta.display_name =
+                        t!("terminal.tab_exited", name = meta.display_name).to_string();
+                }
+                window.exited_terminals.insert(buffer_id, record);
             }
 
             self.set_status_message(t!("terminal.exited", id = terminal_id.0).to_string());

@@ -503,6 +503,14 @@ pub struct SerializedTerminalWorkspace {
     /// either way. Absent for live terminals and in older workspaces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exited: Option<ExitedTerminalState>,
+    /// The tab's explicit title (`claude`, `npm`, a plugin-supplied name),
+    /// when it had one. Without this a restored agent tab falls back to
+    /// foreground-process auto-naming and reads `node` / `bash` — or plain
+    /// `*Terminal N*` once the process has exited and there is no foreground
+    /// to read. Absent for tabs that were auto-named to begin with, which
+    /// re-derive their name the same way after restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// The saved state of a terminal whose process had quit before the editor did.

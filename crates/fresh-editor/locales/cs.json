@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ Obnovit %{program}",
   "status.terminal_restart": "⟳ Restartovat %{program}",
   "status.terminal_restart_shell": "⟳ Restartovat terminál",
-  "status.terminal_restart_code": "%{label} (kód %{code})"
+  "status.terminal_restart_code": "%{label} (kód %{code})",
+  "terminal.tab_exited": "%{name} (ukončeno)"
 }

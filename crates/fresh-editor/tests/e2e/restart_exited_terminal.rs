@@ -313,8 +313,8 @@ fn test_restart_refuses_while_process_is_running() {
     // click on the status bar.
     harness.assert_screen_not_contains("⟳ Restart");
     harness.assert_screen_not_contains("⟳ Resume");
-    // Nor has anything exited.
-    harness.assert_screen_not_contains("[Terminal process exited]");
+    // Nor is the tab marked — the exit is reported there, not in the output.
+    harness.assert_screen_not_contains("(exited)");
 
     // Leaving the live grid for read-only scrollback doesn't change that: the
     // process is still running, so there is still nothing to restart.
@@ -409,5 +409,128 @@ fn test_exited_agent_restart_offer_survives_an_editor_restart() {
         harness
             .wait_until(|h| h.screen_to_string().contains("AGENT-RESUMED sess-1"))
             .expect("the restored offer should still run the agent's resume argv");
+    }
+}
+
+/// A process exiting must not move the user's last screen.
+///
+/// The exit used to append a "[Terminal process exited]" line to the backing
+/// file and then deliberately scroll past the pinned viewport to reveal it,
+/// which pushed the top row out of view — and the first line of an agent's
+/// final answer is often the part you wanted to read. The exit is reported on
+/// the tab and by the status-bar indicator instead, so the dead terminal is
+/// left pixel-identical to its last live frame.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell script
+fn test_exit_does_not_scroll_the_last_frame_away() {
+    if !pty_available() {
+        eprintln!("Skipping terminal-restart test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    // Print a marked first line, then fill most of the grid, then exit. The
+    // filler leaves the marker near the top of the last live frame — close
+    // enough that a single appended line plus a scroll-to-end would carry it
+    // off, which is exactly the regression being guarded.
+    let script = write_script(
+        temp_dir.path(),
+        "filler.sh",
+        "#!/bin/sh\n\
+         echo TOP-OF-THE-ANSWER\n\
+         i=1\n\
+         while [ $i -le 20 ]; do echo \"filler $i\"; i=$((i + 1)); done\n",
+    );
+
+    let mut harness = harness(project_dir);
+    spawn_agent_terminal(&mut harness, &[&script], None);
+    harness.render().unwrap();
+
+    // Wait for the exit (via the indicator, which is the exit's own signal).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("\u{27f3} Restart"))
+        .expect("the filler job should run and exit");
+
+    // The first line is still on screen, and no marker was written into the
+    // output to push it off.
+    harness.assert_screen_contains("TOP-OF-THE-ANSWER");
+    harness.assert_screen_not_contains("[Terminal process exited]");
+    // The exit is legible all the same — on the tab.
+    harness.assert_screen_contains("(exited)");
+}
+
+/// A restored terminal keeps the tab name it was launched with.
+///
+/// Tab titles were not persisted, so a restored agent fell back to
+/// foreground-process auto-naming — reading `node` or `bash` while it ran, and
+/// a bare `*Terminal N*` once it had exited and there was no foreground process
+/// left to read at all.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell command
+fn test_terminal_tab_title_survives_an_editor_restart() {
+    if !pty_available() {
+        eprintln!("Skipping terminal-restart test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    // Named `claude` so the launch derives that tab title from argv[0], the
+    // way an Orchestrator agent does.
+    let agent = write_script(
+        temp_dir.path(),
+        "claude",
+        "#!/bin/sh\necho AGENT-UP\nexec sleep 30\n",
+    );
+
+    let session = |dir_context: &DirectoryContext| {
+        EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_config(terminal_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    {
+        let mut harness = session(&dir_context);
+        harness.editor_mut().set_session_mode(true);
+        spawn_agent_terminal(&mut harness, &[agent.as_str()], None);
+        harness.render().unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("AGENT-UP"))
+            .expect("the agent should start");
+        // The tab is named after the program, not `*Terminal N*`.
+        assert_eq!(
+            terminal_tabs(&harness, "claude"),
+            1,
+            "the launched tab should be named after the agent\nScreen:\n{}",
+            harness.screen_to_string()
+        );
+        harness.shutdown(true).unwrap();
+    }
+
+    {
+        let mut harness = session(&dir_context);
+        assert!(
+            harness.startup(true, &[]).unwrap(),
+            "the workspace should have been restored"
+        );
+        harness.render().unwrap();
+        harness
+            .wait_until(|h| terminal_tabs(h, "claude") == 1)
+            .expect("a restored agent tab should keep its name");
+        // Specifically not the auto-generated fallback.
+        harness.assert_screen_not_contains("*Terminal");
     }
 }

@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ 恢复 %{program}",
   "status.terminal_restart": "⟳ 重启 %{program}",
   "status.terminal_restart_shell": "⟳ 重启终端",
-  "status.terminal_restart_code": "%{label}（退出码 %{code}）"
+  "status.terminal_restart_code": "%{label}（退出码 %{code}）",
+  "terminal.tab_exited": "%{name}（已退出）"
 }

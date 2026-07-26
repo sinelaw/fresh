@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ Reprendre %{program}",
   "status.terminal_restart": "⟳ Redémarrer %{program}",
   "status.terminal_restart_shell": "⟳ Redémarrer le terminal",
-  "status.terminal_restart_code": "%{label} (code %{code})"
+  "status.terminal_restart_code": "%{label} (code %{code})",
+  "terminal.tab_exited": "%{name} (terminé)"
 }
