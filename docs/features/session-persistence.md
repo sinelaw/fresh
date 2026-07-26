@@ -49,8 +49,18 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | No background process. Closing quits everything. |
 | `fresh -a` | Daemon | Background daemon. Supports detach/reattach. |
+| `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 
 Use daemon mode for long-running tasks or remote work where the connection may drop.
+
+`--web` (available in builds with the experimental `web` feature) starts the same
+daemon and additionally serves the editor to a browser. It is one editor with two
+front ends: `fresh -a` in that directory attaches a terminal to the session the
+browser is looking at, edits made in either show up in the other, and closing one
+leaves the session running for the other. The rendered grid fits the smallest
+connected viewport, so a larger window letterboxes. If a daemon is already running
+in the directory, `--web` says so rather than shadowing it — name a separate one
+with `--session-name NAME`.
 
 ## How It Works
 

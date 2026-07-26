@@ -124,7 +124,9 @@ http = ["dep:ureq"]
 # link the extraction/TLS stack.
 self-update = ["http", "dep:tar", "dep:xz2", "dep:zip"]
 # Web UI: `fresh --web [ADDR]` serves the real editor to a browser over a
-# local HTTP + WebSocket bridge (the `webui` module). The frontend (the page
+# local HTTP + WebSocket bridge (the `webui` module), hosted inside the session
+# daemon so `fresh -a` can attach a terminal to the same editor. The frontend
+# (the page
 # build.rs assembles from web-ui/) is embedded into the binary so the build
 # is self-contained. Opt-in (not in `default`) because it embeds ~140 KiB of
 # HTML and pulls in the sha1 WebSocket-handshake dep. Requires the full

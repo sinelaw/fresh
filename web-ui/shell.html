@@ -20,7 +20,10 @@
   carries all input; the HTTP routes remain for curl / the parity harness.
   Served by the bridge that hosts a real Editor (built into `fresh` behind the
   `web` feature, which embeds the assembled page):
-    fresh --web 127.0.0.1:8139 <files…>          # installed binary
+    fresh --web 127.0.0.1:8139 <files…>          # installed binary; also runs the
+                                                 # session daemon, so `fresh -a`
+                                                 # attaches a terminal to the same
+                                                 # editor the browser is showing
     cargo run --features web -p fresh-editor --example webui_server -- 127.0.0.1:8139 <files…>
 
   This file is the document SKELETON only. The full self-contained page is

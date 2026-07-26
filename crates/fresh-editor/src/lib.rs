@@ -47,8 +47,11 @@ pub mod client;
 #[cfg(feature = "runtime")]
 pub mod server;
 
-// Local HTTP bridge hosting the real Editor for the web UI frontend (no mocks).
-// Opt-in via the `web` feature (implies `runtime`); reached from `fresh --web`.
+// Local HTTP bridge serving the real Editor to the web UI frontend (no mocks).
+// Opt-in via the `web` feature (implies `runtime`). `fresh --web` hosts the
+// bridge inside the session daemon (`server`), so browsers and `fresh -a`
+// terminals share one editor; `webui::run` is the standalone, editor-owning
+// host used by the example binary and the parity harness.
 #[cfg(feature = "web")]
 pub mod webui;
 
