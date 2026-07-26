@@ -3365,6 +3365,7 @@ pub fn action_to_events(
         | Action::OpenTerminalRight
         | Action::OpenTerminalBelow
         | Action::CloseTerminal
+        | Action::RestartTerminal
         | Action::FocusTerminal
         | Action::TerminalEscape
         | Action::ToggleKeyboardCapture

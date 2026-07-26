@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Riavvia il processo del terminale",
+  "cmd.restart_terminal": "Riavvia il processo del terminale",
+  "cmd.restart_terminal_desc": "Riavvia il processo terminato in questo buffer del terminale, riprendendo la sessione dell'agente se presente",
+  "menu.terminal.restart": "Riavvia il processo del terminale",
+  "terminal.restarted": "Terminale %{id} riavviato",
+  "terminal.restart_still_running": "Il processo del terminale è ancora in esecuzione",
+  "terminal.restart_unavailable": "Nessun processo del terminale terminato in questo buffer",
+  "terminal.restart_failed": "Impossibile riavviare il processo del terminale",
+  "status.terminal_resume": "⟳ Riprendi %{program}",
+  "status.terminal_restart": "⟳ Riavvia %{program}",
+  "status.terminal_restart_shell": "⟳ Riavvia il terminale",
+  "status.terminal_restart_code": "%{label} (uscita %{code})"
 }

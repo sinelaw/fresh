@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Reiniciar processo do terminal",
+  "cmd.restart_terminal": "Reiniciar processo do terminal",
+  "cmd.restart_terminal_desc": "Reiniciar o processo encerrado neste buffer de terminal, retomando a sessão do agente quando houver",
+  "menu.terminal.restart": "Reiniciar processo do terminal",
+  "terminal.restarted": "Terminal %{id} reiniciado",
+  "terminal.restart_still_running": "O processo do terminal ainda está em execução",
+  "terminal.restart_unavailable": "Nenhum processo de terminal encerrado neste buffer",
+  "terminal.restart_failed": "Falha ao reiniciar o processo do terminal",
+  "status.terminal_resume": "⟳ Retomar %{program}",
+  "status.terminal_restart": "⟳ Reiniciar %{program}",
+  "status.terminal_restart_shell": "⟳ Reiniciar terminal",
+  "status.terminal_restart_code": "%{label} (saída %{code})"
 }

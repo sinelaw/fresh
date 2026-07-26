@@ -1868,6 +1868,17 @@ impl Editor {
             // Active session's trust level for the always-present `{trust}`
             // indicator — read here (Copy) before the mutable window borrow.
             let workspace_trust_level = self.authority().workspace_trust.level();
+            // Restart affordance for a terminal buffer whose process quit.
+            // `exited_terminal` is `Some` only in exactly that state, so the
+            // indicator can't offer to restart a live agent.
+            let terminal_restart = self.active_window().exited_terminal(active_buf).map(|e| {
+                crate::view::ui::status_bar::TerminalRestartState {
+                    program: e.program_name().map(str::to_string),
+                    exit_code: e.exit_code,
+                    resumes_agent: e.resumes_agent()
+                        && self.config.terminal.resume_agents,
+                }
+            });
             // Single window borrow, split into buffers + cursors so the
             // status-bar context can hold both.
             let __active_id = self.active_window;
@@ -1918,6 +1929,7 @@ impl Editor {
                         remote_indicator_on_bar: false,
                         dynamic_status_bar_elements: dynamic_status_bar_elements.clone(),
                         workspace_trust_level,
+                        terminal_restart: terminal_restart.clone(),
                     };
                     let mut sb_rec =
                         crate::app::types::CellThemeRecorder::new(&mut status_bar_runs);

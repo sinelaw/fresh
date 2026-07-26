@@ -79,6 +79,70 @@ pub struct TerminalLinkHover {
     pub cols: std::ops::Range<usize>,
 }
 
+/// A terminal whose process quit while its buffer stayed open as read-only
+/// scrollback, keyed by `BufferId` in [`Window::exited_terminals`].
+///
+/// The exit path drops the buffer↔terminal binding and closes the PTY handle,
+/// so every input a respawn needs — geometry, cwd, backing/log files, launch
+/// and agent-resume argv — is snapshotted here *before* that teardown. That
+/// makes [`Window::restart_terminal_buffer`] a pure function of this record,
+/// exactly like a workspace restore is a pure function of the persisted
+/// terminal entry.
+#[derive(Debug, Clone)]
+pub struct ExitedTerminal {
+    /// The PTY session that died. Kept for the status message and so a
+    /// second exit for the same id can be recognised as stale.
+    pub terminal_id: crate::services::terminal::TerminalId,
+    /// Wait-status exit code, when the platform reported one.
+    pub exit_code: Option<i32>,
+    /// Geometry of the dead PTY, so the reborn one matches its split.
+    pub cols: u16,
+    pub rows: u16,
+    /// Working directory the dead PTY ran in.
+    pub cwd: Option<PathBuf>,
+    /// Scrollback/log files to keep appending to, so a restart continues the
+    /// transcript rather than starting blank.
+    pub backing_path: Option<PathBuf>,
+    pub log_path: Option<PathBuf>,
+    /// Launch argv (`Window::terminal_commands`), absent for a plain shell.
+    pub command: Option<Vec<String>>,
+    /// Agent-resume argv (`Window::terminal_resume_commands`) — the argv that
+    /// rejoins the agent's conversation (`claude --resume <id>`) instead of
+    /// starting a fresh one. Absent for non-agent terminals.
+    pub resume: Option<Vec<String>>,
+    /// Whether the dead terminal was ephemeral (plugin/Orchestrator-created).
+    pub ephemeral: bool,
+}
+
+impl ExitedTerminal {
+    /// Short name of the process that died — the basename of the resume or
+    /// launch argv's program (`claude`, `codex`, …), or `None` for a terminal
+    /// that was just the user's shell.
+    pub fn program_name(&self) -> Option<&str> {
+        // An *empty* resume vector is the plain-shell restore marker, not a
+        // rejoinable agent — fall through to the launch command rather than
+        // reporting no program at all.
+        self.resume
+            .as_ref()
+            .filter(|argv| !argv.is_empty())
+            .or(self.command.as_ref())
+            .and_then(|argv| argv.first())
+            .map(|program| {
+                program
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(program.as_str())
+            })
+    }
+
+    /// Whether restarting this terminal rejoins an agent conversation (as
+    /// opposed to re-running the launch command or opening a plain shell).
+    pub fn resumes_agent(&self) -> bool {
+        self.resume.as_ref().is_some_and(|argv| !argv.is_empty())
+    }
+}
+
 /// Per-terminal-buffer editor state, keyed by `BufferId` in
 /// [`Window::terminal_buffers`]. PTY I/O lives in the `TerminalManager`; the
 /// byte-stream backing files stay keyed by `TerminalId`.
@@ -820,6 +884,15 @@ pub struct Window {
     /// just re-run their launch command.
     pub terminal_resume_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
+
+    /// Terminals whose process has quit while their buffer stayed open,
+    /// keyed by that buffer. Everything needed to respawn the same process
+    /// in place lives in the record, so a restart doesn't depend on the
+    /// terminal-id-keyed maps surviving the teardown. Populated by
+    /// `handle_terminal_exited`, consumed by
+    /// [`Window::restart_terminal_buffer`], and dropped when the buffer
+    /// closes or comes back live.
+    pub exited_terminals: HashMap<BufferId, ExitedTerminal>,
 
     /// Plugin-development workspace per buffer (temp dir + LSP
     /// configuration for plugin buffers). Buffer-keyed and buffers
@@ -2135,6 +2208,7 @@ impl Window {
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
+            exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),
             mouse_state: crate::app::types::MouseState::default(),
@@ -4093,3 +4167,63 @@ impl Window {
 // assertion isn't worth the maintenance, and the same behaviour is
 // already exercised by every `EditorTestHarness::create` path that
 // names a window.
+
+#[cfg(test)]
+mod exited_terminal_tests {
+    use super::ExitedTerminal;
+    use crate::services::terminal::TerminalId;
+
+    fn record(command: Option<&[&str]>, resume: Option<&[&str]>) -> ExitedTerminal {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        ExitedTerminal {
+            terminal_id: TerminalId(0),
+            exit_code: Some(0),
+            cols: 80,
+            rows: 24,
+            cwd: None,
+            backing_path: None,
+            log_path: None,
+            command: command.map(argv),
+            resume: resume.map(argv),
+            ephemeral: true,
+        }
+    }
+
+    /// The status-bar indicator names the program that died. The resume argv
+    /// wins over the launch command — that's the process a restart will
+    /// actually run, so it's the one the user is being offered.
+    #[test]
+    fn program_name_prefers_the_resume_argv() {
+        let e = record(
+            Some(&["/opt/bin/claude", "--session-id", "x"]),
+            Some(&["/opt/bin/claude", "--resume", "x"]),
+        );
+        assert_eq!(e.program_name(), Some("claude"));
+        assert!(e.resumes_agent());
+    }
+
+    /// With no resume spec the launch command names the indicator, and the
+    /// wording drops to "restart" rather than "resume".
+    #[test]
+    fn program_name_falls_back_to_the_launch_command() {
+        let e = record(Some(&["npm", "run", "dev"]), None);
+        assert_eq!(e.program_name(), Some("npm"));
+        assert!(!e.resumes_agent());
+    }
+
+    /// A plain shell has no program to name — the indicator says "terminal".
+    #[test]
+    fn a_plain_shell_has_no_program_name() {
+        assert_eq!(record(None, None).program_name(), None);
+    }
+
+    /// An empty resume vector is the "plain shell" restore marker, not a
+    /// rejoinable agent — treating it as one would render "Resume" for a
+    /// terminal that has nothing to resume.
+    #[test]
+    fn an_empty_resume_argv_is_not_an_agent() {
+        let e = record(Some(&["bash"]), Some(&[]));
+        assert!(!e.resumes_agent());
+        assert_eq!(e.program_name(), Some("bash"));
+    }
+}

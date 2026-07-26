@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Redémarrer le processus du terminal",
+  "cmd.restart_terminal": "Redémarrer le processus du terminal",
+  "cmd.restart_terminal_desc": "Relancer le processus terminé dans ce tampon de terminal, en reprenant la session de l'agent le cas échéant",
+  "menu.terminal.restart": "Redémarrer le processus du terminal",
+  "terminal.restarted": "Terminal %{id} redémarré",
+  "terminal.restart_still_running": "Le processus du terminal est toujours en cours",
+  "terminal.restart_unavailable": "Aucun processus de terminal terminé dans ce tampon",
+  "terminal.restart_failed": "Échec du redémarrage du processus du terminal",
+  "status.terminal_resume": "⟳ Reprendre %{program}",
+  "status.terminal_restart": "⟳ Redémarrer %{program}",
+  "status.terminal_restart_shell": "⟳ Redémarrer le terminal",
+  "status.terminal_restart_code": "%{label} (code %{code})"
 }

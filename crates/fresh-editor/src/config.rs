@@ -835,6 +835,11 @@ pub enum StatusBarElement {
     Warnings,
     /// Update available indicator
     Update,
+    /// Restart indicator for a terminal buffer whose process has quit.
+    /// Renders only while the active buffer is such a terminal; clicking it
+    /// restarts the process (resuming the agent conversation when the
+    /// terminal carries an agent-resume spec).
+    TerminalRestart,
     /// Command palette shortcut hint
     Palette,
     /// Current time (HH:MM) with blinking colon separator
@@ -876,6 +881,7 @@ impl TryFrom<String> for StatusBarElement {
             "lsp" => Ok(Self::Lsp),
             "warnings" => Ok(Self::Warnings),
             "update" => Ok(Self::Update),
+            "terminal_restart" => Ok(Self::TerminalRestart),
             "palette" => Ok(Self::Palette),
             "clock" => Ok(Self::Clock),
             "remote" => Ok(Self::RemoteIndicator),
@@ -909,6 +915,7 @@ impl From<StatusBarElement> for String {
             StatusBarElement::Lsp => "{lsp}".to_string(),
             StatusBarElement::Warnings => "{warnings}".to_string(),
             StatusBarElement::Update => "{update}".to_string(),
+            StatusBarElement::TerminalRestart => "{terminal_restart}".to_string(),
             StatusBarElement::Palette => "{palette}".to_string(),
             StatusBarElement::Clock => "{clock}".to_string(),
             StatusBarElement::RemoteIndicator => "{remote}".to_string(),
@@ -940,6 +947,7 @@ impl schemars::JsonSchema for StatusBarElement {
                 {"value": "{lsp}", "name": "LSP"},
                 {"value": "{warnings}", "name": "Warnings"},
                 {"value": "{update}", "name": "Update"},
+                {"value": "{terminal_restart}", "name": "Terminal Restart"},
                 {"value": "{palette}", "name": "Palette"},
                 {"value": "{clock}", "name": "Clock"},
                 {"value": "{remote}", "name": "Remote Indicator"},
@@ -962,6 +970,11 @@ fn default_status_bar_left() -> Vec<StatusBarElement> {
     vec![
         StatusBarElement::WorkspaceTrust,
         StatusBarElement::RemoteIndicator,
+        // Renders only while the active buffer is a terminal whose process
+        // quit, so it costs nothing the rest of the time — but when an agent
+        // dies it sits beside the other two persistent, clickable controls
+        // where users already look.
+        StatusBarElement::TerminalRestart,
         StatusBarElement::Cursor,
         StatusBarElement::Diagnostics,
         StatusBarElement::CursorCount,
@@ -3507,6 +3520,13 @@ impl MenuConfig {
                             MenuItem::Action {
                                 label: t!("menu.terminal.close").to_string(),
                                 action: "close_terminal".to_string(),
+                                args: HashMap::new(),
+                                when: None,
+                                checkbox: None,
+                            },
+                            MenuItem::Action {
+                                label: t!("menu.terminal.restart").to_string(),
+                                action: "restart_terminal".to_string(),
                                 args: HashMap::new(),
                                 when: None,
                                 checkbox: None,

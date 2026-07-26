@@ -1628,5 +1628,17 @@
   "action.show_read_only_menu": "Show read-only menu",
   "read_only.menu.title": "Read-only buffer",
   "read_only.menu.enable_editing": "Enable editing",
-  "read_only.menu.cancel": "Cancel"
+  "read_only.menu.cancel": "Cancel",
+  "action.restart_terminal": "Restart terminal process",
+  "cmd.restart_terminal": "Restart Terminal Process",
+  "cmd.restart_terminal_desc": "Respawn the exited process in this terminal buffer, resuming the agent session when there is one",
+  "menu.terminal.restart": "Restart Terminal Process",
+  "terminal.restarted": "Terminal %{id} restarted",
+  "terminal.restart_still_running": "Terminal process is still running",
+  "terminal.restart_unavailable": "No exited terminal process in this buffer",
+  "terminal.restart_failed": "Failed to restart terminal process",
+  "status.terminal_resume": "⟳ Resume %{program}",
+  "status.terminal_restart": "⟳ Restart %{program}",
+  "status.terminal_restart_shell": "⟳ Restart terminal",
+  "status.terminal_restart_code": "%{label} (exit %{code})"
 }

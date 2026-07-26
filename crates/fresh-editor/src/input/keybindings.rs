@@ -818,6 +818,9 @@ pub enum Action {
     OpenTerminalRight,       // Open a new terminal in a split to the right (vertical split)
     OpenTerminalBelow,       // Open a new terminal in a split below (horizontal split)
     CloseTerminal,           // Close the current terminal
+    /// Restart the exited terminal process in the current buffer, resuming the
+    /// agent conversation when the terminal carries an agent-resume spec.
+    RestartTerminal,
     FocusTerminal,           // Focus the terminal buffer (if viewing terminal, focus input)
     TerminalEscape,          // Escape from terminal mode back to editor
     ToggleKeyboardCapture,   // Toggle keyboard capture mode (all keys go to terminal)
@@ -1277,6 +1280,7 @@ impl Action {
             "open_terminal_right" => OpenTerminalRight,
             "open_terminal_below" => OpenTerminalBelow,
             "close_terminal" => CloseTerminal,
+            "restart_terminal" => RestartTerminal,
             "focus_terminal" => FocusTerminal,
             "terminal_escape" => TerminalEscape,
             "toggle_keyboard_capture" => ToggleKeyboardCapture,
@@ -2829,6 +2833,7 @@ impl KeybindingResolver {
             Action::OpenTerminalRight => t!("action.open_terminal_right"),
             Action::OpenTerminalBelow => t!("action.open_terminal_below"),
             Action::CloseTerminal => t!("action.close_terminal"),
+            Action::RestartTerminal => t!("action.restart_terminal"),
             Action::FocusTerminal => t!("action.focus_terminal"),
             Action::TerminalEscape => t!("action.terminal_escape"),
             Action::ToggleKeyboardCapture => t!("action.toggle_keyboard_capture"),

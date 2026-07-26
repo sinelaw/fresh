@@ -1011,6 +1011,42 @@ impl Editor {
         self.reattach_window(window_id);
     }
 
+    /// Snapshot a just-exited terminal into the record `restart_terminal_buffer`
+    /// replays from. Reads the live handle for geometry/cwd (valid only until
+    /// `terminal_manager.close`) and the terminal-id-keyed maps for the
+    /// scrollback files and launch/resume argv.
+    fn exited_terminal_record(
+        &self,
+        terminal_id: crate::services::terminal::TerminalId,
+        exit_code: Option<i32>,
+    ) -> crate::app::window::ExitedTerminal {
+        let window = self.active_window();
+        let handle = window.terminal_manager.get(terminal_id);
+        let (cols, rows) = handle
+            .map(|h| h.size())
+            .unwrap_or_else(|| window.get_terminal_dimensions());
+        crate::app::window::ExitedTerminal {
+            terminal_id,
+            exit_code,
+            cols,
+            rows,
+            cwd: handle.and_then(|h| h.cwd()),
+            backing_path: window.terminal_backing_files.get(&terminal_id).cloned(),
+            log_path: window.terminal_log_files.get(&terminal_id).cloned(),
+            command: window
+                .terminal_commands
+                .get(&terminal_id)
+                .filter(|argv| !argv.is_empty())
+                .cloned(),
+            resume: window
+                .terminal_resume_commands
+                .get(&terminal_id)
+                .filter(|argv| !argv.is_empty())
+                .cloned(),
+            ephemeral: window.ephemeral_terminals.contains(&terminal_id),
+        }
+    }
+
     fn handle_terminal_exited(
         &mut self,
         terminal: fresh_core::WindowTerminalId,
@@ -1158,6 +1194,16 @@ impl Editor {
             // reconnect to respawn in place (see above).
             if !preserve_for_reconnect {
                 self.active_window_mut().terminal_buffers.remove(&buffer_id);
+                // Snapshot everything a restart needs *before* the handle is
+                // closed below, so the buffer can be brought back live in
+                // place (palette command / status-bar indicator) with the
+                // same argv precedence a workspace restore would use. The
+                // reconnect path doesn't need this: it keeps the binding and
+                // respawns from the still-intact terminal-id-keyed maps.
+                let record = self.exited_terminal_record(terminal_id, exit_code);
+                self.active_window_mut()
+                    .exited_terminals
+                    .insert(buffer_id, record);
             }
 
             self.set_status_message(t!("terminal.exited", id = terminal_id.0).to_string());

@@ -1457,6 +1457,16 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal],
         custom_contexts: &[],
     },
+    // Offered in Normal context only: a terminal whose process quit has already
+    // dropped out of Terminal context into read-only scrollback, which is
+    // exactly the state this command acts on.
+    CommandDef {
+        name_key: "cmd.restart_terminal",
+        desc_key: "cmd.restart_terminal_desc",
+        action: || Action::RestartTerminal,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
     CommandDef {
         name_key: "cmd.send_selection_to_terminal",
         desc_key: "cmd.send_selection_to_terminal_desc",

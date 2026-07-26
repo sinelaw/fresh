@@ -2459,6 +2459,10 @@ impl Editor {
                 self.dismiss_menu_popups_for_prompt();
                 self.handle_action(Action::UpdateFresh)
             }
+            C::RestartTerminal => {
+                self.dismiss_menu_popups_for_prompt();
+                self.handle_action(Action::RestartTerminal)
+            }
         }
     }
 
