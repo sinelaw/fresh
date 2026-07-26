@@ -3419,11 +3419,13 @@ fn test_scrollback_viewport_resets_on_reentry_mouse_scroll() {
     );
 }
 
-/// Test that terminal process exit keeps buffer open with exit message
+/// Test that terminal process exit keeps the buffer open, marked on the tab
 ///
 /// When a terminal process exits (e.g., via 'exit' command):
 /// 1. The final screen state should be preserved in the buffer
-/// 2. An "[Terminal process exited]" message should be appended
+/// 2. The *tab* should say so — nothing is written into the output, because a
+///    line appended there costs a row of the user's last screen (see
+///    `test_exit_does_not_scroll_the_last_frame_away`)
 /// 3. The buffer should remain open in read-only scrollback mode
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
@@ -3453,12 +3455,9 @@ fn test_terminal_exit_keeps_buffer_with_message() {
         .active_window_mut()
         .send_terminal_input(b"exit\n");
 
-    // Wait for terminal to exit and buffer to show the exit message
+    // Wait for the terminal to exit — signalled on the tab, not in the output.
     harness
-        .wait_until(|h| {
-            let content = h.editor().get_buffer_content(buffer_id).unwrap_or_default();
-            content.contains("[Terminal process exited]")
-        })
+        .wait_until(|h| h.screen_to_string().contains("(exited)"))
         .unwrap();
 
     harness.render().unwrap();
@@ -3493,13 +3492,11 @@ fn test_terminal_exit_keeps_buffer_with_message() {
         content
     );
     assert!(
-        content.contains("[Terminal process exited]"),
-        "Buffer should contain exit message.\nContent:\n{}",
+        !content.contains("[Terminal process exited]"),
+        "The exit must not be written into the output — it costs a row of the \
+         user's last screen. It belongs on the tab.\nContent:\n{}",
         content
     );
-
-    // Screen should show the exit message
-    harness.assert_screen_contains("[Terminal process exited]");
 }
 
 /// Test Windows terminal shows prompt and responds to commands

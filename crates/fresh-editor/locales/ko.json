@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ %{program} 이어서",
   "status.terminal_restart": "⟳ %{program} 다시 시작",
   "status.terminal_restart_shell": "⟳ 터미널 다시 시작",
-  "status.terminal_restart_code": "%{label} (종료 %{code})"
+  "status.terminal_restart_code": "%{label} (종료 %{code})",
+  "terminal.tab_exited": "%{name} (종료됨)"
 }

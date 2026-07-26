@@ -112,6 +112,10 @@ pub struct ExitedTerminal {
     pub resume: Option<Vec<String>>,
     /// Whether the dead terminal was ephemeral (plugin/Orchestrator-created).
     pub ephemeral: bool,
+    /// The tab title as it read *before* the exit marker was appended, so a
+    /// restart can put it back. `None` for an auto-named tab, which re-derives
+    /// its name from the reborn process.
+    pub title: Option<String>,
 }
 
 impl ExitedTerminal {

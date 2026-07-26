@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ Відновити %{program}",
   "status.terminal_restart": "⟳ Перезапустити %{program}",
   "status.terminal_restart_shell": "⟳ Перезапустити термінал",
-  "status.terminal_restart_code": "%{label} (код %{code})"
+  "status.terminal_restart_code": "%{label} (код %{code})",
+  "terminal.tab_exited": "%{name} (завершено)"
 }

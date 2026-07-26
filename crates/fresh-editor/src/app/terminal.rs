@@ -1259,6 +1259,21 @@ impl Window {
             state.buffer.set_modified(false);
         }
 
+        // Drop the "(exited)" marker the exit path put on the tab. An
+        // explicitly-titled tab gets its name back verbatim; an auto-named one
+        // is handed back to `sync_terminal_titles`, which re-derives it from
+        // the reborn process on the next frame.
+        match exited.title {
+            Some(title) => {
+                if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                    meta.display_name = title;
+                }
+            }
+            None => {
+                self.terminal_explicit_titles.remove(&buffer_id);
+            }
+        }
+
         Some(new_id)
     }
 }

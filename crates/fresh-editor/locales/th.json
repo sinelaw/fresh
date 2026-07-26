@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ กลับเข้า %{program}",
   "status.terminal_restart": "⟳ เริ่ม %{program} ใหม่",
   "status.terminal_restart_shell": "⟳ เริ่มเทอร์มินัลใหม่",
-  "status.terminal_restart_code": "%{label} (ออก %{code})"
+  "status.terminal_restart_code": "%{label} (ออก %{code})",
+  "terminal.tab_exited": "%{name} (ออกแล้ว)"
 }

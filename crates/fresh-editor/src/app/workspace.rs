@@ -22,6 +22,7 @@
 //!
 //! Performance: O(1) ≈ 10ms (lazy load) vs O(n) ≈ 1000ms (log replay)
 
+use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -927,6 +928,7 @@ impl crate::app::window::Window {
 
         // Create buffer for this terminal
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+        self.apply_restored_terminal_title(buffer_id, terminal.title.as_deref());
 
         // Load backing file directly as read-only buffer (skip log replay)
         // The backing file already contains complete terminal state from last workspace
@@ -971,7 +973,14 @@ impl crate::app::window::Window {
         // Build the buffer the normal way, then drop the live binding the way
         // the exit path does — the PTY this id names no longer exists.
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+        self.apply_restored_terminal_title(buffer_id, terminal.title.as_deref());
         self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
+        // A restored-dead tab shows the same "(exited)" marker a tab that died
+        // in this session does — the state is identical, so it must read
+        // identically.
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = t!("terminal.tab_exited", name = meta.display_name).to_string();
+        }
         self.terminal_buffers.remove(&buffer_id);
         self.exited_terminals.insert(
             buffer_id,
@@ -988,9 +997,28 @@ impl crate::app::window::Window {
                 // A restored terminal is re-persisted by the branch above on
                 // the next save, so it must not be treated as throwaway.
                 ephemeral: false,
+                title: terminal.title.clone(),
             },
         );
         Some(buffer_id)
+    }
+
+    /// Re-apply a terminal tab's persisted explicit title after restore.
+    ///
+    /// Without this a restored agent tab falls back to foreground-process
+    /// auto-naming: `bash` / `node` while it runs, and a bare `*Terminal N*`
+    /// once it has exited and there is no foreground process left to read.
+    /// `None` leaves the tab auto-named, which is what it was before the save.
+    fn apply_restored_terminal_title(&mut self, buffer_id: BufferId, title: Option<&str>) {
+        let Some(title) = title.filter(|t| !t.is_empty()) else {
+            return;
+        };
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = title.to_string();
+        }
+        // Mark it explicit so `sync_terminal_titles` leaves it alone, exactly
+        // as `create_plugin_terminal` does for a freshly-launched agent.
+        self.terminal_explicit_titles.insert(buffer_id);
     }
 
     /// Load a terminal backing file directly as a read-only buffer.
@@ -2357,6 +2385,16 @@ impl crate::app::window::Window {
                     .get(&terminal_id)
                     .filter(|argv| !argv.is_empty())
                     .map(|argv| crate::workspace::AgentResume { argv: argv.clone() });
+                // Only an *explicit* title is worth persisting; auto-named
+                // tabs re-derive theirs from the live process after restore.
+                let title = self
+                    .terminal_buffers
+                    .iter()
+                    .find(|(_, tb)| tb.terminal_id == terminal_id)
+                    .map(|(b, _)| *b)
+                    .filter(|b| self.terminal_explicit_titles.contains(b))
+                    .and_then(|b| self.buffer_metadata.get(&b))
+                    .map(|meta| meta.display_name.clone());
                 terminals.push(SerializedTerminalWorkspace {
                     terminal_index: idx,
                     cwd,
@@ -2368,6 +2406,7 @@ impl crate::app::window::Window {
                     command,
                     agent_resume,
                     exited: None,
+                    title,
                 });
             }
         }
@@ -2413,6 +2452,9 @@ impl crate::app::window::Window {
                 exited: Some(crate::workspace::ExitedTerminalState {
                     exit_code: exited.exit_code,
                 }),
+                // The pre-exit tab title, not the "(exited)" form the tab is
+                // showing now — restore re-applies the marker itself.
+                title: exited.title.clone(),
             });
         }
 

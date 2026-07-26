@@ -1640,5 +1640,6 @@
   "status.terminal_resume": "⟳ Riprendi %{program}",
   "status.terminal_restart": "⟳ Riavvia %{program}",
   "status.terminal_restart_shell": "⟳ Riavvia il terminale",
-  "status.terminal_restart_code": "%{label} (uscita %{code})"
+  "status.terminal_restart_code": "%{label} (uscita %{code})",
+  "terminal.tab_exited": "%{name} (terminato)"
 }
