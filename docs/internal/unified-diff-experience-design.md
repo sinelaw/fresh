@@ -609,6 +609,9 @@ Every interaction has a pointer path, and the pointer path displays the key:
 - **Wheel** scrolls the pane under the pointer; hover never steals
   selection or focus.
 
+A click-by-click walkthrough of a complete flow, with no key pressed at any
+point, is in §3.15.
+
 ### 3.11 Scaling down and up
 
 - **< 100 columns — zoom model**: one pane at a time. The stream takes the
@@ -657,6 +660,262 @@ this workspace lands as the Phase 1–2 presentation layer. Two open questions
 are flagged for prototyping, not argument: verb buttons on sections vs. a
 persistent bottom hint bar, and `h`/`l` as a granularity ladder vs. pane
 focus.
+
+---
+
+### 3.15 Mouse-only walkthrough
+
+A click-by-click progression through a full flow (reviewing an agent
+session), touching every pointer affordance class: menus, scope segments,
+dropdowns, verb buttons, inline warnings, badges, rail cycling, note
+jumping, hover checkboxes, and the conclude flow. No key is pressed at any
+point. (Keys shown on buttons are the accelerators the mouse path teaches.)
+
+**Frame 1 — ordinary editing.** The menu bar carries a `Review` menu.
+
+```
+ File   Edit   View   Selection   Go   Review   LSP   Help
+ lexer.rs ×   +
+   1 │ //! Lexer for the toy calculator language.
+   2 │ #[derive(Debug, PartialEq)]
+   3 │ pub enum Token { Num(i64), Plus, Minus, Star, Slash, Percent, LParen, RParen }
+   4 │
+   5 │ pub fn lex(input: &str) -> Vec<Token> {
+   6 │     let mut out = Vec::new();
+ ──────────────────────────────────────────────────────────────────────────────────────────
+ Trusted  Local  Ln 1, Col 1                                              LF  UTF-8  Rust
+```
+
+*User clicks `Review` in the menu bar.*
+
+**Frame 2 — the Review menu.** Every item prints its shortcut.
+
+```
+ File   Edit   View   Selection   Go  ┌ Review ──────────────────────────┐  LSP   Help
+ lexer.rs ×   +                       │ Open Review…             Ctrl+R  │
+   1 │ //! Lexer for the toy calcul…  │ Working Tree                     │
+   2 │ #[derive(Debug, PartialEq)]    │ Branch vs Base                   │
+   3 │ pub enum Token { Num(i64), P…  │ Agent Sessions                ▸  │
+   4 │                                │ History                          │
+   5 │ pub fn lex(input: &str) -> V…  │ ─────────────────────────────────│
+   6 │     let mut out = Vec::new();  │ Next Change               Alt+↓  │
+                                      │ Blame File                       │
+                                      └──────────────────────────────────┘
+```
+
+*User clicks `Open Review…`.*
+
+**Frame 3 — scope-choosing state.** Every row is a button; sessions with
+work pending sort first.
+
+```
+ ⟨ choose scope… ⟩                                                              · review
+──────────────────────────────────────────────────────────────────────────────────────────
+     ⚙  agent: auth-refactor       ● waiting on you · 9 to review  ▂▂▅▇   [⏎ Open]
+     ⚙  agent: docs-pass           ✓ idle · 2 left                 ▂▁▁▂
+     ★  feature/eval vs main       3 commits · 4 files · +56 −7
+     ●  working tree               1 staged · 2 unstaged · 1 untracked
+     ⟳  HEAD~3..HEAD               reviewed yesterday · 2 files changed since
+     ⌗  stash@{0}                  "wip: tokenizer"
+     ⌂  history                    browse commits · any range · blame
+
+     revspec:  A..B · A...B · <sha> · stash@{N} · <branch>
+     > ▌
+──────────────────────────────────────────────────────────────────────────────────────────
+ click a row to open it · click an endpoint on any row to override base or target
+```
+
+*User clicks the `⚙ agent: auth-refactor` row.*
+
+**Frame 4 — the workspace, agent scope, flat lens.** The focused hunk shows
+its verb buttons; the rail shows kept/pending files.
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ⟨flat ▾⟩   ▓▓▓░░░░░░ 3/9 kept   [/][o][?]  ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+ files ⟨\ ▾⟩        │  src/auth/session.rs · fn refresh                                ▲
+  ✓ token.rs        │ ───────────────────────────────────────────────────────────────  █
+  ✓ store.rs        │   88   88   fn refresh(&mut self) -> Result<()> {                █
+ ›  session.rs      │        89 +     let tok = self.store.lock()?;                    ▒
+    mod.rs          │        90 +     eprintln!("refresh: {tok:?}");   ⚠ debug print   ░
+    session_test.rs │   89   91       self.renew(tok)                                  ░
+ ▸ noise (1)        │                                                                  ░
+                    │  [k Keep] [x Reject] [c Comment] [v Lines…]         hunk 2/5     ░
+  3/9 kept          │                                                                  ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ session.rs · hunk 2/5 · agent running — files refresh live                        [RO]
+```
+
+*User clicks `⟨flat ▾⟩` in the scope bar.*
+
+**Frame 5 — the lens dropdown.**
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ┌ lens ──────────────────────────────┐   [/][o][?]
+─────────────────────────────────────│ › flat      one combined diff       │─────────────
+ files ⟨\ ▾⟩        │  src/auth/sess │   commits   step commit by commit   │          ▲
+  ✓ token.rs        │ ────────────── │   since v1  my last review → now    │          █
+  ✓ store.rs        │   88   88   fn └────────────────────────────────────┘          █
+ ›  session.rs      │        89 +     let tok = self.store.lock()?;                   ▒
+```
+
+*User clicks `commits`.*
+
+**Frame 6 — commits lens.** The rail becomes the commit strip (with the
+interdiff pseudo-row); the stream shows the selected commit only.
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   commit 2/3   [/][o][?]        ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+ commits ⟨\ ▾⟩      │  9d80aa · wire refresh into session                    2 files    ▲
+   77aa02 add store │ ───────────────────────────────────────────────────────────────  █
+ › 9d80aa wire refr…│   88   88   fn refresh(&mut self) -> Result<()> {                █
+   f00c1a tests     │        89 +     let tok = self.store.lock()?;                    ▒
+   ⇅ v1→v2 interdiff│        90 +     eprintln!("refresh: {tok:?}");   ⚠ debug print   ░
+                    │   89   91       self.renew(tok)                                  ░
+  1/3 reviewed      │  [k Keep] [x Reject] [c Comment] [v Lines…]         hunk 1/2     ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ 9d80aa · hunk 1/2 · click any commit row to preview it                            [RO]
+```
+
+*User clicks the `[x Reject]` button on the focused hunk.*
+
+**Frame 7 — the symbol-graph guard.** Rejecting would orphan kept callers;
+the warning is inline, with buttons.
+
+```
+ commits ⟨\ ▾⟩      │   88   88   fn refresh(&mut self) -> Result<()> {
+   77aa02 add store │        89 +     let tok = self.store.lock()?;
+ › 9d80aa wire refr…│        90 +     eprintln!("refresh: {tok:?}");
+   f00c1a tests     │   89   91       self.renew(tok)
+   ⇅ v1→v2 interdiff│ ┌────────────────────────────────────────────────────────────────┐
+                    │ │ ⚠ 2 kept hunks call refresh()'s new signature:                 │
+                    │ │   mod.rs:44 · session_test.rs:12                               │
+                    │ │   [x Reject those too]   [⏎ Reject anyway]   [Esc Cancel]      │
+                    │ └────────────────────────────────────────────────────────────────┘
+```
+
+*User clicks `[x Reject those too]`.*
+
+**Frame 8 — the receipt.** Context line shows the command and an undo
+button; the rail regroups. Meanwhile the agent edited a file the user
+already reviewed — a queue badge appears instead of the content moving.
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   commit 2/3   [/][o][?]        ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+ commits ⟨\ ▾⟩      │  9d80aa · wire refresh into session                    2 files    ▲
+   77aa02 add store │   88   88   fn refresh(&mut self) -> Result<()> {                █
+ › 9d80aa wire refr…│   89   91       self.renew(tok)              (3 hunks rejected)  ▒
+   f00c1a tests     │                                                                  ░
+   ⇅ v1→v2 interdiff│                                                                  ░
+  ✓ token.rs   ↻2   │                                                                  ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ ✗ rejected 3 hunks — git apply -R (journaled)   [Z Undo]
+```
+
+*User clicks the `↻2` badge on `token.rs`.*
+
+**Frame 9 — the queue applies.** The stream jumps to the first newly
+arrived hunk, tagged `NEW`; the viewed mark on that file was dropped
+automatically (content hash changed).
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   4/10 kept   [/][o][?]         ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+ commits ⟨\ ▾⟩      │  src/auth/token.rs · fn rotate                        NEW        ▲
+   …                │ ───────────────────────────────────────────────────────────────  █
+ › token.rs (live)  │  114  114   fn rotate(&mut self) -> Result<()> {                 █
+                    │       115 +     self.audit.log("token.rotate");                  ▒
+                    │  115  116       self.generate()                                  ░
+                    │  [k Keep] [x Reject] [c Comment]                    hunk 1/2     ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ token.rs · NEW hunk applied from queue · 1 more queued                            [RO]
+```
+
+*User clicks the rail-projection control `⟨\ ▾⟩`.*
+
+**Frame 10 — the rail dropdown.**
+
+```
+ ┌ rail ─────────────┐ │  src/auth/token.rs · fn rotate                        NEW
+ │ › files           │ │ ──────────────────────────────────────────────────────────────
+ │   commits         │ │  114  114   fn rotate(&mut self) -> Result<()> {
+ │   notes        2  │ │       115 +     self.audit.log("token.rotate");
+ │   hidden          │ │  115  116       self.generate()
+ └───────────────────┘ │
+```
+
+*User clicks `notes`.*
+
+**Frame 11 — the notes rail.** Comments and drafts, severity-first.
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   4/10 kept   [/][o][?]         ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+ notes ⟨\ ▾⟩        │  src/auth/token.rs · fn rotate                                   ▲
+  ● must-fix        │  114  114   fn rotate(&mut self) -> Result<()> {                 █
+    session.rs:96   │       115 +     self.audit.log("token.rotate");                  ▒
+    lock held acro… │  115  116       self.generate()                                  ░
+  ○ nit (draft)     │                                                                  ░
+    store.rs:31     │                                                                  ░
+ 1 unresolved       │                                                                  ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ click a note to jump to its anchor
+```
+
+*User clicks the `● must-fix` note.*
+
+**Frame 12 — jumped to the anchor.** The comment box is focused with its
+own buttons.
+
+```
+ notes ⟨\ ▾⟩        │  src/auth/session.rs · fn refresh                                ▲
+ ›● must-fix        │   95   95       let guard = self.store.lock()?;                  █
+    session.rs:96   │   96   96       self.renew_all(guard).await                      █
+  ○ nit (draft)     │ ┌ ● must-fix · session.rs:96 ────────────────────────────────┐   ▒
+    store.rs:31     │ │ lock held across await point — deadlock risk under load    │   ░
+                    │ │ [✎ Edit] [x Delete] [◐ Change severity ▾]                  │   ░
+                    │ └─────────────────────────────────────────────────────────────┘  ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ session.rs:96 · unresolved must-fix
+```
+
+*User reviews the remaining files by clicking the hover checkbox `☐→✓` on
+each rail row (mark reviewed); when the last one is marked…*
+
+**Frame 13 — completion.** The exits are buttons.
+
+```
+ ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   ▓▓▓▓▓▓▓▓ 10/10   [/][o][?]    ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+
+   ✓ Review complete — 10/10 · kept 7 · rejected 3 · 1 must-fix comment unresolved
+
+     [⏎ Jump to unresolved]   [C Conclude: finish session review]   [e Export notes]
+     [q Close — state saved]
+
+──────────────────────────────────────────────────────────────────────────────────────────
+```
+
+*User clicks `[C Conclude: finish session review]`.*
+
+**Frame 14 — the conclude summary.** One confirmation surface (this is a
+bulk mutation), with the tally and the receipt-to-be.
+
+```
+ ┌ conclude: auth-refactor ────────────────────────────────────────────────────────────┐
+ │  keep 7 hunks (already in worktree — no changes needed)                             │
+ │  revert 3 rejected hunks            → git apply -R  (journaled, [Z] undoable)       │
+ │  1 must-fix comment stays open      → visible in the session's notes                │
+ │                                                                                     │
+ │  [⏎ Finish]                [Esc Back to review]                                     │
+ └─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+*User clicks `[⏎ Finish]` — the workspace closes to the dock, whose session
+card now shows `reviewed · 3 reverted · 1 note`, and every mutation along
+the way remains undoable from the command log (`` ` ``).*
 
 ---
 
