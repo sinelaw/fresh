@@ -1412,7 +1412,17 @@ impl EditorServer {
         disconnected.sort_unstable();
         disconnected.dedup();
 
-        // Remove disconnected clients
+        // Remove disconnected clients. Losing one changes the shared fit: the
+        // primary terminal sizes the session, so when it goes away the next
+        // client inherits that role and the grid has to be recomputed for it —
+        // otherwise a survivor keeps being rendered at the dead client's size
+        // and shows a clipped screen until it happens to send a resize. Flag it
+        // like any other resize so the main loop refits and repaints; when the
+        // fit turns out unchanged the recompute is a no-op and the clients just
+        // get a fresh frame.
+        if !disconnected.is_empty() {
+            resize_occurred = true;
+        }
         for idx in disconnected.into_iter().rev() {
             let client = self.clients.remove(idx);
             // Clean up --wait tracking if this client was waiting
