@@ -147,7 +147,9 @@ struct Cli {
 
     /// Serve the editor to a browser over a local HTTP/WebSocket bridge.
     /// Optionally give a bind address (default 127.0.0.1:8137). Any FILES are
-    /// opened in the served editor.
+    /// opened in the served editor. This also runs the session daemon, so
+    /// `fresh -a` in the same directory attaches a terminal to the very same
+    /// editor.
     #[cfg(feature = "web")]
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137")]
     web: Option<String>,
@@ -2778,19 +2780,48 @@ fn kill_session_command(session: Option<&str>, args: &Args) -> AnyhowResult<()> 
 }
 
 /// Run as a daemon server
-fn run_server_command(args: &Args) -> AnyhowResult<()> {
+/// Run the session daemon in this process.
+///
+/// Two entry points land here, and they run the SAME daemon:
+///
+///   - `fresh --server` — the detached process a `fresh -a` client spawns
+///     when no daemon is live for the working directory. Chatty on stderr,
+///     which the spawner has already redirected into the session log.
+///   - `fresh --web [ADDR]` (`web_addr = Some`) — the same daemon in the
+///     foreground, additionally serving the web UI. Same session, same
+///     sockets: `fresh -a` in this working directory attaches a terminal to
+///     the very editor the browser is looking at, and closing either one
+///     leaves the session (and the other) running.
+///
+/// `web_addr` also picks the console posture. The detached daemon logs at
+/// `debug` into its log file; a foreground `--web` would flood the user's
+/// terminal with it, so it logs at `warn` and skips the boot chatter.
+/// `RUST_LOG` still overrides either.
+fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()> {
     use fresh::server::{EditorServer, EditorServerConfig};
+
+    let detached = web_addr.is_none();
+    // Boot progress, useful in the daemon's log file but noise in a terminal.
+    macro_rules! boot {
+        ($($arg:tt)*) => {
+            if detached {
+                eprintln!($($arg)*);
+            }
+        };
+    }
 
     // Initialize tracing to stderr (will go to log file when spawned detached)
     use tracing_subscriber::{fmt, EnvFilter};
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
+    let default_level = if detached { "debug" } else { "warn" };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
     fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();
 
-    eprintln!(
+    boot!(
         "[server] Starting server process for session {:?}",
         args.session_name
     );
@@ -2828,7 +2859,7 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         None => std::env::current_dir()?,
     };
     let config_dir = std::env::current_dir()?;
-    eprintln!("[server] Working directory: {:?}", working_dir);
+    boot!("[server] Working directory: {:?}", working_dir);
 
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
@@ -2851,14 +2882,32 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     );
 
     // Load editor config
-    eprintln!("[server] Loading editor config...");
-    let editor_config = if let Some(config_path) = &args.config {
+    boot!("[server] Loading editor config...");
+    let mut editor_config = if let Some(config_path) = &args.config {
         config::Config::load_from_file(config_path)?
     } else {
         config::Config::load_with_layers(&dir_context, &config_dir)
     };
-    eprintln!("[server] Editor config loaded");
+    boot!("[server] Editor config loaded");
+    // Cell-level (TUI) animations would stream to the browser as bursts of
+    // frame diffs, on top of the CSS-level motion the web frontend does for
+    // itself — the same reason the standalone bridge forces them off. One
+    // editor serves both transports here, so the whole session (attached
+    // terminals included) goes without them while `--web` is serving.
+    if web_addr.is_some() {
+        editor_config.editor.animations = false;
+    }
     editor_config.apply_runtime_flags();
+
+    // `--web` has no client to send an `OpenFiles` after the handshake, so the
+    // files from its own command line ride in on the config and are queued once
+    // the editor is up. The detached daemon leaves this empty — its `fresh -a`
+    // client sends the list itself, `--wait` and all.
+    let startup_files = if web_addr.is_some() {
+        build_file_requests(&args.files, &working_dir)
+    } else {
+        Vec::new()
+    };
 
     let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
         remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
@@ -2880,29 +2929,75 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
         workspace_trust,
         env_provider,
         session_keepalive,
+        startup_files,
+        #[cfg(feature = "web")]
+        web_addr: web_addr.clone(),
     };
 
-    eprintln!("[server] Creating EditorServer...");
+    boot!("[server] Creating EditorServer...");
     let mut server = match EditorServer::new(config) {
         Ok(s) => {
-            eprintln!("[server] EditorServer created successfully");
+            boot!("[server] EditorServer created successfully");
             s
         }
         Err(e) => {
-            eprintln!("[server] EditorServer::new failed: {:?}", e);
+            boot!("[server] EditorServer::new failed: {:?}", e);
             return Err(e.into());
         }
     };
 
-    eprintln!("[server] Server ready at {:?}", server.socket_paths());
+    boot!("[server] Server ready at {:?}", server.socket_paths());
     tracing::info!("Editor server started at {:?}", server.socket_paths());
+    // The web banner is the foreground path's only startup output: the URL to
+    // open, and the `fresh -a` invocation that attaches a terminal to the same
+    // session. Sessions are keyed by working directory unless named, which is
+    // exactly how `-a` resolves them.
+    if let Some(addr) = &web_addr {
+        eprintln!("fresh web bridge on http://{addr}  (WS push on /ws)");
+        match &args.session_name {
+            Some(name) => eprintln!("attach a terminal to this session: fresh -a {name}"),
+            None => eprintln!(
+                "attach a terminal to this session: fresh -a   (in {})",
+                working_dir.display()
+            ),
+        }
+    }
 
     // Run the server (blocking)
-    eprintln!("[server] Entering main loop...");
+    boot!("[server] Entering main loop...");
     server.run()?;
 
-    eprintln!("[server] Server shutting down");
+    boot!("[server] Server shutting down");
     Ok(())
+}
+
+/// `fresh --web [ADDR] [FILES…]` — run the session daemon in the foreground
+/// with the web UI bridge hosted inside it.
+///
+/// The daemon owns the editor; the browser and every `fresh -a` terminal are
+/// transports onto that one editor, so a change made in the browser shows up in
+/// an attached terminal (and the other way round), and closing either leaves the
+/// session running. Because this binds the ordinary session sockets, a session
+/// that is already live here would be shadowed rather than shared — refuse
+/// instead, and say what to do about it.
+#[cfg(feature = "web")]
+fn run_web_command(args: &Args, addr: &str) -> AnyhowResult<()> {
+    let socket_paths = resolve_session(args.session_name.as_deref())?;
+    // A daemon that died without unlinking its sockets must not block the bind.
+    socket_paths.cleanup_if_stale();
+    if socket_paths.is_server_alive() {
+        // A user error, not a bug — printed clean and exited, the same way
+        // `main` special-cases SSH connection failures. Returning an
+        // `anyhow::Error` here would hand the user a backtrace instead
+        // (`real_main` turns backtraces on so genuine crashes are diagnosable).
+        eprintln!(
+            "Error: a fresh session is already running here — `fresh -a` attaches a terminal to it."
+        );
+        eprintln!("To serve a separate session over the web, give it a name:");
+        eprintln!("  fresh --web {addr} --session-name NAME");
+        std::process::exit(1);
+    }
+    run_server_command(args, Some(addr.to_string()))
 }
 
 /// Resolve a session name to socket paths.
@@ -3874,7 +3969,7 @@ fn run_if_subcommand(
         return Some(kill_session_command(session.as_deref(), args));
     }
     if args.server {
-        return Some(run_server_command(args));
+        return Some(run_server_command(args, None));
     }
     if let Some((session_name, files, wait)) = &args.open_files_in_session {
         return Some(run_open_files_command(
@@ -3886,10 +3981,14 @@ fn run_if_subcommand(
     if args.attach {
         return Some(run_attach_command(args));
     }
+    // `--web` runs the session daemon in the foreground with the web bridge
+    // hosted inside it, so the browser and any `fresh -a` terminal share one
+    // editor. It is NOT a separate editor process: the daemon binds the usual
+    // session sockets for this working directory (or `--session NAME`) first,
+    // so a session that is already live is joined rather than shadowed.
     #[cfg(feature = "web")]
     if let Some(addr) = &args.web {
-        let files: Vec<PathBuf> = args.files.iter().map(PathBuf::from).collect();
-        return Some(fresh::webui::run(addr, &files));
+        return Some(run_web_command(args, addr));
     }
     #[cfg(feature = "gui")]
     if !console_available || args.gui {

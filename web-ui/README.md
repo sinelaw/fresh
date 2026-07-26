@@ -226,6 +226,22 @@ cargo run --release --features web -p fresh-editor -- \
 # then open http://127.0.0.1:8137  and type — edits go through the real editor.
 ```
 
+`--web` runs the ordinary **session daemon** with the bridge inside it, so the
+browser is not the only way in — in the same directory:
+
+```sh
+fresh -a          # attach a terminal to the session the browser is looking at
+```
+
+is one editor with two transports: type in the terminal and the browser shows
+it, type in the browser and the terminal shows it. Closing the tab or detaching
+the terminal (`Ctrl-b d`-style detach) leaves the session running for the other.
+The rendered grid fits the smallest connected viewport, so a large window
+letterboxes rather than showing a grid the small one can't display. Sessions are
+keyed by working directory unless you name one with `--session-name NAME`; if a
+session is already live where you run `--web`, it says so instead of shadowing
+it.
+
 For interactive use serve a **release** build — the debug scene render dominates
 the key→frame round-trip (see docs/internal/web-ui.md §3.1 for the measured
 debug vs release numbers). A debug build works for development iteration too
