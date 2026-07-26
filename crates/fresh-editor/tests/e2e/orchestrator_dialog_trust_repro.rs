@@ -111,13 +111,22 @@ fn open_delete_confirmation(height: u16) -> (tempfile::TempDir, EditorTestHarnes
     h.render().unwrap();
     open_dock(&mut h);
 
+    // Guard the wait below against passing vacuously: the confirmation's
+    // heading must not already be on screen before we ask for it.
+    assert!(
+        !h.screen_to_string().contains("Confirm Delete"),
+        "the dock must not already be showing a delete confirmation"
+    );
+
     let card_row = row_of(&h, "alphaproj") as u16;
     h.mouse_right_click(4, card_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Delete"))
+    // Match the rendered button, not the bare word — "Delete" alone could pick
+    // up any other row that happens to mention it.
+    h.wait_until(|h| h.screen_to_string().contains("[ Delete ]"))
         .unwrap();
 
-    let (dcol, drow) = pos_of(&h, "Delete");
-    h.mouse_click(dcol, drow).unwrap();
+    let (dcol, drow) = pos_of(&h, "[ Delete ]");
+    h.mouse_click(dcol + 2, drow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
         .unwrap();
     (tmp, h)
@@ -285,6 +294,20 @@ fn trust_dialog_radio_click_selects_without_accepting() {
     h.wait_until(|h| h.screen_to_string().contains("SECURITY WARNING"))
         .unwrap();
 
+    // The prompt opens on the safe default, so the "(*)" assertion below is a
+    // real state change rather than a value that was already there.
+    let trust_row = row_of(&h, "Trust folder & Allow Tooling");
+    let before = h
+        .screen_to_string()
+        .lines()
+        .nth(trust_row)
+        .unwrap()
+        .to_string();
+    assert!(
+        before.contains("( )"),
+        "the Trust option should start unselected.\nRow: {before}"
+    );
+
     // Click "Trust folder & Allow Tooling (T)".
     let (col, row) = pos_of(&h, "Trust folder & Allow Tooling");
     h.mouse_click(col + 2, row).unwrap();
@@ -304,7 +327,6 @@ fn trust_dialog_radio_click_selects_without_accepting() {
     );
 
     // The click did move the selection: the Trust row is now the marked radio.
-    let trust_row = row_of(&h, "Trust folder & Allow Tooling");
     let line = h
         .screen_to_string()
         .lines()
@@ -316,9 +338,10 @@ fn trust_dialog_radio_click_selects_without_accepting() {
         "the clicked row should become the selected radio.\nRow: {line}"
     );
 
-    // [ OK ] commits it.
-    let (ok_col, ok_row) = pos_of(&h, "OK");
-    h.mouse_click(ok_col + 1, ok_row).unwrap();
+    // [ OK ] commits it. Match the rendered button so the hit can't land on a
+    // stray "OK" elsewhere on screen.
+    let (ok_col, ok_row) = pos_of(&h, "[ OK ]");
+    h.mouse_click(ok_col + 2, ok_row).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("SECURITY WARNING"))
         .unwrap();
     let status = status_bar(&h);
