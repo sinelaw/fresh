@@ -1808,6 +1808,30 @@ mod integration_tests {
             "both transports write to the same buffer"
         );
 
+        // (5) The primary terminal sizes the session, so when it goes away the
+        //     next client inherits that role and the grid refits to IT. Without
+        //     the refit on disconnect the survivor keeps being rendered at the
+        //     dead client's size and shows a clipped screen until it happens to
+        //     send a resize of its own.
+        let second = ClientConnection::connect(&socket_paths).expect("connect second terminal");
+        let hello = ClientHello::new(TermSize::new(60, 18));
+        second
+            .write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        drop(second.read_control().unwrap());
+        // A second client is not the primary — it must not resize the session.
+        thread::sleep(Duration::from_millis(300));
+        let still = state_until(port, |v| v["w"].as_u64().is_some());
+        assert_eq!(
+            (still["w"].clone(), still["h"].clone()),
+            (serde_json::json!(80), serde_json::json!(24)),
+            "a non-primary terminal must not resize the shared grid"
+        );
+        // Drop the primary; the survivor's 60x18 becomes the fit.
+        drop(conn);
+        let refitted = state_until(port, |v| v["w"] == 60 && v["h"] == 18);
+        assert_eq!(refitted["h"], 18);
+
         shutdown_handle.store(true, Ordering::SeqCst);
         drop(server_handle.join());
         drop(socket_paths.cleanup());
