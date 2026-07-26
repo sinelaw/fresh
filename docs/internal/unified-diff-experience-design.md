@@ -616,6 +616,127 @@ column (→ notes rail + inline boxes), the two-line hint bar (→ scope bar +
 context line + chips), the separate picker dialog (→ scope-choosing state),
 and the separate History tab (→ history preset + commits lens).
 
+### 3.13 Independent redesigns: two blind alternatives, and what to take from them
+
+To pressure-test §3.1–3.12, two designers were given the same brief — the task
+list (§ Tasks) and the research evidence (§2) only, with the existing Fresh UI
+and this document's workspace design deliberately withheld — and asked to
+design a TUI review experience from a blank slate. Their full documents are
+preserved with the session research notes; this section presents each design's
+distinctive ideas and the resulting decisions.
+
+**The headline is the convergence.** Working blind, both designs and the
+workspace (§3.2–3.9) independently arrived at the same skeleton:
+
+- the comparison (`base ⟶ target`) as an always-visible, clickable, editable
+  control that *is* the review's identity — every source a preset of it;
+- a magit-style typed section tree with persistent folds and depth presets;
+- a navigator whose selection reactively drives a read-only diff projection
+  (`Enter` = portal to the live buffer; never a second writable copy);
+- verbs that relabel per source on unchanged keys (stage/discard ⇄
+  keep/reject), shown in-place so nothing is hidden;
+- viewed marks keyed by content hash, mark-and-advance, resume that leads
+  with "what changed since I last looked";
+- undo instead of confirmation prompts, with the real git command echoed;
+- runnable `?` help; noise quarantined by default; one-column marker
+  scrollbar as the review's map.
+
+Three independent derivations from the same evidence landing on the same core
+is the strongest de-risking signal this document has: **the §3 skeleton is not
+one designer's taste.** The interesting material is where they differ.
+
+#### Alternative A — "Ledger" (outline-first, conclude-verb design)
+
+One frame (agent session; note the narrative ordering and the inline guard):
+
+```
+◆ Review: session fix-flaky-tests   base session-start ▾ ⟶ head worktree (live ◉)
+   agent: working…  ·  kept 9 · rejected 2 · open 7  ·  viewed 11/18  ·  Flat ▾
+├──────────────────────────────┬────────────────────────────────────────────────────┤
+│ narrative order (agent's) ▾  │ ⌁ fn wait_for_port() · tests/util.rs               │
+│  ✓ tests/util.rs     kept    │   88│ 88▎  let deadline = Instant::now() + timeout;│
+│  ✗ tests/flaky.rs    rejected│   89│   ▁  «sleep(500)»                            │
+│ ▸· tests/net.rs     ↺ changed│     │ 89▎ «backoff.retry(|| probe(port))»          │
+│  · src/backoff.rs  ● new     │ ⚠ tests/net.rs:14 (kept) calls probe(port) —       │
+│  ▸ 12 more (unreviewed)      │   rejecting this hunk removes its definition.      │
+├──────────────────────────────┴────────────────────────────────────────────────────┤
+│ hunk: s keep · x reject · v viewed · c note · N next open · live: files update    │
+```
+
+Distinctive ideas, with verdicts:
+
+| Idea | Verdict for the workspace |
+|---|---|
+| **Uppercase escalates lowercase** (`v` viewed → `V` unmark; `c` comment → `C` *conclude*; one rule makes the map guessable) | **Adopt the rule** as a keymap design principle; `C` = conclude (commit / submit / finish) fills a gap — the workspace had completion *exits* but no single conclude verb |
+| **`?` help = runnable, filterable command list** (help and palette are one thing) | **Adopt** (both designs had it; §3.7 said "runnable" — make it the palette itself, scoped) |
+| **Undo journal persisted across restarts**, discarded hunks saved as patch files | **Adopt**; upgrade §3.1 principle 9 from "session undo" to journal-backed |
+| **Entry rows sorted "waiting on you" first** with per-session progress sparklines | **Adopt** in the scope presets |
+| **Narrative order (agent's edit sequence) as the default file order in agent scopes** | **Adopt as the default** there (deterministic — it's the edit log, not an AI summary; path order one toggle away) |
+| Comments have **no panel at review width** — inline pills only; a comments rail exists only ≥160 cols | Partial: keep the notes rail as a cycled projection (a severity-sorted index of a 50-file review is worth a rail), but adopt the **wide-screen anchored rail** for ≥160 cols |
+| `v` = viewed (because `Space` = extend selection) | Keep `Space` = advance (§3.6); selection stays on `v`/drag — the burn-down key deserves the biggest key |
+
+#### Alternative B — the "lens" design (take/untake/drop, live-queue design)
+
+One frame (the live-update queue and the symbol-graph guard — its two best
+ideas — visible together):
+
+```
+┌ Review ▸ session lexer-rewrite  start ⇄ now  ● agent working   ▰▰▰▱ 11/18 · [s 1/3]┐
+├──────────────────────────────┬─────────────────────────────────────────────────────┤
+│ ▾ To review (7)              │ src/parser/lex.rs › fn next_token()                 │
+│ ▸ ▾ src/parser/lex.rs   ↻2   │  150       ─   let c = self.peek();                │
+│     ▾ fn next_token()        │       150  +   let Some(c) = self.peek() else {    │
+│       hunk @201  NEW         │ ┌─────────────────────────────────────────────────┐│
+│ ▾ Rejected (2)               │ │ ⚠ rejecting this hunk conflicts with 2 KEPT     ││
+│  Sessions needing review:    │ │   hunks that call `peek()`'s new signature:     ││
+│  ▸1 lexer-rewrite ● 7 left   │ │   mod.rs @44 · ast.rs @210                      ││
+│   2 fix-ci        ✓ 3 left   │ │   x reject those too · Enter reject anyway      ││
+├──────────────────────────────┴─────────────────────────────────────────────────────┤
+│ s keep · x reject · u unkeep · N jump to 2 new changes · ]s next session · ? help  │
+```
+
+Distinctive ideas, with verdicts:
+
+| Idea | Verdict for the workspace |
+|---|---|
+| **Live-update queueing**: files you're inside queue agent edits behind a `↻N` badge (`N` applies and jumps); other files refresh freely — *content never moves under your cursor* | **Adopt verbatim** — the best answer found to watch-mode vs. rug-pull, stronger than plain watch |
+| **Symbol-graph context-blindness guard**: rejecting a hunk checks identifiers it removes against identifiers *kept* hunks reference; inline warning lists the linked hunks with one-key "reject those too" | **Adopt** — replaces §3.9's cruder file-default heuristic (keep file-level default too; they compose) |
+| **"Since my last review" as the *default* target when reopening a previously-reviewed lens** (full range one keypress away) | **Adopt** — §3.6's resume banner asked; B's default answers |
+| **`⇅ interdiff` pseudo-commit** in commits lens after a force-push (v3→v5 as just another section) | **Adopt** in the commits lens |
+| **Noise excluded from the progress denominator** (lockfiles/generated/fmt-only don't count against 19/34) | **Adopt** — progress must measure judgment, not scrolling |
+| **Undo ring backed by git objects** (`refs/…/undo/*`), destructive verbs recoverable across restarts | **Adopt** as the implementation of A's journal |
+| **`` ` `` VCS command log** toggle (every echoed command, reviewable) | **Adopt** — cheap, completes the transparency story |
+| **<100-col zoom model**: one pane at a time (Esc shows the tree full-screen, Enter dives back); burn-down loop works without ever visiting the navigator | **Adopt** — cleaner than shrinking panes side-by-side at 80 cols |
+| **`h`/`l` widen/narrow granularity** (file ⇄ hunk ⇄ line as a ladder you climb) | Consider (conflicts with pane-focus muscle memory; prototype both) |
+| Verb triad named **take/untake/drop** (`s`/`u`/`x`) relabeling per lens | Naming kept as-is (stage/keep are the users' words), but the *triad symmetry* (every take has an untake) is adopted as a rule |
+
+#### What stays deliberately different in the workspace design
+
+- **Chips over a global hint bar.** Both alternatives keep a persistent
+  bottom hint bar listing current verbs; the workspace puts the verb hints
+  *on the focused section* (chip row) with a leaner context line. Chips keep
+  eyes on the code and scale better to the web renderer; the hint bar
+  duplicates what chips already say. (If chips test poorly for
+  discoverability, B's hint bar is the fallback — it's the same data.)
+- **The rail cycles (files/commits/notes); the alternatives fix it to
+  files+commits.** The notes projection earns its slot in marathon reviews;
+  cycling keeps the one-rail budget.
+- **Scope presets open in-workspace** (§3.3's choosing state) rather than as
+  a modal overlay picker — one less floating surface, same content.
+
+#### Adoption summary (folded into the next revision of §3)
+
+From A: uppercase-escalation rule; `C` conclude verb; runnable-help-as-palette;
+persisted undo journal; waiting-on-you session ordering; narrative default
+order in agent scopes; ≥160-col anchored comments rail.
+From B: live-update queue (`↻N`/`N`); symbol-graph reject guard; last-review
+default target; `⇅` interdiff pseudo-commit; noise out of the denominator;
+git-object undo ring; `` ` `` command log; sub-100-col zoom model.
+Under prototype: `h`/`l` granularity ladder vs. pane focus; chips vs. hint bar
+(instrumented, not argued).
+
+---
+
 ## 4. Part II — talking to agents and outside systems (lower priority)
 
 Everything here is **orthogonal to Part I by construction**: it consumes the
