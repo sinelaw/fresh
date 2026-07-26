@@ -1601,6 +1601,7 @@ impl Editor {
                 window_id,
                 command,
                 title,
+                resume,
                 env,
                 command_allowlist,
                 request_id,
@@ -1614,6 +1615,7 @@ impl Editor {
                     window_id,
                     command,
                     title,
+                    resume,
                     env,
                     command_allowlist,
                     request_id,
@@ -3891,6 +3893,7 @@ impl Editor {
         target_session_id: Option<fresh_core::WindowId>,
         command: Option<Vec<String>>,
         title: Option<String>,
+        resume: Option<Vec<String>>,
         env: Option<std::collections::HashMap<String, String>>,
         command_allowlist: Option<Vec<String>>,
         request_id: u64,
@@ -3939,16 +3942,26 @@ impl Editor {
                 .windows
                 .get_mut(&target_id)
                 .expect("target window present (existence checked above)");
-            target.create_plugin_terminal(crate::app::terminal::PluginTerminalSpec {
+            let spec = crate::app::terminal::PluginTerminalSpec {
                 cwd: cwd_buf,
                 direction: split_direction,
                 ratio,
                 focus: focus.unwrap_or(true),
                 persistent,
-                command,
+                command: command.clone(),
                 title: title.filter(|t| !t.is_empty()),
                 env: terminal_env,
-            })
+            };
+            let spawned = target.create_plugin_terminal(spec);
+            // Record the launch/resume argv exactly as `create_window_with_terminal`
+            // does. Without this, an agent spawned into an *existing* window (the
+            // Run-Agent "current workspace" path) was not a restorable session
+            // terminal at all: it vanished on workspace save, and a restart
+            // respawned a bare shell instead of the agent.
+            if let Ok((terminal_id, _, _)) = &spawned {
+                target.mark_terminal_restorable(*terminal_id, command, resume);
+            }
+            spawned
         };
         match result {
             Ok((terminal_id, buffer_id, created_split_id)) => {

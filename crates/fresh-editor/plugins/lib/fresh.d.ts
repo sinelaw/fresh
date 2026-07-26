@@ -897,6 +897,23 @@ type CreateTerminalOptions = {
 	*/
 	env?: { [key in string] : string };
 	/**
+	* Argv to run when this terminal is *restored* or *restarted*,
+	* instead of re-running `command`. The exact counterpart of
+	* `CreateWindowWithTerminalOptions::resume`, so an agent launched
+	* into an existing window rejoins its conversation on restart the
+	* same way one born in its own window does — a session started with
+	* `claude --session-id <id>` sets `resume` to
+	* `["claude", "--resume", "<id>"]`. `None` keeps `command` as the
+	* restore argv. The id is a plain argv element — never interpolated
+	* into a shell string.
+	*
+	* Setting `command` (with or without `resume`) also marks the
+	* terminal as a restorable *session* terminal, so it survives a
+	* workspace save even when `persistent` is false — the same
+	* exception `createWindowWithTerminal` relies on.
+	*/
+	resume?: Array<string>;
+	/**
 	* When `Some`, the host mints an unforgeable capability token
 	* bound to the TARGET window (the active window, or `windowId`
 	* when set) and this allowlist of command ids, and injects it
@@ -2078,7 +2095,7 @@ type ScrollbarMarker = {
 	* Priority when several markers land on the same track cell (higher
 	* wins). Defaults to 0.
 	*/
-	priority: number;
+	priority?: number;
 };
 type SpawnResult = {
 	/**

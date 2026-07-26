@@ -19,6 +19,7 @@ use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
+use fresh_core::api::PluginCommand;
 use portable_pty::{native_pty_system, PtySize};
 use tempfile::TempDir;
 
@@ -65,35 +66,38 @@ fn write_script(dir: &std::path::Path, name: &str, body: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Spawn an agent-style terminal: an ephemeral, command-carrying PTY plus the
-/// `terminal_commands` / `terminal_resume_commands` markers
-/// `create_window_with_terminal` records for an Orchestrator agent.
+/// Spawn an agent-style terminal the way the Orchestrator's "Run Agent…" does:
+/// through the plugin `createTerminal` API, with a launch command and an
+/// optional agent-resume argv.
 ///
-/// Setup only — the behaviour under test is driven through the UI below.
-fn spawn_agent_terminal(
-    window: &mut fresh::app::window::Window,
-    launch: &[&str],
-    resume: Option<&[&str]>,
-) {
-    let launch: Vec<String> = launch.iter().map(|s| s.to_string()).collect();
-    let (terminal_id, _buffer_id, _leaf) = window
-        .create_plugin_terminal(fresh::app::PluginTerminalSpec {
+/// Setup only — the behaviour under test is driven through the UI below. It
+/// deliberately goes through `PluginCommand::CreateTerminal` rather than
+/// poking `terminal_commands` / `terminal_resume_commands` directly: those
+/// maps being written *by the spawn path* is part of what these tests check.
+/// An earlier version of this helper set them by hand, which is exactly why a
+/// real bug went unnoticed — `createTerminal` recorded neither, so an agent
+/// started in the current workspace restarted as a bare shell.
+fn spawn_agent_terminal(harness: &mut EditorTestHarness, launch: &[&str], resume: Option<&[&str]>) {
+    let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::CreateTerminal {
             cwd: None,
             direction: None,
             ratio: None,
-            focus: true,
+            focus: Some(true),
+            // Ephemeral, like every plugin-created terminal. Carrying a command
+            // is what makes it a restorable *session* terminal regardless.
             persistent: false,
-            command: Some(launch.clone()),
+            window_id: None,
+            command: Some(argv(launch)),
             title: None,
-            env: std::collections::HashMap::new(),
+            resume: resume.map(argv),
+            env: None,
+            command_allowlist: None,
+            request_id: 0,
         })
         .expect("agent terminal should spawn");
-    window.terminal_commands.insert(terminal_id, launch);
-    if let Some(resume) = resume {
-        window
-            .terminal_resume_commands
-            .insert(terminal_id, resume.iter().map(|s| s.to_string()).collect());
-    }
 }
 
 /// How many tabs the tab bar shows for `title` — the observable form of
@@ -168,7 +172,7 @@ fn test_status_bar_indicator_restarts_exited_agent_by_resuming() {
 
     let mut harness = harness(project_dir);
     spawn_agent_terminal(
-        harness.editor_mut().active_window_mut(),
+        &mut harness,
         &[agent.as_str(), "--session-id", "sess-1"],
         Some(&[agent.as_str(), "--resume", "sess-1"]),
     );
@@ -245,7 +249,7 @@ fn test_palette_restarts_exited_plain_terminal_in_place() {
     );
 
     let mut harness = harness(project_dir);
-    spawn_agent_terminal(harness.editor_mut().active_window_mut(), &[&script], None);
+    spawn_agent_terminal(&mut harness, &[&script], None);
     harness.render().unwrap();
 
     // The job ran and exited. With no agent to rejoin, the indicator offers a
@@ -298,7 +302,7 @@ fn test_restart_refuses_while_process_is_running() {
     );
 
     let mut harness = harness(project_dir);
-    spawn_agent_terminal(harness.editor_mut().active_window_mut(), &[&script], None);
+    spawn_agent_terminal(&mut harness, &[&script], None);
     harness.render().unwrap();
 
     harness
@@ -374,7 +378,7 @@ fn test_exited_agent_restart_offer_survives_an_editor_restart() {
         let mut harness = session(&dir_context);
         harness.editor_mut().set_session_mode(true);
         spawn_agent_terminal(
-            harness.editor_mut().active_window_mut(),
+            &mut harness,
             &[agent.as_str(), "--session-id", "sess-1"],
             Some(&[agent.as_str(), "--resume", "sess-1"]),
         );

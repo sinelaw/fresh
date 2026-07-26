@@ -4245,6 +4245,10 @@ pub enum PluginCommand {
         /// See `CreateTerminalOptions::title`.
         #[serde(default)]
         title: Option<String>,
+        /// Argv to run on restore/restart instead of `command`.
+        /// See `CreateTerminalOptions::resume`.
+        #[serde(default)]
+        resume: Option<Vec<String>>,
         /// Extra env vars for the spawned child, on top of the
         /// inherited/activated env. See `CreateTerminalOptions::env`.
         /// `None` adds nothing.
@@ -5235,6 +5239,23 @@ pub struct CreateTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub env: Option<std::collections::HashMap<String, String>>,
+    /// Argv to run when this terminal is *restored* or *restarted*,
+    /// instead of re-running `command`. The exact counterpart of
+    /// `CreateWindowWithTerminalOptions::resume`, so an agent launched
+    /// into an existing window rejoins its conversation on restart the
+    /// same way one born in its own window does — a session started with
+    /// `claude --session-id <id>` sets `resume` to
+    /// `["claude", "--resume", "<id>"]`. `None` keeps `command` as the
+    /// restore argv. The id is a plain argv element — never interpolated
+    /// into a shell string.
+    ///
+    /// Setting `command` (with or without `resume`) also marks the
+    /// terminal as a restorable *session* terminal, so it survives a
+    /// workspace save even when `persistent` is false — the same
+    /// exception `createWindowWithTerminal` relies on.
+    #[serde(default)]
+    #[ts(optional)]
+    pub resume: Option<Vec<String>>,
     /// When `Some`, the host mints an unforgeable capability token
     /// bound to the TARGET window (the active window, or `windowId`
     /// when set) and this allowlist of command ids, and injects it

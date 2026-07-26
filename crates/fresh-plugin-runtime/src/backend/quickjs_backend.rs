@@ -6863,6 +6863,7 @@ impl JsEditorApi {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
             env: None,
             command_allowlist: None,
         });
@@ -6883,6 +6884,7 @@ impl JsEditorApi {
             persistent: opts.persistent.unwrap_or(false),
             command: opts.command,
             title: opts.title,
+            resume: opts.resume,
             env: opts.env,
             command_allowlist: opts.command_allowlist,
             request_id: id,
