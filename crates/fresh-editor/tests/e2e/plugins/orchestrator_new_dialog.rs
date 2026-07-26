@@ -1634,3 +1634,77 @@ fn run_agent_and_new_workspace_are_one_dialog() {
     harness.assert_screen_contains("ORCHESTRATOR :: New Workspace");
     harness.assert_screen_contains("Run in:");
 }
+
+/// The agent list ends in "custom…", whose whole purpose is to let the user
+/// type an arbitrary command — so the Agent Command field has to be present,
+/// and focusable, in the current-workspace shape too.
+///
+/// It wasn't. On a local *new workspace* that field lives under the Advanced
+/// fold, and both the fold and the inline fallback were gated on "creating",
+/// so running in the current workspace rendered no command box at all. Picking
+/// "custom…" then left the form claiming an agent the user had no way to name,
+/// and — because the preset hands focus to a `cmd` field that wasn't in the
+/// focus cycle — dropped focus back to the top of the form, where the next
+/// arrow key silently flipped "Launch in" to "New workspace".
+#[test]
+fn custom_agent_is_typable_when_running_in_the_current_workspace() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Flip "Launch in" to the current workspace (as `Run Agent…` opens it).
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Run Agent"))
+        .unwrap();
+
+    // The command box is here even though the workspace-shaped Advanced fold
+    // that normally holds it is not.
+    harness.assert_screen_contains("Agent Command");
+    harness.assert_screen_not_contains("Advanced");
+
+    // Walk to the agent selector and step left, which wraps the list around to
+    // "custom…" — the shortest route, and the one that used to strand focus.
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("Agent:") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the agent selector. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("custom"))
+        .unwrap();
+
+    // Focus followed the preset onto the command field, so the user can just
+    // type — and, critically, is not sitting on the "Launch in" switch.
+    let focused = focused_line(&harness.screen_to_string());
+    assert!(
+        !focused.contains("Launch in:"),
+        "picking 'custom…' must not drop focus onto the Launch-in switch — the \
+         next arrow key would change the workspace target. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And what gets typed lands in the command box rather than nowhere.
+    for ch in "zzcustomcmd".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("zzcustomcmd"))
+        .unwrap();
+}

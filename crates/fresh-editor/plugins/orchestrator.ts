@@ -6003,7 +6003,12 @@ function rebuildFormFocusCycle(): void {
   // non-null narrowing across every call below.
   const f = form;
   if (f.target === "current") {
-    cycle.push("agent_dropdown");
+    // `cmd` renders inline here (no Advanced fold in this shape), so it is a
+    // Tab stop right after the selector that fills it — and, crucially, a
+    // *reachable* focus target for the "custom…" preset, which hands focus to
+    // it. Without the entry the setFocusKey was dropped and focus fell back to
+    // the top of the form, so the next ←/→ silently flipped "Launch in".
+    cycle.push("agent_dropdown", "cmd");
     const agent = activeAgentEntry();
     if (agent?.auto) cycle.push("auto_mode");
     if (agent?.prompt) cycle.push("start_prompt");
@@ -7461,9 +7466,15 @@ function buildFormSpec(): WidgetSpec {
   }
   children.push(
     agentPresetRow(),
-    // On remote backends the command box stays inline (no Advanced fold to hold
-    // it); on local it moves into Advanced (appended in `advancedSection`).
-    ...(creating && form.backend !== "local" ? [cmdField()] : []),
+    // The command box stays inline wherever there's no Advanced fold to hold
+    // it: on remote backends, and whenever we're running in the current
+    // workspace (the fold is workspace-shaped, so it's gone entirely). Only a
+    // local *new workspace* moves it into Advanced (via `advancedSection`).
+    //
+    // It has to be reachable in current-workspace mode: the agent list ends in
+    // "custom…", and picking it with nowhere to type left the form claiming an
+    // agent the user could not actually name.
+    ...(!creating || form.backend !== "local" ? [cmdField()] : []),
     // Agent-specific controls (Auto mode / Start prompt), adaptive to the
     // resolved agent. Empty for a bare terminal / unknown command.
     ...agentOptionsFields(),
