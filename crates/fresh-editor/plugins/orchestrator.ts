@@ -8949,7 +8949,11 @@ async function launchAgentInCurrentWorkspace(
     writeFreshCliPromptFile(editor.pathJoin(cwd, teach.path));
   }
   const argv = splitAgentCmd(trimmedCmd);
-  const { launch } = resolveAgentLaunch(argv, {
+  // Keep the resume argv: it is what lets a finished agent be picked back up
+  // (status-bar "Resume claude", or a workspace restore) instead of relaunching
+  // as a brand-new conversation. Dropping it here was why an agent started in
+  // the current workspace restarted as a bare shell.
+  const { launch, resume } = resolveAgentLaunch(argv, {
     auto: opts.auto,
     prompt: opts.prompt,
     systemPrompt: teach?.via === "flag" ? FRESH_CLI_SYSTEM_PROMPT : undefined,
@@ -8959,6 +8963,7 @@ async function launchAgentInCurrentWorkspace(
     await editor.createTerminal({
       cwd,
       command: launch.length > 0 ? launch : undefined,
+      resume,
       title: launch.length > 0 ? editor.pathBasename(launch[0]) || launch[0] : undefined,
       // Always mint the capability token bound to THIS window + allowlist, so
       // `fresh --cmd ...` from inside the terminal is authorised — matching the

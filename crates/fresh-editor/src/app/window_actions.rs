@@ -459,14 +459,7 @@ impl crate::app::Editor {
         // An explicit `resume` argv (agent-resume) supersedes the launch
         // command on restore — see `restore_terminal_from_workspace`.
         if let Some(target) = self.windows.get_mut(&id) {
-            target
-                .terminal_commands
-                .insert(terminal_id, restore_command);
-            if let Some(resume_argv) = resume.filter(|a| !a.is_empty()) {
-                target
-                    .terminal_resume_commands
-                    .insert(terminal_id, resume_argv);
-            }
+            target.mark_terminal_restorable(terminal_id, Some(restore_command), resume);
         }
 
         // The switch has now committed (the spawn succeeded and the active

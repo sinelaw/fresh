@@ -1167,6 +1167,36 @@ impl Window {
         Some(new_id)
     }
 
+    /// Mark a freshly-spawned terminal as a restorable *session* terminal:
+    /// record the argv to re-run on restore, and the agent-resume argv that
+    /// supersedes it when present.
+    ///
+    /// The single writer for both maps, shared by every path that spawns an
+    /// agent — `create_window_with_terminal` (agent in its own new window) and
+    /// the plugin `createTerminal` (agent into an existing window). They used
+    /// to differ: only the former recorded anything, so an agent started in the
+    /// current workspace was invisible to workspace save *and* came back as a
+    /// bare shell when restarted.
+    ///
+    /// An empty `command` is recorded deliberately — an empty-vec entry is the
+    /// plain-shell marker that distinguishes "a session terminal running the
+    /// user's shell" from a throwaway ephemeral, and workspace capture keys on
+    /// its presence. An empty `resume` records nothing: there is no such thing
+    /// as resuming into a shell.
+    pub fn mark_terminal_restorable(
+        &mut self,
+        terminal_id: TerminalId,
+        command: Option<Vec<String>>,
+        resume: Option<Vec<String>>,
+    ) {
+        if let Some(argv) = command {
+            self.terminal_commands.insert(terminal_id, argv);
+        }
+        if let Some(argv) = resume.filter(|a| !a.is_empty()) {
+            self.terminal_resume_commands.insert(terminal_id, argv);
+        }
+    }
+
     /// The exited-terminal record for `buffer_id`, if its process has quit and
     /// the buffer is sitting in read-only scrollback awaiting a restart.
     ///

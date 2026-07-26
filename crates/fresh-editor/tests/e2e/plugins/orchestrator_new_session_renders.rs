@@ -105,6 +105,7 @@ fn new_session_renders_terminal_output_without_keypress() {
                 format!("printf {}; sleep 60", MARKER),
             ]),
             title: Some("agent".into()),
+            resume: None,
             env: None,
             command_allowlist: None,
             request_id: 0,
