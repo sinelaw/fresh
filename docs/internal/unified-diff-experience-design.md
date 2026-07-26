@@ -449,6 +449,52 @@ command log like any other mutation. (Deeper bidirectional sync — replying
 to threads, resolving conversations, live thread updates, viewed-state
 sync — remains Part II, §4.4; the flow above is complete without it.)
 
+**Underneath: the checkout question.** A PR review must never switch the
+user's working tree (the `gh pr checkout` model destroys whatever you were
+doing), but pure no-checkout review hits a wall the moment you want depth —
+`Enter` on a line, LSP navigation, running the tests. The design is a lazy
+ladder:
+
+- **Tier 0 — objects only (instant, the default).** Selecting a PR runs
+  `git fetch origin pull/N/head:refs/fresh/pr/N` and renders the whole
+  review from git blobs. Reading, folds, viewed marks, comments,
+  commit lens, and `C` submit all work; `Enter` opens *read-only
+  file-at-PR-head* buffers. Zero disk cost, zero disturbance, and no
+  foreign code is executed — most PR reviews never need more than this.
+- **Tier 1 — materialize a review worktree (one click, on demand).** The
+  scope bar carries `[⌗ Materialize]`, and any depth boundary offers it in
+  place (first LSP request, first edit attempt, "run tests"): Fresh creates
+  a linked worktree at the PR head **through the same worktree machinery
+  the orchestrator uses**, and the review re-targets it. Now `Enter` opens
+  real editable files, LSP/diagnostics/terminal work, and the buffer lens
+  shows the PR diff in-buffer. This is the moment the existing
+  workspace-trust prompt fires — trust is asked when code could first
+  *run*, not when you merely read the diff.
+- **Never — checkout in the user's main worktree.** Not offered.
+
+Review state (marks, folds, drafts) is keyed to the PR's identity — repo +
+number + head-sha version history — never to a worktree path, so
+materializing, discarding the worktree, or a force-push (new `⇅` version)
+carries the review forward intact.
+
+**Orchestrator integration: one worktree engine, one dock.** A
+materialized PR review *is* a workspace — same primitive as an agent
+session, same dock, same lifecycle (reclaimed on conclude/close if
+untouched, archivable otherwise):
+
+- The dock shows a review card — `⇵ PR #482 · 4/9 viewed · ✓ checks` —
+  and clicking it reopens the review exactly where it stood. The PR
+  picker's rows and the scope bar's checks-chip reuse the orchestrator's
+  existing PR metadata plumbing (checks, review decision, comment counts).
+- **An agent session with an attached PR is the same review seen from two
+  bases.** The session card's PR badge opens the PR scope; the scope bar
+  then offers the flip between `merge-base(PR base) ⟶ head` (what the
+  reviewer sees) and `session start ⟶ head` (what the agent did this run) —
+  one control, no separate feature.
+- The reverse door is Part II: from a PR review with open must-fix
+  comments, "open an agent session in this worktree" hands the comment set
+  to an agent working on the same checkout.
+
 History is not a separate surface: **history = the commits lens over a wide
 scope** (the `⌂ history` preset). The commit strip fills the rail, the shared
 renderer previews the selection (debounced, in-flight `git show` cancelled),
