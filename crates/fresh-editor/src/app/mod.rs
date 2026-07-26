@@ -503,8 +503,16 @@ pub struct Editor {
     /// Backend does not render a hardware cursor — always use software cursor indicators.
     software_cursor_only: bool,
 
-    /// Session name for display in status bar (session mode only)
+    /// Name of the *named* daemon whose persistence scope this editor uses
+    /// (`fresh --cmd daemon new NAME`). `None` in direct mode and for an
+    /// unnamed working-directory daemon, which shares the directory's
+    /// workspaces and recovery with a direct-mode run. Not a display field —
+    /// see `session_display_name`.
     session_name: Option<String>,
+
+    /// Status-bar label for a daemon-backed editor: the daemon's name, or the
+    /// working directory for an unnamed one. Cosmetic only.
+    session_display_name: Option<String>,
 
     /// Pending escape sequences to send to client (session mode only)
     /// These get prepended to the next render output

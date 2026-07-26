@@ -629,6 +629,7 @@ impl Editor {
             session_mode: false,
             software_cursor_only: false,
             session_name: None,
+            session_display_name: None,
             pending_escape_sequences: Vec::new(),
             restart_with_dir: None,
             last_window_title: None,
