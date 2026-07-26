@@ -4931,6 +4931,13 @@ function dockMenuEnterConfirm(action: "archive" | "delete"): void {
   editor.floatingPanelControl(dockMenuPanel.id(), "center", 0);
   editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
   renderDockMenu();
+  // Pin Cancel, exactly as the modal picker's `enterConfirm` does. Today the
+  // host would land here anyway (the outgoing `ctx-delete` focus key isn't
+  // tabbable in the confirm spec, so it falls back to the first one), but
+  // relying on that makes the safe default a property of the button *order* —
+  // swap the pair and a destructive action becomes one Enter away. State the
+  // intent instead of inheriting it.
+  dockMenuPanel.setFocusKey("confirm-cancel");
 }
 
 function closeDockContextMenu(): void {

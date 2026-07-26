@@ -750,11 +750,10 @@ impl EditorServer {
             self.workspace_trust
                 .set_root(Some(self.config.working_dir.clone()));
             self.workspace_trust.set_store(Some(
-                crate::services::workspace_trust::TrustStore::for_project_dir(
-                    &self
-                        .config
-                        .dir_context
-                        .project_state_dir(&self.config.working_dir),
+                crate::services::workspace_trust::store_for_workspace(
+                    &self.config.dir_context,
+                    self.current_authority.filesystem.as_ref(),
+                    &self.config.working_dir,
                 ),
             ));
             // New project ⇒ the old env recipe no longer applies; deactivate

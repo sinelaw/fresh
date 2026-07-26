@@ -140,19 +140,19 @@ impl WorkspaceTrust {
         Self::new(None, TrustLevel::Trusted)
     }
 
-    /// Build a **per-session** trust handle for `root`, backed by that
-    /// project's on-disk store at `project_state_dir`, adopting whatever level
-    /// the user previously recorded for it (Restricted by default). Each
-    /// session owns one of these, so trusting one project never raises the
-    /// live trust level another open session's spawns are gated against —
-    /// they read distinct handles. The shared "remember this folder" registry
-    /// is the per-project store itself. See
-    /// `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
-    pub fn for_session(root: &Path, project_state_dir: &Path) -> Arc<Self> {
+    /// Build a **per-session** trust handle for `root`, backed by the on-disk
+    /// store at `trust_state_dir` (the *owning repo's* state dir — see
+    /// [`trust_owner_root`]), adopting whatever level the user previously
+    /// recorded for it (Restricted by default). Each session owns one of
+    /// these, so trusting one project never raises the live trust level
+    /// another open session's spawns are gated against — they read distinct
+    /// handles. The shared "remember this folder" registry is the per-project
+    /// store itself. See `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
+    pub fn for_session(root: &Path, trust_state_dir: &Path) -> Arc<Self> {
         let trust = Self::new(Some(root.to_path_buf()), TrustLevel::Restricted);
         // `set_store` adopts the project's persisted level (or the safe
         // Restricted default for an undecided project).
-        let store = TrustStore::for_project_dir(project_state_dir);
+        let store = TrustStore::for_project_dir(trust_state_dir);
         let decided = store.is_decided();
         trust.set_store(Some(store));
         // For an *undecided* project, match the boot session's
@@ -410,6 +410,83 @@ impl TrustStore {
         std::fs::write(&tmp, json.as_bytes())?;
         std::fs::rename(&tmp, &self.path)?;
         Ok(())
+    }
+}
+
+/// The folder whose recorded decision governs `root`.
+///
+/// For a **linked git worktree** that is the repo's *main* worktree, not the
+/// checkout: `git worktree add` produces a second working copy of the same
+/// repository, with the same manifests, the same build scripts and the same
+/// language servers. Asking the trust question again per worktree asks the
+/// user the same question about the same code, and an agent-per-worktree
+/// workflow (the Orchestrator's whole point) turns that into a prompt on every
+/// new session. One repo, one decision.
+///
+/// Everything else — the main worktree, a plain directory, a submodule —
+/// answers with `root` itself, so the mapping is identity for every workspace
+/// that isn't a linked worktree.
+///
+/// Detection is the same one git uses and needs no subprocess: a linked
+/// worktree's `.git` is a *file* holding `gitdir: <per-worktree git dir>`, and
+/// that dir holds a `commondir` file pointing at the shared `.git`. The main
+/// worktree's root is that shared dir's parent. A submodule also has a `.git`
+/// file but its git dir has **no** `commondir`, so it falls through to
+/// identity rather than being wrongly folded into the superproject (guideline
+/// 9: recover on the specific shape, not on any `.git` file).
+///
+/// Reads route through `fs` so an SSH/container workspace resolves against the
+/// host that actually holds the repo.
+pub fn trust_owner_root(fs: &dyn crate::model::filesystem::FileSystem, root: &Path) -> PathBuf {
+    linked_worktree_main_root(fs, root).unwrap_or_else(|| root.to_path_buf())
+}
+
+/// The per-project trust store that governs `root`, resolved through
+/// [`trust_owner_root`]. The single place a workspace root becomes a
+/// `trust.json` path — every caller that anchors trust persistence goes
+/// through here so worktree inheritance can't be forgotten at one of them.
+///
+/// Note this deliberately does *not* apply to the project's **env** store:
+/// a worktree is a separate checkout that may carry its own `.venv`, so env
+/// recipes stay keyed on the workspace's own directory.
+pub fn store_for_workspace(
+    dir_context: &crate::config_io::DirectoryContext,
+    fs: &dyn crate::model::filesystem::FileSystem,
+    root: &Path,
+) -> TrustStore {
+    TrustStore::for_project_dir(&dir_context.project_state_dir(&trust_owner_root(fs, root)))
+}
+
+/// Resolve `root` to the main worktree of the repository it belongs to, or
+/// `None` when `root` is not a linked worktree. See [`trust_owner_root`].
+fn linked_worktree_main_root(
+    fs: &dyn crate::model::filesystem::FileSystem,
+    root: &Path,
+) -> Option<PathBuf> {
+    // `.git` as a regular file (rather than a directory) is the marker of a
+    // worktree or submodule checkout. `read_file` on a directory errors, so
+    // this doubles as the file/dir test without a second round-trip.
+    let text = String::from_utf8(fs.read_file(&root.join(".git")).ok()?).ok()?;
+    let git_dir = resolve_git_pointer(root, text.trim().strip_prefix("gitdir:")?.trim());
+    // Only a *linked worktree* git dir carries `commondir`; a submodule's does
+    // not, and the main worktree never reaches here (its `.git` is a dir).
+    let common = String::from_utf8(fs.read_file(&git_dir.join("commondir")).ok()?).ok()?;
+    let common_dir = resolve_git_pointer(&git_dir, common.trim());
+    // The shared git dir is `<main worktree>/.git`; its parent is the root.
+    let main_root = lexical_normalize(common_dir.parent()?);
+    // A degenerate pointer that resolves back to this checkout is identity —
+    // report `None` so the caller keeps `root` untouched.
+    (main_root != lexical_normalize(root)).then_some(main_root)
+}
+
+/// Resolve a git pointer path (the target of a `.git` file or of a
+/// `commondir`), which git writes either absolute or relative to `base`.
+fn resolve_git_pointer(base: &Path, target: &str) -> PathBuf {
+    let target = Path::new(target);
+    if target.is_absolute() {
+        lexical_normalize(target)
+    } else {
+        lexical_normalize(&base.join(target))
     }
 }
 

@@ -262,13 +262,24 @@ impl crate::app::Editor {
     /// blessed factory. Each call mints handles owned by exactly one session,
     /// so a trust decision or env activation in one window can never leak into
     /// another. Every per-session window construction goes through this.
+    ///
+    /// Trust is keyed on the *repo* rather than on `root`: a session opened on
+    /// a linked git worktree is born under the main worktree's recorded
+    /// decision, so forking a worktree per agent doesn't re-ask the trust
+    /// question for code the user already vouched for. Env stays keyed on
+    /// `root` (a worktree can carry its own `.venv`).
     pub(crate) fn session_scope_for(
         &self,
         root: &std::path::Path,
     ) -> crate::services::authority::SessionScope {
+        let trust_owner = crate::services::workspace_trust::trust_owner_root(
+            self.authority().filesystem.as_ref(),
+            root,
+        );
         crate::services::authority::SessionScope::for_root(
             root,
             &self.dir_context.project_state_dir(root),
+            &self.dir_context.project_state_dir(&trust_owner),
         )
     }
 
@@ -1567,13 +1578,9 @@ impl crate::app::Editor {
         let root = descriptor.root.clone();
         // Same per-session local scope a boot-discovered local shell gets:
         // its own trust + env handles, never a clone of the previous
-        // window's.
-        let authority = crate::services::authority::Authority::local_scoped(
-            crate::services::authority::SessionScope::for_root(
-                &root,
-                &self.dir_context.project_state_dir(&root),
-            ),
-        );
+        // window's. Routed through the blessed factory so this shell inherits
+        // the worktree→repo trust keying too.
+        let authority = self.local_session_authority(&root);
         let mut window = Window::new(
             id,
             descriptor.label.clone(),

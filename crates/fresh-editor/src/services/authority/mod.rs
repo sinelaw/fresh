@@ -374,8 +374,14 @@ impl SessionScope {
     /// is trusted, a previously-activated recipe is restored so the session
     /// boots already in its env (no auto-activation restart); otherwise it
     /// starts inactive. Each call yields handles owned by exactly one session.
-    pub fn for_root(root: &Path, project_state_dir: &Path) -> Self {
-        let trust = WorkspaceTrust::for_session(root, project_state_dir);
+    ///
+    /// The two state dirs differ for a linked git worktree: `project_state_dir`
+    /// is the worktree's own (its env recipe, its `.venv`), while
+    /// `trust_state_dir` is the *repo's* — every checkout of one repository
+    /// shares a single trust decision. See
+    /// [`trust_owner_root`](crate::services::workspace_trust::trust_owner_root).
+    pub fn for_root(root: &Path, project_state_dir: &Path, trust_state_dir: &Path) -> Self {
+        let trust = WorkspaceTrust::for_session(root, trust_state_dir);
         let trusted = trust.level() == crate::services::workspace_trust::TrustLevel::Trusted;
         Self {
             trust,

@@ -1356,12 +1356,24 @@ impl Editor {
         // editor fires when the level changes (see env-manager.ts). One
         // decision, one prompt, one place it is recorded.
         //
-        // A decision the user explicitly recorded is always honored — this
-        // branch only fires for undecided projects.
-        let store = crate::services::workspace_trust::TrustStore::for_project_dir(
-            &self.dir_context.project_state_dir(self.working_dir()),
+        // Anchor persistence before consulting it, so the gate and the live
+        // handle can never disagree about *which* file records this
+        // workspace's decision. `store_for_workspace` resolves a linked git
+        // worktree to the repo that owns it, so every checkout of one
+        // repository shares a single decision — and `set_store` adopts that
+        // level, which is what makes a worktree open already-trusted instead
+        // of re-asking. Idempotent: re-anchoring the same store is a no-op.
+        //
+        // A decision the user explicitly recorded is always honored — the rest
+        // of this function only runs for undecided projects.
+        let store = crate::services::workspace_trust::store_for_workspace(
+            &self.dir_context,
+            self.authority().filesystem.as_ref(),
+            self.working_dir(),
         );
-        if store.is_decided() {
+        let decided = store.is_decided();
+        self.authority().workspace_trust.set_store(Some(store));
+        if decided {
             return; // respect a decision the user already recorded
         }
 
@@ -1562,8 +1574,9 @@ impl Editor {
     }
 
     /// Set the radio selection to an absolute index (0=Trust, 1=Restricted,
-    /// 2=Block) without confirming.
-    fn set_workspace_trust_selection(&mut self, index: usize) {
+    /// 2=Block) without confirming. Shared by the keyboard mnemonics and the
+    /// mouse hit-test — both select, only [ OK ] / Enter commits.
+    pub(crate) fn set_workspace_trust_selection(&mut self, index: usize) {
         if let Some(popup) = self.global_popups.top_mut() {
             if let crate::view::popup::PopupContent::List { selected, .. } = &mut popup.content {
                 *selected = index.min(2);
