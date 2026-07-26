@@ -360,38 +360,47 @@ triangles fold, verb buttons act, the scrollbar map jumps on click.
   receipts after mutations: `✓ staged hunk — git apply --cached  [Z Undo]`
   (the `[Z Undo]` is a button).
 
-### 3.3 The scope bar: presets, lens, and the A/B control
+### 3.3 The scope bar: a short list of scopes, riding the orchestrator
 
-Opening **Review** with no argument opens the workspace in *scope-choosing
-state* — same surface, scope bar focused, every row a clickable preset:
+Simplification rule: **the review mechanism keeps its option count low by
+letting the workspaces orchestrator carry the flows.** Workspaces answer
+*where*; the review chooser only answers *what am I comparing, here*. There
+is no cross-workspace scope: to review another workspace's work — an agent
+session, a checked-out PR — you go to that workspace (one dock click) and
+open Review there. **The dock is the review inbox**: cards sort
+waiting-on-you first and carry progress badges (`⚙ auth-refactor · 7 left
+▂▂▅▇`), so "which of my five agents next" is answered where the sessions
+already live, not by a parallel list inside the chooser.
+
+Opening **Review** shows the chooser — four rows and a prompt:
 
 ```
  ⟨ choose scope… ⟩                                                              · review
 ─────────────────────────────────────────────────────────────────────────────────────────
-     ★  feature/eval vs main       3 commits · 4 files · +56 −7        [Enter Open]
-     ⚙  agent: auth-refactor       ● waiting on you · 7 left  ▂▂▅▇     [Enter Open]
-     ⚙  agent: docs-pass           ✓ idle · 2 left            ▂▁▁▂
-     ⇵  PR #482 "retry logic"      review requested · 9 files · +214 −40
+     ★  feature/eval vs main       3 commits · 4 files · +56 −7          [⏎ Open]
      ●  working tree               1 staged · 2 unstaged · 1 untracked
-     ⟳  HEAD~3..HEAD               reviewed yesterday · 2 files changed since
-     ⌗  stash@{0}                  "wip: tokenizer"
-     ⌂  history                    browse commits · any range · blame
+     ⇵  pull requests…             1 review requested · 4 open
+     ⌂  history                    commits · ranges · blame
 
      revspec:  A..B · A...B · <sha> · stash@{N} · <branch> · PR # or URL
      > ▌
 ─────────────────────────────────────────────────────────────────────────────────────────
- ↑↓/click choose · a/b set an endpoint by hand · agent sessions sorted "waiting on you"
+ scopes are local to this workspace — the dock is the cross-workspace review inbox
 ```
 
-- **Agent sessions sort first when they're waiting on you**, with per-session
-  progress sparklines — "which of my five agents next" is answered at entry.
-- Branch presets use **merge-base against the configured upstream** (never
-  the base tip, never hardcoded `origin/main`); each preset row's endpoints
-  can be overridden (`a`/`b`, or click an endpoint) — the A/B picker is
-  first-class, not buried.
-- **Reopening a previously reviewed scope defaults to "since my last
-  review"** (the interdiff); the full range is one click on the base
-  segment away. This is the resume banner's question, answered by default.
+- **The ★ row is context-aware** — it is the workspace's own story. In an
+  agent workspace it reads `★ this session's changes · session start ⟶ now
+  · 9 to review` (keep/reject verbs); on a feature branch,
+  `★ feature/eval vs main`; and wherever a previously reviewed scope
+  exists, it resumes **"since my last review"** by default (full range one
+  click on the base segment away).
+- Branch scopes use **merge-base against the configured upstream** (never
+  the base tip, never hardcoded `origin/main`); any scope's endpoints can
+  be overridden (`a`/`b`, or click an endpoint in the scope bar) — the A/B
+  picker is first-class, not buried.
+- Stashes, ranges, and single commits are **revspecs, not rows** — the
+  prompt handles `stash@{0}` exactly like `HEAD~3..HEAD`. Four rows is the
+  whole menu.
 
 The **lens menu** (`l`, or click `⟨flat ▾⟩`):
 
@@ -407,10 +416,9 @@ In the commits lens, a force-push does not destroy context: the commit strip
 grows a **`⇅ v2→v3 interdiff`** pseudo-commit — "what changed between the
 version I reviewed and this push" as just another selectable section.
 
-**Reviewing a GitHub PR is a first-class scope.** Clicking the `⇵ PR` preset
-(or typing a PR number/URL into the revspec prompt) opens the PR picker —
-open PRs from the repo's forge, review-requested first, then yours, then the
-rest:
+**Reviewing a GitHub PR.** `⇵ pull requests…` (or typing a PR number/URL
+into the prompt) opens the PR picker — review-requested first, then yours,
+then the rest:
 
 ```
  ┌ pull requests · sinelaw/fresh ─────────────────────────── [/ filter] ┐
@@ -418,17 +426,44 @@ rest:
  │   #479  extract clock trait                ada   ✓ approved by you   │
  │   #475  bump deps                          bot   3 checks failing    │
  │   #468  token store groundwork             you   2 reviews pending   │
- └ Enter/click review · no checkout needed — your worktree is untouched ┘
+ └ Enter/click to review ───────────────────────────────────────────────┘
 ```
 
-Selecting one fetches `refs/pull/N/head` (no checkout — the working tree is
-untouched), sets the scope to `merge-base(PR base) ⟶ PR head`, and titles
-the review: `⟨ ⇵ PR #482 · retry logic ⟩`. Existing PR review threads
-import as anchored comments (distinguished by author badge); your own
-comments are local drafts with severity, exactly as everywhere else. The
-commits lens, viewed marks, folds, and resume all work unchanged — and a
-force-push to the PR shows up as the `⇅` interdiff pseudo-commit rather
-than a reset review.
+Selection rides the orchestrator:
+
+- **If this workspace already has the PR's branch checked out** (typical
+  when you're in an agent session reviewing its own PR), the review simply
+  opens here, in place.
+- **Otherwise, the offer is direct:**
+
+```
+ ┌ PR #482 · retry logic ──────────────────────────────────────────────┐
+ │ This PR is not checked out in this workspace.                       │
+ │ [⇱ Checkout in a new workspace]     [👁 Read here without checkout] │
+ └─────────────────────────────────────────────────────────────────────┘
+```
+
+- **Checkout in a new workspace** — the primary, proper path: the
+  orchestrator creates a workspace checked out at the PR branch (its
+  standard worktree creation and trust flow — trust is asked here, where
+  code could first run), and Review opens inside it, scoped
+  `merge-base(PR base) ⟶ PR head`. The dock gains the card
+  (`⇵ PR #482 · 4/9 · ✓ checks`); LSP, tests, editing, and the buffer lens
+  all just work, because it is an ordinary workspace.
+- **Read here without checkout** — the quick look: the review renders from
+  fetched git objects (`refs/fresh/pr/N`), touching nothing on disk and
+  executing no foreign code. Reading, marks, comments, the commits lens,
+  and `C` submit all work; `Enter` opens read-only file-at-PR-head buffers.
+  Hitting a depth boundary — first LSP request, an edit attempt, "run
+  tests" — re-offers `[⇱ Checkout in a new workspace]` from the scope bar.
+- **Never**: checking out over the user's current work.
+
+Existing PR review threads import as anchored comments (author-badged);
+your own comments are local drafts with severity, exactly as everywhere
+else. Review state (marks, folds, drafts) is keyed to the PR's identity —
+repo + number + head-sha version history — never to a worktree path, so the
+same review carries intact across read-only ⇄ checked-out and across
+force-pushes (each push a `⇅` interdiff version).
 
 **`C` conclude on a PR scope = submit the review to GitHub.** The conclude
 surface shows the verdict choice, the summary, and every draft that will be
@@ -449,54 +484,16 @@ command log like any other mutation. (Deeper bidirectional sync — replying
 to threads, resolving conversations, live thread updates, viewed-state
 sync — remains Part II, §4.4; the flow above is complete without it.)
 
-**Underneath: the checkout question.** A PR review must never switch the
-user's working tree (the `gh pr checkout` model destroys whatever you were
-doing), but pure no-checkout review hits a wall the moment you want depth —
-`Enter` on a line, LSP navigation, running the tests. The design is a lazy
-ladder:
-
-- **Tier 0 — objects only (instant, the default).** Selecting a PR runs
-  `git fetch origin pull/N/head:refs/fresh/pr/N` and renders the whole
-  review from git blobs. Reading, folds, viewed marks, comments,
-  commit lens, and `C` submit all work; `Enter` opens *read-only
-  file-at-PR-head* buffers. Zero disk cost, zero disturbance, and no
-  foreign code is executed — most PR reviews never need more than this.
-- **Tier 1 — materialize a review worktree (one click, on demand).** The
-  scope bar carries `[⌗ Materialize]`, and any depth boundary offers it in
-  place (first LSP request, first edit attempt, "run tests"): Fresh creates
-  a linked worktree at the PR head **through the same worktree machinery
-  the orchestrator uses**, and the review re-targets it. Now `Enter` opens
-  real editable files, LSP/diagnostics/terminal work, and the buffer lens
-  shows the PR diff in-buffer. This is the moment the existing
-  workspace-trust prompt fires — trust is asked when code could first
-  *run*, not when you merely read the diff.
-- **Never — checkout in the user's main worktree.** Not offered.
-
-Review state (marks, folds, drafts) is keyed to the PR's identity — repo +
-number + head-sha version history — never to a worktree path, so
-materializing, discarding the worktree, or a force-push (new `⇅` version)
-carries the review forward intact.
-
-**Orchestrator integration: one worktree engine, one dock.** A
-materialized PR review *is* a workspace — same primitive as an agent
-session, same dock, same lifecycle (reclaimed on conclude/close if
-untouched, archivable otherwise):
-
-- The dock shows a review card — `⇵ PR #482 · 4/9 viewed · ✓ checks` —
-  and clicking it reopens the review exactly where it stood. The PR
-  picker's rows and the scope bar's checks-chip reuse the orchestrator's
-  existing PR metadata plumbing (checks, review decision, comment counts).
-- **An agent session with an attached PR is the same review seen from two
-  bases.** The session card's PR badge opens the PR scope; the scope bar
-  then offers the flip between `merge-base(PR base) ⟶ head` (what the
-  reviewer sees) and `session start ⟶ head` (what the agent did this run) —
-  one control, no separate feature.
-- The reverse door is Part II: from a PR review with open must-fix
-  comments, "open an agent session in this worktree" hands the comment set
-  to an agent working on the same checkout.
+**An agent session with an attached PR is the same review seen from two
+bases.** The session card's PR badge opens the PR scope in that workspace;
+the scope bar then offers the flip between `merge-base(PR base) ⟶ head`
+(what a reviewer sees) and `session start ⟶ now` (what the agent did this
+run) — one control, no separate feature. The reverse door is Part II: from
+a PR review with open must-fix comments, "open an agent session in this
+worktree" hands the comment set to an agent on the same checkout.
 
 History is not a separate surface: **history = the commits lens over a wide
-scope** (the `⌂ history` preset). The commit strip fills the rail, the shared
+scope** (the `⌂ history` row). The commit strip fills the rail, the shared
 renderer previews the selection (debounced, in-flight `git show` cancelled),
 `Enter` narrows scope to that commit, `v` over two commits arms a range. A
 `⌕` query on the rail filters Sublime-Merge-style (`author:` `path:`
@@ -716,9 +713,10 @@ Agent-scope specifics, upgraded from the blind designs (Appendix A):
 - **Leftover-noise findings** (debug prints, stray TODO/FIXME) render as `⚠`
   tags on hunks and `!` marks in the rail — display only; talking to the
   agent about them is Part II.
-- Multiple sessions: the scope-choosing state sorts "waiting on you" first
-  (§3.3), and `]s` / `[s` cycle between sessions with work pending without
-  visiting the picker.
+- Multiple sessions: **the dock is the inbox** — cards sort waiting-on-you
+  first with progress badges; reviewing another session means clicking its
+  card and opening Review there (§3.3). No cross-session cycling keys, no
+  parallel session list inside the review.
 
 ### 3.10 The mouse story (parity, stated once)
 
@@ -780,7 +778,7 @@ designed for the web.
 This design's skeleton was validated by two blind independent redesigns
 (Appendix A) that converged on the same core; their distinctive winning
 ideas are folded in above (conclude verb, escalation rule, runnable help,
-git-object undo journal, waiting-on-you ordering, narrative agent order,
+git-object undo journal, waiting-on-you ordering (in the dock), narrative agent order,
 live-update queue, symbol-graph guard, last-review default target, interdiff
 pseudo-commit, noise-free denominator, command log, zoom model, wide-screen
 anchored comment rail). The earlier chrome-conservative draft remains in git
@@ -801,7 +799,9 @@ dropdowns, verb buttons, inline warnings, badges, rail cycling, note
 jumping, hover checkboxes, and the conclude flow. No key is pressed at any
 point. (Keys shown on buttons are the accelerators the mouse path teaches.)
 
-**Frame 1 — ordinary editing.** The menu bar carries a `Review` menu.
+**Frame 1 — ordinary editing, inside the `auth-refactor` agent workspace**
+(entered earlier by clicking its card in the orchestrator dock — the dock is
+how you reach any session's review). The menu bar carries a `Review` menu.
 
 ```
  File   Edit   View   Selection   Go   Review   LSP   Help
@@ -813,7 +813,7 @@ point. (Keys shown on buttons are the accelerators the mouse path teaches.)
    5 │ pub fn lex(input: &str) -> Vec<Token> {
    6 │     let mut out = Vec::new();
  ──────────────────────────────────────────────────────────────────────────────────────────
- Trusted  Local  Ln 1, Col 1                                              LF  UTF-8  Rust
+ Trusted  auth-refactor  Ln 1, Col 1                                      LF  UTF-8  Rust
 ```
 
 *User clicks `Review` in the menu bar.*
@@ -825,7 +825,7 @@ point. (Keys shown on buttons are the accelerators the mouse path teaches.)
  lexer.rs ×   +                       │ Open Review…             Ctrl+R  │
    1 │ //! Lexer for the toy calcul…  │ Working Tree                     │
    2 │ #[derive(Debug, PartialEq)]    │ Branch vs Base                   │
-   3 │ pub enum Token { Num(i64), P…  │ Agent Sessions                ▸  │
+   3 │ pub enum Token { Num(i64), P…  │ Pull Requests…                   │
    4 │                                │ History                          │
    5 │ pub fn lex(input: &str) -> V…  │ ─────────────────────────────────│
    6 │     let mut out = Vec::new();  │ Next Change               Alt+↓  │
@@ -835,27 +835,25 @@ point. (Keys shown on buttons are the accelerators the mouse path teaches.)
 
 *User clicks `Open Review…`.*
 
-**Frame 3 — scope-choosing state.** Every row is a button; sessions with
-work pending sort first.
+**Frame 3 — scope-choosing state.** Four rows and a prompt; the ★ row is
+this workspace's own story (an agent session here, so: the session's
+changes since it started).
 
 ```
  ⟨ choose scope… ⟩                                                              · review
 ──────────────────────────────────────────────────────────────────────────────────────────
-     ⚙  agent: auth-refactor       ● waiting on you · 9 to review  ▂▂▅▇   [⏎ Open]
-     ⚙  agent: docs-pass           ✓ idle · 2 left                 ▂▁▁▂
-     ★  feature/eval vs main       3 commits · 4 files · +56 −7
-     ●  working tree               1 staged · 2 unstaged · 1 untracked
-     ⟳  HEAD~3..HEAD               reviewed yesterday · 2 files changed since
-     ⌗  stash@{0}                  "wip: tokenizer"
-     ⌂  history                    browse commits · any range · blame
+     ★  this session's changes     session start ⟶ now · 9 to review     [⏎ Open]
+     ●  working tree               uncommitted only · 2 files
+     ⇵  pull requests…             this session's PR #497 · checks ✓
+     ⌂  history                    commits · ranges · blame
 
-     revspec:  A..B · A...B · <sha> · stash@{N} · <branch>
+     revspec:  A..B · A...B · <sha> · stash@{N} · <branch> · PR # or URL
      > ▌
 ──────────────────────────────────────────────────────────────────────────────────────────
- click a row to open it · click an endpoint on any row to override base or target
+ scopes are local to this workspace — the dock is the cross-workspace review inbox
 ```
 
-*User clicks the `⚙ agent: auth-refactor` row.*
+*User clicks the `★ this session's changes` row.*
 
 **Frame 4 — the workspace, agent scope, flat lens.** The focused hunk shows
 its verb buttons; the rail shows kept/pending files.
@@ -1133,8 +1131,9 @@ Sequenced so every phase ships a visible coherence win and nothing regresses.
   position, drafts) + "since last review" watermark.
 - Agent scope: Orchestrator "Review Session's Changes" (base = recorded session
   start ref), keep/reject verbs (file-default granularity + related-changes
-  nudge), diffstat-pill-as-entry-point, agent sessions as scope presets,
-  leftover-noise scan. (No agent communication yet — that's Phase 4.)
+  nudge), diffstat-pill-as-entry-point, review opened from the session's
+  workspace with dock cards as the inbox, leftover-noise scan. (No agent
+  communication yet — that's Phase 4.)
 - Buffer Lens unification: one reference picker (absorb git-gutter into the
   live-diff hunk model), agent-baseline auto-swap.
 - Web parity for the workspace (§3.12): complete their scene projections so
@@ -1170,7 +1169,7 @@ default (budgeted opt-in only), replacing merge_conflict's inline flow.
 | Git Log / Git Log (Current File) | *history* scope preset (commits lens over a wide scope; file-scoped variant) |
 | Side-by-Side Diff (per-file command) | the zoomed-file `\|` layout; standalone command stays as a thin alias |
 | Live Diff + Git Gutter + Diff Chunk Nav | **Buffer Lens** (one hunk model, one reference picker, one nav) |
-| (nothing) | *agent session* scope preset + the scope-choosing state |
+| (nothing) | review opened inside the session's workspace (dock = inbox) + the scope-choosing state |
 
 Docs pages, palette naming (`Review:` prefix family), and the keybinding editor's
 `review` context all follow the same rename.
