@@ -1350,7 +1350,6 @@ impl crate::app::Editor {
         if self.session_keepalives.remove(&id).is_some() {
             tracing::info!("close_window: dropped remote session keepalive for window {id}");
         }
-
         self.plugin_manager
             .read()
             .unwrap()
@@ -1489,13 +1488,8 @@ impl crate::app::Editor {
         // terminals spawn over SSH/kube), or seed an empty layout when there is
         // no saved workspace. Either constructor takes the authority by value —
         // the window is born owning its real backend.
-        let workspace = if let Some(name) = self.session_name.clone() {
-            crate::workspace::Workspace::load_session(&name, &root)
-                .ok()
-                .flatten()
-        } else {
-            crate::workspace::Workspace::load(&root).ok().flatten()
-        };
+        // One store, whatever launched this editor — see `save_workspace_for`.
+        let workspace = crate::workspace::Workspace::load(&root).ok().flatten();
         let mut window = match workspace {
             Some(ws) => crate::app::window::Window::from_workspace(
                 id,
