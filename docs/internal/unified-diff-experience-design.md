@@ -286,9 +286,12 @@ to trust it.
    every button shows its key, every menu prints its bindings, right-click
    opens the same verbs anywhere. The mouse path teaches the keyboard path.
    (The recurring TUI discoverability failure, inverted.)
-4. **One list rail, many projections.** A single collapsible navigator shows
-   *files*, *commits*, or *notes* — cycled, never three fixed panels. The
-   rail is a map, not a second document.
+4. **One list rail, many projections — collapsed by default.** A single
+   navigator shows *files*, *commits*, or *notes* — cycled, never three
+   fixed panels. It is a map, not a second document, so the default view is
+   the diff at full width with a visible `⟨▸ files⟩` toggle; the choice
+   sticks per scope. (Progressive disclosure: the obvious thing first,
+   everything else one labeled control away.)
 5. **The stream is a section document.** Typed, foldable sections with
    persistent fold state, depth presets, sticky context header, delta-grade
    bodies (syntax + word-level emphasis, context headers, copy-safe text).
@@ -323,42 +326,80 @@ but owning its area — no inner tab bars or toolbars). Everything drawn below
 is clickable: scope-bar segments are buttons, `▾` marks a dropdown, section
 triangles fold, verb buttons act, the scrollbar map jumps on click.
 
+**The default view is the diff and nothing else.** The rail starts
+collapsed, so opening a review puts the user straight into the thing they
+came for — a full-width, syntax-highlighted, scrollable diff — with the
+scope bar's `⟨▸ files⟩` button (or `\`) one click away when a map is wanted.
+The default is deliberately the simplest complete surface: scope bar,
+stream, map strip, context line.
+
 ```
- ⟨ main ⟶ feature/eval ⟩ · ⟨flat ▾⟩   ▓▓▓▓░░░░░ 4/9   [/ filter] [o view] [? help]  eval review
-──────────────────────────────────────────────────────────────────────────────────────────────
- files ⟨\ ▾⟩      │  src/eval.rs · pub fn eval                                             ▲
-                  │ ─────────────────────────────────────────────────────────────────────  █
-  ✓ parser.rs     │    4   4   pub fn eval(tokens: &[Token]) -> i64 {                      █
-  ✓ lexer.rs   ¹  │        5       let mut acc: i64 = 0;                                   ▒
- ›  eval.rs       │    5   6       for t in tokens {                                       ▒
-    pretty.rs     │    6       −       if let Token::Num(n) = t { acc += n; }              ░
-    README.md     │        7   +       if let Token::Num(n) = t {                          ░
- ▸ noise (2)      │        8   +           acc = acc.wrapping_add(*n);                     ░
-                  │        9   +       }                                                   ░
-  4/9 viewed      │  [c Comment] [s Stage] [d Discard] [v Lines…]            hunk 5/12     ░
-─────────────────────────────────────────────────────────────────────────────────────────────
- eval.rs · hunk 5/12 · Space = viewed & next · Enter = open in buffer                  [RO]
+ ⟨▸ files⟩ ⟨ main ⟶ feature/eval ⟩ · ⟨flat ▾⟩  ▓▓▓▓░░░░ 4/9  [/][o][?]      eval review
+──────────────────────────────────────────────────────────────────────────────────────────
+  src/eval.rs · pub fn eval                                        [✓ Reviewed] [▾]     ▲
+ ─────────────────────────────────────────────────────────────────────────────────────  █
+    4   4   pub fn eval(tokens: &[Token]) -> i64 {                                      █
+         5       let mut acc: i64 = 0;                                                  ▒
+    5   6       for t in tokens {                                                       ▒
+    6       −       if let Token::Num(n) = t { acc += n; }                              ░
+         7   +       if let Token::Num(n) = t {                                         ░
+         8   +           acc = acc.wrapping_add(*n);                                    ░
+         9   +       }                                                                  ░
+  [c Comment] [s Stage] [d Discard] [v Lines…]                          hunk 5/12       ░
+                                                                                        ░
+ ▸ src/pretty.rs   +12 −0                                                               ░
+ ▸ README.md       +2 −0                                                                ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ eval.rs · hunk 5/12 · Space = viewed & next · Enter = open in buffer               [RO]
 ```
 
-- **Scope bar** (line 1): the comparison (each side a button opening its
-  picker), the lens dropdown, the burn-down gauge (click → filter menu),
-  filter / view / help buttons with their keys, and the review's name.
-- **Navigator rail** (left; the `⟨\ ▾⟩` control cycles files → commits →
-  notes → hidden, by click or key): viewed ✓, comment badges, cursor’s file
-  marked; auto-quarantined `noise` group (generated/lock/format-only) folded
-  at the bottom and **excluded from the 4/9 denominator**. Hovering a row
-  reveals its own small verb buttons (viewed-toggle, open).
-- **Stream** (center): the section document. Sticky file·function header —
-  which carries the current file's `[✓ Reviewed]` button and fold triangle,
-  so the primary scroll-and-mark loop (§3.6) never leaves the stream; the
-  focused hunk grows its **verb-button row** — click or key, same thing.
-  Right-click any line/hunk/file opens a context menu listing the same verbs
-  with their keys printed (menus teach the keymap).
-- **Scrollbar map** (right): hunk positions, comment marks, viewed regions
-  (dim); click/drag to jump.
+*Clicking `⟨▸ files⟩` (or `\`) slides the rail in; it becomes `⟨▾ files⟩`
+and clicking again collapses it. The choice sticks per scope, so a user who
+prefers the rail always open only says so once.*
+
+```
+ ⟨▾ files⟩ ⟨ main ⟶ feature/eval ⟩ · ⟨flat ▾⟩  ▓▓▓▓░░░░ 4/9  [/][o][?]      eval review
+──────────────────────────────────────────────────────────────────────────────────────────
+ files ⟨\ ▾⟩      │  src/eval.rs · pub fn eval                     [✓ Reviewed] [▾]    ▲
+                  │ ────────────────────────────────────────────────────────────────  █
+  ✓ parser.rs     │    4   4   pub fn eval(tokens: &[Token]) -> i64 {                  █
+  ✓ lexer.rs   ¹  │         5       let mut acc: i64 = 0;                              ▒
+ ›  eval.rs       │    5   6       for t in tokens {                                   ▒
+    pretty.rs     │    6       −       if let Token::Num(n) = t { acc += n; }          ░
+    README.md     │         7   +       if let Token::Num(n) = t {                     ░
+ ▸ noise (2)      │         8   +           acc = acc.wrapping_add(*n);                ░
+                  │         9   +       }                                              ░
+  4/9 viewed      │  [c Comment] [s Stage] [d Discard] [v Lines…]        hunk 5/12     ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ eval.rs · hunk 5/12 · Space = viewed & next · Enter = open in buffer               [RO]
+```
+
+- **Scope bar** (line 1): the rail toggle, the comparison (each side a
+  button opening its picker), the lens dropdown, the burn-down gauge
+  (click → filter menu), filter / view / help buttons with their keys, and
+  the review's name.
+- **Stream** (center, full width by default): the section document. Sticky
+  file·function header carrying that file's `[✓ Reviewed]` button and fold
+  triangle, so the primary scroll-and-mark loop (§3.6) never leaves the
+  stream; the focused hunk grows its **verb-button row** — click or key,
+  same thing. Right-click any line/hunk/file opens a context menu listing
+  the same verbs with their keys printed (menus teach the keymap).
+- **Navigator rail** (opt-in; the `⟨\ ▾⟩` control cycles files → commits →
+  notes): viewed ✓, comment badges, cursor's file marked; auto-quarantined
+  `noise` group (generated/lock/format-only) folded at the bottom and
+  **excluded from the 4/9 denominator**. Hovering a row reveals its own
+  small verb buttons (viewed-toggle, open).
+- **Scrollbar map** (right, always on): hunk positions, comment marks,
+  viewed regions (dim); click/drag to jump. With the rail collapsed this is
+  the always-present sense of the review's shape — one column, no chrome.
 - **Context line** (bottom): position, the two keys that matter now, and
   receipts after mutations: `✓ staged hunk — git apply --cached  [Z Undo]`
   (the `[Z Undo]` is a button).
+
+Progressive disclosure is the rule the whole workspace follows: the default
+frame carries only what a first-time reviewer needs, and every additional
+surface — rail, lens menu, view transient, notes, commits — is one visible,
+labeled control away. Nothing is hidden behind a key you have to know.
 
 ### 3.3 The scope bar: a short list of scopes, riding the orchestrator
 
@@ -501,8 +542,10 @@ free-text).
 
 ### 3.4 The navigator rail
 
-One rail, three projections, cycled with `\` or its dropdown; collapsible to
-zero width (the stream is self-sufficient):
+One rail, three projections. It starts **collapsed** — the stream is
+self-sufficient (§3.2) — and opens from the scope bar's `⟨▸ files⟩` button
+or `\`; the `⟨\ ▾⟩` control then cycles projections, and the open/closed
+choice persists per scope:
 
 ```
  files ⟨\ ▾⟩         commits ⟨\ ▾⟩              notes ⟨\ ▾⟩
@@ -793,8 +836,8 @@ focus.
 
 ### 3.15 Mouse-only walkthrough
 
-A click-by-click progression through a full flow (reviewing an agent
-session), touching every pointer affordance class: menus, scope segments,
+A click-by-click progression (15 frames) through a full flow (reviewing an
+agent session), touching every pointer affordance class: menus, scope segments,
 dropdowns, verb buttons, inline warnings, badges, rail cycling, note
 jumping, hover checkboxes, and the conclude flow. No key is pressed at any
 point. (Keys shown on buttons are the accelerators the mouse path teaches.)
@@ -855,20 +898,42 @@ changes since it started).
 
 *User clicks the `★ this session's changes` row.*
 
-**Frame 4 — the workspace, agent scope, flat lens.** The focused hunk shows
-its verb buttons; the rail shows kept/pending files.
+**Frame 4 — the workspace opens on the diff, rail collapsed** (the default:
+straight to the thing you came for). The focused hunk shows its verb
+buttons.
 
 ```
- ⟨ session start ⟶ auth-refactor ⟩ · ⟨flat ▾⟩   ▓▓▓░░░░░░ 3/9 kept   [/][o][?]  ⟨⋯⟩
+ ⟨▸ files⟩ ⟨ session start ⟶ auth-refactor ⟩ · ⟨flat ▾⟩  ▓▓▓░░░░ 3/9 kept  [/][o][?] ⟨⋯⟩
 ──────────────────────────────────────────────────────────────────────────────────────────
- files ⟨\ ▾⟩        │  src/auth/session.rs · fn refresh                                ▲
-  ✓ token.rs        │ ───────────────────────────────────────────────────────────────  █
-  ✓ store.rs        │   88   88   fn refresh(&mut self) -> Result<()> {                █
+  src/auth/session.rs · fn refresh                              [✓ Reviewed] [▾]      ▲
+ ─────────────────────────────────────────────────────────────────────────────────── █
+   88   88   fn refresh(&mut self) -> Result<()> {                                    █
+        89 +     let tok = self.store.lock()?;                                        ▒
+        90 +     eprintln!("refresh: {tok:?}");            ⚠ debug print              ░
+   89   91       self.renew(tok)                                                      ░
+  [k Keep] [x Reject] [c Comment] [v Lines…]                        hunk 2/5          ░
+                                                                                      ░
+ ▸ src/auth/mod.rs        +6 −6                                                       ░
+ ▸ tests/session_test.rs  +40 −0                                                      ░
+──────────────────────────────────────────────────────────────────────────────────────────
+ session.rs · hunk 2/5 · agent running — files refresh live                        [RO]
+```
+
+*User clicks `⟨▸ files⟩` to bring in the map.*
+
+**Frame 5 — rail expanded** (the toggle now reads `⟨▾ files⟩`; the choice
+sticks for this scope).
+
+```
+ ⟨▾ files⟩ ⟨ session start ⟶ auth-refactor ⟩ · ⟨flat ▾⟩  ▓▓▓░░░░ 3/9 kept  [/][o][?] ⟨⋯⟩
+──────────────────────────────────────────────────────────────────────────────────────────
+ files ⟨\ ▾⟩        │  src/auth/session.rs · fn refresh              [✓ Reviewed] [▾] ▲
+  ✓ token.rs        │ ─────────────────────────────────────────────────────────────── █
+  ✓ store.rs        │   88   88   fn refresh(&mut self) -> Result<()> {               █
  ›  session.rs      │        89 +     let tok = self.store.lock()?;                    ▒
     mod.rs          │        90 +     eprintln!("refresh: {tok:?}");   ⚠ debug print   ░
     session_test.rs │   89   91       self.renew(tok)                                  ░
- ▸ noise (1)        │                                                                  ░
-                    │  [k Keep] [x Reject] [c Comment] [v Lines…]         hunk 2/5     ░
+ ▸ noise (1)        │  [k Keep] [x Reject] [c Comment] [v Lines…]         hunk 2/5     ░
   3/9 kept          │                                                                  ░
 ──────────────────────────────────────────────────────────────────────────────────────────
  session.rs · hunk 2/5 · agent running — files refresh live                        [RO]
@@ -876,7 +941,7 @@ its verb buttons; the rail shows kept/pending files.
 
 *User clicks `⟨flat ▾⟩` in the scope bar.*
 
-**Frame 5 — the lens dropdown.**
+**Frame 6 — the lens dropdown.**
 
 ```
  ⟨ session start ⟶ auth-refactor ⟩ · ┌ lens ──────────────────────────────┐   [/][o][?]
@@ -889,7 +954,7 @@ its verb buttons; the rail shows kept/pending files.
 
 *User clicks `commits`.*
 
-**Frame 6 — commits lens.** The rail becomes the commit strip (with the
+**Frame 7 — commits lens.** The rail becomes the commit strip (with the
 interdiff pseudo-row); the stream shows the selected commit only.
 
 ```
@@ -908,7 +973,7 @@ interdiff pseudo-row); the stream shows the selected commit only.
 
 *User clicks the `[x Reject]` button on the focused hunk.*
 
-**Frame 7 — the symbol-graph guard.** Rejecting would orphan kept callers;
+**Frame 8 — the symbol-graph guard.** Rejecting would orphan kept callers;
 the warning is inline, with buttons.
 
 ```
@@ -925,7 +990,7 @@ the warning is inline, with buttons.
 
 *User clicks `[x Reject those too]`.*
 
-**Frame 8 — the receipt.** Context line shows the command and an undo
+**Frame 9 — the receipt.** Context line shows the command and an undo
 button; the rail regroups. Meanwhile the agent edited a file the user
 already reviewed — a queue badge appears instead of the content moving.
 
@@ -944,7 +1009,7 @@ already reviewed — a queue badge appears instead of the content moving.
 
 *User clicks the `↻2` badge on `token.rs`.*
 
-**Frame 9 — the queue applies.** The stream jumps to the first newly
+**Frame 10 — the queue applies.** The stream jumps to the first newly
 arrived hunk, tagged `NEW`; the viewed mark on that file was dropped
 automatically (content hash changed).
 
@@ -963,7 +1028,7 @@ automatically (content hash changed).
 
 *User clicks the rail-projection control `⟨\ ▾⟩`.*
 
-**Frame 10 — the rail dropdown.**
+**Frame 11 — the rail dropdown.**
 
 ```
  ┌ rail ─────────────┐ │  src/auth/token.rs · fn rotate                        NEW
@@ -976,7 +1041,7 @@ automatically (content hash changed).
 
 *User clicks `notes`.*
 
-**Frame 11 — the notes rail.** Comments and drafts, severity-first.
+**Frame 12 — the notes rail.** Comments and drafts, severity-first.
 
 ```
  ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   4/10 kept   [/][o][?]         ⟨⋯⟩
@@ -994,7 +1059,7 @@ automatically (content hash changed).
 
 *User clicks the `● must-fix` note.*
 
-**Frame 12 — jumped to the anchor.** The comment box is focused with its
+**Frame 13 — jumped to the anchor.** The comment box is focused with its
 own buttons.
 
 ```
@@ -1012,7 +1077,7 @@ own buttons.
 *User reviews the remaining files by clicking the hover checkbox `☐→✓` on
 each rail row (mark reviewed); when the last one is marked…*
 
-**Frame 13 — completion.** The exits are buttons.
+**Frame 14 — completion.** The exits are buttons.
 
 ```
  ⟨ session start ⟶ auth-refactor ⟩ · ⟨commits ▾⟩   ▓▓▓▓▓▓▓▓ 10/10   [/][o][?]    ⟨⋯⟩
@@ -1028,7 +1093,7 @@ each rail row (mark reviewed); when the last one is marked…*
 
 *User clicks `[C Conclude: finish session review]`.*
 
-**Frame 14 — the conclude summary.** One confirmation surface (this is a
+**Frame 15 — the conclude summary.** One confirmation surface (this is a
 bulk mutation), with the tally and the receipt-to-be.
 
 ```
