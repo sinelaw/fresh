@@ -1,27 +1,24 @@
-//! Reproductions for three reported UX defects around the Orchestrator dock's
-//! destructive-action confirmation and the workspace-trust modal.
+//! Orchestrator dock destructive-action confirmation + workspace-trust modal.
 //!
-//! 1. **Dock context-menu confirm keyboard focus.** Right-click a dock session
-//!    row → Delete must raise a centered confirmation whose Cancel button holds
-//!    the keyboard. This one currently *passes*: focus lands on Cancel via the
-//!    renderer's "first tabbable" fallback (`render_spec_inner`'s
-//!    `auto_focus_first`), because the outgoing focus key (`ctx-delete`) is not
-//!    tabbable in the confirm spec. It is guarded here because it holds only by
-//!    accident — `dockMenuEnterConfirm` never pins `confirm-cancel` the way the
-//!    modal picker's `enterConfirm` does, so reordering the button pair would
-//!    silently move default focus onto **Confirm Delete**.
+//! Three reported defects, each guarded here by driving only keyboard/mouse and
+//! asserting on rendered output (CONTRIBUTING §2):
 //!
-//! 2. **A worktree re-asks the trust question.** Creating a workspace as a
-//!    git worktree of an already-decided repo raises the trust modal again —
-//!    trust is keyed purely on the worktree's own path, so the base repo's
-//!    recorded decision is not inherited.
+//! 1. The dock's right-click → Delete confirmation was **clipped** on a short
+//!    terminal: it mounts at `heightPct: 44`, the centered placement treated
+//!    that as a hard cap, and the tail of the spec — including the
+//!    `[ Cancel ] [ Confirm Delete ]` row — was cut off. The modal read as
+//!    "up but the keyboard isn't on it" while the (invisible) focused Cancel
+//!    still answered Enter.
 //!
-//! 3. **Clicking a trust level accepts it immediately.** In the trust modal a
-//!    click on a radio row calls `confirm_workspace_trust` — it records the
-//!    decision and dismisses the dialog, instead of just moving the radio and
-//!    waiting for OK (which is what the keyboard mnemonics `T`/`K`/`B` do).
-//!    Shared by the TUI and the web UI (the web frontend forwards the click to
-//!    the same `handle_workspace_trust_mouse`).
+//! 2. A workspace opened on a linked git worktree re-asked the trust question
+//!    even though the user had already answered it for the repo, because trust
+//!    was keyed purely on the workspace's own path.
+//!
+//! 3. Clicking a radio row in the trust modal recorded the decision and
+//!    dismissed the dialog, rather than moving the selection and waiting for
+//!    [ OK ] — so "Trust folder & Allow Tooling" was a one-click grant of full
+//!    execution rights. The web UI forwards its radio clicks to the same
+//!    hit-test, so both frontends are covered by the same fix.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -30,6 +27,10 @@ use std::path::{Path, PathBuf};
 
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 40;
+/// Tall enough for the dock and a session card, short enough that a 44%-high
+/// centered modal cannot hold the confirmation's ~13 content rows — the shape
+/// that clipped the button row.
+const SHORT_HEIGHT: u16 = 24;
 
 /// 0-based screen (col, row) of the first occurrence of `needle`. Dock rows
 /// carry multibyte box-drawing glyphs, so the byte offset `str::find` returns
@@ -54,8 +55,19 @@ fn row_of(h: &EditorTestHarness, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
+/// The status bar — the last painted row. Carries the `{trust}` pill, which is
+/// how the trust level is *observable* rather than inspected.
+fn status_bar(h: &EditorTestHarness) -> String {
+    h.screen_to_string()
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Issue 1 — dock context-menu confirmation keyboard focus
+// Issue 1 — the dock's delete confirmation must show its buttons
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A git project with the orchestrator plugin (+ shared lib) installed.
@@ -89,14 +101,13 @@ fn open_dock(h: &mut EditorTestHarness) {
         .unwrap();
 }
 
-/// Right-click a dock session card → Delete → the confirmation pane must open
-/// with the **Cancel** button holding keyboard focus, so a stray Enter is a
-/// no-op (it returns to the menu) rather than nothing at all.
-#[test]
-fn dock_context_menu_delete_confirm_focuses_cancel() {
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h = EditorTestHarness::with_config_and_working_dir(WIDTH, 32, Default::default(), root)
-        .unwrap();
+/// Open the dock, right-click the session card, and choose Delete. Leaves the
+/// harness showing the confirmation.
+fn open_delete_confirmation(height: u16) -> (tempfile::TempDir, EditorTestHarness) {
+    let (tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(WIDTH, height, Default::default(), root)
+            .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
 
@@ -109,28 +120,51 @@ fn dock_context_menu_delete_confirm_focuses_cancel() {
     h.mouse_click(dcol, drow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
         .unwrap();
+    (tmp, h)
+}
 
-    // Enter must activate the focused button. With Cancel focused (the safe
-    // default for a destructive prompt) that returns to the three-action menu.
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Visit"))
-        .unwrap_or_else(|_| {
-            let screen = h.screen_to_string();
-            panic!(
-                "Enter on the delete confirmation did nothing — no button holds \
-                 keyboard focus. Expected Cancel to be focused and return to the \
-                 context menu.\nScreen:\n{screen}"
-            )
-        });
+/// A destructive confirmation is useless if the user can't see how to answer
+/// it. On a short terminal the centered panel must grow to fit its content
+/// instead of clipping the tail: both the warning and the Cancel / Confirm
+/// pair have to be on screen.
+#[test]
+fn dock_delete_confirmation_shows_its_buttons_on_a_short_terminal() {
+    let (_tmp, h) = open_delete_confirmation(SHORT_HEIGHT);
+
     let screen = h.screen_to_string();
     assert!(
-        !screen.contains("Confirm Delete"),
-        "Enter should have dismissed the confirmation via Cancel.\nScreen:\n{screen}"
+        screen.contains("Uncommitted changes will be lost"),
+        "the delete warning was clipped off the confirmation.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("[ Cancel ]"),
+        "the confirmation must show its Cancel button — a modal whose buttons \
+         are clipped reads as 'the keyboard isn't on it'.\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("[ Confirm Delete ]"),
+        "the confirmation must show its Confirm button.\nScreen:\n{screen}"
     );
 }
 
+/// Cancel holds the keyboard by default, so a stray Enter on a destructive
+/// prompt is recoverable: it returns to the context menu rather than wiping a
+/// worktree.
+#[test]
+fn dock_delete_confirmation_focuses_cancel() {
+    let (_tmp, mut h) = open_delete_confirmation(HEIGHT);
+
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("Visit") && !s.contains("Confirm Delete")
+    })
+    .unwrap();
+    h.assert_screen_contains("Archive");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Issue 2 — a git worktree must inherit its base repo's trust decision
+// Issue 2 — a git worktree inherits its repo's trust decision
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn git(args: &[&str], cwd: &Path) {
@@ -175,51 +209,27 @@ fn repo_with_worktree() -> (tempfile::TempDir, PathBuf, PathBuf) {
     (temp, base, wt)
 }
 
-/// Record `level` for `root` in the harness's per-project trust store — the
-/// same on-disk decision the trust modal writes when the user picks a row.
-fn record_trust(
-    h: &EditorTestHarness,
-    root: &Path,
-    level: fresh::services::workspace_trust::TrustLevel,
-) {
+/// Write the on-disk decision the trust modal records for `root`. Spelled out
+/// as literal JSON so the test's *setup* doesn't ride the same resolution the
+/// assertion is checking.
+fn record_trusted_on_disk(h: &EditorTestHarness, root: &Path) {
     let dir = h.editor().dir_context().project_state_dir(root);
     fs::create_dir_all(&dir).unwrap();
-    let store = fresh::services::workspace_trust::TrustStore::for_project_dir(&dir);
-    let trust =
-        fresh::services::workspace_trust::WorkspaceTrust::new_persistent(None, level, store);
-    trust.set_level(level);
+    fs::write(dir.join("trust.json"), r#"{"level":"trusted"}"#).unwrap();
 }
 
-/// Point the harness's live trust handle at the working dir's own (undecided)
-/// project store, so the prompt gate sees a real per-project store.
-fn arm_project_store(h: &mut EditorTestHarness) {
-    let dir = h.editor().working_dir().to_path_buf();
-    let store_path = h.editor().dir_context().project_state_dir(&dir);
-    let store = fresh::services::workspace_trust::TrustStore::for_project_dir(&store_path);
-    h.editor()
-        .authority()
-        .workspace_trust
-        .set_store(Some(store));
-}
-
-/// A workspace opened on a linked worktree of an already-trusted repo must NOT
-/// re-ask the trust question — the decision belongs to the repo, not to each
-/// checkout of it.
+/// Opening a linked worktree of an already-trusted repo must not re-ask the
+/// trust question: `git worktree add` makes a second checkout of the *same*
+/// code, and an agent-per-worktree workflow would otherwise prompt on every
+/// new session. The worktree opens under the repo's recorded level.
 #[test]
-#[ignore = "reproduces an open bug: trust is keyed on the worktree's own path, \
-            so the base repo's recorded decision is never inherited"]
 fn worktree_inherits_base_repo_trust_decision() {
     let (_tmp, base, wt) = repo_with_worktree();
     let mut h =
         EditorTestHarness::with_config_and_working_dir(WIDTH, HEIGHT, Default::default(), wt)
             .unwrap();
-    // The user already answered the trust prompt for the base repo.
-    record_trust(
-        &h,
-        &base,
-        fresh::services::workspace_trust::TrustLevel::Trusted,
-    );
-    arm_project_store(&mut h);
+    // The user already answered the prompt for the base repo.
+    record_trusted_on_disk(&h, &base);
 
     // Activating the worktree workspace runs the same gate the Orchestrator's
     // new-session path runs.
@@ -232,33 +242,43 @@ fn worktree_inherits_base_repo_trust_decision() {
         "a worktree of an already-trusted repo must not re-prompt for \
          trust.\nScreen:\n{screen}"
     );
-    assert_eq!(
-        h.editor().authority().workspace_trust.level(),
-        fresh::services::workspace_trust::TrustLevel::Trusted,
-        "the worktree must adopt the base repo's recorded trust level"
+    let status = status_bar(&h);
+    assert!(
+        status.contains("Trusted"),
+        "the worktree must open under the repo's recorded level.\nStatus bar: {status}"
     );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Issue 3 — clicking a trust radio must select, not accept
-// ─────────────────────────────────────────────────────────────────────────────
+/// The counterpart: an *undecided* repo still prompts through its worktree —
+/// inheritance shares a real decision, it never invents one.
+#[test]
+fn worktree_of_undecided_repo_still_prompts() {
+    let (_tmp, _base, wt) = repo_with_worktree();
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(WIDTH, HEIGHT, Default::default(), wt)
+            .unwrap();
 
-fn arm_undecided_project_with_markers(h: &mut EditorTestHarness) {
-    let dir = h.editor().working_dir().to_path_buf();
-    fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
-    arm_project_store(h);
+    h.editor_mut().maybe_prompt_workspace_trust(true);
+    h.render().unwrap();
+
+    h.wait_until(|h| h.screen_to_string().contains("SECURITY WARNING"))
+        .unwrap();
+    h.assert_screen_contains("Cargo.toml");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue 3 — clicking a trust radio selects, it does not accept
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Clicking a radio row in the workspace-trust modal must only move the
 /// selection — the decision is committed by [ OK ], exactly as the keyboard
 /// mnemonics (`T`/`K`/`B` select, Enter/`O` confirm) already behave. The web
 /// UI forwards its clicks to this same hit-test, so the two share the fix.
 #[test]
-#[ignore = "reproduces an open bug: a radio click calls confirm_workspace_trust, \
-            recording the decision and dismissing the dialog immediately"]
 fn trust_dialog_radio_click_selects_without_accepting() {
     let mut h = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
-    arm_undecided_project_with_markers(&mut h);
+    let dir = h.editor().working_dir().to_path_buf();
+    fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
 
     h.editor_mut().maybe_prompt_workspace_trust(true);
     h.render().unwrap();
@@ -276,15 +296,11 @@ fn trust_dialog_radio_click_selects_without_accepting() {
         "clicking a trust option must only move the radio — the dialog stays up \
          until [ OK ].\nScreen:\n{screen}"
     );
-
-    let store_path = {
-        let dir = h.editor().working_dir().to_path_buf();
-        h.editor().dir_context().project_state_dir(&dir)
-    };
-    let store = fresh::services::workspace_trust::TrustStore::for_project_dir(&store_path);
+    let status = status_bar(&h);
     assert!(
-        !store.is_decided(),
-        "clicking a trust option must not record the decision — only [ OK ] does"
+        status.contains("Restricted"),
+        "an un-committed selection must not change the live trust \
+         level.\nStatus bar: {status}"
     );
 
     // The click did move the selection: the Trust row is now the marked radio.
@@ -303,12 +319,11 @@ fn trust_dialog_radio_click_selects_without_accepting() {
     // [ OK ] commits it.
     let (ok_col, ok_row) = pos_of(&h, "OK");
     h.mouse_click(ok_col + 1, ok_row).unwrap();
-    h.render().unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("SECURITY WARNING"))
         .unwrap();
-    assert_eq!(
-        h.editor().authority().workspace_trust.level(),
-        fresh::services::workspace_trust::TrustLevel::Trusted,
-        "[ OK ] must commit the highlighted option"
+    let status = status_bar(&h);
+    assert!(
+        status.contains("Trusted"),
+        "[ OK ] must commit the highlighted option.\nStatus bar: {status}"
     );
 }

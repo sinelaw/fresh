@@ -1712,12 +1712,14 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
     // Re-anchor trust to this project now that the working dir is known.
+    // `store_for_workspace` keys a linked git worktree on the repo that owns
+    // it, so every checkout of one repository shares a single decision.
     workspace_trust.set_root(Some(effective_working_dir.clone()));
-    workspace_trust.set_store(Some(
-        fresh::services::workspace_trust::TrustStore::for_project_dir(
-            &dir_context.project_state_dir(&effective_working_dir),
-        ),
-    ));
+    workspace_trust.set_store(Some(fresh::services::workspace_trust::store_for_workspace(
+        &dir_context,
+        authority.filesystem.as_ref(),
+        &effective_working_dir,
+    )));
     // Attach the project's env recipe store and, when trusted, re-enter the
     // env the user previously activated — so the editor boots already in it
     // and the env-manager plugin's auto-activation finds nothing to do
@@ -2833,13 +2835,15 @@ fn run_server_command(args: &Args) -> AnyhowResult<()> {
     let dir_context = fresh::config_io::DirectoryContext::from_system()?;
 
     // Re-anchor trust to this project: its persisted level (if any) is
-    // adopted, else the safe Restricted default.
+    // adopted, else the safe Restricted default. `store_for_workspace` keys a
+    // linked git worktree on the repo that owns it, so every checkout shares
+    // one decision.
     workspace_trust.set_root(Some(working_dir.clone()));
-    workspace_trust.set_store(Some(
-        fresh::services::workspace_trust::TrustStore::for_project_dir(
-            &dir_context.project_state_dir(&working_dir),
-        ),
-    ));
+    workspace_trust.set_store(Some(fresh::services::workspace_trust::store_for_workspace(
+        &dir_context,
+        authority.filesystem.as_ref(),
+        &working_dir,
+    )));
     // Attach the project's env recipe store and, when trusted, re-enter the
     // previously-activated env so the editor boots already in it (no
     // auto-activation restart flicker on a re-open, issue #2280).
@@ -4331,10 +4335,18 @@ fn real_main() -> AnyhowResult<()> {
                 .clone()
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_default();
+            // The placeholder is local by construction, so its own filesystem
+            // is what resolves a linked worktree to the repo that owns its
+            // trust decision.
+            let trust_owner = fresh::services::workspace_trust::trust_owner_root(
+                current_authority.filesystem.as_ref(),
+                &placeholder_root,
+            );
             let placeholder = fresh::services::authority::Authority::local_scoped(
                 fresh::services::authority::SessionScope::for_root(
                     &placeholder_root,
                     &dir_context.project_state_dir(&placeholder_root),
+                    &dir_context.project_state_dir(&trust_owner),
                 ),
             );
             std::mem::replace(&mut current_authority, placeholder)

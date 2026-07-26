@@ -2060,7 +2060,17 @@ impl Editor {
                             self.should_quit = true;
                         }
                     } else if let Some(i) = layout.radios.iter().position(|r| hit(*r)) {
-                        self.confirm_workspace_trust(i);
+                        // Selecting a radio is NOT consent. A click moves the
+                        // selection and leaves the dialog up; [ OK ] commits
+                        // it — the same two-step the keyboard already used
+                        // (`T`/`K`/`B` select, Enter/`O` confirm). Accepting
+                        // on click made "Trust folder & Allow Tooling" a
+                        // one-click grant of full execution rights on a
+                        // security prompt, with no chance to reconsider and
+                        // no way to read the option before committing to it.
+                        // The web UI forwards its radio clicks to this same
+                        // hit-test, so both frontends inherit the fix.
+                        self.set_workspace_trust_selection(i);
                     }
                     // else: click on the dialog body or dimmed backdrop — absorb.
                 }

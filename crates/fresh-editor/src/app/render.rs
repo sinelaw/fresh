@@ -4451,7 +4451,18 @@ impl Editor {
             super::PanelPlacement::Centered => {
                 let requested = Self::centered_overlay_rect(area, width_pct, height_pct);
                 let needed_h = (entries.len() as u16).saturating_add(2);
-                let effective_h = needed_h.min(requested.height).max(3);
+                // Fit the content in BOTH directions: the requested height is
+                // a hint, never a guillotine. Shorter content shrinks the box
+                // (the original Bug 7 fix); content taller than the requested
+                // percentage GROWS it, up to the frame. Capping at the request
+                // silently amputated the tail of the spec — on a 24-row
+                // terminal the dock's delete confirmation (mounted at 44%,
+                // i.e. 10 rows) lost its `[ Cancel ] [ Confirm Delete ]` row
+                // entirely, so the modal read as "up but not focused" while
+                // the (invisible) focused button still answered Enter.
+                // Clipping is only acceptable when the frame itself is too
+                // small, which `area.height` already expresses.
+                let effective_h = needed_h.clamp(3, area.height.max(3));
                 ratatui::layout::Rect {
                     x: requested.x,
                     y: area.y + (area.height.saturating_sub(effective_h)) / 2,

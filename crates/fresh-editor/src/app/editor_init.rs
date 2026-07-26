@@ -508,10 +508,18 @@ fn build_persisted_window_shells(
         // This shell's own local authority, gated by its own per-session trust
         // + env (scoped to its root + project store) — never a clone of the
         // active session's handles.
+        // `shell_resources.fs_manager` is the local host filesystem these
+        // shells read through, so it's also what resolves a linked worktree
+        // to the repo whose trust decision governs it.
+        let trust_owner = crate::services::workspace_trust::trust_owner_root(
+            shell_resources.fs_manager.filesystem().as_ref(),
+            &ps.root,
+        );
         let shell_authority = crate::services::authority::Authority::local_scoped(
             crate::services::authority::SessionScope::for_root(
                 &ps.root,
                 &dir_context.project_state_dir(&ps.root),
+                &dir_context.project_state_dir(&trust_owner),
             ),
         );
         let mut shell = crate::app::window::Window::new(
