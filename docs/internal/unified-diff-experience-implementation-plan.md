@@ -16,7 +16,7 @@ milestone ships user-visible value on its own and none requires the next.
 |---|---|---|
 | Review session (worktree/range/stash review, staging, comments, `.review/` persistence, watch mode, split/stack, sticky header panel) | `crates/fresh-editor/plugins/audit_mode.ts` | becomes the ReviewSession core; most Part I logic refactors out of here |
 | Commit-list rendering | `plugins/lib/git_history.ts` | reused by the commits-lens rail |
-| Git Log (buffer-group tab, streamed `git show` into a **file-backed `.diff` buffer** with real syntax highlighting, folds, scrollbar) | `plugins/git_log.ts` | the model for how the diff stream should be rendered (§2); its list becomes the history preset |
+| Git Log (buffer-group tab, streamed `git show` into a file-backed `.diff` buffer — diff-level scoping, folds, scrollbar) | `plugins/git_log.ts` | streaming/SHA-cache pattern reused by the commits lens (§4.1); its list becomes the history preset |
 | Side-by-side composite buffer | host (`fresh-core` / render) | the split layout; keys must become rebindable Actions |
 | Live Diff (in-buffer hunks, virtual old-lines, word-level intraline, reference picker) | `plugins/live_diff.ts` | the buffer lens; its virtual-line machinery powers expand-in-place |
 | Git gutter | `plugins/git_gutter.ts` | absorbed into the live-diff hunk model (M5) |
