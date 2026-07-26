@@ -262,485 +262,364 @@ From Gerrit, Reviewable, GitHub's 2025-26 Files-Changed revamp, and CodeFlow lin
 
 ---
 
-## 3. Part I — the review experience: one experience, four doors
+## 3. Part I — the Review workspace, redesigned
 
-### 3.1 Mental model
+This section is a clean-slate UI design. It keeps the architecture already
+established (one renderer; one `ReviewSession { source, lens, verbs, state }`;
+one buffer lens) but deliberately does **not** inherit Fresh's current review
+chrome — no three fixed panels, no two-line hint bar, no separate picker
+dialog, no separate History tab. It is designed from the research lessons
+alone, then mapped back onto Fresh's primitives.
 
-> **Fresh has one way to look at a change, no matter where the change came from.**
+### 3.1 Design principles (each one traces to evidence)
 
-Everything is built from three shared pieces:
+1. **Two lines of chrome, total.** One *scope bar* on top (what am I
+   comparing), one *context line* at the bottom (where am I, what can I do
+   here). Everything else is content. (gitui's hint bar + the observed failure
+   of four competing chrome dialects; Linear's "Fast, Focused".)
+2. **The comparison is the headline.** `base ⟶ target · lens` sits in the
+   scope bar as a clickable, editable control — the review's identity, always
+   visible, always changeable in place. (Gerrit's A/B patchset picker as the
+   page's single source of truth; Reviewable's diff bounds; Xcode's
+   revision-pickers-in-editor.)
+3. **One list rail, many projections.** A single collapsible navigator rail
+   shows *files*, *commits*, or *notes* — cycled, never three fixed panels
+   competing for width. The rail is a map, not a second document. (GitHub's
+   tray toggle file-tree⇄comments; Graphite's timeline⇄tree tray; the
+   truncated fixed comments column observed in today's UI.)
+4. **The stream is a section document.** Files and hunks are typed, foldable
+   sections with persistent fold state, depth presets, and a sticky context
+   header — magit's model, rendered with delta-grade bodies (syntax +
+   word-level emphasis, enclosing-context headers, copy-safe text).
+5. **Verbs live where they apply.** No global verb bar: the focused section
+   grows a small chip row (`[s]tage · [d]iscard · [c]omment`) that is
+   simultaneously the keymap hint, the click target, and the *only* place
+   mutation is offered. Read-only scopes simply grow no chips. (lazygit's
+   runnable help; scm-record's undiscoverable-confirm cautionary tale; VS
+   Code's per-hunk gutter actions.)
+6. **`Space` is the review.** One key advances the burn-down: mark the
+   current thing viewed/kept, go to the next unreviewed thing — across hunks,
+   files, and (in per-commit lens) commits. Progress is always visible.
+   (GitHub's viewed-auto-advance; Zed's `StageAndNext`; tuicr/ftdv's
+   persisted burn-down.)
+7. **`Enter` zooms in, `Esc` zooms out, everywhere.** scope → file → hunk →
+   the real buffer, one ladder, no dead ends. Every diff line is a portal to
+   the live file. (lazygit/tig convergence; magit's "every line is
+   operable".)
+8. **Options are a transient, and they stick.** One key opens a small menu of
+   visible, toggleable view options (layout, whitespace, context, intraline,
+   noise filters) that persist with the scope. Menus show their keys and
+   teach them. (magit transients; JetBrains' one-diff-viewer-many-options.)
+9. **Every mutation is undoable and transparent.** `Z` undoes the last
+   stage/discard/keep/reject; the context line briefly echoes the underlying
+   git command after each action. (jj's op-log lesson — undo removes fear;
+   Sublime Merge/jj-fzf's command echo — transparency builds trust.)
+10. **The review survives anything.** Viewed marks, fold layout, cursor
+    position, unsent comment drafts, scope recents — all persist and restore
+    exactly. Reopening a scope shows what changed since you last looked
+    before it shows anything else. (ftdv/tuicr persistence; Reviewable's
+    "show diffs to review"; the marathon reality of agent-sized changesets.)
 
-- **The Diff Renderer** — how any two versions of a file are drawn.
-- **The Review Session** — the container that holds a set of file diffs plus review
-  state (comments, viewed marks, verbs). One implementation; every source of
-  changes opens here.
-- **The Buffer Lens** — in-buffer change marks and expandable hunks in the ordinary
-  editor.
+### 3.2 Anatomy: one workspace
 
-And the user reaches them through **four task-shaped doors** (entry points with a
-focused verb set), all opening the same container:
-
-| Door | Task in the user's head | Source | Verb set |
-|------|------------------------|--------|----------|
-| **Review Changes** | "What's in my working tree; stage and commit it" | worktree + index | stage / unstage / discard / commit |
-| **Review Branch / PR** | "Read this branch or PR like a reviewer" | merge-base three-dot vs base; commit-scoped lens | comment / viewed / export / approve-note |
-| **History** | "What happened; find and inspect commits" | log; any commit or range | read-only + pivot-to-review |
-| **Review Agent Work** | "What did the agent do; keep or reject it" | session checkpoint → worktree | keep / reject (agent dialogue: Part II) |
-
-The doors differ in *defaults and verbs*, never in rendering, navigation, or chrome.
-
-### 3.2 The Diff Renderer (shared by everything)
-
-One renderer with two layouts and one rule: **the layout toggle is global to the
-session and works everywhere the renderer appears.**
-
-- **Stack (unified)** — the virtual-buffer stream Review Diff uses today, upgraded
-  with: per-token syntax highlighting (the #1 gap; see Phase 0), word-level
-  intraline emphasis layered *on top* of syntax colors (delta's model, with the
-  ~hundreds-of-tokens-per-line fallback guardrail), `@@` headers replaced by
-  "line number + syntax-highlighted enclosing context" (delta's signature
-  readability win), copy-safe bodies (no `+`/`-` prefixes; change identity lives in
-  gutter + background), dual old⋮new line-number gutter.
-- **Split (side-by-side)** — the composite buffer, kept, with its keys migrated to
-  rebindable Actions in the `diff-view` context (killing the v1 hardcoded router,
-  as `search-and-diff.md` already prescribes).
-- Shared toggles, one keybinding each, identical in both layouts and in every door:
-  whitespace-ignore, collapse-unchanged (with click/key expandable context), inline
-  notes on/off, watch mode.
-- Colors are theme keys only. Renderer must stream and render per-hunk incrementally
-  (the lazygit-delta regression and gitui's benchmark both show render latency on
-  selection-change is the make-or-break TUI metric).
-
-The renderer is also the long-term home for niceties that should *not* block v1:
-moved-code detection, "formatting-only change" dimming (a syntax-aware check with an
-explicit budget and a visible fallback indicator — difftastic's lesson: never switch
-modes silently).
-
-### 3.3 The Review Session (one container, parameterized)
-
-Generalize the existing `audit_mode` session into *the* container:
-
-```
-ReviewSession {
-  source:  Worktree | Staged | Range{from,to} | Commit(sha) | Stash(ref)
-         | Branch{base}            // merge-base three-dot semantics
-         | AgentTurn{session, from_checkpoint}
-         | Patch{file|stdin}
-  lens:    Flattened | PerCommit(sha)   // see below
-  verbs:   {stage,unstage,discard} | {keep,reject} | {} (read-only)
-  state:   comments, viewed marks, watermark (per source identity)
-}
-```
-
-Layout (today's three panels, kept). Wireframes below use Fresh's real chrome
-(menu bar, tab bar, two-line hint bar, status bar, as captured in tmux); diff
-bodies are syntax-highlighted in reality, `›` marks the cursor row.
-
-**The container, stack (unified) layout — worktree source shown:**
+The whole of Part I is **one full-bleed workspace** (it opens as a tab like
+any buffer, but owns its area — no inner tab bars, no nested toolbars):
 
 ```
- File   Edit   View   Selection   Go   LSP   Help
- lexer.rs ×   *Review: Working Tree* ×   +
- REVIEW CHANGES · working tree · 2/4 viewed ──────── [Tab] focus  [n p] hunk  [, .] file  [?] help
- [s u d] stage/unstage/discard  [v] lines  [c] comment  [Space] viewed+next  [1 2 0] layout  [q] close
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- FILES                    │ ▾ STAGED (1)                                           │ COMMENTS (2)
- STAGED (1)               │ ▾ src/parser.rs  +6 −1                       ✓ viewed  │ ● must-fix
- ▾ src/                   │   ▾ fn parse_number · L212                             │   parser.rs:218
-  ✓ M parser.rs  +6 −1    │     212  212    while self.peek_digit() {              │   off-by-one on
- UNSTAGED (2)             │     213  213        self.advance();                    │   empty input
- ▾ src/                   │     214      −  let s = collect(start, self.pos);      │ ○ nit
-  ✓ M lexer.rs  +9 −2 *1  │          214 +  let s = collect(start, self.pos)?;     │   lexer.rs:31
-  › M eval.rs   +4 −0     │     215  215        s.parse().ok()                     │   naming
- UNTRACKED (1)            │                                                        │
- ▾ src/                   │ ▾ UNSTAGED (2)                                         │ [] ] next  [x] del
-    ? pretty.rs +12 −0    │ ▸ src/lexer.rs  +9 −2  *1  (folded)          ✓ viewed  │ [e] export
-                          │ ▾ src/eval.rs   +4 −0                                  │
- [/] filter  [F] unseen   │ › ▾ pub fn eval · L4                                   │
-                          │       4    4    pub fn eval(tokens: &[Token]) -> i64 { │
-                          │            5 +      let mut acc: i64 = 0;              │
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- Trusted  Local  Ln 14   Review: Working Tree · 2/4 viewed · hunk 3/7           [RO]  LF  UTF-8  Diff
+ ⟨ main ⟶ feature/eval ⟩ · flat ▾   ▓▓▓▓░░░░░ 4/9   ⌕ filter   ⌥ view   ? ·   eval review
+─────────────────────────────────────────────────────────────────────────────────────────
+ files  ‹\›       │  src/eval.rs · pub fn eval                                         ▲
+                  │ ─────────────────────────────────────────────────────────────────  █
+  ✓ parser.rs     │    4   4   pub fn eval(tokens: &[Token]) -> i64 {                  █
+  ✓ lexer.rs   ¹  │        5       let mut acc: i64 = 0;                               ▒
+ ›  eval.rs       │    5   6       for t in tokens {                                   ▒
+    pretty.rs     │    6       −       if let Token::Num(n) = t { acc += n; }          ░
+    README.md     │        7   +       if let Token::Num(n) = t {                      ░
+                  │        8   +           acc = acc.wrapping_add(*n);                 ░
+  4/9 viewed      │        9   +       }                                               ░
+                  │   [c]omment  [s]tage  [d]iscard  [v] lines            hunk 5/12    ░
+─────────────────────────────────────────────────────────────────────────────────────────
+ eval.rs · hunk 5/12 · Space mark viewed & next · Enter open in buffer            [RO]
 ```
 
-Notes on what the frame encodes: hunk headers are enclosing-context lines
-("fn parse_number · L212"), not `@@` noise; the dual gutter carries old⋮new line
-numbers with no `+`/`-` prefixes on the code itself (copy-safe); `✓ viewed` and
-the `2/4` progress live in the FILES panel, hint bar, and status bar; `*1` is a
-comment badge; the comment entries show their severity tags; the status-bar
-counters are session-wide, not per-file.
+Reading the frame:
 
-**Same session after pressing `1` — split layout (file under cursor):**
+- **Scope bar** (line 1): the comparison `⟨ main ⟶ feature/eval ⟩` (each side
+  clickable), the lens (`flat ▾`), the burn-down gauge, filter, the view
+  transient, help. Nothing else. The right edge names the review (editable).
+- **Navigator rail** (left, `\` cycles files → commits → notes → hidden):
+  the file list is *flat by default, tree on demand*, with viewed ✓, comment
+  count badges (`¹`), and the cursor's file marked. It is a map — selecting
+  in the rail scrolls the stream; scrolling the stream tracks the rail.
+- **Stream** (center): the section document. The current file+function is a
+  **sticky header** at the top of the stream, so "where am I" survives long
+  hunks. The focused hunk grows its **chip row** — the only verb surface.
+- **Scrollbar** (right): reuses Fresh's marker primitive — hunk positions,
+  comment positions, and viewed regions (dim) paint the whole review's shape.
+- **Context line** (bottom): position, the two keys that matter right now,
+  and read-only state. After a mutation it briefly shows the receipt:
+  `✓ staged hunk — git apply --cached (Z to undo)`.
 
-```
- REVIEW CHANGES · working tree · 2/4 viewed · split ─ [Tab] focus  [n p] hunk  [2] stack  [?] help
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- FILES                    │ src/eval.rs  +4 −0        OLD (HEAD) │ NEW (working)          │ COMMENTS (2)
- STAGED (1)               │  1 //! Evaluator.                │  1 //! Evaluator.          │ ● must-fix
-  ✓ M parser.rs  +6 −1    │  2 use crate::lexer::Token;      │  2 use crate::lexer::Token;│   parser.rs:218
- UNSTAGED (2)             │  3                               │  3                         │ ○ nit
-  ✓ M lexer.rs  +9 −2 *1  │  4 pub fn eval(tokens: …) {      │  4 pub fn eval(tokens: …) {│   lexer.rs:31
-  › M eval.rs   +4 −0     │                                  │  5     let mut acc = 0;    │
- UNTRACKED (1)            │  5     for t in tokens {         │  6     for t in tokens {   │
-    ? pretty.rs +12 −0    │ ~                                │ ~                          │
-──────────────────────────────────────────────────────────────────────────────────────────────────────
-```
+### 3.3 The scope bar: doors become presets
 
-Same panels, same keys, same comments — only the center pane's projection
-changed. `0` picks stack/split automatically by terminal width.
-
-Key decisions:
-
-1. **The commit dimension becomes a lens, not a separate feature.** Today
-   "Review: Commit Range" (flattened) and "Review: PR Branch" (commit-by-commit) are
-   two products. In the unified session, a branch/range source has a **lens toggle**:
-   *Flattened* (the whole change as one diff — the default, per GitHub/Gerrit
-   practice of reviewing the cumulative change) ⇄ *Per-commit* (a commit strip —
-   list panel swaps to commits; selection drives the diff, tig-style; `[`/`]` or
-   click to move between commits; "all commits" returns to flattened). This is
-   exactly GitHub's Dec-2025 "review commit-by-commit without leaving Files
-   Changed", and it deletes the PR-Branch mode's separate implementation.
-2. **Comments work in every source, every lens, both layouts.** (Today they exist
-   only in the worktree/range session and vanish in split-file drill-down history
-   panes.) Comments persist per source identity as today (`.review/`), with
-   re-anchoring by content match and a staleness marker when the anchor is fuzzy
-   (Reviewable's dog-ear). Comments gain an optional **severity tag**
-   (`must-fix` / `suggestion` / `nit` / `question` — diffhub's vocabulary), which
-   colors the inline box and the panel entry, orders the export, and lets the
-   agent door filter what gets dispatched. Longer term, comments are one instance
-   of a general *line-anchored annotation* model (the `@pierre/diffs` framework
-   pattern): review comments, agent notes, CI/lint findings, and LSP diagnostics
-   all render through the same widget channel instead of growing parallel systems.
-3. **Viewed marks + progress.** Per-file ✓ in the FILES panel, keyed by
-   *(file, blob-hash-pair)* so a mark auto-invalidates exactly when content changes
-   (no timestamps); "N/M reviewed" in the hint bar; `Space` = mark-viewed-and-advance
-   (GitHub's auto-advance); `F`-style filter to unreviewed-only. This is what makes
-   large (agent-sized) diffs tractable, and it's cheap: it reuses the existing
-   `.review/` persistence. For range/branch sources, state should additionally key
-   on a *stable change identity* (patch-id today; jj/Gerrit-style change-ids when
-   available) so a rebase or an agent re-run doesn't reset review progress.
-   Fold state persists across refresh too (magit's underrated detail — a refresh
-   must never destroy the user's fold layout), and depth presets
-   (`1`..`4` ≈ sections / files / hunks / everything) complement `z a`/`z r`.
-   The whole bundle — viewed marks, fold layout, cursor/read position, and
-   *unsent comment drafts* — persists to disk with the session, because a 50-file
-   agent review is a marathon: closing the editor mid-review and resuming with
-   nothing lost is the trust-defining behavior (ftdv/tuicr's persisted-progress
-   lesson, and what `.review/` already does for comments).
-4. **Verbs are context-sensitive and door-scoped.** `s/u/d` in the worktree door
-   (file or hunk under cursor, `v` for lines — unchanged from today); `k`/`x`
-   keep/reject in the agent door with the same granularity ladder; read-only doors
-   simply don't bind mutation verbs — and say so in the hint bar. Destructive verbs
-   (discard, reject) get an undo story rather than ever more confirmation prompts:
-   at minimum a per-session "last discarded patch" buffer; longer term a small
-   operation log (jj's lesson — universal undo removes fear, and fear is the main
-   tax on git UIs).
-5. **Jump-out is uniform.** `Enter` = drill (side-aware open, as today);
-   `Alt+o` = open editable working-tree file at this line, from *any* source
-   (for historical sources, opens read-only file-at-commit exactly like Git Log's
-   current drill-down).
-6. **Read-through, never a copy.** Where the target is the working tree, the NEW
-   side must reflect live buffers (watch mode already reloads on save); the session
-   never holds a second writable copy of a file (Cursor's failure mode).
-
-### 3.4 The four doors, concretely
-
-**Door 1 — Review Changes** (today's Review Diff, essentially unchanged in spirit):
-`Review Changes` opens `source: Worktree`, STAGED/UNSTAGED/UNTRACKED sections,
-staging verbs, watch mode. Everything the 0.4.0 rework shipped stays; it just
-inherits the renderer upgrades and viewed marks. Stash and Patch are variants
-reachable from the picker (below).
-
-**Door 2 — Review Branch / PR**: one command replacing Review Range + Review PR
-Branch. Opens `source: Branch{base}` with base defaulting to the branch's
-**configured upstream tracking branch** (then origin/HEAD → main → master, as
-today), and **merge-base three-dot semantics by default** — the consensus every
-serious tool converged on after the same bug (diffing the base *tip* makes your
-file counts creep as teammates merge; today's two-dot `diff base..HEAD` has exactly
-this problem). Like Superset's diff-semantics doctrine, each source's exact git
-comparison gets documented and integration-tested. Flattened lens by default;
-per-commit lens one key away.
-Typed revspecs (`A..B`, `A...B`, sha, stash) remain the power-user path in the same
-prompt. (PR metadata import — threads, viewed-state sync — is Part II, §4.4.)
-
-**Flattened lens (default) — the whole branch as one reviewable diff:**
+There is no separate picker dialog. Opening **Review** with no argument opens
+the workspace in *scope-choosing state* — the same surface, empty stream,
+scope bar focused:
 
 ```
- File   Edit   View   Selection   Go   LSP   Help
- lexer.rs ×   *Review: feature/eval vs main* ×   +
- REVIEW BRANCH · main...feature/eval · 3 commits · 1/4 viewed ── [C] per-commit lens  [n p] hunk  [?] help
- [Space] viewed+next  [c] comment  [v] lines  [1 2 0] layout  [z a/r] fold  [/] filter  [q] close
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- FILES                    │ ▾ src/eval.rs  (new file)  +14 −0            ✓ viewed  │ COMMENTS (1)
- ▾ src/                   │   ▸ (folded — 1 hunk)                                  │ ? question
-  ✓ A eval.rs   +14 −0    │                                                        │   eval.rs:9
-  › M lexer.rs   +1 −1 *1 │ ▾ src/lexer.rs  +1 −1                                  │   overflow intent?
-    M parser.rs  +6 −1    │ › ▾ pub enum Token · L3                                │
-    M README.md  +2 −0    │       3        −  … Star, Slash, LParen, …             │ read-only source:
-                          │            3   +  … Star, Slash, Percent, LParen, …    │ no stage keys —
- 1/4 viewed  [F] unseen   │           (word-level: only "Percent, " emphasized)    │ hint bar says so
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- Trusted  Local   Review: main...feature/eval · 1/4 viewed · hunk 2/6          [RO]  LF  UTF-8  Diff
+ ⟨ choose scope… ⟩                                                            · review
+─────────────────────────────────────────────────────────────────────────────────────────
+
+     ★  feature/eval vs main       3 commits · 4 files · +56 −7          ← smart default
+     ●  working tree               1 staged · 2 unstaged · 1 untracked
+     ⚙  agent: auth-refactor       9 files pending · running…
+     ⚙  agent: docs-pass           2 files pending · idle
+     ⟳  HEAD~3..HEAD               reviewed yesterday · 2 files changed since
+     ⌗  stash@{0}                  "wip: tokenizer"
+
+     type a revspec:  A..B · A...B · <sha> · stash@{N} · <branch>
+     > ▌
+─────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ choose · Enter open · every row = a scope preset, nothing here is a separate mode
 ```
 
-**Per-commit lens (`C`) — the FILES panel swaps to a commit strip; selection
-drives the diff (tig-style); `[` `]` step commits without leaving the diff:**
+The four "doors" of the earlier draft survive as the **preset rows** (working
+tree, branch-vs-base, agent session, history/recents) — but they are entries
+in one list feeding one control, not four commands. The scope bar afterwards
+is the same list, collapsed: click either side of `⟨ main ⟶ feature/eval ⟩`
+(or press `b`) to re-open it in place; pick a new base or target without
+leaving the review. Presets carry their verb sets implicitly: target =
+working tree → stage verbs; target = agent worktree → keep/reject; both sides
+historical → no mutation chips at all.
+
+The **lens menu** (`l`, or click `flat ▾`) is the second scope-bar control:
 
 ```
- REVIEW BRANCH · main...feature/eval · commit 2/3 ──── [C] flattened  [[ ]] prev/next commit  [?] help
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- COMMITS (main..HEAD)     │ adc21a9 · lexer: add Percent token           2 files   │ COMMENTS (1)
-  778ff10 eval: naive sum │ ▾ src/lexer.rs  +1 −1                                  │ ? question
- ›adc21a9 lexer: add Perc…│ › ▾ pub enum Token · L3                                │   eval.rs:9
-  bacff16 eval: wrapping …│       3        −  … Star, Slash, LParen, …             │   (anchored across
-                          │            3   +  … Star, Slash, Percent, LParen, …    │    lenses)
- [Enter] pin  [y] hash    │ ▾ src/lexer.rs · doc comment  +1 −1                    │
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- Trusted  Local   Review: main...feature/eval · commit 2/3 (adc21a9)           [RO]  LF  UTF-8  Diff
+ ⟨ main ⟶ feature/eval ⟩ · ┌ lens ─────────────────────────────┐
+                           │ › flat      one combined diff      │
+                           │   commits   step commit by commit  │
+                           │   since v2  what changed since my  │
+                           │             last review (2 files)  │
+                           └───────────────────────────────────┘
 ```
 
-The tab, the comments, the viewed state, and the layout toggle are the same
-session in both frames — the lens only changes what the left panel lists and
-what slice the center shows.
+`flat` and `commits` replace the old Range/PR-Branch split; `since vN` is the
+interdiff lens (checkpoint refs, Phase 3), listed greyed-out until versions
+exist so the capability is discoverable before it is available.
 
-**Door 3 — History** (today's Git Log, kept as the *browse* surface): the commit
-list stays a list — but its detail pane becomes **the shared renderer** (structured
-headers, folds, syntax colors, per-commit lens of a one-commit session) instead of
-raw `git show` text. Selection continues to drive the preview (streamed, cancellable,
-SHA-cached per the existing streaming plan). From any commit: `Enter` = promote to a
-full Review Session on that commit (comments and all); a range selection (lazygit
-`v`-style) promotes to a session on the range; `y` copy hash; blame/file-history
-pivots. Git Log (Current File) stays as a scoped variant. This deletes zero
-functionality — it upgrades the detail pane and gives History a *pivot into* review
-rather than being a parallel review implementation.
+History is not a separate surface either: **History = the commits lens over a
+wide scope.** `Review` on `⟨ all ⟶ HEAD ⟩` (a preset: "history") puts the
+commit strip in the rail, the shared renderer in the stream, and `Enter` on a
+commit narrows the scope to that commit — the same workspace throughout. A
+`⌕` query on the rail filters it Sublime-Merge-style (`author:` `path:`
+free-text), which replaces log-filter commands.
 
-```
- File   Edit   View   Selection   Go   LSP   Help
- lexer.rs ×   *History* ×   +
- HISTORY · all branches ─────── [Enter] review commit  [v] select range  [y] hash  [f] file scope  [?]
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- ›bacff16 11 min (TE) eval: wrapping add        [HEAD → feature/eval] │ bacff16 · eval: wrapping add
-  adc21a9 11 min (TE) lexer: add Percent token                        │ Test <test@test> · 11 min ago
-  778ff10 11 min (TE) eval: naive sum evaluator                       │
-  0bc313a 12 min (TE) lexer: clarify doc comment  [main]              │ ▾ src/eval.rs  +1 −1
-  cfb23ed 12 min (TE) docs: numbers feature                           │ › ▾ pub fn eval · L4
-  6d685b7 13 min (TE) initial: lexer, parser, readme                  │    7  −  … { acc += n; }
-                                                                      │    7  +  … { acc = acc.wra…
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- Trusted  Local   History · 6 commits · bacff16                                 LF  UTF-8
-```
+### 3.4 The navigator rail
 
-Scrubbing the list updates the right pane live (debounced; the in-flight
-`git show` is cancelled on move). The detail is the *shared renderer* —
-structured headers, folds, syntax — not raw `git show` text. `Enter` promotes
-the selected commit (or a `v`-selected range) into a full Review Session tab
-with comments and viewed marks; `Esc`/`q` returns here.
-
-**Door 4 — Review Agent Work** (new; the missing entry point): from an
-Orchestrator session card (key + click + palette), "Review Session's Changes" opens
-the container with `source: AgentTurn{session, from_checkpoint}` in *that session's*
-worktree context: base = the ref the agent started from (recorded when the
-Orchestrator creates/attaches the worktree; fallback: merge-base with the default
-branch), head = live worktree, watch mode ON by default (Conductor's live-diff-as-
-status), verbs = **keep / reject** (per hunk/file/line; reject = revert those lines
-in the worktree — implementable with the same `git apply`-style machinery staging
-uses today). Two guardrails against keep/reject's documented failure modes:
-**file-level is the default granularity** (hunk/line reject is a deliberate act),
-and a partial keep/reject on a file whose *other* hunks touch the same symbols
-gets a "related changes remain" nudge — cheap protection against the
-keep-the-signature-reject-the-call-site build break. Agent diffs also get a
-lightweight **leftover-noise scan** (debug prints, `dbg!`/`console.log`, stray
-TODO/FIXME markers highlighted in the stream) — the review-then-commit model's
-classic leak. The dock card's diffstat pill becomes a *door*: click → review.
-Above the single session, the `Review…` picker's "Agent sessions" group is the
-**review inbox**: every session with unreviewed changes, sorted by
-awaiting-review state (Graphite's queue, scoped to the local farm). Reviewing the
-*combined* output of parallel sessions (jj-style megamerge) stays out of scope
-until worktree merging is itself a Fresh feature; the inbox plus per-session
-review is the honest v1.
-```
- File   Edit   View   Selection   Go   LSP   Help
- dock: auth-refactor ▸   *Review: agent "auth-refactor"* ×   +
- REVIEW AGENT WORK · since session start (2h ago) · watch ON · 3/9 kept ── [k] keep  [x] reject  [?]
- [K X] whole file  [v] lines  [Space] viewed+next  [c] comment  [b] baseline…  [1 2 0] layout  [q]
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- FILES                    │ ▾ src/auth/token.rs  +38 −12                 ✓ kept    │ COMMENTS (1)
- ▾ src/auth/              │ ▾ src/auth/session.rs  +21 −4                          │ ● must-fix
-  ✓ M token.rs   +38 −12  │ › ▾ fn refresh · L88                                   │   session.rs:96
-  › M session.rs +21 −4   │      88   88   fn refresh(&mut self) -> Result<()> {   │   lock held across
-  ! M mod.rs     +6 −6    │           89 +     let tok = self.store.lock()?;       │   await point
- ▾ tests/                 │           90 +     eprintln!("refresh: {tok:?}");      │
-    A session_test.rs +40 │                ⚠ debug print — leftover-noise scan     │
-                          │      89   91       self.renew(tok)                     │
- 3/9 kept  [F] pending    │                                                        │
-──────────────────────────────────────────────────────────────────────────────────────────────────────
- Trusted  auth-refactor   Review: agent session · baseline: session start · 3/9 kept   [RO]  Diff
-```
-
-`b` opens the baseline picker (the interdiff lens once checkpoint refs exist):
+One rail, three projections, cycled with `\` (and collapsible to zero width —
+the stream is self-sufficient):
 
 ```
- ┌ Baseline for "auth-refactor" ──────────────────────────────┐
- │ › since session start          2h ago        (default)     │
- │   since my last review (v2)    14:32 · 3 files changed     │
- │   vs HEAD                      uncommitted only            │
- │   vs main (merge-base)         whole branch                │
- └────────────────────────────────────────────────────────────┘
+ files ‹\›          commits ‹\›               notes ‹\›
+  ✓ parser.rs        › adc21a9 lexer: add …    ● must-fix    session.rs:96
+  ✓ lexer.rs   ¹       778ff10 eval: naive     │  lock held across await
+ ›  eval.rs            bacff16 eval: wrap…     ○ nit         lexer.rs:31
+    pretty.rs                                  ?  question   eval.rs:9
+    README.md        2/3 reviewed              1 unresolved · [Enter] jump
+  4/9 viewed
 ```
 
-Rejecting a hunk whose siblings were kept triggers the related-changes nudge
-(file `mod.rs` above shows `!` — partially resolved with related hunks pending):
+- **files**: flat list (tree toggle for deep repos), viewed ✓, badges, the
+  filter (`/`) narrows it live; `F` shows only unreviewed. Generated/lock
+  files land pre-collapsed at the bottom under `▸ generated (3)` —
+  never interleaved with real changes.
+- **commits**: the strip that *is* the per-commit lens — selection drives the
+  stream (debounced, in-flight `git show` cancelled), `[` `]` step it from
+  anywhere, and it shows per-commit reviewed state. In flat lens the strip
+  still exists as a read-only map of what the scope contains.
+- **notes**: every comment/draft in the review, severity-first, `Enter`
+  jumps. Drafts that were never sent render dimmed with a `draft` tag —
+  nothing silently lost. (This projection replaces the old fixed comments
+  column; inline anchored boxes in the stream remain the primary rendering.)
+
+### 3.5 The stream: sections, chips, selection, comments
+
+The stream is one scrollable document of typed sections: *file* → *hunk*.
+`-`/`=` collapse/expand the section at point, `1`–`4` are depth presets
+(files only → +hunks → +bodies → everything), and fold state persists with
+the review. Two display treatments do noise suppression by default:
+formatting-only hunks render dimmed with a `∅ format-only` tag (expandable),
+and context between hunks collapses to interactive separators
+(`··· 14 unchanged ···`, click/`=` to grow — Sublime Merge's draggable hunk
+edge, keyboardized).
+
+**Selection state** (`v`, or mouse drag over lines): the chip row follows the
+selection and the verbs narrow to line-granularity:
 
 ```
- ┌ Related changes remain ────────────────────────────────────┐
- │ You rejected the change to `fn refresh` in session.rs,     │
- │ but kept 2 hunks in mod.rs that call it.                   │
- │   [Enter] review those hunks   [r] reject them too         │
- │   [Esc] keep anyway                                        │
- └────────────────────────────────────────────────────────────┘
+ │    5   6       for t in tokens {
+ │▌   6       −       if let Token::Num(n) = t { acc += n; }
+ │▌       7   +       if let Token::Num(n) = t {
+ │▌       8   +           acc = acc.wrapping_add(*n);
+ │        9   +       }
+ │  3 lines — [s]tage lines  [d]iscard lines  [c]omment on selection  [Esc]
 ```
 
-Note the scope line: this door, as Part I, is *pure UI* — a baseline choice
-(the session's start ref), a verb set (keep/reject), and the same container.
-Everything that makes it *converse* with the agent — sending comments to the
-session, agent-seeded notes, pause-on-review, guided-review outlines — lives in
-Part II and layers on later without changing the door. One later Part-I
-capability worth naming now because it's baseline UX, not communication:
-per-turn checkpoints recorded as refs enable a **"since I last reviewed"
-interdiff lens** in the baseline picker — the gap no tool owns today (§2.4).
-
-### 3.5 One picker in front of the doors
-
-A single **`Review…`** palette entry (the "review picker" already sketched in
-`search-and-diff.md`, upgraded to door-awareness):
-
-Rendered in Fresh's palette style (list above, typed prompt below, preview
-updating with the highlighted row):
+**Comment compose** opens inline, exactly where the comment will live, with
+severity as one keystroke — and the draft persists if you close mid-thought:
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────────────────┐
-│ ★ This branch vs main         feature/eval · 3 commits · +56 −7          → Review Branch │
-│ ● Working tree                4 files: 1 staged, 2 unstaged, 1 untracked → Review Changes│
-│ ▸ Agent sessions…             2 with unreviewed changes                  → Review Agent  │
-│ ▸ Stash                       stash@{0} · "wip: tokenizer"                               │
-│ ⟳ Recent: HEAD~3..HEAD        reviewed yesterday · since then: 2 files changed           │
-│ ─────────────────────────────────────────────────────────────────────────────────────────│
-│ preview: main...feature/eval — 3 commits · 4 files · +56 −7 · last: eval: wrapping add   │
-└──────────────────────────────────────────────────────────────────────────────────────────┘
-  revspec: A..B | A...B | <sha> | stash@{N} | <branch>
->Review: ▌
+ │        8   +           acc = acc.wrapping_add(*n);
+ │ ┌ comment · eval.rs:8 ── severity: [1] must-fix [2] suggestion [3] nit [4] ? ┐
+ │ │ overflow wrap is intentional here? worth a unit test either way▌           │
+ │ │                                                                            │
+ │ └ [Enter] save · [Esc] keep as draft ────────────────────────────────────────┘
 ```
 
-Selecting a row opens the matching door; typing a revspec overrides everything.
-The "Recent" rows re-open with full state and show the "since you last
-reviewed" delta up front.
+Saved comments render as compact anchored boxes (severity-colored border,
+author, age) that fold with their hunk and re-anchor across lenses; a
+stale anchor shows a `≈` marker (content moved — Reviewable's dog-ear).
 
-Debounced live preview on selection (lazygit's selection-drives-preview), and
-re-opening a recent shows "since you last reviewed: N files changed" (the watermark
-lens). The individual door commands remain in the palette for muscle memory
-(`Review Changes`, `Review Branch/PR…`, `Git Log`, `Review Agent Work`), all listed
-under one `Review:`/`Git:` naming scheme.
+### 3.6 The review loop: Space, Enter, Esc
 
-### 3.6 The Buffer Lens (ambient tier)
+The intended rhythm for a big review is three keys:
 
-Merge the three in-buffer systems into one concept with one options surface:
-
-- **One hunk model** feeding gutter marks: reference = HEAD | disk | branch |
-  agent-baseline (Live Diff's reference picker becomes *the* picker; git-gutter
-  becomes the rendering of the same hunks at reference=HEAD rather than a parallel
-  system).
-- **One navigation**: Next/Previous Change (the `diff_nav` merged jump list) is the
-  *only* in-buffer hunk navigation, bound once, listed once.
-- **Expand-in-place** (host primitive, phased): a gutter/hunk key expands the hunk
-  inline — old lines as virtual lines (Live Diff already renders exactly this) —
-  with hunk-scoped actions (stage/revert; keep/reject when the reference is an
-  agent baseline) and Esc-collapse. This is Zed's model and matklad's ideal, and it
-  reuses Live Diff's virtual-line machinery rather than inventing a new surface.
-- When an agent session is active on the buffer's worktree, the lens's reference
-  auto-swaps to the agent baseline while review is pending (Zed's baseline-override
-  trick), so ordinary editing shows "what the agent changed" without opening
-  anything.
-
-An ordinary editable buffer with the lens on, one hunk expanded in place:
+- **`Space`** — mark the thing at point viewed (or *kept*, in an agent
+  scope) and jump to the next unreviewed thing. The gauge in the scope bar
+  ticks. When nothing is left, the workspace says so and offers the exits:
 
 ```
- File   Edit   View   Selection   Go   LSP   Help
- lexer.rs ●   +
-   9 │         match c {
+─────────────────────────────────────────────────────────────────────────────────────────
+   ✓ Review complete — 9/9 viewed · 1 must-fix comment unresolved
+
+     [Enter] jump to unresolved    [e] export notes    [g] stage all reviewed
+     [q] close (state saved — reopening shows only what changes from now on)
+─────────────────────────────────────────────────────────────────────────────────────────
+```
+
+- **`Enter`** — zoom: on a file section header → that file full-width (the
+  split layout appears here naturally: `|` toggles unified/side-by-side for
+  the zoomed file and remembers the choice per scope); on a hunk/line → the
+  **real buffer** at that line, with the buffer lens active (§3.8) so the
+  hunks are still visible, actionable, and `Esc` returns to the stream at the
+  exact position. Editing during review is therefore never a mode switch —
+  the portal *is* the fix-it flow (matklad/Zed).
+- **`Esc`** — always one level back out; at the top it closes, saving
+  everything.
+
+Reopening any recent scope leads with the delta, not the diff:
+
+```
+ ⟨ main ⟶ feature/eval ⟩ · flat ▾   resumed — since your last visit: 2 files changed
+   › show only what changed (interdiff)      · show everything (marks kept)
+```
+
+### 3.7 The view transient and help
+
+`⌥ view` (key `o`) opens the one options menu — every toggle visible, keyed,
+and sticky to the scope:
+
+```
+ ┌ view ────────────────────────────────────────────┐
+ │ layout        [|] unified ◉ / split ○ / auto     │
+ │ whitespace    [w] shown ◉ / ignored ○            │
+ │ intraline     [i] on ◉                           │
+ │ context       [+/−] 3 lines                      │
+ │ format-only   [f] dimmed ◉ / hidden ○ / full ○   │
+ │ generated     [g] collapsed ◉ / hidden ○         │
+ │ depth         [1–4] current: 3                   │
+ └──────────────────────────────────────────────────┘
+```
+
+`?` opens the full keymap as a *runnable* list (Enter executes the row —
+lazygit's trick), grouped by the same names used in this doc: scope, rail,
+stream, loop, view.
+
+### 3.8 The buffer portal (the lens, unchanged in role)
+
+The in-buffer tier survives the redesign intact: one hunk model (reference =
+HEAD | disk | branch | agent baseline), gutter marks, one Next/Previous
+Change binding, and expand-in-place — an expanded hunk shows old lines as
+virtual text plus the same chip row the stream uses:
+
+```
   10 │             '+' => { out.push(Token::Plus); chars.next(); }
- ┌╴changed vs HEAD ── [s] stage  [d] discard  [n p] next/prev change  [Esc] collapse ╴┐
+ ┌╴vs HEAD ─ [s]tage  [d]iscard  [n p] change  [Esc] collapse ╴┐
   11 │             '-' => { out.push(Token::Minus); chars.next(); }
- −   ┆             '-' => { out.push(Token::Minus); }              (old line, virtual)
- └────────────────────────────────────────────────────────────────────────────────────┘
- │12 │             '*' => { out.push(Token::Star); chars.next(); }      ← gutter mark
-  13 │             _ => { chars.next(); }
-──────────────────────────────────────────────────────────────────────────────────────
- Trusted  Local  Ln 11, Col 14   changes vs HEAD: 2                LF  UTF-8  Rust
+ −   ┆             '-' => { out.push(Token::Minus); }
+ └────────────────────────────────────────────────────────────╴┘
+ │12 │             '*' => { out.push(Token::Star); chars.next(); }
 ```
 
-The buffer stays fully editable throughout — the expanded hunk is virtual lines
-plus a scoped action row, not a mode. With an agent baseline active, the action
-row's verbs read `[k] keep  [x] reject` instead.
+The chip row is the *same component* as the stream's — one verb surface
+everywhere, so the portal and the workspace never teach different keys. With
+an agent baseline active the chips read `[k]eep [x] reject`.
 
-### 3.7 Uniform vocabulary (the coherence contract)
+### 3.9 Verb sets and the agent scope
 
-One keymap, defined once in a shared `review` key context, inherited by every door
-and by the composite buffer (all rebindable):
+Scopes bind verbs; the UI shape never changes:
 
-| Key | Meaning — everywhere |
-|-----|----------------------|
-| `n` / `p` | next / prev hunk (chains across files, JetBrains-style) |
-| `,` / `.` | prev / next file |
-| `[` / `]` | prev / next commit (per-commit lens) · prev/next comment elsewhere |
-| `Tab` / `S-Tab` | cycle panel focus (never "switch pane" vs "focus" ambiguity) |
-| `Enter` / `Esc`+`q` | drill in / back out |
-| `1` / `2` / `0` | split / stack / auto — session-wide |
-| `Space` | mark viewed & advance (read doors) · toggle selection (staging ladder) |
-| `s`/`u`/`d`, `S`/`U`/`D` | stage/unstage/discard — worktree door only |
-| `k` / `x` | keep / reject — agent door only |
-| `c` / `N` / `e` | comment / session note / export — every door |
-| `v` | line-range selection (feeds whatever verb follows) |
-| `W`, `/`, `z a`, `z r`, `r` | watch, filter files, fold/unfold all, refresh |
-| `?` | full help overlay — every door, same layout |
+| target | chips on hunks | `Space` means | extra |
+|---|---|---|---|
+| working tree | `s` stage · `d` discard | viewed + next | `g` stage-all-reviewed |
+| agent worktree | `k` keep · `x` reject | keep + next | `!` noise flags; `b` baseline |
+| historical (commit/range/stash) | none (read-only) | viewed + next | comments only |
 
-Chrome contract: every door gets the same two-line hint bar (door name + source +
-progress on line 1, context verbs on line 2), the same `?` overlay style, and the
-same status-bar segment (`Review: Branch main...HEAD · 4/12 viewed · hunk 3/41` —
-session-wide counters, fixing the "Hunk 1 of 1" confusion). Menus and mouse: every
-key action is also a menu item (Fresh's identity is menus + palette + mouse; this is
-our answer to the TUI discoverability failure mode, and it's cheaper than it sounds
-because the verbs are defined once).
+The agent scope keeps its two guardrails, now expressed in the redesigned
+chrome: rejects at hunk/line level are chips *behind* the file-level default
+(`x` on a file header rejects the file; on a hunk it asks once per session),
+and the related-changes nudge is a context-line prompt, not a modal, unless
+the reject would touch a kept sibling:
 
-### 3.8 Web: parity, not a feature
+```
+ ✗ rejected hunk · fn refresh — 2 kept hunks in mod.rs call this  [Enter] see · [Z] undo
+```
 
-The field builds separate local web apps to escape TUI fatigue (difit, Codiff,
-diffhub — the "TUI review became overwhelming" complaint in §2.4). Fresh's answer
-is structural, not a feature: every Part-I surface is a scene projection consumed
-by both the TUI and the web renderer under the existing parity discipline
-(`web-ui.md` — divergence is a test failure). The only work is making the review
-panels' projections complete; after that the entire experience — container,
-doors, picker, comments, viewed marks, fold state — is simply *also* in the
-browser, with no web-specific design, no second implementation, and no state
-divergence. This section exists only to state that constraint: **no review
-feature may land as TUI-only logic.**
+Leftover-noise findings (debug prints, stray TODOs) render as `!` markers in
+the rail and `⚠` tags on the hunks — display only, Part II owns talking to
+the agent about them.
 
-### 3.9 Blame and merge (adjacent, aligned, not absorbed)
+### 3.10 Web: parity, not a feature
 
-- **Blame** stays its own surface (it is an annotation of one file, not a changeset)
-  but adopts the vocabulary: `Enter` opens the commit *in the shared renderer*
-  (one-commit Review Session), `,` re-blames at parent (already exists as "Go Back"
-  — rebind to match tig's beloved verb), and a "hunk history" pivot from any review
-  hunk into scoped Git Log (Current File) — the Sublime Merge pivot.
-- **Merge conflicts** stay with `merge_conflict.ts` inline markers (never force-
-  replace the inline flow — VS Code's lesson); the renderer gains zdiff3-style
-  "each side as a diff against base" display as a later, additive option.
+Unchanged from before the redesign, and easier now: the workspace is *fewer*
+distinct surfaces than the old three-panel design. Every element above —
+scope bar, rail, stream, chips, transients — lands as a scene projection
+consumed by both the TUI and web renderers under the existing parity
+discipline (`web-ui.md`); divergence is a test failure. **No review feature
+may land as TUI-only logic.** The same frames above, rendered by the web
+frontend with real typography, are the web review experience; nothing else is
+designed for it.
 
----
+### 3.11 Blame and merge (adjacent, aligned, not absorbed)
+
+- **Blame** stays its own surface (an annotation of one file, not a
+  changeset) but adopts the vocabulary: `Enter` on a blame line opens a
+  one-commit scope in the workspace, `,` re-blames at the parent (tig's
+  beloved verb), and any hunk in the stream offers a "history of this code"
+  pivot (Sublime Merge's Hunk History) which is just the workspace scoped to
+  `path @ all ⟶ HEAD`, commits lens.
+- **Merge conflicts** stay with `merge_conflict.ts` inline markers (never
+  force-replace an inline flow users rely on — VS Code's lesson); the
+  renderer gains zdiff3-style "each side as a diff against base" display as a
+  later, additive option.
+
+### 3.12 Migration note
+
+The previous draft of this section kept Fresh's existing chrome (hint bars,
+three fixed panels, palette-dialog picker) and its wireframes; that version
+is preserved in git history and remains the low-risk fallback. The phased
+plan (§5) is unchanged in substance — phases 0–1 converge the existing
+surfaces onto the shared renderer/session regardless of chrome, and the
+workspace chrome of this section lands as the Phase 1–2 presentation layer.
+What the redesign *removes* relative to that draft: the fixed comments
+column (→ notes rail + inline boxes), the two-line hint bar (→ scope bar +
+context line + chips), the separate picker dialog (→ scope-choosing state),
+and the separate History tab (→ history preset + commits lens).
 
 ## 4. Part II — talking to agents and outside systems (lower priority)
 
 Everything here is **orthogonal to Part I by construction**: it consumes the
-container, the comment store, and the door model but changes none of their UX.
+workspace, the comment store, and the scope-preset model but changes none of their UX.
 It is sequenced last deliberately — the UI must be nailed first, and each item
 below layers onto a finished Part I without reopening it.
 
@@ -811,19 +690,19 @@ Sequenced so every phase ships a visible coherence win and nothing regresses.
   opens the container on `Branch{base}` (three-dot), flattened lens; **per-commit
   lens** lands here (commit strip + selection-drives-diff), closing the gap the
   old mode covered. Range/stash/patch become picker variants.
-- The `Review…` picker (smart default, recents, live preview).
+- The scope-choosing state (§3.3): presets, recents, typed revspecs, live preview.
 
-**Phase 2 — review state + the agent door**
+**Phase 2 — review state + the agent scope**
 - Viewed marks (blob-hash-keyed), progress counters, Space=viewed-and-advance,
   unreviewed filter; recents re-open with full state (marks, folds, read
   position, drafts) + "since last review" watermark.
-- Door 4: Orchestrator "Review Session's Changes" (base = recorded session start
-  ref), keep/reject verbs (file-default granularity + related-changes nudge),
-  diffstat-pill-as-door, sessions review inbox in the picker, leftover-noise
-  scan. (No agent communication yet — that's Phase 4.)
+- Agent scope: Orchestrator "Review Session's Changes" (base = recorded session
+  start ref), keep/reject verbs (file-default granularity + related-changes
+  nudge), diffstat-pill-as-entry-point, agent sessions as scope presets,
+  leftover-noise scan. (No agent communication yet — that's Phase 4.)
 - Buffer Lens unification: one reference picker (absorb git-gutter into the
   live-diff hunk model), agent-baseline auto-swap.
-- Web parity for the review panels (§3.8): complete their scene projections so
+- Web parity for the workspace (§3.10): complete their scene projections so
   the whole experience is also in the web UI — enforced by the parity tests,
   no web-specific design.
 
@@ -850,13 +729,13 @@ default (budgeted opt-in only), replacing merge_conflict's inline flow.
 
 | Today | Becomes |
 |-------|---------|
-| Review Diff | **Review Changes** (Door 1) |
-| Review Range / Review Stash | picker variants of the same session |
-| Review: PR Branch | **Review Branch/PR…** (Door 2, per-commit lens) |
-| Git Log / Git Log (Current File) | **History** (Door 3) — same list, shared renderer detail, pivot-to-review |
-| Side-by-Side Diff (per-file command) | the session's `1` layout; standalone command stays as a thin alias that opens a one-file session |
+| Review Diff | the workspace, *working tree* scope preset |
+| Review Range / Review Stash | typed-revspec / stash scope presets |
+| Review: PR Branch | *branch vs base* scope preset, commits lens |
+| Git Log / Git Log (Current File) | *history* scope preset (commits lens over a wide scope; file-scoped variant) |
+| Side-by-Side Diff (per-file command) | the zoomed-file `\|` layout; standalone command stays as a thin alias |
 | Live Diff + Git Gutter + Diff Chunk Nav | **Buffer Lens** (one hunk model, one reference picker, one nav) |
-| (nothing) | **Review Agent Work** (Door 4) + `Review…` picker |
+| (nothing) | *agent session* scope preset + the scope-choosing state |
 
 Docs pages, palette naming (`Review:` prefix family), and the keybinding editor's
 `review` context all follow the same rename.
@@ -867,7 +746,7 @@ Docs pages, palette naming (`Review:` prefix family), and the keybinding editor'
 
 - **Refactor risk in `audit_mode` (6.6k lines) and the outer-vs-inner split-leaf
   class of bugs** documented in `search-and-diff.md`: extract the container behind
-  the existing e2e suites (review_diff_* tests) and add door-parameterized e2e
+  the existing e2e suites (review_diff_* tests) and add scope-parameterized e2e
   fixtures before moving PR-Branch/Git Log onto it.
 - **Perf**: the renderer must keep the streaming/SHA-cache/viewport-render
   discipline the current surfaces already learned (streamed `git show`, one-viewport
@@ -891,4 +770,4 @@ Docs pages, palette naming (`Review:` prefix family), and the keybinding editor'
 - `fresh-vs-hunk-review-gaps.md`, `hunk-diff-viewer-report.md` (repo root) — the
   hunk parity analysis that drove 0.4.0; Tier-3 items (agent surface, stdin/patch)
   are scheduled above.
-- `docs/internal/orchestrator-sessions.md` — session/worktree model Door 4 builds on.
+- `docs/internal/orchestrator-sessions.md` — session/worktree model the agent scope builds on.
