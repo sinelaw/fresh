@@ -4468,6 +4468,38 @@ fn test_terminal_drag_select_copy_resumes_live() {
     );
 }
 
+/// A drag that overshoots the end of the echoed text must still select the
+/// WHOLE text, last character included. Regression: the grid-wrap byte
+/// resolver (`terminal_grid_byte_at`) resolved a past-end column through
+/// `source_byte_at_visual_col`, whose out-of-range fallback clamps to the
+/// last character's *start* byte — so every selection whose drag ended past
+/// the text silently lost the final character (fresh web-ui suite caught it
+/// as a copied "…MARKER-4" for an on-screen "…MARKER-42").
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_drag_select_past_line_end_includes_last_char() {
+    let mut harness = harness_or_return!(120, 30);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+    let marker = "XSELECT_PAST_EOL_9";
+    let (col, row) = terminal_with_marker(&mut harness, marker);
+
+    // Overshoot the 18-char marker by several columns.
+    drag_select_row(&mut harness, col, col + marker.len() as u16 + 7, row).unwrap();
+    assert!(
+        primary_selection_active(&harness),
+        "drag should build a real selection over the terminal text"
+    );
+
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    let clip = harness.editor_mut().clipboard_content_for_test();
+    assert!(
+        clip.contains(marker),
+        "a drag past the end of the text must copy it whole (last char included), got {clip:?}"
+    );
+}
+
 /// A bare click on a drag-parked scrollback pane abandons the selection and
 /// resumes the live grid immediately — no new output required.
 #[test]
