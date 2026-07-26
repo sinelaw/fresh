@@ -459,8 +459,23 @@ a checkbox for building multi-selections by mouse:
  │  3 lines — [s Stage lines] [d Discard lines] [c Comment] [Esc Cancel]
 ```
 
+**Comments follow the same granularity ladder as every verb**: a single
+line (cursor on the line, or hover it — a `+` button appears in the gutter,
+one click to compose, the GitHub/Pierre affordance), a line range (`v` or
+drag, then `[c Comment]`), a whole hunk (cursor on the hunk header), or a
+whole file (cursor on the file header — for "this file shouldn't exist"-type
+notes). Single-line is the base case, and the anchor is always stored at
+line granularity (`file:line` or `file:line–line`), never widened to the
+hunk.
+
 **Comment compose** opens inline at the anchor; severity chips are buttons;
 `Esc` keeps the draft:
+
+```
+ │        7   +       if let Token::Num(n) = t {
+ │ ⊕      8   +           acc = acc.wrapping_add(*n);      ← hover: + appears in gutter
+ │        9   +       }
+```
 
 ```
  │        8   +           acc = acc.wrapping_add(*n);
@@ -598,7 +613,8 @@ Every interaction has a pointer path, and the pointer path displays the key:
 - **Click** selects; **double-click** = `Enter`; `Esc` = right-click "Back"
   or the breadcrumb in the scope bar.
 - **Verb buttons** on the focused section, hover buttons on any hunk/file
-  header, and hover checkboxes for multi-select.
+  header, hover checkboxes for multi-select, and the hover `⊕` gutter
+  button on any diff line for a one-click single-line comment.
 - **Drag** over diff lines = line selection (verb buttons follow).
 - **Right-click** = context menu for the section type, keys printed.
 - **Scope bar**: every segment is a button (base picker, target picker, lens
