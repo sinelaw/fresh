@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Terminalprozess neu starten",
+  "cmd.restart_terminal": "Terminalprozess neu starten",
+  "cmd.restart_terminal_desc": "Den beendeten Prozess in diesem Terminalpuffer neu starten und die Agent-Sitzung fortsetzen, falls vorhanden",
+  "menu.terminal.restart": "Terminalprozess neu starten",
+  "terminal.restarted": "Terminal %{id} neu gestartet",
+  "terminal.restart_still_running": "Der Terminalprozess läuft noch",
+  "terminal.restart_unavailable": "Kein beendeter Terminalprozess in diesem Puffer",
+  "terminal.restart_failed": "Terminalprozess konnte nicht neu gestartet werden",
+  "status.terminal_resume": "⟳ %{program} fortsetzen",
+  "status.terminal_restart": "⟳ %{program} neu starten",
+  "status.terminal_restart_shell": "⟳ Terminal neu starten",
+  "status.terminal_restart_code": "%{label} (Code %{code})"
 }

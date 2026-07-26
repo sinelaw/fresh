@@ -21,6 +21,28 @@ You can open multiple terminal tabs and switch between them like regular file bu
 
 `Ctrl+Click` (or `Ctrl`-hover, which underlines the target) opens file paths from terminal output, including scrollback. Paths resolve as absolute (with `~` expansion), then relative to the terminal's working directory, then relative to Fresh's working directory. The shell's working directory is tracked via OSC 7, so relative paths resolve correctly after `cd` — and resolution works over SSH.
 
+## Restarting an Exited Terminal
+
+When a terminal's process quits, the buffer stays open as read-only scrollback and the status bar shows a clickable restart indicator on the bottom-left — `⟳ Restart terminal`, or `⟳ Restart npm` / `⟳ Resume claude` named after whatever was running. A non-zero exit code rides along: `⟳ Resume claude (exit 3)`.
+
+Restart it three ways — all equivalent:
+
+*   **Click the indicator**
+*   **Command palette** → **Restart Terminal Process**
+*   **View → Terminal → Restart Terminal Process**
+
+The process comes back **in the same buffer**, appending below the `[Terminal process exited]` marker, so the earlier transcript stays where it was and you don't have to open a new terminal and lose your place. This is the same mechanism that reattaches a workspace's terminals when you reopen the editor, now available per buffer and on demand — including the same argv precedence:
+
+1.  the terminal's **agent-resume** argv, if it has one (e.g. `claude --resume <id>`), so a coding agent *rejoins its conversation* rather than starting a fresh one;
+2.  otherwise the **launch command** it was started with;
+3.  otherwise a plain interactive shell.
+
+Agent resume obeys the `terminal.resume_agents` setting (default on); turn it off to always re-run the launch command instead.
+
+A **running** terminal is never restarted — the indicator only appears once the process has quit, and asking anyway (from the palette while the split sits in scrollback) reports "Terminal process is still running" rather than killing what's there.
+
+The indicator is the `{terminal_restart}` status-bar element and can be moved or removed via `editor.status_bar.left` / `.right` like any other.
+
 ## Terminal Modes
 
 The terminal has two modes, indicated in the status bar:

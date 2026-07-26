@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Khởi động lại tiến trình terminal",
+  "cmd.restart_terminal": "Khởi động lại tiến trình terminal",
+  "cmd.restart_terminal_desc": "Chạy lại tiến trình đã thoát trong bộ đệm terminal này, tiếp tục phiên agent nếu có",
+  "menu.terminal.restart": "Khởi động lại tiến trình terminal",
+  "terminal.restarted": "Đã khởi động lại terminal %{id}",
+  "terminal.restart_still_running": "Tiến trình terminal vẫn đang chạy",
+  "terminal.restart_unavailable": "Không có tiến trình terminal đã thoát trong bộ đệm này",
+  "terminal.restart_failed": "Không thể khởi động lại tiến trình terminal",
+  "status.terminal_resume": "⟳ Tiếp tục %{program}",
+  "status.terminal_restart": "⟳ Khởi động lại %{program}",
+  "status.terminal_restart_shell": "⟳ Khởi động lại terminal",
+  "status.terminal_restart_code": "%{label} (mã %{code})"
 }

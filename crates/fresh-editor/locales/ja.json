@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "ターミナルプロセスを再起動",
+  "cmd.restart_terminal": "ターミナルプロセスを再起動",
+  "cmd.restart_terminal_desc": "このターミナルバッファで終了したプロセスを再起動し、エージェントのセッションがあれば再開します",
+  "menu.terminal.restart": "ターミナルプロセスを再起動",
+  "terminal.restarted": "ターミナル %{id} を再起動しました",
+  "terminal.restart_still_running": "ターミナルプロセスはまだ実行中です",
+  "terminal.restart_unavailable": "このバッファに終了したターミナルプロセスはありません",
+  "terminal.restart_failed": "ターミナルプロセスの再起動に失敗しました",
+  "status.terminal_resume": "⟳ %{program} を再開",
+  "status.terminal_restart": "⟳ %{program} を再起動",
+  "status.terminal_restart_shell": "⟳ ターミナルを再起動",
+  "status.terminal_restart_code": "%{label} (終了 %{code})"
 }

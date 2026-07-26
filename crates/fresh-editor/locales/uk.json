@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Перезапустити процес термінала",
+  "cmd.restart_terminal": "Перезапустити процес термінала",
+  "cmd.restart_terminal_desc": "Перезапустити завершений процес у цьому буфері термінала, відновивши сесію агента, якщо вона є",
+  "menu.terminal.restart": "Перезапустити процес термінала",
+  "terminal.restarted": "Термінал %{id} перезапущено",
+  "terminal.restart_still_running": "Процес термінала ще виконується",
+  "terminal.restart_unavailable": "У цьому буфері немає завершеного процесу термінала",
+  "terminal.restart_failed": "Не вдалося перезапустити процес термінала",
+  "status.terminal_resume": "⟳ Відновити %{program}",
+  "status.terminal_restart": "⟳ Перезапустити %{program}",
+  "status.terminal_restart_shell": "⟳ Перезапустити термінал",
+  "status.terminal_restart_code": "%{label} (код %{code})"
 }

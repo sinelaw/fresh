@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "เริ่มโปรเซสเทอร์มินัลใหม่",
+  "cmd.restart_terminal": "เริ่มโปรเซสเทอร์มินัลใหม่",
+  "cmd.restart_terminal_desc": "เริ่มโปรเซสที่ออกไปแล้วในบัฟเฟอร์เทอร์มินัลนี้ใหม่ และกลับเข้าเซสชันเอเจนต์หากมี",
+  "menu.terminal.restart": "เริ่มโปรเซสเทอร์มินัลใหม่",
+  "terminal.restarted": "เริ่มเทอร์มินัล %{id} ใหม่แล้ว",
+  "terminal.restart_still_running": "โปรเซสเทอร์มินัลยังทำงานอยู่",
+  "terminal.restart_unavailable": "ไม่มีโปรเซสเทอร์มินัลที่ออกไปแล้วในบัฟเฟอร์นี้",
+  "terminal.restart_failed": "เริ่มโปรเซสเทอร์มินัลใหม่ไม่สำเร็จ",
+  "status.terminal_resume": "⟳ กลับเข้า %{program}",
+  "status.terminal_restart": "⟳ เริ่ม %{program} ใหม่",
+  "status.terminal_restart_shell": "⟳ เริ่มเทอร์มินัลใหม่",
+  "status.terminal_restart_code": "%{label} (ออก %{code})"
 }

@@ -23,7 +23,7 @@
 //!   - Resumes live terminal rendering
 //!   - Performance: O(1) ≈ 1ms
 
-use super::window::{TerminalBuffer, Window};
+use super::window::{ExitedTerminal, TerminalBuffer, Window};
 use super::{BufferId, BufferMetadata, Editor};
 use crate::model::event::LeafId;
 use crate::services::authority::TerminalWrapper;
@@ -1038,65 +1038,23 @@ impl Window {
                 .get(&old_id)
                 .filter(|argv| !argv.is_empty())
                 .cloned();
-            let spawn_argv = resume_argv.or(launch_argv);
-            let wrapper = match spawn_argv.as_deref() {
-                Some(argv) => self.authority().terminal_command(argv),
-                None => self.resolved_terminal_wrapper(),
-            };
-            let wrapper = self.apply_remote_terminal_env(wrapper);
-            let env_delta = self.terminal_env_delta(&wrapper);
+            let ephemeral = self.ephemeral_terminals.contains(&old_id);
 
-            let new_id = match self.terminal_manager.spawn(
+            let spawn = RespawnSpec {
+                old_id,
                 cols,
                 rows,
                 cwd,
-                log_path,
                 backing_path,
-                wrapper,
-                env_delta,
-                HashMap::new(),
-            ) {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!("reconnect: failed to respawn terminal {:?}: {}", old_id, e);
-                    continue;
-                }
+                log_path,
+                resume_argv,
+                launch_argv,
+                ephemeral,
             };
-
-            // The dead PTY's handle is now superseded — tear it down.
-            self.terminal_manager.close(old_id);
-
-            // Remap every terminal-id-keyed entry from old_id → new_id.
-            if new_id != old_id {
-                // Remap the PTY id but preserve the buffer's remembered mode.
-                if let Some(tb) = self.terminal_buffers.get_mut(&buffer_id) {
-                    tb.terminal_id = new_id;
-                }
-                if let Some(p) = self.terminal_backing_files.remove(&old_id) {
-                    self.terminal_backing_files.insert(new_id, p);
-                }
-                if let Some(p) = self.terminal_log_files.remove(&old_id) {
-                    self.terminal_log_files.insert(new_id, p);
-                }
-                if let Some(c) = self.terminal_commands.remove(&old_id) {
-                    self.terminal_commands.insert(new_id, c);
-                }
-                if let Some(c) = self.terminal_resume_commands.remove(&old_id) {
-                    self.terminal_resume_commands.insert(new_id, c);
-                }
-                if self.ephemeral_terminals.remove(&old_id) {
-                    self.ephemeral_terminals.insert(new_id);
-                }
+            match self.respawn_terminal_pty(buffer_id, spawn) {
+                Some(_) => revived += 1,
+                None => continue,
             }
-
-            // Register the reborn leader pid so window-level signal operations
-            // (Stop / Archive / Delete) reach the new process group.
-            if let Some(pid) = self.terminal_manager.get(new_id).and_then(|h| h.pid()) {
-                self.process_groups
-                    .register(pid, format!("terminal #{}", new_id.0));
-            }
-
-            revived += 1;
         }
 
         // Size the freshly-spawned PTYs to their splits' content areas.
@@ -1104,6 +1062,180 @@ impl Window {
 
         revived
     }
+
+    /// Spawn a replacement PTY for `buffer_id`'s dead terminal and re-key every
+    /// terminal-id-keyed entry onto the new id.
+    ///
+    /// The single respawn primitive behind both the remote-reconnect sweep
+    /// (`respawn_terminals_through_authority`) and the user-driven per-buffer
+    /// restart (`restart_terminal_buffer`), so the two can never drift on argv
+    /// precedence, scrollback reuse, or id remapping. Argv is composed through
+    /// the window's *current* authority, so the reborn PTY always runs inside
+    /// the session's backend.
+    ///
+    /// Returns the new terminal id, or `None` when the spawn failed (logged;
+    /// the old handle is left in place for the caller to report on).
+    fn respawn_terminal_pty(&mut self, buffer_id: BufferId, spec: RespawnSpec) -> Option<TerminalId> {
+        // The window's bridge may be unset on a window restored without ever
+        // spawning through `spawn_terminal_session_impl`; setting it is idempotent.
+        let bridge = self.bridge.clone();
+        self.terminal_manager.set_async_bridge(bridge);
+
+        let spawn_argv = spec.resume_argv.as_ref().or(spec.launch_argv.as_ref());
+        let wrapper = match spawn_argv {
+            Some(argv) => self.authority().terminal_command(argv),
+            None => self.resolved_terminal_wrapper(),
+        };
+        let wrapper = self.apply_remote_terminal_env(wrapper);
+        let env_delta = self.terminal_env_delta(&wrapper);
+
+        let new_id = match self.terminal_manager.spawn(
+            spec.cols,
+            spec.rows,
+            spec.cwd,
+            spec.log_path.clone(),
+            spec.backing_path.clone(),
+            wrapper,
+            env_delta,
+            HashMap::new(),
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("failed to respawn terminal {:?}: {}", spec.old_id, e);
+                return None;
+            }
+        };
+
+        // The dead PTY's handle is now superseded — tear it down.
+        self.terminal_manager.close(spec.old_id);
+
+        // Re-key every terminal-id-keyed entry onto the reborn terminal. The
+        // values come from the caller's spec rather than the maps, so this is
+        // correct even when the exit path already dropped the old entries.
+        if new_id != spec.old_id {
+            self.terminal_backing_files.remove(&spec.old_id);
+            self.terminal_log_files.remove(&spec.old_id);
+            self.terminal_commands.remove(&spec.old_id);
+            self.terminal_resume_commands.remove(&spec.old_id);
+            self.ephemeral_terminals.remove(&spec.old_id);
+        }
+        if let Some(p) = spec.backing_path {
+            self.terminal_backing_files.insert(new_id, p);
+        }
+        if let Some(p) = spec.log_path {
+            self.terminal_log_files.insert(new_id, p);
+        }
+        if let Some(c) = spec.launch_argv {
+            self.terminal_commands.insert(new_id, c);
+        }
+        if let Some(c) = spec.resume_argv {
+            self.terminal_resume_commands.insert(new_id, c);
+        }
+        if spec.ephemeral {
+            self.ephemeral_terminals.insert(new_id);
+        }
+
+        // Point the buffer at the reborn PTY, preserving its remembered
+        // per-split live/scrollback modes when the binding still exists (the
+        // reconnect path) and seeding a live one when it doesn't (restart,
+        // where the exit path dropped it).
+        match self.terminal_buffers.get_mut(&buffer_id) {
+            Some(tb) => tb.terminal_id = new_id,
+            None => {
+                self.terminal_buffers
+                    .insert(buffer_id, TerminalBuffer::new_live(new_id));
+            }
+        }
+
+        // Register the reborn leader pid so window-level signal operations
+        // (Stop / Archive / Delete) reach the new process group.
+        if let Some(pid) = self.terminal_manager.get(new_id).and_then(|h| h.pid()) {
+            self.process_groups
+                .register(pid, format!("terminal #{}", new_id.0));
+        }
+
+        Some(new_id)
+    }
+
+    /// The exited-terminal record for `buffer_id`, if its process has quit and
+    /// the buffer is sitting in read-only scrollback awaiting a restart.
+    ///
+    /// `None` while the terminal is live — the restart affordances (palette
+    /// command, status-bar indicator) key off this, so a running agent is
+    /// never offered a restart that would kill it.
+    pub fn exited_terminal(&self, buffer_id: BufferId) -> Option<&ExitedTerminal> {
+        self.exited_terminals.get(&buffer_id)
+    }
+
+    /// Restart the terminal process behind `buffer_id` in place, rejoining the
+    /// agent conversation when the terminal carries a resume spec.
+    ///
+    /// This is the per-buffer counterpart to what a workspace restore does for
+    /// a whole window: same argv precedence (agent-resume → launch command →
+    /// plain shell), same authority wrapper, same reuse of the backing/log
+    /// files so the transcript continues below the `[Terminal process exited]`
+    /// marker rather than starting blank.
+    ///
+    /// Returns the new terminal id. `None` when the buffer has no exited
+    /// terminal (never was one, still live, or already restarted) or the
+    /// respawn failed.
+    pub fn restart_terminal_buffer(&mut self, buffer_id: BufferId) -> Option<TerminalId> {
+        // Take the record up front: a failed respawn must not leave a stale
+        // entry claiming a restart is still available, and a successful one
+        // has no dead terminal left to describe.
+        let exited = self.exited_terminals.remove(&buffer_id)?;
+
+        // Same gate as workspace restore: `terminal.resume_agents` off means
+        // re-run the launch command instead of rejoining the conversation.
+        let resume_argv = exited
+            .resume
+            .clone()
+            .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
+        let launch_argv = exited.command.clone().filter(|argv| !argv.is_empty());
+
+        let spec = RespawnSpec {
+            old_id: exited.terminal_id,
+            cols: exited.cols,
+            rows: exited.rows,
+            cwd: exited.cwd.clone(),
+            backing_path: exited.backing_path.clone(),
+            log_path: exited.log_path.clone(),
+            resume_argv,
+            launch_argv,
+            ephemeral: exited.ephemeral,
+        };
+        let Some(new_id) = self.respawn_terminal_pty(buffer_id, spec) else {
+            // Put the record back so the user can retry the restart.
+            self.exited_terminals.insert(buffer_id, exited);
+            return None;
+        };
+
+        // The exit path froze every split showing this buffer into read-only
+        // scrollback; hand them all back to the live grid. `new_live` already
+        // cleared the per-split modes, so this only has to undo the buffer's
+        // read-only editing state and re-arm the viewport.
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.margins.configure_for_line_numbers(false);
+            state.buffer.set_modified(false);
+        }
+
+        Some(new_id)
+    }
+}
+
+/// Inputs for one PTY respawn — see [`Window::respawn_terminal_pty`]. Grouped
+/// into a struct so the two callers can't transpose the several optional
+/// paths and argv vectors.
+struct RespawnSpec {
+    old_id: TerminalId,
+    cols: u16,
+    rows: u16,
+    cwd: Option<PathBuf>,
+    backing_path: Option<PathBuf>,
+    log_path: Option<PathBuf>,
+    resume_argv: Option<Vec<String>>,
+    launch_argv: Option<Vec<String>>,
+    ephemeral: bool,
 }
 
 impl Editor {
@@ -1419,6 +1551,46 @@ impl Editor {
             // destination is the more useful thing to surface.
             self.set_status_message(t!("terminal.sent_selection", id = terminal_id.0).to_string());
         }
+    }
+
+    /// Restart the exited terminal process in the active buffer, rejoining the
+    /// agent conversation when the terminal carries an agent-resume spec.
+    ///
+    /// This is the per-buffer form of what reactivating a workspace does for a
+    /// whole window — same argv precedence, same authority wrapper, same
+    /// scrollback file — so a Claude (or codex/aider/…) session whose process
+    /// quit can be picked back up without reopening the session. Reachable from
+    /// the command palette, the Terminal menu, and the status-bar indicator.
+    ///
+    /// No-ops with an explanatory status message when the active buffer isn't a
+    /// terminal, or is a terminal that is still running (restarting a live
+    /// agent would kill it).
+    pub fn restart_terminal(&mut self) {
+        let buffer_id = self.active_buffer();
+        if self.active_window().exited_terminal(buffer_id).is_none() {
+            let message = if self.active_window().is_terminal_buffer(buffer_id) {
+                t!("terminal.restart_still_running")
+            } else {
+                t!("terminal.restart_unavailable")
+            };
+            self.set_status_message(message.to_string());
+            return;
+        }
+
+        let Some(terminal_id) = self
+            .active_window_mut()
+            .restart_terminal_buffer(buffer_id)
+        else {
+            self.set_status_message(t!("terminal.restart_failed").to_string());
+            return;
+        };
+
+        // Come back live at the prompt, exactly like diving into a restored
+        // session does — the point of a restart is to keep working, not to
+        // land in scrollback of the transcript.
+        self.focus_terminal_buffer(terminal_id);
+        self.relayout();
+        self.set_status_message(t!("terminal.restarted", id = terminal_id.0).to_string());
     }
 
     /// Focus the buffer of the given terminal: jump to the split that

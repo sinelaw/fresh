@@ -246,6 +246,34 @@ Ctrl+Space flips to Scrollback. The PTY itself is ephemeral and re-spawned; only
 the backing file (scrollback + screen snapshot) is persisted (design-decisions.md
 #18).
 
+### 4.3.1 Per-buffer restart of an exited terminal
+
+The same rejoin mechanism, scoped to one buffer and driven by the user rather
+than by reactivation. When a terminal's process exits, `handle_terminal_exited`
+snapshots everything a respawn needs — geometry, cwd, backing/log files, launch
+and agent-resume argv, the ephemeral flag — into `Window::exited_terminals`
+(keyed by `BufferId`) *before* closing the PTY handle, since the exit path drops
+the buffer↔terminal binding and the handle that carries the geometry.
+
+`Window::restart_terminal_buffer` replays that record through
+`Window::respawn_terminal_pty`, the single respawn primitive also used by the
+remote-reconnect sweep (`respawn_terminals_through_authority`) — so the two
+cannot drift on argv precedence (agent-resume → launch → shell, gated by
+`terminal.resume_agents`), on composing argv through the window's *current*
+authority, on reusing the backing/log files, or on re-keying the terminal-id-keyed
+maps onto the new id. Restart is offered for **every** exited terminal, not only
+agent ones; a resume spec only changes which argv runs and how the indicator is
+worded.
+
+A live terminal is never restarted: the record exists only in the exited state,
+and `Editor::restart_terminal` reports "still running" instead. Surfaces:
+`Action::RestartTerminal` from the command palette, the View → Terminal menu, and
+the clickable `{terminal_restart}` status-bar element (`StatusBarClickable::RestartTerminal`).
+
+The record is in-memory only. A workspace save already skips exited terminals,
+so a restart offer does not survive an editor restart — reopening the workspace
+resumes the agent through the normal restore path instead.
+
 ### 4.4 Plugin-level agent state
 
 The dock additionally shows a coarse agent state inferred from terminal output

@@ -2447,6 +2447,9 @@ impl Editor {
             Action::CloseTerminal => {
                 self.close_terminal();
             }
+            Action::RestartTerminal => {
+                self.restart_terminal();
+            }
             Action::FocusTerminal => {
                 // If viewing a terminal buffer, drop the focused split into live
                 // mode (clears its scrollback edge, re-enables PTY input,

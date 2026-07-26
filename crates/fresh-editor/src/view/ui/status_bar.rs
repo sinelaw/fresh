@@ -49,6 +49,9 @@ pub enum StatusBarClickable {
     ReadOnly,
     /// The "Update: vX.Y.Z" indicator — click to offer an in-editor update.
     Update,
+    /// The restart indicator on a terminal buffer whose process quit — click
+    /// to respawn it (resuming the agent conversation when there is one).
+    RestartTerminal,
 }
 
 /// Categorization of how a rendered element should be styled and tracked for click detection.
@@ -68,6 +71,8 @@ enum ElementKind {
     WarningBadge,
     /// Update available indicator (highlighted)
     Update,
+    /// Exited-terminal restart indicator (error palette, clickable)
+    TerminalRestart,
     /// Command palette shortcut hint (distinct style)
     Palette,
     /// Status message area (clickable to show history)
@@ -309,6 +314,28 @@ pub struct StatusBarContext<'a> {
     /// `{trust}` indicator (read from the active authority each frame, so it
     /// never goes stale or vanishes — unlike a per-buffer plugin token).
     pub workspace_trust_level: crate::services::workspace_trust::TrustLevel,
+    /// Set when the active buffer is a terminal whose process has quit and can
+    /// be restarted in place. Drives the `{terminal_restart}` indicator, which
+    /// renders only in that state. `None` for every other buffer — including a
+    /// live terminal, so the indicator never offers to restart a running agent.
+    pub terminal_restart: Option<TerminalRestartState>,
+}
+
+/// What the `{terminal_restart}` indicator needs to describe the dead process
+/// behind the active buffer. Derived per frame from the window's
+/// `exited_terminals` record.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalRestartState {
+    /// Short program name of the process that died (`claude`, `codex`, …), or
+    /// `None` when the terminal was just a shell.
+    pub program: Option<String>,
+    /// Wait-status exit code, when the platform reported one. Shown only when
+    /// non-zero — a clean exit is the common "the agent finished" case and
+    /// doesn't need a number shouting on the bar.
+    pub exit_code: Option<i32>,
+    /// Whether restarting rejoins an agent conversation rather than starting a
+    /// fresh process. Drives "Resume" vs "Restart" wording.
+    pub resumes_agent: bool,
 }
 
 /// Layout information returned from status bar rendering for mouse click detection
@@ -368,6 +395,7 @@ fn element_kind_name(kind: ElementKind) -> &'static str {
         ElementKind::RemoteIndicator(_) => "remote",
         ElementKind::WorkspaceTrust(_) => "trust",
         ElementKind::Messages => "message",
+        ElementKind::TerminalRestart => "terminalRestart",
         ElementKind::Custom => "plugin",
         _ => "text",
     }
@@ -1231,6 +1259,36 @@ impl StatusBarRenderer {
                     token_key: None,
                 })
             }
+            StatusBarElement::TerminalRestart => {
+                // Absent unless the active buffer is a terminal whose process
+                // quit — this is a call to action, not a persistent control.
+                let restart = ctx.terminal_restart.as_ref()?;
+                // "Resume claude" when the restart rejoins the conversation,
+                // "Restart claude" when it re-runs the launch command, and a
+                // bare "Restart terminal" for a plain shell.
+                let text = match (&restart.program, restart.resumes_agent) {
+                    (Some(program), true) => {
+                        t!("status.terminal_resume", program = program).to_string()
+                    }
+                    (Some(program), false) => {
+                        t!("status.terminal_restart", program = program).to_string()
+                    }
+                    (None, _) => t!("status.terminal_restart_shell").to_string(),
+                };
+                // A non-zero code is the signal that something went wrong, so
+                // it rides along; exit 0 (the agent simply finished) doesn't.
+                let text = match restart.exit_code {
+                    Some(code) if code != 0 => {
+                        t!("status.terminal_restart_code", label = text, code = code).to_string()
+                    }
+                    _ => text,
+                };
+                Some(RenderedElement {
+                    text,
+                    kind: ElementKind::TerminalRestart,
+                    token_key: None,
+                })
+            }
             StatusBarElement::Palette => {
                 let shortcut = ctx
                     .keybindings
@@ -1461,6 +1519,27 @@ impl StatusBarRenderer {
                 }
                 style
             }
+            ElementKind::TerminalRestart => {
+                // The error palette: a dead agent is a state the user has to
+                // act on, and the indicator *is* the action. Hover styling
+                // matches the other clickable indicators.
+                let (fg, bg) = if is_hovering {
+                    (
+                        theme.status_error_indicator_hover_fg,
+                        theme.status_error_indicator_hover_bg,
+                    )
+                } else {
+                    (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    )
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
             // The palette shortcut hint is purely informational — driven
             // by the dedicated `status_palette_*` theme keys (default
             // to the neutral status-bar palette so it blends into the
@@ -1553,6 +1632,10 @@ impl StatusBarRenderer {
                 "ui.status_warning_indicator_bg",
             ),
             ElementKind::Update => ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+            ElementKind::TerminalRestart => (
+                "ui.status_error_indicator_fg",
+                "ui.status_error_indicator_bg",
+            ),
             ElementKind::Palette => ("ui.status_palette_fg", "ui.status_palette_bg"),
             ElementKind::RemoteIndicator(state) => match state {
                 RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
@@ -1594,6 +1677,7 @@ impl StatusBarRenderer {
             ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
             ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
             ElementKind::Update => Some(StatusBarClickable::Update),
+            ElementKind::TerminalRestart => Some(StatusBarClickable::RestartTerminal),
             ElementKind::Normal
             | ElementKind::RemoteDisconnected
             | ElementKind::Palette

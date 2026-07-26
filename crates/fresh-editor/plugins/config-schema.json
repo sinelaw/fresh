@@ -58,6 +58,7 @@
           "left": [
             "{trust}",
             "{remote}",
+            "{terminal_restart}",
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
@@ -509,6 +510,7 @@
             "left": [
               "{trust}",
               "{remote}",
+              "{terminal_restart}",
               "{cursor}",
               "{diagnostics}",
               "{cursor_count}",
@@ -974,6 +976,7 @@
           "default": [
             "{trust}",
             "{remote}",
+            "{terminal_restart}",
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
@@ -1069,6 +1072,10 @@
         {
           "value": "{update}",
           "name": "Update"
+        },
+        {
+          "value": "{terminal_restart}",
+          "name": "Terminal Restart"
         },
         {
           "value": "{palette}",

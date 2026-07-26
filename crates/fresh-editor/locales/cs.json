@@ -1628,5 +1628,17 @@
   "update.terminal_title": "fresh update (local)",
   "status.update_running": "Updating…",
   "status.update_done": "Updated — restart fresh",
-  "status.update_failed": "Update failed — click for details"
+  "status.update_failed": "Update failed — click for details",
+  "action.restart_terminal": "Restartovat proces terminálu",
+  "cmd.restart_terminal": "Restartovat proces terminálu",
+  "cmd.restart_terminal_desc": "Znovu spustit ukončený proces v tomto bufferu terminálu a obnovit relaci agenta, pokud existuje",
+  "menu.terminal.restart": "Restartovat proces terminálu",
+  "terminal.restarted": "Terminál %{id} restartován",
+  "terminal.restart_still_running": "Proces terminálu stále běží",
+  "terminal.restart_unavailable": "V tomto bufferu není žádný ukončený proces terminálu",
+  "terminal.restart_failed": "Nepodařilo se restartovat proces terminálu",
+  "status.terminal_resume": "⟳ Obnovit %{program}",
+  "status.terminal_restart": "⟳ Restartovat %{program}",
+  "status.terminal_restart_shell": "⟳ Restartovat terminál",
+  "status.terminal_restart_code": "%{label} (kód %{code})"
 }
