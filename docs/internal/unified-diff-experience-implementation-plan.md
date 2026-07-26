@@ -14,58 +14,134 @@ milestone ships user-visible value on its own and none requires the next.
 
 | Piece | Where | Role in the plan |
 |---|---|---|
-| Review session (worktree/range/stash review, staging, comments, `.review/` persistence, watch mode, split/stack) | `crates/fresh-editor/plugins/audit_mode.ts` | becomes the ReviewSession core; most Part I logic refactors out of here |
+| Review session (worktree/range/stash review, staging, comments, `.review/` persistence, watch mode, split/stack, sticky header panel) | `crates/fresh-editor/plugins/audit_mode.ts` | becomes the ReviewSession core; most Part I logic refactors out of here |
 | Commit-list rendering | `plugins/lib/git_history.ts` | reused by the commits-lens rail |
-| Git Log (buffer-group tab, streamed `git show` detail) | `plugins/git_log.ts` | its detail pane is replaced by the shared renderer; its list becomes the history preset |
-| Side-by-side composite buffer | host (`fresh-core`/editor render) | the split layout; keys must become rebindable Actions |
+| Git Log (buffer-group tab, streamed `git show` into a **file-backed `.diff` buffer** with real syntax highlighting, folds, scrollbar) | `plugins/git_log.ts` | the model for how the diff stream should be rendered (§2); its list becomes the history preset |
+| Side-by-side composite buffer | host (`fresh-core` / render) | the split layout; keys must become rebindable Actions |
 | Live Diff (in-buffer hunks, virtual old-lines, word-level intraline, reference picker) | `plugins/live_diff.ts` | the buffer lens; its virtual-line machinery powers expand-in-place |
 | Git gutter | `plugins/git_gutter.ts` | absorbed into the live-diff hunk model (M5) |
 | Diff nav (merged jump list) | `plugins/diff_nav.ts` | the single in-buffer Next/Prev Change |
-| Orchestrator (worktree workspaces, dock cards, PR badges/metadata, trust flow) | `plugins/orchestrator.ts` | workspace creation for PR checkout, session-start refs, dock-as-inbox badges |
-| Scrollbar markers (live-diff hunks, diagnostics) | host | the review map strip |
+| Orchestrator (worktree workspaces, dock cards, PR badges/metadata, trust flow, `windowEmbed` live preview) | `plugins/orchestrator.ts` | workspace creation for PR checkout, session-start refs, dock-as-inbox badges — and the working precedent for the workspace shell (§2) |
+| **Widget framework** — 17 `WidgetSpec` kinds, host-owned instance state, keyboard *and* mouse dispatch, hit areas | host `src/widgets/*`, `src/app/widget_runtime.rs`, TS `plugins/lib/widgets.ts` | **the chrome of the entire Review workspace** (§2) |
+| Buffer decoration APIs — `addOverlay` (fg/bg/underline/`extendToLineEnd`/`fgOnCollisionOnly`/OSC-8 `url`), virtual lines w/ priority, line indicators, `publishFoldingRanges` + collapsed folds, `setScrollbarMarkers[InRange]` | host + `fresh.d.ts` | diff body decoration, folds, the map strip |
 | Piece-tree diff, review-hunk state, `set-review-diff-hunks`, local-control IPC | host | M6 agent surface; hunk model plumbing |
-| Web scene projections + parity tests | host + `web-ui/` | every new surface lands as a projection (design §3.12) |
+| Web scene projections + parity tests | host + `web-ui/` | free for widgets; every new surface lands as a projection (design §3.12) |
 
-Known host gaps (from `search-and-diff.md` and observation): no syntax
-highlighting in the unified review stream (overlay-priority/background
-pathway missing); composite-buffer keys hardcoded; no inline click targets
-("buttons") in panel content; no sticky header primitive; no hover events
-for text elements.
+### 1.1 The widget toolkit, concretely
 
-## 2. New host primitives (the short list)
+This was under-appreciated in the first draft of this plan and changes the
+build substantially. What already ships:
 
-Ordered by how many milestones depend on them:
+- **Kinds**: `Row`, `Col`, `HintBar`, `Toggle`, `Number`, `Dropdown`,
+  `DualList`, `Button`, `Spacer`, `Divider`, `List`, `Tree`, `Text`,
+  `LabeledSection`, `WindowEmbed`, `Raw`, `Overlay` — with TS builders in
+  `lib/widgets.ts` and `WidgetPanel` / `FloatingWidgetPanel` helpers.
+- **Host-owned instance state keyed by widget key**: scroll offset, cursor,
+  selection index, expanded tree keys and focus survive a full spec rebuild,
+  so a plugin can re-emit its whole spec on every model change (exactly the
+  render model a live-updating review needs).
+- **Mouse is already solved for widgets**: the registry produces `HitArea`s
+  (widget key, kind, row, byte range, payload, event type) and the runtime
+  routes clicks — button activate, tree expand/collapse, list item select
+  (item-granular even for multi-row cards via `itemSpecs`), dropdown
+  open/select, text caret positioning. Right-click context menus and
+  focus-follow are wired in `widget_runtime.rs`.
+- **`Tree`** gives foldable typed nodes with host-retained expansion.
+  **`List`** gives per-row `TextPropertyEntry`s *or* per-item widget cards.
+  **`Overlay`** floats a child over the layout (dropdowns, popups).
+  **`LabeledSection`** draws the rounded bordered box with a legend.
+  **`HintBar`** renders keyed hint entries. **`Divider`**/`flexSpacer`
+  size themselves to the panel — no width math in the plugin.
+- **`WindowEmbed`** reserves a rectangle in a widget layout for the host to
+  natively paint a real editor `Window` — syntax highlighting, folds,
+  decorations, scrollbar and all. The Orchestrator already ships this for
+  its live session preview.
+- **`Raw`** is the escape hatch: pass-through `TextPropertyEntry` rows that
+  emit **no hit areas**, leaving the plugin to do byte-offset math on
+  `mouse_click` — which is what `audit_mode` does today, and what the
+  git_log widget migration explicitly called out as *"the most error-prone
+  part of the plugin"*.
+- Direction of travel (`settings-widget-unification-plan.md`): the Settings
+  UI has already been migrated onto this framework; the stated goal is one
+  declarative widget framework for all controls. A new surface should not
+  add a second hand-rolled one.
 
-1. **Overlay priority / background layering** so token colors and
-   add/remove backgrounds compose in the unified stream (unblocks M0's
-   biggest win; already analyzed in `search-and-diff.md` §3.3).
-2. **Inline actionable spans**: a text-property that marks a range as a
-   click/hover target with an action id + hover style. Powers verb buttons,
-   scope-bar segments, expanders, hover checkboxes, `⊕` gutter button,
-   `[Z Undo]` receipts. (One primitive; every "button" in the design is
-   this.) Must land as a scene projection so the web renders real buttons.
-3. **Sticky first row(s)** for a panel/buffer view (file·function header;
-   also useful for git log). Degrades gracefully: without it, the header
-   just scrolls — ship M1 without blocking on it.
-4. **Rebindable composite-buffer Actions** (`diff-view` key context)
-   replacing the hardcoded input router.
-5. **Per-hunk incremental render/stream + cancellation** for
-   selection-driven previews (extends the existing streamed-`git show`
-   work; kill-on-move is already planned there).
-6. (M3) **Ref recording API** for plugins (`refs/fresh/review/*`,
-   `refs/fresh/undo/*`): create/read/prune refs without shelling per call.
+## 2. Architecture consequence: widgets for chrome, a real buffer for the diff
 
-Everything else is plugin-side TypeScript.
+The first draft of this plan assumed the workspace would be built the way
+`audit_mode` is built today — everything painted into virtual buffers via
+`setPanelContent`, with the plugin hit-testing clicks by byte offset. Given
+§1.1 that is the wrong build. The Review workspace is:
 
-## 3. Milestones
+**Chrome = widgets.** Every element of the design maps onto an existing
+kind, which means click targets, hover/focus behavior, host-retained state,
+keyboard dispatch and **web parity all come for free**:
+
+| Design element | Widget |
+|---|---|
+| scope bar (`⟨base ⟶ target⟩`, lens, gauge, `[/][o][?]`) | `Row` of `Button` + `Dropdown` + `Divider`/`flexSpacer` |
+| scope chooser rows, PR picker | `List` with `itemSpecs` cards (item-granular clicks, `/` filter) |
+| navigator rail — files / commits / notes | `Tree` (files, host-retained expansion) or `List`; the `⟨\ ▾⟩` cycle is a `Dropdown` |
+| verb button rows (`[s Stage] [d Discard] …`) | `Row` of `Button` (label carries the key, per design §3.1 principle 3) |
+| lens menu, rail dropdown, guard prompt | `Overlay` + `LabeledSection` |
+| comment composer, conclude dialog | `LabeledSection` + `Text`/`textArea` + `Button` row |
+| view transient | `LabeledSection` + `Toggle`/`Number`/`Dropdown` rows |
+| context line / receipts | `HintBar` (+ a `Button` for `[Z Undo]`) |
+| completion / resume banners | `LabeledSection` + `Button` row |
+
+**The diff stream = a real editor buffer**, embedded in that widget layout
+via `WindowEmbed` (or hosted as the buffer-group's center panel, whichever
+the M1 spike shows is cleaner). Rendering the stream as a *buffer* rather
+than as panel content is what unlocks, at zero cost: **syntax highlighting**
+(git_log already proves the pattern — write the unified diff to a
+`.diff`-suffixed file so the bundled grammar applies, then layer per-line
+add/remove backgrounds with `addOverlay` + `fgOnCollisionOnly`), folding via
+`publishFoldingRanges`, the scrollbar map via `setScrollbarMarkers`,
+selection, in-buffer search, and the buffer lens itself.
+
+This reframes the single biggest M0 item: *"syntax highlighting in the
+unified review pane"* is not primarily a new host API — it is a **rendering
+strategy change** (buffer instead of panel content) that the codebase has
+already executed once, in git_log.
+
+## 3. Host primitives — re-evaluated
+
+The first draft listed six. After reading the toolkit, two are unnecessary,
+two shrink to "finish what's declared", and one is a strategy change:
+
+| # (old) | Proposed primitive | Verdict |
+|---|---|---|
+| 1 | Overlay priority / background layering | **Downgraded — strategy, not API.** Render the stream as a buffer (§2) and syntax highlighting is syntect's; `fgOnCollisionOnly` already exists for the row-bg-vs-token collision and `extendToLineEnd` for fills. Any residual composition bug is a fix in the existing overlay path, not a new primitive. |
+| 2 | Inline actionable spans | **Keep, re-scoped and much smaller.** All *chrome* affordances are real widgets with hit areas already. This is needed only for **in-diff-body** affordances: the `⊕` hover-comment gutter button, context expanders, and any in-stream chips. The data model already declares it — `InlineOverlay.properties` is documented as *"click target metadata"* but **nothing consumes it**. Work = resolve a click/hover inside a buffer row to the innermost overlay carrying an action property and deliver it as a plugin event. Fallback if it slips: `mouse_click` byte math (today's audit_mode path) for those few targets only. |
+| 3 | Sticky first row(s) | **Dropped — already exists.** `audit_mode` ships a `sticky` panel slot re-rendered on scroll; git_log ships a fixed toolbar band. Reuse the pattern. |
+| 4 | Rebindable composite-buffer Actions (`diff-view` context) | **Keep.** The hardcoded input router is real and is the documented "v1 mistake". |
+| 5 | Per-hunk incremental render + cancellation | **Keep, as an extension.** Streaming into file-backed buffers ships; growth polling and the planned kill-on-move cancellation are the remaining pieces. |
+| 6 | Ref recording API for `refs/fresh/*` | **Dropped.** Plugins already spawn `git` directly for everything; version/undo refs are `git update-ref` calls. |
+
+Net: **one genuinely new host capability** (overlay-property click/hover
+resolution in buffer rows), one refactor (composite keys → Actions), one
+perf extension (cancellation), and one strategy change (stream as buffer).
+Everything else in Part I is plugin-side TypeScript over the existing
+widget framework.
+
+A corollary worth stating: because chrome is widgets and widgets already
+project into the web scene with parity tests, the M5 "web parity" work
+shrinks to whatever the `WindowEmbed`'d buffer needs — the chrome comes
+across by construction.
+
+## 4. Milestones
 
 ### M0 — stop the visible bleeding (design §5 Phase 0)
 
 Small, independent, shippable one by one:
 
-- Syntax highlighting + word-level intraline in the unified review pane
-  (host primitive #1; syntect diff-scope mapping per the existing plan).
-- Composite-buffer keys → `diff-view` Actions (primitive #4); keybinding
+- Syntax highlighting + word-level intraline in the unified review pane —
+  as the §2 strategy change (render the stream from a `.diff`-suffixed
+  file-backed buffer like git_log already does, then layer add/remove
+  backgrounds with `addOverlay` + `fgOnCollisionOnly`), not a new API.
+  Doing this in M0 also de-risks M1, since it establishes the buffer the
+  workspace will host.
+- Composite-buffer keys → `diff-view` Actions (§3 #4); keybinding
   editor lists them.
 - Chrome convergence on the *existing* surfaces: shared hint-bar format and
   `?` overlay for Git Log, PR-Branch, Side-by-Side; unify `Tab`/`q`
@@ -94,10 +170,15 @@ The big refactor plus the primary loop:
 - **The primary loop**: viewed marks keyed by `(path, old-blob, new-blob)`
   hashes; `Space` = mark & advance; mark-collapses-file; fold-without-mark
   independent and persisted; progress gauge excluding noise; `F`
-  unreviewed filter; sticky header with `[✓ Reviewed]` (primitive #3, else
-  header-in-place).
-- **Verb buttons** on focused section + right-click context menus + hover
-  checkboxes (primitive #2).
+  unreviewed filter; sticky header with `[✓ Reviewed]` (reusing
+  `audit_mode`'s existing `sticky` panel slot).
+- **Chrome on the widget framework** (§2): scope bar, chooser, rail, verb
+  button rows, transients and banners as `Row`/`Button`/`List`/`Tree`/
+  `Overlay`/`LabeledSection`/`HintBar` — deleting `audit_mode`'s
+  byte-offset `mouse_click` hit-testing rather than extending it. Only
+  in-diff-body affordances (`⊕` gutter, expanders) need the overlay-property
+  click primitive; until it lands they can stay on the existing
+  `mouse_click` path.
 - **Comments v2**: severity tags, line/range anchors with ±context hashes,
   re-anchor + `≈` staleness, `⊕` hover gutter button, drafts persisted;
   notes rail projection.
@@ -115,7 +196,7 @@ with today verified by the existing suites; chooser replaces old entries.
 ### M2 — lenses and history convergence (design §3.3 lens, history)
 
 - **Commits lens**: rail swaps to the commit strip (`lib/git_history.ts`),
-  selection drives the stream (debounced, cancellable — primitive #5),
+  selection drives the stream (debounced, cancellable — §3 #5),
   `[`/`]` stepping, per-commit + flat progress sharing the same
   content-hash marks.
 - **History preset**: `git_log.ts` detail pane → shared renderer; `Enter`
@@ -125,7 +206,7 @@ with today verified by the existing suites; chooser replaces old entries.
 - **Retire Review: PR Branch** (its two halves are now the commits lens and
   the history preset); palette alias points at the branch scope.
 - **Version refs + interdiff**: record `refs/fresh/review/<scope-id>/v<N>`
-  on review-open/conclude (primitive #6); "since my last review" as
+  on review-open/conclude (plain `git update-ref`); "since my last review" as
   default reopened target; `⇅ vN→vM` pseudo-commit in the commits lens.
 
 Exit: one commit-list implementation remains; git_log.ts shrinks to the
@@ -184,10 +265,12 @@ to GitHub from the conclude surface; force-push shows `⇅` interdiff.
 - Absorb `git_gutter` into the live-diff hunk model (one reference picker;
   reference auto-swaps to session baseline when an agent review is open);
   expand-in-place hunk with the shared verb-button row (live_diff virtual
-  lines + primitive #2); single Next/Prev Change everywhere.
-- **Scene projections + parity tests** for every workspace surface (scope
-  bar, rail, stream, buttons, transients, chooser, PR picker) — the web UI
-  gets the whole experience with no web-specific code (design §3.12).
+  lines + the §3 #2 overlay-property click targets); single Next/Prev
+  Change everywhere.
+- **Scene projections + parity tests**: widget chrome projects already, so
+  this shrinks to the stream surface (the embedded window) plus parity
+  coverage for the new panels — the web UI gets the whole experience with
+  no web-specific code (design §3.12).
 - Scaling: sub-100-col zoom model; ≥160-col split default + anchored
   comments rail.
 - Blame alignment (`Enter` → one-commit scope; `,` re-blame at parent).
@@ -203,7 +286,7 @@ pause-on-review / guided-review lens → deeper forge sync (thread replies,
 resolution, viewed-state). Each independently shippable; none blocks or
 reshapes Part I surfaces.
 
-## 4. Cross-cutting workstreams
+## 5. Cross-cutting workstreams
 
 - **Keybindings**: one `review` context defined once, inherited everywhere;
   uppercase-escalation convention enforced in review-owned maps; all
@@ -222,7 +305,7 @@ reshapes Part I surfaces.
   per-hunk streaming; never a whole-diff overlay pass (the git-log
   million-overlay lesson).
 
-## 5. Sequencing and risk
+## 6. Sequencing and risk
 
 ```
 M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M6
@@ -233,10 +316,17 @@ M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M6
   lines) and the documented outer-vs-inner split-leaf bug class — mitigate
   by extracting behind the existing e2e suites and landing chrome changes
   separately from logic moves.
-- Host-primitive risk: inline actionable spans (#2) is the one primitive
-  the design leans on everywhere; prototype it first (M1 spike) — fallback
-  is a persistent hint bar (design §3.14 explicitly keeps it as the
-  fallback), which changes no data model.
+- Host-primitive risk is now small: the only new capability is
+  overlay-property click/hover resolution (§3 #2), and it is confined to
+  in-diff-body affordances — chrome rides the widget framework's existing
+  hit areas. Fallback for those few targets is today's `mouse_click` byte
+  math; the design's hint-bar alternative (§3.14) remains available and
+  changes no data model.
+- Integration risk moves to the §2 spike: does the stream live in a
+  `WindowEmbed`'d window inside one widget panel, or as a buffer-group
+  center panel with widget panels around it? Decide in an M1 spike before
+  the chrome work; both keep the same data model, so the risk is layout
+  plumbing, not rework.
 - Forge risk (M4): API scope creep — the plugin API is four calls (list,
   fetch, threads, submit); everything else is Part II.
 - The two flagged prototype questions (buttons vs hint bar; `h`/`l`
