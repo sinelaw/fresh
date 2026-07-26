@@ -270,9 +270,21 @@ and `Editor::restart_terminal` reports "still running" instead. Surfaces:
 `Action::RestartTerminal` from the command palette, the View → Terminal menu, and
 the clickable `{terminal_restart}` status-bar element (`StatusBarClickable::RestartTerminal`).
 
-The record is in-memory only. A workspace save already skips exited terminals,
-so a restart offer does not survive an editor restart — reopening the workspace
-resumes the agent through the normal restore path instead.
+The record is persisted. `capture_workspace` walks `exited_terminals` alongside
+the live `terminal_buffers` (adding their buffer→terminal entries to the layout's
+`terminal_id_map`, which otherwise only covers live bindings) and writes each as a
+`SerializedTerminalWorkspace` carrying an `exited: Some(ExitedTerminalState)`
+marker — skip-serialized, so live terminals are unchanged on disk. On restore
+that marker short-circuits `restore_terminal_from_workspace` into
+`restore_exited_terminal`, which loads the backing file and re-arms the record
+*without spawning*: a workspace must not silently re-run a process the user had
+finished with, and for an agent that would mean resuming the conversation on
+reopen. The same ephemeral-without-command rule applies as for live terminals.
+
+One consequence worth noting in `respawn_terminal_pty`: a terminal restored as
+already-exited holds an id the `TerminalManager` never had, so the allocator can
+hand that very id back to the respawn. The old handle is therefore torn down only
+when the ids differ — an unguarded close would kill the terminal just spawned.
 
 ### 4.4 Plugin-level agent state
 

@@ -1110,8 +1110,14 @@ impl Window {
             }
         };
 
-        // The dead PTY's handle is now superseded — tear it down.
-        self.terminal_manager.close(spec.old_id);
+        // The dead PTY's handle is now superseded — tear it down. Guarded on
+        // the ids differing: a terminal restored as already-exited holds an id
+        // the manager never had, so the allocator can hand that very id back
+        // to the spawn above — and an unguarded close would kill the terminal
+        // we just started.
+        if new_id != spec.old_id {
+            self.terminal_manager.close(spec.old_id);
+        }
 
         // Re-key every terminal-id-keyed entry onto the reborn terminal. The
         // values come from the caller's spec rather than the maps, so this is

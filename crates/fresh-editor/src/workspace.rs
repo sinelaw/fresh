@@ -493,6 +493,27 @@ pub struct SerializedTerminalWorkspace {
     /// `command`. Absent in older workspaces and for plain terminals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_resume: Option<AgentResume>,
+    /// Set when this terminal's process had already quit at save time.
+    ///
+    /// Restore then brings the buffer back as read-only scrollback with the
+    /// restart offer re-armed, rather than respawning: the user closed the
+    /// editor on a *finished* process, and silently re-running it — spending
+    /// agent tokens on a conversation they were done with — is not what
+    /// "restore my workspace" should mean. The restart is one click away
+    /// either way. Absent for live terminals and in older workspaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exited: Option<ExitedTerminalState>,
+}
+
+/// The saved state of a terminal whose process had quit before the editor did.
+/// A struct rather than a bare bool so it can carry more of the dead process's
+/// story later (signal, duration, …) without a breaking schema change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExitedTerminalState {
+    /// Wait-status exit code, when the platform reported one. Drives the
+    /// `(exit N)` suffix on the restored restart indicator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 /// How to rejoin a terminal's agent conversation on restore. A struct (not a
