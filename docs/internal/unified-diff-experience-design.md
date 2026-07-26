@@ -348,8 +348,10 @@ triangles fold, verb buttons act, the scrollbar map jumps on click.
   marked; auto-quarantined `noise` group (generated/lock/format-only) folded
   at the bottom and **excluded from the 4/9 denominator**. Hovering a row
   reveals its own small verb buttons (viewed-toggle, open).
-- **Stream** (center): the section document. Sticky file·function header;
-  the focused hunk grows its **verb-button row** — click or key, same thing.
+- **Stream** (center): the section document. Sticky file·function header —
+  which carries the current file's `[✓ Reviewed]` button and fold triangle,
+  so the primary scroll-and-mark loop (§3.6) never leaves the stream; the
+  focused hunk grows its **verb-button row** — click or key, same thing.
   Right-click any line/hunk/file opens a context menu listing the same verbs
   with their keys printed (menus teach the keymap).
 - **Scrollbar map** (right): hunk positions, comment marks, viewed regions
@@ -490,8 +492,21 @@ that fold with their hunk and re-anchor across lenses; a fuzzy anchor shows
 
 ### 3.6 The review loop: Space, Enter, Esc, C
 
+**The primary use case is the flat stream, reviewed file-by-file, top to
+bottom.** Everything else — commits lens, history, zoomed files — is
+secondary; the design optimizes this loop first: scroll (or `Space`) down
+one continuous document, and as each file is dealt with, mark it reviewed —
+whereupon it **collapses in place to its one-line header**
+(`✓ src/parser.rs  +6 −1`), GitHub-style. The stream physically shrinks
+into a to-do list of what's left; unmarking or clicking a collapsed header
+re-expands it. Scrolling itself is a first-class review motion: the sticky
+file header carries the file's own `[✓ Reviewed]` button and fold triangle,
+so scroll-and-mark never needs the rail or a jump back to the file's top.
+
 - **`Space`** — mark the thing at point viewed (or *kept* in an agent scope)
-  and jump to the next unreviewed thing. The gauge ticks; noise files never
+  and advance: on a hunk, next hunk; on the last hunk of a file (or on a
+  file header), the whole file — which collapses — and the cursor lands on
+  the next unreviewed file's first hunk. The gauge ticks; noise files never
   inflate the denominator. When nothing is left, the workspace offers the
   exits as buttons:
 
