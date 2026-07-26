@@ -4190,6 +4190,7 @@ mod exited_terminal_tests {
             command: command.map(argv),
             resume: resume.map(argv),
             ephemeral: true,
+            title: None,
         }
     }
 
