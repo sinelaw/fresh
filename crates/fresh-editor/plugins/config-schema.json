@@ -95,6 +95,8 @@
         "whitespace_tabs_leading": true,
         "whitespace_tabs_inner": true,
         "whitespace_tabs_trailing": true,
+        "whitespace_newlines": false,
+        "whitespace_carriage_returns": false,
         "use_tabs": false,
         "tab_size": 4,
         "auto_indent": true,
@@ -649,6 +651,18 @@
           "description": "Show tab indicators (→) for trailing tabs.\nCan be overridden per-language via `show_whitespace_tabs` in language config.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Whitespace"
+        },
+        "whitespace_newlines": {
+          "description": "Show newline indicators (↵) at the end of every line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_carriage_returns": {
+          "description": "Show carriage-return indicators (␍) for the CR half of CRLF line\nendings, next to the newline position. Stray CR bytes that are not\npart of the buffer's line ending always render as `<0D>` escapes.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Whitespace"
         },
         "use_tabs": {

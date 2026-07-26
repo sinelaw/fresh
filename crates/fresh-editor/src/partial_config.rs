@@ -232,6 +232,8 @@ pub struct PartialEditorConfig {
     pub whitespace_tabs_leading: Option<bool>,
     pub whitespace_tabs_inner: Option<bool>,
     pub whitespace_tabs_trailing: Option<bool>,
+    pub whitespace_newlines: Option<bool>,
+    pub whitespace_carriage_returns: Option<bool>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -363,6 +365,10 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.whitespace_tabs_inner);
         self.whitespace_tabs_trailing
             .merge_from(&other.whitespace_tabs_trailing);
+        self.whitespace_newlines
+            .merge_from(&other.whitespace_newlines);
+        self.whitespace_carriage_returns
+            .merge_from(&other.whitespace_carriage_returns);
     }
 }
 
@@ -683,6 +689,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             whitespace_tabs_leading: Some(cfg.whitespace_tabs_leading),
             whitespace_tabs_inner: Some(cfg.whitespace_tabs_inner),
             whitespace_tabs_trailing: Some(cfg.whitespace_tabs_trailing),
+            whitespace_newlines: Some(cfg.whitespace_newlines),
+            whitespace_carriage_returns: Some(cfg.whitespace_carriage_returns),
         }
     }
 }
@@ -876,6 +884,12 @@ impl PartialEditorConfig {
             whitespace_tabs_trailing: self
                 .whitespace_tabs_trailing
                 .unwrap_or(defaults.whitespace_tabs_trailing),
+            whitespace_newlines: self
+                .whitespace_newlines
+                .unwrap_or(defaults.whitespace_newlines),
+            whitespace_carriage_returns: self
+                .whitespace_carriage_returns
+                .unwrap_or(defaults.whitespace_carriage_returns),
         }
     }
 }

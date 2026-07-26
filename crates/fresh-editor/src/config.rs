@@ -680,11 +680,13 @@ pub struct WhitespaceVisibility {
     pub tabs_leading: bool,
     pub tabs_inner: bool,
     pub tabs_trailing: bool,
+    pub newlines: bool,
+    pub carriage_returns: bool,
 }
 
 impl Default for WhitespaceVisibility {
     fn default() -> Self {
-        // Match EditorConfig defaults: tabs all on, spaces all off
+        // Match EditorConfig defaults: tabs all on, spaces and line endings all off
         Self {
             spaces_leading: false,
             spaces_inner: false,
@@ -692,6 +694,8 @@ impl Default for WhitespaceVisibility {
             tabs_leading: true,
             tabs_inner: true,
             tabs_trailing: true,
+            newlines: false,
+            carriage_returns: false,
         }
     }
 }
@@ -700,14 +704,7 @@ impl WhitespaceVisibility {
     /// Resolve from EditorConfig flat fields (applying master toggle)
     pub fn from_editor_config(editor: &EditorConfig) -> Self {
         if !editor.whitespace_show {
-            return Self {
-                spaces_leading: false,
-                spaces_inner: false,
-                spaces_trailing: false,
-                tabs_leading: false,
-                tabs_inner: false,
-                tabs_trailing: false,
-            };
+            return Self::hidden();
         }
         Self {
             spaces_leading: editor.whitespace_spaces_leading,
@@ -716,6 +713,8 @@ impl WhitespaceVisibility {
             tabs_leading: editor.whitespace_tabs_leading,
             tabs_inner: editor.whitespace_tabs_inner,
             tabs_trailing: editor.whitespace_tabs_trailing,
+            newlines: editor.whitespace_newlines,
+            carriage_returns: editor.whitespace_carriage_returns,
         }
     }
 
@@ -740,9 +739,14 @@ impl WhitespaceVisibility {
         self.tabs_leading || self.tabs_inner || self.tabs_trailing
     }
 
-    /// Returns true if any indicator (space or tab) is enabled
+    /// Returns true if any line-ending indicator (newline or CR) is enabled
+    pub fn any_line_endings(&self) -> bool {
+        self.newlines || self.carriage_returns
+    }
+
+    /// Returns true if any indicator (space, tab, or line ending) is enabled
     pub fn any_visible(&self) -> bool {
-        self.any_spaces() || self.any_tabs()
+        self.any_spaces() || self.any_tabs() || self.any_line_endings()
     }
 
     /// All indicators disabled — the "hidden" state of the master toggle.
@@ -754,6 +758,8 @@ impl WhitespaceVisibility {
             tabs_leading: false,
             tabs_inner: false,
             tabs_trailing: false,
+            newlines: false,
+            carriage_returns: false,
         }
     }
 
@@ -1361,6 +1367,20 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Whitespace"))]
     pub whitespace_tabs_trailing: bool,
 
+    /// Show newline indicators (↵) at the end of every line.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_newlines: bool,
+
+    /// Show carriage-return indicators (␍) for the CR half of CRLF line
+    /// endings, next to the newline position. Stray CR bytes that are not
+    /// part of the buffer's line ending always render as `<0D>` escapes.
+    /// Default: false
+    #[serde(default = "default_false")]
+    #[schemars(extend("x-section" = "Whitespace"))]
+    pub whitespace_carriage_returns: bool,
+
     // ===== Editing =====
     /// Whether pressing Tab inserts a tab character instead of spaces.
     /// This is the global default; individual languages can override it
@@ -1917,6 +1937,8 @@ impl Default for EditorConfig {
             whitespace_tabs_leading: true,
             whitespace_tabs_inner: true,
             whitespace_tabs_trailing: true,
+            whitespace_newlines: false,
+            whitespace_carriage_returns: false,
         }
     }
 }
