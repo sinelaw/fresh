@@ -68,6 +68,8 @@ Files without write permission and known library paths (rustup toolchains, `/usr
 
 Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or `whitespace_indicators` in config. A master toggle and per-language overrides are supported. Theme color: `whitespace_indicator_fg`.
 
+Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle.
+
 ## Inline Diagnostics
 
 Diagnostic messages can be displayed at the end of each line, right-aligned, with version-aware staleness dimming. Disabled by default — enable "diagnostics inline text" in the Settings UI or set `diagnostics_inline_text` in config.

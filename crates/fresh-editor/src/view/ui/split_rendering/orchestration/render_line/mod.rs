@@ -1035,7 +1035,12 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         let end_x = if line_was_empty {
             gutter_width as u16
         } else {
-            last_visible_x.saturating_add(1)
+            // A rendered line-ending indicator adds view-map cells for the
+            // newline byte itself; step back over them so the end-of-line
+            // cursor lands on the indicator, not past it.
+            last_visible_x
+                .saturating_add(1)
+                .saturating_sub(cells.newline_indicator_cols as u16)
         };
         let line_len_chars = line_content.chars().count();
 
