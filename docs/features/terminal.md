@@ -39,6 +39,8 @@ The process comes back **in the same buffer**, appending below the `[Terminal pr
 
 Agent resume obeys the `terminal.resume_agents` setting (default on); turn it off to always re-run the launch command instead.
 
+The offer survives the editor, too: quit with a dead terminal and the workspace comes back showing that pane's transcript with the indicator still on it. It comes back *dead* on purpose — reopening a workspace never silently re-runs a process you had finished with, which for an agent would mean resuming the conversation (and spending tokens) unasked. The restart stays one click away.
+
 A **running** terminal is never restarted — the indicator only appears once the process has quit, and asking anyway (from the palette while the split sits in scrollback) reports "Terminal process is still running" rather than killing what's there.
 
 The indicator is the `{terminal_restart}` status-bar element and can be moved or removed via `editor.status_bar.left` / `.right` like any other.

@@ -838,6 +838,22 @@ impl crate::app::window::Window {
         self.terminal_backing_files
             .insert(predicted_id, backing_path.clone());
 
+        // A terminal that had already exited when the workspace was saved comes
+        // back *dead*: its transcript is restored and the restart offer is
+        // re-armed, but nothing is spawned. Respawning here would re-run a
+        // process the user had already finished with — and for an agent, would
+        // silently resume a conversation (and spend tokens) just because the
+        // editor reopened. One click restarts it if they want it back.
+        if let Some(state) = terminal.exited.as_ref() {
+            return self.restore_exited_terminal(
+                terminal,
+                state,
+                predicted_id,
+                log_path,
+                backing_path,
+            );
+        }
+
         // Decide what to run in the restored terminal:
         //  1. an agent-resume argv (rejoin the conversation), when present
         //     and resume is enabled — `claude --resume <id>` / `--continue`;
@@ -916,6 +932,64 @@ impl crate::app::window::Window {
         // The backing file already contains complete terminal state from last workspace
         self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
 
+        Some(buffer_id)
+    }
+
+    /// Rebuild a terminal whose process had already quit at save time: restore
+    /// the transcript and re-arm the restart offer, without spawning anything.
+    ///
+    /// The result is byte-for-byte the state `handle_terminal_exited` leaves
+    /// behind — a terminal buffer with no live binding plus an
+    /// `exited_terminals` record — so the status-bar indicator, the palette
+    /// command and the menu entry all work on a restored dead terminal exactly
+    /// as they do on one that died in this session.
+    fn restore_exited_terminal(
+        &mut self,
+        terminal: &SerializedTerminalWorkspace,
+        state: &crate::workspace::ExitedTerminalState,
+        terminal_id: crate::services::terminal::TerminalId,
+        log_path: PathBuf,
+        backing_path: PathBuf,
+    ) -> Option<BufferId> {
+        let command = terminal.command.clone().filter(|argv| !argv.is_empty());
+        let resume = terminal
+            .agent_resume
+            .as_ref()
+            .map(|r| r.argv.clone())
+            .filter(|argv| !argv.is_empty());
+        // Carry the launch/resume argv forward under the reserved id so a
+        // *later* save re-persists them and the terminal stays restartable
+        // across any number of restarts.
+        if let Some(argv) = command.as_ref() {
+            self.terminal_commands.insert(terminal_id, argv.clone());
+        }
+        if let Some(argv) = resume.as_ref() {
+            self.terminal_resume_commands
+                .insert(terminal_id, argv.clone());
+        }
+
+        // Build the buffer the normal way, then drop the live binding the way
+        // the exit path does — the PTY this id names no longer exists.
+        let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+        self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
+        self.terminal_buffers.remove(&buffer_id);
+        self.exited_terminals.insert(
+            buffer_id,
+            crate::app::window::ExitedTerminal {
+                terminal_id,
+                exit_code: state.exit_code,
+                cols: terminal.cols,
+                rows: terminal.rows,
+                cwd: terminal.cwd.clone(),
+                backing_path: Some(backing_path),
+                log_path: Some(log_path),
+                command,
+                resume,
+                // A restored terminal is re-persisted by the branch above on
+                // the next save, so it must not be treated as throwaway.
+                ephemeral: false,
+            },
+        );
         Some(buffer_id)
     }
 
@@ -2293,8 +2367,53 @@ impl crate::app::window::Window {
                     backing_path,
                     command,
                     agent_resume,
+                    exited: None,
                 });
             }
+        }
+
+        // Terminals whose process quit while their buffer stayed open. Without
+        // this they'd be dropped on save — the buffer↔terminal binding is gone,
+        // so the loop above can't see them — and a workspace reopened after
+        // finishing an agent would come back missing that pane entirely.
+        // Persisting them keeps both the transcript and the restart offer.
+        let mut exited_buffers: Vec<(BufferId, TerminalId)> = Vec::new();
+        for (buffer_id, exited) in &self.exited_terminals {
+            // Same rule as live terminals: a commandless ephemeral (a plugin's
+            // build output, an exec shell) stays transient.
+            if exited.ephemeral && exited.command.is_none() {
+                continue;
+            }
+            if !seen.insert(exited.terminal_id) {
+                continue;
+            }
+            let idx = terminals.len();
+            terminal_indices.insert(exited.terminal_id, idx);
+            exited_buffers.push((*buffer_id, exited.terminal_id));
+            terminals.push(SerializedTerminalWorkspace {
+                terminal_index: idx,
+                cwd: exited.cwd.clone(),
+                shell: crate::services::terminal::detect_shell(),
+                cols: exited.cols,
+                rows: exited.rows,
+                log_path: exited.log_path.clone().unwrap_or_else(|| {
+                    let root = self.resources.dir_context.terminal_dir_for(&self.root);
+                    root.join(format!("fresh-terminal-{}.log", exited.terminal_id.0))
+                }),
+                backing_path: exited.backing_path.clone().unwrap_or_else(|| {
+                    let root = self.resources.dir_context.terminal_dir_for(&self.root);
+                    root.join(format!("fresh-terminal-{}.txt", exited.terminal_id.0))
+                }),
+                command: exited.command.clone(),
+                agent_resume: exited
+                    .resume
+                    .as_ref()
+                    .filter(|argv| !argv.is_empty())
+                    .map(|argv| crate::workspace::AgentResume { argv: argv.clone() }),
+                exited: Some(crate::workspace::ExitedTerminalState {
+                    exit_code: exited.exit_code,
+                }),
+            });
         }
 
         let (mgr, view_states) = self
@@ -2304,11 +2423,15 @@ impl crate::app::window::Window {
 
         // Serialization helpers only need the buffer→PTY-id association, not
         // the interaction mode, so project the terminal-buffer map down to it.
-        let terminal_id_map: HashMap<BufferId, TerminalId> = self
+        let mut terminal_id_map: HashMap<BufferId, TerminalId> = self
             .terminal_buffers
             .iter()
             .map(|(b, tb)| (*b, tb.terminal_id))
             .collect();
+        // Exited terminals have no live binding, so add theirs explicitly —
+        // otherwise the split layout would serialize their panes as ordinary
+        // file buffers pointing at a backing file in the data dir.
+        terminal_id_map.extend(exited_buffers);
 
         let split_layout = serialize_split_node(
             mgr.root(),

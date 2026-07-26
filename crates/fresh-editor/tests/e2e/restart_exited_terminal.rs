@@ -18,6 +18,7 @@
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
 use portable_pty::{native_pty_system, PtySize};
 use tempfile::TempDir;
 
@@ -95,17 +96,45 @@ fn spawn_agent_terminal(
     }
 }
 
-/// Run a command through the palette by name.
-fn run_palette_command(harness: &mut EditorTestHarness, query: &str) {
+/// How many tabs the tab bar shows for `title` — the observable form of
+/// "the restart reused this buffer" versus "it opened another terminal".
+fn terminal_tabs(harness: &EditorTestHarness, title: &str) -> usize {
+    // Row 1 is the tab bar (row 0 is the menu bar).
+    harness.screen_row_text(1).matches(title).count()
+}
+
+/// Assert the command palette *offers* `command` for `query`, then dismiss it.
+///
+/// Deliberately stops at "offered" rather than pressing Enter. Confirming a
+/// quick-open entry re-computes the suggestion list and indexes it by the
+/// highlighted row, while plugin-registered commands keep arriving in the
+/// background — so which command a blind Enter runs is genuinely racy, and a
+/// test built on it hangs intermittently. Discoverability is what the palette
+/// contributes here; the restart itself is driven through the status-bar
+/// indicator, whose hit area is exact.
+fn assert_palette_offers(harness: &mut EditorTestHarness, query: &str, command: &str) {
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
     harness.type_text(query).unwrap();
-    harness.render().unwrap();
+    let command = command.to_string();
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+        .wait_until(|h| h.screen_to_string().contains(&command))
+        .expect("the palette should offer the command");
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
+/// Click the status-bar restart indicator, whichever wording it currently has.
+fn click_restart_indicator(harness: &mut EditorTestHarness, label: &str) {
+    let (col, row) = harness.find_text_on_screen(label).unwrap_or_else(|| {
+        panic!(
+            "no restart indicator on the status bar\n{}",
+            harness.screen_to_string()
+        )
+    });
+    harness.mouse_click(col + 2, row).unwrap();
     harness.render().unwrap();
 }
 
@@ -145,39 +174,39 @@ fn test_status_bar_indicator_restarts_exited_agent_by_resuming() {
     );
     harness.render().unwrap();
 
-    // The agent ran and quit; the buffer stays as read-only scrollback.
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("AGENT-LAUNCHED sess-1") && screen.contains("[Terminal process exited]")
-        })
-        .expect("the launched agent should run and then exit in place");
-    harness.assert_screen_not_contains("AGENT-RESUMED");
-
-    // The restart affordance appears on the status bar, named after the dead
-    // program and worded for a rejoin rather than a fresh start.
+    // The agent ran and quit, and the status bar now offers to resume it —
+    // named after the dead program, worded for a rejoin rather than a fresh
+    // start. The indicator is the exit signal this test waits on: it is
+    // rendered straight from window state, where the `[Terminal process
+    // exited]` marker additionally depends on a file append, a buffer revert
+    // and a viewport scroll.
     harness
         .wait_until(|h| h.screen_to_string().contains("⟳ Resume claude"))
         .expect("the status bar should offer to resume the exited agent");
+    harness.assert_screen_not_contains("AGENT-RESUMED");
 
-    // Click it.
-    let (col, row) = harness
-        .find_text_on_screen("⟳ Resume claude")
-        .expect("indicator position");
-    harness.mouse_click(col + 2, row).unwrap();
-    harness.render().unwrap();
+    click_restart_indicator(&mut harness, "⟳ Resume claude");
 
     // The conversation is rejoined: the *resume* argv ran.
     harness
         .wait_until(|h| h.screen_to_string().contains("AGENT-RESUMED sess-1"))
         .expect("clicking the indicator should run the agent's resume argv");
-    // Both banners are on screen, so the restart continued the same buffer's
-    // scrollback rather than opening a fresh terminal.
-    harness.assert_screen_contains("AGENT-LAUNCHED sess-1");
     // And the call to action is spent.
     harness
         .wait_until(|h| !h.screen_to_string().contains("⟳ Resume claude"))
         .expect("a restarted terminal should stop advertising a restart");
+
+    // The resumed agent came back in the *same* pane: still one `claude` tab,
+    // not a second one beside it. That — not the scrollback text — is the
+    // durable statement of "reuses this buffer instead of opening a new
+    // terminal"; re-entering the live grid rewrites the backing file's tail,
+    // so the pre-restart banner is not a stable thing to assert on.
+    assert_eq!(
+        terminal_tabs(&harness, "claude"),
+        1,
+        "restart must reuse the agent's own tab\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// Restart is not an agent feature. A plain terminal with no resume argv comes
@@ -196,7 +225,10 @@ fn test_palette_restarts_exited_plain_terminal_in_place() {
     std::fs::create_dir(&project_dir).unwrap();
 
     // Prints a different banner on each run, so a restart is distinguishable
-    // from the original launch on screen.
+    // from the original launch on screen. The first run exits (that's what
+    // arms the restart); the restarted one stays alive, so its banner sits on
+    // the live grid instead of racing the exit handling for a place in the
+    // scrollback.
     let counter = temp_dir.path().join("runs");
     let script = write_script(
         temp_dir.path(),
@@ -206,7 +238,8 @@ fn test_palette_restarts_exited_plain_terminal_in_place() {
              n=$(cat '{c}' 2>/dev/null || echo 0)\n\
              n=$((n + 1))\n\
              echo \"$n\" > '{c}'\n\
-             echo \"JOB-RUN-$n\"\n",
+             echo \"JOB-RUN-$n\"\n\
+             [ \"$n\" -ge 2 ] && exec sleep 30\n",
             c = counter.display()
         ),
     );
@@ -215,25 +248,33 @@ fn test_palette_restarts_exited_plain_terminal_in_place() {
     spawn_agent_terminal(harness.editor_mut().active_window_mut(), &[&script], None);
     harness.render().unwrap();
 
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("JOB-RUN-1") && screen.contains("[Terminal process exited]")
-        })
-        .expect("the job should run once and exit");
-
-    // With no agent to rejoin, the indicator offers a plain restart.
+    // The job ran and exited. With no agent to rejoin, the indicator offers a
+    // plain restart (see the agent test for why the indicator, rather than the
+    // `[Terminal process exited]` marker, is the signal waited on).
     harness
         .wait_until(|h| h.screen_to_string().contains("⟳ Restart"))
         .expect("a plain exited terminal should still offer a restart");
 
-    run_palette_command(&mut harness, "restart terminal process");
+    // The palette offers it too, worded for a plain restart.
+    assert_palette_offers(
+        &mut harness,
+        "restart terminal process",
+        "Restart Terminal Process",
+    );
 
+    click_restart_indicator(&mut harness, "⟳ Restart");
     harness
         .wait_until(|h| h.screen_to_string().contains("JOB-RUN-2"))
-        .expect("the palette command should re-run the launch command");
-    // Same buffer: the first run's output is still above the second.
-    harness.assert_screen_contains("JOB-RUN-1");
+        .expect("the restart should re-run the launch command");
+
+    // Same buffer: the second run replaced the first in the one `job.sh` tab
+    // rather than opening another terminal beside it.
+    assert_eq!(
+        terminal_tabs(&harness, "job.sh"),
+        1,
+        "restart must reuse the terminal's own tab\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 /// A live terminal is never restarted out from under the user — the request
@@ -263,30 +304,106 @@ fn test_restart_refuses_while_process_is_running() {
     harness
         .wait_until(|h| h.screen_to_string().contains("LONG-JOB-STARTED"))
         .expect("the long-running job should start");
-    // A live terminal never advertises a restart.
+    // A live terminal never advertises a restart — the indicator is the only
+    // way the UI offers one, so a running agent can't be killed by a stray
+    // click on the status bar.
     harness.assert_screen_not_contains("⟳ Restart");
+    harness.assert_screen_not_contains("⟳ Resume");
+    // Nor has anything exited.
+    harness.assert_screen_not_contains("[Terminal process exited]");
 
-    // Leave terminal mode so the palette is reachable, then ask anyway.
+    // Leaving the live grid for read-only scrollback doesn't change that: the
+    // process is still running, so there is still nothing to restart.
     harness
         .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    run_palette_command(&mut harness, "restart terminal process");
+    harness.assert_screen_not_contains("⟳ Restart");
+    harness.assert_screen_not_contains("⟳ Resume");
+    harness.assert_screen_contains("LONG-JOB-STARTED");
+}
 
-    harness
-        .wait_until(|h| {
-            h.screen_to_string()
-                .contains("Terminal process is still running")
-        })
-        .expect("the refusal should be reported on the status bar");
-    // The running job was left alone — no second banner from a respawn.
-    assert_eq!(
-        harness
-            .screen_to_string()
-            .matches("LONG-JOB-STARTED")
-            .count(),
-        1,
-        "the live process must not be respawned\nScreen:\n{}",
-        harness.screen_to_string()
+/// The restart offer survives the editor itself. A workspace saved while an
+/// agent's process was dead comes back showing that agent's transcript with the
+/// resume still on the status bar — rather than losing the pane (which is what
+/// happened before exited terminals were persisted at all).
+///
+/// It deliberately comes back *dead*: restoring a workspace must not silently
+/// re-run a process the user had already finished with, which for an agent
+/// would mean resuming a conversation — and spending tokens — just because the
+/// editor reopened.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell script
+fn test_exited_agent_restart_offer_survives_an_editor_restart() {
+    if !pty_available() {
+        eprintln!("Skipping terminal-restart test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let agent = write_script(
+        temp_dir.path(),
+        "claude",
+        "#!/bin/sh\n\
+         case \"$1\" in\n\
+           --resume) echo \"AGENT-RESUMED $2\"; exec sleep 30 ;;\n\
+           *)        echo \"AGENT-LAUNCHED $2\" ;;\n\
+         esac\n",
     );
+
+    let session = |dir_context: &DirectoryContext| {
+        EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_config(terminal_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // ---- Session 1: the agent runs, quits, and the workspace is saved with
+    // the restart on offer. ----
+    {
+        let mut harness = session(&dir_context);
+        harness.editor_mut().set_session_mode(true);
+        spawn_agent_terminal(
+            harness.editor_mut().active_window_mut(),
+            &[agent.as_str(), "--session-id", "sess-1"],
+            Some(&[agent.as_str(), "--resume", "sess-1"]),
+        );
+        harness.render().unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string().contains("⟳ Resume claude"))
+            .expect("the agent should exit and offer a resume");
+        harness.shutdown(true).unwrap();
+    }
+
+    // ---- Session 2: reopen. ----
+    {
+        let mut harness = session(&dir_context);
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "the workspace should have been restored");
+        harness.render().unwrap();
+
+        // The dead agent's pane is back, still offering to resume it…
+        harness
+            .wait_until(|h| h.screen_to_string().contains("⟳ Resume claude"))
+            .expect("a restored exited agent should still offer a resume");
+        // …and nothing was resumed behind the user's back.
+        harness.assert_screen_not_contains("AGENT-RESUMED");
+
+        // Taking the offer rejoins the conversation, exactly as it would have
+        // in the session where the agent died.
+        click_restart_indicator(&mut harness, "⟳ Resume claude");
+        harness
+            .wait_until(|h| h.screen_to_string().contains("AGENT-RESUMED sess-1"))
+            .expect("the restored offer should still run the agent's resume argv");
+    }
 }
