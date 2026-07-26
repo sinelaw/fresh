@@ -66,7 +66,7 @@ build substantially. What already ships:
   declarative widget framework for all controls. A new surface should not
   add a second hand-rolled one.
 
-## 2. Architecture consequence: widgets for chrome, a real buffer for the diff
+## 2. Architecture consequence: widgets for chrome, the existing stream for the diff
 
 The first draft of this plan assumed the workspace would be built the way
 `audit_mode` is built today — everything painted into virtual buffers via
@@ -89,20 +89,34 @@ keyboard dispatch and **web parity all come for free**:
 | context line / receipts | `HintBar` (+ a `Button` for `[Z Undo]`) |
 | completion / resume banners | `LabeledSection` + `Button` row |
 
-**The diff stream = a real editor buffer**, embedded in that widget layout
-via `WindowEmbed` (or hosted as the buffer-group's center panel, whichever
-the M1 spike shows is cleaner). Rendering the stream as a *buffer* rather
-than as panel content is what unlocks, at zero cost: **syntax highlighting**
-(git_log already proves the pattern — write the unified diff to a
-`.diff`-suffixed file so the bundled grammar applies, then layer per-line
-add/remove backgrounds with `addOverlay` + `fgOnCollisionOnly`), folding via
-`publishFoldingRanges`, the scrollbar map via `setScrollbarMarkers`,
-selection, in-buffer search, and the buffer lens itself.
+**The diff stream stays a buffer — the one audit_mode already builds.** The
+stream is *already* a foldable, overlay-decorated panel buffer; the chrome
+around it is what changes. Do **not** rewrite the stream builder to chase
+syntax highlighting (see the correction below); wrap it.
 
-This reframes the single biggest M0 item: *"syntax highlighting in the
-unified review pane"* is not primarily a new host API — it is a **rendering
-strategy change** (buffer instead of panel content) that the codebase has
-already executed once, in git_log.
+**Correction — per-token highlighting is not free.** An earlier draft of
+this plan claimed that rendering the stream from a `.diff`-suffixed
+file-backed buffer (git_log's trick) gets syntax highlighting for nothing.
+That is true only of *diff* scoping (`+`/`−` line coloring). Per-token
+language highlighting inside hunk bodies — Rust keywords colored on an
+added line, which the design's frames show and which the side-by-side
+composite already delivers because each pane is a real file buffer — needs
+one of:
+
+- the **embedded-region mechanism** (`EMBEDDING_SPECS` in
+  `highlight_engine.rs`), which is a build-time table keyed on *host-grammar
+  scopes* and cannot be driven by a plugin today, and whose language token
+  is a language name, not a path; or
+- a narrow host addition: **per-byte-range language regions on a buffer**,
+  driven by the path each hunk belongs to (which the plugin already knows
+  per row), reusing the engine's existing composite parse-state snapshots so
+  checkpointing, windowed parsing and convergence keep working.
+
+That is a real, scheduled host change (§3 #7) — modest and inside an
+existing well-factored mechanism — not a freebie. Sequencing keeps it
+honest: **M0 ships the cheap half** (diff add/remove backgrounds via
+`addOverlay` + `fgOnCollisionOnly`, as git_log already does), and per-token
+highlighting lands with the region API in M2 rather than being assumed.
 
 ## 3. Host primitives — re-evaluated
 
@@ -111,36 +125,123 @@ two shrink to "finish what's declared", and one is a strategy change:
 
 | # (old) | Proposed primitive | Verdict |
 |---|---|---|
-| 1 | Overlay priority / background layering | **Downgraded — strategy, not API.** Render the stream as a buffer (§2) and syntax highlighting is syntect's; `fgOnCollisionOnly` already exists for the row-bg-vs-token collision and `extendToLineEnd` for fills. Any residual composition bug is a fix in the existing overlay path, not a new primitive. |
+| 1 | Overlay priority / background layering | **Downgraded — mostly exists.** `fgOnCollisionOnly` (row-bg vs token collision) and `extendToLineEnd` already ship; add/remove backgrounds are `addOverlay` calls as in git_log. Any residual composition bug is a fix in the existing overlay path, not a new primitive. |
 | 2 | Inline actionable spans | **Keep, re-scoped and much smaller.** All *chrome* affordances are real widgets with hit areas already. This is needed only for **in-diff-body** affordances: the `⊕` hover-comment gutter button, context expanders, and any in-stream chips. The data model already declares it — `InlineOverlay.properties` is documented as *"click target metadata"* but **nothing consumes it**. Work = resolve a click/hover inside a buffer row to the innermost overlay carrying an action property and deliver it as a plugin event. Fallback if it slips: `mouse_click` byte math (today's audit_mode path) for those few targets only. |
 | 3 | Sticky first row(s) | **Dropped — already exists.** `audit_mode` ships a `sticky` panel slot re-rendered on scroll; git_log ships a fixed toolbar band. Reuse the pattern. |
 | 4 | Rebindable composite-buffer Actions (`diff-view` context) | **Keep.** The hardcoded input router is real and is the documented "v1 mistake". |
 | 5 | Per-hunk incremental render + cancellation | **Keep, as an extension.** Streaming into file-backed buffers ships; growth polling and the planned kill-on-move cancellation are the remaining pieces. |
 | 6 | Ref recording API for `refs/fresh/*` | **Dropped.** Plugins already spawn `git` directly for everything; version/undo refs are `git update-ref` calls. |
+| 7 | *(new — replaces the "highlighting is free" assumption)* per-byte-range **language regions** on a buffer | **Added, narrow, scheduled M2.** The only way to get per-token highlighting inside a composed unified stream without abandoning that stream (§2). Reuses the embedded-region engine's composite parse snapshots; the plugin supplies ranges from the path it already tracks per row. M0 ships diff-level coloring without it. |
 
-Net: **one genuinely new host capability** (overlay-property click/hover
-resolution in buffer rows), one refactor (composite keys → Actions), one
-perf extension (cancellation), and one strategy change (stream as buffer).
+Net: **two genuinely new host capabilities** — overlay-property click/hover
+resolution in buffer rows (#2, small) and per-range language regions (#7,
+scheduled M2, the price of the design's syntax highlighting) — plus one
+refactor (composite keys → Actions) and one perf extension (cancellation).
 Everything else in Part I is plugin-side TypeScript over the existing
-widget framework.
+widget framework and the stream `audit_mode` already builds.
 
 A corollary worth stating: because chrome is widgets and widgets already
 project into the web scene with parity tests, the M5 "web parity" work
 shrinks to whatever the `WindowEmbed`'d buffer needs — the chrome comes
 across by construction.
 
-## 4. Milestones
+## 4. Migrating `audit_mode`: what must survive the new UI
+
+The workspace is a **chrome replacement around a proven engine**, not a
+rewrite. `audit_mode` (6.6k lines) already solves the expensive parts, in
+ways that were arrived at by fixing real bugs and real slowness. The
+migration rule: *the stream engine and the git actions move across
+unchanged; only the chrome and the entry points are rebuilt on widgets.*
+
+### 4.1 Performance invariants — preserve exactly
+
+| Invariant (as implemented today) | Why it exists | Migration note |
+|---|---|---|
+| **Single-pass build** (`buildDiffPanelEntries`) emits rows *and*, in the same pass, byte offsets per row, header row indices, per-row property maps, and the byte ranges of every collapsible body | one traversal instead of five; no post-hoc scans | keep the function; the widget chrome consumes its outputs |
+| **Collapse/expand = host fold registration** on those pre-captured byte ranges (`editor.addFold`) — *no buffer rebuild* | folding a 10k-line review is O(1) instead of a full re-render | the new file-header `[▾]` button and depth presets must call the same path — never rebuild to fold |
+| **Plugin-side `entryPropsByRow`** instead of `getTextPropertiesAtCursor` | the host getter can return the *previous* row's props when the cursor sits on a row-boundary byte — a bug they already hit | keep the map; do **not** "fix" this with a new host API |
+| **Width-parameterised prebuild** (`buildDiffLines(viewportWidth)`) | wrapping/padding computed once per width, not per paint | rebuild on resize only; widget chrome must not change the stream's width per frame |
+| **Sticky header repaint guarded by a change check** (`filesCurrentKey`, driven by `viewport_changed`) | scrolling repaints nothing when the top file hasn't changed | the new sticky header carries a `[✓ Reviewed]` button — keep the guard, re-emit only on file change |
+| **Manual refresh (`r`) + opt-in watch (`W`)**; auto-refresh on buffer activation was deliberately *removed* | it spawned several `git` subprocesses on every panel switch | the live-update queue (design §3.9) is watch-mode-driven; do not reintroduce refresh-on-focus |
+| **Sidebar scroll-into-view via stored byte offsets** (`filesPanelByteByKey`) | no re-render to reveal a row | the rail is a widget `List`/`Tree` whose host-retained scroll replaces this — one of the few places the widget framework is strictly better |
+| **Streamed `git show` into file-backed buffers, SHA-cached** (git_log) | multi-MB commits paint in <100 ms | the commits lens reuses it verbatim; add the planned kill-on-move cancellation |
+| **Viewport-bounded rendering discipline** generally | multi-GB-file editor invariants | never introduce a whole-diff overlay pass (the git_log "million overlay objects" regression) |
+
+### 4.2 Features to move, not re-implement
+
+These already work and are surprisingly subtle. They port as-is, with only
+their *invocation surface* changing from keys/panels to widgets:
+
+- **Staging engine**: hunk-level `git apply --cached` against a tempfile
+  with a `--check` dry-run first (the canonical magit/lazygit method,
+  chosen because the process spawner has no stdin piping), plus file-level
+  `git add` / `reset HEAD` / `checkout`, plus line-level visual-selection
+  staging. The new `[s Stage]` button calls the existing function.
+- **Comment model**: line-anchored records with old/new line numbers,
+  content and selection ranges; per-repo `.review/` persistence keyed by
+  review identity; best-effort re-anchoring; orphan pruning; Markdown and
+  JSON export. The design's severity tag is one new field, not a new model.
+- **Range / stash / patch pipelines**: `bootstrapRangeReview` with an
+  explicit argv override already generalises the source — the design's
+  `source` parameterisation is mostly renaming what exists.
+- **Repo resolution** (`lib/git_repo.ts`, monorepo-aware) and
+  **default-branch detection** (`origin/HEAD` → `main` → `master`).
+- **Watch mode, file filter, fold-all/unfold-all, cross-file `n`/`p`,
+  side-by-side drill-down, open-file-at-line/at-commit.**
+- **i18n catalogues** (`audit_mode.i18n.json`) — extend, don't restart.
+- **The `review_diff_*` e2e suites** — they are the safety net for the
+  extraction; they must stay green through it, updated only where chrome
+  assertions change.
+
+### 4.3 What is genuinely new (and therefore where the risk is)
+
+Only these are new code, and each is small and additive:
+
+1. Widget chrome (scope bar, chooser, rail, verb rows, transients,
+   banners) — replacing `Raw` panel content **and deleting** the
+   byte-offset `mouse_click` hit-testing that goes with it.
+2. Viewed marks + collapse state + progress, keyed by content hash
+   (§ M1) — a new field set in the existing `.review/` store.
+3. Lens switching (flat ⇄ commits) — new wiring over two existing
+   renderers.
+4. Keep/reject verbs — the staging engine with `git apply -R` and a
+   journal.
+5. PR scope — a new forge plugin (four calls) plus orchestrator worktree
+   creation, both outside `audit_mode`.
+
+### 4.4 APIs we deliberately do **not** add
+
+To keep the host surface honest, these were considered and rejected because
+existing mechanisms cover them:
+
+- a row-properties/hit-test API for panel rows — `entryPropsByRow` plus
+  widget hit areas already cover it;
+- a sticky-header primitive — the `sticky` panel slot ships today;
+- a fold/outline API for the review — pre-captured byte ranges +
+  `addFold` already give O(1) folding;
+- a ref-management API — `git update-ref` via the existing spawner;
+- a "review model" host type — the review stays plugin-side data, which is
+  what makes range/stash/PR/agent sources cheap to add;
+- a second widget/control framework — everything routes through the one in
+  `lib/widgets.ts` (`settings-widget-unification-plan.md`'s stated goal).
+
+The two we *do* add (§3 #2, #7) are both narrow extensions of mechanisms
+that already exist, and both are needed to hit the design without
+compromise: in-body click targets for the `⊕`/expander affordances, and
+per-range language regions for per-token highlighting in the unified
+stream.
+
+## 5. Milestones
 
 ### M0 — stop the visible bleeding (design §5 Phase 0)
 
 Small, independent, shippable one by one:
 
-- Syntax highlighting + word-level intraline in the unified review pane —
-  as the §2 strategy change (render the stream from a `.diff`-suffixed
-  file-backed buffer like git_log already does, then layer add/remove
-  backgrounds with `addOverlay` + `fgOnCollisionOnly`), not a new API.
-  Doing this in M0 also de-risks M1, since it establishes the buffer the
-  workspace will host.
+- Diff-level coloring + word-level intraline in the unified review pane:
+  add/remove backgrounds via `addOverlay` + `fgOnCollisionOnly` on the
+  existing stream (git_log's pattern), no new API. **Per-token language
+  highlighting is explicitly deferred to M2** with the language-region
+  capability (§2 correction, §3 #7) — M0 does not pretend to deliver it.
 - Composite-buffer keys → `diff-view` Actions (§3 #4); keybinding
   editor lists them.
 - Chrome convergence on the *existing* surfaces: shared hint-bar format and
@@ -159,7 +260,10 @@ The big refactor plus the primary loop:
 - **Extract `ReviewSession`** from `audit_mode.ts`: `source` (worktree /
   range / stash / patch), verbs, state; worktree/range/stash become
   parameterizations (they already share most code paths — this is honest
-  refactoring behind the existing `review_diff_*` e2e suites).
+  refactoring behind the existing `review_diff_*` e2e suites). The stream
+  builder, fold-by-byte-range, staging engine and comment store move
+  across **unchanged** (§4.1, §4.2); only chrome and entry points are
+  rebuilt.
 - **Renderer upgrades** in the stream: enclosing-context hunk headers,
   copy-safe bodies (change identity in gutter/background only),
   interactive collapsed-context expanders, whitespace toggle,
@@ -205,6 +309,9 @@ with today verified by the existing suites; chooser replaces old entries.
   filter.
 - **Retire Review: PR Branch** (its two halves are now the commits lens and
   the history preset); palette alias points at the branch scope.
+- **Per-token syntax highlighting** in the unified stream via per-range
+  language regions (§3 #7), driven by the path the plugin already tracks
+  per row — the design's last reader-quality gap.
 - **Version refs + interdiff**: record `refs/fresh/review/<scope-id>/v<N>`
   on review-open/conclude (plain `git update-ref`); "since my last review" as
   default reopened target; `⇅ vN→vM` pseudo-commit in the commits lens.
@@ -286,7 +393,7 @@ pause-on-review / guided-review lens → deeper forge sync (thread replies,
 resolution, viewed-state). Each independently shippable; none blocks or
 reshapes Part I surfaces.
 
-## 5. Cross-cutting workstreams
+## 6. Cross-cutting workstreams
 
 - **Keybindings**: one `review` context defined once, inherited everywhere;
   uppercase-escalation convention enforced in review-owned maps; all
@@ -305,7 +412,7 @@ reshapes Part I surfaces.
   per-hunk streaming; never a whole-diff overlay pass (the git-log
   million-overlay lesson).
 
-## 6. Sequencing and risk
+## 7. Sequencing and risk
 
 ```
 M0 ──► M1 ──► M2 ──► M3 ──► M4 ──► M6
