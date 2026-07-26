@@ -814,17 +814,17 @@ pub enum Action {
     SettingsInherit,     // Set nullable setting to null (inherit value)
 
     // Terminal operations
-    OpenTerminal,            // Open a new terminal in the current split
-    OpenTerminalRight,       // Open a new terminal in a split to the right (vertical split)
-    OpenTerminalBelow,       // Open a new terminal in a split below (horizontal split)
-    CloseTerminal,           // Close the current terminal
+    OpenTerminal,      // Open a new terminal in the current split
+    OpenTerminalRight, // Open a new terminal in a split to the right (vertical split)
+    OpenTerminalBelow, // Open a new terminal in a split below (horizontal split)
+    CloseTerminal,     // Close the current terminal
     /// Restart the exited terminal process in the current buffer, resuming the
     /// agent conversation when the terminal carries an agent-resume spec.
     RestartTerminal,
-    FocusTerminal,           // Focus the terminal buffer (if viewing terminal, focus input)
-    TerminalEscape,          // Escape from terminal mode back to editor
-    ToggleKeyboardCapture,   // Toggle keyboard capture mode (all keys go to terminal)
-    TerminalPaste,           // Paste clipboard contents into terminal as a single batch
+    FocusTerminal,  // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape, // Escape from terminal mode back to editor
+    ToggleKeyboardCapture, // Toggle keyboard capture mode (all keys go to terminal)
+    TerminalPaste,  // Paste clipboard contents into terminal as a single batch
     SendSelectionToTerminal, // Run the selection (or current line) in the last-focused terminal
 
     // Shell command operations
