@@ -1979,6 +1979,29 @@ impl Editor {
         }
     }
 
+    /// Fire the `config_changed` hook after the effective config has
+    /// been replaced (Settings-UI save, config reload from disk).
+    ///
+    /// Refreshes the plugin state snapshot *first* so a handler that
+    /// re-reads `getConfig()` / `getPluginConfig()` observes the new
+    /// values rather than the ones it just replaced — the snapshot
+    /// reserializes lazily off the `Arc<Config>` pointer, so without
+    /// this the hook would hand plugins a stale read. Mirrors the
+    /// snapshot-then-hook order used by `trust_changed`.
+    pub fn fire_config_changed_hook(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            if !self.plugin_manager.read().unwrap().is_active() {
+                return;
+            }
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.read().unwrap().run_hook(
+                "config_changed",
+                crate::services::plugins::hooks::HookArgs::ConfigChanged {},
+            );
+        }
+    }
+
     /// Test-only accessor for the current effective config.
     #[doc(hidden)]
     pub fn config_for_tests(&self) -> &crate::config::Config {

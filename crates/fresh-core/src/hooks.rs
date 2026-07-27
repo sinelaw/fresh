@@ -158,6 +158,24 @@ pub enum HookArgs {
     /// hook, *not* an editor rebuild (which would reset other sessions).
     TrustChanged { level: String },
 
+    /// The effective configuration changed: the user saved from the
+    /// Settings UI, or the config was reloaded from disk. Fires after
+    /// the new config is live *and* the plugin state snapshot has been
+    /// refreshed, so a handler that re-reads `editor.getConfig()` /
+    /// `editor.getPluginConfig()` sees the new values, not the old ones.
+    ///
+    /// Deliberately payload-free. Config is a pull API — the host says
+    /// "something changed" and each plugin re-reads exactly the keys it
+    /// cares about. Naming the changed keys here would have to lie for
+    /// the reload-from-disk path, which replaces the whole tree without
+    /// computing a diff.
+    ///
+    /// Does *not* fire for `editor.setSetting(...)`, a plugin's own
+    /// write into its session-scoped runtime layer: a plugin that
+    /// re-configures itself from this handler would otherwise wake
+    /// itself (and every other plugin) right back up.
+    ConfigChanged {},
+
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
 
@@ -737,6 +755,7 @@ mod tests {
             HookArgs::PluginsLoaded {},
             HookArgs::Ready {},
             HookArgs::FocusGained {},
+            HookArgs::ConfigChanged {},
         ] {
             let json = hook_args_to_json(&args).unwrap();
             assert_eq!(

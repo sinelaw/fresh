@@ -267,6 +267,17 @@ impl Editor {
                     self.refresh_open_buffer_settings_from_config();
                     self.invalidate_live_editor_layout_after_settings_save();
                 }
+                // Tell plugins the config moved under them. Fired once,
+                // here, rather than from the earlier `set_config` above:
+                // that one holds the pre-normalization tree, and a
+                // handler reacting to a value the resolver is about to
+                // rewrite would act on a state the user never saved.
+                // Everything above this line only re-applies config to
+                // *host* subsystems (theme, keybindings, LSP, bars,
+                // explorer); plugins that expose settings — including
+                // every `defineConfigX` field — have no other way to
+                // learn a save happened.
+                self.fire_config_changed_hook();
                 self.set_status_message(
                     t!("settings.saved_to_layer", layer = layer_name).to_string(),
                 );

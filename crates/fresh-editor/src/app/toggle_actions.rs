@@ -603,7 +603,7 @@ impl Editor {
     /// Reload configuration from the config file
     ///
     /// This reloads the config from disk, applies runtime changes (theme, keybindings),
-    /// and emits a config_changed event so plugins can update their state accordingly.
+    /// and fires the `config_changed` hook so plugins can update their state accordingly.
     /// Uses the layered config system to properly merge with defaults.
     pub fn reload_config(&mut self) {
         let old_theme = self.config.theme.clone();
@@ -660,7 +660,11 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
-        // Emit event so plugins know config changed
+        // Control-event bus: in-process observers (the test harness's
+        // `EventBroadcaster`), NOT plugins. Plugins are notified by the
+        // hook below — `emit_event` never reaches them, which is why
+        // this call alone left every plugin's cached config stale after
+        // a reload.
         let config_path = Config::find_config_path(self.working_dir());
         self.emit_event(
             "config_changed",
@@ -668,6 +672,10 @@ impl Editor {
                 "path": config_path.map(|p| p.to_string_lossy().into_owned()),
             }),
         );
+
+        // Tell plugins the config was replaced, so they can re-read the
+        // keys and `defineConfigX` settings they care about.
+        self.fire_config_changed_hook();
     }
 
     /// Reload the theme registry from disk.
