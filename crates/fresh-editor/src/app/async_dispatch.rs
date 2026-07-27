@@ -97,6 +97,12 @@ impl Editor {
         // reconnect notification and posts `RemoteReconnected`.
         self.ensure_remote_reconnect_forwarders();
 
+        // Kick off off-loop content loads for any freshly-restored remote
+        // placeholder buffers (idempotent; drains each window's queue). This is
+        // what makes a dived-into remote session's files fill in without ever
+        // reading them on the editor loop.
+        self.drive_pending_content_loads();
+
         let Some(bridge) = &self.async_bridge else {
             return false;
         };
@@ -411,6 +417,13 @@ impl Editor {
                 }
                 AsyncMessage::RemoteReconnected { connection_id } => {
                     self.handle_remote_reconnected(connection_id);
+                }
+                AsyncMessage::RemoteBufferContentLoaded {
+                    window_id,
+                    buffer_id,
+                    content,
+                } => {
+                    self.handle_remote_buffer_content_loaded(window_id, buffer_id, content);
                 }
                 AsyncMessage::RemoteAttachFailed {
                     error,
@@ -920,6 +933,97 @@ impl Editor {
     /// channel id and a fresh forwarder; the old forwarder parks forever on a
     /// notify that can no longer fire (its channel is dropped) — a single idle
     /// task per rebuild, which is rare. Cleaning those up is a future refinement.
+    /// Start off-loop content reads for any window's freshly-restored remote
+    /// placeholder buffers, delivering each via `RemoteBufferContentLoaded`.
+    /// Idempotent: it drains each window's `pending_content_load`, so a buffer
+    /// is scheduled exactly once. Runs the blocking `read_file` on a plain
+    /// thread (never a runtime worker — the remote read uses `block_on`), so a
+    /// slow link never touches the editor loop.
+    fn drive_pending_content_loads(&mut self) {
+        if self.async_bridge.is_none() {
+            return;
+        }
+        type Job = (
+            fresh_core::WindowId,
+            fresh_core::BufferId,
+            std::path::PathBuf,
+            std::sync::Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+        );
+        let mut jobs: Vec<Job> = Vec::new();
+        for (wid, window) in self.windows.iter_mut() {
+            if window.pending_content_load.is_empty() {
+                continue;
+            }
+            let fs = std::sync::Arc::clone(&window.authority().filesystem);
+            for (bid, path) in window.pending_content_load.drain(..) {
+                jobs.push((*wid, bid, path, std::sync::Arc::clone(&fs)));
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let sender = self.async_bridge.as_ref().unwrap().sender();
+        for (window_id, buffer_id, path, fs) in jobs {
+            let sender = sender.clone();
+            std::thread::Builder::new()
+                .name("remote-buffer-load".to_string())
+                .spawn(move || {
+                    let content = fs.read_file(&path).map_err(|e| e.to_string());
+                    #[allow(clippy::let_underscore_must_use)]
+                    let _ = sender.send(AsyncMessage::RemoteBufferContentLoaded {
+                        window_id,
+                        buffer_id,
+                        content,
+                    });
+                })
+                .ok();
+        }
+    }
+
+    /// Install content read off-loop into a remote session's placeholder buffer
+    /// (see `drive_pending_content_loads`). Skips a buffer that has since closed
+    /// or that the user already edited, so a late load never clobbers input.
+    fn handle_remote_buffer_content_loaded(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        buffer_id: fresh_core::BufferId,
+        content: Result<Vec<u8>, String>,
+    ) {
+        let content = match content {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("remote buffer {buffer_id:?} content load failed: {e}");
+                return;
+            }
+        };
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        let (modified, path) = {
+            let Some(state) = window.buffers.get(&buffer_id) else {
+                return;
+            };
+            (
+                state.buffer.is_modified(),
+                state.buffer.file_path().map(|p| p.to_path_buf()),
+            )
+        };
+        if modified {
+            return;
+        }
+        let Some(path) = path else {
+            return;
+        };
+        // Build the buffer from the off-loop content, then run the *same*
+        // finalize the synchronous open path runs — so an async-filled remote
+        // buffer is identical to a normally-opened one (LSP didOpen, read-only,
+        // editorconfig, metadata). The only difference is the content arrived
+        // from a background read. For a remote session the path is already the
+        // canonical remote path, so it doubles as display / canonical here.
+        let state = window.build_workspace_file_state(&path, Some(content));
+        window.finalize_file_buffer(buffer_id, state, &path, &path, &path, true);
+    }
+
     fn ensure_remote_reconnect_forwarders(&mut self) {
         let (Some(runtime), Some(bridge)) =
             (self.tokio_runtime.as_ref(), self.async_bridge.as_ref())

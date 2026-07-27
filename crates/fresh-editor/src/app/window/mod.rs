@@ -329,6 +329,13 @@ pub struct Window {
     /// drops the buffer and its log together.
     pub event_logs: HashMap<BufferId, crate::model::event::EventLog>,
 
+    /// File buffers restored as **empty placeholders** because this window's
+    /// authority is remote: reading their content synchronously during restore
+    /// would freeze the single-threaded editor loop over a slow link. The editor
+    /// drains this each tick, reads each file off-loop, and fills the buffer via
+    /// `AsyncMessage::RemoteBufferContentLoaded`. Always empty for local windows.
+    pub(crate) pending_content_load: Vec<(BufferId, PathBuf)>,
+
     /// Status message (shown in this window's status bar). Per-window
     /// because each window has its own context — a save in window A
     /// shouldn't flash a status message into window B's UI. Only the
@@ -2097,6 +2104,7 @@ impl Window {
             panel_ids: HashMap::new(),
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
+            pending_content_load: Vec::new(),
             terminal_manager: crate::services::terminal::TerminalManager::new(id),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),

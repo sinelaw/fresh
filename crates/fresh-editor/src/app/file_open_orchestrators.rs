@@ -921,6 +921,116 @@ impl crate::app::window::Window {
         path.starts_with(&canonical_data) && !path.starts_with(&canonical_root)
     }
 
+    /// Install a freshly-built file buffer into this window and apply every
+    /// open-time side effect: binary detection + read-only, `.editorconfig` /
+    /// per-language settings, file metadata, and the LSP `didOpen`.
+    ///
+    /// Shared by the synchronous open path ([`Self::open_file_no_focus_inner`])
+    /// and the asynchronous remote-content fill
+    /// ([`crate::app::Editor::handle_remote_buffer_content_loaded`]) so a buffer
+    /// opened either way is byte-for-byte the same — same LSP registration,
+    /// read-only handling, editorconfig and metadata. The only difference is
+    /// *where the content was read* (inline vs. a background thread); everything
+    /// after that is this one routine. The caller owns split placement.
+    pub(crate) fn finalize_file_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        mut state: EditorState,
+        path: &Path,
+        display_path: &Path,
+        canonical_path: &Path,
+        file_exists: bool,
+    ) {
+        // Check if the buffer contains binary content
+        let is_binary = state.buffer.is_binary();
+        if is_binary {
+            // Make binary buffers read-only
+            state.editing_disabled = true;
+            tracing::info!("Detected binary file: {}", path.display());
+        }
+
+        // Internal app artifacts under the data dir (e.g. terminal scrollback
+        // backing files surfaced by Universal Search) are things the user is
+        // inspecting, not editing — open them read-only so an accidental
+        // keystroke can't corrupt persisted state. Files inside the window's
+        // own root are excluded so session working trees that live under the
+        // data dir stay editable.
+        if self.is_internal_data_artifact(canonical_path) {
+            state.editing_disabled = true;
+        }
+
+        // Apply the global + per-language buffer settings (whitespace
+        // visibility, tabs, auto-close/surround, guides, …).
+        state.apply_buffer_config(&self.resources.config);
+
+        // Apply `.editorconfig` overrides. Project-level indentation settings
+        // take precedence over the language/global defaults resolved above.
+        // Resolved through the FileSystem abstraction so it also works on
+        // remote hosts; matched against the canonical on-disk path.
+        let editorconfig = crate::services::editorconfig::resolve_for_file(
+            self.authority().filesystem.as_ref(),
+            canonical_path,
+        );
+        if let Some(use_tabs) = editorconfig.use_tabs {
+            state.buffer_settings.use_tabs = use_tabs;
+        }
+        if let Some(tab_size) = editorconfig.tab_size {
+            state.buffer_settings.tab_size = tab_size;
+        }
+
+        // Apply line_numbers default from config
+        state
+            .margins
+            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
+        state.reference_highlight_overlay.enabled =
+            self.resources.config.editor.highlight_occurrences;
+
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+
+        // Create metadata for this buffer
+        let mut metadata = crate::app::types::BufferMetadata::with_file(
+            path.to_path_buf(),
+            display_path,
+            &self.root,
+            self.authority().path_translation.as_ref(),
+            self.resources.config.editor.auto_read_only,
+        );
+
+        // Mark binary files in metadata and disable LSP
+        if is_binary {
+            metadata.binary = true;
+            metadata.read_only = true;
+            metadata.disable_lsp(t!("buffer.binary_file").to_string());
+        }
+
+        // Check if the file is read-only on disk (filesystem permissions),
+        // unless the user opted out of automatic read-only via config
+        if file_exists
+            && !metadata.read_only
+            && self.resources.config.editor.auto_read_only
+            && !self.authority().filesystem.is_writable(path)
+        {
+            metadata.read_only = true;
+        }
+
+        // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled
+        if metadata.read_only {
+            if let Some(state) = self.buffers.get_mut(&buffer_id) {
+                state.editing_disabled = true;
+            }
+        }
+
+        // Notify LSP about the newly opened file (skip for binary files)
+        if !is_binary {
+            self.notify_lsp_file_opened(path, buffer_id, &mut metadata);
+        }
+
+        // Store metadata for this buffer
+        self.buffer_metadata.insert(buffer_id, metadata);
+    }
+
     fn open_file_no_focus_inner(
         &mut self,
         path: &Path,
@@ -1047,7 +1157,7 @@ impl crate::app::window::Window {
             path.extension(),
             self.resources.grammar_registry.catalog().len(),
         );
-        let mut state = if file_exists {
+        let state = if file_exists {
             // Load from canonical path (for I/O and dedup), detect language from
             // display path (for glob pattern matching against user-visible names).
             let buffer = crate::model::buffer::Buffer::load_from_file_for_editing(
@@ -1087,96 +1197,17 @@ impl crate::app::window::Window {
         };
         // Note: line_wrap_enabled is set on SplitViewState.viewport when the split is created
 
-        // Check if the buffer contains binary content
-        let is_binary = state.buffer.is_binary();
-        if is_binary {
-            // Make binary buffers read-only
-            state.editing_disabled = true;
-            tracing::info!("Detected binary file: {}", path.display());
-        }
-
-        // Internal app artifacts under the data dir (e.g. terminal scrollback
-        // backing files surfaced by Universal Search) are things the user is
-        // inspecting, not editing — open them read-only so an accidental
-        // keystroke can't corrupt persisted state. Files inside the window's
-        // own root are excluded so session working trees that live under the
-        // data dir stay editable.
-        if self.is_internal_data_artifact(&canonical_path) {
-            state.editing_disabled = true;
-        }
-
-        // Apply the global + per-language buffer settings (whitespace
-        // visibility, tabs, auto-close/surround, guides, …).
-        // Uses the buffer's stored language (already set by
-        // from_file_with_languages).
-        state.apply_buffer_config(&self.resources.config);
-
-        // Apply `.editorconfig` overrides. Project-level indentation settings
-        // take precedence over the language/global defaults resolved above.
-        // Resolved through the FileSystem abstraction so it also works on
-        // remote hosts; matched against the canonical on-disk path.
-        let editorconfig = crate::services::editorconfig::resolve_for_file(
-            self.authority().filesystem.as_ref(),
-            &canonical_path,
-        );
-        if let Some(use_tabs) = editorconfig.use_tabs {
-            state.buffer_settings.use_tabs = use_tabs;
-        }
-        if let Some(tab_size) = editorconfig.tab_size {
-            state.buffer_settings.tab_size = tab_size;
-        }
-
-        // Apply line_numbers default from config
-        state
-            .margins
-            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
-        state.reference_highlight_overlay.enabled =
-            self.resources.config.editor.highlight_occurrences;
-
-        self.buffers.insert(buffer_id, state);
-        self.event_logs
-            .insert(buffer_id, crate::model::event::EventLog::new());
-
-        // Create metadata for this buffer
-        let mut metadata = crate::app::types::BufferMetadata::with_file(
-            path.to_path_buf(),
+        // Install the built buffer + all its side effects (binary/read-only,
+        // per-language + editorconfig settings, metadata, LSP didOpen). Shared
+        // with the async remote-content fill so both open paths are identical.
+        self.finalize_file_buffer(
+            buffer_id,
+            state,
+            path,
             &display_path,
-            &self.root,
-            self.authority().path_translation.as_ref(),
-            self.resources.config.editor.auto_read_only,
+            &canonical_path,
+            file_exists,
         );
-
-        // Mark binary files in metadata and disable LSP
-        if is_binary {
-            metadata.binary = true;
-            metadata.read_only = true;
-            metadata.disable_lsp(t!("buffer.binary_file").to_string());
-        }
-
-        // Check if the file is read-only on disk (filesystem permissions),
-        // unless the user opted out of automatic read-only via config
-        if file_exists
-            && !metadata.read_only
-            && self.resources.config.editor.auto_read_only
-            && !self.authority().filesystem.is_writable(path)
-        {
-            metadata.read_only = true;
-        }
-
-        // Mark read-only files (library, binary, or filesystem-readonly) as editing-disabled
-        if metadata.read_only {
-            if let Some(state) = self.buffers.get_mut(&buffer_id) {
-                state.editing_disabled = true;
-            }
-        }
-
-        // Notify LSP about the newly opened file (skip for binary files)
-        if !is_binary {
-            self.notify_lsp_file_opened(path, buffer_id, &mut metadata);
-        }
-
-        // Store metadata for this buffer
-        self.buffer_metadata.insert(buffer_id, metadata);
 
         // Add buffer to the preferred split's tabs (but don't switch to it)
         // Uses preferred_split_for_file() to avoid opening in labeled splits (e.g., sidebars)

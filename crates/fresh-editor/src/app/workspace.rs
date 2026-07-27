@@ -1700,12 +1700,88 @@ impl crate::app::window::Window {
         }
     }
 
+    /// Build the `EditorState` for a restored workspace file. `content` is the
+    /// file's bytes when known (a fill), or `None` for an empty placeholder (a
+    /// remote restore, before its content streams in off-loop). Language and
+    /// buffer config are applied either way, so a placeholder already carries
+    /// the right gutter / title / language and the later fill just swaps in the
+    /// text.
+    pub(crate) fn build_workspace_file_state(
+        &self,
+        path: &Path,
+        content: Option<Vec<u8>>,
+    ) -> EditorState {
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let threshold = self.resources.config.editor.large_file_threshold_bytes as usize;
+        let buffer = match content {
+            Some(bytes) => {
+                let mut b = crate::model::buffer::Buffer::from_bytes(bytes, fs);
+                b.set_file_path(path.to_path_buf());
+                b
+            }
+            None => crate::model::buffer::Buffer::new_with_path(threshold, fs, path.to_path_buf()),
+        };
+        let first_line = buffer.first_line_lossy();
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                path,
+                first_line.as_deref(),
+                &self.resources.grammar_registry,
+                &self.resources.config.languages,
+                self.resources.config.default_language.as_deref(),
+            );
+        let mut state = EditorState::from_buffer_with_language(buffer, detected);
+        state
+            .margins
+            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
+        state.apply_buffer_config(&self.resources.config);
+        state
+    }
+
+    /// Install an empty placeholder buffer for `abs_path` and queue its content
+    /// to be read off-loop (see [`crate::app::window::Window::pending_content_load`]).
+    /// Returns the new buffer id so the split layout can reference it at once.
+    fn install_remote_placeholder(&mut self, abs_path: &Path) -> BufferId {
+        let buffer_id = self.alloc_buffer_id();
+        let state = self.build_workspace_file_state(abs_path, None);
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+        self.buffer_metadata
+            .insert(buffer_id, crate::app::types::BufferMetadata::new());
+        self.pending_content_load
+            .push((buffer_id, abs_path.to_path_buf()));
+        buffer_id
+    }
+
     /// Open every file referenced by the saved split states, returning a map
     /// from relative (or absolute) path to the new `BufferId`.
     fn open_workspace_files(
         &mut self,
         split_states: &HashMap<usize, SerializedSplitViewState>,
     ) -> HashMap<PathBuf, BufferId> {
+        // Remote sessions: never *read* persisted file buffers here. These reads
+        // run synchronously on the single-threaded editor loop, so over a slow /
+        // high-latency link they freeze the whole editor while a dived-into
+        // session materializes — the orchestrator-dock freeze. Instead restore
+        // each file as an empty placeholder (no I/O) so the layout, tabs and
+        // titles come up instantly; the editor then loads their content off-loop
+        // and fills them in (see `Editor::drive_pending_content_loads`).
+        // Terminals restore separately, unaffected.
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
+            for rel_path in collect_file_paths_from_states(split_states) {
+                let abs_path = self.root.join(&rel_path);
+                let buffer_id = self.install_remote_placeholder(&abs_path);
+                path_to_buffer.insert(rel_path, buffer_id);
+            }
+            return path_to_buffer;
+        }
         let file_paths = collect_file_paths_from_states(split_states);
         tracing::debug!(
             "Workspace has {} files to restore: {:?}",
@@ -1743,6 +1819,21 @@ impl crate::app::window::Window {
         path_to_buffer: &mut HashMap<PathBuf, BufferId>,
     ) {
         if external_files.is_empty() {
+            return;
+        }
+        // Same rationale as `open_workspace_files`: don't read remote files on
+        // the editor loop during restore. Restore each as an empty placeholder
+        // and let the content load off-loop.
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            for abs_path in external_files {
+                let buffer_id = self.install_remote_placeholder(abs_path);
+                path_to_buffer.insert(abs_path.clone(), buffer_id);
+            }
             return;
         }
         tracing::debug!(
