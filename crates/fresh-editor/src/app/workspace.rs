@@ -888,6 +888,9 @@ impl crate::app::window::Window {
             terminal.cwd.clone(),
             Some(log_path.clone()),
             Some(backing_path.clone()),
+            // Restore: this terminal's own saved transcript — keep streaming
+            // into it so the restored buffer keeps its scrollback.
+            crate::services::terminal::BackingMode::Continue,
             wrapper_for_spawn,
             env_delta,
             std::collections::HashMap::new(),
