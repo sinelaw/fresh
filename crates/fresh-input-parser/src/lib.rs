@@ -285,10 +285,15 @@ impl InputParser {
                 };
             }
             other => {
-                // Alt + key.
+                // Alt + key. The byte keeps whatever modifier it would carry
+                // on its own, with Alt added: a C0 control byte after `ESC` is
+                // Alt+Ctrl+<letter> (`ESC 0x10` = Alt+Ctrl+P), not Alt+<letter>.
+                // Dropping the Control bit made the two indistinguishable, so
+                // Alt+Ctrl+P silently ran the (bound) Alt+P command instead of
+                // resolving to an unbound chord — sinelaw/fresh#2810.
                 out.push(Event::Key(KeyEvent::new(
                     byte_to_keycode(other),
-                    KeyModifiers::ALT,
+                    c0_control_modifier(other) | KeyModifiers::ALT,
                 )));
                 self.state = State::Ground;
             }
@@ -965,17 +970,27 @@ fn utf8_char_width(first_byte: u8) -> usize {
     }
 }
 
+/// CONTROL for C0 control characters — except Tab, LF, CR and Esc, which are
+/// their own keys and carry no modifier.
+///
+/// Shared by the ground-state mapping and the `ESC <byte>` (Alt+key) mapping so
+/// both agree that `0x10` is Ctrl+P.
+fn c0_control_modifier(byte: u8) -> KeyModifiers {
+    if byte < 32 && byte != 9 && byte != 10 && byte != 13 && byte != 27 {
+        KeyModifiers::CONTROL
+    } else {
+        KeyModifiers::empty()
+    }
+}
+
 /// Convert a single ground-state byte to a key event, attaching CONTROL for
 /// C0 control characters (except Tab, LF, CR and Esc, which are their own
 /// keys).
 fn byte_to_event(byte: u8) -> Event {
-    let keycode = byte_to_keycode(byte);
-    let modifiers = if byte < 32 && byte != 9 && byte != 10 && byte != 13 && byte != 27 {
-        KeyModifiers::CONTROL
-    } else {
-        KeyModifiers::empty()
-    };
-    Event::Key(KeyEvent::new(keycode, modifiers))
+    Event::Key(KeyEvent::new(
+        byte_to_keycode(byte),
+        c0_control_modifier(byte),
+    ))
 }
 
 /// Convert a byte to a `KeyCode`.
