@@ -9,9 +9,20 @@ large bank and seeded by the project name passed as argv[1], so two instances
 running side by side diverge. It loops forever, so it keeps producing output
 for as long as a demo needs to film it.
 
-Usage:  python3 coding_agent.py <project-name>
+Usage:  python3 coding_agent.py [--as <comm-name>] <project-name>
+
+`--as` renames the process (prctl PR_SET_NAME on Linux) and sets the terminal
+title (OSC 2), the two things Fresh's terminal auto-titling reads — the
+foreground process' `/proc/<pgid>/comm` and the OSC title. A demo can then put
+a shim called `claude` on `PATH` and get the tab a real agent launch produces,
+instead of one named `python3`.
+
+Any remaining argument that starts with `-` is ignored (a launcher may append
+its own flags); the first bare one, or else the current directory's name, is
+the seed.
 """
 import itertools
+import os
 import random
 import sys
 import time
@@ -21,10 +32,31 @@ def sgr(code, text):
     return f"\033[{code}m{text}\033[0m"
 
 
+def announce_as(name):
+    """Look like `name` to a terminal: rename the process (best-effort
+    `/proc/self/comm`, a no-op off Linux) and set the OSC 2 window title."""
+    try:
+        import ctypes
+
+        PR_SET_NAME = 15
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(
+            PR_SET_NAME, name.encode()[:15] + b"\0", 0, 0, 0
+        )
+    except Exception:
+        pass
+    sys.stdout.write(f"\033]2;{name}\007")
+
+
 DIM, BOLD = "2", "1"
 CYAN, GREEN, YELLOW, MAGENTA = "36", "32", "33", "35"
 
-project = sys.argv[1] if len(sys.argv) > 1 else "service"
+argv = sys.argv[1:]
+if len(argv) >= 2 and argv[0] == "--as":
+    announce_as(argv[1])
+    argv = argv[2:]
+
+bare = [a for a in argv if not a.startswith("-")]
+project = bare[0] if bare else os.path.basename(os.getcwd()) or "service"
 # `random.Random` accepts a str seed and hashes it stably (sha512), so the
 # stream is deterministic per project and differs between projects.
 rng = random.Random(project)

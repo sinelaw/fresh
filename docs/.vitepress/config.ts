@@ -44,6 +44,7 @@ export default defineConfig({
         text: "Blog",
         link: "/blog/",
         items: [
+          { text: "One Editor, Every Worktree", link: "/blog/orchestrator-worktrees/" },
           { text: "Fresh 0.4.0", link: "/blog/fresh-0.4.0/" },
           { text: "The Architecture of Fresh", link: "/blog/fresh-pipeline/" },
           { text: "Fresh 0.3.0", link: "/blog/fresh-0.3.0/" },

@@ -40,5 +40,20 @@ if [[ $fail -ne 0 ]]; then
     exit 1
 fi
 
+# The landing page is not part of the VitePress build — it is copied verbatim
+# with homepage/public/, so a GIF it embeds needs its own copy there. Keep the
+# ones it uses in sync with the showcase they came from.
+declare -A HOMEPAGE_GIFS=(
+    ["orchestrator-worktrees"]="orchestrator.gif"
+)
+for src_dir in "${!HOMEPAGE_GIFS[@]}"; do
+    src="$BLOG_DIR/$src_dir/showcase.gif"
+    dest="$ROOT_DIR/homepage/public/assets/${HOMEPAGE_GIFS[$src_dir]}"
+    if [[ -f "$src" ]]; then
+        cp "$src" "$dest"
+        echo "✓ Copied $src_dir/showcase.gif → homepage/public/assets/${HOMEPAGE_GIFS[$src_dir]}"
+    fi
+done
+
 echo ""
 echo "Done. All showcases updated."
