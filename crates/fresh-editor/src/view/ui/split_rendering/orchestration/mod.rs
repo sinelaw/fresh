@@ -476,6 +476,21 @@ pub(crate) fn render_content(
                 .unwrap_or(&mut empty_folds);
 
             let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
+
+            // Use a previously discovered bound so an extra wheel step cannot
+            // paint a blank frame before the post-render scan refreshes it.
+            if show_horizontal_scrollbar
+                && !viewport.line_wrap_enabled
+                && viewport.max_line_length_seen > 0
+            {
+                let visible_width = viewport.width as usize;
+                let max_scroll = viewport
+                    .max_line_length_seen
+                    .max(visible_width)
+                    .saturating_sub(visible_width);
+                viewport.left_column = viewport.left_column.min(max_scroll);
+            }
+
             let split_view_mappings = render_buffer_in_split(
                 buf,
                 state,
