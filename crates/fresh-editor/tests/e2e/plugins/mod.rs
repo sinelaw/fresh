@@ -7,6 +7,7 @@ pub mod audit_mode;
 pub mod authority_snapshot;
 pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
+pub mod csharp_restore_trust;
 pub mod dashboard;
 // The three modules below drive the in-tree fake-devcontainer
 // CLI (a bash script under `scripts/fake-devcontainer/bin/`).
