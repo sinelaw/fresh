@@ -62,6 +62,7 @@ other docs assume.
 | [remote-authority-trust.md](remote-authority-trust.md) | The `Authority` backend slot (local / SSH / docker-exec / kubectl-exec), the remote agent and filesystem, heartbeat/reconnect, devcontainers, the k8s transport, Workspace Trust, and the live env provider — with a clear shipped-vs-planned line. |
 | [orchestrator-sessions.md](orchestrator-sessions.md) | The Orchestrator/Dock for many concurrent workspaces/agent sessions, session persistence and the Live/Dormant lifecycle, and the dock UX design versus what ships today. |
 | [terminal.md](terminal.md) | The integrated terminal: PTY spawning, the embedded `fresh-winterm` VT emulator (and why custom), live/scrollback per-buffer state, mouse/links/OSC52, and restore-on-reconnect. |
+| [ghostty-vs-alacritty-emulation.md](ghostty-vs-alacritty-emulation.md) | Whether to swap `alacritty_terminal` for libghostty-vt: exactly which seven API groups `term.rs` depends on, how each maps, the `!Send`/Zig-toolchain blockers, and the cheaper wins to take instead. |
 
 ### Configuration, features & quality
 | Doc | What it covers |
