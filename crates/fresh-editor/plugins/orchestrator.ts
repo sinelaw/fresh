@@ -1368,17 +1368,69 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
 }
 
 // The dock's "card" density renders each session leaf as a fixed
-// 3-content-row card inside the tree; with `cardBorders` the host
-// wraps those rows in a rounded `╭─…─╮` border (5 screen rows total),
-// restoring the modal picker's pill look: line 1 = glyph · [facet] ·
-// NAME + project; line 2 = branch + git summary (right-aligned against
-// the card border); line 3 = PR badge (blank when none).
-const DOCK_CARD_HEIGHT = 3;
+// 2-content-row card inside the tree; with `cardBorders` the host wraps
+// those rows in a rounded `╭─…─╮` border (4 screen rows total). Two
+// rows, each one "what it is" on the left and "how it's doing" flush
+// right, so the status columns line up down the dock:
+//
+//   ╭──────────────────────────────╮
+//   │ * fresh-27            ↑2 +14 │   name              git
+//   │ ▸ fix/wrapped-nav   PR #2784 │   branch / project  PR
+//   ╰──────────────────────────────╯
+//
+// It was three rows: the third held the PR badge and stood empty on
+// every session without one, and the branch shared the middle row with
+// the git summary as a single right-aligned group — which left it
+// floating in the middle of the card instead of starting at the left
+// edge. The name-repeating branch (a worktree branch usually *is* the
+// workspace name) and the project tag beside the name were dropped for
+// the same reason: they spent a card's scarce width on what the row
+// already said.
+const DOCK_CARD_HEIGHT = 2;
+
+// A card row split into a left group and a right group flush against
+// the card's right border. Tree card rows are plain text entries (no
+// host flex spacer like the modal pill's `flexLine`), so the split
+// point rides along as a byte offset and the host's `render_tree_card`
+// — which knows the card's *actual* inner width, responsive or dragged
+// — inserts the gap. Plugin-side padding could only estimate that width
+// and drifted at every other one.
+function cardSplitRow(left: Entry[], right: Entry[]): TextPropertyEntry {
+  const row = styledRow([...left, ...right] as Parameters<typeof styledRow>[0]);
+  if (right.length === 0) return row;
+  row.properties = {
+    align: "between",
+    splitByte: left.reduce((n, e) => n + utf8Len(e.text), 0),
+  };
+  return row;
+}
+
+// Truncate to `cols` display columns, ellipsising when it doesn't fit.
+// Code-point aware (`Array.from`), so a multi-byte name can't be cut
+// mid-character.
+function capText(s: string, cols: number): string {
+  const chars = Array.from(s);
+  if (chars.length <= cols) return s;
+  return chars.slice(0, Math.max(1, cols - 1)).join("") + "…";
+}
+
+// Columns a group of entries occupies, for the left-group cap below.
+function entriesWidth(entries: Entry[]): number {
+  return entries.reduce((n, e) => n + Array.from(e.text).length, 0);
+}
+
+// Inner width of a card at the dock's default width — an estimate (the
+// dock can be dragged), used only to cap the branch so it doesn't shove
+// the right-hand group off the row. The host does the exact alignment.
+function cardInnerColsEstimate(): number {
+  return Math.max(12, dockContentCols(dockDefaultWidth()) - 2);
+}
 
 // Card line 1 (the tree node's primary text): state glyph, optional
-// remote facet, the name (highlighted when active), then a dim project
-// tag. Distinct from the compact `sessionNodeEntry`, which trails the
-// branch on the single line instead of the project.
+// remote facet, the name (highlighted when active) and — for a remote
+// session — its backend target, with the git summary flush right.
+// Distinct from the compact `sessionNodeEntry`, which trails the git
+// summary on the single line it has.
 function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
@@ -1394,61 +1446,87 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
     text: s.label,
     style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
   });
-  const proj = editor.pathBasename(projectKeyOf(s));
-  segs.push({ text: "  " + PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } });
-  segs.push({ text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } });
   // A remote session surfaces its backend target (host / ns·pod) coloured
   // by the connection state — pill parity (the pill shows it at the right
-  // end of line 1). The discovered "· on-disk" tag is NOT repeated here:
-  // the card's third line (prLineEntries) already carries it, exactly like
-  // the pill.
+  // end of line 1).
   if (s.remote) {
     segs.push({
       text: "  " + s.remote.detail,
       style: { fg: remoteStateFg(s.remote.state), italic: true },
     });
   }
-  return styledRow(segs as Parameters<typeof styledRow>[0]);
+  // Right group. A being-created placeholder has no git summary; it gets
+  // the one-key affordance instead ("↵ Retry"), so the row below is free
+  // for the whole status message.
+  if (s.pending) {
+    return cardSplitRow(
+      segs,
+      pendingActionable(s.pending)
+        ? [{
+          text: "↵ " + editor.t("dock.ctx_retry"),
+          style: { fg: "ui.menu_disabled_fg", italic: true },
+        }]
+        : [],
+    );
+  }
+  return cardSplitRow(segs, gitLineParts(s).right);
 }
 
-// Card lines 2 & 3 (continuation rows). Line 2 is the branch + a
-// compact git summary, right-aligned as one group against the card's
-// right border; line 3 is the PR badge (or a blank spacer when there's
-// no PR, keeping every card the same height). Tree card rows are plain
-// text entries (no host flex spacer), so the line carries the
-// `align: "right"` entry property and the host's `render_tree_card` —
-// which knows the card's *actual* inner width, responsive or dragged —
-// pads it flush against the right border.
+// Card line 2 (the continuation row): what this workspace *is* on the
+// left — its branch when that says something the name doesn't, else the
+// project it belongs to — and its PR badge (or the on-disk tag) flush
+// right.
 function sessionCardExtraLines(id: number): TextPropertyEntry[] {
   const s = orchestratorSessions.get(id);
   if (!s) return [];
-  // A being-created placeholder shows its status in place of the git / PR
-  // lines: line 2 is the creating/connecting/error message, line 3 is a
-  // retry/resume hint (blank while still creating).
+  // A being-created placeholder spends the row on its status message
+  // (the retry affordance sits on line 1).
   if (s.pending) {
     const p = s.pending;
-    const actionable = pendingActionable(p);
     return [
-      styledRow([{ text: p.message, style: { fg: pendingMsgFg(p), italic: actionable } }]),
-      styledRow([
-        actionable
-          ? { text: pendingHintText(p), style: { fg: "ui.menu_disabled_fg", italic: true } }
-          : { text: " " },
-      ] as Parameters<typeof styledRow>[0]),
+      styledRow([{
+        text: p.message,
+        style: { fg: pendingMsgFg(p), italic: pendingActionable(p) },
+      }]),
     ];
   }
-  const git = gitLineParts(s);
-  const gitSegs: Entry[] = [...git.left];
-  if (git.right.length) {
-    gitSegs.push({ text: "   " });
-    gitSegs.push(...git.right);
+  const dim = "ui.menu_disabled_fg";
+  const right = prLineEntries(s);
+  // The branch earns the row only when it differs from the workspace
+  // name — a worktree's branch is usually named after it, and printing
+  // it twice was pure noise. Otherwise the project takes the slot: it's
+  // the context the name doesn't carry. `(detached)` is reserved for a
+  // real repo with no branch; a plain directory just shows its project.
+  const branch = s.branch ||
+    (s.discovered
+      ? editor.t("pill.branch_worktree")
+      : s.git?.info
+      ? editor.t("pill.branch_detached")
+      : "");
+  const showBranch = branch !== "" && branch !== s.label;
+  const proj = editor.pathBasename(projectKeyOf(s));
+  const icon = showBranch ? BRANCH_ICON : PROJECT_ICON;
+  const text = showBranch ? branch : proj;
+  // Nothing to say that the name doesn't already say (a plain folder
+  // opened as its own project, whose label *is* the folder). The row
+  // stays empty rather than echoing the line above it.
+  if (text === s.label) {
+    return [cardSplitRow(right.length > 0 ? [] : [{ text: " " }], right)];
   }
-  const gitLine = styledRow(gitSegs as Parameters<typeof styledRow>[0]);
-  gitLine.properties = { align: "right" };
-  const pr = prLineEntries(s);
+  // Cap the branch/project so the badge keeps its columns: the host
+  // truncates the row's *end*, which is the badge. Budget = the card's
+  // inner width less this row's icon (2 cols), the badge, and the one
+  // column that always separates the two groups.
+  const cap = cardInnerColsEstimate() - 2 - entriesWidth(right) -
+    (right.length > 0 ? 1 : 0);
   return [
-    gitLine,
-    styledRow((pr.length ? pr : [{ text: " " }]) as Parameters<typeof styledRow>[0]),
+    cardSplitRow(
+      [
+        { text: icon + " ", style: { fg: dim } },
+        { text: capText(text, Math.max(8, cap)), style: { fg: dim, italic: !showBranch } },
+      ],
+      right,
+    ),
   ];
 }
 
@@ -2139,10 +2217,12 @@ const PROJECT_ICON = "▣";
 // already uses.
 const BRANCH_ICON = "▸";
 
-// Card line 2: branch (with icon, left) + a compact git summary
-// (right-aligned) that's useful even before any PR exists —
+// The modal pill's branch line: branch (with icon, left) + a compact
+// git summary (right-aligned) that's useful even before any PR exists —
 // ahead/behind the upstream and the uncommitted diffstat
-// (`+added −deleted`), or `clean`.
+// (`+added −deleted`), or `clean`. The dock card takes only the `right`
+// half — its name row carries the summary — so `left` (the branch) is
+// the pill's alone.
 function gitLineParts(s: AgentSession): { left: Entry[]; right: Entry[] } {
   const dim = "ui.menu_disabled_fg";
   let branch = s.branch || (s.discovered ? editor.t("pill.branch_worktree") : editor.t("pill.branch_detached"));
@@ -2272,7 +2352,10 @@ function stateGlyphEntry(s: AgentSession): Entry {
   return { text: sym.glyph + " ", style: { fg: sym.fg, bold: true } };
 }
 
-// Build one session row. Two densities, picked by `dockView`:
+// Build one session row for the modal picker's list. (The dock's own
+// tree rows are built by `sessionCardPrimary` / `sessionNodeEntry`; its
+// cards are two rows, not the three below.) Two densities, picked by
+// `dockView`:
 //
 //   card (default): a rounded `labeledSection` pill —
 //     line 1: <state> NAME (bold)              ▣ project

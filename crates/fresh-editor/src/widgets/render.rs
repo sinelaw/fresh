@@ -4910,18 +4910,49 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
         // The pad is ASCII spaces (1 byte == 1 char each), so shifting
         // overlay offsets by the pad length is unit-correct for both
         // byte- and char-unit overlays.
-        let align_right = src
+        let align = src
             .properties
             .get("align")
             .and_then(|v| v.as_str())
-            .map(|v| v == "right")
-            .unwrap_or(false);
-        if align_right {
+            .unwrap_or("")
+            .to_string();
+        // `align: "between"` splits the row into a left group and a
+        // right one flush against the border — the card equivalent of
+        // the flex spacer a widget `Row` gets. The split point is a byte
+        // offset into the row's own text (`splitByte`), so the plugin
+        // says *where* the groups meet and the host, which alone knows
+        // the card's real width, decides how much space goes between
+        // them. Overflowing rows get a single separating space and fall
+        // through to the usual end-truncation.
+        let split = if align == "between" {
+            src.properties
+                .get("splitByte")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .filter(|&b| b <= src.text.len() && src.text.is_char_boundary(b))
+        } else {
+            None
+        };
+        // Where the padding goes: the row's start (right-aligned) or the
+        // group boundary (space-between).
+        let pad_at = match (align.as_str(), split) {
+            ("right", _) => Some(0),
+            ("between", Some(b)) => Some(b),
+            _ => None,
+        };
+        if let Some(at) = pad_at {
             let width = src.text.chars().count();
-            if width < inner_width {
-                let pad = " ".repeat(inner_width - width);
-                src.text.insert_str(0, &pad);
-                for o in src.inline_overlays.iter_mut() {
+            // A "between" row always keeps at least one space between
+            // the groups so they can't run together when the card is too
+            // narrow to hold both.
+            let pad_cols = inner_width.saturating_sub(width).max(usize::from(at > 0));
+            if pad_cols > 0 {
+                let pad = " ".repeat(pad_cols);
+                src.text.insert_str(at, &pad);
+                // The pad is ASCII spaces (1 byte == 1 char each), so
+                // shifting the overlays that sit after it is unit-correct
+                // for both byte- and char-unit overlays.
+                for o in src.inline_overlays.iter_mut().filter(|o| o.start >= at) {
                     o.start += pad.len();
                     o.end += pad.len();
                 }
@@ -7778,6 +7809,72 @@ mod tests {
         assert!(
             trimmed.ends_with("ab   "),
             "row should be padded after segment concat, got {trimmed:?}"
+        );
+    }
+
+    /// One `align: "between"` card row: `left` and `right` groups meet
+    /// at `splitByte`, rendered in a card `width` columns wide.
+    fn between_card_row(left: &str, right: &str, width: u32) -> String {
+        let mut node = tnode("name", 0, false);
+        let mut line = TextPropertyEntry::text(format!("{left}{right}"));
+        line.properties.insert(
+            "align".to_string(),
+            serde_json::Value::String("between".to_string()),
+        );
+        line.properties.insert(
+            "splitByte".to_string(),
+            serde_json::Value::Number((left.len() as u64).into()),
+        );
+        node.extra_lines = vec![line];
+        let spec = WidgetSpec::Tree {
+            nodes: vec![node],
+            item_keys: vec!["x".to_string()],
+            selected_index: -1,
+            visible_rows: 10,
+            expanded_keys: vec![],
+            checkable: false,
+            item_height: 2,
+            card_borders: true,
+            key: Some("T".to_string()),
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", width);
+        // Top border, name row, the split row, bottom border.
+        out.entries[2].text.trim_end_matches('\n').to_string()
+    }
+
+    /// A card row (the orchestrator dock's workspace cards) can ask for
+    /// its right-hand group to sit flush against the card border while
+    /// the left group starts at the left one — `align: "between"` with
+    /// the group boundary as a byte offset. Only the host knows the
+    /// card's real width (the dock is resizable), so it owns the gap.
+    #[test]
+    fn tree_card_between_alignment_pushes_the_right_group_to_the_border() {
+        let row = between_card_row("branch", "PR #7", 30);
+        assert!(
+            row.starts_with("│branch") && row.ends_with("PR #7│"),
+            "left group hugs the left border and the right group the right one, got {row:?}"
+        );
+        // Padding only between them — not a plugin-side guess that
+        // leaves both groups floating mid-card.
+        let inner = row.trim_start_matches('│').trim_end_matches('│');
+        assert!(
+            inner["branch".len()..inner.len() - "PR #7".len()]
+                .chars()
+                .all(|c| c == ' '),
+            "the two groups are separated by padding only, got {inner:?}"
+        );
+    }
+
+    /// The groups still get a separating space when the card has no room
+    /// to spare — they must never run together into one unreadable word,
+    /// even at the exact width where they would just barely both fit.
+    #[test]
+    fn tree_card_between_alignment_keeps_a_gap_when_the_row_is_full() {
+        // Inner width 15 = exactly "abcdefghij" + "PR #7".
+        let row = between_card_row("abcdefghij", "PR #7", 17);
+        assert!(
+            !row.contains("ijPR"),
+            "a full row still separates the groups, got {row:?}"
         );
     }
 
