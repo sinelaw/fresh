@@ -396,27 +396,27 @@ impl Default for FoldManager {
 /// ([`PatternIndentCalculator::count_leading_indent`]).
 pub mod indent_folding {
     use crate::model::buffer::Buffer;
-    use crate::primitives::indent_pattern::PatternIndentCalculator;
+
+    /// Chunk size for the line-boundary scans below.  Scanning via
+    /// per-byte `byte_at` calls costs a full `slice_bytes` round-trip
+    /// per byte, which is what made cursor movement inside a very long
+    /// line slow (these scans run per rendered frame); block reads make
+    /// the scans effectively memchr-speed.
+    const LINE_SCAN_CHUNK: usize = 4096;
 
     /// Find the byte offset of the start of the line containing `pos`.
     /// Scans backward for `\n` (or returns 0).
     pub fn find_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
-        if pos == 0 {
-            return 0;
-        }
-        let mut p = pos.min(buffer.len()).saturating_sub(1);
-        loop {
-            match PatternIndentCalculator::byte_at(buffer, p) {
-                Some(b'\n') => return p + 1,
-                None => return 0,
-                _ => {
-                    if p == 0 {
-                        return 0;
-                    }
-                    p -= 1;
-                }
+        let mut end = pos.min(buffer.len());
+        while end > 0 {
+            let start = end.saturating_sub(LINE_SCAN_CHUNK);
+            let bytes = buffer.slice_bytes(start..end);
+            if let Some(i) = bytes.iter().rposition(|&b| b == b'\n') {
+                return start + i + 1;
             }
+            end = start;
         }
+        0
     }
 
     /// Find the exclusive byte offset just past the line containing `pos`
@@ -424,13 +424,14 @@ pub mod indent_folding {
     /// line has no trailing newline). Scans forward for `\n`.
     pub fn find_line_end_byte(buffer: &Buffer, pos: usize) -> usize {
         let buf_len = buffer.len();
-        let mut p = pos;
-        while p < buf_len {
-            match PatternIndentCalculator::byte_at(buffer, p) {
-                Some(b'\n') => return p + 1,
-                None => return buf_len,
-                _ => p += 1,
+        let mut start = pos.min(buf_len);
+        while start < buf_len {
+            let end = (start + LINE_SCAN_CHUNK).min(buf_len);
+            let bytes = buffer.slice_bytes(start..end);
+            if let Some(i) = bytes.iter().position(|&b| b == b'\n') {
+                return start + i + 1;
             }
+            start = end;
         }
         buf_len
     }
@@ -582,16 +583,7 @@ pub mod indent_folding {
     /// Scans forward for `\n` and returns the byte after it. If no `\n` is
     /// found, returns `buffer.len()`.
     pub fn find_next_line_start_byte(buffer: &Buffer, pos: usize) -> usize {
-        let mut p = pos;
-        let len = buffer.len();
-        while p < len {
-            match PatternIndentCalculator::byte_at(buffer, p) {
-                Some(b'\n') => return p + 1,
-                None => return len,
-                _ => p += 1,
-            }
-        }
-        len
+        find_line_end_byte(buffer, pos)
     }
 
     /// Byte-range of a fold that contains `target_byte`.
