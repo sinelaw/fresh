@@ -14,6 +14,12 @@ Fresh brings the intuitive UX of VS Code and Sublime Text to the terminal. Stand
 
 Built for real-world performance: Fresh handles [multi-gigabyte files](https://noamlewis.com/blog/2025/12/09/how-fresh-loads-huge-files-fast) with negligible memory overhead and delivers consistently low-latency input, regardless of file size.
 
+### Multitask with the Orchestrator
+
+A git worktree per task, a coding agent in each, all in one editor. Arrow keys switch between them — every workspace comes back exactly as you left it, and the agents you're not watching keep working.
+
+![Orchestrator](docs/blog/orchestrator-worktrees/showcase.gif)
+
 ### Command Palette & Fuzzy Finder
 
 One shortcut to find files, run commands, switch buffers, and jump to any line.
@@ -47,6 +53,7 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 | **Views & Layout** | split panes, line numbers, line wrap, backgrounds, markdown preview |
 | **Language Server (LSP)** | go to definition, references, hover, code actions, rename, diagnostics, autocompletion |
 | **Productivity** | command palette, menu bar, keyboard macros, git log, diagnostics panel |
+| **Multitasking (Orchestrator)** | one workspace per git worktree, coding agents (claude, codex, opencode, aider) per workspace, dock switcher, resumable agent sessions, remote/SSH workspaces |
 | **Extensibility** | TypeScript plugins (sandboxed QuickJS), color highlighter, TODO highlighter, merge conflicts, path complete, keymaps |
 | **Internationalization** | Multiple language support (see [`locales/`](locales/)), plugin translation system |
 
