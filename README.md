@@ -16,7 +16,7 @@ Built for real-world performance: Fresh handles [multi-gigabyte files](https://n
 
 ### Multitask with the Orchestrator
 
-A git worktree per task, a coding agent in each, all in one editor. Arrow keys switch between them — every workspace comes back exactly as you left it, and the agents you're not watching keep working.
+A workspace per task — its own tabs, terminals and git worktree, plus a coding agent if you want one. Arrow keys switch between them: every workspace comes back exactly as you left it, and whatever is running in the ones you're not watching keeps running.
 
 ![Orchestrator](docs/blog/orchestrator-worktrees/showcase.gif)
 
@@ -53,7 +53,7 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 | **Views & Layout** | split panes, line numbers, line wrap, backgrounds, markdown preview |
 | **Language Server (LSP)** | go to definition, references, hover, code actions, rename, diagnostics, autocompletion |
 | **Productivity** | command palette, menu bar, keyboard macros, git log, diagnostics panel |
-| **Multitasking (Orchestrator)** | one workspace per git worktree, coding agents (claude, codex, opencode, aider) per workspace, dock switcher, resumable agent sessions, remote/SSH workspaces |
+| **Multitasking (Orchestrator)** | one workspace per git worktree, terminals and long-running commands per workspace, coding agents (claude, codex, opencode, aider) with resumable sessions, dock switcher, remote/SSH workspaces |
 | **Extensibility** | TypeScript plugins (sandboxed QuickJS), color highlighter, TODO highlighter, merge conflicts, path complete, keymaps |
 | **Internationalization** | Multiple language support (see [`locales/`](locales/)), plugin translation system |
 
