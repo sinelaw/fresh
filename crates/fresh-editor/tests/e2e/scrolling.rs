@@ -179,6 +179,45 @@ fn test_cursor_advances_beyond_viewport_width() {
     assert_eq!(harness.cursor_position(), 100);
 }
 
+/// An extra horizontal wheel step at the right bound must not paint a blank frame.
+#[test]
+fn test_extra_horizontal_scroll_at_right_bound_does_not_paint_blank_frame() {
+    use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+    use fresh::config::Config;
+
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    config.editor.show_horizontal_scrollbar = true;
+    let line: String = (0..160)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .collect();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&line).unwrap();
+
+    let scroll_right = || MouseEvent {
+        kind: MouseEventKind::ScrollRight,
+        column: 10,
+        row: 2,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    // More wheel steps than source cells guarantees that the existing
+    // viewport-local bound has been discovered and exceeded.
+    for _ in 0..line.len() {
+        harness.send_mouse(scroll_right()).unwrap();
+        harness.render().unwrap();
+    }
+
+    // Settle the frame after the final overshoot, then observe only rendered
+    // output when one more wheel event arrives at the same bound.
+    harness.render().unwrap();
+    let settled_frame = harness.screen_to_string();
+    harness.send_mouse(scroll_right()).unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.screen_to_string(), settled_frame);
+}
+
 /// Test horizontal scrolling when cursor moves beyond visible width
 /// The viewport should scroll horizontally to keep the cursor visible
 #[test]
