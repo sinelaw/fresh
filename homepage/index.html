@@ -6,7 +6,19 @@
     <title>Fresh - The Terminal IDE</title>
     <meta name="description" content="Fresh is a terminal IDE. One static binary, instant startup, broad LSP coverage, magit-style diff review, project-wide search, huge-file editing, SSH remote editing, and TypeScript plugins.">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='12' y='70' font-family='monospace' font-size='60' font-weight='bold' fill='%23222'%3E%3E_%3C/text%3E%3C/svg%3E">
-    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css">
+    <!-- The version badge fetch fires while the page is still parsing, so
+         warming this connection early pays off. No preconnect for the
+         analytics beacon on purpose: it is deliberately held back until after
+         load, and an early connection would only compete with the assets that
+         actually matter. -->
+    <link rel="preconnect" href="https://api.github.com" crossorigin>
+    <!-- The player's stylesheet only ever styles the hero demo, which JS
+         builds after the page is up. Loading it as print media keeps it off
+         the critical path; the onload handler promotes it once it arrives.
+         No <noscript> counterpart on purpose — without JS there is no player
+         to style, just the fallback PNG. -->
+    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css"
+          media="print" onload="this.media='all'; this.onload=null;">
     <style>
         :root {
             --bg-dark: #0a0a0a;
@@ -31,6 +43,16 @@
 
         html {
             scroll-behavior: smooth;
+            /* The nav is fixed and 60px tall, so an #anchor would otherwise
+               land with its heading tucked underneath it. Reset below 980px,
+               where the nav goes back to being part of the flow. */
+            scroll-padding-top: 76px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
         }
 
         /* Three-size typography system:
@@ -59,6 +81,39 @@
 
         a:hover {
             color: var(--text-light);
+        }
+
+        /* Every section and sub-section heading carries a permalink, so any
+           part of the page can be linked to directly. It stays invisible
+           until you hover the heading (or tab onto the link itself) so it
+           never competes with the heading text — but it always occupies its
+           space, so revealing it shifts nothing. */
+        .anchor-link {
+            font-weight: 400;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        /* These two headings are flex containers with their own gap, which
+           already supplies the separation. */
+        .feature-content h2 > .anchor-link,
+        .install-card h3 > .anchor-link {
+            margin-left: 0;
+        }
+
+        h2:hover > .anchor-link,
+        h3:hover > .anchor-link,
+        .anchor-link:hover,
+        .anchor-link:focus-visible {
+            opacity: 1;
+        }
+
+        /* Nothing to hover with, so keep them permanently but faintly on. */
+        @media (hover: none) {
+            .anchor-link {
+                opacity: 0.5;
+            }
         }
 
         /* Navigation */
@@ -1165,6 +1220,10 @@
            buttons are clipped silently rather than scrolled to. Collapse to
            the hamburger menu instead. */
         @media (max-width: 980px) {
+            html {
+                scroll-padding-top: 0;
+            }
+
             nav {
                 position: relative;
             }
@@ -1287,7 +1346,7 @@
     <!-- Navigation -->
     <nav>
         <div class="nav-container">
-            <a href="#" class="nav-logo">
+            <a href="#top" class="nav-logo">
                 >_ Fresh <span id="version-badge"></span>
             </a>
             <button class="hamburger" onclick="toggleMobileMenu()" aria-label="Menu" aria-controls="mobile-menu" aria-expanded="false">
@@ -1329,7 +1388,7 @@
     </div>
 
     <!-- Hero Section -->
-    <section class="hero">
+    <section class="hero" id="top">
         <div class="hero-content">
             <h1>Fresh</h1>
             <p class="hero-claim">A powerful terminal text editor and IDE.</p>
@@ -1382,7 +1441,7 @@
                     </div>
                 </div>
                 <div id="demo-player" class="asciinema-host">
-                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900"></a>
+                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900" fetchpriority="high" decoding="async"></a>
                 </div>
                 <div class="screenshot-glow"></div>
             </div>
@@ -1391,9 +1450,9 @@
 
     <!-- Feature Sections -->
     <section class="features" id="features">
-        <div class="feature-section">
+        <div class="feature-section" id="fast-and-light">
             <div class="feature-content">
-                <h2>Fast &amp; light</h2>
+                <h2>Fast &amp; light<a class="anchor-link" href="#fast-and-light" aria-label="Permalink to Fast &amp; light">#</a></h2>
                 <p>Instant startup. Text appears as you type. Small memory footprint. Stays responsive on multi-GB files and remote editing over SSH.</p>
                 <ul class="feature-list">
                     <li>Instant startup, low-latency input</li>
@@ -1411,9 +1470,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="git-review">
             <div class="feature-content">
-                <h2>Git review &amp; diff</h2>
+                <h2>Git review &amp; diff<a class="anchor-link" href="#git-review" aria-label="Permalink to Git review &amp; diff">#</a></h2>
                 <p>Split-panel review with staged / unstaged / untracked files on the left and the selected diff on the right. Stage, unstage or discard individual hunks; leave line comments and review notes; export to Markdown. Side-by-side diff view for file comparisons.</p>
                 <ul class="feature-list">
                     <li>Hunk-level stage / unstage / discard</li>
@@ -1430,9 +1489,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="lsp">
             <div class="feature-content">
-                <h2>Language Server Protocol</h2>
+                <h2>Language Server Protocol<a class="anchor-link" href="#lsp" aria-label="Permalink to Language Server Protocol">#</a></h2>
                 <p>Run multiple LSP servers per language (for example pylsp + pyright) with feature routing and merged completions. Per-project workspace roots detected from configurable markers like <code style="color: var(--accent-green);">Cargo.toml</code> or <code style="color: var(--accent-green);">package.json</code>.</p>
                 <ul class="feature-list">
                     <li>Configs shipped for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml, Elixir and many more</li>
@@ -1448,9 +1507,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="daemon">
             <div class="feature-content">
-                <h2>Detachable daemon</h2>
+                <h2>Detachable daemon<a class="anchor-link" href="#daemon" aria-label="Permalink to Detachable daemon">#</a></h2>
                 <p>Start a named daemon, detach and reattach across terminal disconnects. The <code style="color: var(--accent-green);">--wait</code> flag blocks until the buffer is closed, which lets Fresh serve as <code style="color: var(--accent-green);">git core.editor</code> or <code style="color: var(--accent-green);">$EDITOR</code>. Hot Exit persists every buffer across restarts and crashes.</p>
                 <ul class="feature-list">
                     <li>Named and directory-based daemons (<code style="color: var(--accent-green);">fresh -a myproject</code>)</li>
@@ -1475,9 +1534,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="ssh">
             <div class="feature-content">
-                <h2>SSH remote editing</h2>
+                <h2>SSH remote editing<a class="anchor-link" href="#ssh" aria-label="Permalink to SSH remote editing">#</a></h2>
                 <p>Open files on an SSH host with <code style="color: var(--accent-green);">fresh user@host:path</code>. Connections reconnect in the background if they drop. Saves to large files transfer only the patch, not the whole file.</p>
                 <ul class="feature-list">
                     <li>Password and key authentication, sudo save</li>
@@ -1500,9 +1559,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="plugins">
             <div class="feature-content">
-                <h2>TypeScript plugins</h2>
+                <h2>TypeScript plugins<a class="anchor-link" href="#plugins" aria-label="Permalink to TypeScript plugins">#</a></h2>
                 <p>Plugins are compiled with OXC and run in an embedded QuickJS VM, sandboxed and shipped inside the same binary. No <code style="color: var(--accent-green);">node_modules</code> on disk. Packages are installed from the official registry; language packs bundle a grammar, settings and LSP config together.</p>
                 <ul class="feature-list">
                     <li>Plugin API for buffers, splits, cursors, processes, virtual buffers and overlays</li>
@@ -1518,9 +1577,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="themes">
             <div class="feature-content">
-                <h2>Themes, status bar &amp; i18n</h2>
+                <h2>Themes, status bar &amp; i18n<a class="anchor-link" href="#themes" aria-label="Permalink to Themes, status bar &amp; i18n">#</a></h2>
                 <p>Both sides of the status bar are configurable via a visual picker, with reorderable elements including a <code style="color: var(--accent-green);">{clock}</code>, git branch and LSP status. Themes are edited live. The interface is translated into several languages including Japanese, Korean, Chinese and Vietnamese.</p>
                 <ul class="feature-list">
                     <li>Live theme editor with "Inspect Theme at Cursor"</li>
@@ -1537,9 +1596,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="keyboard">
             <div class="feature-content">
-                <h2>Keyboard &amp; editing</h2>
+                <h2>Keyboard &amp; editing<a class="anchor-link" href="#keyboard" aria-label="Permalink to Keyboard &amp; editing">#</a></h2>
                 <p>Command palette with prefix routing (<code style="color: var(--accent-green);">&gt;</code> commands, <code style="color: var(--accent-green);">#</code> buffers, <code style="color: var(--accent-green);">:</code> lines). Keybinding editor with conflict detection and per-context bindings. Full mouse support.</p>
                 <ul class="feature-list">
                     <li>Vim mode with operators, motions, text objects and colon commands</li>
@@ -1560,10 +1619,10 @@
     <!-- Installation Section -->
     <section class="install-section" id="install">
         <div class="install-container">
-            <h2>Installation <a href="https://github.com/sinelaw/fresh?tab=readme-ov-file#installation" target="_blank" class="install-even-more">even more options →</a></h2>
+            <h2>Installation<a class="anchor-link" href="#install" aria-label="Permalink to Installation">#</a> <a href="https://github.com/sinelaw/fresh?tab=readme-ov-file#installation" target="_blank" class="install-even-more">even more options →</a></h2>
             <div class="install-grid">
-                <div class="install-card">
-                    <h3>Linux / macOS (quick install)</h3>
+                <div class="install-card" id="install-quick">
+                    <h3>Linux / macOS (quick install)<a class="anchor-link" href="#install-quick" aria-label="Permalink to Linux / macOS (quick install)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-curl">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                         <button class="copy-btn" onclick="copyCode('cmd-curl', this)">
@@ -1573,8 +1632,8 @@
                     <p class="install-card-note">One-line install. No toolchain required.</p>
                 </div>
 
-                <div class="install-card">
-                    <h3>macOS (Homebrew)</h3>
+                <div class="install-card" id="install-homebrew">
+                    <h3>macOS (Homebrew)<a class="anchor-link" href="#install-homebrew" aria-label="Permalink to macOS (Homebrew)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-brew">brew install fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-brew', this)">
@@ -1583,8 +1642,8 @@
                     </div>
                 </div>
 
-                <div class="install-card">
-                    <h3>Windows (winget)</h3>
+                <div class="install-card" id="install-winget">
+                    <h3>Windows (winget)<a class="anchor-link" href="#install-winget" aria-label="Permalink to Windows (winget)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-winget">winget install fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-winget', this)">
@@ -1593,8 +1652,8 @@
                     </div>
                 </div>
 
-                <div class="install-card">
-                    <h3>Debian / Ubuntu</h3>
+                <div class="install-card" id="install-debian">
+                    <h3>Debian / Ubuntu<a class="anchor-link" href="#install-debian" aria-label="Permalink to Debian / Ubuntu">#</a></h3>
                     <p class="install-card-note" style="margin-top: 0;">
                         <a href="https://github.com/sinelaw/fresh/releases" target="_blank">Grab the <code style="color: var(--accent-green);">.deb</code> from Releases</a>, then:
                     </p>
@@ -1606,8 +1665,8 @@
                     </div>
                 </div>
 
-                <div class="install-card">
-                    <h3>Arch Linux (AUR)</h3>
+                <div class="install-card" id="install-aur">
+                    <h3>Arch Linux (AUR)<a class="anchor-link" href="#install-aur" aria-label="Permalink to Arch Linux (AUR)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-aur">yay -S fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-aur', this)">
@@ -1619,8 +1678,8 @@
                     </p>
                 </div>
 
-                <div class="install-card">
-                    <h3>npm / npx (no install)</h3>
+                <div class="install-card" id="install-npm">
+                    <h3>npm / npx (no install)<a class="anchor-link" href="#install-npm" aria-label="Permalink to npm / npx (no install)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-npx">npx @fresh-editor/fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-npx', this)">
@@ -1632,16 +1691,16 @@
                     </p>
                 </div>
 
-                <div class="install-card">
-                    <h3>Pre-built Binaries</h3>
+                <div class="install-card" id="install-binaries">
+                    <h3>Pre-built Binaries<a class="anchor-link" href="#install-binaries" aria-label="Permalink to Pre-built Binaries">#</a></h3>
                     <p class="install-card-note" style="margin-top: 0;">
                         Linux, macOS, Windows, FreeBSD binaries on
                         <a href="https://github.com/sinelaw/fresh/releases" target="_blank">GitHub Releases</a>. Drop anywhere on <code style="color: var(--accent-green);">$PATH</code>.
                     </p>
                 </div>
 
-                <div class="install-card">
-                    <h3>From source (Cargo)</h3>
+                <div class="install-card" id="install-cargo">
+                    <h3>From source (Cargo)<a class="anchor-link" href="#install-cargo" aria-label="Permalink to From source (Cargo)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-cargo">cargo install --locked fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-cargo', this)">
@@ -1656,7 +1715,7 @@
 
     <!-- Full feature list -->
     <section class="feature-list-section" id="full-features">
-        <h2>Full feature list</h2>
+        <h2>Full feature list<a class="anchor-link" href="#full-features" aria-label="Permalink to Full feature list">#</a></h2>
         <ul class="full-feature-list">
             <li>Multi-GB file support</li>
             <li>Intuitive out of the box</li>
@@ -1712,7 +1771,7 @@
 
     <!-- Testimonials -->
     <section class="testimonials" id="testimonials">
-        <h2>Testimonials</h2>
+        <h2>Testimonials<a class="anchor-link" href="#testimonials" aria-label="Permalink to Testimonials">#</a></h2>
         <div class="testimonials-grid" id="testimonials-grid">
             <div class="testimonial">
                 <p class="testimonial-quote">how come nobody is talking about [Fresh] … by far the best terminal-based ADE/orchestration tool i've used so far 🔥🔥🔥</p>
@@ -1987,16 +2046,12 @@
             });
         }
 
-        // Smooth scroll for anchor links
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-            });
-        });
+        // In-page links are left to the browser on purpose. A click handler
+        // here used to preventDefault() and scrollIntoView() instead, which
+        // scrolled correctly but never put the fragment in the address bar —
+        // so there was no link to copy, and Back skipped over the jump.
+        // `scroll-behavior: smooth` on <html> already makes the native
+        // navigation smooth, and it honours prefers-reduced-motion.
 
         // Fetch latest version from GitHub releases
         fetch('https://api.github.com/repos/sinelaw/fresh/releases/latest')
@@ -2017,11 +2072,15 @@
             });
     </script>
 
-    <!-- Asciinema player: recorded demo of Fresh. Loads async; keeps the
-         static hero PNG if the bundle or cast fail to load. -->
-    <script src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
+    <!-- Asciinema player: recorded demo of Fresh. Keeps the static hero PNG if
+         the bundle or cast fail to load.
+
+         The bundle is deferred so its ~176KB never blocks the parser. Deferred
+         scripts run before DOMContentLoaded, so by the time the listener below
+         fires, AsciinemaPlayer is defined. -->
+    <script defer src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
     <script>
-        (function () {
+        document.addEventListener('DOMContentLoaded', function () {
             if (typeof AsciinemaPlayer === 'undefined') return;
             const host = document.getElementById('demo-player');
             if (!host) return;
@@ -2043,12 +2102,36 @@
             } catch (err) {
                 if (fallback) host.appendChild(fallback);
             }
-        })();
+        });
     </script>
 
-    <!-- Cloudflare Web Analytics (sinelaw.github.io/fresh) -->
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "0858f4857c744e418bce27f9577ea9d2"}'></script>
-    <!-- Cloudflare Web Analytics (getfresh.dev) -->
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f624a28f02c14086b6963415fb57c550"}'></script>
+    <!-- Cloudflare Web Analytics, one token per domain the site is served from.
+         Injected after the load event instead of shipped as a <script> tag:
+         `defer` runs before DOMContentLoaded and `async` still holds the load
+         event, so either way an unreachable beacon host stalls the page — it
+         cost 12.9s to DOMContentLoaded here when it could not connect. Nothing
+         on the page depends on analytics, so it goes last and blocks nothing. -->
+    <script>
+        (function () {
+            const TOKENS = [
+                '0858f4857c744e418bce27f9577ea9d2', // sinelaw.github.io/fresh
+                'f624a28f02c14086b6963415fb57c550'  // getfresh.dev
+            ];
+            function loadBeacons() {
+                for (const token of TOKENS) {
+                    const s = document.createElement('script');
+                    s.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+                    s.defer = true;
+                    // The beacon reads its token off its own element, which
+                    // document.currentScript still resolves for an injected tag.
+                    s.setAttribute('data-cf-beacon', JSON.stringify({ token: token }));
+                    document.head.appendChild(s);
+                }
+            }
+            const start = () => setTimeout(loadBeacons, 0);
+            if (document.readyState === 'complete') start();
+            else window.addEventListener('load', start);
+        })();
+    </script>
 </body>
 </html>
