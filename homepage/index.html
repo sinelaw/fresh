@@ -1394,12 +1394,13 @@
             <p class="hero-claim">A powerful terminal text editor and IDE.</p>
 
             <ul class="feature-pills">
+                <li>Agents &amp; worktrees</li>
                 <li>Intuitive keys &amp; mouse</li>
                 <li>Fast &amp; light</li>
                 <li>Huge files</li>
-                <li>Themes</li>
                 <li>TypeScript plugins</li>
                 <li>Open source</li>
+                <li>Themes</li>
                 <li>Multi-cursor</li>
                 <li>Keyboard macros</li>
                 <li>LSP</li>
@@ -1450,6 +1451,26 @@
 
     <!-- Feature Sections -->
     <section class="features" id="features">
+        <div class="feature-section" id="orchestrator">
+            <div class="feature-content">
+                <h2>Orchestrator: one editor, every worktree<a class="anchor-link" href="#orchestrator" aria-label="Permalink to Orchestrator: one editor, every worktree">#</a></h2>
+                <p>A worktree per task, a coding agent per worktree — all in one process. The dock is a persistent left column listing every workspace with its branch, git summary and PR badge; the arrow keys live-switch between them. Each workspace keeps its own tabs, splits, terminals and scrollback, and the agents in the workspaces you are not looking at keep running.</p>
+                <ul class="feature-list">
+                    <li><code style="color: var(--accent-green);">Run Agent…</code> launches <code style="color: var(--accent-green);">claude</code>, <code style="color: var(--accent-green);">codex</code>, <code style="color: var(--accent-green);">opencode</code>, <code style="color: var(--accent-green);">aider</code> or any command, in this workspace or a new one</li>
+                    <li>New Workspace cuts the git worktree and branch for you, without blocking the editor while it comes up</li>
+                    <li>Agents that support it rejoin their conversation after an editor restart, in the same buffer</li>
+                    <li>Group workspaces into folders, filter by project, search the dock</li>
+                    <li>Remote workspaces over SSH sit in the same list</li>
+                </ul>
+            </div>
+            <div class="feature-visual">
+                <div class="feature-visual-dots">
+                    <span></span><span></span><span></span>
+                </div>
+                <a href="public/assets/orchestrator.gif" target="_blank"><img src="public/assets/orchestrator.gif" alt="Switching between three git worktrees from the Orchestrator dock, each workspace with its own tabs and a coding agent running in a terminal split" width="1260" height="648" loading="lazy" decoding="async"></a>
+            </div>
+        </div>
+
         <div class="feature-section" id="fast-and-light">
             <div class="feature-content">
                 <h2>Fast &amp; light<a class="anchor-link" href="#fast-and-light" aria-label="Permalink to Fast &amp; light">#</a></h2>
@@ -1728,6 +1749,9 @@
             <li>Project-wide search &amp; replace</li>
             <li>File explorer with git status</li>
             <li>Tabs and split panes</li>
+            <li>Orchestrator dock: one workspace per git worktree</li>
+            <li>Coding agents per workspace (claude, codex, opencode, aider)</li>
+            <li>Agent sessions that resume after a restart</li>
             <li>Side-by-side diff view</li>
             <li>Markdown preview (compose mode)</li>
             <li>Multi-cursor &amp; block selection</li>

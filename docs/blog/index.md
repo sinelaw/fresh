@@ -13,6 +13,14 @@ Updates on new features and changes in Fresh.
 
 <div class="blog-grid">
 
+<a class="blog-card" href="./orchestrator-worktrees/">
+  <img src="./orchestrator-worktrees/showcase.gif" alt="One Editor, Every Worktree" />
+  <div class="blog-card-body">
+    <h3>One Editor, Every Worktree</h3>
+    <p>A git worktree per task, a coding agent per worktree, one editor process: switching between parallel agent sessions from the Orchestrator dock.</p>
+  </div>
+</a>
+
 <a class="blog-card" href="./fresh-pipeline/">
   <img src="./fresh-pipeline/showcase.gif" alt="The Architecture of Fresh" />
   <div class="blog-card-body">
