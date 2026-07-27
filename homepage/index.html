@@ -1111,6 +1111,39 @@
             padding-top: 16px;
         }
 
+        /* Only the first rows show until the reader asks for the rest. The
+           markup carries every quote either way — see the <noscript> block. */
+        .testimonial.extra {
+            display: none;
+        }
+
+        .testimonials-grid.expanded .testimonial.extra {
+            display: flex;
+        }
+
+        .testimonials-toggle-row {
+            display: flex;
+            justify-content: center;
+            margin-top: 32px;
+        }
+
+        .testimonials-toggle {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: inherit;
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .testimonials-toggle:hover {
+            color: var(--text-light);
+            border-color: #333;
+        }
+
         .testimonial-quote::before {
             content: '"';
             color: var(--accent-green);
@@ -1238,6 +1271,17 @@
             animation: fadeInUp 0.8s ease-out 0.2s both;
         }
     </style>
+    <noscript>
+        <style>
+            .testimonial.extra {
+                display: flex;
+            }
+
+            .testimonials-toggle-row {
+                display: none;
+            }
+        </style>
+    </noscript>
 </head>
 <body>
     <!-- Navigation -->
@@ -1669,7 +1713,7 @@
     <!-- Testimonials -->
     <section class="testimonials" id="testimonials">
         <h2>Testimonials</h2>
-        <div class="testimonials-grid">
+        <div class="testimonials-grid" id="testimonials-grid">
             <div class="testimonial">
                 <p class="testimonial-quote">how come nobody is talking about [Fresh] … by far the best terminal-based ADE/orchestration tool i've used so far 🔥🔥🔥</p>
                 <p class="testimonial-source">— <a href="https://x.com/paulbettner/status/2080210336381292995" target="_blank">Paul Bettner (@paulbettner)</a>, X</p>
@@ -1730,118 +1774,122 @@
                 <p class="testimonial-quote">Thank you for a amazing terminal editor. Something that I felt was truly lacking in the modern age. Even though its unintended it's the perfect editor if you have mobility issues or are missing a limb. No need for weird vim/emacs bindings all over the keyboard making it hard to use.</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1734" target="_blank">EliteAMDGamer</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">man... i'm blown away, this project is so insane i had to personally congratulate you guys for it, it's simply fantastic</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1162" target="_blank">eusebioleite</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Ive tried maybe every terminal editor attempting it to works like simple IDE, no luck :) so thank you pretty much for delivering this great stuff 🔥🔥🔥</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/odjhqv4/" target="_blank">u/kisdmitri</a>, r/CLI</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">The multi-cursor experience is the smoothest I've seen in a terminal based editor. Congrats!</p>
                 <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46141073" target="_blank">yoavm</a>, Hacker News</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Thank goodness for a terminal editor that behaves like a proper editor should. No silly mode, no weird key bindings, function keys even behave as expected and the mouse works if you have one.</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/483" target="_blank">shartrec</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">This is insane, love this project so much! Is now my main</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nz5kmz5/" target="_blank">u/Ok_Trifle3308</a>, r/commandline</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">i REALLY love this thing, especially the efficiency and speed (phenomenal!). gonna start using it daily.</p>
                 <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46145940" target="_blank">winterrdog</a>, Hacker News</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I love this editor. I'm looking to wean myself off vscode. Also the text based animations are *chefs-kiss*. Makes using the computer feel like the good old days.</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/okgdg5r/" target="_blank">u/Virtual-Spring-5884</a>, r/CLI</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I really enjoy the command palette, the open file menu and the multi cursor. It's well thought, really intuitive so far and I definitively will use it regularly.</p>
                 <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46140106" target="_blank">az09mugen</a>, Hacker News</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I've been using it for over a month. It's getting better at each update. I've made an alias to replace nano with fresh</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/o3ky4cr/" target="_blank">u/not-them</a>, r/CLI</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Thanks for the great project, I've been waiting for a fully-featured and modern terminal text editor, and I've really, really enjoyed using fresh so far.</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/1157" target="_blank">long-live-yossarian</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">i have been searching for something like this for weeks. thanks a lot for developing this. … can't wait to see this becoming more popular and even contributing to it where i can. kudos to you!</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nxqqxcp/" target="_blank">u/Ropl</a>, r/commandline</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I have to say... I really like it. I was settled on NVim and VSCode … Everybody loves fast and responsive software, what can I say.</p>
                 <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46141604" target="_blank">desireco42</a>, Hacker News</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">It works like a GUI editor but runs in your terminal.</p>
                 <p class="testimonial-source">— Sourav Rudra, <a href="https://itsfoss.com/fresh-terminal-text-editor/" target="_blank">It's FOSS</a></p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Been using fresh to edit some scripts across multiple VM's in my homelab the past few weeks and loving it so far! Been able to get hours and hours of usage with no hiccups. Hotkeys for fresh also feel pretty intuitive!</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/oskucjd/" target="_blank">u/Thebareassbear</a>, r/CLI</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I'm very impressed by the Fresh editor. I have a feeling this will very quickly become my favorite command line text editor!</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/464" target="_blank">TobberH</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Fresh is well suited for you if you want modern editor conveniences and features like file explorers, split views, and LSP support without switching to a GUI editor. Give Fresh a try.</p>
                 <p class="testimonial-source">— Haroon Javed, <a href="https://www.maketecheasier.com/fresh-text-editor-linux-terminal/" target="_blank">Make Tech Easier</a></p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I just used this piece of software and I loved it. Good work sinelaw. It has real good potential esp. for people who want to shift towards working with TUI as their primary interface than say using a GUI.</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nut6or5/" target="_blank">u/let_us_reddit</a>, r/commandline</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">It is really awsome. Never imagine I would be able to use vscode inside a terminal 😆</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/761" target="_blank">goutou1994</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">What sets it apart from similar applications is that it targets developers who want IDE-style functionality while remaining entirely inside the terminal.</p>
                 <p class="testimonial-source">— Bobby Borisov, <a href="https://linuxiac.com/fresh-launches-as-a-new-terminal-first-text-editor/" target="_blank">Linuxiac</a></p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Iam using your IDE on a daily basis for fun personal projects and learning. I love it. … I was looking for something efficient and not too heavy on the system + with some style.</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/oasn8cv/" target="_blank">u/Classic-Weakness-788</a>, r/commandline</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Wow, the console editor I have been looking for for SO long, thank you!</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/2100" target="_blank">jetpax</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">This has to be one of the best text editors that probably saved me for my upcoming semesters.</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/788" target="_blank">VA-Valtorious</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Great work! This should have been made years ago.</p>
                 <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/o2biqn9/" target="_blank">u/Suspicious_Selfy</a>, r/commandline</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">This was the last blocker to making fresh my daily driver!</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/2201" target="_blank">steve-price-immybot</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I really like your code editor, because I wanted something that works out of the box and is also in the terminal (since I use it a lot).</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/898" target="_blank">X3NON-11</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Really nice project! I very dislike modal editors, but I'm forced to use them since they are the only available editors in terminal.</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/218" target="_blank">hkalbasi</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">Just started using fresh and i love it, keep up the good work.</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/761" target="_blank">Fegsav</a>, GitHub</p>
             </div>
-            <div class="testimonial">
+            <div class="testimonial extra">
                 <p class="testimonial-quote">I wanted a list of all the cool things people are doing with Fresh (LOVE this editor).</p>
                 <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/785" target="_blank">sottey</a>, GitHub</p>
             </div>
+        </div>
+        <div class="testimonials-toggle-row">
+            <button class="testimonials-toggle" onclick="toggleTestimonials()"
+                    aria-controls="testimonials-grid" aria-expanded="false">Show all testimonials</button>
         </div>
     </section>
 
@@ -1862,6 +1910,26 @@
     </footer>
 
     <script>
+        function toggleTestimonials() {
+            const grid = document.getElementById('testimonials-grid');
+            const btn = document.querySelector('.testimonials-toggle');
+            const expanded = grid.classList.toggle('expanded');
+            btn.setAttribute('aria-expanded', expanded);
+            btn.textContent = expanded ? 'Show fewer' : btn.dataset.moreLabel;
+            if (!expanded) {
+                document.getElementById('testimonials').scrollIntoView();
+            }
+        }
+
+        // Label the button with the real count so it cannot drift from the markup.
+        (function () {
+            const btn = document.querySelector('.testimonials-toggle');
+            if (!btn) return;
+            const total = document.querySelectorAll('#testimonials-grid .testimonial').length;
+            btn.dataset.moreLabel = 'Show all ' + total + ' testimonials';
+            btn.textContent = btn.dataset.moreLabel;
+        })();
+
         function toggleMobileMenu() {
             const menu = document.getElementById('mobile-menu');
             const hamburger = document.querySelector('.hamburger');
