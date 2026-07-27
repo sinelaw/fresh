@@ -24,6 +24,15 @@
 //! backing file. When `grid.history_size() > synced_history_lines`, new lines need
 //! to be flushed.
 //!
+//! That pointer counts rows from the *oldest surviving* history row, so it only
+//! stays meaningful while that row does. The emulator must therefore never evict
+//! history on its own: its grid is sized `SCROLLBACK_LINES + SCROLLBACK_DRAIN_MARGIN`
+//! and `flush_new_scrollback` trims history back to `SCROLLBACK_LINES` itself,
+//! dropping only already-written rows and decrementing the pointer in step. Letting
+//! the emulator saturate instead pins `history_size()` at the cap, which makes the
+//! `history <= synced_history_lines` guard permanently true and stops streaming for
+//! the rest of the session (fresh#2820).
+//!
 //! `backing_file_history_end` tracks the byte offset where scrollback ends in the
 //! backing file, used for truncation when re-entering terminal mode.
 
@@ -39,6 +48,20 @@ use std::sync::{Arc, Mutex};
 
 // Keep a generous scrollback so sync-to-buffer can include deep history.
 const SCROLLBACK_LINES: usize = 200_000;
+
+/// Rows of grid history kept *above* the retained window as staging space.
+///
+/// `flush_new_scrollback` indexes history rows relative to the oldest surviving
+/// row, so a row the emulator evicts on its own shifts that origin and
+/// invalidates the sync pointer. To keep the origin stable we never let the
+/// emulator evict: the grid's cap is `scrollback_lines + SCROLLBACK_DRAIN_MARGIN`
+/// and the flush trims history back down to `scrollback_lines` itself, dropping
+/// only rows it has already written (see `trim_synced_history`).
+///
+/// The margin therefore has to cover the rows one flush cycle can scroll in.
+/// The PTY reader flushes after every read and reads at most 4 KiB, so at most
+/// 4096 rows can scroll between flushes; 8192 is 2x that.
+const SCROLLBACK_DRAIN_MARGIN: usize = 8192;
 
 /// Event listener that captures PtyWrite events for sending back to the PTY.
 ///
@@ -417,7 +440,21 @@ pub struct TerminalState {
     /// `WRAPLINE`), so the file always ends on a logical-line boundary. Flush
     /// only ever advances this past lines it *wrote*, so nothing is skipped —
     /// scrollback is never lost (a grow may re-write a bounded few lines instead).
+    ///
+    /// Counted from the *oldest surviving history row*, so it is only meaningful
+    /// while that row stays put. `trim_synced_history` is what keeps it so: it
+    /// evicts old rows itself (decrementing this pointer in step) instead of
+    /// letting the emulator drop them silently underneath the pointer.
     synced_history_lines: usize,
+    /// Rows of scrollback the emulator's grid retains. History past this is
+    /// trimmed by `trim_synced_history` once streamed to the backing file, which
+    /// holds the full scrollback. The grid's own cap sits `SCROLLBACK_DRAIN_MARGIN`
+    /// rows higher so the emulator never evicts before the flush has run.
+    scrollback_lines: usize,
+    /// The emulator evicted history rows before they could be streamed — the
+    /// flush pointer's origin moved by an unknown amount. Cleared by the next
+    /// flush, which restarts the epoch rather than trusting the stale pointer.
+    history_overrun: bool,
     /// Count of complete logical lines streamed this epoch. Invariant under
     /// width reflow (a logical line keeps its identity when re-wrapped), so it's
     /// the anchor used to rebuild `synced_history_lines` after a resize re-wraps
@@ -461,9 +498,21 @@ pub struct PrependedHead {
 impl TerminalState {
     /// Create a new terminal state
     pub fn new(cols: u16, rows: u16) -> Self {
+        Self::with_scrollback(cols, rows, SCROLLBACK_LINES)
+    }
+
+    /// Create a terminal state retaining `scrollback_lines` rows of grid history.
+    ///
+    /// The full scrollback lives in the backing file; this only sizes the
+    /// emulator's in-memory window (what the live viewport can scroll over
+    /// without reading the file back).
+    pub fn with_scrollback(cols: u16, rows: u16, scrollback_lines: usize) -> Self {
         let size = TermSize::new(cols as usize, rows as usize);
         let config = TermConfig {
-            scrolling_history: SCROLLBACK_LINES,
+            // Staging space above the retained window: the flush trims history
+            // down to `scrollback_lines` itself so the emulator never evicts a
+            // row out from under the sync pointer. See SCROLLBACK_DRAIN_MARGIN.
+            scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
             ..Default::default()
         };
         let listener = PtyWriteListener::new();
@@ -480,6 +529,8 @@ impl TerminalState {
             terminal_title: String::new(),
             synced_history_lines: 0,
             synced_logical_lines: 0,
+            scrollback_lines,
+            history_overrun: false,
             pending_reflow_resync: false,
             backing_file_history_end: 0,
             pty_write_queue,
@@ -569,6 +620,15 @@ impl TerminalState {
             if history_after < history_before {
                 self.synced_history_lines = 0;
                 self.synced_logical_lines = 0;
+            }
+            // History reached the grid's hard cap, so the emulator started
+            // evicting its own oldest rows — the origin `synced_history_lines`
+            // counts from has moved by an unknown amount. Normally
+            // `trim_synced_history` keeps history a full `SCROLLBACK_DRAIN_MARGIN`
+            // below the cap, so this needs more rows to scroll in one read than
+            // the margin covers (e.g. `CSI Ps S` with a huge parameter).
+            if history_after >= self.grid_history_cap() {
+                self.history_overrun = true;
             }
         }
 
@@ -904,8 +964,26 @@ impl TerminalState {
     pub fn flush_new_scrollback<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
         use alacritty_terminal::grid::Dimensions;
 
+        if self.history_overrun {
+            // The emulator dropped rows before we streamed them, so the pointer
+            // no longer refers to the rows it was set against. Restart the epoch:
+            // re-emit everything still in history (bounded duplication) rather
+            // than skip past it (unbounded loss).
+            tracing::warn!(
+                "Terminal scrollback overran the grid's {}-row cap; re-streaming \
+                 the surviving history (some lines may be duplicated or lost)",
+                self.grid_history_cap()
+            );
+            self.synced_history_lines = 0;
+            self.synced_logical_lines = 0;
+            self.history_overrun = false;
+        }
+
         let history = self.term.grid().history_size();
         if history <= self.synced_history_lines {
+            // Nothing new — but history may still sit above the retained window
+            // (an in-progress wrapped line can block a trim), so still try.
+            self.trim_synced_history();
             return Ok(0);
         }
 
@@ -935,7 +1013,47 @@ impl TerminalState {
         }
         // Any rows past `synced_history_lines` form an incomplete logical line
         // (its final row wraps into the visible screen); leave them uncommitted.
+        self.trim_synced_history();
         Ok(written)
+    }
+
+    /// The grid's hard history cap — the retained window plus staging margin.
+    fn grid_history_cap(&self) -> usize {
+        self.scrollback_lines
+            .saturating_add(SCROLLBACK_DRAIN_MARGIN)
+    }
+
+    /// Drop history rows past the retained window, keeping `synced_history_lines`
+    /// anchored to the oldest surviving row.
+    ///
+    /// This is what makes streaming survive a saturated emulator. The flush
+    /// pointer counts rows from the oldest surviving row, so an eviction the
+    /// emulator performs on its own silently shifts every index — and since
+    /// `history_size()` is pinned at the cap once saturated, the
+    /// `history <= synced_history_lines` guard would then be true forever and
+    /// streaming would stop for the rest of the session (fresh#2820). Evicting
+    /// here instead keeps the two in step: we drop `n` rows and subtract `n`, so
+    /// the pointer keeps pointing at the same row and the guard keeps releasing
+    /// newly scrolled lines.
+    ///
+    /// Only rows already written to the backing file are dropped, so trimming
+    /// can never discard unstreamed scrollback.
+    fn trim_synced_history(&mut self) {
+        use alacritty_terminal::grid::Dimensions;
+
+        let history = self.term.grid().history_size();
+        let excess = history.saturating_sub(self.scrollback_lines);
+        let drop = excess.min(self.synced_history_lines);
+        if drop == 0 {
+            return;
+        }
+
+        // `update_history` shrinks from the oldest end and also sets the cap, so
+        // restore the cap afterwards to keep the staging margin available.
+        let cap = self.grid_history_cap();
+        self.term.grid_mut().update_history(history - drop);
+        self.term.grid_mut().update_history(cap);
+        self.synced_history_lines -= drop;
     }
 
     /// Append the visible screen content to the writer as logical lines,
@@ -1720,6 +1838,134 @@ mod tests {
     fn test_last_visible_line_blank_row_is_empty() {
         let state = TerminalState::new(80, 24);
         assert_eq!(state.last_visible_line(), "");
+    }
+
+    /// Collect the distinct `Line <n>` markers that reached the sink.
+    fn persisted_line_numbers(sink: &[u8], upto: usize) -> Vec<usize> {
+        let out = String::from_utf8_lossy(sink);
+        let seen: std::collections::HashSet<&str> =
+            out.lines().map(|l| l.trim_end_matches(' ')).collect();
+        (1..=upto)
+            .filter(|i| seen.contains(format!("Line {}", i).as_str()))
+            .collect()
+    }
+
+    /// fresh#2820: once the emulator's grid history saturates, every row that
+    /// scrolls in evicts the oldest one, so `history_size()` is pinned at the
+    /// cap. `synced_history_lines` counts rows from the *oldest surviving row*,
+    /// so those evictions used to shift the origin out from under it and leave
+    /// the `history <= synced_history_lines` guard permanently true — streaming
+    /// to the backing file stopped for the rest of the session.
+    ///
+    /// Without the fix this persists only the first `scrollback` lines and then
+    /// nothing, forever.
+    #[test]
+    fn test_flush_streams_past_history_saturation() {
+        let scrollback = 50;
+        let mut state = TerminalState::with_scrollback(80, 10, scrollback);
+        let mut sink: Vec<u8> = Vec::new();
+
+        // Well past saturation, flushing after every line like the PTY reader.
+        for i in 1..=400 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+
+        // Everything that has fully scrolled off the 10-row screen must be in
+        // the file. Each line ends in a newline, so the last one sits above a
+        // blank cursor row and only lines 392..=400 stay visible.
+        let persisted = persisted_line_numbers(&sink, 400);
+        assert_eq!(
+            persisted,
+            (1..=391).collect::<Vec<_>>(),
+            "every scrolled-off line must reach the backing file across saturation"
+        );
+
+        // And the emulator's retained window stays bounded by what we asked for.
+        assert!(
+            state.history_size() <= scrollback,
+            "history {} should be trimmed to the retained window {}",
+            state.history_size(),
+            scrollback
+        );
+    }
+
+    /// The same failure at the shipped default: streaming must not stop once a
+    /// long-running terminal has emitted `SCROLLBACK_LINES` rows. Guards against
+    /// the bug being "fixed" by simply enlarging the window again.
+    #[test]
+    fn test_flush_streams_past_default_scrollback_window() {
+        let mut state = TerminalState::with_scrollback(80, 10, SCROLLBACK_LINES);
+        let mut sink: Vec<u8> = Vec::new();
+        let total = SCROLLBACK_LINES + 500;
+
+        for i in 1..=total {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+
+        let scrolled_off = total - 10;
+        let out = String::from_utf8_lossy(&sink);
+        let seen: std::collections::HashSet<&str> =
+            out.lines().map(|l| l.trim_end_matches(' ')).collect();
+        for i in [1, SCROLLBACK_LINES - 1, SCROLLBACK_LINES + 1, scrolled_off] {
+            assert!(
+                seen.contains(format!("Line {}", i).as_str()),
+                "line {} (of {} scrolled off) missing from the backing file",
+                i,
+                scrolled_off
+            );
+        }
+    }
+
+    /// Trimming must never drop a row that hasn't been written yet: with no
+    /// writer draining it, history is allowed to fill the staging margin rather
+    /// than silently discarding unstreamed scrollback.
+    #[test]
+    fn test_trim_never_drops_unstreamed_rows() {
+        let scrollback = 50;
+        let mut state = TerminalState::with_scrollback(80, 10, scrollback);
+        for i in 1..=200 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+        }
+        // Never flushed, so nothing is safe to trim: history holds every
+        // scrolled-off row even though that is far past the retained window.
+        assert_eq!(state.synced_history_lines(), 0);
+        assert_eq!(state.history_size(), 191);
+
+        // The first flush still sees — and writes — all 191 scrolled-off lines.
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        assert_eq!(
+            persisted_line_numbers(&sink, 200),
+            (1..=191).collect::<Vec<_>>()
+        );
+    }
+
+    /// A width resize re-anchors the pointer by walking history; that walk must
+    /// not resurrect the saturation stall.
+    #[test]
+    fn test_flush_streams_past_saturation_across_resize() {
+        let mut state = TerminalState::with_scrollback(80, 10, 50);
+        let mut sink: Vec<u8> = Vec::new();
+        for i in 1..=200 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+        state.resize(100, 10);
+        for i in 201..=300 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+        let persisted = persisted_line_numbers(&sink, 300);
+        for i in [250, 289, 290] {
+            assert!(
+                persisted.contains(&i),
+                "line {} missing after resize; got up to {:?}",
+                i,
+                persisted.last()
+            );
+        }
     }
 
     #[test]
