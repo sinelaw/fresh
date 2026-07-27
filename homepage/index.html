@@ -1117,21 +1117,14 @@
         }
 
         /* Responsive */
-        @media (max-width: 768px) {
+
+        /* The full nav row needs ~980px to fit. Below that it overruns the
+           viewport, and because body sets overflow-x: hidden the trailing
+           buttons are clipped silently rather than scrolled to. Collapse to
+           the hamburger menu instead. */
+        @media (max-width: 980px) {
             nav {
                 position: relative;
-            }
-
-            .nav-container {
-                height: 60px;
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-                padding: 0 16px;
-            }
-
-            .nav-logo {
-                width: auto;
             }
 
             .nav-links {
@@ -1146,6 +1139,20 @@
                 display: block;
                 position: absolute;
                 top: 60px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-container {
+                height: 60px;
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 16px;
+            }
+
+            .nav-logo {
+                width: auto;
             }
 
             #version-badge {
@@ -1237,6 +1244,7 @@
             </button>
             <div class="nav-links">
                 <a href="#features">Features</a>
+                <a href="#testimonials">Testimonials</a>
                 <a href="#install">Install</a>
                 <a href="docs/">Docs</a>
                 <a href="docs/blog/">Blog</a>
@@ -1257,6 +1265,7 @@
     <div class="mobile-menu" id="mobile-menu">
         <div class="mobile-menu-content">
             <a href="#features" onclick="toggleMobileMenu()">Features</a>
+            <a href="#testimonials" onclick="toggleMobileMenu()">Testimonials</a>
             <a href="#install" onclick="toggleMobileMenu()">Install</a>
             <a href="docs/">Docs</a>
             <a href="docs/blog/">Blog</a>
@@ -1649,8 +1658,8 @@
     </section>
 
     <!-- Testimonials -->
-    <section class="testimonials">
-        <h2>User feedback</h2>
+    <section class="testimonials" id="testimonials">
+        <h2>Testimonials</h2>
         <div class="testimonials-grid">
             <div class="testimonial">
                 <p class="testimonial-quote">Out of the box this is the best new TUI editor I've tried, probably ever. … you really nailed the discoverability / accessibility — basically everything works intuitively and needs very little explanation.</p>
