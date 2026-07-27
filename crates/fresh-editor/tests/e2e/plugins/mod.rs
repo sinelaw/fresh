@@ -54,6 +54,7 @@ pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;
 pub mod package_manager;
 pub mod plugin;
+pub mod plugin_config_changed_hook;
 pub mod plugin_config_registration;
 pub mod plugin_keybinding_execution;
 pub mod plugins_dir_in_working_dir;

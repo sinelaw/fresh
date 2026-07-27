@@ -540,6 +540,19 @@ interface HookEventMap {
   focus_gained: Record<string, never>;
   authority_changed: { label: string };
   trust_changed: { level: "trusted" | "restricted" | "blocked" };
+  /**
+   * The effective config changed — the user saved from the Settings UI,
+   * or the config was reloaded from disk. Payload-free by design:
+   * re-read what you care about with `editor.getPluginConfig()` /
+   * `editor.getConfig()`, both of which already reflect the new values
+   * when the handler runs.
+   *
+   * Any plugin that caches a `defineConfigX` value (rather than reading
+   * it at point of use) should subscribe, or its setting will appear to
+   * do nothing until the editor restarts. Does not fire for the
+   * plugin's own `editor.setSetting(...)` writes.
+   */
+  config_changed: Record<string, never>;
 
   // ── buffer lifecycle ─────────────────────────────────────────────────────
   buffer_activated: { buffer_id: number };
