@@ -1086,12 +1086,20 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 24px;
+            display: flex;
+            flex-direction: column;
         }
 
         .testimonial-quote {
             color: var(--text-light);
             line-height: 1.7;
             font-style: italic;
+        }
+
+        .testimonial-source {
+            color: var(--text-muted);
+            margin-top: auto;
+            padding-top: 16px;
         }
 
         .testimonial-quote::before {
@@ -1646,21 +1654,87 @@
         <div class="testimonials-grid">
             <div class="testimonial">
                 <p class="testimonial-quote">Out of the box this is the best new TUI editor I've tried, probably ever.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46140845" target="_blank">Hacker News</a></p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">I used to work with Micro, Nice Editor, or Tilde, but now Fresh is the best text editor i have ever seen!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/953" target="_blank">marco-trovato</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">It has actually replaced both Sublime and VSCode as my IDE of choice on my laptop. I got tired of the fan running full speed when I wanted to work on a project.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1162" target="_blank">rkram5424</a>, GitHub</p>
             </div>
             <div class="testimonial">
                 <p class="testimonial-quote">I had given up hope on ever finding an editor like this. WOW.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46135067" target="_blank">Hacker News</a></p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Thank goodness for a terminal editor that behaves like a proper editor should. No silly mode, no weird key bindings, function keys even behave as expected and the mouse works if you have one.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/483" target="_blank">shartrec</a>, GitHub</p>
             </div>
             <div class="testimonial">
                 <p class="testimonial-quote">The multi-cursor experience is the smoothest I've seen in a terminal based editor.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46135067" target="_blank">Hacker News</a></p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Thank you for a amazing terminal editor. Something that I felt was truly lacking in the modern age. Even though its unintended it's the perfect editor if you have mobility issues or are missing a limb. No need for weird vim/emacs bindings all over the keyboard making it hard to use.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1734" target="_blank">EliteAMDGamer</a>, GitHub</p>
             </div>
             <div class="testimonial">
                 <p class="testimonial-quote">I REALLY love this thing, especially the efficiency and speed. Gonna start using it daily.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46135067" target="_blank">Hacker News</a></p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">man... i'm blown away, this project is so insane i had to personally congratulate you guys for it, it's simply fantastic</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1162" target="_blank">eusebioleite</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Thanks for the great project, I've been waiting for a fully-featured and modern terminal text editor, and I've really, really enjoyed using fresh so far.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/1157" target="_blank">long-live-yossarian</a>, GitHub</p>
             </div>
             <div class="testimonial">
                 <p class="testimonial-quote">I really enjoy the command palette, the open file menu and the multi cursor. It's well thought, really intuitive.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46135067" target="_blank">Hacker News</a></p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">It is really awsome. Never imagine I would be able to use vscode inside a terminal 😆</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/761" target="_blank">goutou1994</a>, GitHub</p>
             </div>
             <div class="testimonial">
                 <p class="testimonial-quote">Everybody loves fast and responsive software. I have to say... I really like it.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46135067" target="_blank">Hacker News</a></p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">I'm very impressed by the Fresh editor. I have a feeling this will very quickly become my favorite command line text editor!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/464" target="_blank">TobberH</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Wow, the console editor I have been looking for for SO long, thank you!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/2100" target="_blank">jetpax</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">This has to be one of the best text editors that probably saved me for my upcoming semesters.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/788" target="_blank">VA-Valtorious</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">This was the last blocker to making fresh my daily driver!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/2201" target="_blank">steve-price-immybot</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">I really like your code editor, because I wanted something that works out of the box and is also in the terminal (since I use it a lot).</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/898" target="_blank">X3NON-11</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Really nice project! I very dislike modal editors, but I'm forced to use them since they are the only available editors in terminal.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/218" target="_blank">hkalbasi</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Just started using fresh and i love it, keep up the good work.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/761" target="_blank">Fegsav</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">I wanted a list of all the cool things people are doing with Fresh (LOVE this editor).</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/785" target="_blank">sottey</a>, GitHub</p>
             </div>
         </div>
     </section>
