@@ -915,17 +915,13 @@ impl Editor {
         // Update menu context with current editor state
         self.update_menu_context();
 
-        // Settings / calibration-wizard / keybinding-editor / event-debug
-        // modals, dimming the chrome behind each. Rendered before the menu
-        // bar so open menus overlay them.
-        self.render_modal_overlays(frame, chrome_area);
-
-        // The workspace-trust prompt is a blocking, top-most security modal.
-        // It dims the *entire* frame (the dock included) and centres in the
-        // full window, so it is rendered at the very end of this method —
-        // after the dock and floating panels — rather than here, where the
-        // dock's later pass would overpaint its left edge. See the bottom of
-        // `render`.
+        // The full-screen modals (settings, calibration wizard, keybinding
+        // editor, event-debug dialog) and the blocking workspace-trust prompt
+        // each dim the *entire* frame — the dock included — and centre in the
+        // full window, so they are rendered at the very end of this method,
+        // after the dock and floating panels, rather than here, where the
+        // dock's later pass would overpaint their left edge. See the bottom of
+        // `render` and `render_panels_and_modals`.
 
         // Menu bar, drawn last so its dropdowns sit above all other content.
         self.render_menu_bar(frame, menu_bar_area);
@@ -964,19 +960,15 @@ impl Editor {
             }
         }
 
-        // Convert all colors for terminal capability (256/16 color fallback)
-        crate::view::color_support::convert_buffer_colors(
-            frame.buffer_mut(),
-            self.color_capability,
-        );
-
-        // Frame-buffer animations run last so they mutate the final paint.
+        // Frame-buffer animations run after the main draw so they mutate the
+        // final paint.
         self.active_window_mut()
             .animations
             .apply_all(frame.buffer_mut());
 
-        // Dock, floating panel, theme-info popup, and the workspace-trust
-        // modal — the topmost layers, drawn above prompts/popups/animations.
+        // Dock, full-screen modals, floating panel, theme-info popup, and the
+        // workspace-trust modal — the topmost layers, drawn above
+        // prompts/popups/animations.
         self.render_panels_and_modals(
             frame,
             size,
@@ -984,6 +976,15 @@ impl Editor {
             dock_area,
             top_is_trust_modal,
             &theme_clone,
+        );
+
+        // Convert all colors for terminal capability (256/16 color fallback).
+        // Dead last, so the layers painted above — dock, full-screen modals,
+        // animations — go through the fallback too instead of emitting
+        // truecolor SGR on a terminal that cannot render it.
+        crate::view::color_support::convert_buffer_colors(
+            frame.buffer_mut(),
+            self.color_capability,
         );
     }
 
@@ -1318,8 +1319,9 @@ impl Editor {
     }
 
     /// Render the topmost layers: the dock and floating widget panel (each in
-    /// its own slot), the theme-info popup, and the blocking workspace-trust
-    /// modal. Drawn after every other layer so they sit on top.
+    /// its own slot), the full-screen modals (settings, keybinding editor,
+    /// …), the theme-info popup, and the blocking workspace-trust modal.
+    /// Drawn after every other layer so they sit on top.
     fn render_panels_and_modals(
         &mut self,
         frame: &mut Frame,
@@ -1339,6 +1341,14 @@ impl Editor {
                 self.render_floating_widget_panel(frame, dock, super::PanelSlot::Dock);
             }
         }
+
+        // Settings / calibration-wizard / keybinding-editor / event-debug —
+        // full-screen modals. They get the whole frame (`size`), not the
+        // chrome region right of the dock: each dims everything behind it,
+        // the dock included, and centres in the full window. Drawn here,
+        // after the dock's own pass, so the dock cannot overpaint the
+        // modal's left edge.
+        self.render_modal_overlays(frame, size);
 
         // The theme-info popup (Ctrl+Right-Click) anchors to an absolute
         // screen cell that may sit over the dock column, so draw it after
@@ -1953,12 +1963,16 @@ impl Editor {
         }
     }
 
-    /// Render the modal overlays that dim the chrome behind them: settings,
+    /// Render the modal overlays that dim everything behind them: settings,
     /// calibration wizard, keybinding editor, and event-debug dialog. Each is
     /// drawn only for the TUI (`!suppress_chrome_cells`); the web projects
-    /// them natively. Rendered before the menu bar so open menus overlay them.
-    fn render_modal_overlays(&mut self, frame: &mut Frame, chrome_area: ratatui::layout::Rect) {
-        // Render settings modal (before menu bar so menus can overlay)
+    /// them natively.
+    ///
+    /// `area` is the whole frame — these are full-screen modals, so the dim
+    /// pass covers the dock column too and each dialog centres in the full
+    /// window. They are called from `render_panels_and_modals` (after the
+    /// dock paints) so the dock cannot overpaint them.
+    fn render_modal_overlays(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
         // Check visibility first to avoid borrow conflict with dimming
         // The web renders Settings natively from `settings_view`; paint cells
         // only for the TUI.
@@ -1970,10 +1984,12 @@ impl Editor {
                 .map(|s| s.visible)
                 .unwrap_or(false);
         if settings_visible {
-            // Dim the editor content behind the settings modal. Use the
-            // chrome area (right of a left dock) so the modal sits beside
-            // the persistent dock instead of being overlapped by it.
-            crate::view::dimming::apply_dimming(frame, chrome_area);
+            // Dim everything behind the settings modal — the editor chrome
+            // *and* the dock. The dock is input-inaccessible while the modal
+            // is up (`dispatch_modal_mouse` routes every click to settings),
+            // so leaving it at full brightness read as if it were still live
+            // beside a dialog that had already swallowed its input.
+            crate::view::dimming::apply_dimming(frame, area);
         }
         if let Some(ref mut settings_state) = self.settings_state {
             if !draw_settings {
@@ -1988,7 +2004,7 @@ impl Editor {
                 settings_state.update_focus_states();
                 let settings_layout = crate::view::settings::render_settings(
                     frame,
-                    chrome_area,
+                    area,
                     settings_state,
                     &self.theme.read().unwrap(),
                 );
@@ -2001,10 +2017,10 @@ impl Editor {
         if !self.suppress_chrome_cells {
             if let Some(ref wizard) = self.calibration_wizard {
                 // Dim the editor content behind the wizard modal
-                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::dimming::apply_dimming(frame, area);
                 crate::view::calibration_wizard::render_calibration_wizard(
                     frame,
-                    chrome_area,
+                    area,
                     wizard,
                     &self.theme.read().unwrap(),
                 );
@@ -2019,10 +2035,10 @@ impl Editor {
         // paint cells only for the TUI.
         if draw_aux {
             if let Some(ref mut kb_editor) = self.keybinding_editor {
-                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::dimming::apply_dimming(frame, area);
                 crate::view::keybinding_editor::render_keybinding_editor(
                     frame,
-                    chrome_area,
+                    area,
                     kb_editor,
                     &self.theme.read().unwrap(),
                 );
@@ -2033,10 +2049,10 @@ impl Editor {
         if draw_aux {
             if let Some(ref debug) = self.active_window().event_debug {
                 // Dim the editor content behind the dialog modal
-                crate::view::dimming::apply_dimming(frame, chrome_area);
+                crate::view::dimming::apply_dimming(frame, area);
                 crate::view::event_debug::render_event_debug(
                     frame,
-                    chrome_area,
+                    area,
                     debug,
                     &self.theme.read().unwrap(),
                 );

@@ -35,6 +35,7 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
   * Dock rows are fully clickable in compact (list) view, ordered by recency, and auto-name themselves from their terminal.
   * Fixed a crash when navigating to an unreachable remote workspace.
   * Searching the dock and then opening one of the matches no longer wipes the search — the filtered list is still there when you come back for the next one. Leaving the dock (`Esc`, clicking the editor) still clears it.
+  * **Settings opens over the dock**, not beside it - the Settings dialog (and the keybinding editor) now centres on the whole screen and dims the dock along with everything else, instead of being squeezed into the columns right of the dock and leaving it bright, as if it were still live.
   * **Tidier workspace cards** - a card is now two rows instead of three: name with its git summary flush right, then the branch with the PR badge flush right. The branch starts at the card's left edge rather than floating mid-row, the empty third row is gone, and a branch that just repeats the workspace name gives its place to the project.
 * **Terminal**
   * Scrollback no longer loses output or gets stuck mid-scroll (#2649, reported by @dmknght).
