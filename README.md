@@ -22,7 +22,7 @@ One shortcut to find files, run commands, switch buffers, and jump to any line.
 
 ### Multitask with the Orchestrator
 
-A workspace per task — its own tabs, terminals and git worktree, plus a coding agent if you want one. Arrow keys switch between them: every workspace comes back exactly as you left it, and whatever is running in the ones you're not watching keeps running.
+One workspace per git worktree, each with its own tabs, terminals and coding agent. Arrow keys switch between them, and the ones you are not looking at keep running.
 
 ![Orchestrator](docs/blog/orchestrator-worktrees/showcase.gif)
 
