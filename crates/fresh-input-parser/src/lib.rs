@@ -893,11 +893,11 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
     );
 
     let kind = if cb & 64 != 0 {
-        // Wheel: low bit selects up/down.
-        if cb & 1 != 0 {
-            MouseEventKind::ScrollDown
-        } else {
-            MouseEventKind::ScrollUp
+        match button_bits {
+            0 => MouseEventKind::ScrollUp,
+            1 => MouseEventKind::ScrollDown,
+            2 => MouseEventKind::ScrollLeft,
+            _ => MouseEventKind::ScrollRight,
         }
     } else if button_bits == 3 {
         // No button pressed. This is always motion, never a button event —

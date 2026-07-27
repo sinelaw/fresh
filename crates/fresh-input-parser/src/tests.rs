@@ -446,6 +446,26 @@ fn sgr_mouse_is_zero_indexed() {
 }
 
 #[test]
+fn sgr_mouse_decodes_wheel_buttons_across_a_split_boundary() {
+    // SGR wheel buttons 64–67 are respectively up, down, left, and right.
+    for (button, kind) in [
+        (64, MouseEventKind::ScrollUp),
+        (65, MouseEventKind::ScrollDown),
+        (66, MouseEventKind::ScrollLeft),
+        (67, MouseEventKind::ScrollRight),
+    ] {
+        let mut parser = InputParser::new();
+        let sequence = format!("\x1b[<{button};10;5M");
+        let split = sequence.len() - 1;
+        assert!(parser.parse(&sequence.as_bytes()[..split]).is_empty());
+        assert!(matches!(
+            parser.parse(&sequence.as_bytes()[split..]).as_slice(),
+            [Event::Mouse(MouseEvent { kind: actual, .. })] if *actual == kind
+        ));
+    }
+}
+
+#[test]
 fn sgr_mouse_motion_without_button() {
     let mut p = InputParser::new();
     let ev = p.parse(b"\x1b[<35;10;5M");
