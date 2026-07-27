@@ -33,7 +33,10 @@ first-class there. The problem is not capability. It is three things:
 2. **The build needs Zig 0.15.x plus ~68 MB of network fetches** — and not
    just ghostty: the whole ghostty package graph, imgui and harfbuzz and
    fonts included, even for a vt-only build **[verified]**.
-3. **Pre-1.0 on both sides of the FFI**, with the Rust binding pinned to a
+3. **It costs ~1.0 MB of binary.** Measured with our own `[profile.release]`
+   flags: the emulator's contribution goes from 105 KB to 943 KB, ~9×, with
+   no supported way to trim it (§5.6).
+4. **Pre-1.0 on both sides of the FFI**, with the Rust binding pinned to a
    hardcoded ghostty commit that already lags `main` in ways that matter to
    us (§6.2).
 
@@ -191,17 +194,23 @@ graph** — 22 packages, ~68 MB — even though it passes
 > wuffs, highway, libpng, libxml2, zlib, pixels, uucode, libxev, vaxis, z2d,
 > zf, zig_wayland, JetBrains Mono, Nerd Fonts Symbols, ghostty-themes
 
-Root cause is in ghostty's `build.zig`: `SharedDeps.init`,
-`GhosttyExe.init`, `GhosttyResources.init`, `GhosttyDocs.init`,
-`GhosttyWebdata.init`, `GhosttyBench.init` and `GhosttyDist.init` all run
-**unconditionally**, before any `emit_lib_vt` gating, so Zig must resolve
-every `b.lazyDependency(...)` in the graph. They are fetched but not
-compiled into the artifact. "Zero-dependency" is true of the *library*; it
-is not true of *building the library through this crate*.
+They are fetched but never compiled into the artifact. "Zero-dependency" is
+true of the *library*; it is not true of *building the library through this
+crate*. Unpacked, the Zig package cache reaches **343 MB**. A cold
+`zig build` of the vt library alone took ~62 s on 4 cores.
 
-Fetches come from `github.com` (ghostty itself) and
-`deps.files.ghostty.org`, plus at least one direct GitHub archive
-(`ocornut/imgui`).
+Partial root cause, read from the pinned checkout: the `lazyDependency` calls
+live in `SharedDeps.add()`, not `SharedDeps.init()`. `GhosttyExe.init` already
+guards its call (`if (!cfg.emit_lib_vt) _ = try deps.add(exe)`) but
+`GhosttyBench.init` — constructed unconditionally at `build.zig:103` — calls
+`deps.add()` twice with no such guard. Gating bench alone did **not** stop the
+fetches in testing, because Zig also resolves the transitive manifest of any
+package already in the cache. So this is fixable upstream in principle, but it
+is not a one-line fix, and it is not fixed today.
+
+Fetches come from `deps.files.ghostty.org`, `github.com` (ghostty itself, via
+`git clone`), and direct GitHub archive/`git+https` URLs for `ocornut/imgui`,
+`ivanstepanovftw/zigimg` and `jacobsandlund/uucode`.
 
 What that hits:
 
@@ -274,6 +283,69 @@ Note this cuts the other way on §5.1: `RenderState` is explicitly designed so
 the terminal is borrowed only during `update()`, "which allows the renderer
 to be safely multi-threaded (as long as a lock is held during the update
 call)". That is the actor split, and it is the sanctioned path.
+
+### 5.6 Binary size: **+1.0 MB** on the release profile  **[measured]**
+
+Three minimal binaries, each exercising the same seven API groups from §2
+(construct → feed VT bytes → resize → read every visible cell's char, colors
+and attributes → read wrap flags → query all mode flags → cursor), built with
+Fresh's profiles verbatim and rustc 1.95 on `x86_64-unknown-linux-gnu`.
+`baseline` is the same harness with no emulator at all, so the deltas isolate
+the library.
+
+**`[profile.release]`** — `debug = 0, lto = "fat", codegen-units = 1, opt-level = "z"`.
+This is what `[profile.dist]` inherits, i.e. what ships.
+
+| binary | as-built | stripped | emulator cost (stripped) |
+|---|---:|---:|---:|
+| `baseline` (no emulator) | 362,256 | 291,128 | — |
+| `alacritty_terminal` 0.25.1 | 502,360 | 398,208 | **+105 KB** |
+| `libghostty-vt` 0.2.1 | 1,527,544 | 1,256,928 | **+943 KB** |
+
+> **`ghostty − alacritty` = +1,025,184 B as-built (+1.00 MB), +858,720 B stripped (+0.82 MB).**
+> The emulator's contribution grows **~9×**.
+
+**`[profile.min-size]`** — release + `panic = "abort"`, `strip = true`:
+
+| target | baseline | alacritty | ghostty | delta |
+|---|---:|---:|---:|---:|
+| gnu | 289,096 | 388,000 (+97 KB) | 1,254,344 (+943 KB) | **+846 KB** |
+| musl static | 377,400 | 479,792 (+100 KB) | 1,426,336 (+1,024 KB) | **+924 KB** |
+
+The static library itself: `libghostty-vt.a` is **1,737,484 B** (gnu) /
+1,916,766 B (musl) at `ReleaseSmall`; the shared object is 968,440 B. Linking
+gc's roughly 750 KB of it away.
+
+Where the weight is, from the archive members and largest symbols:
+
+| | bytes |
+|---|---:|
+| `libghostty-vt-static_zcu.o` (the Zig code) | 1,209,288 |
+| `compiler_rt.o` | 270,832 |
+| `simdutf.o` (SIMD UTF-8 decoder) | 195,288 |
+| everything else | ~35,000 |
+
+Biggest individual symbols are Unicode property tables (`props.Tables…stage2`
+63,488 + `stage1` 16,384), the x11 colour-name table (12,528), `PageList`
+resize/reflow, the OSC parser, the plain/VT/HTML formatter, Kitty graphics
+image loading, and `compress.flate.Decompress` (scrollback compression). Most
+of that is functionality Fresh would not use, but it arrives as one static
+library.
+
+**Two levers, neither usable from Rust today:**
+
+- `zig build -Dsimd=false` shrinks the archive to 1,467,672 B and the binary
+  to 1,365,016 B — **−159 KB**. Still +842 KB over alacritty, and it discards
+  the SIMD parser that is half the performance argument. `build.rs` exposes
+  no way to pass it; the only env knob is `LIBGHOSTTY_VT_SYS_OPTIMIZE`.
+- The `kitty-graphics` cargo feature (on by default) is **inert**:
+  `libghostty-vt-sys`'s `build.rs` never reads it. `default-features = false`
+  and the default build produce byte-identical binaries (1,260,272 B both).
+
+For a project that maintains a dedicated `min-size` profile, a `min-size-build`
+CI job and a trimmed musl artifact, ~1 MB for a component we already have at
+105 KB is a substantial regression, and there is currently no supported way to
+tune it down.
 
 ---
 
@@ -487,18 +559,32 @@ Any two of:
   `DOCS_RS=1 cargo check` (which makes `build.rs` skip the native build, so
   the whole public API can be checked without Zig). Clean compile for the
   mapping; the two `E0277`s quoted in §5.1 for the `Arc<Mutex<…>>` shape.
-- **Build requirements (§5.2):** `cargo build` without Zig, then with Zig
-  0.15.2 on `PATH`, capturing the dependency fetches. Package list and byte
-  count are from the actual fetch loop. The native link was **not** completed
-  — `ocornut/imgui` is fetched directly from GitHub and this sandbox blocks
-  non-scoped GitHub repos. That is an environment limit, not a crate defect;
-  everything up to that point (Zig requirement, ghostty clone, 22 packages,
-  ~68 MB) is observed.
+- **Build requirements (§5.2):** `cargo build` without Zig (fails), then with
+  Zig 0.15.2 on `PATH`. The full native build **was completed** on a pristine
+  (unpatched) checkout of ghostty `a887df42c`, producing
+  `libghostty-vt.a`/`.so` and headers. Package list, byte counts and cache
+  size are observed from that build.
+  - Workaround for this sandbox: Zig's HTTP client does not honour the agent
+    proxy, and GitHub *archive* endpoints 403 for repos outside the session
+    scope. `git clone` works for any public repo, so packages were resolved by
+    `curl`-ing (for `deps.files.ghostty.org`) or `git clone`-ing (for GitHub)
+    and then `zig fetch`-ing the local tree into the global cache. The hash
+    `zig fetch` computed from a git tree **matched the manifest exactly**
+    (e.g. imgui → `N-V-__8AAEbOfQBnvcFcCX2W5z7tDaN8vaNZGamEQtNOe0UI`), so the
+    build is faithful, not approximated.
 - **Dependency-graph root cause (§5.2):** read from the pinned checkout's
-  `build.zig` and `build.zig.zon` — only `uucode` is eager; the other 14 are
-  `.lazy = true` but are still resolved because the unconditional
-  `SharedDeps`/`GhosttyExe`/`GhosttyResources`/`GhosttyDocs`/`GhosttyWebdata`
-  constructors call `b.lazyDependency` before the `emit_lib_vt` gates.
+  `build.zig`, `build.zig.zon` and `src/build/SharedDeps.zig`. Only `uucode`
+  is eager; the other 14 are `.lazy = true`. `GhosttyExe.init` guards its
+  `deps.add()`; `GhosttyBench.init` does not. Gating bench alone was tested
+  and did not eliminate the fetches, so the trigger is not fully isolated —
+  the *observed* fact is that a clean-cache build fetches the whole graph.
+- **Binary size (§5.6):** three minimal binaries (`baseline`/`alac`/`ghost`)
+  in one cargo workspace whose `[profile.release]` and `[profile.min-size]`
+  are copied verbatim from Fresh's root `Cargo.toml`, pinned to rustc 1.95 via
+  `rust-toolchain.toml`. Each exercises the same seven API groups so nothing
+  is dead-stripped. Static linking confirmed via `ldd` (no `libghostty-vt.so`).
+  Attribution via `ar x` + `nm --size-sort -S`. The `-Dsimd=false` and
+  `kitty-graphics` results are separate builds.
 - **Missing scrollback options (§6.2):** `grep` of the published
   `libghostty-vt-sys` 0.2.1 `bindings.rs` and of the pinned checkout's
   `include/ghostty/vt/terminal.h` (`…OPT_CLIPBOARD_WRITE = 26` is the last

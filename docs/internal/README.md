@@ -62,7 +62,7 @@ other docs assume.
 | [remote-authority-trust.md](remote-authority-trust.md) | The `Authority` backend slot (local / SSH / docker-exec / kubectl-exec), the remote agent and filesystem, heartbeat/reconnect, devcontainers, the k8s transport, Workspace Trust, and the live env provider — with a clear shipped-vs-planned line. |
 | [orchestrator-sessions.md](orchestrator-sessions.md) | The Orchestrator/Dock for many concurrent workspaces/agent sessions, session persistence and the Live/Dormant lifecycle, and the dock UX design versus what ships today. |
 | [terminal.md](terminal.md) | The integrated terminal: PTY spawning, the embedded `fresh-winterm` VT emulator (and why custom), live/scrollback per-buffer state, mouse/links/OSC52, and restore-on-reconnect. |
-| [ghostty-vs-alacritty-emulation.md](ghostty-vs-alacritty-emulation.md) | Whether to swap `alacritty_terminal` for libghostty-vt: exactly which seven API groups `term.rs` depends on, how each maps, the compiler-verified `!Send` and Zig-toolchain blockers, what a file-backed-scrollback offload needs from either backend — and the scrollback-loss bug in `flush_new_scrollback` that blocks the offload today. |
+| [ghostty-vs-alacritty-emulation.md](ghostty-vs-alacritty-emulation.md) | Whether to swap `alacritty_terminal` for libghostty-vt: exactly which seven API groups `term.rs` depends on, how each maps, the compiler-verified `!Send` blocker, the Zig toolchain cost, the measured +1.0 MB binary-size hit, what a file-backed-scrollback offload needs from either backend — and the scrollback-loss bug in `flush_new_scrollback` that blocks the offload today. |
 
 ### Configuration, features & quality
 | Doc | What it covers |
