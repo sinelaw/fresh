@@ -6,7 +6,19 @@
     <title>Fresh - The Terminal IDE</title>
     <meta name="description" content="Fresh is a terminal IDE. One static binary, instant startup, broad LSP coverage, magit-style diff review, project-wide search, huge-file editing, SSH remote editing, and TypeScript plugins.">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='12' y='70' font-family='monospace' font-size='60' font-weight='bold' fill='%23222'%3E%3E_%3C/text%3E%3C/svg%3E">
-    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css">
+    <!-- The version badge fetch fires while the page is still parsing, so
+         warming this connection early pays off. No preconnect for the
+         analytics beacon on purpose: it is deliberately held back until after
+         load, and an early connection would only compete with the assets that
+         actually matter. -->
+    <link rel="preconnect" href="https://api.github.com" crossorigin>
+    <!-- The player's stylesheet only ever styles the hero demo, which JS
+         builds after the page is up. Loading it as print media keeps it off
+         the critical path; the onload handler promotes it once it arrives.
+         No <noscript> counterpart on purpose — without JS there is no player
+         to style, just the fallback PNG. -->
+    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css"
+          media="print" onload="this.media='all'; this.onload=null;">
     <style>
         :root {
             --bg-dark: #0a0a0a;
@@ -1429,7 +1441,7 @@
                     </div>
                 </div>
                 <div id="demo-player" class="asciinema-host">
-                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900"></a>
+                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900" fetchpriority="high" decoding="async"></a>
                 </div>
                 <div class="screenshot-glow"></div>
             </div>
@@ -2060,11 +2072,15 @@
             });
     </script>
 
-    <!-- Asciinema player: recorded demo of Fresh. Loads async; keeps the
-         static hero PNG if the bundle or cast fail to load. -->
-    <script src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
+    <!-- Asciinema player: recorded demo of Fresh. Keeps the static hero PNG if
+         the bundle or cast fail to load.
+
+         The bundle is deferred so its ~176KB never blocks the parser. Deferred
+         scripts run before DOMContentLoaded, so by the time the listener below
+         fires, AsciinemaPlayer is defined. -->
+    <script defer src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
     <script>
-        (function () {
+        document.addEventListener('DOMContentLoaded', function () {
             if (typeof AsciinemaPlayer === 'undefined') return;
             const host = document.getElementById('demo-player');
             if (!host) return;
@@ -2086,12 +2102,36 @@
             } catch (err) {
                 if (fallback) host.appendChild(fallback);
             }
-        })();
+        });
     </script>
 
-    <!-- Cloudflare Web Analytics (sinelaw.github.io/fresh) -->
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "0858f4857c744e418bce27f9577ea9d2"}'></script>
-    <!-- Cloudflare Web Analytics (getfresh.dev) -->
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f624a28f02c14086b6963415fb57c550"}'></script>
+    <!-- Cloudflare Web Analytics, one token per domain the site is served from.
+         Injected after the load event instead of shipped as a <script> tag:
+         `defer` runs before DOMContentLoaded and `async` still holds the load
+         event, so either way an unreachable beacon host stalls the page — it
+         cost 12.9s to DOMContentLoaded here when it could not connect. Nothing
+         on the page depends on analytics, so it goes last and blocks nothing. -->
+    <script>
+        (function () {
+            const TOKENS = [
+                '0858f4857c744e418bce27f9577ea9d2', // sinelaw.github.io/fresh
+                'f624a28f02c14086b6963415fb57c550'  // getfresh.dev
+            ];
+            function loadBeacons() {
+                for (const token of TOKENS) {
+                    const s = document.createElement('script');
+                    s.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+                    s.defer = true;
+                    // The beacon reads its token off its own element, which
+                    // document.currentScript still resolves for an injected tag.
+                    s.setAttribute('data-cf-beacon', JSON.stringify({ token: token }));
+                    document.head.appendChild(s);
+                }
+            }
+            const start = () => setTimeout(loadBeacons, 0);
+            if (document.readyState === 'complete') start();
+            else window.addEventListener('load', start);
+        })();
+    </script>
 </body>
 </html>
