@@ -24,7 +24,7 @@ use crate::server::capture_backend::{
     terminal_setup_sequences, terminal_teardown_sequences, CaptureBackend,
 };
 use crate::server::command_access;
-use crate::server::input_parser::InputParser;
+use crate::server::input_parser::ClientInputParser;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths, StreamWrapper};
 use crate::server::protocol::{
     ClientControl, ServerControl, ServerHello, TermSize, VersionMismatch, PROTOCOL_VERSION,
@@ -194,7 +194,7 @@ struct ConnectedClient {
     term_size: TermSize,
     env: std::collections::HashMap<String, Option<String>>,
     id: u64,
-    input_parser: InputParser,
+    input_parser: ClientInputParser,
     /// Whether this client needs a full screen render on next frame
     needs_full_render: bool,
     /// If set, this client is waiting for a --wait completion signal
@@ -1124,7 +1124,7 @@ impl EditorServer {
             term_size: hello.term_size,
             env: hello.env,
             id: client_id,
-            input_parser: InputParser::new(),
+            input_parser: ClientInputParser::new(),
             needs_full_render: true,
             wait_id: None,
             cmd_token: hello.cmd_token,
@@ -1183,6 +1183,18 @@ impl EditorServer {
                 }
             }
             let _ = data_eof; // Suppress unused warning
+
+            // A lone trailing `ESC` is ambiguous until the next byte says
+            // whether it was the Escape key or the head of a sequence. The
+            // socket read above is non-blocking, so nothing else in this loop
+            // ever decides that — resolve it here once the grace window has
+            // passed with no continuation, or Escape never registers at all
+            // (sinelaw/fresh#2810).
+            let flushed = client.input_parser.flush_idle(Instant::now());
+            if !flushed.is_empty() {
+                input_source_client = Some(idx);
+                input_events.extend(flushed);
+            }
 
             // Check control socket
             // On Windows, don't toggle nonblocking mode - it fails on named pipes
