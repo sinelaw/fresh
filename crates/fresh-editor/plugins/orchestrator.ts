@@ -845,24 +845,101 @@ let pickerFocusKey: string = "sessions";
 // updates this and the next open honours it.
 let lastOpenScope: "current" | "all" = "all";
 // Remembered across opens, like `lastOpenScope`: whether the
-// discovered on-disk worktree rows are shown. Defaults to false
-// (worktrees hidden) — surfacing them is opt-in via "Show all
-// worktrees" (Alt+T).
-let lastShowWorktrees = false;
+// discovered on-disk worktree rows are shown. `null` means "not touched
+// this session" — the dock then seeds it from the `showAllWorktrees`
+// plugin setting (default false: worktrees hidden, surfacing them is
+// opt-in via "Show all worktrees" / Alt+T). Flipping the checkbox pins a
+// concrete value that wins for the rest of the session.
+let lastShowWorktrees: boolean | null = null;
 // Remembered across opens: whether "trivial" sessions are hidden.
-// Defaults to false — showing every workspace. A freshly created
-// workspace starts empty, so hiding trivial sessions made it vanish the
-// instant it lost the "active" exemption (issue: "new workspace
-// immediately disappears"). Showing all by default keeps new workspaces
-// visible; the "show empty" checkbox (Alt+I) opts back into hiding the
-// throwaway single-file / restored-shell rows.
-let lastHideTrivial = false;
-// Dock card density, remembered across opens. "card" (default) shows
-// the three-line rounded pill; "compact" shows one line per session.
-// Toggled by the dock toolbar's "view" button.
+// `null` ⇒ seeded from the `showEmptyWorkspaces` setting, which defaults
+// to true (nothing hidden). A freshly created workspace starts empty, so
+// hiding trivial sessions made it vanish the instant it lost the
+// "active" exemption (issue: "new workspace immediately disappears").
+// Showing all by default keeps new workspaces visible; the "show empty"
+// checkbox (Alt+I) opts back into hiding the throwaway single-file /
+// restored-shell rows.
+let lastHideTrivial: boolean | null = null;
+// Dock card density. "card" (default) shows the three-line rounded pill;
+// "compact" shows one line per session. Read all over the render path,
+// so it stays a plain value rather than a config lookup; the dock
+// re-seeds it from the `defaultView` setting on open unless the user has
+// hit the toolbar's "view" button this session (`dockViewOverride`).
 let dockView: "card" | "compact" = "card";
+let dockViewOverride: "card" | "compact" | null = null;
 // Remembered dock project filter (see `OpenDialogState.projectFilter`).
 let lastDockProjectFilter: string | null = null;
+
+// =============================================================================
+// Dock settings (Settings → Plugin: orchestrator)
+//
+// The dock's start-up defaults are *plugin* config, not core editor
+// config: they only mean anything while this plugin is loaded, and the
+// plugin-config API already gives us schema validation, the layered
+// User/Project/Session merge, and a rendered Settings sub-category for
+// free. Declaring them here is what makes them discoverable — before
+// this, the dock's defaults were module constants only a source-reader
+// could find, and the checkbox/density state was session-only.
+//
+// Each field is the *default* the dock opens with. The in-dock controls
+// (the "view" button, the two Filters checkboxes) still win for the rest
+// of the session — they set the `*Override` / `last*` values above —
+// they just no longer decide where the dock starts.
+editor.defineConfigBoolean("autoOpenDock", {
+  default: false,
+  description:
+    "Open the workspace dock automatically when Fresh starts. The dock opens unfocused, so typing still goes to the editor.",
+});
+editor.defineConfigEnum("defaultView", {
+  values: ["card", "compact"] as const,
+  default: "card",
+  description:
+    "Dock layout the panel opens with: 'card' (multi-line pill per workspace) or 'compact' (one line per workspace). The dock's 'view' button flips it for the current session.",
+});
+editor.defineConfigBoolean("showAllWorktrees", {
+  default: false,
+  description:
+    "Start the dock (and the Open picker) with 'all worktrees' checked, listing on-disk worktrees that have no open workspace.",
+});
+editor.defineConfigBoolean("showEmptyWorkspaces", {
+  default: true,
+  description:
+    "Start the dock (and the Open picker) with 'show empty' checked, listing workspaces with no edited files (freshly created ones included).",
+});
+
+interface DockSettings {
+  autoOpenDock?: boolean;
+  defaultView?: "card" | "compact";
+  showAllWorktrees?: boolean;
+  showEmptyWorkspaces?: boolean;
+}
+
+// Re-read on demand rather than caching the values `defineConfigX`
+// returned at load time: a Settings-UI edit lands in the config snapshot
+// straight away, so the next dock open honours it without a plugin
+// reload or an editor restart.
+function dockSettings(): DockSettings {
+  return (editor.getPluginConfig() ?? {}) as DockSettings;
+}
+
+// Density the dock should open at: the session's own "view" toggle if
+// the user has hit it, otherwise the configured default.
+function configuredDockView(): "card" | "compact" {
+  if (dockViewOverride !== null) return dockViewOverride;
+  return dockSettings().defaultView === "compact" ? "compact" : "card";
+}
+
+// The two Filters checkboxes, same precedence. `hideTrivial` is the
+// inverse of the user-facing "show empty" checkbox.
+function configuredShowWorktrees(): boolean {
+  if (lastShowWorktrees !== null) return lastShowWorktrees;
+  return dockSettings().showAllWorktrees === true;
+}
+
+function configuredHideTrivial(): boolean {
+  if (lastHideTrivial !== null) return lastHideTrivial;
+  return dockSettings().showEmptyWorkspaces === false;
+}
 
 // =============================================================================
 // Dock folder tree
@@ -3819,8 +3896,8 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
     // control / Alt+P updates it for next time.
     scope: lastOpenScope,
     selectedIds: new Set<number>(),
-    showWorktrees: lastShowWorktrees,
-    hideTrivial: lastHideTrivial,
+    showWorktrees: configuredShowWorktrees(),
+    hideTrivial: configuredHideTrivial(),
     bulkInFlight: null,
     projectFilter: asDock ? lastDockProjectFilter : null,
     projectMenuOpen: false,
@@ -3844,6 +3921,10 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
   if (asDock) {
     dockMode = true;
     dockBlurred = false;
+    // Adopt the configured density on every open (unless the "view"
+    // button already picked one this session), so editing the setting
+    // and reopening the dock is enough to see the change.
+    dockView = configuredDockView();
   } else {
     dockMode = false;
   }
@@ -8424,15 +8505,16 @@ function startPendingWorkspace(
   savePendingSpecs();
   if (!restored) {
     closeForm();
-    showDockForPending();
+    showDockUnfocused();
     launchPendingCreate(id);
   }
   return id;
 }
 
-// Ensure the dock is visible so a just-created placeholder is seen, without
-// stealing keyboard focus — the user asked to keep working ("stay put").
-function showDockForPending(): void {
+// Ensure the dock is visible without stealing keyboard focus — the user
+// asked to keep working ("stay put"). Used for a just-created placeholder
+// (so it's seen), and for the `autoOpenDock` setting at startup.
+function showDockUnfocused(): void {
   // Open the dock if nothing is up yet. (Structured so the module-level
   // `openPanel`'s narrowing survives the `openControlRoom` reassignment —
   // mirrors `openMoveToFolderForCurrent`.)
@@ -8977,7 +9059,7 @@ function recoverPendingWorkspaces(): void {
     startPendingWorkspace(spec, { restored: true, label });
     restored++;
   }
-  if (restored > 0) showDockForPending();
+  if (restored > 0) showDockUnfocused();
 }
 
 // `visit`: "Create & Visit" — focus follows into the workspace once it's real.
@@ -10322,6 +10404,9 @@ editor.on("widget_event", (e) => {
     // Dock "view" button → flip card ⇄ compact density and re-render.
     if (e.event_type === "activate" && e.widget_key === "view-toggle") {
       dockView = dockView === "card" ? "compact" : "card";
+      // Pin it for the rest of the session — the configured default only
+      // decides where the dock *starts*.
+      dockViewOverride = dockView;
       if (openPanel) openPanel.update(buildDockSpec());
       return;
     }
@@ -10501,6 +10586,14 @@ editor.on("window_closed", (e) => {
 // resumes (Enter) or dismisses — nothing auto-runs (§ recoverPendingWorkspaces).
 editor.on("ready", () => {
   recoverPendingWorkspaces();
+  // Auto-open the dock when the user asked for it in Settings (Plugin:
+  // orchestrator → autoOpenDock). Runs after the recovery pass, which
+  // may already have shown the dock for a restored placeholder —
+  // `showDockUnfocused` is a no-op on an open panel, so the two can't
+  // fight. Like the pending-workspace case, the dock comes up *blurred*:
+  // it's a switcher, not something to type into, so the keyboard stays
+  // with whatever the editor restored.
+  if (dockSettings().autoOpenDock === true) showDockUnfocused();
 });
 
 // Grace window after a session becomes active during which terminal
