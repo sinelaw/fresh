@@ -1717,6 +1717,13 @@ impl TextBuffer {
             line_feed_cnt,
             &self.buffers,
         );
+
+        // Content changed: layout caches (line-wrap cache, visual-row
+        // index) key on the version and would otherwise serve
+        // pre-append state.  Deliberately not `mark_content_modified`
+        // — the buffer still matches the on-disk stream, so it isn't
+        // dirty.
+        self.bump_version();
     }
 
     /// Check if the buffer has been modified since last save
