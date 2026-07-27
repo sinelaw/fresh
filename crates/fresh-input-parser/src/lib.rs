@@ -410,7 +410,12 @@ impl InputParser {
         buf[have as usize] = byte;
         have += 1;
         if have == 3 {
-            out.push(x10_mouse_event(buf));
+            // A report we can't represent yields no event, but its bytes are
+            // still consumed here — they must never fall through to ground and
+            // print as literal text (sinelaw/fresh#2745).
+            if let Some(ev) = x10_mouse_event(buf) {
+                out.push(ev);
+            }
             self.state = State::Ground;
         } else {
             self.state = State::X10 { buf, have };
@@ -864,9 +869,22 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
     if parts.len() < 3 {
         return None;
     }
-    let cb: u16 = parts[0].parse().unwrap_or(0);
+    // `Cb` is a single byte in every mouse protocol, so anything non-numeric or
+    // out of range is malformed. Defaulting it to 0 (as this used to) turns
+    // garbage into a synthetic left-click at the reported cell.
+    let cb: u8 = parts[0].parse().ok()?;
     let cx: u16 = parts[1].parse().unwrap_or(1);
     let cy: u16 = parts[2].parse().unwrap_or(1);
+
+    // Bit 7 is xterm's high-button extension: the button number is
+    // `(cb & 3) | (cb & 0xC0) >> 4`, so bit 7 marks buttons 8-15. `MouseButton`
+    // has no representation for those, and their low bits alias onto
+    // Left/Middle/Right — and, when bit 6 is set too (buttons 12-15), onto the
+    // wheel. Decoding them would manufacture clicks and scrolls the user never
+    // made, so drop them, as crossterm does.
+    if cb & 0b1000_0000 != 0 {
+        return None;
+    }
 
     let button_bits = cb & 0b11;
     let button = match button_bits {
@@ -876,21 +894,7 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
         _ => MouseButton::Left, // 3 = no button; never used as a real button
     };
 
-    let modifiers = KeyModifiers::from_bits_truncate(
-        if cb & 4 != 0 {
-            KeyModifiers::SHIFT.bits()
-        } else {
-            0
-        } | if cb & 8 != 0 {
-            KeyModifiers::ALT.bits()
-        } else {
-            0
-        } | if cb & 16 != 0 {
-            KeyModifiers::CONTROL.bits()
-        } else {
-            0
-        },
-    );
+    let modifiers = mouse_modifiers(cb);
 
     let kind = if cb & 64 != 0 {
         match button_bits {
@@ -922,23 +926,85 @@ fn sgr_mouse_event(params: &[u8], pressed: bool) -> Option<Event> {
     }))
 }
 
+/// Decode the Shift/Alt/Ctrl bits of a mouse report's `Cb` byte. The bit
+/// layout is shared by the SGR and X10 encodings — only the transport differs.
+fn mouse_modifiers(cb: u8) -> KeyModifiers {
+    let mut modifiers = KeyModifiers::empty();
+    if cb & 4 != 0 {
+        modifiers |= KeyModifiers::SHIFT;
+    }
+    if cb & 8 != 0 {
+        modifiers |= KeyModifiers::ALT;
+    }
+    if cb & 16 != 0 {
+        modifiers |= KeyModifiers::CONTROL;
+    }
+    modifiers
+}
+
 /// Decode a legacy X10 mouse report from its three raw coordinate bytes.
-fn x10_mouse_event(buf: [u8; 3]) -> Event {
+///
+/// The button byte carries the same `Cb` layout as an SGR report (button in
+/// bits 0-1, Shift/Alt/Ctrl in bits 2-4, motion in bit 5, wheel in bit 6, high
+/// buttons in bit 7); only the transport differs. Each field is a single byte
+/// biased by 32, and there is no `m` release terminator — a release is
+/// reported as button 3, so which button came up is simply not encoded.
+///
+/// Returns `None` for reports that have no `MouseEventKind` counterpart.
+fn x10_mouse_event(buf: [u8; 3]) -> Option<Event> {
     let cb = buf[0].wrapping_sub(32);
     let cx = buf[1].wrapping_sub(32);
     let cy = buf[2].wrapping_sub(32);
-    let kind = match cb & 0b11 {
-        0 => MouseEventKind::Down(MouseButton::Left),
-        1 => MouseEventKind::Down(MouseButton::Middle),
-        2 => MouseEventKind::Down(MouseButton::Right),
-        _ => MouseEventKind::Up(MouseButton::Left), // 3 = release
+
+    // Buttons 8-15 are unrepresentable — see `sgr_mouse_event`.
+    if cb & 0b1000_0000 != 0 {
+        return None;
+    }
+
+    let button_bits = cb & 0b11;
+    let button = match button_bits {
+        0 => MouseButton::Left,
+        1 => MouseButton::Middle,
+        2 => MouseButton::Right,
+        _ => MouseButton::Left, // 3 = no button / release
     };
-    Event::Mouse(MouseEvent {
+
+    let kind = if cb & 64 != 0 {
+        // Wheel: buttons 4-7 are up, down, left and right.
+        match button_bits {
+            0 => MouseEventKind::ScrollUp,
+            1 => MouseEventKind::ScrollDown,
+            2 => MouseEventKind::ScrollLeft,
+            _ => MouseEventKind::ScrollRight,
+        }
+    } else if cb & 32 != 0 {
+        // Motion. With a button held this is a drag; button 3 means no button
+        // is down, i.e. bare pointer movement under DECSET 1003. Reading the
+        // whole class as a press produced a click flood on every mouse move —
+        // the X10 half of the same bug `sgr_mouse_event` documents.
+        if button_bits == 3 {
+            MouseEventKind::Moved
+        } else {
+            MouseEventKind::Drag(button)
+        }
+    } else if button_bits == 3 {
+        MouseEventKind::Up(MouseButton::Left)
+    } else {
+        MouseEventKind::Down(button)
+    };
+
+    Some(Event::Mouse(MouseEvent {
         kind,
-        column: cx as u16,
-        row: cy as u16,
-        modifiers: KeyModifiers::empty(),
-    })
+        // X10 coordinates are 1-based, exactly like SGR's: the byte is
+        // `coordinate + 32` with the top-left cell at 1,1. Dropping the `- 1`
+        // (as this used to) placed every legacy-protocol click one cell down
+        // and to the right of the cell the user aimed at. `saturating_sub`
+        // rather than `- 1` for the same reason as in `sgr_mouse_event`: an
+        // out-of-spec 0 coordinate must not underflow (sinelaw/fresh#2732).
+        column: u16::from(cx).saturating_sub(1),
+        row: u16::from(cy).saturating_sub(1),
+        modifiers: mouse_modifiers(cb),
+    }))
 }
 
 /// Convert buffered bracketed-paste bytes to text, dropping stray C0/C1 control
