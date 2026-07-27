@@ -373,6 +373,11 @@ impl Viewport {
                     line_wrap_enabled: true,
                     // Grid mode returns before this cache path.
                     grid_wrap: false,
+                    // This is the viewport-local count-only cache — its
+                    // entries are placeholders never shared with the
+                    // renderer's per-state cache, and the count helper is
+                    // tab-blind, so a fixed sentinel keys them fine.
+                    tab_size: 0,
                     // Scroll math is cursor-blind by convention (matches
                     // `VisualRowIndex` and its own cursor-free inputs).
                     cursor_sig: 0,

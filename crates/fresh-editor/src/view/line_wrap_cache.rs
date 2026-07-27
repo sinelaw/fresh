@@ -88,6 +88,13 @@ pub struct LineWrapKey {
     /// buffers set this; it keys separately from word-wrap entries at the
     /// same geometry.
     pub grid_wrap: bool,
+    /// Tab width the pipeline renders `\t` at (`buffer_settings.tab_size`).
+    /// A layout input like the geometry fields: changing it (e.g. the
+    /// `set tab_size` command) reshapes visual columns and wrap points
+    /// without bumping any pipeline-inputs version, so it must key the
+    /// entry or the renderer's cached-window fast path would serve
+    /// stale layouts after a tab-size change.
+    pub tab_size: u16,
     /// Signature of the cursor positions inside this line (see
     /// [`cursor_sig_for_line`]). Cursor-dependent conceal/soft-break
     /// activation makes the cursor line's layout a function of where the
@@ -117,6 +124,19 @@ pub fn cursor_sig_for_line(cursors: &[usize], line_start: usize, line_end: usize
         }
     }
     sig
+}
+
+/// True when the wrap pipeline's output can actually depend on cursor
+/// positions.  Cursor-dependent activation only exists for soft breaks
+/// and conceals; when both managers are empty the pipeline never reads
+/// the cursor list, so the cursor line's layout is identical to the
+/// cursor-free form and can be keyed with `cursor_sig: 0`.  This keeps
+/// the cursor line's cache entry valid as the cursor moves within it —
+/// without it, every cursor move forced a full re-wrap of the line it
+/// sits on (very slow inside a very long wrapped line).
+#[inline]
+pub fn layout_depends_on_cursors(state: &EditorState) -> bool {
+    !state.soft_breaks.is_empty() || !state.conceals.is_empty()
 }
 
 /// Derive the combined pipeline-inputs version from the three source
@@ -178,12 +198,27 @@ fn estimate_view_lines_bytes(lines: &[ViewLine]) -> usize {
 /// rarely again.  FIFO is simpler to reason about and matches this
 /// pattern well enough.  If future profiling shows churn we can swap the
 /// eviction policy — the external API doesn't change.
+///
+/// Eviction is generation-aware: entries written or touched during the
+/// current frame (see [`LineWrapCache::begin_frame`]) are never evicted
+/// by inserts from the same frame.  Without this, a single logical line
+/// whose layout alone exceeds the byte budget (a multi-hundred-KB
+/// wrapped line) and its neighbours evict each other within one frame,
+/// so the render fast path never hits.  The budget can therefore be
+/// exceeded by at most one frame's visible-window worth of entries.
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    value: Arc<Vec<ViewLine>>,
+    generation: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct LineWrapCache {
-    map: HashMap<LineWrapKey, Arc<Vec<ViewLine>>>,
+    map: HashMap<LineWrapKey, CacheEntry>,
     order: VecDeque<LineWrapKey>,
     byte_budget: usize,
     current_bytes: usize,
+    generation: u64,
 }
 
 impl Default for LineWrapCache {
@@ -200,7 +235,15 @@ impl LineWrapCache {
             order: VecDeque::new(),
             byte_budget,
             current_bytes: 0,
+            generation: 0,
         }
+    }
+
+    /// Start a new eviction generation.  Called once per buffer render;
+    /// entries written or touched after this call are protected from
+    /// eviction until the next `begin_frame`.
+    pub fn begin_frame(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
     }
 
     pub fn len(&self) -> usize {
@@ -228,7 +271,18 @@ impl LineWrapCache {
     /// `Arc` is a cheap clone; callers can hold it without copying the
     /// underlying `Vec<ViewLine>`.
     pub fn get(&self, key: &LineWrapKey) -> Option<Arc<Vec<ViewLine>>> {
-        self.map.get(key).cloned()
+        self.map.get(key).map(|e| e.value.clone())
+    }
+
+    /// Like [`get`](Self::get), but also stamps the entry with the
+    /// current eviction generation so same-frame inserts won't evict it.
+    /// Used by the renderer's cached-window fast path.
+    pub fn get_touch(&mut self, key: &LineWrapKey) -> Option<Arc<Vec<ViewLine>>> {
+        let generation = self.generation;
+        self.map.get_mut(key).map(|e| {
+            e.generation = generation;
+            e.value.clone()
+        })
     }
 
     /// Query by key; on miss, run `compute` and store its result.  The
@@ -243,7 +297,7 @@ impl LineWrapCache {
         F: FnOnce() -> Vec<ViewLine>,
     {
         if let Some(v) = self.map.get(&key) {
-            return v.clone();
+            return v.value.clone();
         }
         let value = Arc::new(compute());
         self.insert_fresh(key, value.clone());
@@ -255,10 +309,12 @@ impl LineWrapCache {
     /// **not** changed (this keeps the queue simple — re-inserts don't
     /// refresh age).  Byte-budget accounting is updated.
     pub fn put(&mut self, key: LineWrapKey, value: Arc<Vec<ViewLine>>) {
+        let generation = self.generation;
         if let Some(existing) = self.map.get_mut(&key) {
-            let old_bytes = estimate_view_lines_bytes(existing);
+            let old_bytes = estimate_view_lines_bytes(&existing.value);
             let new_bytes = estimate_view_lines_bytes(&value);
-            *existing = value;
+            existing.value = value;
+            existing.generation = generation;
             self.current_bytes = self.current_bytes + new_bytes - old_bytes.min(self.current_bytes);
             return;
         }
@@ -279,21 +335,47 @@ impl LineWrapCache {
         debug_assert!(!self.map.contains_key(&key));
         let new_bytes = estimate_view_lines_bytes(&value);
 
-        // Evict until (current_bytes + new_bytes) fits.  Always keep at
-        // least one slot — if the single new entry alone exceeds the
-        // budget, we still accept it (the cache was asked to hold it;
-        // the alternative is silently dropping data the caller just
-        // paid to compute).
-        while self.current_bytes + new_bytes > self.byte_budget && !self.order.is_empty() {
-            if let Some(oldest_key) = self.order.pop_front() {
-                if let Some(oldest_val) = self.map.remove(&oldest_key) {
-                    let shed = estimate_view_lines_bytes(&oldest_val);
-                    self.current_bytes = self.current_bytes.saturating_sub(shed);
-                }
+        // Evict until (current_bytes + new_bytes) fits.  Entries written
+        // or touched in the current frame generation are spared as long
+        // as the total stays under 2× the budget — the renderer needs
+        // the whole visible window alive at once, and a huge line's
+        // entry can single-handedly exceed the budget (without this
+        // guard it and its neighbours would evict each other every
+        // frame, defeating the cached-window fast path).  Generation 0
+        // means `begin_frame` has never run (cursor-nav / scroll-math
+        // only usage), where the plain budget applies.  A single new
+        // entry larger than the whole budget is still accepted (the
+        // cache was asked to hold it; the alternative is silently
+        // dropping data the caller just paid to compute).
+        while self.current_bytes + new_bytes > self.byte_budget {
+            let Some(oldest_key) = self.order.front() else {
+                break;
+            };
+            let oldest_is_current_frame = self.generation != 0
+                && self
+                    .map
+                    .get(oldest_key)
+                    .is_some_and(|e| e.generation == self.generation);
+            if oldest_is_current_frame
+                && self.current_bytes + new_bytes <= self.byte_budget.saturating_mul(2)
+            {
+                break;
+            }
+            let oldest_key = *oldest_key;
+            self.order.pop_front();
+            if let Some(oldest) = self.map.remove(&oldest_key) {
+                let shed = estimate_view_lines_bytes(&oldest.value);
+                self.current_bytes = self.current_bytes.saturating_sub(shed);
             }
         }
 
-        self.map.insert(key, value);
+        self.map.insert(
+            key,
+            CacheEntry {
+                value,
+                generation: self.generation,
+            },
+        );
         self.order.push_back(key);
         self.current_bytes += new_bytes;
         debug_assert_eq!(self.map.len(), self.order.len());
@@ -365,6 +447,14 @@ pub fn layout_for_line(
     geom: &WrapGeometry,
     cursors: &[usize],
 ) -> Arc<Vec<ViewLine>> {
+    // When the pipeline is cursor-independent, key with `cursor_sig: 0`
+    // so entries are shared with cursor-blind consumers and stay valid
+    // across cursor movement (see `layout_depends_on_cursors`).
+    let cursors: &[usize] = if layout_depends_on_cursors(state) {
+        cursors
+    } else {
+        &[]
+    };
     let version = pipeline_inputs_version(
         state.buffer.version(),
         state.soft_breaks.version(),
@@ -459,6 +549,8 @@ pub struct WrapGeometry {
     /// breaks at `effective_width`, ignoring `gutter_width` /
     /// `hanging_indent` / `wrap_column`.
     pub grid_wrap: bool,
+    /// Tab width (see [`LineWrapKey::tab_size`]).
+    pub tab_size: usize,
     pub view_mode: CacheViewMode,
 }
 
@@ -483,6 +575,7 @@ impl WrapGeometry {
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
             grid_wrap: self.grid_wrap,
+            tab_size: self.tab_size as u16,
             cursor_sig,
         }
     }
@@ -985,6 +1078,7 @@ mod tests {
             hanging_indent: false,
             line_wrap_enabled: true,
             grid_wrap: false,
+            tab_size: 4,
             cursor_sig: 0,
         }
     }
@@ -1584,6 +1678,7 @@ mod tests {
                 hanging_indent: false,
                 line_wrap_enabled: true,
                 grid_wrap: false,
+                tab_size: 4,
                 cursor_sig: 0,
             };
             let real_val = real.get_or_insert_with(key, || dummy_lines(shadow_rows));
@@ -1618,6 +1713,7 @@ mod tests {
             hanging_indent: false,
             line_wrap_enabled: true,
             grid_wrap: false,
+            tab_size: 4,
             cursor_sig: 0,
         };
         cache.get_or_insert_with(key_v0, || dummy_lines(5));
@@ -1662,11 +1758,12 @@ mod tests {
             hanging_indent: false,
             line_wrap_enabled: true,
             grid_wrap: false,
+            tab_size: 4,
             cursor_sig: 0,
         };
 
         // Vary each field in turn; each variation must be a distinct key.
-        let variations: [LineWrapKey; 9] = [
+        let variations: [LineWrapKey; 10] = [
             LineWrapKey {
                 pipeline_inputs_version: 2,
                 ..base
@@ -1702,6 +1799,10 @@ mod tests {
             },
             LineWrapKey {
                 grid_wrap: true,
+                ..base
+            },
+            LineWrapKey {
+                tab_size: 8,
                 ..base
             },
         ];
