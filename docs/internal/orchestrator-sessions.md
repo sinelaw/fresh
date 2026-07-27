@@ -309,6 +309,29 @@ All UI is plugin-side (orchestrator.ts). Shipped surfaces:
 - **Preview pane** — branch, worktree path, working-tree diffstat, PR info, and
   per-session action buttons (Visit / Stop / Archive / Delete).
 
+### 5.0 Dock settings
+
+The dock's opening state is user-configurable through the **plugin** config API
+(`editor.defineConfigBoolean` / `defineConfigEnum` at the top of orchestrator.ts,
+rendered by the Settings UI under **Plugin: orchestrator**, stored at
+`plugins.orchestrator.settings.*`). They're plugin config rather than core
+config because they're meaningless without this plugin loaded, and the plugin
+API already supplies schema validation, the User/Project/Session layering, and
+the generated settings widgets.
+
+| Setting               | Default  | Effect                                              |
+| --------------------- | -------- | --------------------------------------------------- |
+| `autoOpenDock`        | `false`  | Open the dock (unfocused) on the `ready` event.      |
+| `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
+| `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
+| `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+
+Each is a *default*, not a lock: the dock's own "view" button and the two
+Filters checkboxes still override it for the rest of the session
+(`dockViewOverride`, `lastShowWorktrees`, `lastHideTrivial` — all `null` until
+touched). Settings are re-read on every dock open, so an edit takes effect on
+the next toggle of the dock, no reload required.
+
 ### 5.1 Project scoping (the "yesterday's directories" fix)
 
 Globally-listed sessions confused users by combining unrelated projects. The
