@@ -39,6 +39,20 @@ pub fn ensure_hanging_fake_ssh_on_path() {
     HANG_PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh-hang"));
 }
 
+static SLOW_PATH_INIT: Once = Once::new();
+
+/// Like [`ensure_fake_ssh_on_path`], but the shim **completes the connection
+/// slowly** (`tests/fixtures/fake-ssh-slow`): it bootstraps the real agent
+/// locally so file ops actually work, but throttles selected responses so the
+/// channel becomes "connected but slow" — the bandwidth-throttled remote shape
+/// (cf. `ProxyCommand ... | pv -qL 20k`). This is the state that stalls a
+/// *synchronous* filesystem call, unlike the hang shim (which never
+/// establishes the channel at all). Behaviour is tuned per-test through the
+/// `FAKE_SSH_SLOW_*` env vars the shim reads.
+pub fn ensure_slow_fake_ssh_on_path() {
+    SLOW_PATH_INIT.call_once(|| prepend_shim_dir("tests/fixtures/fake-ssh-slow"));
+}
+
 fn prepend_shim_dir(rel: &str) {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
     assert!(

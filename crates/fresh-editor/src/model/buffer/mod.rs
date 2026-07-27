@@ -272,6 +272,13 @@ impl TextBuffer {
         buffer
     }
 
+    /// Associate this buffer with `path` (title, dedup, save target). Used when
+    /// building a buffer from in-memory bytes that logically belongs to a file
+    /// — e.g. filling a restored remote placeholder with content read off-loop.
+    pub fn set_file_path(&mut self, path: PathBuf) {
+        self.persistence.set_file_path(path);
+    }
+
     /// Current buffer version (monotonic, wraps on overflow)
     pub fn version(&self) -> u64 {
         self.version

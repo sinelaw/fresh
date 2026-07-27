@@ -98,6 +98,17 @@ pub enum AsyncMessage {
     /// the app-level `RemoteAttachMode::Reconnect` rebuild path.
     RemoteReconnected { connection_id: u64 },
 
+    /// Content for a remote session's placeholder buffer, read off the editor
+    /// loop (see `Window::pending_content_load`). The main loop installs it into
+    /// `window_id`'s `buffer_id`, replacing the empty placeholder — or logs and
+    /// drops it on read error. Keeps remote workspace restore from freezing the
+    /// UI: the buffers appear instantly (empty) and fill in as this arrives.
+    RemoteBufferContentLoaded {
+        window_id: fresh_core::WindowId,
+        buffer_id: fresh_core::BufferId,
+        content: Result<Vec<u8>, String>,
+    },
+
     /// An async `attachRemoteAgent` connect failed — reject the plugin's
     /// promise with `error` (the plugin shows it and creates no window); the
     /// editor stays on its current authority. `reconnect_window` is `Some(id)`
