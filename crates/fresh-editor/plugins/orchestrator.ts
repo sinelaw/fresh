@@ -820,6 +820,16 @@ function dockContentCols(dockWidth: number): number {
 // (dispatch_floating_widget_key) reads the panel focus directly to route
 // Enter/Esc/Space//'; this mirror is informational for the plugin.
 let dockFocus: "list" | "filter" = "list";
+// Set just before the dock blurs *because the user picked a workspace*
+// (a row click, Enter on the list, or attaching a discovered worktree
+// with `dive`). The `blur` handler clears the search filter so a stale
+// needle can't silently hide sessions on the next focus (F5) — but a
+// dive isn't "leaving the dock", it's acting on the very list the
+// filter produced. Wiping the needle there forces a retype for every
+// workspace picked out of a search. Consumed (and reset) by the next
+// `blur`; also reset on `focus` so an unconsumed flag can't leak into a
+// later, unrelated blur.
+let dockDiveBlur = false;
 // Full focused-widget mirror for the open dialog (both dock and
 // centered-picker modes). Updated from every `focus` widget_event.
 // Used by `toggleSelectCurrent` so a Space keypress while focus is
@@ -5051,6 +5061,9 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
     else editor.setActiveWindow(id);
   }
   // Hand keyboard focus to the activated window (mirror `dock_activate`).
+  // Picking a row is not "leaving the dock", so the search filter that
+  // produced this row survives the blur (see `dockDiveBlur`).
+  dockDiveBlur = true;
   dockBlurred = true;
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
   editor.setEditorMode(null);
@@ -8978,6 +8991,8 @@ async function attachToWorktree(opts: {
     // (arrow-nav, row click) deliberately keep the dock focused, exactly
     // like switching to a live session does.
     if (opts.dive && dockMode && openPanel) {
+      // A dive out of the dock keeps the search filter (see `dockDiveBlur`).
+      dockDiveBlur = true;
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
       editor.setEditorMode(null);
@@ -9807,6 +9822,8 @@ editor.on("widget_event", (e) => {
       // leave, editor click, or an unhandled chord like Ctrl+P). The
       // dock stays visible; the host stops routing keys to it.
       if (dockMode) {
+        const wasDive = dockDiveBlur;
+        dockDiveBlur = false;
         dockBlurred = true;
         // Leaving the dock also closes the project dropdown so it
         // doesn't linger over the blurred dock.
@@ -9816,7 +9833,13 @@ editor.on("widget_event", (e) => {
         // "/gamma") otherwise silently hides sessions on the next
         // focus, with only the filter box as a clue — and there is no
         // one-key clear from the list. (See F5.)
-        if (openDialog.filter.value !== "") {
+        //
+        // A *dive* is the exception: clicking a row (or Enter on it) is
+        // acting on the filtered list, not abandoning it, so the needle
+        // stays put and the next workspace can be picked out of the same
+        // search without retyping it. Esc/editor-click still clear, so
+        // the one-key escape from a stale filter is unchanged.
+        if (!wasDive && openDialog.filter.value !== "") {
           openDialog.filter.value = "";
           openDialog.filter.cursor = 0;
           dockFocus = "list";
@@ -9849,6 +9872,9 @@ editor.on("widget_event", (e) => {
         pickerFocusKey = e.widget_key;
       }
       if (dockMode) {
+        // A dive that never produced a `blur` (already blurred, say)
+        // must not leave the flag armed for the next, unrelated one.
+        dockDiveBlur = false;
         const wasBlurred = dockBlurred;
         dockBlurred = false;
         dockFocus = e.widget_key === "filter" ? "filter" : "list";
@@ -9916,6 +9942,9 @@ editor.on("widget_event", (e) => {
       if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
         editor.setActiveWindow(id);
       }
+      // Same as the row click: the filter that surfaced this row is kept
+      // across the dive (see `dockDiveBlur`).
+      dockDiveBlur = true;
       dockBlurred = true;
       editor.floatingPanelControl(openPanel.id(), "blur", 0);
       editor.setEditorMode(null);
