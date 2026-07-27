@@ -24,9 +24,10 @@ workspaces you're not looking at keep working.
 
 The capture above is one repository checked out three times — `fix/auth-bypass`,
 `perf/db-pool`, `feat/rate-limit` — plus `main` to review from. Each task
-workspace has the files that task touches open as tabs and its agent running in
-a split underneath. Walking down the dock and back up, every workspace returns
-exactly as it was left, with its agent further along than when you left it.
+workspace has the files that task touches open as tabs, with its agent running
+in a split beside the code. Walking down the dock and back up, every workspace
+returns exactly as it was left, with its agent further along than when you
+looked away.
 
 ## Getting there
 
