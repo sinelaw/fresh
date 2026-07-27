@@ -240,5 +240,11 @@ editor.on("editor_initialized", () => {
 editor.on("focus_gained", () => {
   refreshGitExplorerDecorations();
 });
+// `colorNames` is read inside the refresh, so without this the setting
+// changes nothing until the next file open/save/explorer change — the
+// user ticks the box in Settings and the explorer just sits there.
+editor.on("config_changed", () => {
+  refreshGitExplorerDecorations();
+});
 
 refreshGitExplorerDecorations();
