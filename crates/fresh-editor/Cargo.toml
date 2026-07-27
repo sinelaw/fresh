@@ -260,7 +260,7 @@ encoding_rs = "0.8"
 chardetng = "0.1"
 
 # Terminal emulation (optional)
-alacritty_terminal = { version = "0.25", optional = true }
+alacritty_terminal = { version = "0.26", optional = true }
 portable-pty = { version = "0.9", optional = true }
 
 # Session persistence / client-server IPC
