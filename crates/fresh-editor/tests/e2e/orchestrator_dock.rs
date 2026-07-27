@@ -1767,6 +1767,88 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     h.assert_screen_contains("Search Tasks");
 }
 
+/// The F5 clear-on-leave must NOT fire when the user *picks* a workspace
+/// out of the filtered list. Enter on a row (and a click on one) blurs the
+/// dock to hand the keyboard to the chosen session — a dive, not a
+/// departure — so the search that produced the row has to survive it.
+/// Wiping it there meant retyping the needle for every workspace opened
+/// out of one search, which is the common case with a long list.
+#[test]
+fn dock_filter_survives_diving_into_a_filtered_workspace() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // Filter to "gamma"; "beta" drops out of the list.
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("beta"))
+        .unwrap();
+
+    // Enter returns to the list, a second Enter dives into the highlighted
+    // "gamma" row — the dock blurs, handing the keyboard to that session.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    // The dive must leave the filter alone: "beta" stays hidden and the
+    // box still reads "gamma" (an emptied box shows the "Search Tasks"
+    // placeholder instead).
+    let after_dive = h.screen_to_string();
+    assert!(
+        !after_dive.contains("beta"),
+        "diving into a filtered workspace must keep the filter applied, but the \
+         filtered-out 'beta' row came back:\n{after_dive}"
+    );
+    assert!(
+        !after_dive.contains("Search Tasks"),
+        "diving into a filtered workspace must keep the search text, but the box \
+         fell back to its placeholder:\n{after_dive}"
+    );
+
+    // Re-focusing the dock finds the same filtered list, so the next
+    // workspace can be picked out of the search without retyping it.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    let refocused = h.screen_to_string();
+    assert!(
+        !refocused.contains("beta"),
+        "re-entering the dock after a dive must show the still-filtered list:\n{refocused}"
+    );
+
+    // A click on a row is the same gesture as Enter, and keeps the filter
+    // for the same reason. (The row's own line, not the filter box, which
+    // also spells the needle — that one shares its row with "New Task".)
+    let gamma_row =
+        h.screen_to_string()
+            .lines()
+            .position(|l| l.contains("gamma") && !l.contains("New Task"))
+            .unwrap_or_else(|| panic!("no 'gamma' row:\n{}", h.screen_to_string())) as u16;
+    h.mouse_click(3, gamma_row).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    let after_click = h.screen_to_string();
+    assert!(
+        !after_click.contains("beta"),
+        "clicking a filtered workspace must keep the filter applied:\n{after_click}"
+    );
+    assert!(
+        !after_click.contains("Search Tasks"),
+        "clicking a filtered workspace must keep the search text:\n{after_click}"
+    );
+}
+
 /// F6: the auto-generated session name is rooted in the project
 /// (`<project>-N`) rather than a bare `session-N`, so a dock row tells
 /// you which project a session belongs to.
