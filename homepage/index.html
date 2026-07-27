@@ -175,8 +175,11 @@
             z-index: 99;
         }
 
+        /* Tall enough for any number of entries — a fixed max-height silently
+           cut off the last links, since .mobile-menu sets overflow: hidden. */
         .mobile-menu.active {
-            max-height: 400px;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
         }
 
         .mobile-menu-content {
@@ -628,6 +631,7 @@
 
         .screenshot-wrapper img {
             width: 100%;
+            height: auto;
             display: block;
             cursor: zoom-in;
         }
@@ -652,6 +656,7 @@
         }
         .asciinema-host img {
             width: 100%;
+            height: auto;
             display: block;
         }
 
@@ -821,6 +826,7 @@
 
         .feature-visual img {
             width: 100%;
+            height: auto;
             display: block;
             cursor: zoom-in;
         }
@@ -828,6 +834,9 @@
         .feature-code {
             padding: 24px;
             line-height: 1.7;
+            /* Command lines are single unbreakable tokens; scroll them rather
+               than letting them push the page wider than the viewport. */
+            overflow-x: auto;
         }
 
         .code-line {
@@ -869,7 +878,7 @@
 
         .install-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
             gap: 20px;
         }
 
@@ -1016,7 +1025,7 @@
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
             gap: 24px;
         }
 
@@ -1077,7 +1086,7 @@
 
         .testimonials-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
             gap: 24px;
         }
 
@@ -1237,7 +1246,7 @@
             <a href="#" class="nav-logo">
                 >_ Fresh <span id="version-badge"></span>
             </a>
-            <button class="hamburger" onclick="toggleMobileMenu()" aria-label="Menu">
+            <button class="hamburger" onclick="toggleMobileMenu()" aria-label="Menu" aria-controls="mobile-menu" aria-expanded="false">
                 <span></span>
                 <span></span>
                 <span></span>
@@ -1311,7 +1320,7 @@
                         <div class="install-pill primary" id="install-pill" onclick="copyInstallPill(this)">
                             <code id="install-cmd">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                             <button class="copy-btn" onclick="event.stopPropagation(); copyInstallPill(document.getElementById('install-pill'))" aria-label="Copy install command">
-                                <img src="public/copy-icon.svg" alt="">
+                                <img src="public/copy-icon.svg" alt="" width="16" height="16">
                             </button>
                             <span class="copied-popup">Copied</span>
                         </div>
@@ -1329,7 +1338,7 @@
                     </div>
                 </div>
                 <div id="demo-player" class="asciinema-host">
-                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback"></a>
+                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900"></a>
                 </div>
                 <div class="screenshot-glow"></div>
             </div>
@@ -1354,7 +1363,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/multicursor.png" target="_blank"><img src="public/assets/multicursor.png" alt="Multi-cursor editing in a large file"></a>
+                <a href="public/assets/multicursor.png" target="_blank"><img src="public/assets/multicursor.png" alt="Multi-cursor editing in a large file" width="1202" height="807" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
@@ -1373,7 +1382,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/gitlog.png" target="_blank"><img src="public/assets/gitlog.png" alt="Git log view in Fresh"></a>
+                <a href="public/assets/gitlog.png" target="_blank"><img src="public/assets/gitlog.png" alt="Git log view in Fresh" width="1202" height="900" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
@@ -1391,7 +1400,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/fresh-lsp-hover.png" target="_blank"><img src="public/assets/fresh-lsp-hover.png" alt="LSP hover documentation"></a>
+                <a href="public/assets/fresh-lsp-hover.png" target="_blank"><img src="public/assets/fresh-lsp-hover.png" alt="LSP hover documentation" width="1895" height="1117" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
@@ -1461,7 +1470,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/palette.png" target="_blank"><img src="public/assets/palette.png" alt="Command palette"></a>
+                <a href="public/assets/palette.png" target="_blank"><img src="public/assets/palette.png" alt="Command palette" width="1202" height="807" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
@@ -1480,7 +1489,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/fresh-i18nlight.png" target="_blank"><img src="public/assets/fresh-i18nlight.png" alt="Fresh with Japanese UI and light theme"></a>
+                <a href="public/assets/fresh-i18nlight.png" target="_blank"><img src="public/assets/fresh-i18nlight.png" alt="Fresh with Japanese UI and light theme" width="1895" height="1114" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
@@ -1499,7 +1508,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor with file explorer and integrated terminal"></a>
+                <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor with file explorer and integrated terminal" width="1402" height="900"></a>
             </div>
         </div>
     </section>
@@ -1514,7 +1523,7 @@
                     <div class="copyable">
                         <code id="cmd-curl">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                         <button class="copy-btn" onclick="copyCode('cmd-curl', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">One-line install. No toolchain required.</p>
@@ -1525,7 +1534,7 @@
                     <div class="copyable">
                         <code id="cmd-brew">brew install fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-brew', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                 </div>
@@ -1535,7 +1544,7 @@
                     <div class="copyable">
                         <code id="cmd-winget">winget install fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-winget', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                 </div>
@@ -1548,7 +1557,7 @@
                     <div class="copyable">
                         <code id="cmd-deb">sudo dpkg -i fresh-editor_*.deb</code>
                         <button class="copy-btn" onclick="copyCode('cmd-deb', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                 </div>
@@ -1558,7 +1567,7 @@
                     <div class="copyable">
                         <code id="cmd-aur">yay -S fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-aur', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">
@@ -1571,7 +1580,7 @@
                     <div class="copyable">
                         <code id="cmd-npx">npx @fresh-editor/fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-npx', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">
@@ -1592,7 +1601,7 @@
                     <div class="copyable">
                         <code id="cmd-cargo">cargo install --locked fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-cargo', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">If you already have a Rust toolchain.</p>
@@ -1802,6 +1811,7 @@
             const hamburger = document.querySelector('.hamburger');
             menu.classList.toggle('active');
             hamburger.classList.toggle('active');
+            hamburger.setAttribute('aria-expanded', hamburger.classList.contains('active'));
         }
 
         function copyCode(elementId, btn) {
