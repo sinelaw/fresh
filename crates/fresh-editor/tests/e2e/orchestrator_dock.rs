@@ -3614,3 +3614,62 @@ fn dock_card_leaves_the_second_row_empty_rather_than_echo_the_name() {
         "the card still ends after its second row, got {after:?}"
     );
 }
+
+/// The Settings modal is a *full-screen* modal: with the dock open it must
+/// centre in the whole window — painting over the dock column — and dim the
+/// dock along with the rest of the frame.
+///
+/// It used to be laid into the chrome region right of the dock (the dock's
+/// later paint pass would otherwise overpaint the modal's left edge), which
+/// squeezed the dialog into the remaining columns and left the dock at full
+/// brightness beside it, reading as live even though the modal had already
+/// swallowed every key and click bound for it.
+#[test]
+fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The dock's right border on the toolbar row (row 0) marks the width of
+    // its column; row 0 sits above the modal, so it survives it.
+    let cols = h.screen_row_text(0).chars().count() as u16;
+    let dock_border_col = (0..cols)
+        .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+        .expect("dock right border (│) should be present on the toolbar row");
+
+    // Sample a dock cell before the modal opens: its title, which the
+    // modal does not cover.
+    let (title_col, title_row) = h
+        .find_text_on_screen("Orchestrator")
+        .expect("dock title should be on screen");
+    let undimmed_fg = h.get_cell_style(title_col, title_row).unwrap().fg;
+
+    h.open_settings().unwrap();
+
+    // The modal's top-left corner lands *inside* the dock column, i.e. it
+    // is centred on the full frame rather than on the chrome beside the
+    // dock.
+    let (modal_left, modal_row) = h
+        .find_text_on_screen("Settings [")
+        .expect("settings modal title should be on screen");
+    let corner_col = (0..modal_left)
+        .rev()
+        .find(|&c| h.get_cell(c, modal_row).as_deref() == Some("╭"))
+        .expect("settings modal should draw its rounded top-left corner");
+    assert!(
+        corner_col < dock_border_col,
+        "the settings modal must start inside the dock column (corner at {corner_col}, \
+         dock border at {dock_border_col}):\n{}",
+        h.screen_to_string()
+    );
+
+    // ...and the dock is dimmed behind it rather than left looking live.
+    let dimmed_fg = h.get_cell_style(title_col, title_row).unwrap().fg;
+    assert_ne!(
+        undimmed_fg, dimmed_fg,
+        "the dock must dim while the settings modal is up"
+    );
+}
