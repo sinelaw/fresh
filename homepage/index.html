@@ -1453,21 +1453,22 @@
     <section class="features" id="features">
         <div class="feature-section" id="orchestrator">
             <div class="feature-content">
-                <h2>Orchestrator: one editor, every worktree<a class="anchor-link" href="#orchestrator" aria-label="Permalink to Orchestrator: one editor, every worktree">#</a></h2>
-                <p>A worktree per task, a coding agent per worktree — all in one process. The dock is a persistent left column listing every workspace with its branch, git summary and PR badge; the arrow keys live-switch between them. Each workspace keeps its own tabs, splits, terminals and scrollback, and the agents in the workspaces you are not looking at keep running.</p>
+                <h2>Run five tasks at once, without losing your place<a class="anchor-link" href="#orchestrator" aria-label="Permalink to Run five tasks at once, without losing your place">#</a></h2>
+                <p>Start a task, put an agent on it, and move to the next one. Each task gets its own git worktree and its own workspace — its own tabs, splits, terminal and scrollback — and the Orchestrator keeps them all in one editor. Press an arrow key to drop into any of them, exactly as you left it, with its agent further along than when you looked away. No tmux windows to hunt through, no second editor per branch.</p>
                 <ul class="feature-list">
-                    <li><code style="color: var(--accent-green);">Run Agent…</code> launches <code style="color: var(--accent-green);">claude</code>, <code style="color: var(--accent-green);">codex</code>, <code style="color: var(--accent-green);">opencode</code>, <code style="color: var(--accent-green);">aider</code> or any command, in this workspace or a new one</li>
-                    <li>New Workspace cuts the git worktree and branch for you, without blocking the editor while it comes up</li>
-                    <li>Agents that support it rejoin their conversation after an editor restart, in the same buffer</li>
-                    <li>Group workspaces into folders, filter by project, search the dock</li>
-                    <li>Remote workspaces over SSH sit in the same list</li>
+                    <li>Hand a task to <code style="color: var(--accent-green);">claude</code>, <code style="color: var(--accent-green);">codex</code>, <code style="color: var(--accent-green);">opencode</code>, <code style="color: var(--accent-green);">aider</code> or any command in one dialog — Fresh cuts the worktree and branch for you</li>
+                    <li>See at a glance which task is which: branch, uncommitted diff and PR status on every row</li>
+                    <li>Kick off a workspace and keep typing — creating one never blocks the editor</li>
+                    <li>Quit for the day and come back to it: agents that support resuming rejoin their conversation on restart</li>
+                    <li>Keep dozens of tasks straight with folders, per-project filters and dock search</li>
+                    <li>Work on a remote box the same way — SSH workspaces sit in the same list</li>
                 </ul>
             </div>
             <div class="feature-visual">
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/orchestrator.gif" target="_blank"><img src="public/assets/orchestrator.gif" alt="Switching between three git worktrees from the Orchestrator dock, each workspace with its own tabs and a coding agent running in a terminal split" width="1260" height="648" loading="lazy" decoding="async"></a>
+                <a href="public/assets/orchestrator.gif" target="_blank"><img src="public/assets/orchestrator.gif" alt="Switching between three git worktrees from the Orchestrator dock, each workspace with its own tabs and a coding agent running beside the code" width="1800" height="864" loading="lazy" decoding="async"></a>
             </div>
         </div>
 

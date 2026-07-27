@@ -4627,9 +4627,11 @@ fn blog_showcase_fresh_0_4_0_workspace_trust() {
 
 /// The Orchestrator dock as an agentic-multitasking cockpit: one repository
 /// checked out into three git worktrees, each its own workspace with its own
-/// file tabs and its own coding agent running in a split under the code, plus
+/// file tabs and its own coding agent running in a split beside the code, plus
 /// the `main` checkout you review from. The dock lists all four with their
 /// branches and per-worktree git summary; `↓`/`↑` live-switch between them.
+/// The capture opens with the dock already up — getting to it is a different
+/// story, and this one is about the switching.
 ///
 /// The point of the capture is what happens *off*-screen: the agents you are
 /// not looking at never stopped, so a workspace you come back to is further
@@ -4680,123 +4682,241 @@ fn blog_showcase_orchestrator_worktrees() {
     let repo = base.join("api");
 
     // --- One repository -----------------------------------------------------
+    // Long enough to fill the code pane at this capture size — a half-empty
+    // buffer beside a busy agent transcript reads as an empty editor.
     let sources: &[(&str, &str)] = &[
         (
             "src/main.rs",
-            "mod auth;\n\
-             mod db;\n\
-             mod ratelimit;\n\
-             mod routes;\n\
-             mod session;\n\
-             \n\
-             #[tokio::main]\n\
-             async fn main() -> anyhow::Result<()> {\n\
-             \x20   let pool = db::pool::connect(&std::env::var(\"DATABASE_URL\")?).await?;\n\
-             \x20   let app = routes::router(pool);\n\
-             \x20   axum::serve(listener()?, app).await?;\n\
-             \x20   Ok(())\n\
-             }\n",
+            r#"mod auth;
+mod db;
+mod ratelimit;
+mod routes;
+mod session;
+
+use std::net::SocketAddr;
+
+use anyhow::Context;
+use tokio::net::TcpListener;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
+    let url = std::env::var("DATABASE_URL").context("DATABASE_URL is not set")?;
+    let pool = db::pool::connect(&url).await?;
+    pool.migrate().await?;
+
+    let addr: SocketAddr = ([0, 0, 0, 0], 8080).into();
+    let listener = TcpListener::bind(addr).await?;
+    tracing::info!(%addr, "api listening");
+
+    axum::serve(listener, routes::router(pool))
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!("draining connections");
+}
+"#,
         ),
         (
             "src/ratelimit.rs",
-            "use std::time::{Duration, Instant};\n\
-             \n\
-             /// Token bucket, one per API key.\n\
-             pub struct RateLimiter {\n\
-             \x20   capacity: u32,\n\
-             \x20   tokens: u32,\n\
-             \x20   refill: Duration,\n\
-             \x20   last: Instant,\n\
-             }\n\
-             \n\
-             impl RateLimiter {\n\
-             \x20   pub fn per_minute(capacity: u32) -> Self {\n\
-             \x20       Self { capacity, tokens: capacity, refill: Duration::from_secs(60), last: Instant::now() }\n\
-             \x20   }\n\
-             \n\
-             \x20   pub fn allow(&mut self, now: Instant) -> bool {\n\
-             \x20       if now.duration_since(self.last) >= self.refill {\n\
-             \x20           self.tokens = self.capacity;\n\
-             \x20           self.last = now;\n\
-             \x20       }\n\
-             \x20       if self.tokens == 0 {\n\
-             \x20           return false;\n\
-             \x20       }\n\
-             \x20       self.tokens -= 1;\n\
-             \x20       true\n\
-             \x20   }\n\
-             }\n",
+            r#"use std::time::{Duration, Instant};
+
+/// A token bucket, one per API key.
+///
+/// `capacity` tokens are handed out per `refill` window. The bucket
+/// refills all at once rather than continuously — close enough at our
+/// window sizes, and far cheaper to reason about.
+pub struct RateLimiter {
+    capacity: u32,
+    tokens: u32,
+    refill: Duration,
+    last: Instant,
+}
+
+impl RateLimiter {
+    pub fn per_minute(capacity: u32) -> Self {
+        Self {
+            capacity,
+            tokens: capacity,
+            refill: Duration::from_secs(60),
+            last: Instant::now(),
+        }
+    }
+
+    /// Take a token, if one is left in this window.
+    pub fn allow(&mut self, now: Instant) -> bool {
+        if now.duration_since(self.last) >= self.refill {
+            self.tokens = self.capacity;
+            self.last = now;
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+
+    /// How long until the bucket refills, for the `Retry-After` header.
+    pub fn retry_after(&self, now: Instant) -> Duration {
+        if self.tokens > 0 {
+            return Duration::ZERO;
+        }
+        self.refill.saturating_sub(now.duration_since(self.last))
+    }
+}
+"#,
         ),
         (
             "src/routes.rs",
-            "use axum::{routing::get, Router};\n\
-             \n\
-             pub fn router(pool: Pool) -> Router {\n\
-             \x20   Router::new()\n\
-             \x20       .route(\"/healthz\", get(health))\n\
-             \x20       .route(\"/v1/sessions\", get(list_sessions))\n\
-             \x20       .layer(middleware::from_fn(ratelimit::guard))\n\
-             \x20       .with_state(pool)\n\
-             }\n",
+            r#"use axum::{
+    middleware,
+    routing::{get, post},
+    Router,
+};
+
+use crate::db::pool::Pool;
+use crate::ratelimit;
+
+pub fn router(pool: Pool) -> Router {
+    Router::new()
+        .route("/healthz", get(health))
+        .route("/v1/sessions", get(list_sessions).post(create_session))
+        .route("/v1/tokens/refresh", post(refresh_token))
+        .layer(middleware::from_fn(ratelimit::guard))
+        .with_state(pool)
+}
+
+async fn health() -> &'static str {
+    "ok"
+}
+
+async fn list_sessions(State(pool): State<Pool>) -> Result<Json<Sessions>, Error> {
+    let conn = pool.acquire().await?;
+    Ok(Json(conn.query_sessions().await?))
+}
+"#,
         ),
         (
             "src/auth.rs",
-            "use crate::session::Session;\n\
-             \n\
-             pub fn validate_token(token: &str) -> Option<Session> {\n\
-             \x20   let claims = decode_jwt(token)?;\n\
-             \x20   if claims.expired() {\n\
-             \x20       return None;\n\
-             \x20   }\n\
-             \x20   Some(Session::from_claims(claims))\n\
-             }\n\
-             \n\
-             pub fn decode_jwt(token: &str) -> Option<Claims> {\n\
-             \x20   let (header, payload, signature) = split_parts(token)?;\n\
-             \x20   verify_signature(header, payload, signature).then(|| parse(payload))?\n\
-             }\n",
+            r#"use crate::session::{Claims, Session};
+
+/// Validate a bearer token and mint a session from it.
+pub fn validate_token(token: &str) -> Option<Session> {
+    let claims = decode_jwt(token)?;
+    if claims.expired() {
+        return None;
+    }
+    Some(Session::from_claims(claims))
+}
+
+/// Decode a JWT, verifying the signature before trusting the payload.
+pub fn decode_jwt(token: &str) -> Option<Claims> {
+    let (header, payload, signature) = split_parts(token)?;
+    verify_signature(header, payload, signature).then(|| parse(payload))?
+}
+
+fn split_parts(token: &str) -> Option<(&str, &str, &str)> {
+    let mut parts = token.split('.');
+    let header = parts.next()?;
+    let payload = parts.next()?;
+    let signature = parts.next()?;
+    parts.next().is_none().then_some((header, payload, signature))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Denied {
+    #[error("token has expired")]
+    Expired,
+    #[error("token is missing a required scope")]
+    Scope,
+}
+"#,
         ),
         (
             "src/session.rs",
-            "pub struct Session {\n\
-             \x20   pub user_id: u64,\n\
-             \x20   pub scopes: Vec<String>,\n\
-             }\n\
-             \n\
-             impl Session {\n\
-             \x20   pub fn from_claims(claims: Claims) -> Self {\n\
-             \x20       Self { user_id: claims.sub, scopes: claims.scopes }\n\
-             \x20   }\n\
-             \n\
-             \x20   pub fn allows(&self, scope: &str) -> bool {\n\
-             \x20       self.scopes.iter().any(|s| s == scope)\n\
-             \x20   }\n\
-             }\n",
+            r#"use std::time::{SystemTime, UNIX_EPOCH};
+
+pub struct Claims {
+    pub sub: u64,
+    pub exp: u64,
+    pub scopes: Vec<String>,
+}
+
+impl Claims {
+    pub fn expired(&self) -> bool {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.exp <= now
+    }
+}
+
+pub struct Session {
+    pub user_id: u64,
+    pub scopes: Vec<String>,
+}
+
+impl Session {
+    pub fn from_claims(claims: Claims) -> Self {
+        Self {
+            user_id: claims.sub,
+            scopes: claims.scopes,
+        }
+    }
+
+    pub fn allows(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|s| s == scope)
+    }
+}
+"#,
         ),
         (
             "src/db/pool.rs",
-            "use std::time::{Duration, Instant};\n\
-             \n\
-             pub struct Pool {\n\
-             \x20   idle: Vec<Conn>,\n\
-             \x20   max_size: usize,\n\
-             \x20   acquire_timeout: Duration,\n\
-             }\n\
-             \n\
-             impl Pool {\n\
-             \x20   pub async fn acquire(&self) -> Result<Conn, Error> {\n\
-             \x20       let deadline = Instant::now() + self.acquire_timeout;\n\
-             \x20       loop {\n\
-             \x20           if let Some(conn) = self.try_pop() {\n\
-             \x20               return Ok(conn);\n\
-             \x20           }\n\
-             \x20           if Instant::now() >= deadline {\n\
-             \x20               return Err(Error::AcquireTimeout);\n\
-             \x20           }\n\
-             \x20           self.idle_notify.notified().await;\n\
-             \x20       }\n\
-             \x20   }\n\
-             }\n",
+            r#"use std::time::{Duration, Instant};
+
+use tokio::sync::Notify;
+
+pub struct Pool {
+    idle: Vec<Conn>,
+    max_size: usize,
+    acquire_timeout: Duration,
+    idle_notify: Notify,
+}
+
+impl Pool {
+    pub fn builder() -> Builder {
+        Builder {
+            max_size: 16,
+            acquire_timeout: Duration::from_secs(5),
+        }
+    }
+
+    /// Check out a connection, waiting until one is returned or the
+    /// acquire timeout elapses.
+    pub async fn acquire(&self) -> Result<Conn, Error> {
+        let deadline = Instant::now() + self.acquire_timeout;
+        loop {
+            if let Some(conn) = self.try_pop() {
+                return Ok(conn);
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::AcquireTimeout);
+            }
+            self.idle_notify.notified().await;
+        }
+    }
+
+    fn try_pop(&self) -> Option<Conn> {
+        self.idle.last().filter(|conn| conn.is_healthy()).cloned()
+    }
+}
+"#,
         ),
     ];
     for (rel, content) in sources {
@@ -4895,7 +5015,20 @@ fn blog_showcase_orchestrator_worktrees() {
     // The dock already takes a left column; keep the explorer narrow so the
     // `main` workspace still shows a readable width of code beside both.
     cfg.file_explorer.width = fresh::config::ExplorerWidth::Columns(22);
-    let mut h = EditorTestHarness::with_config_and_working_dir(140, 36, cfg, rate.clone()).unwrap();
+    // Wide enough for three columns — dock, code, agent — at a readable width
+    // each, since every task workspace puts its agent beside the code.
+    let mut h = EditorTestHarness::create(
+        200,
+        48,
+        HarnessOptions::new()
+            .with_config(cfg)
+            .with_working_dir(rate.clone())
+            .without_empty_plugins_dir()
+            // Real syntax highlighting: the default registry is empty (fast
+            // startup), which would render every file flat.
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
     h.tick_and_render().unwrap();
     h.wait_until(|h| {
         let reg = h.editor().command_registry().read().unwrap();
@@ -4906,7 +5039,7 @@ fn blog_showcase_orchestrator_worktrees() {
     .unwrap();
 
     // A task workspace: the files that task touches as tabs, and the agent
-    // working on it in a split underneath — the same shape `Run Agent…`
+    // working on it in a split beside the code — the same shape `Run Agent…`
     // produces (an ephemeral, command-carrying terminal titled after the
     // agent), so both are on screen at once.
     let open_task =
@@ -4919,7 +5052,9 @@ fn blog_showcase_orchestrator_worktrees() {
                 .active_window_mut()
                 .create_plugin_terminal(fresh::app::PluginTerminalSpec {
                     cwd: Some(root.to_path_buf()),
-                    direction: Some(fresh::model::event::SplitDirection::Horizontal),
+                    // Side by side: the agent's transcript is tall and narrow,
+                    // and the code stays readable next to it.
+                    direction: Some(fresh::model::event::SplitDirection::Vertical),
                     ratio: Some(0.5),
                     // Focus stays in the code pane: the agent runs, you read.
                     focus: false,
@@ -4943,7 +5078,8 @@ fn blog_showcase_orchestrator_worktrees() {
     open_task(
         &mut h,
         &rate,
-        &["src/ratelimit.rs", "src/routes.rs"],
+        // Last one wins the active tab: the longer file fills the pane.
+        &["src/routes.rs", "src/ratelimit.rs"],
         "claude",
     );
 
@@ -4981,12 +5117,36 @@ fn blog_showcase_orchestrator_worktrees() {
     }
 
     // Back to the launch workspace, and let the three agents build up a log
-    // before filming.
+    // before filming — an agent whose transcript is still empty reads as one
+    // that hasn't started.
     h.editor_mut().set_active_window(rate_win);
-    for _ in 0..8 {
-        std::thread::sleep(std::time::Duration::from_millis(200));
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(250));
         h.tick_and_render().unwrap();
     }
+
+    // Open the dock *before* filming. Getting to it (`Ctrl+P` →
+    // `Orchestrator: Toggle Dock`, or the startup setting) is its own,
+    // already-captured story; this one is about the switching, so the capture
+    // starts with the dock up.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Toggle Dock").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Wait for the branch line on every row too, not just the names: the rows
+    // mount with a `…` placeholder while their git state resolves, and the
+    // first frame shouldn't be of a dock still filling itself in.
+    h.wait_until(|h| {
+        let scr = h.screen_to_string();
+        scr.contains("fix/auth-bypass")
+            && scr.contains("perf/db-pool")
+            && scr.contains("feat/rate-limit")
+            && h.editor().is_dock_focused()
+    })
+    .unwrap();
 
     let mut s = BlogShowcase::new(
         "orchestrator-worktrees",
@@ -4998,27 +5158,7 @@ fn blog_showcase_orchestrator_worktrees() {
          you left it.",
     );
 
-    animate(&mut h, &mut s, None, 4, 170, 90);
-
-    // --- Open the dock ------------------------------------------------------
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text("Toggle Dock").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
-        .unwrap();
-    snap(&mut h, &mut s, Some("Toggle Dock"), 120);
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| {
-        let scr = h.screen_to_string();
-        scr.contains("auth-bypass")
-            && scr.contains("db-pool")
-            && scr.contains("rate-limit")
-            && h.editor().is_dock_focused()
-    })
-    .unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 150);
-    animate(&mut h, &mut s, None, 6, 170, 90);
+    animate(&mut h, &mut s, None, 8, 200, 130);
 
     // --- Walk the worktrees -------------------------------------------------
     let do_switch = |h: &mut EditorTestHarness, key: KeyCode| {
@@ -5033,19 +5173,19 @@ fn blog_showcase_orchestrator_worktrees() {
     // from the workspace we opened on…
     for _ in 0..3 {
         do_switch(&mut h, KeyCode::Down);
-        snap(&mut h, &mut s, Some("↓"), 130);
-        animate(&mut h, &mut s, None, 6, 170, 90);
+        snap(&mut h, &mut s, Some("↓"), 200);
+        animate(&mut h, &mut s, None, 9, 200, 130);
     }
 
     // …and `↑` comes back up to the same workspaces, each further along than
     // it was left — the agents never stopped while they were off-screen.
     for _ in 0..3 {
         do_switch(&mut h, KeyCode::Up);
-        snap(&mut h, &mut s, Some("↑"), 130);
-        animate(&mut h, &mut s, None, 6, 170, 90);
+        snap(&mut h, &mut s, Some("↑"), 200);
+        animate(&mut h, &mut s, None, 9, 200, 130);
     }
 
-    hold(&mut h, &mut s, 6, 110);
+    hold(&mut h, &mut s, 8, 150);
 
     s.finalize().unwrap();
 }

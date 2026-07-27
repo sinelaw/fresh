@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Coding Agent — a *fake* autonomous coding agent used by Fresh's showcase
+"""Coding Agent — a *fake* interactive coding agent used by Fresh's showcase
 GIFs. Every line of output is staged; it does not read, run, or change
 anything.
 
-It streams an agent-style log: a braille spinner animates a "thinking" line
-for about a second, then it commits a result line. Lines are drawn from a
-large bank and seeded by the project name passed as argv[1], so two instances
+It renders the shape a real terminal coding agent has: a transcript that
+scrolls (a user turn, assistant bullets, tool calls with their `⎿` results)
+under a spinner line, and an input box pinned to the bottom of the pane. Lines
+are drawn from a large bank and seeded by the project name, so two instances
 running side by side diverge. It loops forever, so it keeps producing output
 for as long as a demo needs to film it.
 
@@ -24,6 +25,8 @@ the seed.
 import itertools
 import os
 import random
+import shutil
+import signal
 import sys
 import time
 
@@ -48,7 +51,7 @@ def announce_as(name):
 
 
 DIM, BOLD = "2", "1"
-CYAN, GREEN, YELLOW, MAGENTA = "36", "32", "33", "35"
+CYAN, GREEN, YELLOW, MAGENTA, ORANGE = "36", "32", "33", "35", "38;5;209"
 
 argv = sys.argv[1:]
 if len(argv) >= 2 and argv[0] == "--as":
@@ -61,7 +64,7 @@ project = bare[0] if bare else os.path.basename(os.getcwd()) or "service"
 # stream is deterministic per project and differs between projects.
 rng = random.Random(project)
 
-SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+SPIN = "✻✳✶✻✳✢"
 
 FILES = [
     "src/auth.rs", "src/session.rs", "src/handlers.rs", "src/routes.rs",
@@ -76,79 +79,224 @@ SYMS = [
 ]
 
 THINK = [
-    "reading {f}",
-    "scanning for call sites of {s}",
-    "planning the refactor",
-    "inferring lifetimes in {f}",
-    "checking the error paths",
-    "resolving trait bounds",
-    "diffing against main",
-    "summarising the test failures",
-    "grepping for stale TODOs",
-    "tracing the request through {f}",
-    "drafting a patch for {f}",
-    "re-running the failing case",
-    "reading the docs for {s}",
-    "narrowing the type of {s}",
-    "checking for a borrow conflict",
-    "looking for a simpler approach",
+    "Reading {f}", "Scanning for call sites of {s}", "Planning the refactor",
+    "Inferring lifetimes in {f}", "Checking the error paths",
+    "Resolving trait bounds", "Diffing against main",
+    "Summarising the test failures", "Grepping for stale TODOs",
+    "Tracing the request through {f}", "Drafting a patch for {f}",
+    "Re-running the failing case", "Reading the docs for {s}",
+    "Narrowing the type of {s}", "Checking for a borrow conflict",
+    "Looking for a simpler approach", "Cogitating", "Untangling",
 ]
 
-CMDS = ["cargo build", "cargo clippy", "cargo fmt --check", "git status", "ruff check", "cargo nextest run"]
-NOTES = [
-    "{s} can be simplified",
-    "found a missing .await",
-    "this branch is never hit — removing it",
-    "extracted a helper to cut duplication",
-    "added a regression test for the panic",
-    "the lock was held across an await — fixed",
+TASKS = [
+    ("harden token validation", "reject any token whose signature we can't verify"),
+    ("cut p99 latency", "the /v1/sessions route spikes to 900ms under load"),
+    ("fix the flaky test", "tests/api.rs::concurrent_refresh fails ~1 in 20"),
+    ("migrate to the new pool", "swap the deadpool wrapper for the new Pool"),
+    ("add per-route rate limiting", "60/min per API key, 429 with Retry-After"),
+    ("close the auth bypass", "an expired refresh token still mints a session"),
 ]
+
+SAYS = [
+    "Found it — {s} returns before the expiry check runs.",
+    "The lock is held across an await; that's the stall.",
+    "There are {n} call sites; {n2} of them can take the fast path.",
+    "That branch is unreachable — removing it simplifies the match.",
+    "I'll extract a helper so the two paths can't drift again.",
+    "The failure only reproduces when the bucket refills mid-request.",
+    "Adding a regression test before the fix, so it's pinned.",
+    "This is cheaper as a single pass — no intermediate Vec.",
+]
+
+# (command, how its `⎿` result line reads) — a grep doesn't report "tests
+# passing", so each command carries its own shape of result.
+CMDS = [
+    ("cargo nextest run", lambda: f"{{ok}} {rng.choice([12, 18, 24, 31, 42])} tests passed"),
+    ("cargo build", lambda: f"{{ok}} Finished in {rng.randint(2, 40)}.{rng.randint(0, 9)}s"),
+    ("cargo clippy --all-targets", lambda: f"{{ok}} No warnings"),
+    ("cargo fmt --check", lambda: f"{{ok}} Clean"),
+    ("git diff --stat", lambda: f"{rng.randint(2, 6)} files changed, "
+                                f"{rng.randint(12, 90)} insertions(+)"),
+    ("rg 'unwrap\\(\\)' src/", lambda: f"{rng.randint(3, 24)} matches"),
+]
+
+
+def truncate(line, width):
+    """Trim to `width` printable columns, ignoring SGR escapes, so a long
+    line can't wrap and desync the cursor arithmetic below."""
+    out, shown, i = [], 0, 0
+    while i < len(line):
+        if line[i] == "\033":
+            end = line.find("m", i)
+            if end == -1:
+                break
+            out.append(line[i:end + 1])
+            i = end + 1
+            continue
+        if shown >= width:
+            out.append("\033[0m")
+            break
+        out.append(line[i])
+        shown += 1
+        i += 1
+    return "".join(out)
 
 
 def think_line():
     return rng.choice(THINK).format(f=rng.choice(FILES), s=rng.choice(SYMS))
 
 
-def result_line():
+def step():
+    """One committed transcript step: a list of lines, blank-separated from
+    whatever came before."""
     roll = rng.random()
-    if roll < 0.42:
+    f = rng.choice(FILES)
+    if roll < 0.26:
         a, d = rng.randint(2, 48), rng.randint(0, 14)
-        return f"{sgr(GREEN, '✓')} {sgr(BOLD, 'edit')} {rng.choice(FILES)}  {sgr(DIM, f'+{a} -{d}')}"
-    if roll < 0.62:
-        n = rng.choice([12, 18, 24, 31, 42])
+        return [
+            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Update')}({f})",
+            f"  {sgr(DIM, '⎿')}  Updated {f} with {a} additions and {d} removals",
+        ]
+    if roll < 0.44:
+        cmd, result = rng.choice(CMDS)
         ms = rng.randint(80, 900)
-        return f"{sgr(GREEN, '✓')} {sgr(BOLD, 'tests')}  {sgr(GREEN, f'{n}/{n} passing')}{sgr(DIM, f'  ({ms}ms)')}"
+        line = result().replace("{ok}", sgr(GREEN, "✓"))
+        return [
+            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Bash')}({cmd})",
+            f"  {sgr(DIM, '⎿')}  {line} {sgr(DIM, f'({ms}ms)')}",
+        ]
+    if roll < 0.58:
+        return [
+            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Read')}({f})",
+            f"  {sgr(DIM, '⎿')}  Read {rng.randint(24, 310)} lines",
+        ]
+    if roll < 0.68:
+        s = rng.choice(SYMS)
+        return [
+            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Search')}(pattern: \"{s}\")",
+            f"  {sgr(DIM, '⎿')}  Found {rng.randint(2, 19)} matches across "
+            f"{rng.randint(2, 7)} files",
+        ]
     if roll < 0.78:
-        return f"{sgr(CYAN, '→')} {sgr(BOLD, 'run')} {sgr(DIM, rng.choice(CMDS))}"
-    if roll < 0.90:
-        f = rng.choice(FILES).replace("src/", "src/new_")
-        return f"{sgr(YELLOW, '✎')} {sgr(BOLD, 'create')} {f}"
-    return f"{sgr(MAGENTA, '◆')} {sgr(DIM, rng.choice(NOTES).format(s=rng.choice(SYMS)))}"
+        nf = f.replace("src/", "src/new_")
+        return [
+            f"{sgr(GREEN, '●')} {sgr(BOLD, 'Write')}({nf})",
+            f"  {sgr(DIM, '⎿')}  Wrote {rng.randint(18, 90)} lines",
+        ]
+    say = rng.choice(SAYS).format(
+        s=rng.choice(SYMS), n=rng.randint(4, 17), n2=rng.randint(2, 4)
+    )
+    return [f"{sgr(GREEN, '●')} {say}"]
+
+
+class Pane:
+    """Transcript above, spinner + input box pinned below."""
+
+    #  spinner, blank, rule, prompt, rule, hint
+    LIVE_LINES = 6
+
+    def __init__(self, out, header):
+        self.out = out
+        self.header = header
+        self.width = 60
+        self.rows = 24
+        self.drawn = False
+        self.resized = True  # first render lays the pane out from scratch
+
+    def measure(self):
+        size = shutil.get_terminal_size((80, 24))
+        self.width = max(28, size.columns - 1)
+        self.rows = max(8, size.lines)
+
+    def on_resize(self, *_):
+        self.resized = True
+
+    def lay_out(self):
+        """Clear the pane and park the header just above the input box, the
+        way an agent CLI looks a moment after it starts — transcript lines
+        then push it up. Also the recovery path after a resize: the redraw
+        below rewinds by a fixed number of lines, which a reflow invalidates,
+        so a resize starts the pane over rather than desyncing it."""
+        self.measure()
+        self.out.write("\033[H\033[2J")
+        pad = max(0, self.rows - len(self.header) - self.LIVE_LINES)
+        self.out.write("\n" * pad)
+        for line in self.header:
+            self.out.write(truncate(line, self.width) + "\n")
+        self.drawn = False
+        self.resized = False
+
+    def live(self, spinner):
+        rule = sgr(DIM, "─" * self.width)
+        return [
+            spinner,
+            "",
+            rule,
+            f"{sgr(ORANGE, '❯')} {sgr(DIM, '▏')}",
+            rule,
+            f"  {sgr(DIM, '⏸ manual mode on · ? for shortcuts · ← for agents')}",
+        ]
+
+    def render(self, spinner, commit=()):
+        """Erase the live block, append `commit` to the transcript, redraw."""
+        if self.resized:
+            self.lay_out()
+        self.measure()
+        if self.drawn:
+            # Cursor sits on the last live line: rewind to the first and wipe.
+            self.out.write(f"\r\033[{self.LIVE_LINES - 1}A\033[J")
+        for line in commit:
+            self.out.write(truncate(line, self.width) + "\n")
+        block = self.live(spinner)
+        self.out.write(
+            "\n".join(truncate(line, self.width) for line in block)
+        )
+        self.out.flush()
+        self.drawn = True
 
 
 def main():
     out = sys.stdout
-    task = rng.choice([
-        "harden token validation", "cut p99 latency", "fix the flaky test",
-        "migrate to the new pool", "add per-route rate limiting",
-        "close the auth bypass",
-    ])
-    out.write("\n")
-    out.write(f" {sgr(f'1;{CYAN}', '⟁ Coding Agent')}{sgr(DIM, f'  ·  {project}')}\n")
-    out.write(f" {sgr(DIM, 'task: ' + task)}\n\n")
-    out.flush()
+    task, ask = rng.choice(TASKS)
+    header = [
+        "",
+        f" {sgr(f'1;{ORANGE}', '✻ Coding Agent')}{sgr(DIM, f'  ·  {project}')}",
+        f" {sgr(DIM, 'task: ' + task)}",
+        "",
+        f"{sgr(ORANGE, '❯')} {ask}",
+        "",
+    ]
+    pane = Pane(out, header)
+    try:
+        signal.signal(signal.SIGWINCH, pane.on_resize)
+    except (AttributeError, ValueError):
+        pass  # no SIGWINCH off Unix; the first render still lays out
+    # A host that opens this in a split resizes the PTY right after spawning
+    # it. SIGWINCH handles that, but waiting out the initial flurry keeps the
+    # opening frames from being a redraw.
+    time.sleep(0.5)
 
     for _ in itertools.count():
         msg = think_line()
-        deadline = time.time() + rng.uniform(0.7, 1.2)
+        tokens = rng.randint(2, 19) * 100
+        started = time.time()
+        deadline = started + rng.uniform(1.6, 3.0)
         spin = 0
+        commit = []
         while time.time() < deadline:
-            out.write(f"\r {sgr(YELLOW, SPIN[spin % len(SPIN)])} {sgr(DIM, msg)} …\033[K")
-            out.flush()
-            time.sleep(0.08)
+            glyph = SPIN[spin % len(SPIN)]
+            elapsed = int(time.time() - started)
+            spinner = (
+                f"{sgr(ORANGE, glyph)} {sgr(DIM, msg + '…')} "
+                f"{sgr(DIM, f'({elapsed}s · ↑ {tokens} tokens)')}"
+            )
+            pane.render(spinner, commit)
+            commit = []
+            time.sleep(0.22)
             spin += 1
-        out.write(f"\r {result_line()}\033[K\n")
-        out.flush()
+        commit = step() + [""]
+        pane.render(f"{sgr(ORANGE, SPIN[0])} {sgr(DIM, 'Cogitating…')}", commit)
 
 
 if __name__ == "__main__":
