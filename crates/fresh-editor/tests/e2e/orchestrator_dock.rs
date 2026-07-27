@@ -478,10 +478,10 @@ fn next_window_cycles_only_dock_visible_sessions() {
     }
 }
 
-/// Rows a dock card occupies below its name row in card view: the two
-/// remaining content rows (branch, PR/spacer) plus the bottom border.
-/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (3 content rows).
-const DOCK_CARD_ROWS_BELOW_NAME: u16 = 3;
+/// Rows a dock card occupies below its name row in card view: the
+/// remaining content row (branch/project + PR) plus the bottom border.
+/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (2 content rows).
+const DOCK_CARD_ROWS_BELOW_NAME: u16 = 2;
 
 /// Column of the dock's right-edge divider (the "wall") on the title row.
 fn dock_wall_col(h: &EditorTestHarness) -> u16 {
@@ -2935,10 +2935,11 @@ fn dock_compact_rows_drop_branch_name() {
     .unwrap();
 }
 
-/// Card density right-aligns the whole branch + git-summary group on
-/// the card's second content line: the summary's last glyph sits flush
-/// against the card's right border instead of trailing the branch on
-/// the left.
+/// Card density right-aligns the git summary against the card's right
+/// border — it sits on the *name* row now, so the status of every
+/// workspace lines up in one column down the dock, and the branch row
+/// below starts at the card's left edge instead of being dragged along
+/// in the same right-aligned group.
 #[test]
 fn dock_card_git_line_right_aligned_to_card_border() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -2965,29 +2966,24 @@ fn dock_card_git_line_right_aligned_to_card_border() {
     // inactive, fully-bordered card.
     assert_eq!(h.editor().active_window().label, "alphaproj");
 
-    // Wait for the git probe to land zzz_other's summary line ("clean" —
-    // fresh repo, nothing to diff), rendered flush against the card's
-    // right border: the summary is IMMEDIATELY followed by the rounded
-    // `│` side border, with no interior padding after the group, and the
-    // branch marker rides in the same right-aligned group before it.
-    // Waiting for the final flush state directly (instead of asserting
-    // after a stability settle) keeps the check semantic: intermediate
-    // frames where the probe result exists but a refresh is mid-flight
-    // are simply waited through.
+    // Wait for the git probe to land zzz_other's summary ("clean" —
+    // fresh repo, nothing to diff) on its name row, flush against the
+    // card's right border: the summary is IMMEDIATELY followed by the
+    // rounded `│` side border, with no interior padding after it, while
+    // the name still leads the row from the left. Waiting for the final
+    // flush state directly (instead of asserting after a stability
+    // settle) keeps the check semantic: intermediate frames where the
+    // probe result exists but a refresh is mid-flight are simply waited
+    // through.
     h.wait_until(|h| {
         let screen = h.screen_to_string();
-        let zzz_row = match screen.lines().position(|l| l.contains("zzz_other")) {
-            Some(r) => r,
-            None => return false,
-        };
-        // The git line is the card row right below the name row.
-        let Some(line) = screen.lines().nth(zzz_row + 1) else {
+        let Some(line) = screen.lines().find(|l| l.contains("zzz_other")) else {
             return false;
         };
         let Some(b) = line.find("clean") else {
             return false;
         };
-        line[b + "clean".len()..].starts_with('│') && line[..b].contains('▸')
+        line[b + "clean".len()..].starts_with('│') && line[..b].contains("zzz_other")
     })
     .unwrap();
 }
@@ -3404,4 +3400,217 @@ fn dock_git_summary_survives_transient_probe_failure() {
 
     // The target's failed re-probe must NOT have wiped its last-known summary.
     h.assert_screen_contains("+2");
+}
+
+/// The card view's two rows, each a left group and a status flush
+/// against the card's right border:
+///
+///   ╭──────────────────────────╮
+///   │ · beta              clean│
+///   │ ▸ master                 │
+///   ╰──────────────────────────╯
+///
+/// It used to be three rows, and the middle one carried the branch and
+/// the git summary as a *single right-aligned group* — so the branch
+/// floated in the middle of the card instead of starting at its left
+/// edge, and the third row stood empty on every session without a PR.
+#[test]
+fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
+    let (_tmp, root) = setup_committed_project("alphaproj");
+    // The measured workspace lives in its own repo, so its card can be
+    // read without the launch project's own status bleeding in. It stays
+    // *inactive*, keeping the right border the active card scoops away
+    // for the seamless tab.
+    let (_tmp_b, beta_root) = setup_committed_project("betaproj");
+    let branch = git_head_branch(&beta_root);
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(beta_root.clone(), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Steady state: the git probe has landed beta's summary on its name
+    // row and the branch on the row below.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let Some(r) = screen.lines().position(|l| l.contains("beta")) else {
+            return false;
+        };
+        screen.lines().nth(r).is_some_and(|l| l.contains("clean"))
+            && screen
+                .lines()
+                .nth(r + 1)
+                .is_some_and(|l| l.contains(&branch))
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let name_row = screen.lines().position(|l| l.contains("beta")).unwrap();
+    let inner = |r: usize| -> String {
+        screen
+            .lines()
+            .nth(r)
+            .unwrap_or_default()
+            .split('│')
+            .nth(1)
+            .unwrap_or_else(|| panic!("row {r} is not a bordered card row:\n{screen}"))
+            .to_string()
+    };
+
+    // Row 1: the name leads from the left border, the git summary is
+    // flush against the right one, and the project no longer rides
+    // along beside the name.
+    let row1 = inner(name_row);
+    assert!(
+        row1.trim_start().starts_with("· beta") || row1.trim_start().starts_with("* beta"),
+        "the name leads the card's first row, got {row1:?}"
+    );
+    assert!(
+        row1.ends_with("clean"),
+        "the git summary sits flush against the card's right border, got {row1:?}"
+    );
+    assert!(
+        !row1.contains('▣'),
+        "the project tag no longer doubles up beside the name, got {row1:?}"
+    );
+
+    // Row 2: the branch, starting at the card's left edge — not floating
+    // mid-card in a right-aligned group.
+    let row2 = inner(name_row + 1);
+    assert!(
+        row2.starts_with(&format!("▸ {branch}")),
+        "the branch starts at the card's left edge, got {row2:?}"
+    );
+
+    // ...and that is the last content row: the card is two rows tall, so
+    // the next line is its bottom border.
+    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    assert!(
+        after.trim_start().starts_with('╰'),
+        "the card ends after the branch row, got {after:?}"
+    );
+}
+
+/// A worktree's branch is usually named after the workspace itself, and
+/// printing both spent one of the card's two rows saying the same thing
+/// twice. When they match, the row carries the project instead — the
+/// context the name genuinely doesn't have.
+#[test]
+fn dock_card_shows_the_project_when_the_branch_just_repeats_the_name() {
+    let (_tmp, root) = setup_committed_project("alphaproj");
+    let (_tmp_b, twin_root) = setup_committed_project("twinproj");
+    // A branch that shares nothing with the launch project's, so the
+    // card under test is the only row spelling it.
+    assert!(std::process::Command::new("git")
+        .args(["checkout", "-q", "-b", "feature-x"])
+        .current_dir(&twin_root)
+        .status()
+        .unwrap()
+        .success());
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    // The workspace is named exactly after the branch it sits on.
+    h.editor_mut()
+        .create_window_at(twin_root.clone(), "feature-x".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The row below the name is the project, not a second copy of the
+    // name. Waiting on it directly rides out the git probe: before it
+    // lands the row already reads "▣ twinproj" (no branch known yet),
+    // and it must still read that once the branch *is* known.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let Some(r) = screen.lines().position(|l| l.contains("feature-x")) else {
+            return false;
+        };
+        screen.lines().nth(r).is_some_and(|l| l.contains("clean"))
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let name_row = screen
+        .lines()
+        .position(|l| l.contains("feature-x"))
+        .unwrap();
+    let row2 = screen
+        .lines()
+        .nth(name_row + 1)
+        .unwrap_or_default()
+        .split('│')
+        .nth(1)
+        .unwrap_or_else(|| panic!("the twin card's second row is not bordered:\n{screen}"))
+        .to_string();
+    assert!(
+        row2.starts_with("▣ twinproj"),
+        "the project takes the row when the branch only repeats the name, got {row2:?}"
+    );
+    assert!(
+        !row2.contains("feature-x"),
+        "the name is not repeated as a branch on the row below it, got {row2:?}"
+    );
+}
+
+/// The branch `HEAD` points at in `root` (`master` or `main`, depending
+/// on the git that created it).
+fn git_head_branch(root: &std::path::Path) -> String {
+    String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+/// The same rule one step further: a plain folder opened as its own
+/// workspace has a project name identical to the workspace name, so the
+/// second row has nothing left to add — it stays empty instead of
+/// echoing the line above it.
+#[test]
+fn dock_card_leaves_the_second_row_empty_rather_than_echo_the_name() {
+    let (_tmp, root) = setup_committed_project("alphaproj");
+    // A plain, non-git folder outside the project: no branch, and its
+    // project *is* the folder the workspace is named after.
+    let loose = root.parent().unwrap().join("loose");
+    fs::create_dir(&loose).unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(loose.clone(), "loose".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The card is up, and its second row is blank between the borders.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let Some(r) = screen.lines().position(|l| l.contains("loose")) else {
+            return false;
+        };
+        let Some(row2) = screen.lines().nth(r + 1) else {
+            return false;
+        };
+        row2.split('│').nth(1).is_some_and(|s| s.trim().is_empty())
+    })
+    .unwrap();
+
+    // ...and it is still a two-row card, closed by its bottom border.
+    let screen = h.screen_to_string();
+    let name_row = screen.lines().position(|l| l.contains("loose")).unwrap();
+    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    assert!(
+        after.trim_start().starts_with('╰'),
+        "the card still ends after its second row, got {after:?}"
+    );
 }
