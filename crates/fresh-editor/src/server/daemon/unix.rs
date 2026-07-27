@@ -201,9 +201,12 @@ mod tests {
             "detached child must not share our process group"
         );
 
-        let _ = attached.kill();
-        let _ = attached.wait();
-        let _ = detached.kill();
-        let _ = detached.wait();
+        // Reap both stubs rather than ignoring the results: a `sleep` that
+        // outlives the test would linger for five minutes, and the detached one
+        // is — by construction — in a session this process no longer controls.
+        attached.kill().expect("kill the control child");
+        attached.wait().expect("reap the control child");
+        detached.kill().expect("kill the detached child");
+        detached.wait().expect("reap the detached child");
     }
 }
