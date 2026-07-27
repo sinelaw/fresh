@@ -177,12 +177,6 @@
   body.theme-cosmos:not(.mobile) .widget-surface.w-floatingModal.anchored .w-button.danger{
     background:transparent;color:#ff9b9b}
 
-  /* Cell-painted file-browser band (OpenFile / SaveFileAs / SwitchProject):
-     real pipeline cells, framed as a floating card above the panes and the
-     native explorer. */
-  .pbrowser{z-index:60;background:var(--bg);border-radius:10px;overflow:hidden;
-    box-shadow:0 18px 50px rgba(0,0,0,.55),inset 0 0 0 1px var(--hairline)}
-
   /* ---- COSMOS shell motion. The editor's cell-level animations are forced
      off by the bridge (config.editor.animations = false); the frontend owns
      motion instead: a quick fade/pop for the palette + a uniform full-window

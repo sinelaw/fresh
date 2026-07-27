@@ -1960,6 +1960,14 @@ impl Editor {
             status_bar.clickable = status_bar_layout.clickable;
             status_bar.plugin_token_areas = status_bar_layout.plugin_token_areas;
             status_bar.segments = status_bar_layout.segments;
+        } else {
+            // No bar this frame — the user hid it, or a suggestions / file-
+            // browser popup took the row. Drop last frame's capture instead of
+            // leaving it to go stale: `status_view` would keep projecting a
+            // status bar the web then draws under its prompt row (the TUI's
+            // ghost-text bug), and the click/hover hit-tests would keep
+            // resolving segments that are no longer on screen.
+            self.active_chrome_mut().status_bar = Default::default();
         }
     }
 
@@ -2476,6 +2484,10 @@ impl Editor {
                 width,
                 height: max_height,
             };
+            // Web renders the browser natively from `file_browser_view`; skip
+            // its cell drawing (layout, spans and the list viewport are still
+            // computed, and the projection reads them).
+            let fb_draw = !self.suppress_chrome_cells;
             let __win = self.active_window_mut();
             let Some(file_open_state) = &mut __win.file_open_state else {
                 return;
@@ -2487,6 +2499,7 @@ impl Editor {
                 &theme,
                 &hover_target,
                 Some(&kb_clone),
+                fb_draw,
             );
             return;
         }

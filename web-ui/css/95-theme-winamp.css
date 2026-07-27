@@ -327,13 +327,13 @@
   body.theme-winamp .dropdown,body.theme-winamp .popup,body.theme-winamp .ctxmenu,
   body.theme-winamp .palette,body.theme-winamp .palette.centered,
   body.theme-winamp .settings-modal,body.theme-winamp .m-sheet,
-  body.theme-winamp .widget-surface.w-floatingModal,body.theme-winamp .pbrowser{
+  body.theme-winamp .widget-surface.w-floatingModal{
     -webkit-backdrop-filter:none;backdrop-filter:none;
     background:var(--wa-metal);color:#e9d9c2;border:none;border-radius:3px;
     box-shadow:var(--wa-seam),var(--wa-out),6px 8px 0 rgba(0,0,0,.5)}
   /* Their list bodies are LCD panes. */
   body.theme-winamp .palette .plist,body.theme-winamp .palette .pinput,
-  body.theme-winamp .palette .ppreview{background:var(--wa-sunken)}
+  body.theme-winamp .palette .ppreview,body.theme-winamp .palette .fbrows{background:var(--wa-sunken)}
   body.theme-winamp .palette .ptitle,body.theme-winamp .palette .ptitlebar{
     color:var(--wa-amber);letter-spacing:.12em;text-transform:uppercase}
   body.theme-winamp .palette .pinput .q{color:var(--wa-green)}

@@ -188,7 +188,7 @@
   .settings-modal .set-dual-list{padding:2px 4px}
   .w-list{padding:0 2px}
 
-  .fileexplorer .fx-row,.palette .prow,.popup .popup-row,.ctxmenu .ctxitem,
+  .fileexplorer .fx-row,.palette .prow,.palette .fbrow,.popup .popup-row,.ctxmenu .ctxitem,
   .settings-modal .set-cat,.settings-modal .set-cat-sec,.kbedit .kb-row:not(.kb-head),
   .settings-modal .set-dual-row,.w-list-row{border-radius:7px}
   .fileexplorer .fx-row{margin:1px 0}
@@ -197,7 +197,8 @@
   .settings-modal .set-item{border-bottom:0;border-radius:9px;margin:1px 0}
 
   /* The sheen + rounded fill for every selected/highlighted row. */
-  .fileexplorer .fx-row.sel,.palette .prow.sel,.popup .popup-row.sel,
+  .fileexplorer .fx-row.sel,.palette .prow.sel,.palette .fbrow.sel,.palette .fbchip.sel,
+  .popup .popup-row.sel,
   .ctxmenu .ctxitem.sel,.settings-modal .set-cat.sel,.settings-modal .set-item.sel,
   .kbedit .kb-row.sel,.settings-modal .set-dual-row.sel,.w-list-row.sel,
   .auxmodal .am-line.sel{background:var(--sel)}
@@ -232,6 +233,7 @@
   /* Primary text on the menuHi / --sel highlight pill → readable in any theme. */
   .menu.open,.mitem.hi,.mitem.hi .lab,
   .palette .prow.sel,.palette .prow.sel .pkey,
+  .palette .fbrow.sel,.palette .fbrow.sel .fbname,.palette .fbchip.sel,
   .fileexplorer .fx-row.sel,.fileexplorer .fx-row.sel .fx-chev,
   .popup .popup-row.sel,.ctxmenu .ctxitem.sel,.trustdialog .td-opt.sel,
   .w-list-row.sel,.settings-modal .set-cat.sel,.settings-modal .set-dual-row.sel,
@@ -240,6 +242,7 @@
   /* Secondary text on selected rows → a muted shade of the on-sel colour
      (the old #dfe8ff light-blue vanished on a light highlight). */
   .mitem.hi .accel,.palette .prow.sel .pdesc,.popup .popup-row.sel .pdetail,
+  .palette .fbrow.sel .fbsize,.palette .fbrow.sel .fbmod,
   .trustdialog .td-opt.sel .td-odesc,.kbedit .kb-field.focus .kb-field-l{
     color:color-mix(in srgb,var(--on-sel) 62%,transparent)}
   .palette .prow.sel .pkey{border-color:color-mix(in srgb,var(--on-sel) 45%,transparent)}
