@@ -1993,6 +1993,16 @@ impl Window {
                     }
                     return;
                 }
+                // Alternate scroll is vertical-only, in xterm as here: there is
+                // no horizontal counterpart to synthesize (Left/Right arrows
+                // would walk the shell's cursor through the command line, not
+                // pan anything). Reaching this arm also means the program never
+                // enabled mouse reporting — `uses_alt_scroll` requires
+                // `!wants_mouse` — so falling through to a real mouse report
+                // would inject bytes it never asked for. Drop it instead.
+                TerminalMouseEventKind::ScrollLeft | TerminalMouseEventKind::ScrollRight => {
+                    return;
+                }
                 _ => {}
             }
         }
@@ -2683,8 +2693,11 @@ fn encode_sgr_mouse(
             (code, false)
         }
         TerminalMouseEventKind::Moved => (35, false), // 3 + 32 (no button + motion)
+        // Wheel: buttons 4-7 are up, down, left and right.
         TerminalMouseEventKind::ScrollUp => (64, false),
         TerminalMouseEventKind::ScrollDown => (65, false),
+        TerminalMouseEventKind::ScrollLeft => (66, false),
+        TerminalMouseEventKind::ScrollRight => (67, false),
     };
 
     // Add modifier flags
@@ -2728,8 +2741,11 @@ fn encode_x10_mouse(
         },
         TerminalMouseEventKind::Up(_) => 3, // Release is button 3 in X10
         TerminalMouseEventKind::Moved => 3 + 32,
+        // Wheel: buttons 4-7 are up, down, left and right.
         TerminalMouseEventKind::ScrollUp => 64,
         TerminalMouseEventKind::ScrollDown => 65,
+        TerminalMouseEventKind::ScrollLeft => 66,
+        TerminalMouseEventKind::ScrollRight => 67,
     };
 
     // Add modifier flags and motion flag for drag
@@ -2789,5 +2805,51 @@ mod title_tests {
     #[test]
     fn none_when_neither_present() {
         assert_eq!(combine_terminal_title(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod mouse_encoding_tests {
+    use super::{encode_sgr_mouse, encode_x10_mouse};
+    use crate::input::handler::TerminalMouseEventKind;
+    use crossterm::event::KeyModifiers;
+
+    /// Encode at 0-based cell (9, 4), which both protocols report as 10;5.
+    fn sgr(kind: TerminalMouseEventKind) -> String {
+        String::from_utf8(encode_sgr_mouse(9, 4, kind, KeyModifiers::empty()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn sgr_encodes_the_wheel_as_buttons_4_through_7() {
+        // xterm's wheel buttons are 64 up, 65 down, 66 left, 67 right. The
+        // horizontal pair had no encoding, so a horizontal wheel over a
+        // mouse-tracking program was dropped before it reached the PTY.
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollUp), "\x1b[<64;10;5M");
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollDown), "\x1b[<65;10;5M");
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollLeft), "\x1b[<66;10;5M");
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollRight), "\x1b[<67;10;5M");
+    }
+
+    #[test]
+    fn sgr_horizontal_wheel_carries_modifiers() {
+        let bytes = encode_sgr_mouse(
+            9,
+            4,
+            TerminalMouseEventKind::ScrollLeft,
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        )
+        .unwrap();
+        // 66 + 4 (shift) + 16 (ctrl)
+        assert_eq!(String::from_utf8(bytes).unwrap(), "\x1b[<86;10;5M");
+    }
+
+    #[test]
+    fn x10_encodes_the_wheel_as_buttons_4_through_7() {
+        // Same button numbers, biased by 32 like every other X10 field.
+        let cb = |kind| encode_x10_mouse(9, 4, kind, KeyModifiers::empty()).unwrap()[3];
+        assert_eq!(cb(TerminalMouseEventKind::ScrollUp), 64 + 32);
+        assert_eq!(cb(TerminalMouseEventKind::ScrollDown), 65 + 32);
+        assert_eq!(cb(TerminalMouseEventKind::ScrollLeft), 66 + 32);
+        assert_eq!(cb(TerminalMouseEventKind::ScrollRight), 67 + 32);
     }
 }

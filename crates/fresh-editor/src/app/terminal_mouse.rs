@@ -316,21 +316,8 @@ impl Window {
         let term_col = col.saturating_sub(content_rect.x);
         let term_row = row.saturating_sub(content_rect.y);
 
-        // Convert crossterm MouseEventKind to our TerminalMouseEventKind.
-        let kind = match mouse_event.kind {
-            MouseEventKind::Down(btn) => TerminalMouseEventKind::Down(convert_button(btn)),
-            MouseEventKind::Up(btn) => TerminalMouseEventKind::Up(convert_button(btn)),
-            MouseEventKind::Drag(btn) => TerminalMouseEventKind::Drag(convert_button(btn)),
-            MouseEventKind::Moved => TerminalMouseEventKind::Moved,
-            MouseEventKind::ScrollUp => TerminalMouseEventKind::ScrollUp,
-            MouseEventKind::ScrollDown => TerminalMouseEventKind::ScrollDown,
-            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
-                // Horizontal scroll not typically supported in terminal mouse protocols.
-                return Ok(false);
-            }
-        };
-
         // Send to terminal.
+        let kind = convert_kind(mouse_event.kind);
         self.send_terminal_mouse(term_col, term_row, kind, mouse_event.modifiers);
 
         // Terminal renders itself, so we need to trigger a render.
@@ -344,6 +331,67 @@ fn convert_button(btn: MouseButton) -> TerminalMouseButton {
         MouseButton::Left => TerminalMouseButton::Left,
         MouseButton::Right => TerminalMouseButton::Right,
         MouseButton::Middle => TerminalMouseButton::Middle,
+    }
+}
+
+/// Convert a crossterm `MouseEventKind` to the kind the PTY encoders speak.
+///
+/// Total: every kind the input parser can produce has a wire representation,
+/// horizontal wheel included (xterm buttons 6 and 7). This used to drop
+/// `ScrollLeft`/`ScrollRight` on the floor — and because the caller reports
+/// "handled" either way, a horizontal wheel over a mouse-tracking terminal
+/// was swallowed rather than falling through to Fresh's own panning.
+fn convert_kind(kind: MouseEventKind) -> TerminalMouseEventKind {
+    match kind {
+        MouseEventKind::Down(btn) => TerminalMouseEventKind::Down(convert_button(btn)),
+        MouseEventKind::Up(btn) => TerminalMouseEventKind::Up(convert_button(btn)),
+        MouseEventKind::Drag(btn) => TerminalMouseEventKind::Drag(convert_button(btn)),
+        MouseEventKind::Moved => TerminalMouseEventKind::Moved,
+        MouseEventKind::ScrollUp => TerminalMouseEventKind::ScrollUp,
+        MouseEventKind::ScrollDown => TerminalMouseEventKind::ScrollDown,
+        MouseEventKind::ScrollLeft => TerminalMouseEventKind::ScrollLeft,
+        MouseEventKind::ScrollRight => TerminalMouseEventKind::ScrollRight,
+    }
+}
+
+#[cfg(test)]
+mod convert_kind_tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_wheel_has_a_wire_representation() {
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollLeft),
+            TerminalMouseEventKind::ScrollLeft
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollRight),
+            TerminalMouseEventKind::ScrollRight
+        );
+    }
+
+    #[test]
+    fn other_kinds_are_unchanged() {
+        assert_eq!(
+            convert_kind(MouseEventKind::Down(MouseButton::Left)),
+            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
+            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Moved),
+            TerminalMouseEventKind::Moved
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollUp),
+            TerminalMouseEventKind::ScrollUp
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollDown),
+            TerminalMouseEventKind::ScrollDown
+        );
     }
 }
 
