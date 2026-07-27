@@ -111,6 +111,44 @@ fn alt_key_via_esc_prefix() {
 }
 
 #[test]
+fn alt_ctrl_key_via_esc_prefix_keeps_the_control_modifier() {
+    // `ESC` + a C0 control byte is Alt+Ctrl+<letter> — the same encoding an
+    // Escape keypress followed closely by a Ctrl chord produces. Reporting it
+    // as a plain Alt+<letter> made it run whichever command Alt+<letter> is
+    // bound to (Alt+P = find previous, Alt+A = open Search/Replace), silently
+    // eating both keypresses. See sinelaw/fresh#2810.
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x10")),
+        vec![(
+            KeyCode::Char('p'),
+            KeyModifiers::ALT | KeyModifiers::CONTROL
+        )]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x01")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::ALT | KeyModifiers::CONTROL
+        )]
+    );
+    // Tab / Enter / Backspace are keys in their own right, so they stay
+    // Alt-only rather than picking up a spurious Control.
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x09")),
+        vec![(KeyCode::Tab, KeyModifiers::ALT)]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x0d")),
+        vec![(KeyCode::Enter, KeyModifiers::ALT)]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b\x7f")),
+        vec![(KeyCode::Backspace, KeyModifiers::ALT)]
+    );
+}
+
+#[test]
 fn csi_modifiers_parsed() {
     let mut p = InputParser::new();
     // Shift+Up: ESC [ 1 ; 2 A
