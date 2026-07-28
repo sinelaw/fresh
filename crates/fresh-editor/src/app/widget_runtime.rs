@@ -506,6 +506,7 @@ impl Editor {
             "select"
         };
         Some(crate::widgets::HitArea {
+            overlay: false,
             widget_key: item_key.clone(),
             widget_kind: "list",
             buffer_row: 0,
@@ -587,6 +588,7 @@ impl Editor {
             ),
         };
         Some(crate::widgets::HitArea {
+            overlay: false,
             widget_key: widget_key.to_string(),
             widget_kind: "tree",
             buffer_row: 0,
@@ -662,6 +664,7 @@ impl Editor {
             _ => return None,
         };
         Some(crate::widgets::HitArea {
+            overlay: false,
             widget_key: widget_key.to_string(),
             widget_kind,
             buffer_row: 0,

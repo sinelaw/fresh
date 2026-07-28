@@ -76,6 +76,13 @@ pub struct HitArea {
     /// Event type to deliver with the `widget_event` hook
     /// (`"toggle"` or `"activate"`).
     pub event_type: &'static str,
+    /// True when this hit came from an `Overlay` child — a popup the
+    /// renderer paints *over* the rows beneath it without reflowing
+    /// them (the dock's "New Task… ▾" and "Move to Folder…" dropdowns).
+    /// Its byte range is measured against the overlay's own row text,
+    /// not the text of the row it covers, so click resolution has to
+    /// keep the two apart. See [`WidgetRegistry::overlay_hit_test`].
+    pub overlay: bool,
 }
 
 /// Widget instance state retained across spec updates, keyed by
@@ -525,6 +532,37 @@ impl WidgetRegistry {
             .or_else(|| self.row_select_hit(buffer_id, row))
     }
 
+    /// Resolve a click on a row that an `Overlay` paints over.
+    ///
+    /// Only hits the overlay itself contributed are reachable there. The
+    /// row underneath is hidden by the popup, so a click anywhere on it —
+    /// including the border columns, where no option sits — must never
+    /// reach the widget behind. Callers must map the click column to
+    /// `col_byte` through the *overlay's* row text, since that is the
+    /// text these byte ranges were measured against.
+    pub fn overlay_hit_test(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        col_byte: u32,
+    ) -> Option<(PanelKey, HitArea)> {
+        for (key, state) in &self.panels {
+            if state.buffer_id != buffer_id {
+                continue;
+            }
+            for hit in &state.hits {
+                if hit.overlay
+                    && hit.buffer_row == row
+                    && (col_byte as usize) >= hit.byte_start
+                    && (col_byte as usize) < hit.byte_end
+                {
+                    return Some((key.clone(), hit.clone()));
+                }
+            }
+        }
+        None
+    }
+
     /// The row-body `select` hit of a list/tree row in `buffer_id`,
     /// regardless of column. Row-level gestures (a right-click context
     /// menu) target the ROW, not a byte — a compact tree row's text is
@@ -568,6 +606,7 @@ mod tests {
 
     fn make_hit(row: u32, byte_start: usize, byte_end: usize, key: &str) -> HitArea {
         HitArea {
+            overlay: false,
             widget_key: key.into(),
             widget_kind: "button",
             buffer_row: row,
@@ -618,6 +657,7 @@ mod tests {
 
     fn make_row_select_hit(row: u32, byte_end: usize, key: &str) -> HitArea {
         HitArea {
+            overlay: false,
             widget_key: key.into(),
             widget_kind: "tree",
             buffer_row: row,

@@ -1145,6 +1145,12 @@ fn collect_col(
             }
             for mut h in child_out.hits {
                 h.buffer_row += row_offset;
+                // Mark them as the popup's own: their byte ranges are
+                // measured against the overlay's row text, which is what
+                // the user sees at these rows — the covered row's text
+                // is invisible and must not resolve clicks. See
+                // `WidgetRegistry::overlay_hit_test`.
+                h.overlay = true;
                 hits.push(h);
             }
             // Focus cursor inside an overlay (rare but
@@ -1268,6 +1274,7 @@ fn collect_toggle(
         (entry, (0, end))
     };
     out.hits.push(HitArea {
+        overlay: false,
         widget_key: key.unwrap_or("").to_string(),
         widget_kind: "toggle",
         buffer_row: 0,
@@ -1327,6 +1334,7 @@ fn collect_number(
     // A click on the value cell begins in-place editing host-side
     // (see `deliver_widget_hit`'s `number_value` special case).
     out.hits.push(HitArea {
+        overlay: false,
         widget_key: key.unwrap_or("").to_string(),
         widget_kind: "number",
         buffer_row: 0,
@@ -1424,6 +1432,7 @@ fn collect_dropdown(
     // A click on the `[value ▼]` button toggles the option list open
     // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
     out.hits.push(HitArea {
+        overlay: false,
         widget_key: widget_key.clone(),
         widget_kind: "dropdown",
         buffer_row: 0,
@@ -1489,6 +1498,7 @@ fn collect_button(
     if !disabled {
         let byte_end = entry.text.len();
         out.hits.push(HitArea {
+            overlay: false,
             widget_key: key.unwrap_or("").to_string(),
             widget_kind: "button",
             buffer_row: 0,
@@ -1878,6 +1888,7 @@ fn collect_list(
                 let hit_row = entries.len() as u32;
                 entries.push(entry);
                 hits.push(HitArea {
+                    overlay: false,
                     widget_key: item_key.clone(),
                     widget_kind: "list",
                     buffer_row: hit_row,
@@ -1909,6 +1920,7 @@ fn collect_list(
             let item_key = item_keys.get(i).cloned().unwrap_or_default();
             let hit_row = (entries.len() - 1) as u32;
             hits.push(HitArea {
+                overlay: false,
                 widget_key: item_key.clone(),
                 widget_kind: "list",
                 buffer_row: hit_row,
@@ -2480,6 +2492,7 @@ fn render_widget_text(
             // (see the single-line branch / #2234 item 1).
             if let Some(k) = key.filter(|k| !k.is_empty()) {
                 out.hits.push(HitArea {
+                    overlay: false,
                     widget_key: k.to_string(),
                     widget_kind: "text",
                     buffer_row: row_idx as u32,
@@ -2563,6 +2576,7 @@ fn render_widget_text(
         if let Some(k) = key.filter(|k| !k.is_empty()) {
             let inner_start = marker_bytes + rendered.inner_byte_start;
             out.hits.push(HitArea {
+                overlay: false,
                 widget_key: k.to_string(),
                 widget_kind: "text",
                 buffer_row: 0,
@@ -2877,6 +2891,7 @@ fn render_widget_tree(
             out.entries.push(extra);
             if extra_byte_end > 0 {
                 out.hits.push(HitArea {
+                    overlay: false,
                     widget_key: tree_spec_key.clone(),
                     widget_kind: "tree",
                     buffer_row: (out.entries.len() - 1) as u32,
@@ -2897,6 +2912,7 @@ fn render_widget_tree(
         // expansion changes.
         if let Some(disc_range) = rendered.disclosure_range {
             out.hits.push(HitArea {
+                overlay: false,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
@@ -2919,6 +2935,7 @@ fn render_widget_tree(
         if let Some(cb_range) = rendered.checkbox_range {
             let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
             out.hits.push(HitArea {
+                overlay: false,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
@@ -2942,6 +2959,7 @@ fn render_widget_tree(
         };
         if body_start < row_byte_end {
             out.hits.push(HitArea {
+                overlay: false,
                 widget_key: tree_spec_key.clone(),
                 widget_kind: "tree",
                 buffer_row: hit_row,
@@ -4465,6 +4483,7 @@ fn collect_dual_list(
         // cursor row.
         if left_val.is_some() {
             out.hits.push(HitArea {
+                overlay: false,
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",
                 buffer_row: row,
@@ -4476,6 +4495,7 @@ fn collect_dual_list(
         }
         if right_val.is_some() {
             out.hits.push(HitArea {
+                overlay: false,
                 widget_key: widget_key.clone(),
                 widget_kind: "dual_list",
                 buffer_row: row,

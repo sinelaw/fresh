@@ -4210,6 +4210,7 @@ impl Editor {
         // Option row → select that index (fires `change`) and close.
         if let Some(hit) = hits.iter().find(|h| in_rect(col, row, h.rect)) {
             let ha = crate::widgets::HitArea {
+                overlay: false,
                 widget_key: key,
                 widget_kind: "dropdown",
                 buffer_row: 0,
@@ -4259,23 +4260,49 @@ impl Editor {
             .map(|f| f.entries.clone())
             .unwrap_or_default();
         let local_screen_col = (col - inner.x) as usize;
-        let bcol = match entries.get(brow as usize) {
-            Some(entry) => crate::primitives::display_width::grapheme_byte_at_visual_column(
-                &entry.text,
-                local_screen_col,
-            ),
-            None => return,
-        };
+        // A row an `Overlay` covers (the dock's "New Task… ▾" / "Move to
+        // Folder…" dropdowns float over the tree without reflowing it) is
+        // DRAWN from the overlay's text, so the click column has to be
+        // mapped through that text — it is what the user is pointing at,
+        // and what the overlay's hit areas were measured against. Mapping
+        // through the row underneath yields a byte offset in a different
+        // string, which is why the dropdown options were unclickable: the
+        // offset never landed inside an option's range.
+        let overlay_text = self.panel(slot).and_then(|f| {
+            f.overlays
+                .iter()
+                .find(|o| o.buffer_row == brow)
+                .map(|o| o.entry.text.clone())
+        });
+        let on_overlay = overlay_text.is_some();
+        let row_text =
+            match overlay_text.or_else(|| entries.get(brow as usize).map(|e| e.text.clone())) {
+                Some(text) => text,
+                None => return,
+            };
+        let bcol = crate::primitives::display_width::grapheme_byte_at_visual_column(
+            &row_text,
+            local_screen_col,
+        );
         // Row-aware resolution: an exact byte hit wins, but a click past a
         // compact list/tree row's text still lands on the row (its body
         // `select`) instead of being dropped — the same rule the
         // right-click context path uses, kept in one place so the two can't
         // drift (they did once: right-click was row-wide, left-click was
         // byte-exact, so compact dock rows ignored left-clicks past the label).
-        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match self
-            .widget_registry
-            .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
-        {
+        //
+        // Over an overlay that rule is off: the popup is opaque, so only its
+        // own hits are reachable and a click that misses every option (its
+        // border, its padding) is swallowed rather than falling through to
+        // the row it hides.
+        let resolved = if on_overlay {
+            self.widget_registry
+                .overlay_hit_test(slot.buffer_id(), brow, bcol as u32)
+        } else {
+            self.widget_registry
+                .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
+        };
+        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match resolved {
             Some((_, hit)) => (
                 hit.payload.clone(),
                 hit.event_type.to_string(),
