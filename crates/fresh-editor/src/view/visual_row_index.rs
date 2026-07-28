@@ -59,6 +59,9 @@ pub struct VisualRowIndexKey {
     /// Terminal-grid wrap (fresh#2649): per-line counts use exact-column
     /// breaks at `effective_width` instead of the word-boundary wrap.
     pub grid_wrap: bool,
+    /// Tab width (see [`LineWrapKey::tab_size`]): changing it reshapes
+    /// wrap points, so per-line row counts must rebuild.
+    pub tab_size: u16,
 }
 
 impl VisualRowIndexKey {
@@ -79,6 +82,7 @@ impl VisualRowIndexKey {
             hanging_indent: self.hanging_indent,
             line_wrap_enabled: self.line_wrap_enabled,
             grid_wrap: self.grid_wrap,
+            tab_size: self.tab_size,
             cursor_sig: 0,
         }
     }
@@ -369,6 +373,7 @@ pub fn ensure_built_from_geom(state: &mut EditorState, geom: &WrapGeometry) {
         hanging_indent: geom.hanging_indent,
         line_wrap_enabled: geom.line_wrap_enabled,
         grid_wrap: geom.grid_wrap,
+        tab_size: geom.tab_size as u16,
     };
     ensure_built(state, &key);
 }
@@ -388,6 +393,7 @@ mod tests {
                 hanging_indent: false,
                 line_wrap_enabled: true,
                 grid_wrap: false,
+                tab_size: 4,
             }),
             prefix_sums: prefix,
             line_starts: starts,

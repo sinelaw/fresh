@@ -228,6 +228,7 @@ pub(super) fn scrollbar_visual_row_counts(
         hanging_indent,
         line_wrap_enabled: viewport.line_wrap_enabled,
         grid_wrap: viewport.grid_wrap,
+        tab_size: state.buffer_settings.tab_size as u16,
     };
     ensure_built(state, &key);
 

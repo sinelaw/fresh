@@ -105,6 +105,7 @@ fn current_keys(harness: &EditorTestHarness, line_start: usize) -> (LineWrapKey,
         hanging_indent,
         line_wrap_enabled: true,
         grid_wrap: false,
+        tab_size: harness.editor().active_state().buffer_settings.tab_size as u16,
         cursor_sig: 0,
     };
     let source = LineWrapKey {

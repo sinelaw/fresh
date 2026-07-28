@@ -118,6 +118,12 @@ pub(crate) fn compute_buffer_layout(
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
 
+    // New line-wrap-cache eviction generation for this render: entries
+    // this frame writes or reads (via the cached-window fast path) are
+    // protected from evicting each other, even when a single huge line's
+    // layout exceeds the cache's byte budget on its own.
+    state.line_wrap_cache.begin_frame();
+
     // Configure shared margin layout for this split's line number setting.
     state.margins.configure_for_line_numbers(show_line_numbers);
 

@@ -68,6 +68,7 @@ fn ensure_index(
             hanging_indent: false,
             line_wrap_enabled: true,
             grid_wrap: true,
+            tab_size: state.buffer_settings.tab_size as u16,
         };
         ensure_built(state, &key);
         return;
@@ -91,6 +92,7 @@ fn ensure_index(
         hanging_indent: wrap_config.hanging_indent,
         line_wrap_enabled: true,
         grid_wrap: false,
+        tab_size: state.buffer_settings.tab_size as u16,
     };
     ensure_built(state, &key);
 }
