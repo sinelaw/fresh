@@ -81,7 +81,8 @@ fn interrupted_local_workspace_is_restored_paused_on_launch() {
             plugin_name: "orchestrator".to_string(),
             key: "orchestrator.pending".to_string(),
             value: Some(pending),
-        });
+        })
+        .unwrap();
 
     // Push the just-set global state into the shared snapshot the plugin thread
     // reads before firing `ready`. In production this ordering is guaranteed —
