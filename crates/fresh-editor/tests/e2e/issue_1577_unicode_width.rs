@@ -377,7 +377,7 @@ fn test_issue_1577_full_ticket_sample_renders_consistently_at_137_cols_real_term
             .unwrap();
     }
 
-    let mut parser = vt100::Parser::new(TICKET_HEIGHT, TICKET_WIDTH, 0);
+    let mut parser = crate::common::vt::Parser::new(TICKET_HEIGHT, TICKET_WIDTH, 0);
     parser.process(&captured);
     let screen = parser.screen();
     let mut vt100_text = String::new();

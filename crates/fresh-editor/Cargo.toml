@@ -73,7 +73,7 @@ tree-sitter = ["fresh-languages/bundled-languages"]
 embed-plugins = ["plugins", "dep:include_dir", "dep:trash"]
 # Feature for optional development binaries (generate_schema, event_debug)
 # Includes ratatui for theme type definitions needed by schema generation
-dev-bins = ["dep:ratatui", "dep:vt100"]
+dev-bins = ["dep:ratatui", "dep:rio-vt"]
 # Runtime feature includes all heavy dependencies needed for the actual editor
 runtime = [
     "dep:crossterm",
@@ -271,7 +271,7 @@ include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.25", optional = true }
 trash = { version = "5.2.5", optional = true }
 open = { version = "5.3", optional = true }
-vt100 = { version = "0.16", optional = true }
+rio-vt = { version = "0.5.1", optional = true }
 
 # GUI mode — all windowing/GPU deps are encapsulated in fresh-gui
 fresh-gui = { workspace = true, optional = true }
@@ -280,7 +280,7 @@ fresh-gui = { workspace = true, optional = true }
 proptest = "1.9"
 tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }
-vt100 = "0.16"  # Virtual terminal emulator for testing real ANSI output
+rio-vt = "0.5.1"  # Terminal engine for parsing real ANSI output in tests
 ctor = "0.6.3"
 tiny_http = "0.12"  # Lightweight HTTP server for testing release checker
 unicode-segmentation = "1.12"  # For grapheme cluster testing

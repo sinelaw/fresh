@@ -2,7 +2,7 @@
 //!
 //! Asserts on the [`RoundTripGrid`] produced by piping the editor's
 //! emitted ANSI through the harness's existing `render_real()` →
-//! `vt100::Parser` → typed grid pipeline. Catches escape-emission
+//! `rio-vt` parser → typed grid pipeline. Catches escape-emission
 //! bugs (redundant SGR resets, incorrect cursor positioning,
 //! incremental-redraw correctness regressions) without committing
 //! to specific byte sequences.

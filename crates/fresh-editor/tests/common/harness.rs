@@ -522,7 +522,7 @@ pub struct EditorTestHarness {
 
     /// VT100 parser for testing real ANSI terminal output
     /// This simulates how a real terminal would interpret the escape sequences
-    vt100_parser: vt100::Parser,
+    vt100_parser: super::vt::Parser,
 
     /// Terminal dimensions for vt100
     term_width: u16,
@@ -776,7 +776,7 @@ impl EditorTestHarness {
             enable_shadow_validation: false,
             shadow_undo_stack: Vec::new(),
             shadow_redo_stack: Vec::new(),
-            vt100_parser: vt100::Parser::new(height, width, 0),
+            vt100_parser: super::vt::Parser::new(height, width, 0),
             term_width: width,
             term_height: height,
         };

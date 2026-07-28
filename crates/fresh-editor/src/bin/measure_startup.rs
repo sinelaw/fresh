@@ -3,7 +3,7 @@
 //! Spawns the editor in a real pseudo-terminal and measures time from exec
 //! until the marker string (default: "File") appears in the rendered screen.
 //!
-//! Uses the `vt100` crate as a virtual terminal emulator to process raw PTY
+//! Uses `rio-vt` as a virtual terminal emulator to process raw PTY
 //! output into actual screen contents, so we detect exactly what a user would
 //! see. A dedicated reader thread responds to crossterm's DA1 query with
 //! minimal latency.
@@ -157,7 +157,7 @@ fn run_once(
     let cols_copy = cols;
 
     let handle = std::thread::spawn(move || {
-        let mut parser = vt100::Parser::new(rows_copy, cols_copy, 0);
+        let mut parser = fresh::vt::Parser::new(rows_copy, cols_copy, 0);
         let mut raw_buf = Vec::new();
         let mut da1_replied = false;
         let mut first_output: Option<Instant> = None;

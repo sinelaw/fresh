@@ -20,6 +20,10 @@ pub mod git_test_helper;
 pub mod harness;
 #[cfg(test)]
 #[allow(dead_code)]
+#[path = "../../src/vt.rs"]
+pub mod vt;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod locale_lock;
 #[cfg(test)]
 #[allow(dead_code)]

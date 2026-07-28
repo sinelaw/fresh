@@ -33,6 +33,11 @@ pub mod workspace;
 pub mod model;
 pub mod primitives;
 
+// vt100-shaped terminal parser over rio-vt, for ANSI-output tests and the
+// startup-measurement binary.
+#[cfg(any(test, feature = "dev-bins"))]
+pub mod vt;
+
 // Runtime-only modules (heavy dependencies, platform-specific)
 #[cfg(feature = "runtime")]
 pub mod app;

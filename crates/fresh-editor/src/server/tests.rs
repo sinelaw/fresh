@@ -1040,7 +1040,7 @@ mod integration_tests {
     /// Parse accumulated ANSI output through a VT100 terminal emulator
     /// and return the visible screen text (all rows joined by newlines).
     fn vt100_screen_text(output: &[u8]) -> String {
-        let mut parser = vt100::Parser::new(24, 80, 0);
+        let mut parser = crate::vt::Parser::new(24, 80, 0);
         parser.process(output);
         let screen = parser.screen();
         let mut result = String::new();
