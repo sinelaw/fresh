@@ -1509,6 +1509,48 @@ impl GrammarRegistry {
         &self.loaded_grammar_paths
     }
 
+    /// Grammar files declared by `[languages.<id>] textmate_grammar = "…"`.
+    ///
+    /// The language's own `extensions` come along so the loaded grammar is
+    /// reachable by file extension, the same way plugin-registered grammars are.
+    pub fn config_grammar_specs(
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) -> Vec<GrammarSpec> {
+        let mut specs: Vec<GrammarSpec> = languages
+            .iter()
+            .filter_map(|(id, lc)| {
+                Some(GrammarSpec {
+                    language: id.clone(),
+                    path: lc.textmate_grammar.clone()?,
+                    extensions: lc.extensions.clone(),
+                })
+            })
+            .collect();
+        // `languages` is a HashMap, so fix an order — otherwise two grammars
+        // claiming the same extension would win at random between runs.
+        specs.sort_by(|a, b| a.language.cmp(&b.language));
+        specs
+    }
+
+    /// Load the `[languages]` block into `registry`: first any
+    /// `textmate_grammar` files (a full syntax-set rebuild, so only when at
+    /// least one is configured), then the catalog config — which the rebuild
+    /// drops and so has to be re-applied after it.
+    pub fn apply_languages(
+        registry: &mut Arc<Self>,
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) {
+        let specs = Self::config_grammar_specs(languages);
+        if !specs.is_empty() {
+            if let Some(rebuilt) = Self::with_additional_grammars(registry, &specs) {
+                *registry = Arc::new(rebuilt);
+            }
+        }
+        Arc::get_mut(registry)
+            .expect("grammar registry Arc must be uniquely owned when applying language config")
+            .apply_language_config(languages);
+    }
+
     /// Create a new registry with additional grammar files
     ///
     /// This builds a new GrammarRegistry that includes all grammars from

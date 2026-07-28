@@ -1499,9 +1499,10 @@ impl Editor {
         // channel, so we're the sole owner here. Assert rather
         // than silently drop config.
         let mut registry = registry;
-        std::sync::Arc::get_mut(&mut registry)
-            .expect("freshly-received grammar registry Arc must be uniquely owned")
-            .apply_language_config(&self.config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut registry,
+            &self.config.languages,
+        );
         crate::config::reload_indent_overrides(&self.config.languages);
         self.grammar_registry = registry;
         // Propagate the new grammar registry to every window's
