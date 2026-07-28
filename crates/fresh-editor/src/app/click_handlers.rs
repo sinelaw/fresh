@@ -240,7 +240,7 @@ impl Editor {
         #[cfg(feature = "plugins")]
         if let Some(brow) = mc_buffer_row {
             if let Some(target) = self.line_target_at(buffer_id, brow as usize) {
-                self.follow_line_target(target);
+                self.follow_line_target(target, split_id);
                 return Ok(());
             }
         }

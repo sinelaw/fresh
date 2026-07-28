@@ -1074,7 +1074,8 @@ impl Editor {
             let buffer_id = self.active_buffer();
             if let Some(line) = self.cursor_line_in_active_buffer() {
                 if let Some(target) = self.line_target_at(buffer_id, line) {
-                    self.follow_line_target(target);
+                    let source = self.active_split_id();
+                    self.follow_line_target(target, source);
                     return Ok(());
                 }
             }
