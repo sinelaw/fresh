@@ -103,57 +103,71 @@ fn fg_of(harness: &EditorTestHarness, needle: &str) -> Option<ratatui::style::Co
     harness.get_cell_style(col, row).map(|s| s.fg)?
 }
 
-/// A single-line JSON whose tail carries a string and a number, behind a
-/// padding string long enough that the tail is over a hundred KB in. After
-/// scrolling to the bottom, the two tail tokens must render in their own
-/// syntax colours.
+/// A single-line JSON of ascending `"M######": 424242` pairs. After a
+/// scrollbar jump deep into the line, the key on screen (a string) and the
+/// value next to it (a number) must still render in different syntax
+/// colours.
 ///
 /// The bug asked the highlighter for a byte window anchored at `top_byte`
 /// and one screen row wide (`0..952` on the issue's file) no matter how far
-/// the viewport had scrolled into the line, so every row past the first few
-/// wrapped ones was painted by whatever single span happened to overlap
-/// that window — uniformly, with no structure — or left undecorated.
+/// the viewport had scrolled into the line. Every row past the first few
+/// wrapped ones was then painted by whatever single span happened to
+/// overlap that window — uniformly, with no structure — or, once nothing
+/// overlapped, left undecorated, which is what makes both tokens come back
+/// the same colour here.
+///
+/// The marker doubles as proof the viewport really moved: reading it off
+/// the screen fails loudly if the jump left the view at the top of the
+/// line, where highlighting worked even before the fix.
 #[test]
-fn wrapped_long_line_keeps_syntax_colours_when_scrolled_to_the_tail() {
+fn wrapped_long_line_keeps_syntax_colours_when_scrolled_into() {
     const WIDTH: u16 = 100;
     const HEIGHT: u16 = 30;
+    const PAIRS: u32 = 10_000;
 
     let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
     let dir = harness.project_dir().unwrap();
     let path = dir.join("one_line.json");
 
-    // ~150 KB of padding inside one JSON string, then a string value and a
-    // numeric value. No trailing newline: the whole file is one line, and the
-    // tail sits well past the first screenful of wrap segments.
-    let padding = "pad ".repeat(37_500);
-    let content = format!(r#"{{"pad":"{padding}","tag":"ZZSTRINGZZ","num":424242}}"#);
-    std::fs::write(&path, &content).unwrap();
+    // ~170 KB on one line, no trailing newline. Every wrapped row carries
+    // several key/value pairs, so whichever part of the line the viewport
+    // lands on has both a string and a number on screen.
+    let mut body = String::with_capacity(PAIRS as usize * 18);
+    for i in 0..PAIRS {
+        if i > 0 {
+            body.push(',');
+        }
+        body.push_str(&format!(r#""M{i:06}":424242"#));
+    }
+    std::fs::write(&path, format!("{{{body}}}")).unwrap();
 
     harness.open_file(&path).unwrap();
     harness.render().unwrap();
 
-    // Jump to the bottom of the scrollbar track so the tail is on screen.
-    let (_, last_content_row) = harness.content_area_rows();
-    harness
-        .mouse_click(scrollbar_col(WIDTH), last_content_row as u16)
-        .unwrap();
+    // Jump two thirds down the scrollbar track — far enough in that the old
+    // `0..952` window covers nothing that is on screen.
+    harness.mouse_click(scrollbar_col(WIDTH), 20).unwrap();
     harness.render().unwrap();
 
     let screen = harness.screen_to_string();
+    let marker = first_marker(&screen)
+        .unwrap_or_else(|| panic!("no marker visible after the scrollbar jump:\n{screen}"));
     assert!(
-        screen.contains("ZZSTRINGZZ") && screen.contains("424242"),
-        "precondition: the line's tail should be visible after a scrollbar \
-         jump to the bottom. Screen:\n{screen}"
+        marker > 1_000,
+        "precondition: the scrollbar jump should land well into the line, \
+         past the first screenful of wrap segments (top marker is M{marker:06}). \
+         Screen:\n{screen}"
     );
 
-    let string_fg = fg_of(&harness, "ZZSTRINGZZ")
-        .unwrap_or_else(|| panic!("no style for the tail string. Screen:\n{screen}"));
+    let key = format!("M{marker:06}");
+    let string_fg = fg_of(&harness, &key)
+        .unwrap_or_else(|| panic!("no style for the key string. Screen:\n{screen}"));
     let number_fg = fg_of(&harness, "424242")
-        .unwrap_or_else(|| panic!("no style for the tail number. Screen:\n{screen}"));
+        .unwrap_or_else(|| panic!("no style for the numeric value. Screen:\n{screen}"));
 
     assert_ne!(
         string_fg, number_fg,
-        "after scrolling into a soft-wrapped line the tail's string and number \
+        "after scrolling into a soft-wrapped line the visible key and value \
          must still be syntax-coloured differently (string {string_fg:?}, \
          number {number_fg:?}) — identical colours mean the decoration pass is \
          still describing the top of the line. Screen:\n{screen}"
