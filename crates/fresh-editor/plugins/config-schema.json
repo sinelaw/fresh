@@ -1143,7 +1143,7 @@
       "type": "object",
       "properties": {
         "respect_gitignore": {
-          "description": "Whether to respect .gitignore files",
+          "description": "Whether `.gitignore` rules apply in the file explorer at all.\nWhen disabled, ignored entries are neither hidden nor grayed out and\nthe \"show gitignored files\" toggle below has nothing left to hide.\nDefault: true",
           "type": "boolean",
           "default": true
         },

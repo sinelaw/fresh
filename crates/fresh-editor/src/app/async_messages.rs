@@ -1466,6 +1466,7 @@ impl Editor {
         let defaults = crate::app::file_explorer::FileExplorerViewDefaults {
             show_hidden: self.config.file_explorer.show_hidden,
             show_gitignored: self.config.file_explorer.show_gitignored,
+            respect_gitignore: self.config.file_explorer.respect_gitignore,
             compact_directories: self.config.file_explorer.compact_directories,
             custom_ignore_patterns: self.config.file_explorer.custom_ignore_patterns.clone(),
         };
