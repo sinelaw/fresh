@@ -2370,8 +2370,6 @@ impl Editor {
             custom_contexts: command.custom_contexts,
             source: CommandSource::Plugin(command.plugin_name),
             terminal_bypass: command.terminal_bypass,
-            args: command.args,
-            returns: command.returns,
         };
 
         tracing::debug!(

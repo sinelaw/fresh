@@ -100,9 +100,9 @@ pub struct EditorServer {
     next_wait_id: u64,
     /// Maps wait_id → client_id for clients waiting on file events
     waiting_clients: std::collections::HashMap<u64, u64>,
-    /// Maps a dispatched command's request_id → the client waiting for its
-    /// result. A plugin command settles on the plugin thread well after it is
-    /// dispatched, so its `CommandResult` is written when the outcome arrives
+    /// Maps a running script's request_id → the client waiting for its
+    /// result. A script settles on the plugin thread well after it is
+    /// submitted, so its `ScriptResult` is written when the outcome arrives
     /// rather than at dispatch time.
     pending_commands: std::collections::HashMap<u64, u64>,
     /// Current authority. Carried across editor rebuilds so plugin-
@@ -205,8 +205,8 @@ struct ConnectedClient {
     /// If set, this client is waiting for a --wait completion signal
     wait_id: Option<u64>,
     /// Per-workspace capability token presented in this client's `Hello`
-    /// (from `$FRESH_CMD_TOKEN`). Authorizes `ListCommands` / `RunCommand`
-    /// against the token's allowlist; `None` for clients that carry no token.
+    /// (from `$FRESH_CMD_TOKEN`). Authorizes `RunScript` against the token's
+    /// grant; `None` for clients that carry no token.
     cmd_token: Option<String>,
 }
 
@@ -548,9 +548,9 @@ impl EditorServer {
                     needs_render = true;
                 }
 
-                // Answer command-channel callers whose plugin command has now
-                // settled: the handler's return value becomes the reply's
-                // `output` (what `fresh --cmd cmd run` prints).
+                // Answer script callers whose script has now settled: what
+                // the script returned becomes the reply's `output` (what
+                // `fresh --cmd script run` prints).
                 let settled = {
                     let pending = &self.pending_commands;
                     command_access::take_completed_where(|id| pending.contains_key(&id))
@@ -560,7 +560,7 @@ impl EditorServer {
                         continue;
                     };
                     if let Some(client) = self.clients.iter_mut().find(|c| c.id == client_id) {
-                        let msg = serde_json::to_string(&ServerControl::CommandResult {
+                        let msg = serde_json::to_string(&ServerControl::ScriptResult {
                             ok: outcome.ok,
                             error: outcome.error,
                             output: outcome.output,
@@ -1419,43 +1419,16 @@ impl EditorServer {
                         }
                     }
                 }
-                ClientControl::ListCommands { include_args } => {
-                    // Scope the reply to the caller's token allowlist; a
-                    // client with no/unknown token gets an empty list (the
-                    // channel must not double as a capability probe).
+                ClientControl::RunScript { source } => {
                     let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
-                    let commands = match (
-                        token.as_deref().and_then(command_access::lookup),
-                        self.editor.as_ref(),
-                    ) {
-                        (Some(grant), Some(editor)) => {
-                            command_access::list_allowed_commands(editor, &grant, include_args)
-                        }
-                        _ => Vec::new(),
-                    };
-                    if let Some(client) = self.clients.get_mut(idx) {
-                        let json = serde_json::to_string(&ServerControl::CommandList { commands })
-                            .unwrap_or_default();
-                        // Best-effort reply
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = client.conn.write_control(&json);
-                    }
-                }
-                ClientControl::RunCommand { id, args } => {
-                    let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
-                    let dispatch = command_access::run_command_by_id(
-                        self.editor.as_mut(),
-                        token.as_deref(),
-                        &id,
-                        &args,
-                    );
+                    let dispatch =
+                        command_access::run_script(self.editor.as_mut(), token.as_deref(), &source);
                     match dispatch {
+                        // Only a refusal settles here — a script that started
+                        // answers for itself.
                         command_access::CommandDispatch::Settled { ok, error, output } => {
-                            if ok {
-                                resize_occurred = true; // Force re-render
-                            }
                             if let Some(client) = self.clients.get_mut(idx) {
-                                let json = serde_json::to_string(&ServerControl::CommandResult {
+                                let json = serde_json::to_string(&ServerControl::ScriptResult {
                                     ok,
                                     error,
                                     output,
@@ -1466,7 +1439,7 @@ impl EditorServer {
                                 let _ = client.conn.write_control(&json);
                             }
                         }
-                        // A plugin handler runs on the plugin thread and settles
+                        // The script runs on the plugin thread and settles
                         // later; remember which client is waiting and answer it
                         // when the outcome comes back (see the drain in `run`).
                         // Same shape as `waiting_clients` for `--wait` opens.
@@ -1474,7 +1447,7 @@ impl EditorServer {
                             if let Some(client) = self.clients.get(idx) {
                                 self.pending_commands.insert(request_id, client.id);
                             }
-                            resize_occurred = true; // The command may change the view
+                            resize_occurred = true; // The script may change the view
                         }
                     }
                 }

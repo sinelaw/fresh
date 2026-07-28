@@ -272,7 +272,7 @@ fn new_local_session_is_born_with_its_own_local_authority() -> anyhow::Result<()
             born_authority,
             None,
             None,
-            None,
+            false,
         )
         .map_err(anyhow::Error::msg)?;
 

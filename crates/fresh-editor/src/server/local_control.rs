@@ -64,22 +64,13 @@ enum LocalControlRequest {
     },
     /// Open a directory as a new, focused orchestrator window.
     OpenWindow { path: PathBuf },
-    /// Enumerate the editor commands `token` is allowed to run. The editor
-    /// thread computes the reply (it owns the command registry) and sends it
-    /// back on `reply`, where the parked handler thread writes it to the
-    /// client connection.
-    ListCommands {
+    /// Evaluate a script on the workspace `token` is bound to. The editor
+    /// thread does the work (it owns the plugin manager) and answers on
+    /// `reply`, where the parked handler thread writes it to the client
+    /// connection.
+    RunScript {
         token: Option<String>,
-        include_args: bool,
-        reply: Sender<ServerControl>,
-    },
-    /// Dispatch one command by id on the workspace `token` is bound to. As
-    /// with `ListCommands`, the editor thread does the work and answers on
-    /// `reply`.
-    RunCommand {
-        token: Option<String>,
-        id: String,
-        args: HashMap<String, String>,
+        source: String,
         reply: Sender<ServerControl>,
     },
 }
@@ -92,10 +83,9 @@ struct Shared {
     /// `wait_id` -> notifier that wakes the parked handler thread once the
     /// editor reports the matching buffer closed.
     waiters: Arc<Mutex<HashMap<u64, Sender<()>>>>,
-    /// `request_id` -> the parked handler thread's reply channel, for a plugin
-    /// command whose handler is still running. A plugin command settles on the
-    /// plugin thread well after dispatch, so its reply is held here until the
-    /// outcome arrives.
+    /// `request_id` -> the parked handler thread's reply channel, for a script
+    /// that is still running. A script settles on the plugin thread well after
+    /// submission, so its reply is held here until the outcome arrives.
     command_replies: Arc<Mutex<HashMap<u64, Sender<ServerControl>>>>,
 }
 
@@ -262,39 +252,22 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
                     tracing::warn!("OpenWindow ignored: path must be absolute: {:?}", path);
                 }
             }
-            Ok(LocalControlRequest::ListCommands {
+            Ok(LocalControlRequest::RunScript {
                 token,
-                include_args,
+                source,
                 reply,
             }) => {
-                let commands = match token.as_deref().and_then(command_access::lookup) {
-                    Some(grant) => {
-                        command_access::list_allowed_commands(editor, &grant, include_args)
-                    }
-                    None => Vec::new(),
-                };
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = reply.send(ServerControl::CommandList { commands });
-            }
-            Ok(LocalControlRequest::RunCommand {
-                token,
-                id,
-                args,
-                reply,
-            }) => {
-                match command_access::run_command_by_id(Some(editor), token.as_deref(), &id, &args)
-                {
+                match command_access::run_script(Some(editor), token.as_deref(), &source) {
+                    // Only a refusal settles here — a script that started
+                    // answers for itself.
                     command_access::CommandDispatch::Settled { ok, error, output } => {
-                        if ok {
-                            changed = true;
-                        }
                         #[allow(clippy::let_underscore_must_use)]
-                        let _ = reply.send(ServerControl::CommandResult { ok, error, output });
+                        let _ = reply.send(ServerControl::ScriptResult { ok, error, output });
                     }
-                    // A plugin handler settles on the plugin thread, long after
-                    // dispatch. Park the client's reply channel under its
+                    // The script settles on the plugin thread, long after
+                    // submission. Park the client's reply channel under its
                     // request id; the drain below answers it once the outcome
-                    // arrives, with whatever the handler returned.
+                    // arrives, with whatever the script returned.
                     command_access::CommandDispatch::Pending { request_id } => {
                         shared
                             .command_replies
@@ -309,7 +282,7 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
         }
     }
 
-    // Answer callers whose plugin command has settled since the last pump.
+    // Answer callers whose script has settled since the last pump.
     // Scoped to this host's own waiters: the daemon drains the same queue for
     // its IPC clients, and an unscoped drain would let each swallow the other's
     // outcomes.
@@ -325,7 +298,7 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
             .remove(&outcome.request_id);
         if let Some(reply) = reply {
             #[allow(clippy::let_underscore_must_use)]
-            let _ = reply.send(ServerControl::CommandResult {
+            let _ = reply.send(ServerControl::ScriptResult {
                 ok: outcome.ok,
                 error: outcome.error,
                 output: outcome.output,
@@ -400,7 +373,7 @@ fn handle_connection(
     let mut reader = std::io::BufReader::new(&conn.control);
 
     // The capability token (from the client's `Hello`) is captured once and
-    // reused for every `ListCommands` / `RunCommand` on this connection.
+    // reused for every `RunScript` on this connection.
     let cmd_token = match handshake(&conn, &mut reader) {
         Ok(token) => token,
         Err(e) => {
@@ -467,37 +440,21 @@ fn handle_connection(
                     waiters.lock().unwrap().remove(&id);
                 }
             }
-            ClientControl::ListCommands { include_args } => {
-                // Round-trip to the editor thread (it owns the registry) and
-                // relay its answer back to the client. A recv error means the
-                // editor exited first; drop the reply in that case.
+            ClientControl::RunScript { source } => {
+                // Round-trip to the editor thread (it owns the plugin manager)
+                // and relay its answer back to the client.
                 let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
                 #[allow(clippy::let_underscore_must_use)]
-                let _ = req_tx.send(LocalControlRequest::ListCommands {
+                let _ = req_tx.send(LocalControlRequest::RunScript {
                     token: cmd_token.clone(),
-                    include_args,
+                    source,
                     reply: reply_tx,
                 });
-                if let Ok(reply) = reply_rx.recv() {
-                    let json = serde_json::to_string(&reply).unwrap_or_default();
-                    #[allow(clippy::let_underscore_must_use)]
-                    let _ = conn.write_control(&json);
-                }
-            }
-            ClientControl::RunCommand { id, args } => {
-                let (reply_tx, reply_rx) = mpsc::channel::<ServerControl>();
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = req_tx.send(LocalControlRequest::RunCommand {
-                    token: cmd_token.clone(),
-                    id,
-                    args,
-                    reply: reply_tx,
-                });
-                // Bounded, unlike the other requests: a plugin command's answer
-                // comes from a handler that could in principle never settle, and
-                // an unbounded wait would leak this thread (and the client's
-                // connection) for the life of the editor. The client gives up
-                // long before this; the ceiling is only a backstop.
+                // Bounded, unlike the other requests: a script could in
+                // principle never settle, and an unbounded wait would leak this
+                // thread (and the client's connection) for the life of the
+                // editor. The client gives up long before this; the ceiling is
+                // only a backstop.
                 if let Ok(reply) = reply_rx.recv_timeout(COMMAND_REPLY_CEILING) {
                     let json = serde_json::to_string(&reply).unwrap_or_default();
                     #[allow(clippy::let_underscore_must_use)]
@@ -515,7 +472,7 @@ fn handle_connection(
 /// same shape as the daemon server's handshake, minus the data-channel
 /// terminal setup (nested clients never render). Returns the client's
 /// capability token (`cmd_token` from the `Hello`, `None` if absent) so the
-/// command loop can authorize `ListCommands` / `RunCommand`.
+/// command loop can authorize `RunScript`.
 ///
 /// Shares the connection's [`BufReader`] with the post-handshake command
 /// loop so no buffered bytes are lost between the two.
@@ -847,8 +804,7 @@ mod tests {
         match req {
             LocalControlRequest::OpenFiles { .. } => "OpenFiles",
             LocalControlRequest::OpenWindow { .. } => "OpenWindow",
-            LocalControlRequest::ListCommands { .. } => "ListCommands",
-            LocalControlRequest::RunCommand { .. } => "RunCommand",
+            LocalControlRequest::RunScript { .. } => "RunScript",
         }
     }
 
@@ -871,30 +827,29 @@ mod tests {
         conn
     }
 
-    /// A `RunCommand` is forwarded to the editor thread carrying the
-    /// connection's `cmd_token` (captured from the `Hello`) and its id — the
-    /// thread that owns the editor is the only place it can be authorized and
-    /// dispatched, so the handler round-trips it there.
+    /// A `RunScript` is forwarded to the editor thread carrying the
+    /// connection's `cmd_token` (captured from the `Hello`) and its source —
+    /// the thread that owns the editor is the only place it can be authorized
+    /// and evaluated, so the handler round-trips it there.
     #[test]
-    fn run_command_forwards_request_with_token() {
+    fn run_script_forwards_request_with_token() {
         let dir = TempDir::new().unwrap();
-        let paths = SocketPaths::for_session_name_in_dir("run-cmd-token-test", dir.path());
+        let paths = SocketPaths::for_session_name_in_dir("run-script-token-test", dir.path());
         let bound = bind_and_spawn(paths.clone()).expect("bind");
 
         let conn = connect_client_with_token(&paths, "tok-123");
-        let msg = ClientControl::RunCommand {
-            id: "split_vertical".to_string(),
-            args: HashMap::new(),
+        let msg = ClientControl::RunScript {
+            source: "return 1;".to_string(),
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
 
         match bound.req_rx.recv().expect("request forwarded") {
-            LocalControlRequest::RunCommand { token, id, .. } => {
+            LocalControlRequest::RunScript { token, source, .. } => {
                 assert_eq!(token.as_deref(), Some("tok-123"));
-                assert_eq!(id, "split_vertical");
+                assert_eq!(source, "return 1;");
             }
-            other => panic!("expected RunCommand, got {}", req_kind(&other)),
+            other => panic!("expected RunScript, got {}", req_kind(&other)),
         }
 
         bound.shutdown.store(true, Ordering::SeqCst);
@@ -928,39 +883,40 @@ mod tests {
         (editor, temp)
     }
 
-    /// The full `fresh --cmd cmd list` round trip against a host that drains the
-    /// channel: the request reaches the editor thread, `pump` answers it from
-    /// the command registry scoped to the caller's token, and the client reads a
-    /// `CommandList`.
+    /// The full `fresh --cmd script run` round trip against a host that drains
+    /// the channel: the request reaches the editor thread, `pump` authorizes it
+    /// and hands it to the runtime, and the client reads a `ScriptResult`.
+    ///
+    /// The editor here is built without plugins, so the answer is the runtime's
+    /// absence rather than a script's value — which is exactly the assertion
+    /// that matters. Everything up to the runtime handoff had to work for any
+    /// reply to arrive at all, and that wiring is what regressed.
     ///
     /// Regression: only the TUI loop and the standalone web bridge pumped. The
     /// GUI tick and the session daemon (what `fresh --web` and every attached
     /// terminal run) did not, so the request sat in the queue, the handler
-    /// thread parked on a reply that was never produced, and `fresh --cmd cmd
-    /// list` hung forever in the agent's terminal.
+    /// thread parked on a reply that was never produced, and the CLI hung
+    /// forever in the agent's terminal.
     #[test]
-    fn list_commands_is_answered_when_the_host_pumps() {
+    fn script_is_answered_when_the_host_pumps() {
         let dir = TempDir::new().unwrap();
-        let paths = SocketPaths::for_session_name_in_dir("list-cmd-pump-test", dir.path());
+        let paths = SocketPaths::for_session_name_in_dir("script-pump-test", dir.path());
         let bound = bind_and_spawn(paths.clone()).expect("bind");
         let shutdown = bound.shutdown.clone();
         let shared = shared_for(bound);
 
-        let token = command_access::mint(command_access::Grant::new(
-            None,
-            ["split_vertical".to_string()],
-        ));
+        let token = command_access::mint(command_access::Grant::new(None, true));
 
         // The client runs on its own thread with a blocking read, exactly like
         // the real CLI; this thread plays the host loop below.
-        let (done_tx, done_rx) = mpsc::channel::<Vec<String>>();
+        let (done_tx, done_rx) = mpsc::channel::<(bool, Option<String>)>();
         let client_paths = paths.clone();
         let client_token = token.clone();
         let client = std::thread::spawn(move || {
             let conn = connect_client_with_token(&client_paths, &client_token);
             conn.write_control(
-                &serde_json::to_string(&ClientControl::ListCommands {
-                    include_args: false,
+                &serde_json::to_string(&ClientControl::RunScript {
+                    source: "return editor.activeWindow();".to_string(),
                 })
                 .unwrap(),
             )
@@ -969,31 +925,30 @@ mod tests {
                 .read_control()
                 .expect("read reply")
                 .expect("reply present");
-            let ids = match serde_json::from_str::<ServerControl>(&line).expect("parse reply") {
-                ServerControl::CommandList { commands } => {
-                    commands.into_iter().map(|c| c.id).collect()
-                }
-                other => panic!("expected CommandList, got {:?}", other),
+            let got = match serde_json::from_str::<ServerControl>(&line).expect("parse reply") {
+                ServerControl::ScriptResult { ok, error, .. } => (ok, error),
+                other => panic!("expected ScriptResult, got {:?}", other),
             };
             #[allow(clippy::let_underscore_must_use)]
-            let _ = done_tx.send(ids);
+            let _ = done_tx.send(got);
         });
 
         // Host loop: pump until the client reports. Unbounded on purpose — with
         // the regression the reply never comes and the external runner times the
         // test out, which is the signal we want.
         let (mut editor, _temp) = pump_test_editor();
-        let ids = loop {
+        let (ok, error) = loop {
             pump_shared(&shared, &mut editor);
-            if let Ok(ids) = done_rx.try_recv() {
-                break ids;
+            if let Ok(got) = done_rx.try_recv() {
+                break got;
             }
         };
 
-        assert_eq!(
-            ids,
-            vec!["split_vertical".to_string()],
-            "the reply must carry exactly the commands the token allows"
+        assert!(!ok, "a plugin-less editor cannot run a script");
+        let error = error.unwrap_or_default();
+        assert!(
+            !error.contains("not authorized") && !error.contains("granted"),
+            "the grant must have been accepted; refused with: {error}"
         );
 
         client.join().unwrap();
@@ -1010,14 +965,14 @@ mod tests {
     #[test]
     fn client_read_times_out_when_the_host_never_pumps() {
         let dir = TempDir::new().unwrap();
-        let paths = SocketPaths::for_session_name_in_dir("list-cmd-nopump-test", dir.path());
+        let paths = SocketPaths::for_session_name_in_dir("script-nopump-test", dir.path());
         // Note: no `pump` — `bound` holds the receiving end and never drains it.
         let bound = bind_and_spawn(paths.clone()).expect("bind");
 
         let conn = connect_client(&paths);
         conn.write_control(
-            &serde_json::to_string(&ClientControl::ListCommands {
-                include_args: false,
+            &serde_json::to_string(&ClientControl::RunScript {
+                source: "return 1;".to_string(),
             })
             .unwrap(),
         )
@@ -1035,26 +990,25 @@ mod tests {
     /// A client that presents no token still forwards the request, but with
     /// `token: None`; the editor-thread authorization then refuses it. This
     /// asserts the no-token path is wired (the refusal itself is unit-tested
-    /// against `command_access::run_command_by_id`).
+    /// against `command_access::run_script`).
     #[test]
-    fn run_command_without_token_forwards_none() {
+    fn run_script_without_token_forwards_none() {
         let dir = TempDir::new().unwrap();
-        let paths = SocketPaths::for_session_name_in_dir("run-cmd-notoken-test", dir.path());
+        let paths = SocketPaths::for_session_name_in_dir("run-script-notoken-test", dir.path());
         let bound = bind_and_spawn(paths.clone()).expect("bind");
 
         let conn = connect_client(&paths);
-        let msg = ClientControl::RunCommand {
-            id: "split_vertical".to_string(),
-            args: HashMap::new(),
+        let msg = ClientControl::RunScript {
+            source: "return 1;".to_string(),
         };
         conn.write_control(&serde_json::to_string(&msg).unwrap())
             .unwrap();
 
         match bound.req_rx.recv().expect("request forwarded") {
-            LocalControlRequest::RunCommand { token, .. } => {
+            LocalControlRequest::RunScript { token, .. } => {
                 assert!(token.is_none());
             }
-            other => panic!("expected RunCommand, got {}", req_kind(&other)),
+            other => panic!("expected RunScript, got {}", req_kind(&other)),
         }
 
         bound.shutdown.store(true, Ordering::SeqCst);

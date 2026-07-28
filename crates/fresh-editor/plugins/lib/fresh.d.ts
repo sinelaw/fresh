@@ -818,14 +818,17 @@ type CreateWindowWithTerminalOptions = {
 	*/
 	env?: { [key in string] : string };
 	/**
-	* When `Some`, the host mints an unforgeable capability token
-	* bound to the NEW window and this allowlist of command ids,
-	* and injects it into the spawned terminal as `FRESH_CMD_TOKEN`.
-	* A client presenting that token over the control socket may run
-	* exactly the listed command ids against this window. `None` (the
-	* default) mints no token and injects nothing.
+	* When set, the host mints an unforgeable capability token bound
+	* to the NEW window and injects it into the spawned terminal as
+	* `FRESH_CMD_TOKEN`. A client presenting that token over the
+	* control socket may drive this window by submitting scripts.
+	* `false` (the default) mints no token and injects nothing.
+	*
+	* The grant is all-or-nothing on purpose: a script can call
+	* anything the plugin API exposes, so a narrower list would
+	* describe a boundary that isn't there.
 	*/
-	commandAllowlist?: Array<string>;
+	allowScript?: boolean;
 };
 type SessionWithTerminalResult = {
 	/**
@@ -928,16 +931,20 @@ type CreateTerminalOptions = {
 	*/
 	resume?: Array<string>;
 	/**
-	* When `Some`, the host mints an unforgeable capability token
-	* bound to the TARGET window (the active window, or `windowId`
-	* when set) and this allowlist of command ids, and injects it
-	* into the spawned terminal as `FRESH_CMD_TOKEN` (alongside
-	* `FRESH_SESSION`). This lets an agent spawned into an *existing*
-	* window drive exactly those commands against it — the same
-	* capability a `createWindowWithTerminal` agent gets. `None` (the
-	* default) mints no token and injects nothing.
+	* When set, the host mints an unforgeable capability token bound
+	* to the TARGET window (the active window, or `windowId` when
+	* set) and injects it into the spawned terminal as
+	* `FRESH_CMD_TOKEN` (alongside `FRESH_SESSION`). This lets an
+	* agent spawned into an *existing* window drive it by submitting
+	* scripts — the same capability a `createWindowWithTerminal`
+	* agent gets. `false` (the default) mints no token and injects
+	* nothing.
+	*
+	* The grant is all-or-nothing on purpose: a script can call
+	* anything the plugin API exposes, so a narrower list would
+	* describe a boundary that isn't there.
 	*/
-	commandAllowlist?: Array<string>;
+	allowScript?: boolean;
 };
 type CursorInfo = {
 	/**
@@ -2254,12 +2261,6 @@ interface EditorAPI {
 	*/
 	registerCommand(name: string, description: string, handlerName: string, context?: string | null, options?: {
 		terminalBypass?: boolean;
-		args?: {
-			name: string;
-			required?: boolean;
-			description?: string;
-		}[];
-		returns?: string;
 	} | null): boolean;
 	/**
 	* Unregister a command by name

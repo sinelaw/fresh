@@ -94,7 +94,7 @@ fn spawn_agent_terminal(harness: &mut EditorTestHarness, launch: &[&str], resume
             title: None,
             resume: resume.map(argv),
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .expect("agent terminal should spawn");

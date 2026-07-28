@@ -406,8 +406,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         registry.register(custom_command.clone());
@@ -430,8 +428,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         registry.register(custom_command);
@@ -453,8 +449,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         let command2 = Command {
@@ -465,8 +459,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         registry.register(command1);
@@ -491,8 +483,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         registry.register(Command {
@@ -503,8 +493,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         registry.register(Command {
@@ -515,8 +503,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         assert_eq!(registry.plugin_command_count(), 3);
@@ -545,8 +531,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         let empty_contexts = std::collections::HashSet::new();
@@ -583,8 +567,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         registry.register(Command {
@@ -595,8 +577,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         // In normal context, "Popup Only" should be disabled
@@ -642,8 +622,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         registry.register(Command {
@@ -654,8 +632,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         let all = registry.get_all();
@@ -680,8 +656,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         // Should now find the custom version
@@ -786,8 +760,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         registry.register(Command {
@@ -798,8 +770,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Builtin,
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         });
 
         // Use one built-in command
@@ -897,8 +867,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         let cmd_b = Command {
@@ -909,8 +877,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-b".to_string()),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         // First registration succeeds
@@ -939,8 +905,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         let cmd2 = Command {
@@ -951,8 +915,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         assert!(registry.try_register(cmd1).is_ok());
@@ -976,8 +938,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-a".to_string()),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         let cmd_b = Command {
@@ -988,8 +948,6 @@ mod tests {
             custom_contexts: vec![],
             source: CommandSource::Plugin("plugin-b".to_string()),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         };
 
         // Plugin A registers

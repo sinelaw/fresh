@@ -5385,7 +5385,7 @@ async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
       label,
       cwd: projectRoot,
       // Always mint the workspace's capability token (see runLocalCreate).
-      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
+      allowScript: FRESH_CLI_ALLOW_SCRIPT,
     });
     // `createWindowWithTerminal` fires `window_created`, which reconciles
     // the new window into the model; set it eagerly too so the immediate
@@ -6526,40 +6526,34 @@ const AGENT_REGISTRY: AgentEntry[] = [
   },
 ];
 
-// Command ids the workspace's capability token is minted for. Conservative and
-// safe: these two back the `fresh --cmd split` alias, letting a process in the
-// workspace split its own view without exposing the full command surface.
-// Passed to the host as `commandAllowlist` on *every* workspace creation, which
-// binds the minted `FRESH_CMD_TOKEN` to exactly these ids on the new window —
-// the token is always present; the "Teach Fresh CLI" toggle only controls
-// whether the agent is *told* about it (the system-prompt injection).
-// `orchestrator_agent_run` / `orchestrator_agent_new` are the headless twins of
-// the Run-Agent and New-Workspace dialogs (see "Headless twins of the dialog"),
-// so an agent can start a sibling agent the same way a human does. Both are
-// scoped to the calling workspace by the token, like every other entry here.
-const FRESH_CLI_DEFAULT_ALLOWLIST = [
-  "split_vertical",
-  "split_horizontal",
-  "orchestrator_agent_run",
-  "orchestrator_agent_new",
-];
+// Whether a workspace's spawned agent gets a capability token at all. Passed to
+// the host as `allowScript` on *every* workspace creation, which mints a
+// `FRESH_CMD_TOKEN` bound to the new window — the token is always present; the
+// "Teach Fresh CLI" toggle only controls whether the agent is *told* about it
+// (the system-prompt injection).
+//
+// The grant is all-or-nothing: a script can call anything the plugin API
+// exposes, so there is no narrower honest setting. What bounds an agent is the
+// window its token is bound to, not a list of verbs.
+const FRESH_CLI_ALLOW_SCRIPT = true;
 
 // System prompt injected (via flag or AGENTS.md) when "Teach Fresh CLI" is on.
 // Teaches the agent the verbatim `fresh` CLI verbs it can drive the editor
 // with. Keep the command strings exact — they're the agent's only reference.
 const FRESH_CLI_SYSTEM_PROMPT = [
-  "You are running inside a Fresh editor workspace and can control it from the shell via the `fresh` CLI.",
-  "Always invoke it through the `$FRESH_BIN` environment variable — it points at the exact editor binary running this workspace, so its `--cmd` verbs and `--help` match this build (never rely on a bare `fresh` from PATH, which may be a different version).",
-  'Discover what you can do: `"$FRESH_BIN" --cmd cmd list --json` (lists the commands you\'re allowed to run in this workspace).',
-  'Run one: `"$FRESH_BIN" --cmd cmd run <id>` (e.g. `"$FRESH_BIN" --cmd cmd run split_vertical`), or the shortcut `"$FRESH_BIN" --cmd split --vertical`.',
-  'See what arguments a command takes: `"$FRESH_BIN" --cmd cmd describe <id> --json`; pass them as `<name>=<value>` pairs to `cmd run`.',
+  "You are running inside a Fresh editor workspace and can drive it by submitting TypeScript to the editor's plugin runtime.",
+  "Always invoke the CLI through the `$FRESH_BIN` environment variable — it points at the exact editor binary running this workspace, so its verbs match this build (never rely on a bare `fresh` from PATH, which may be a different version).",
+  'Run a script: `"$FRESH_BIN" --cmd script run <file>`, or pipe it on stdin (`... --cmd script run <<\'EOF\' ... EOF`). Whatever the script returns is printed as JSON; a throw exits non-zero with the message.',
+  'The script body is an async function: `await` works at the top level, and `return value` is how you answer. The `editor` global is the same API plugins use.',
+  'Read the API before you write a script: `"$FRESH_BIN" --cmd script types` prints the paths of `fresh.d.ts` (the whole `editor` API) and `plugins.d.ts` (what each loaded plugin exports). These are large — grep them for what you need rather than reading them end to end.',
+  'Reach a plugin\'s own API with `editor.getPluginApi("<name>")`, e.g. the orchestrator that manages workspaces and agents.',
+  'Start another coding agent alongside you, in this workspace: `const r = await editor.getPluginApi("orchestrator").runAgent({ agent: "claude", prompt: "<task>" }); return r;`',
+  'Start one in a NEW workspace (its own git worktree): `return await editor.getPluginApi("orchestrator").newWorkspace({ agent: "claude", prompt: "<task>", path: "<repo>", newBranch: "<branch>" });`',
+  'Both answer with `{"workspaceId","windowId","root"}`. Record `workspaceId` if you need to refer to that workspace later — it stays valid across editor restarts; `windowId` does not.',
+  "`newWorkspace` resolves once the workspace is up (or rejects); after that the agent there runs on its own — you are not blocked and you do not see its output.",
   'Open a file in this workspace: `"$FRESH_BIN" <path>` (this blocks until you close the file, so use it for hand-offs, not quick peeks).',
-  'Open another project as a new workspace: `"$FRESH_BIN" --cmd workspace new <dir>`.',
-  'Start another coding agent alongside you, in this workspace: `"$FRESH_BIN" --cmd agent run --agent claude --prompt "<task>"`.',
-  'Start one in a NEW workspace (its own git worktree): `"$FRESH_BIN" --cmd agent new --agent claude --prompt "<task>" [--path <repo>] [--name <workspace>] [--new-branch <branch>]`.',
-  'Both print `{"workspaceId","windowId","root"}` for the workspace the agent is in. Record `workspaceId` if you need to refer to that workspace later — it stays valid across editor restarts; `windowId` does not.',
-  "`agent new` waits until the workspace is up (or fails); once it returns, the agent there runs on its own — you are not blocked and you do not see its output.",
-  "These commands act only on the current workspace.",
+  "Your script starts out pointed at the workspace you are in, and `FRESH_WINDOW_ID` holds that window's id. Treat the *active* window as transient — the user keeps working while your script runs, so after an `await` it may be someone else's. Prefer calls that take a window id explicitly (`editor.windowPath(FRESH_WINDOW_ID, path)`, `editor.openFileInBackground(path, FRESH_WINDOW_ID)`) over ones that act on whatever is focused.",
+  "Scripts run to completion and are then forgotten; anything they create (a terminal, a workspace) outlives them.",
 ].join("\n");
 
 // Marker wrapping the injected block so an existing user file (codex/opencode
@@ -8919,10 +8913,11 @@ async function runLocalCreate(id: number): Promise<void> {
       command: launchArgv.length > 0 ? launchArgv : undefined,
       title: launchArgv.length > 0 ? launchArgv[0] : undefined,
       resume: resumeArgv,
-      // Always mint the capability token bound to this window + allowlist so
-      // `fresh --cmd cmd ...` from inside the workspace is authorised — whether
-      // or not the agent was taught about it. `teach` only gates the prompt.
-      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
+      // Always mint the capability token bound to this window so
+      // `fresh --cmd script ...` from inside the workspace is authorised —
+      // whether or not the agent was taught about it. `teach` only gates the
+      // prompt.
+      allowScript: FRESH_CLI_ALLOW_SCRIPT,
     });
     const winId = result.windowId;
     // Dismissed during the (awaited) spawn: the window was born and dove in,
@@ -9199,7 +9194,7 @@ async function attachToWorktree(opts: {
       label: opts.label,
       cwd: opts.root,
       // Always mint the workspace's capability token (see runLocalCreate).
-      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
+      allowScript: FRESH_CLI_ALLOW_SCRIPT,
     });
     const id = result.windowId;
     editor.setWindowState("project_path", opts.projectPath);
@@ -9287,7 +9282,7 @@ async function launchAgentInCurrentWorkspace(
   const entry = agentEntryForCmd(trimmedCmd);
   // "Teach Fresh CLI": inject the CLI system prompt (via flag on launch, or by
   // writing AGENTS.md for file-style agents). The capability token is minted
-  // regardless (see `commandAllowlist` below) — `teach` only gates the prompt.
+  // regardless (see `allowScript` below) — `teach` only gates the prompt.
   const teach = opts.teachFreshCli && entry?.systemPrompt ? entry.systemPrompt : null;
   if (teach?.via === "file") {
     writeFreshCliPromptFile(editor.pathJoin(cwd, teach.path));
@@ -9313,7 +9308,7 @@ async function launchAgentInCurrentWorkspace(
       // `fresh --cmd ...` from inside the terminal is authorised — matching the
       // dialogue, where the token is always present and only the prompt is
       // gated by "Teach Fresh CLI".
-      commandAllowlist: FRESH_CLI_DEFAULT_ALLOWLIST,
+      allowScript: FRESH_CLI_ALLOW_SCRIPT,
       focus: true,
     });
   } catch (e) {
@@ -9324,52 +9319,96 @@ async function launchAgentInCurrentWorkspace(
 }
 
 // =============================================================================
-// Headless twins of the dialog — the agent (CLI) entry points
+// The orchestrator's plugin API — what a script (or another plugin) can drive
 //
 // The two dialogs above are how a *human* launches an agent. An agent driving
 // the editor from its shell has no way to fill in a form, so each dialog gets a
-// headless command with the same parameters, submitting through the very same
-// path (`launchAgentInCurrentWorkspace` / `captureCreateSpec` +
+// programmatic twin taking the same parameters and submitting through the very
+// same path (`launchAgentInCurrentWorkspace` / `captureCreateSpec` +
 // `startPendingWorkspace`). One launch pipeline, two front doors — a fix or a
 // new agent flag reaches both without being implemented twice.
 //
-// Reached over the command channel, so arguments arrive as a string map:
-//   fresh --cmd cmd run orchestrator_agent_run agent=claude prompt="fix the bug"
-//   fresh --cmd agent new --path /repo --agent claude --prompt "…"   (CLI alias)
-// Every argument is optional; omitted ones take the dialog's own defaults.
+// Published through `editor.exportPluginApi`, so a script reaches it the way
+// any plugin reaches another's surface:
+//
+//   const orch = editor.getPluginApi("orchestrator");
+//   const ws = await orch.newWorkspace({ path: "/repo", agent: "claude" });
+//
+// The types below are emitted into `~/.config/fresh/types/plugins.d.ts`, which
+// is what makes that call *typed* at the call site rather than a string
+// incantation an agent has to be told about.
 // =============================================================================
 
-// Argument values arrive as strings over the wire. Accept the spellings a
-// person (or an agent copying a flag) would actually write; anything else is
-// the default, never an error — a create must not fail over `auto=yes`.
-function cliBool(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) return fallback;
-  const v = value.trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(v)) return true;
-  if (["0", "false", "no", "off"].includes(v)) return false;
-  return fallback;
-}
-
-function cliStr(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
-
-// The `agent` argument is a command line, exactly like the dialog's "Agent
-// Command" field: a bare agent name (`claude`), a name with flags
-// (`claude --model opus`), or any other command. Empty ⇒ a plain terminal.
-type CliArgs = Record<string, string | undefined>;
-
-// What a headless launch answers with. `workspaceId` is the durable identity —
-// the one still valid after a restart — and is what a caller should record;
-// `windowId` is a per-process handle, useful only for the rest of this run.
-interface CliLaunchResult {
+/// What a launch answers with. `workspaceId` is the durable identity — the one
+/// still valid after a restart — and is what a caller should record;
+/// `windowId` is a per-process handle, useful only for the rest of this run.
+export type AgentLaunchResult = {
   workspaceId: string;
   windowId: number;
   root: string;
+};
+
+/// Options shared by both launch verbs. Every field is optional; an omitted one
+/// takes the dialog's own default, so `runAgent({})` is the dialog's defaults
+/// with no agent.
+export type RunAgentOptions = {
+  /** Agent command line, e.g. `claude` or `claude --model opus`. A bare
+   *  terminal when empty or omitted. */
+  agent?: string;
+  /** Initial prompt handed to the agent at launch (agents that accept one). */
+  prompt?: string;
+  /** Run the agent in its reduced-approval mode. Default false. Ignored for an
+   *  agent whose registry entry has no such mode. */
+  auto?: boolean;
+  /** Inject the Fresh system prompt so the agent knows it can drive the editor.
+   *  Default true. */
+  teach?: boolean;
+};
+
+export type NewWorkspaceOptions = RunAgentOptions & {
+  /** Project directory the workspace roots at. Default: this workspace's
+   *  project. Must exist. */
+  path?: string;
+  /** Workspace name. Default: the next auto-generated `<project>-N`. */
+  name?: string;
+  /** Existing branch to check out in the new worktree. Default: the repo's
+   *  default branch. */
+  branch?: string;
+  /** Create the worktree on a new branch of this name, cut from `branch`. */
+  newBranch?: string;
+  /** Create a git worktree for the workspace. Default true; ignored for a
+   *  non-git path. */
+  worktree?: boolean;
+  /** Move focus into the new workspace once it is up. Default false — an agent
+   *  asking for a workspace should not yank the human's focus into it. */
+  visit?: boolean;
+};
+
+/// Public surface of the bundled `orchestrator` plugin, reachable through
+/// `editor.getPluginApi("orchestrator")`.
+export type OrchestratorApi = {
+  /** Launch a coding agent in THIS workspace — the headless twin of the
+   *  "Run Agent…" dialog. Resolves once the agent's terminal is up. */
+  runAgent(options?: RunAgentOptions): Promise<AgentLaunchResult>;
+  /** Create a workspace (a git worktree by default) and launch a coding agent
+   *  in it — the headless twin of the "New Workspace" dialog.
+   *
+   *  Unlike the dialog, which returns to the user immediately and reports
+   *  progress on the dock, this waits for the create to finish: a caller has no
+   *  dock to watch, the durable workspace id does not exist until the window is
+   *  born, and waiting is what lets a failed create reject rather than
+   *  silently do nothing. */
+  newWorkspace(options?: NewWorkspaceOptions): Promise<AgentLaunchResult>;
+};
+
+declare global {
+  interface FreshPluginRegistry {
+    orchestrator: OrchestratorApi;
+  }
 }
 
 // The active workspace's ids, for a launch that ran in place.
-function currentWorkspaceIds(): CliLaunchResult {
+function currentWorkspaceIds(): AgentLaunchResult {
   const id = editor.activeWindow();
   const info = editor.listWindows().find((w) => w.id === id);
   return {
@@ -9379,47 +9418,44 @@ function currentWorkspaceIds(): CliLaunchResult {
   };
 }
 
-// `fresh --cmd cmd run orchestrator_agent_run` — Run Agent in THIS workspace.
-async function cliRunAgent(args: CliArgs): Promise<CliLaunchResult> {
-  const cmd = cliStr(args?.agent);
+function trimmed(value: string | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+async function runAgent(options: RunAgentOptions = {}): Promise<AgentLaunchResult> {
+  const cmd = trimmed(options.agent);
   const entry = agentEntryForCmd(cmd);
   // Mirror `submitForm`'s current-workspace branch: the per-agent options are
   // only honoured for an agent whose registry entry supports each, so a bare
   // terminal never gets stray flags appended.
   await launchAgentInCurrentWorkspace(cmd, {
-    auto: !!entry?.auto && cliBool(args?.auto, false),
-    prompt: entry?.prompt ? cliStr(args?.prompt) : "",
-    teachFreshCli: !!entry?.systemPrompt && cliBool(args?.teach, true),
+    auto: !!entry?.auto && (options.auto ?? false),
+    prompt: entry?.prompt ? trimmed(options.prompt) : "",
+    teachFreshCli: !!entry?.systemPrompt && (options.teach ?? true),
   });
   // The agent runs in the workspace the caller is already in; returning its ids
   // means a caller never has to correlate "which workspace did that land in".
   return currentWorkspaceIds();
 }
 
-// `fresh --cmd cmd run orchestrator_agent_new` — New Workspace + agent.
-//
-// Local backend only: ssh/kubernetes workspaces need connection details that
-// deserve their own verb (and their own validation), and an agent asking for a
-// sibling workspace wants the local case.
-//
-// Unlike the dialog — which returns to the user immediately and reports
-// progress on the dock — this waits for the create to finish. The caller has no dock to
-// watch, and the durable workspace id it needs does not exist until the window
-// is born; waiting is also what lets a failed create be reported as a failure
-// rather than a silent nothing.
-async function cliNewWorkspace(args: CliArgs): Promise<CliLaunchResult> {
-  const cmd = cliStr(args?.agent);
+async function newWorkspace(
+  options: NewWorkspaceOptions = {},
+): Promise<AgentLaunchResult> {
+  const cmd = trimmed(options.agent);
   const entry = agentEntryForCmd(cmd);
-  const requestedPath = cliStr(args?.path);
+  const requestedPath = trimmed(options.path);
   const projectPath = requestedPath || localProjectDefault();
-  const name = cliStr(args?.name);
-  // A path the caller typed has to exist. The dialog's field completes against
+  const name = trimmed(options.name);
+  // A path the caller passed has to exist. The dialog's field completes against
   // the filesystem, so a human sees a wrong path immediately; a caller passing
-  // `--path` by hand does not, and the create would otherwise "succeed" into a
+  // `path` by hand does not, and the create would otherwise "succeed" into a
   // workspace rooted at a directory that isn't there.
   if (requestedPath && !editor.fileExists(editor.localPath(requestedPath))) {
     throw new Error(`project path does not exist: ${requestedPath}`);
   }
+  // Local backend only: ssh/kubernetes workspaces need connection details that
+  // deserve their own verb (and their own validation), and a caller asking for
+  // a sibling workspace wants the local case.
   const spec: CreateSpec = {
     backend: "local",
     projectPath,
@@ -9427,29 +9463,24 @@ async function cliNewWorkspace(args: CliArgs): Promise<CliLaunchResult> {
     // default the dialog's placeholder shows.
     name,
     cmd,
-    auto: !!entry?.auto && cliBool(args?.auto, false),
-    startPrompt: entry?.prompt ? cliStr(args?.prompt) : "",
-    teachFreshCli: !!entry?.systemPrompt && cliBool(args?.teach, true),
-    branch: cliStr(args?.branch),
-    newBranch: cliStr(args?.new_branch),
+    auto: !!entry?.auto && (options.auto ?? false),
+    startPrompt: entry?.prompt ? trimmed(options.prompt) : "",
+    teachFreshCli: !!entry?.systemPrompt && (options.teach ?? true),
+    branch: trimmed(options.branch),
+    newBranch: trimmed(options.newBranch),
     // Worktree by default (the dialog's default too); `runLocalCreate` demotes
     // it to false on its own when the path isn't a git tree.
-    createWorktree: cliBool(args?.worktree, true),
+    createWorktree: options.worktree ?? true,
     displayLabel: name || editor.pathBasename(projectPath) ||
       editor.t("dock.pending_default_name"),
     displayProject: projectPath,
   };
-  // `visit` defaults to false: an agent asking for a workspace should not yank
-  // the human's focus into it. Pass `visit=true` for the dialog's
-  // "Create & Visit".
-  const pendingId = startPendingWorkspace(spec, {
-    visit: cliBool(args?.visit, false),
-  });
+  const pendingId = startPendingWorkspace(spec, { visit: options.visit ?? false });
   const outcome = await awaitCreateOutcome(pendingId);
   if (!outcome.ok) {
-    // Thrown, not returned: a failed create must fail the caller's command
-    // (non-zero exit), not hand it a result object it might mistake for a
-    // workspace. The dock keeps the row for a human to retry or dismiss.
+    // Thrown, not returned: a failed create must reject the caller's promise
+    // (and so fail its script), not hand it a result object it might mistake
+    // for a workspace. The dock keeps the row for a human to retry or dismiss.
     throw new Error(outcome.error || "workspace creation failed");
   }
   return {
@@ -9459,105 +9490,7 @@ async function cliNewWorkspace(args: CliArgs): Promise<CliLaunchResult> {
   };
 }
 
-// Both handlers *return* their result (a promise is fine): the host awaits it
-// and hands it to the caller as the command's output, so a plugin command
-// answers by returning a value like any other function.
-registerHandler("orchestrator_agent_run", (args: CliArgs) => cliRunAgent(args ?? {}));
-registerHandler("orchestrator_agent_new", (args: CliArgs) => cliNewWorkspace(args ?? {}));
-
-// Names are deliberately plain English rather than `%`-keys: these are a CLI
-// surface read by agents through `cmd list --json`, not UI labels. The
-// `fresh-cli` context is never activated, which keeps them out of the command
-// palette — a human wanting either of these wants the dialog, which asks for
-// the parameters these commands take as arguments.
-editor.registerCommand(
-  "Run Agent (headless)",
-  "Launch a coding agent in the current workspace, without the dialog",
-  "orchestrator_agent_run",
-  "fresh-cli",
-  {
-    returns:
-      "{ workspaceId, windowId, root } for the workspace the agent was launched in. " +
-      "workspaceId is durable — still valid after a restart; windowId is not.",
-    args: [
-      {
-        name: "agent",
-        description:
-          "Agent command line, e.g. `claude` or `claude --model opus`. Empty runs a plain terminal.",
-      },
-      {
-        name: "prompt",
-        description: "Initial prompt handed to the agent at launch (agents that take one).",
-      },
-      {
-        name: "auto",
-        description: "true/false — run the agent in its reduced-approval mode. Default false.",
-      },
-      {
-        name: "teach",
-        description:
-          "true/false — inject the Fresh CLI system prompt so the agent can drive the editor. Default true.",
-      },
-    ],
-  },
-);
-editor.registerCommand(
-  "New Workspace with Agent (headless)",
-  "Create a workspace (git worktree by default) and launch a coding agent in it, without the dialog",
-  "orchestrator_agent_new",
-  "fresh-cli",
-  {
-    returns:
-      "{ workspaceId, windowId, root } for the new workspace, once it is up. " +
-      "workspaceId is durable — record that one; windowId is valid only for this editor run. " +
-      "Waits for the create to finish, so a failure is reported as one.",
-    args: [
-      {
-        name: "path",
-        description: "Project directory the workspace roots at. Default: this workspace's project.",
-      },
-      {
-        name: "name",
-        description: "Workspace name. Default: the next auto-generated `<project>-N`.",
-      },
-      {
-        name: "agent",
-        description:
-          "Agent command line, e.g. `claude` or `claude --model opus`. Empty runs a plain terminal.",
-      },
-      {
-        name: "prompt",
-        description: "Initial prompt handed to the agent at launch (agents that take one).",
-      },
-      {
-        name: "auto",
-        description: "true/false — run the agent in its reduced-approval mode. Default false.",
-      },
-      {
-        name: "teach",
-        description:
-          "true/false — inject the Fresh CLI system prompt so the agent can drive the editor. Default true.",
-      },
-      {
-        name: "branch",
-        description: "Existing branch to check out in the new worktree. Default: the repo's default branch.",
-      },
-      {
-        name: "new_branch",
-        description: "Create the worktree on a new branch of this name, cut from `branch`.",
-      },
-      {
-        name: "worktree",
-        description:
-          "true/false — create a git worktree for the workspace. Default true (ignored for a non-git path).",
-      },
-      {
-        name: "visit",
-        description: "true/false — move focus into the new workspace once it is up. Default false.",
-      },
-    ],
-  },
-);
+editor.exportPluginApi("orchestrator", { runAgent, newWorkspace });
 
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`

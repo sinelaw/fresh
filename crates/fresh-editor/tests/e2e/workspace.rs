@@ -1921,7 +1921,7 @@ fn test_plugin_ephemeral_terminal_excluded_from_workspace() {
             title: None,
             resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -1970,7 +1970,7 @@ fn test_plugin_persistent_terminal_included_in_workspace() {
             title: None,
             resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -2025,7 +2025,7 @@ fn test_plugin_split_terminal_not_duplicated_in_active_split() {
             title: None,
             resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();

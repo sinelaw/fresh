@@ -2712,11 +2712,10 @@ pub enum PluginCommand {
         /// Extra env for the spawned terminal; see
         /// `CreateWindowWithTerminalOptions::env`.
         env: Option<std::collections::HashMap<String, String>>,
-        /// When `Some`, the host mints a capability token bound to the
-        /// new window + these command ids and injects it as
-        /// `FRESH_CMD_TOKEN`; see
-        /// `CreateWindowWithTerminalOptions::command_allowlist`.
-        command_allowlist: Option<Vec<String>>,
+        /// When set, the host mints a capability token bound to the new
+        /// window and injects it as `FRESH_CMD_TOKEN`; see
+        /// `CreateWindowWithTerminalOptions::allow_script`.
+        allow_script: bool,
         request_id: u64,
     },
 
@@ -4282,12 +4281,12 @@ pub enum PluginCommand {
         /// `None` adds nothing.
         #[serde(default)]
         env: Option<std::collections::HashMap<String, String>>,
-        /// Optional capability-token allowlist. When `Some`, the host
-        /// mints a token bound to the target window + these command ids
-        /// and injects `FRESH_CMD_TOKEN` / `FRESH_SESSION` into the
-        /// spawned child. See `CreateTerminalOptions::command_allowlist`.
+        /// Capability grant. When set, the host mints a token bound to
+        /// the target window and injects `FRESH_CMD_TOKEN` /
+        /// `FRESH_SESSION` into the spawned child. See
+        /// `CreateTerminalOptions::allow_script`.
         #[serde(default)]
-        command_allowlist: Option<Vec<String>>,
+        allow_script: bool,
         /// Callback ID for async response
         request_id: u64,
     },
@@ -5284,17 +5283,21 @@ pub struct CreateTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub resume: Option<Vec<String>>,
-    /// When `Some`, the host mints an unforgeable capability token
-    /// bound to the TARGET window (the active window, or `windowId`
-    /// when set) and this allowlist of command ids, and injects it
-    /// into the spawned terminal as `FRESH_CMD_TOKEN` (alongside
-    /// `FRESH_SESSION`). This lets an agent spawned into an *existing*
-    /// window drive exactly those commands against it — the same
-    /// capability a `createWindowWithTerminal` agent gets. `None` (the
-    /// default) mints no token and injects nothing.
-    #[serde(default, rename = "commandAllowlist")]
-    #[ts(optional, rename = "commandAllowlist")]
-    pub command_allowlist: Option<Vec<String>>,
+    /// When set, the host mints an unforgeable capability token bound
+    /// to the TARGET window (the active window, or `windowId` when
+    /// set) and injects it into the spawned terminal as
+    /// `FRESH_CMD_TOKEN` (alongside `FRESH_SESSION`). This lets an
+    /// agent spawned into an *existing* window drive it by submitting
+    /// scripts — the same capability a `createWindowWithTerminal`
+    /// agent gets. `false` (the default) mints no token and injects
+    /// nothing.
+    ///
+    /// The grant is all-or-nothing on purpose: a script can call
+    /// anything the plugin API exposes, so a narrower list would
+    /// describe a boundary that isn't there.
+    #[serde(default, rename = "allowScript")]
+    #[ts(optional, rename = "allowScript")]
+    pub allow_script: Option<bool>,
 }
 
 /// Options for `createWindowWithTerminal` — the atomic
@@ -5352,15 +5355,18 @@ pub struct CreateWindowWithTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub env: Option<std::collections::HashMap<String, String>>,
-    /// When `Some`, the host mints an unforgeable capability token
-    /// bound to the NEW window and this allowlist of command ids,
-    /// and injects it into the spawned terminal as `FRESH_CMD_TOKEN`.
-    /// A client presenting that token over the control socket may run
-    /// exactly the listed command ids against this window. `None` (the
-    /// default) mints no token and injects nothing.
-    #[serde(default)]
-    #[ts(optional)]
-    pub command_allowlist: Option<Vec<String>>,
+    /// When set, the host mints an unforgeable capability token bound
+    /// to the NEW window and injects it into the spawned terminal as
+    /// `FRESH_CMD_TOKEN`. A client presenting that token over the
+    /// control socket may drive this window by submitting scripts.
+    /// `false` (the default) mints no token and injects nothing.
+    ///
+    /// The grant is all-or-nothing on purpose: a script can call
+    /// anything the plugin API exposes, so a narrower list would
+    /// describe a boundary that isn't there.
+    #[serde(default, rename = "allowScript")]
+    #[ts(optional, rename = "allowScript")]
+    pub allow_script: Option<bool>,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new
@@ -7392,25 +7398,25 @@ mod tests {
 mod create_window_with_terminal_options_tests {
     use super::CreateWindowWithTerminalOptions;
 
-    /// Old callers that supply neither `env` nor `commandAllowlist` must
-    /// still deserialize, with both new fields defaulting to `None`.
+    /// Old callers that supply neither `env` nor `allowScript` must still
+    /// deserialize, with both fields defaulting to off.
     #[test]
     fn deserializes_without_new_fields() {
         let opts: CreateWindowWithTerminalOptions =
             serde_json::from_str(r#"{"root":"/tmp/x"}"#).expect("legacy payload should decode");
         assert_eq!(opts.root, "/tmp/x");
         assert!(opts.env.is_none());
-        assert!(opts.command_allowlist.is_none());
+        assert!(opts.allow_script.is_none());
     }
 
-    /// The two new fields round-trip through serde using their camelCase
-    /// JSON names (`env`, `commandAllowlist`).
+    /// The two fields round-trip through serde using their camelCase JSON
+    /// names (`env`, `allowScript`).
     #[test]
     fn new_fields_round_trip() {
         let json = r#"{
             "root": "/tmp/proj",
             "env": {"FOO": "bar"},
-            "commandAllowlist": ["split_vertical", "open_file"]
+            "allowScript": true
         }"#;
         let opts: CreateWindowWithTerminalOptions =
             serde_json::from_str(json).expect("payload with new fields should decode");
@@ -7421,15 +7427,12 @@ mod create_window_with_terminal_options_tests {
                 .map(String::as_str),
             Some("bar")
         );
-        assert_eq!(
-            opts.command_allowlist.as_deref(),
-            Some(&["split_vertical".to_string(), "open_file".to_string()][..])
-        );
+        assert_eq!(opts.allow_script, Some(true));
 
         let reencoded = serde_json::to_string(&opts).expect("re-serialize");
         let back: CreateWindowWithTerminalOptions =
             serde_json::from_str(&reencoded).expect("re-decode");
-        assert_eq!(back.command_allowlist, opts.command_allowlist);
+        assert_eq!(back.allow_script, opts.allow_script);
         assert_eq!(back.env, opts.env);
     }
 }
