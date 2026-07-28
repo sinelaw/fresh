@@ -725,8 +725,20 @@ impl crate::app::Editor {
     /// editor content as the incoming window appears. The editor
     /// content geometry is layout-driven (identical for any session),
     /// so the outgoing window's last content rect is the right area to
-    /// animate. `capture_before_all` snapshots the previous frame (the
-    /// outgoing window) and `SlideIn` slides the new content in over it.
+    /// animate: `SlideIn` pushes the previous frame out as the new
+    /// content slides in over it.
+    ///
+    /// The "before" comes from `last_rendered_frame`, the editor-wide
+    /// clone of the last painted frame, so it is the workspace the user
+    /// is actually looking at. It cannot come from the incoming window's
+    /// own animation runner: runners are per-window and only the active
+    /// window paints, so that one still holds whatever this window drew
+    /// the last time it was on screen.
+    ///
+    /// Starting the effect here is only sound because every path that
+    /// reaches this function runs between frames or in the pre-layout
+    /// drain — see `Editor::plugin_command_must_precede_layout`, which
+    /// keeps window switches out of the mid-render drain.
     pub fn set_active_window_animated(&mut self, id: WindowId, from_edge: &str) {
         let animate = self.active_window != id
             && self.windows.contains_key(&id)

@@ -1023,12 +1023,6 @@ pub struct AnimationRunner {
     /// test to detect that an effect was kicked off without having to
     /// catch the transient `is_active()` window between polling ticks.
     total_started: u64,
-    /// Full snapshot of the buffer at the end of the previous render
-    /// pass. Ratatui's swap_buffers resets the "current" buffer, so at
-    /// the start of the next draw `frame.buffer_mut()` is blank — not
-    /// the previous frame. We keep our own copy so `capture_before`
-    /// can see what the user actually saw last frame.
-    last_frame: Option<Buffer>,
 }
 
 impl Default for AnimationRunner {
@@ -1043,7 +1037,6 @@ impl AnimationRunner {
             next_id: 1,
             active: Vec::new(),
             total_started: 0,
-            last_frame: None,
         }
     }
 
@@ -1131,19 +1124,26 @@ impl AnimationRunner {
     }
 
     /// Let each active effect snapshot the "before" state of its Rect
-    /// from the cached last-frame buffer. Called once per render, at
-    /// the start of the pass. We can't read the live `frame.buffer_mut()`
-    /// here because ratatui resets the current buffer before each draw
-    /// (see `swap_buffers`); our own cache is what actually holds what
-    /// was on screen last frame.
+    /// from `prev` — the buffer painted by the previous render pass.
+    /// Called once per render, at the start of the pass. We can't read
+    /// the live `frame.buffer_mut()` here because ratatui resets the
+    /// current buffer before each draw (see `swap_buffers`), so the
+    /// caller keeps a post-apply clone of the last frame and hands it
+    /// in.
+    ///
+    /// That cache is deliberately editor-wide rather than per-runner:
+    /// every window owns a runner but only the *active* one paints, so a
+    /// per-runner cache would hold whatever its window drew the last time
+    /// it was on screen. Cross-window transitions (the Orchestrator
+    /// dock's live-switch) run on the *incoming* window's runner and must
+    /// push out the frame the user is actually looking at.
     ///
     /// Effects still in their `delay` window are skipped, and effects
-    /// whose Rect falls outside the cached buffer (resize shrank the
-    /// terminal) are skipped too — they fall back to the slide-over-
-    /// blanks path.
-    pub fn capture_before_all(&mut self) {
+    /// whose Rect falls outside `prev` (resize shrank the terminal) are
+    /// skipped too — they fall back to the slide-over-blanks path.
+    pub fn capture_before_all(&mut self, prev: Option<&Buffer>) {
         let now = Instant::now();
-        let Some(prev) = self.last_frame.as_ref() else {
+        let Some(prev) = prev else {
             return;
         };
         let prev_area = prev.area;
@@ -1169,11 +1169,6 @@ impl AnimationRunner {
             e.status = e.effect.apply(buf, e.area, elapsed);
         }
         self.active.retain(|e| e.status == EffectStatus::Running);
-
-        // Cache the final painted buffer so the next frame's
-        // `capture_before_all` can read it. We clone because ratatui
-        // resets the current buffer before the next draw.
-        self.last_frame = Some(buf.clone());
     }
 
     pub fn is_active(&self) -> bool {
@@ -1193,14 +1188,6 @@ impl AnimationRunner {
 
     pub fn next_deadline(&self) -> Option<Instant> {
         self.active.iter().map(|e| e.deadline).min()
-    }
-
-    /// Area of the cached last-frame buffer, i.e. the full screen as of
-    /// the previous render. `None` until the first frame has been drawn.
-    /// Full-screen effects (theme color transition) use this as their
-    /// Rect so callers don't need to thread the terminal size through.
-    pub fn last_frame_area(&self) -> Option<Rect> {
-        self.last_frame.as_ref().map(|b| b.area)
     }
 
     /// True if `(col, row)` falls inside the area of any running effect.
@@ -1326,27 +1313,27 @@ mod tests {
     }
 
     #[test]
-    fn runner_caches_last_frame_for_push_transition() {
+    fn runner_pushes_out_the_caller_supplied_previous_frame() {
         // Simulate two frames:
-        //   frame 1: buf contains OLD content, no effects, runner
-        //            caches this as last_frame.
-        //   frame 2: an effect is started, capture_before_all reads
-        //            OLD from the cache (not the blank live buffer),
-        //            then buf is repainted with NEW, apply_all runs
-        //            the push using OLD as the before.
+        //   frame 1: buf contains OLD content, no effects; the caller
+        //            keeps it as the previous frame.
+        //   frame 2: an effect is started, capture_before_all reads OLD
+        //            from that frame (not the blank live buffer), then
+        //            buf is repainted with NEW and apply_all runs the
+        //            push using OLD as the before.
         let area = Rect::new(0, 0, 3, 3);
         let mut runner = AnimationRunner::new();
 
-        // Frame 1: paint OLD into buf, run apply_all (no effects) so
-        // the runner caches it.
+        // Frame 1: paint OLD into buf, run apply_all (no effects). The
+        // editor keeps this clone as `last_rendered_frame`.
         let mut frame1 = make_buf(3, 3);
         paint(&mut frame1, area, 'O', Color::Green);
         runner.apply_all(&mut frame1);
-        assert!(runner.last_frame.is_some());
+        let previous = frame1.clone();
 
-        // Frame 2: start the effect, capture_before_all (reads cache),
-        // paint NEW into a fresh blank buf (simulating ratatui reset),
-        // then apply_all.
+        // Frame 2: start the effect, capture_before_all (reads the
+        // previous frame), paint NEW into a fresh blank buf (simulating
+        // ratatui reset), then apply_all.
         let id = runner.start(
             area,
             AnimationKind::SlideIn {
@@ -1355,7 +1342,7 @@ mod tests {
                 delay: Duration::ZERO,
             },
         );
-        runner.capture_before_all();
+        runner.capture_before_all(Some(&previous));
         let mut frame2 = make_buf(3, 3); // blank, like ratatui's reset
         paint(&mut frame2, area, 'N', Color::Blue);
         runner.apply_all(&mut frame2);
@@ -1781,8 +1768,9 @@ mod tests {
     }
 
     #[test]
-    fn color_transition_through_runner_uses_cached_frame() {
-        // Frame 1: old-theme colors, no effects — runner caches the frame.
+    fn color_transition_through_runner_uses_previous_frame() {
+        // Frame 1: old-theme colors, no effects — the caller keeps the
+        // painted frame as the previous one.
         let area = Rect::new(0, 0, 3, 2);
         let mut runner = AnimationRunner::new();
         let mut frame1 = make_buf(3, 2);
@@ -1793,19 +1781,20 @@ mod tests {
             Color::Rgb(0, 0, 255),
         );
         runner.apply_all(&mut frame1);
-        assert_eq!(runner.last_frame_area(), Some(area));
+        let previous = frame1.clone();
+        assert_eq!(previous.area, area);
 
         // Frame 2: theme switched — start the transition, capture the old
-        // frame from the cache, paint new-theme colors, apply. Right after
-        // start (t≈0) the visible colors must still be (close to) the old
-        // ones, not the new ones.
+        // frame from the previous one, paint new-theme colors, apply.
+        // Right after start (t≈0) the visible colors must still be (close
+        // to) the old ones, not the new ones.
         runner.start(
             area,
             AnimationKind::ColorTransition {
                 duration: Duration::from_secs(3600),
             },
         );
-        runner.capture_before_all();
+        runner.capture_before_all(Some(&previous));
         let mut frame2 = make_buf(3, 2);
         paint_colors(
             &mut frame2,

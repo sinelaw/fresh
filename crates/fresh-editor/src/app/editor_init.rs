@@ -647,6 +647,9 @@ impl Editor {
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
+            last_rendered_frame: None,
+            #[cfg(feature = "plugins")]
+            deferred_plugin_commands: Vec::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
             suspend_requested: false,

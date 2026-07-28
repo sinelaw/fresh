@@ -27,6 +27,8 @@ pub mod dabbrev_completion;
 #[cfg(feature = "plugins")]
 pub mod dock_focus_stuck_born_attached;
 pub mod dock_panel_routing;
+#[cfg(feature = "plugins")]
+pub mod dock_switch_wipes_outgoing_window;
 pub mod document_model;
 pub mod emacs_actions;
 pub mod encoding;
