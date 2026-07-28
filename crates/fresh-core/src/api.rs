@@ -6878,8 +6878,6 @@ mod tests {
             plugin_name: String::new(),
             custom_contexts: Vec::new(),
             terminal_bypass: false,
-            args: Vec::new(),
-            returns: None,
         }
     }
 
