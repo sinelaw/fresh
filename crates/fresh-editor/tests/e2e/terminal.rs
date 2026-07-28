@@ -60,6 +60,23 @@ fn tab_row_col_of_str(screen: &str, needle: &str) -> Option<u16> {
     Some(line[..byte_idx].chars().count() as u16)
 }
 
+/// The rendered text of the LEFT pane of a two-pane vertical split: every
+/// screen row truncated at the vertical separator. Lets an assertion say
+/// "this appeared in *that* pane" when both panes show the same terminal.
+fn left_pane_text(screen: &str) -> String {
+    screen
+        .lines()
+        .map(|line| line.split('│').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Shell command emitting one line of `X` * 100 followed by the marker
+/// `ZEND`. The `Z` is written as `\x5a` so the marker never appears
+/// literally in the echoed command line — finding "ZEND" on screen can only
+/// mean the *output* row's tail was actually rendered.
+const WIDE_LINE_CMD: &[u8] = b"printf 'X%.0s' $(seq 1 100); printf '\\x5aEND\\n'\n";
+
 /// Regression: with the keyboard focused on an *active terminal* buffer
 /// (terminal mode owns the keyboard), opening the tab bar's "+" popup must
 /// still hand the keyboard to the popup. Its navigation keys drive the menu
@@ -4888,4 +4905,169 @@ fn test_bug_2775_scrollback_entry_is_seamless_grid_wrap() {
             "row {i} unstable after PageUp x3 + Ctrl+End round trip.\nBEFORE:\n{bottom1}\nAFTER:\n{bottom2}"
         );
     }
+}
+
+/// fresh#2844: a terminal's scroll-back view keeps the wrap column it was
+/// captured at, so when a *new split* halves its pane the exact-column grid
+/// rows are laid out too wide and every line is clipped at the pane edge —
+/// the tail of each line simply disappears.
+///
+/// Drives: print a line wider than half the screen, drop the split into
+/// read-only scroll-back, then split vertically. The pre-existing (left) pane
+/// must re-wrap at its new width, so the line's tail is still on screen
+/// *inside that pane*.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_terminal_scrollback_rewraps_when_split_shrinks_pane() {
+    let mut harness = harness_or_return!(120, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(WIDE_LINE_CMD);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZEND"))
+        .unwrap();
+
+    // Ctrl+Space drops the focused split into read-only scroll-back, which
+    // captures the buffer at the current (full-width) grid width.
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Split vertically: the pre-existing split's pane halves in width. The new
+    // split streams the live grid, so only the LEFT pane exercises scroll-back.
+    harness.editor_mut().split_pane_vertical();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        left_pane_text(&screen).contains("ZEND"),
+        "The pre-existing split's scroll-back must re-wrap to its new pane \
+         width and keep the tail of the line on screen. Screen:\n{}",
+        screen
+    );
+}
+
+/// fresh#2844: the tab bar's maximize button toggles the split tree directly
+/// and never reflows, so every visible terminal keeps the PTY size (and
+/// scroll-back wrap column) it had before the click — the grid stays wrapped
+/// at the old half-pane width inside a now full-width pane.
+///
+/// Drives: split a terminal in two, then click the maximize button on the
+/// left split's tab bar. Its pane is now full width, so the whole 104-column
+/// line must fit on a single rendered row.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_mouse_maximize_button_resizes_terminal() {
+    let mut harness = harness_or_return!(120, 30);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(WIDE_LINE_CMD);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZEND"))
+        .unwrap();
+
+    // Two splits, both showing the same terminal at roughly half width. The
+    // 100-X run no longer fits on one row.
+    harness.editor_mut().split_pane_vertical();
+    harness.render().unwrap();
+    let run = "X".repeat(100);
+    assert!(
+        !harness.screen_to_string().lines().any(|l| l.contains(&run)),
+        "Precondition: at half width no row should hold 100 columns of output. \
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The maximize glyph is "□" while not maximized; the first one on the tab
+    // row belongs to the left split.
+    let screen = harness.screen_to_string();
+    let btn_col = tab_row_col_of(&screen, '□')
+        .unwrap_or_else(|| panic!("expected a '□' maximize button on the tab row:\n{screen}"));
+    harness.mouse_click(btn_col, 1).unwrap();
+    harness.render().unwrap();
+
+    // The grid reflow happens synchronously with the resize, so the very next
+    // frame already shows it — no waiting on the PTY child.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.lines().any(|l| l.contains(&run)),
+        "Maximizing via the tab bar button must resize the terminal to the \
+         full-width pane, fitting the whole line on one row. Screen:\n{}",
+        screen
+    );
+}
+
+/// fresh#2844: dropping a tab onto a pane edge builds a new split without
+/// going through the layout funnel, so the dragged terminal's PTY child never
+/// gets the resize — an alternate-screen app (or anything that only redraws on
+/// SIGWINCH) keeps painting at the old width and is clipped at the new,
+/// narrower pane edge.
+///
+/// Drives: drag the terminal's tab to the right edge of its own pane to create
+/// a vertical split. The terminal now lives in a half-width pane, so its grid
+/// must re-wrap — the line's tail stays on screen instead of being clipped
+/// away.
+#[test]
+#[cfg(not(windows))] // Uses Unix shell
+fn test_tab_drag_split_resizes_terminal() {
+    let mut config = Config::default();
+    // Pin the shell so the tab's title (and therefore the drag origin) is
+    // deterministic.
+    config.terminal.shell = Some(TerminalShellConfig {
+        command: "/bin/sh".to_string(),
+        args: Vec::new(),
+    });
+    let mut harness = match EditorTestHarness::with_config(120, 30, config) {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+
+    harness
+        .editor_mut()
+        .active_window_mut()
+        .send_terminal_input(WIDE_LINE_CMD);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZEND"))
+        .unwrap();
+
+    // Full width: the whole line sits on one row.
+    let run = "X".repeat(100);
+    assert!(
+        harness.screen_to_string().lines().any(|l| l.contains(&run)),
+        "Precondition: at full width the whole line should fit on one row. \
+         Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Drag the terminal's tab onto the right edge of the content area, which
+    // is the "split right" drop zone (the rightmost 25% of the pane).
+    let screen = harness.screen_to_string();
+    let tab_col = tab_row_col_of_str(&screen, "sh")
+        .unwrap_or_else(|| panic!("expected the terminal's tab on the tab row:\n{screen}"));
+    harness.mouse_drag(tab_col, 1, 115, 15).unwrap();
+    harness.render().unwrap();
+
+    // The terminal is now in a half-width pane. Its grid must have re-wrapped,
+    // so the tail marker is still rendered (rather than clipped off the pane).
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("ZEND"),
+        "A terminal dropped into a new split must be resized to its new pane, \
+         re-wrapping so the tail of the line stays on screen. Screen:\n{}",
+        screen
+    );
 }
