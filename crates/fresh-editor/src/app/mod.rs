@@ -902,9 +902,9 @@ pub struct Editor {
     last_rendered_frame: Option<ratatui::buffer::Buffer>,
 
     /// Plugin commands the mid-render drain refused to run because they
-    /// have to happen before a frame is laid out (see
-    /// `Editor::plugin_command_must_precede_layout`). Drained at the top
-    /// of the next render, ahead of anything newly arrived.
+    /// may only be handled between frames (see
+    /// `Editor::plugin_command_must_run_between_frames`). Drained at the
+    /// very bottom of the same render, once the paint is finished.
     #[cfg(feature = "plugins")]
     deferred_plugin_commands: Vec<fresh_core::api::PluginCommand>,
 

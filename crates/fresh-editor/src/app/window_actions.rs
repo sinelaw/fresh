@@ -736,9 +736,9 @@ impl crate::app::Editor {
     /// the last time it was on screen.
     ///
     /// Starting the effect here is only sound because every path that
-    /// reaches this function runs between frames or in the pre-layout
-    /// drain — see `Editor::plugin_command_must_precede_layout`, which
-    /// keeps window switches out of the mid-render drain.
+    /// reaches this function runs between frames — see
+    /// `Editor::plugin_command_must_run_between_frames`, which keeps
+    /// window switches out of the mid-render drain.
     pub fn set_active_window_animated(&mut self, id: WindowId, from_edge: &str) {
         let animate = self.active_window != id
             && self.windows.contains_key(&id)

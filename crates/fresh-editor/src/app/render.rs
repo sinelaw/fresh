@@ -394,9 +394,9 @@ impl Editor {
                     // stitches one frame out of two workspaces — the
                     // reported "the sidebar hangs over the wrong
                     // workspace for a moment" when clicking between dock
-                    // cards. Hold it for the next frame's pre-layout
-                    // drain, which runs before any of that is laid out.
-                    if Self::plugin_command_must_precede_layout(&command) {
+                    // cards. Hold it until the paint is finished, at the
+                    // very bottom of this function.
+                    if Self::plugin_command_must_run_between_frames(&command) {
                         self.deferred_plugin_commands.push(command);
                         self.plugin_render_requested = true;
                         continue;
@@ -1011,6 +1011,22 @@ impl Editor {
             frame.buffer_mut(),
             self.color_capability,
         );
+
+        // Commands the mid-render drain held back because they change which
+        // window the frame belongs to. The paint is finished, so they can no
+        // longer split it across two workspaces — and running them here
+        // rather than at the top of the next render keeps them from lagging a
+        // frame behind everything else the same drain dispatched.
+        //
+        // Deliberately after `last_rendered_frame` was captured above: the
+        // wipe a switch starts takes that frame as its "before", and it has
+        // to be the one still showing the window being left.
+        #[cfg(feature = "plugins")]
+        for command in std::mem::take(&mut self.deferred_plugin_commands) {
+            if let Err(e) = self.handle_plugin_command(command) {
+                tracing::error!("Error handling deferred plugin command: {}", e);
+            }
+        }
     }
 
     /// Render the search-options bar into `area` when `show_search_options`
@@ -2161,14 +2177,14 @@ impl Editor {
     /// The mid-render drain (after `compute_dock_split`) runs too late for
     /// those: the dock area would be computed from stale state and the freed
     /// columns would render blank until the next input event.
-    /// True for plugin commands that must be handled before a frame is
-    /// laid out, never in the mid-render drain. Today that is exactly the
+    /// True for plugin commands that may only be handled between frames,
+    /// never in the mid-render drain. Today that is exactly the
     /// active-window switches: everything the editor paints — chrome,
     /// sidebar, splits, status bar — is derived from the active window, so
     /// moving that pointer part-way through a paint yields a frame
     /// assembled from two different workspaces.
     #[cfg(feature = "plugins")]
-    fn plugin_command_must_precede_layout(command: &fresh_core::api::PluginCommand) -> bool {
+    fn plugin_command_must_run_between_frames(command: &fresh_core::api::PluginCommand) -> bool {
         use fresh_core::api::PluginCommand;
         matches!(
             command,
@@ -2179,14 +2195,6 @@ impl Editor {
     fn drain_pre_layout_plugin_commands(&mut self) {
         #[cfg(feature = "plugins")]
         {
-            // Commands the previous frame's mid-render drain held back
-            // go first: they were queued before anything `process_commands`
-            // returns now.
-            for command in std::mem::take(&mut self.deferred_plugin_commands) {
-                if let Err(e) = self.handle_plugin_command(command) {
-                    tracing::error!("Error handling deferred plugin command: {}", e);
-                }
-            }
             let early_commands = self.plugin_manager.write().unwrap().process_commands();
             if !early_commands.is_empty() {
                 tracing::trace!(
