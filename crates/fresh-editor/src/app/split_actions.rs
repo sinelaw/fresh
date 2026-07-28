@@ -857,6 +857,7 @@ impl Editor {
 impl Editor {
     /// Record which lines of a buffer point somewhere, replacing any previous
     /// set. An empty list clears them.
+    #[cfg(feature = "plugins")]
     pub(crate) fn set_line_targets(
         &mut self,
         buffer_id: fresh_core::BufferId,
@@ -946,12 +947,14 @@ impl Editor {
     }
 
     /// The 0-indexed line the primary cursor is on, in the active buffer.
+    #[cfg(feature = "plugins")]
     pub(crate) fn cursor_line_in_active_buffer(&self) -> Option<usize> {
         let position = self.active_window().active_cursors().primary().position;
         Some(self.active_state().buffer.get_line_number(position))
     }
 
     /// The target on `line` of `buffer_id`, if that line has one.
+    #[cfg(feature = "plugins")]
     pub(crate) fn line_target_at(
         &self,
         buffer_id: fresh_core::BufferId,

@@ -643,6 +643,7 @@ impl Editor {
             status_bar_token_registry: Mutex::new(HashMap::new()),
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             event_broadcaster: parts.event_broadcaster,
+            #[cfg(feature = "plugins")]
             line_targets: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
