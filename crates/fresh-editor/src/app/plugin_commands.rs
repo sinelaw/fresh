@@ -2356,6 +2356,54 @@ impl Editor {
 
     // ==================== Command/Mode Registration ====================
 
+    /// Run a plugin action, handing its handler an arguments object.
+    ///
+    /// The keybinding / palette path (`Action::PluginAction` in `handle_action`)
+    /// calls handlers with no arguments, because a keystroke carries none. The
+    /// agent command channel does carry them — `fresh --cmd cmd run <id>
+    /// <k>=<v>` — so this is its dispatch: the `k=v` pairs become a JSON object
+    /// passed as the handler's single argument. That is what lets a plugin
+    /// expose a *parameterized* command (an agent launch, say) to an agent,
+    /// instead of only the argless "open the dialog" form a keystroke needs.
+    ///
+    /// Returns an error string when the plugin runtime is unavailable or the
+    /// action could not be started; `Ok(())` means the handler was started (it
+    /// may still be running — plugin actions are async by nature).
+    pub fn run_plugin_action_with_args(
+        &mut self,
+        action_name: &str,
+        args: &std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        #[cfg(feature = "plugins")]
+        {
+            // String values throughout: `RunCommand.args` is a string map on the
+            // wire, so a handler reading `args.auto` sees "true"/"false" and
+            // parses what it needs. Keeping the JSON faithful to the wire beats
+            // guessing types the caller never declared.
+            let args_json = serde_json::to_string(args)
+                .map_err(|e| format!("could not encode command arguments: {}", e))?;
+            let started = self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .execute_action_async(action_name, Some(args_json));
+            match started {
+                Some(Ok(receiver)) => {
+                    self.pending_plugin_actions
+                        .push((action_name.to_string(), receiver));
+                    Ok(())
+                }
+                Some(Err(e)) => Err(format!("plugin action failed to start: {}", e)),
+                None => Err("plugin manager unavailable".to_string()),
+            }
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (action_name, args);
+            Err("plugins not available (compiled without plugin support)".to_string())
+        }
+    }
+
     /// Handle RegisterCommand command
     pub(super) fn handle_register_command(&self, command: fresh_core::command::Command) {
         use crate::input::commands::{Command as EditorCommand, CommandSource};
@@ -2370,6 +2418,7 @@ impl Editor {
             custom_contexts: command.custom_contexts,
             source: CommandSource::Plugin(command.plugin_name),
             terminal_bypass: command.terminal_bypass,
+            args: command.args,
         };
 
         tracing::debug!(

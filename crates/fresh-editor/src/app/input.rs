@@ -2287,7 +2287,7 @@ impl Editor {
                         .plugin_manager
                         .read()
                         .unwrap()
-                        .execute_action_async(&action_name);
+                        .execute_action_async(&action_name, None);
                     if let Some(result) = result {
                         match result {
                             Ok(receiver) => {

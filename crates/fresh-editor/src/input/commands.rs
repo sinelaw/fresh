@@ -40,6 +40,12 @@ pub struct Command {
     /// flag stays `false` for them and they still bypass the
     /// existing way.
     pub terminal_bypass: bool,
+    /// Declared arguments, for commands that take any. Plugins set these via
+    /// `editor.registerCommand(..., { args: [...] })`; built-ins declare none
+    /// (their argument handling lives in `Action::from_str`). Surfaced over the
+    /// agent command channel so `fresh --cmd cmd describe <id>` can tell an
+    /// agent how to call the command.
+    pub args: Vec<fresh_core::command::CommandArg>,
 }
 
 impl Command {
@@ -1600,6 +1606,9 @@ pub fn get_all_commands() -> Vec<Command> {
             // path; the plugin-driven `terminal_bypass` flag isn't
             // wired into them.
             terminal_bypass: false,
+            // Built-ins declare no argument schema: the ones that take
+            // arguments consume them inside `Action::from_str`.
+            args: Vec::new(),
         })
         .collect()
 }

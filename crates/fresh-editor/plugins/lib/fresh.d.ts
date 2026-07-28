@@ -2240,6 +2240,11 @@ interface EditorAPI {
 	*/
 	registerCommand(name: string, description: string, handlerName: string, context?: string | null, options?: {
 		terminalBypass?: boolean;
+		args?: {
+			name: string;
+			required?: boolean;
+			description?: string;
+		}[];
 	} | null): boolean;
 	/**
 	* Unregister a command by name
