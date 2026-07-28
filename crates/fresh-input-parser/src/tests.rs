@@ -1189,6 +1189,91 @@ fn kitty_event_type_release_is_not_a_press() {
 }
 
 #[test]
+fn kitty_event_type_on_legacy_form_keys() {
+    // Turning on event-type reporting does *not* move keys to the CSI-u form:
+    // the arrows, Home/End, keypad Begin and the `CSI <n> ~` editing keys keep
+    // their legacy final byte and gain a `:<event-type>` sub-parameter on the
+    // modifier field (`CSI 1 ; <mods>:<event-type> {ABCDEFHPQS}`,
+    // `CSI <n> ; <mods>:<event-type> ~`).
+    //
+    // Decoding only the modifiers there reported every release as a press, so a
+    // single arrow keypress moved the cursor twice and a single Delete removed
+    // two characters (sinelaw/fresh#2796).
+    let releases: &[(&[u8], KeyCode)] = &[
+        (b"\x1b[1;1:3A", KeyCode::Up),
+        (b"\x1b[1;1:3B", KeyCode::Down),
+        (b"\x1b[1;1:3C", KeyCode::Right),
+        (b"\x1b[1;1:3D", KeyCode::Left),
+        (b"\x1b[1;1:3H", KeyCode::Home),
+        (b"\x1b[1;1:3F", KeyCode::End),
+        (b"\x1b[1;1:3E", KeyCode::KeypadBegin),
+        (b"\x1b[2;1:3~", KeyCode::Insert),
+        (b"\x1b[3;1:3~", KeyCode::Delete),
+        (b"\x1b[5;1:3~", KeyCode::PageUp),
+        (b"\x1b[6;1:3~", KeyCode::PageDown),
+        (b"\x1b[24;1:3~", KeyCode::F(12)),
+        (b"\x1b[1;2:3P", KeyCode::F(1)),
+        (b"\x1b[1;2:3Z", KeyCode::BackTab),
+    ];
+    for (bytes, code) in releases {
+        let mut p = InputParser::new();
+        let ev = p.parse(bytes);
+        match &ev[..] {
+            [Event::Key(ke)] => {
+                assert_eq!(ke.code, *code, "wrong key for {:?}", bytes);
+                assert_eq!(
+                    ke.kind,
+                    KeyEventKind::Release,
+                    "{:?} is a release, not a press",
+                    bytes
+                );
+            }
+            other => panic!("expected one key event for {:?}, got {:?}", bytes, other),
+        }
+    }
+
+    // Repeat (auto-repeat while the key is held) is its own kind — it is a
+    // keystroke, so it must not be dropped, but it is not a press either.
+    let mut p = InputParser::new();
+    assert!(matches!(
+        &p.parse(b"\x1b[1;1:2B")[0],
+        Event::Key(ke) if ke.code == KeyCode::Down && ke.kind == KeyEventKind::Repeat
+    ));
+    assert!(matches!(
+        &p.parse(b"\x1b[3;1:2~")[0],
+        Event::Key(ke) if ke.code == KeyCode::Delete && ke.kind == KeyEventKind::Repeat
+    ));
+
+    // An explicit press, and the plain legacy forms a terminal without
+    // event-type reporting sends, all stay presses.
+    for bytes in [
+        b"\x1b[1;1:1B".as_slice(),
+        b"\x1b[B".as_slice(),
+        b"\x1b[3~".as_slice(),
+        b"\x1b[1;5C".as_slice(),
+    ] {
+        let mut p = InputParser::new();
+        assert!(
+            matches!(&p.parse(bytes)[0], Event::Key(ke) if ke.kind == KeyEventKind::Press),
+            "{:?} should be a press",
+            bytes
+        );
+    }
+
+    // Modifiers still decode alongside an event type: the sub-parameter must
+    // not swallow the modifier value it is attached to.
+    let mut p = InputParser::new();
+    match &p.parse(b"\x1b[1;2:3D")[0] {
+        Event::Key(ke) => {
+            assert_eq!(ke.code, KeyCode::Left);
+            assert_eq!(ke.modifiers, KeyModifiers::SHIFT);
+            assert_eq!(ke.kind, KeyEventKind::Release);
+        }
+        other => panic!("expected key, got {:?}", other),
+    }
+}
+
+#[test]
 fn ss3_application_keypad_forms() {
     // The numeric keypad in application mode (DECPAM) went silent for these.
     let mut p = InputParser::new();

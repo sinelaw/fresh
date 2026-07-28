@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::{Event, KeyEventKind};
+use crossterm::event::Event;
 use ratatui::Terminal;
 
 use crate::app::Editor;
@@ -1516,7 +1516,7 @@ impl EditorServer {
 
         match event {
             Event::Key(key_event) => {
-                if key_event.kind == KeyEventKind::Press {
+                if crate::input::is_keystroke(key_event.kind) {
                     editor
                         .handle_key(key_event.code, key_event.modifiers)
                         .map_err(|e| io::Error::other(e.to_string()))?;

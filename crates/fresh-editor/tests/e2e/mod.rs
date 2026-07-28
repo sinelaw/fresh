@@ -92,6 +92,7 @@ pub mod issue_2449_scrollback_wrapped_ansi_color;
 pub mod issue_2566_env_detector_labels;
 pub mod issue_2572_hover_through_panel;
 pub mod issue_2605_format_selection_range;
+pub mod issue_2796_key_release_duplicates;
 #[cfg(feature = "plugins")]
 pub mod issue_2810_session_escape_flush;
 pub mod issue_779_after_eof_shade;

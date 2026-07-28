@@ -304,10 +304,11 @@ impl Editor {
     ///
     /// Returns whether the editor wants the next frame redrawn.
     pub fn handle_input_event(&mut self, event: crossterm::event::Event) -> anyhow::Result<bool> {
-        use crossterm::event::{Event as Ev, KeyEventKind};
+        use crate::input::is_keystroke;
+        use crossterm::event::Event as Ev;
 
         match event {
-            Ev::Key(key_event) if key_event.kind == KeyEventKind::Press => {
+            Ev::Key(key_event) if is_keystroke(key_event.kind) => {
                 let key_code = format!("{:?}", key_event.code);
                 let modifiers = format!("{:?}", key_event.modifiers);
                 self.active_window_mut()
