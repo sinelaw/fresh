@@ -892,6 +892,22 @@ pub struct Editor {
     #[cfg(feature = "plugins")]
     plugin_render_requested: bool,
 
+    /// Clone of the buffer as it stood at the end of the previous render
+    /// pass. Ratatui's `swap_buffers` resets the "current" buffer, so at
+    /// the start of the next draw `frame.buffer_mut()` is blank rather
+    /// than the previous frame; animations need what the user actually
+    /// saw. Editor-wide, not per-window: only the active window paints,
+    /// so a per-window copy would go stale the moment focus moved, and
+    /// cross-window transitions read it from the *incoming* window.
+    last_rendered_frame: Option<ratatui::buffer::Buffer>,
+
+    /// Plugin commands the mid-render drain refused to run because they
+    /// have to happen before a frame is laid out (see
+    /// `Editor::plugin_command_must_precede_layout`). Drained at the top
+    /// of the next render, ahead of anything newly arrived.
+    #[cfg(feature = "plugins")]
+    deferred_plugin_commands: Vec<fresh_core::api::PluginCommand>,
+
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
     /// Stores the keys pressed so far in a chord sequence
     // `chord_state` moved onto `Window`.

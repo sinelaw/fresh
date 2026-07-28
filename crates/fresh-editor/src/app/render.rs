@@ -75,11 +75,15 @@ impl Editor {
         // painted last alongside the centered-overlay path.
         let (dock_area, chrome_area) = self.compute_dock_split(size);
 
-        // Let active animations snapshot the previous frame's buffer
-        // from the runner's own cache. We can't read the live
-        // `frame.buffer_mut()` — ratatui resets it before each draw —
-        // so the runner keeps a post-apply clone from the last frame.
-        self.active_window_mut().animations.capture_before_all();
+        // Let active animations snapshot the previous frame's buffer.
+        // We can't read the live `frame.buffer_mut()` — ratatui resets it
+        // before each draw — so the editor keeps a post-apply clone of
+        // the last frame and hands it in.
+        let previous_frame = self.last_rendered_frame.take();
+        self.active_window_mut()
+            .animations
+            .capture_before_all(previous_frame.as_ref());
+        self.last_rendered_frame = previous_frame;
 
         // Save frame dimensions for recompute_layout (used by macro replay)
         self.active_chrome_mut().last_frame.width = size.width;
@@ -381,6 +385,22 @@ impl Editor {
                 let commands = self.plugin_manager.write().unwrap().process_commands();
                 let dispatched_any = !commands.is_empty();
                 for command in commands {
+                    // A command that changes *which window this frame is
+                    // being painted for* cannot run here: the menu bar,
+                    // the file-explorer sidebar, the tab bar and the
+                    // splits above have already been drawn for the
+                    // outgoing window, and only the buffer content and
+                    // bottom row are still to come. Running it anyway
+                    // stitches one frame out of two workspaces — the
+                    // reported "the sidebar hangs over the wrong
+                    // workspace for a moment" when clicking between dock
+                    // cards. Hold it for the next frame's pre-layout
+                    // drain, which runs before any of that is laid out.
+                    if Self::plugin_command_must_precede_layout(&command) {
+                        self.deferred_plugin_commands.push(command);
+                        self.plugin_render_requested = true;
+                        continue;
+                    }
                     if let Err(e) = self.handle_plugin_command(command) {
                         tracing::error!("Error handling plugin command: {}", e);
                     }
@@ -965,6 +985,11 @@ impl Editor {
         self.active_window_mut()
             .animations
             .apply_all(frame.buffer_mut());
+
+        // Keep the post-apply paint so the next frame's effects can push
+        // it out of view. Cloned because ratatui resets the current
+        // buffer before the next draw.
+        self.last_rendered_frame = Some(frame.buffer_mut().clone());
 
         // Dock, full-screen modals, floating panel, theme-info popup, and the
         // workspace-trust modal — the topmost layers, drawn above
@@ -2136,9 +2161,32 @@ impl Editor {
     /// The mid-render drain (after `compute_dock_split`) runs too late for
     /// those: the dock area would be computed from stale state and the freed
     /// columns would render blank until the next input event.
+    /// True for plugin commands that must be handled before a frame is
+    /// laid out, never in the mid-render drain. Today that is exactly the
+    /// active-window switches: everything the editor paints — chrome,
+    /// sidebar, splits, status bar — is derived from the active window, so
+    /// moving that pointer part-way through a paint yields a frame
+    /// assembled from two different workspaces.
+    #[cfg(feature = "plugins")]
+    fn plugin_command_must_precede_layout(command: &fresh_core::api::PluginCommand) -> bool {
+        use fresh_core::api::PluginCommand;
+        matches!(
+            command,
+            PluginCommand::SetActiveWindow { .. } | PluginCommand::SetActiveWindowAnimated { .. }
+        )
+    }
+
     fn drain_pre_layout_plugin_commands(&mut self) {
         #[cfg(feature = "plugins")]
         {
+            // Commands the previous frame's mid-render drain held back
+            // go first: they were queued before anything `process_commands`
+            // returns now.
+            for command in std::mem::take(&mut self.deferred_plugin_commands) {
+                if let Err(e) = self.handle_plugin_command(command) {
+                    tracing::error!("Error handling deferred plugin command: {}", e);
+                }
+            }
             let early_commands = self.plugin_manager.write().unwrap().process_commands();
             if !early_commands.is_empty() {
                 tracing::trace!(
