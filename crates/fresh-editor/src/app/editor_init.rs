@@ -768,13 +768,15 @@ impl Editor {
         let start = std::time::Instant::now();
         let mut grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
         // Merge user config so find_by_path respects user globs/filenames
-        // from the very first lookup. `defaults_only` just built the Arc, so
-        // we're the sole owner; get_mut is guaranteed to succeed. Assert
+        // from the very first lookup, and load any `textmate_grammar` files
+        // the config points at. `defaults_only` just built the Arc, so we're
+        // the sole owner; the get_mut inside is guaranteed to succeed. Assert
         // rather than silently drop config — a failure here would leave the
         // user wondering why their `*.conf → bash` rule doesn't highlight.
-        std::sync::Arc::get_mut(&mut grammar_registry)
-            .expect("defaults_only returned a shared Arc")
-            .apply_language_config(&config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut grammar_registry,
+            &config.languages,
+        );
         crate::config::reload_indent_overrides(&config.languages);
         tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         // Don't start background grammar build here — it's deferred to the
@@ -828,9 +830,10 @@ impl Editor {
         // through `find_by_path`. Both call sites that feed into `for_test`
         // (`HarnessOptions::with_full_grammar_registry` and the default
         // `GrammarRegistry::empty()`) hand us the sole Arc owner.
-        std::sync::Arc::get_mut(&mut grammar_registry)
-            .expect("grammar registry Arc must be uniquely owned at for_test entry")
-            .apply_language_config(&config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut grammar_registry,
+            &config.languages,
+        );
         crate::config::reload_indent_overrides(&config.languages);
         let authority = Self::local_authority_with_filesystem(filesystem);
         let mut editor = Self::with_options(

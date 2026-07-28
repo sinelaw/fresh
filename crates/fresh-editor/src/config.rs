@@ -2639,8 +2639,11 @@ pub struct LanguageConfig {
     #[serde(default)]
     pub auto_surround: Option<bool>,
 
-    /// Path to custom TextMate grammar file (optional)
-    /// If specified, this grammar will be used when highlighter is "textmate"
+    /// Path to a custom grammar file for this language (optional).
+    /// Loaded into the grammar registry at startup and associated with this
+    /// language's `extensions`, so files matching them highlight with it.
+    /// Only Sublime Text `.sublime-syntax` grammars are supported —
+    /// TextMate `.tmLanguage` is a different format syntect cannot load.
     #[serde(default)]
     pub textmate_grammar: Option<std::path::PathBuf>,
 

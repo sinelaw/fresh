@@ -1481,7 +1481,7 @@
           "default": null
         },
         "textmate_grammar": {
-          "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
+          "description": "Path to a custom grammar file for this language (optional).\nLoaded into the grammar registry at startup and associated with this\nlanguage's `extensions`, so files matching them highlight with it.\nOnly Sublime Text `.sublime-syntax` grammars are supported —\nTextMate `.tmLanguage` is a different format syntect cannot load.",
           "type": [
             "string",
             "null"
