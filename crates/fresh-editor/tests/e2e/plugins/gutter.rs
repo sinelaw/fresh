@@ -199,6 +199,54 @@ fn start_server(config: Config) {
     println!("Git gutter screen:\n{}", screen);
 }
 
+/// Regression test for issue #2721: user-configured external diff tools may
+/// emit side-by-side output, but the gutter parser requires a unified diff.
+#[test]
+#[cfg(unix)]
+fn test_git_gutter_ignores_external_diff_and_pager() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_gutter_plugin();
+    repo.setup_external_diff_and_pager();
+
+    repo.modify_file(
+        "src/main.rs",
+        r#"fn main() {
+    println!("Modified while difft is configured!");
+    let config = load_config();
+    start_server(config);
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting server...");
+}
+"#,
+    );
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    open_file(&mut harness, &repo.path, "src/main.rs");
+    wait_for_indicator(&mut harness, "│");
+
+    assert!(
+        has_gutter_indicator(&harness.screen_to_string(), "│"),
+        "Git gutter indicator should appear even when diff.external and core.pager are configured"
+    );
+}
+
 /// Test that git gutter updates after saving a file
 // TODO: Fix git gutter tests on Windows - they fail due to git command output differences
 #[test]
