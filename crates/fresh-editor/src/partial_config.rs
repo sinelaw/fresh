@@ -199,6 +199,7 @@ pub struct PartialEditorConfig {
     pub rainbow_brackets: Option<bool>,
     pub cursor_style: Option<CursorStyle>,
     pub keyboard_disambiguate_escape_codes: Option<bool>,
+    pub keyboard_escape_time_ms: Option<u64>,
     pub keyboard_report_event_types: Option<bool>,
     pub keyboard_report_alternate_keys: Option<bool>,
     pub keyboard_report_all_keys_as_escape_codes: Option<bool>,
@@ -310,6 +311,8 @@ impl Merge for PartialEditorConfig {
         self.cursor_style.merge_from(&other.cursor_style);
         self.keyboard_disambiguate_escape_codes
             .merge_from(&other.keyboard_disambiguate_escape_codes);
+        self.keyboard_escape_time_ms
+            .merge_from(&other.keyboard_escape_time_ms);
         self.keyboard_report_event_types
             .merge_from(&other.keyboard_report_event_types);
         self.keyboard_report_alternate_keys
@@ -654,6 +657,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             rainbow_brackets: Some(cfg.rainbow_brackets),
             cursor_style: Some(cfg.cursor_style),
             keyboard_disambiguate_escape_codes: Some(cfg.keyboard_disambiguate_escape_codes),
+            keyboard_escape_time_ms: Some(cfg.keyboard_escape_time_ms),
             keyboard_report_event_types: Some(cfg.keyboard_report_event_types),
             keyboard_report_alternate_keys: Some(cfg.keyboard_report_alternate_keys),
             keyboard_report_all_keys_as_escape_codes: Some(
@@ -808,6 +812,9 @@ impl PartialEditorConfig {
             keyboard_disambiguate_escape_codes: self
                 .keyboard_disambiguate_escape_codes
                 .unwrap_or(defaults.keyboard_disambiguate_escape_codes),
+            keyboard_escape_time_ms: self
+                .keyboard_escape_time_ms
+                .unwrap_or(defaults.keyboard_escape_time_ms),
             keyboard_report_event_types: self
                 .keyboard_report_event_types
                 .unwrap_or(defaults.keyboard_report_event_types),

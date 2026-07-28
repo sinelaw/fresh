@@ -1685,6 +1685,21 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Keyboard"))]
     pub keyboard_disambiguate_escape_codes: bool,
 
+    /// How long a lone Escape byte waits for a continuation before it is treated
+    /// as the Escape key, in milliseconds.
+    /// In the legacy encoding `ESC` is both the Escape key and the prefix of every
+    /// escape sequence, so this is a guess on a timer: too low and a mouse report
+    /// split by a slow ssh/mosh link is torn apart mid-sequence, too high and the
+    /// Escape key feels sluggish. Raise it on high-latency connections
+    /// (tmux's equivalent, `escape-time`, defaults to 500).
+    /// Ignored entirely on terminals that confirm the kitty keyboard protocol's
+    /// "disambiguate escape codes" mode, where Escape is unambiguous and no
+    /// guessing is needed.
+    /// Default: 50ms
+    #[serde(default = "default_keyboard_escape_time")]
+    #[schemars(extend("x-section" = "Keyboard"))]
+    pub keyboard_escape_time_ms: u64,
+
     /// Enable keyboard enhancement: report key event types (repeat/release).
     /// Adds extra events when keys are autorepeated or released.
     /// Requires terminal support (kitty keyboard protocol).
@@ -1815,6 +1830,15 @@ fn default_quick_suggestions_delay() -> u64 {
     150 // 150ms — fast enough to feel responsive, slow enough to not interrupt typing
 }
 
+fn default_keyboard_escape_time() -> u64 {
+    // 50ms, matching Neovim's `ttimeoutlen` and libtermkey's waittime — the
+    // established floor for reassembling sequences split across reads. The
+    // previous 15ms was the most aggressive of any comparable tool (tmux's
+    // `escape-time` defaults to 500ms) and left normal ssh jitter inside the
+    // window where a split mouse report is torn apart (sinelaw/fresh#2793).
+    50
+}
+
 fn default_scroll_offset() -> usize {
     3
 }
@@ -1917,6 +1941,7 @@ impl Default for EditorConfig {
             rainbow_brackets: true,
             cursor_style: CursorStyle::default(),
             keyboard_disambiguate_escape_codes: true,
+            keyboard_escape_time_ms: default_keyboard_escape_time(),
             keyboard_report_event_types: false,
             keyboard_report_alternate_keys: true,
             keyboard_report_all_keys_as_escape_codes: false,

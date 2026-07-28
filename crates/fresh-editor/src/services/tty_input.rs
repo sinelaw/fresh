@@ -31,20 +31,11 @@ use std::time::Duration;
 use crossterm::event::{Event as CrosstermEvent, MouseEventKind};
 use fresh_input_parser::InputParser;
 
-/// How long a buffered lone `ESC` waits for a continuation before it is
-/// resolved as the Escape key. This bounds two waits: the in-`drain_stdin`
-/// window that lets a sequence split across a read boundary complete as one
-/// event, and the idle wait in [`TtyReader::poll`] before a genuinely lone
-/// `ESC` is emitted as the Escape key. It must stay well below human
-/// key-repeat latency so Escape still registers promptly.
+/// Default grace for a buffered lone `ESC`, when no configured value is given
+/// (tests, and callers that predate the config plumbing).
 ///
-/// Crucially the grace is only ever a *wait*, never — as it once was — a
-/// deadline that flushes the `ESC` mid-stream: a continuation arriving after
-/// the window elapses (a mouse report split across a slow pty/socket boundary)
-/// must still be parsed as the control sequence it is, not torn into an Escape
-/// key plus literal keystrokes that fresh forwards into a focused embedded
-/// terminal (sinelaw/fresh#2793, a residue of #2745).
-const ESC_GRACE: Duration = Duration::from_millis(15);
+/// Matches `editor.keyboard_escape_time_ms`; see that setting for why 50ms.
+pub const DEFAULT_ESC_GRACE: Duration = Duration::from_millis(50);
 
 /// Set to true by the `SIGWINCH` handler; consumed by [`TtyReader::take_resize`].
 static SIGWINCH_PENDING: AtomicBool = AtomicBool::new(false);
@@ -101,17 +92,29 @@ pub struct TtyReader {
     parser: InputParser,
     queue: VecDeque<CrosstermEvent>,
     stdin_fd: RawFd,
+    /// How long a lone `ESC` may wait for a continuation before it resolves to
+    /// the Escape key. Only consulted while the terminal has *not* confirmed
+    /// unambiguous Escape encoding.
+    esc_grace: Duration,
 }
 
 impl TtyReader {
-    /// Install the `SIGWINCH` handler and take ownership of stdin input.
+    /// Install the `SIGWINCH` handler and take ownership of stdin input, using
+    /// the default escape grace.
     pub fn new() -> Self {
+        Self::with_escape_grace(DEFAULT_ESC_GRACE)
+    }
+
+    /// As [`TtyReader::new`], with the grace from
+    /// `editor.keyboard_escape_time_ms`.
+    pub fn with_escape_grace(esc_grace: Duration) -> Self {
         install_sigwinch_handler();
         RAW_INPUT_ACTIVE.store(true, Ordering::Relaxed);
         Self {
             parser: InputParser::new(),
             queue: VecDeque::new(),
             stdin_fd: std::io::stdin().as_raw_fd(),
+            esc_grace,
         }
     }
 
@@ -137,33 +140,43 @@ impl TtyReader {
     /// promptly without blocking.
     ///
     /// A lone trailing `ESC` is ambiguous — the Escape key, or the head of a
-    /// sequence split across reads. If a continuation arrives within
-    /// [`ESC_GRACE`] it is pulled in so the sequence completes as one event;
-    /// otherwise the `ESC` is left *buffered* (not emitted) and only resolved
-    /// as the Escape key by [`flush_pending_escape`](Self::flush_pending_escape)
-    /// once stdin actually goes idle. Flushing it here — as a previous version
-    /// did on grace expiry — tore a slowly-split control sequence into an
-    /// Escape key followed by its remainder as literal keystrokes, which fresh
-    /// then forwarded verbatim into a focused embedded terminal
+    /// sequence split across reads. If a continuation arrives within the escape
+    /// grace it is pulled in so the sequence completes as one event; otherwise
+    /// the `ESC` is left *buffered* (not emitted) and only resolved as the
+    /// Escape key by [`flush_pending_escape`](Self::flush_pending_escape) once
+    /// stdin actually goes idle. Flushing it here — as a previous version did on
+    /// grace expiry — tore a slowly-split control sequence into an Escape key
+    /// followed by its remainder as literal keystrokes, which fresh then
+    /// forwarded verbatim into a focused embedded terminal
     /// (sinelaw/fresh#2793).
     pub fn drain_stdin(&mut self) {
         while self.read_once() {
-            if !self.parser.escape_pending() || !poll_readable(self.stdin_fd, ESC_GRACE) {
+            if !self.parser.flush_pending() || !poll_readable(self.stdin_fd, self.esc_grace) {
                 break;
             }
         }
     }
 
-    /// Resolve a buffered lone `ESC` as the Escape key press, queueing the
-    /// event. A no-op when no `ESC` is pending.
+    /// Resolve a buffered lone `ESC` as the Escape key press (or release a `[`
+    /// held after an earlier flush), queueing the event. A no-op when nothing is
+    /// pending.
     ///
     /// The caller invokes this only when stdin has gone idle — a blocking
-    /// [`poll`](Self::poll) that timed out with no further bytes. At that point
-    /// a pending `ESC` has no continuation in flight, so it is unambiguously the
-    /// Escape key. Keeping the decision here (rather than at the end of every
-    /// [`drain_stdin`](Self::drain_stdin)) is what makes the leak in
-    /// sinelaw/fresh#2793 structurally impossible: while bytes are still
-    /// arriving the `ESC` stays buffered and combines with its continuation.
+    /// [`poll`](Self::poll) that timed out with no further bytes. Deferring the
+    /// decision to here rather than to the end of every
+    /// [`drain_stdin`](Self::drain_stdin) widens the window in which a split
+    /// sequence still reassembles from one grace period to two.
+    ///
+    /// It does **not** eliminate the leak, and earlier revisions of this comment
+    /// wrongly claimed it did: a continuation that arrives after both windows
+    /// have elapsed still finds the `ESC` gone. That is inherent to the legacy
+    /// encoding — `0x1b` is both the Escape key and a sequence prefix, so every
+    /// implementation guesses on a timer (tmux `escape-time`, Neovim
+    /// `ttimeoutlen`). What bounds the damage is elsewhere: the parser resyncs a
+    /// mouse report whose `ESC` was flushed instead of spraying its bytes as
+    /// keystrokes, and on terminals that confirm the kitty protocol's
+    /// disambiguate mode the guess never happens at all
+    /// (`InputParser::set_escape_unambiguous`). See sinelaw/fresh#2793.
     pub fn flush_pending_escape(&mut self) {
         for ev in self.parser.flush() {
             self.push_coalesced(ev);
@@ -188,7 +201,34 @@ impl TtyReader {
         for ev in events {
             self.push_coalesced(ev);
         }
+        self.adopt_keyboard_flags_reply();
         true
+    }
+
+    /// Act on a kitty keyboard-flags reply (`CSI ? <flags> u`) if one arrived in
+    /// the bytes just parsed — the answer to the `CSI ? u` query
+    /// `TerminalModes::enable` sends after pushing its enhancement flags.
+    ///
+    /// Bit 0 is "disambiguate escape codes". When the terminal confirms it, the
+    /// Escape key arrives as `CSI 27 u`, so a bare `0x1b` is *always* the head of
+    /// a sequence and must never be resolved on a timer; telling the parser so
+    /// retires the guess entirely on those terminals (sinelaw/fresh#2793). A
+    /// reply with the bit clear (or no reply at all, from a terminal that
+    /// ignored both the push and the query) leaves the timer in charge.
+    fn adopt_keyboard_flags_reply(&mut self) {
+        let Some(flags) = self.parser.take_keyboard_flags_reply() else {
+            return;
+        };
+        let unambiguous = flags & 0b1 != 0;
+        if unambiguous != self.parser.escape_unambiguous() {
+            tracing::info!(
+                "Terminal reported keyboard flags {flags:#b}; \
+                 Escape is {}ambiguous, escape timer {}",
+                if unambiguous { "un" } else { "" },
+                if unambiguous { "retired" } else { "in use" },
+            );
+        }
+        self.parser.set_escape_unambiguous(unambiguous);
     }
 
     /// Queue an event, collapsing a run of mouse-move events down to the latest
@@ -216,13 +256,17 @@ impl TtyReader {
         if let Some(ev) = self.take_resize() {
             return Ok(Some(ev));
         }
-        // While a lone `ESC` is buffered, cap the wait to `ESC_GRACE`: if a
-        // continuation arrives it completes the sequence, and if the stream
-        // stays idle we resolve the `ESC` as the Escape key promptly instead of
-        // blocking for the caller's full timeout. When nothing is pending the
-        // caller's timeout is honoured as before.
-        let wait = if self.parser.escape_pending() {
-            timeout.min(ESC_GRACE)
+        // While a lone `ESC` (or a `[` held after a flush) is buffered, cap the
+        // wait to the escape grace: if a continuation arrives it completes the
+        // sequence, and if the stream stays idle we resolve the pending byte
+        // promptly instead of blocking for the caller's full timeout. When
+        // nothing is pending the caller's timeout is honoured as before.
+        //
+        // A terminal that confirmed unambiguous Escape encoding needs no cap: a
+        // lone `ESC` there is never a key press, so there is nothing to resolve
+        // and the parser simply waits for the rest of the sequence.
+        let wait = if self.parser.flush_pending() && !self.parser.escape_unambiguous() {
+            timeout.min(self.esc_grace)
         } else {
             timeout
         };
@@ -265,6 +309,7 @@ impl TtyReader {
             parser: InputParser::new(),
             queue: VecDeque::new(),
             stdin_fd: fd,
+            esc_grace: DEFAULT_ESC_GRACE,
         }
     }
 }
@@ -314,7 +359,13 @@ mod tests {
     /// must arrive as a single `Mouse` event, never the Escape key followed by
     /// its remainder (`[ M C H 4`) as literal keystrokes. Before the fix
     /// `drain_stdin` flushed the `ESC` as soon as no continuation arrived within
-    /// `ESC_GRACE`, so this split leaked six key events and zero mouse events.
+    /// the escape grace, so this split leaked six key events and zero mouse
+    /// events.
+    ///
+    /// Note this case never reaches the flush at all — it covers the window in
+    /// which the `ESC` is merely *buffered*. The leak the issue reports happens
+    /// once the flush has fired; that is
+    /// `flushed_escape_does_not_leak_a_split_mouse_report_as_keys` below.
     #[test]
     fn split_x10_mouse_across_reads_is_one_mouse_event_not_leaked_keys() {
         let pipe = Pipe::new();
@@ -369,6 +420,96 @@ mod tests {
                 CrosstermEvent::Key(k) if k.code == KeyCode::Esc,
             ),
             "expected Esc key, got {:?}",
+            events[0],
+        );
+    }
+
+    /// #2793, the leak as actually reported: the split gap outlasts every grace
+    /// window, so the caller has already flushed the `ESC` as the Escape key
+    /// (stdin went idle) when the continuation finally arrives. The remainder
+    /// must not become `[ M C H 4` keystrokes — those get forwarded verbatim into
+    /// the focused embedded terminal's child pty and print `^[[MCH4` at the
+    /// user's shell prompt.
+    ///
+    /// Drives the same call sequence the event loop uses (`drain_stdin`, then
+    /// `flush_pending_escape` on an idle poll, then `drain_stdin` again) rather
+    /// than the buffered-only window, so it exercises the path that leaked. No
+    /// timing involved: the idle flush is invoked directly, exactly as a
+    /// timed-out `poll` would.
+    #[test]
+    fn flushed_escape_does_not_leak_a_split_mouse_report_as_keys() {
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        pipe.write(b"\x1b");
+        reader.drain_stdin();
+
+        // stdin went idle for the whole grace: the caller resolves the Escape.
+        reader.flush_pending_escape();
+        let flushed = drain_events(&mut reader);
+        assert!(
+            matches!(flushed.first(), Some(CrosstermEvent::Key(k)) if k.code == KeyCode::Esc),
+            "expected the Escape key on idle, got {flushed:?}",
+        );
+
+        // The continuation arrives late. It is still a mouse report.
+        pipe.write(b"[MCH4");
+        reader.drain_stdin();
+        let events = drain_events(&mut reader);
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                CrosstermEvent::Key(k) if matches!(k.code, KeyCode::Char(_))
+            )),
+            "mouse report leaked as literal keystrokes: {events:?}",
+        );
+        assert_eq!(
+            events.len(),
+            1,
+            "expected just the mouse event, got {events:?}"
+        );
+        assert!(
+            matches!(events[0], CrosstermEvent::Mouse(_)),
+            "expected the late continuation to decode as a mouse event, got {:?}",
+            events[0],
+        );
+    }
+
+    /// A terminal that confirms the kitty protocol's disambiguate mode (`CSI ? 1 u`
+    /// in reply to fresh's `CSI ? u` query) encodes Escape as `CSI 27 u`, so a
+    /// bare `ESC` is always the head of a sequence. The reader must then stop
+    /// resolving it on idle altogether — the guess is retired, not merely widened.
+    #[test]
+    fn confirmed_disambiguate_mode_retires_the_escape_guess() {
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        pipe.write(b"\x1b[?1u"); // the flags reply
+        reader.drain_stdin();
+        assert!(
+            drain_events(&mut reader).is_empty(),
+            "the flags reply must not surface as input",
+        );
+
+        pipe.write(b"\x1b");
+        reader.drain_stdin();
+        reader.flush_pending_escape();
+        assert!(
+            drain_events(&mut reader).is_empty(),
+            "a lone ESC must not resolve to the Escape key on such terminals",
+        );
+
+        pipe.write(b"[MCH4");
+        reader.drain_stdin();
+        let events = drain_events(&mut reader);
+        assert_eq!(
+            events.len(),
+            1,
+            "expected just the mouse event, got {events:?}"
+        );
+        assert!(
+            matches!(events[0], CrosstermEvent::Mouse(_)),
+            "expected a mouse event, got {:?}",
             events[0],
         );
     }

@@ -199,6 +199,23 @@ impl TerminalModes {
                     "Pushed keyboard enhancement flags optimistically: {:?}",
                     flags
                 );
+                // Ask what actually took effect. Pushing optimistically leaves us
+                // unable to tell a terminal that honoured the flags from one that
+                // ignored them, and that distinction decides whether a lone `ESC`
+                // can ever be the Escape key: with "disambiguate escape codes"
+                // active it arrives as `CSI 27 u`, so a bare `0x1b` is always the
+                // head of a sequence and must never be resolved on a timer
+                // (sinelaw/fresh#2793).
+                //
+                // Unlike `crossterm::supports_keyboard_enhancement` this costs
+                // nothing on terminals that don't implement the protocol: we do
+                // not wait for the answer. `CSI ? u` is silently ignored by them,
+                // while terminals that do implement it reply on stdin, where the
+                // input parser picks the reply up as part of normal reading
+                // (`InputParser::take_keyboard_flags_reply`).
+                if let Err(e) = write!(stdout(), "\x1b[?u").and_then(|()| stdout().flush()) {
+                    tracing::info!("Failed to query keyboard flags: {}", e);
+                }
             }
         } else {
             tracing::debug!("Keyboard enhancement disabled by config");

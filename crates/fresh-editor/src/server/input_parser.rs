@@ -14,12 +14,16 @@ use crossterm::event::Event;
 
 pub use fresh_input_parser::InputParser;
 
-/// How long a lone `ESC` stays buffered before it is resolved as the Escape
-/// key. Mirrors the tty reader's grace window: long enough that a control
-/// sequence split across two socket reads still arrives as one sequence, short
-/// enough that Escape feels immediate. Two keystrokes can never land this close
-/// together, so nothing a user types is coalesced by it.
-const ESC_GRACE: Duration = Duration::from_millis(15);
+/// Default grace for a lone `ESC` on the session path, used when no configured
+/// value is supplied.
+///
+/// Mirrors the tty reader's default (and `editor.keyboard_escape_time_ms`): long
+/// enough that a control sequence split across two socket reads still arrives as
+/// one sequence, short enough that Escape feels immediate. The two paths must
+/// agree — this window was 15ms while the tty path effectively allowed ~30ms,
+/// which made `fresh -a` twice as easy to tear a split mouse report apart on
+/// (sinelaw/fresh#2793).
+pub const DEFAULT_ESC_GRACE: Duration = Duration::from_millis(50);
 
 /// [`InputParser`] plus the idle-flush rule the session path needs.
 ///
@@ -39,13 +43,22 @@ pub struct ClientInputParser {
     /// When the currently-buffered lone `ESC` was first observed. `None`
     /// whenever the parser is not sitting on one.
     escape_pending_since: Option<Instant>,
+    /// How long that `ESC` may stay buffered before resolving to the Escape key.
+    esc_grace: Duration,
 }
 
 impl ClientInputParser {
     pub fn new() -> Self {
+        Self::with_escape_grace(DEFAULT_ESC_GRACE)
+    }
+
+    /// As [`ClientInputParser::new`], with the grace from
+    /// `editor.keyboard_escape_time_ms`.
+    pub fn with_escape_grace(esc_grace: Duration) -> Self {
         Self {
             parser: InputParser::new(),
             escape_pending_since: None,
+            esc_grace,
         }
     }
 
@@ -58,7 +71,7 @@ impl ClientInputParser {
     }
 
     /// Resolve a buffered lone `ESC` as the Escape key once it has been pending
-    /// for [`ESC_GRACE`] without a continuation. Returns the events to inject
+    /// for the escape grace without a continuation. Returns the events to inject
     /// (empty when nothing is pending or the grace window has not elapsed).
     ///
     /// `now` is a parameter so tests can drive the window without sleeping.
@@ -66,7 +79,7 @@ impl ClientInputParser {
         let Some(since) = self.escape_pending_since else {
             return Vec::new();
         };
-        if now.duration_since(since) < ESC_GRACE {
+        if now.duration_since(since) < self.esc_grace {
             return Vec::new();
         }
         let events = self.parser.flush();
@@ -78,7 +91,9 @@ impl ClientInputParser {
     /// the parser has moved on (the continuation arrived, or the escape was
     /// already flushed).
     fn sync_escape_timer(&mut self, now: Instant) {
-        if self.parser.escape_pending() {
+        // A terminal that confirmed unambiguous Escape encoding never needs the
+        // timer: a lone `ESC` there is only ever the head of a sequence.
+        if self.parser.escape_pending() && !self.parser.escape_unambiguous() {
             self.escape_pending_since.get_or_insert(now);
         } else {
             self.escape_pending_since = None;
