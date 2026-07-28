@@ -3465,6 +3465,10 @@ impl Editor {
                 // Drop the closed split from every terminal's scrollback set.
                 self.active_window_mut()
                     .forget_split_terminal_modes(leaf_id);
+                // The surviving panes just grew into the closed split's
+                // space — reflow through the layout funnel so their
+                // terminals are resized, same as `close_active_split`.
+                self.relayout();
                 tracing::info!("Closed split {:?}", split_id);
             }
             Err(e) => {

@@ -210,6 +210,15 @@ impl Editor {
                 self.move_tab_to_split(buffer_id, source_split_id, target_split_id, None);
             }
         }
+
+        // Every drop outcome above can change pane geometry: the four
+        // `Split*` zones create a split, and a move can empty (and close)
+        // the source one. Reflow through the single layout funnel here —
+        // the one fork all of them pass through — so a dropped terminal's
+        // PTY is SIGWINCHed to its new pane instead of keeping the size it
+        // had before the drag. Redundant for a same-split reorder, which
+        // `relayout` is explicitly cheap enough to absorb.
+        self.relayout();
     }
 
     /// Reorder a tab within the same split
