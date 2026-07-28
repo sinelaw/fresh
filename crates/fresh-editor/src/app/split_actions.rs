@@ -772,6 +772,7 @@ impl Editor {
 
     /// Resolve a caller-supplied path against the window's root, so a script
     /// can say `"README.md"` and mean the obvious thing.
+    #[cfg(feature = "plugins")]
     fn resolve_workspace_path(&self, path: &str) -> std::path::PathBuf {
         let p = std::path::Path::new(path);
         if p.is_absolute() {
@@ -809,16 +810,29 @@ impl Editor {
             return;
         }
 
-        // Every pane that currently holds it, except the destination.
+        // Every pane whose *tab strip* carries it, except the destination.
+        //
+        // Read from the view states rather than `splits_for_buffer`, which
+        // reports the narrower "is displaying it" relation: a pane can hold a
+        // buffer as a background tab without showing it, and those are exactly
+        // the copies a move is supposed to clean up.
         let sources: Vec<LeafId> = self
             .windows
             .get(&self.active_window)
             .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr.splits_for_buffer(buffer_id))
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|leaf| *leaf != target)
-            .collect();
+            .map(|(_, vs)| {
+                vs.iter()
+                    .filter(|(leaf, state)| {
+                        **leaf != target
+                            && state
+                                .open_buffers
+                                .iter()
+                                .any(|tab| tab.as_buffer() == Some(buffer_id))
+                    })
+                    .map(|(leaf, _)| *leaf)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         // Show it in the destination first: dropping the last tab from a pane
         // can collapse that pane, and doing it in this order means the buffer
@@ -873,7 +887,12 @@ impl Editor {
             .cloned()
     }
 
+    #[cfg(feature = "plugins")]
     /// Open what a line points at.
+    ///
+    /// Gated with the rest of the plugin surface: targets can only be set
+    /// through `editor.setLineTargets`, so without plugins there is never one
+    /// to follow.
     ///
     /// The destination pane is resolved by label when the target names one.
     /// Falling back to *beside* the index — rather than into it — is
@@ -924,11 +943,30 @@ impl Editor {
             tracing::warn!("line target: could not open {}: {e}", target.path);
             return;
         }
+
+        // Opening leaves a tab for the file in the pane that was active as
+        // well as the destination, so following a few entries would silently
+        // fill the index's own tab strip with the things you visited. Move it
+        // instead: the destination keeps it, everyone else drops it.
+        #[cfg(feature = "plugins")]
+        {
+            let opened = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .and_then(|(_, vs)| vs.get(&leaf))
+                .map(|vs| vs.active_buffer);
+            if let Some(buffer_id) = opened {
+                self.handle_move_buffer_to_split(buffer_id, leaf.0);
+            }
+        }
+
         // Focus follows the jump — the user asked to go there.
         self.split_manager_mut().set_active_split(leaf);
     }
 
     /// The leaf a label names, when it still exists.
+    #[cfg(feature = "plugins")]
     fn split_by_label(&self, label: &str) -> Option<crate::model::event::LeafId> {
         let (mgr, _) = self
             .windows
@@ -943,6 +981,7 @@ impl Editor {
 
     /// Any visible pane that isn't `this_one`, preferring the one to its right
     /// or below — where a reader would expect the destination to appear.
+    #[cfg(feature = "plugins")]
     fn pane_beside(
         &self,
         this_one: crate::model::event::LeafId,
