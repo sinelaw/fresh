@@ -862,11 +862,87 @@ impl Editor {
         buffer_id: fresh_core::BufferId,
         targets: Vec<fresh_core::api::LineTarget>,
     ) {
+        self.clear_line_target_decorations(buffer_id);
         if targets.is_empty() {
             self.line_targets.remove(&buffer_id);
         } else {
+            self.decorate_line_targets(buffer_id, &targets);
             self.line_targets.insert(buffer_id, targets);
         }
+    }
+
+    /// Namespace the link decorations live under, so replacing a buffer's
+    /// targets can drop exactly its own styling and nothing else's.
+    #[cfg(feature = "plugins")]
+    const LINE_TARGET_NS: &'static str = "fresh.line-targets";
+
+    /// Underline the lines that point somewhere.
+    ///
+    /// Without this a link is indistinguishable from ordinary text: the user
+    /// has no way to know a line is clickable except by clicking it, which is
+    /// no way to discover anything.
+    ///
+    /// Underline only, deliberately. There is no link colour in the theme
+    /// today, and referencing a key that doesn't exist would resolve to
+    /// nothing and leave the styling silently absent again. Underline is the
+    /// convention terminals and browsers already trained users on, and it
+    /// works against every theme.
+    #[cfg(feature = "plugins")]
+    fn decorate_line_targets(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        targets: &[fresh_core::api::LineTarget],
+    ) {
+        let ranges: Vec<std::ops::Range<usize>> = {
+            let Some(state) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.get(&buffer_id))
+            else {
+                return;
+            };
+            targets
+                .iter()
+                .filter_map(|t| {
+                    let start = state.buffer.line_start_offset(t.line)?;
+                    let end = state
+                        .buffer
+                        .line_start_offset(t.line + 1)
+                        .unwrap_or_else(|| state.buffer.len());
+                    // Trim the newline so the underline stops at the text.
+                    let end = end.saturating_sub(1).max(start);
+                    (end > start).then_some(start..end)
+                })
+                .collect()
+        };
+
+        let namespace = Some(crate::view::overlay::OverlayNamespace::from_string(
+            Self::LINE_TARGET_NS.to_string(),
+        ));
+        for range in ranges {
+            let options = fresh_core::api::OverlayOptions {
+                underline: true,
+                ..Default::default()
+            };
+            self.handle_add_overlay(buffer_id, namespace.clone(), range, options);
+        }
+    }
+
+    /// Drop the link styling this buffer's previous targets installed.
+    #[cfg(feature = "plugins")]
+    fn clear_line_target_decorations(&mut self, buffer_id: fresh_core::BufferId) {
+        let len = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.get(&buffer_id))
+            .map(|state| state.buffer.len())
+            .unwrap_or(0);
+        if len == 0 {
+            return;
+        }
+        let namespace =
+            crate::view::overlay::OverlayNamespace::from_string(Self::LINE_TARGET_NS.to_string());
+        self.handle_clear_overlays_in_range_for_namespace(buffer_id, namespace, 0, len);
     }
 
     /// The 0-indexed line the primary cursor is on, in the active buffer.
@@ -898,8 +974,17 @@ impl Editor {
     /// Falling back to *beside* the index — rather than into it — is
     /// deliberate: an index that replaced itself with the first thing you
     /// clicked would destroy the view you were navigating.
-    pub(crate) fn follow_line_target(&mut self, target: fresh_core::api::LineTarget) {
-        let source_split = self.active_split_id();
+    pub(crate) fn follow_line_target(
+        &mut self,
+        target: fresh_core::api::LineTarget,
+        source_split: crate::model::event::LeafId,
+    ) {
+        // `source_split` is the pane the index itself lives in — passed in by
+        // the caller rather than read from the active split, because a click
+        // is dispatched *before* it moves focus. Reading the active split here
+        // meant "beside" was computed relative to whichever pane the user
+        // happened to be in last, so the same link opened somewhere different
+        // each time.
         let destination = target
             .into
             .as_deref()
@@ -979,29 +1064,39 @@ impl Editor {
             .filter(|leaf| self.split_rect(*leaf).is_some())
     }
 
-    /// Any visible pane that isn't `this_one`, preferring the one to its right
-    /// or below — where a reader would expect the destination to appear.
+    /// The pane to open a target in when no label named one: the nearest
+    /// neighbour of `this_one` that is safe to write into.
+    ///
+    /// "Safe" excludes terminals — replacing a running shell with a source
+    /// file loses the user's session, and the first version of this did
+    /// exactly that when the index was the rightmost pane. Preference is for
+    /// the pane immediately after (right/below), then the nearest before, so
+    /// the destination is where a reader would look for it and does not depend
+    /// on where focus happened to be.
     #[cfg(feature = "plugins")]
     fn pane_beside(
         &self,
         this_one: crate::model::event::LeafId,
     ) -> Option<crate::model::event::LeafId> {
-        let area = self
-            .windows
-            .get(&self.active_window)
-            .map(|w| w.editor_content_area())?;
-        let (mgr, _) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())?;
+        let window = self.windows.get(&self.active_window)?;
+        let area = window.editor_content_area();
+        let (mgr, _) = window.buffers.splits()?;
         let panes = mgr.get_visible_buffers(area);
         let here = panes.iter().find(|(id, _, _)| *id == this_one)?.2;
-        panes
+
+        let usable: Vec<_> = panes
             .iter()
-            .filter(|(id, _, _)| *id != this_one)
-            .min_by_key(|(_, _, rect)| {
-                let after = rect.x > here.x || rect.y > here.y;
-                (!after as u32, rect.x as u32, rect.y as u32)
+            .filter(|(id, buf, _)| *id != this_one && !window.is_terminal_buffer(*buf))
+            .collect();
+        // Nearest to the right / below first.
+        usable
+            .iter()
+            .filter(|(_, _, rect)| rect.x > here.x || rect.y > here.y)
+            .min_by_key(|(_, _, rect)| (rect.x as u32, rect.y as u32))
+            .or_else(|| {
+                usable
+                    .iter()
+                    .max_by_key(|(_, _, rect)| (rect.x as u32, rect.y as u32))
             })
             .map(|(id, _, _)| *id)
     }
