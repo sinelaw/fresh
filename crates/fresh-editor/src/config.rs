@@ -1968,7 +1968,10 @@ pub enum FileExplorerSide {
 /// File explorer configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileExplorerConfig {
-    /// Whether to respect .gitignore files
+    /// Whether `.gitignore` rules apply in the file explorer at all.
+    /// When disabled, ignored entries are neither hidden nor grayed out and
+    /// the "show gitignored files" toggle below has nothing left to hide.
+    /// Default: true
     #[serde(default = "default_true")]
     pub respect_gitignore: bool,
 

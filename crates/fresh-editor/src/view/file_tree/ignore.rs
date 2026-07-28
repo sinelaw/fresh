@@ -46,6 +46,11 @@ pub struct IgnorePatterns {
     /// Whether to show gitignored files
     show_gitignored: bool,
 
+    /// Whether `.gitignore` rules apply at all (`file_explorer.respect_gitignore`).
+    /// When false the loaded rules are kept but never consulted, so gitignored
+    /// entries are neither hidden nor marked, whatever `show_gitignored` says.
+    respect_gitignore: bool,
+
     /// Whether to show custom ignored files
     show_custom_ignored: bool,
 }
@@ -59,6 +64,7 @@ impl IgnorePatterns {
             custom_patterns: Vec::new(),
             show_hidden: false,
             show_gitignored: false,
+            respect_gitignore: true,
             show_custom_ignored: false,
         }
     }
@@ -171,6 +177,11 @@ impl IgnorePatterns {
 
     /// Check if path matches any .gitignore rules
     fn matches_gitignore(&self, path: &Path, is_dir: bool) -> bool {
+        // Single gate for the whole feature: with `respect_gitignore` off, both
+        // the visibility filter and the render status see "no rules matched".
+        if !self.respect_gitignore {
+            return false;
+        }
         // Find the most specific .gitignore (deepest directory)
         // that could apply to this path
         for (gitignore_dir, gitignore) in &self.gitignores {
@@ -235,6 +246,16 @@ impl IgnorePatterns {
     /// Get whether gitignored files are shown
     pub fn show_gitignored(&self) -> bool {
         self.show_gitignored
+    }
+
+    /// Set whether `.gitignore` rules apply at all.
+    pub fn set_respect_gitignore(&mut self, respect: bool) {
+        self.respect_gitignore = respect;
+    }
+
+    /// Get whether `.gitignore` rules apply at all.
+    pub fn respect_gitignore(&self) -> bool {
+        self.respect_gitignore
     }
 
     /// Set whether to show custom ignored files

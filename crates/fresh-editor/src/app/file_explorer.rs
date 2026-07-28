@@ -19,6 +19,7 @@ pub struct FileExplorerClipboard {
 pub(crate) struct FileExplorerViewDefaults {
     pub show_hidden: bool,
     pub show_gitignored: bool,
+    pub respect_gitignore: bool,
     pub compact_directories: bool,
     pub custom_ignore_patterns: Vec<String>,
 }
@@ -1692,6 +1693,10 @@ impl crate::app::window::Window {
             .unwrap_or(defaults.show_gitignored);
         view.ignore_patterns_mut()
             .set_show_gitignored(show_gitignored);
+        // Not session-restorable: unlike `show_gitignored` (a runtime toggle),
+        // this one only ever comes from config.
+        view.ignore_patterns_mut()
+            .set_respect_gitignore(defaults.respect_gitignore);
         {
             // Wire the configured custom ignore patterns into the matcher (previously the
             // `custom_ignore_patterns` config field was parsed but never applied).

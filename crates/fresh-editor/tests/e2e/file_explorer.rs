@@ -4353,3 +4353,60 @@ fn test_file_explorer_git_decorations_nested_subrepo_under_repo_root() {
         "inner.py tree row should show a modified (M) decoration from its own nested repo. Line: '{inner_line}'"
     );
 }
+
+/// `file_explorer.respect_gitignore = false` switches the `.gitignore` rules
+/// off wholesale: ignored files show up without anyone touching the
+/// "Show Gitignored Files" toggle. The setting was previously parsed, merged
+/// and offered in the Settings UI but never read (issue #2842).
+#[test]
+fn test_respect_gitignore_false_shows_ignored_files() {
+    let mut config = Config::default();
+    config.file_explorer.respect_gitignore = false;
+
+    let mut harness = EditorTestHarness::with_temp_project_and_config(120, 40, config).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), "build_output.txt\n").unwrap();
+    fs::write(project_root.join("build_output.txt"), "generated").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("build_output.txt"),
+        "a gitignored file should still be listed when respect_gitignore is \
+         off, even with 'Show Gitignored Files' left off.\nScreen:\n{}",
+        screen
+    );
+}
+
+/// The default (`respect_gitignore = true`) keeps ignored files out, so the
+/// test above is measuring the setting and not just a broken .gitignore.
+#[test]
+fn test_respect_gitignore_true_hides_ignored_files() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+
+    fs::write(project_root.join(".gitignore"), "build_output.txt\n").unwrap();
+    fs::write(project_root.join("build_output.txt"), "generated").unwrap();
+    fs::write(project_root.join("visible_file.txt"), "visible").unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    harness.wait_for_file_explorer().unwrap();
+    harness
+        .wait_for_file_explorer_item("visible_file.txt")
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("build_output.txt"),
+        "a gitignored file must stay hidden under the default \
+         respect_gitignore = true.\nScreen:\n{}",
+        screen
+    );
+}
