@@ -100,6 +100,11 @@ pub struct EditorServer {
     next_wait_id: u64,
     /// Maps wait_id → client_id for clients waiting on file events
     waiting_clients: std::collections::HashMap<u64, u64>,
+    /// Maps a dispatched command's request_id → the client waiting for its
+    /// result. A plugin command settles on the plugin thread well after it is
+    /// dispatched, so its `CommandResult` is written when the outcome arrives
+    /// rather than at dispatch time.
+    pending_commands: std::collections::HashMap<u64, u64>,
     /// Current authority. Carried across editor rebuilds so plugin-
     /// installed authorities (e.g. a devcontainer attach) survive the
     /// restart-based transition: the old editor is dropped, a new one
@@ -254,6 +259,7 @@ impl EditorServer {
             last_input_client: None,
             next_wait_id: 1,
             waiting_clients: std::collections::HashMap::new(),
+            pending_commands: std::collections::HashMap::new(),
             current_authority,
             workspace_trust,
             env_provider,
@@ -540,6 +546,29 @@ impl EditorServer {
                 }
                 if editor.process_pending_file_opens() {
                     needs_render = true;
+                }
+
+                // Answer command-channel callers whose plugin command has now
+                // settled: the handler's return value becomes the reply's
+                // `output` (what `fresh --cmd cmd run` prints).
+                let settled = {
+                    let pending = &self.pending_commands;
+                    command_access::take_completed_where(|id| pending.contains_key(&id))
+                };
+                for outcome in settled {
+                    let Some(client_id) = self.pending_commands.remove(&outcome.request_id) else {
+                        continue;
+                    };
+                    if let Some(client) = self.clients.iter_mut().find(|c| c.id == client_id) {
+                        let msg = serde_json::to_string(&ServerControl::CommandResult {
+                            ok: outcome.ok,
+                            error: outcome.error,
+                            output: outcome.output,
+                        })
+                        .unwrap_or_default();
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = client.conn.write_control(&msg);
+                    }
                 }
 
                 // Process completed --wait operations
@@ -1414,25 +1443,39 @@ impl EditorServer {
                 }
                 ClientControl::RunCommand { id, args } => {
                     let token = self.clients.get(idx).and_then(|c| c.cmd_token.clone());
-                    let (ok, error) = command_access::run_command_by_id(
+                    let dispatch = command_access::run_command_by_id(
                         self.editor.as_mut(),
                         token.as_deref(),
                         &id,
                         &args,
                     );
-                    if ok {
-                        resize_occurred = true; // Force re-render
-                    }
-                    if let Some(client) = self.clients.get_mut(idx) {
-                        let json = serde_json::to_string(&ServerControl::CommandResult {
-                            ok,
-                            error,
-                            output: None,
-                        })
-                        .unwrap_or_default();
-                        // Best-effort reply
-                        #[allow(clippy::let_underscore_must_use)]
-                        let _ = client.conn.write_control(&json);
+                    match dispatch {
+                        command_access::CommandDispatch::Settled { ok, error, output } => {
+                            if ok {
+                                resize_occurred = true; // Force re-render
+                            }
+                            if let Some(client) = self.clients.get_mut(idx) {
+                                let json = serde_json::to_string(&ServerControl::CommandResult {
+                                    ok,
+                                    error,
+                                    output,
+                                })
+                                .unwrap_or_default();
+                                // Best-effort reply
+                                #[allow(clippy::let_underscore_must_use)]
+                                let _ = client.conn.write_control(&json);
+                            }
+                        }
+                        // A plugin handler runs on the plugin thread and settles
+                        // later; remember which client is waiting and answer it
+                        // when the outcome comes back (see the drain in `run`).
+                        // Same shape as `waiting_clients` for `--wait` opens.
+                        command_access::CommandDispatch::Pending { request_id } => {
+                            if let Some(client) = self.clients.get(idx) {
+                                self.pending_commands.insert(request_id, client.id);
+                            }
+                            resize_occurred = true; // The command may change the view
+                        }
                     }
                 }
                 ClientControl::Quit => unreachable!(), // Handled above

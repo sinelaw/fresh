@@ -294,6 +294,7 @@ impl PluginServiceBridge for EditorServiceBridge {
             source: CommandSource::Plugin(command.plugin_name),
             terminal_bypass: command.terminal_bypass,
             args: command.args,
+            returns: command.returns,
         };
         self.command_registry
             .read()

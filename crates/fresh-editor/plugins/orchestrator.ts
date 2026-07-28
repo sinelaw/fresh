@@ -6557,7 +6557,8 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   'Open another project as a new workspace: `"$FRESH_BIN" --cmd workspace new <dir>`.',
   'Start another coding agent alongside you, in this workspace: `"$FRESH_BIN" --cmd agent run --agent claude --prompt "<task>"`.',
   'Start one in a NEW workspace (its own git worktree): `"$FRESH_BIN" --cmd agent new --agent claude --prompt "<task>" [--path <repo>] [--name <workspace>] [--new-branch <branch>]`.',
-  "Both agent verbs return as soon as the launch is queued — the new agent runs on its own; you are not blocked and you do not get its output.",
+  'Both print `{"workspaceId","windowId","root"}` for the workspace the agent is in. Record `workspaceId` if you need to refer to that workspace later — it stays valid across editor restarts; `windowId` does not.',
+  "`agent new` waits until the workspace is up (or fails); once it returns, the agent there runs on its own — you are not blocked and you do not see its output.",
   "These commands act only on the current workspace.",
 ].join("\n");
 
@@ -8554,6 +8555,50 @@ function launchPendingCreate(id: number): void {
   else enqueueRemoteCreate(id);
 }
 
+// =============================================================================
+// Create completion — for callers that need the result, not just the row
+//
+// A workspace create is deliberately non-blocking: the dialog closes, the dock
+// shows a pending row, and the user keeps working. A *caller* (the headless
+// `orchestrator_agent_new`, driven from an agent's shell) has no dock to watch
+// and nothing to do until the workspace exists, so it needs the outcome — above
+// all the new workspace's durable id, which only exists once the window is born.
+//
+// Resolvers registered here are settled by the create worker at exactly the
+// points that end a create: success, failure, and dismissal. Nothing else may
+// resolve them, or a caller would be told a workspace exists that doesn't.
+// =============================================================================
+
+interface CreateOutcome {
+  ok: boolean;
+  /// Per-process window handle. Valid until this editor exits.
+  windowId?: number;
+  /// Durable workspace identity — the id to keep. Survives restarts.
+  workspaceId?: string;
+  /// The workspace's root directory (its worktree, when it has one).
+  root?: string;
+  error?: string;
+}
+
+const createOutcomeResolvers = new Map<number, (r: CreateOutcome) => void>();
+
+// Await the outcome of the pending create `id`. The promise settles exactly
+// once; a create that is dismissed or fails settles with `ok: false`.
+function awaitCreateOutcome(id: number): Promise<CreateOutcome> {
+  return new Promise((resolve) => {
+    createOutcomeResolvers.set(id, resolve);
+  });
+}
+
+// Settle a pending create's outcome, if anyone is waiting on it. Safe to call
+// on every terminal path — a create nobody awaited simply has no resolver.
+function settleCreateOutcome(id: number, outcome: CreateOutcome): void {
+  const resolve = createOutcomeResolvers.get(id);
+  if (!resolve) return;
+  createOutcomeResolvers.delete(id);
+  resolve(outcome);
+}
+
 // Update a placeholder's status line (a no-op once the row is gone).
 function setPendingMessage(id: number, msg: string): void {
   const s = orchestratorSessions.get(id);
@@ -8583,6 +8628,9 @@ function failPending(id: number, reason: string): void {
   editor.setStatus(editor.t("status.prefix", { msg: s.pending.message }));
   savePendingSpecs();
   if (openPanel) refreshOpenDialog();
+  // The row stays for the user to retry or dismiss, but a caller waiting on
+  // this create is done — it gets the reason rather than hanging.
+  settleCreateOutcome(id, { ok: false, error: s.pending.message });
 }
 
 // Return keyboard focus to the window that was active before a spawn/attach
@@ -8820,6 +8868,7 @@ async function runLocalCreate(id: number): Promise<void> {
     // Dismissed while the worktree was being added — remove what we just
     // created so a dismissed create leaves nothing orphaned on disk.
     if (addedWorktree) await discardCreatedWorktree(repoRoot, root);
+    settleCreateOutcome(id, { ok: false, error: "workspace creation was dismissed" });
     return;
   }
 
@@ -8891,6 +8940,7 @@ async function runLocalCreate(id: number): Promise<void> {
       if (result.terminalId) editor.signalWindow(winId, "SIGKILL");
       editor.closeWindow(winId);
       if (addedWorktree) await discardCreatedWorktree(repoRoot, root);
+      settleCreateOutcome(id, { ok: false, error: "workspace creation was dismissed" });
       return;
     }
     editor.setWindowState("project_path", effectiveProjectPath);
@@ -8914,6 +8964,15 @@ async function runLocalCreate(id: number): Promise<void> {
       state: "running",
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
+    });
+    // The workspace exists and is running: hand a waiting caller its ids. The
+    // durable `stableId` is minted with the window, so it is already final —
+    // this is the only moment it can be reported from.
+    settleCreateOutcome(id, {
+      ok: true,
+      windowId: winId,
+      workspaceId: result.stableId,
+      root,
     });
     if (visit) {
       // Create & Visit: `createWindowWithTerminal` already dove into the new
@@ -9300,8 +9359,28 @@ function cliStr(value: unknown): string {
 // (`claude --model opus`), or any other command. Empty ⇒ a plain terminal.
 type CliArgs = Record<string, string | undefined>;
 
+// What a headless launch answers with. `workspaceId` is the durable identity —
+// the one still valid after a restart — and is what a caller should record;
+// `windowId` is a per-process handle, useful only for the rest of this run.
+interface CliLaunchResult {
+  workspaceId: string;
+  windowId: number;
+  root: string;
+}
+
+// The active workspace's ids, for a launch that ran in place.
+function currentWorkspaceIds(): CliLaunchResult {
+  const id = editor.activeWindow();
+  const info = editor.listWindows().find((w) => w.id === id);
+  return {
+    workspaceId: info?.stable_id ?? "",
+    windowId: id,
+    root: info?.root ?? editor.getCwd(),
+  };
+}
+
 // `fresh --cmd cmd run orchestrator_agent_run` — Run Agent in THIS workspace.
-async function cliRunAgent(args: CliArgs): Promise<void> {
+async function cliRunAgent(args: CliArgs): Promise<CliLaunchResult> {
   const cmd = cliStr(args?.agent);
   const entry = agentEntryForCmd(cmd);
   // Mirror `submitForm`'s current-workspace branch: the per-agent options are
@@ -9312,20 +9391,35 @@ async function cliRunAgent(args: CliArgs): Promise<void> {
     prompt: entry?.prompt ? cliStr(args?.prompt) : "",
     teachFreshCli: !!entry?.systemPrompt && cliBool(args?.teach, true),
   });
+  // The agent runs in the workspace the caller is already in; returning its ids
+  // means a caller never has to correlate "which workspace did that land in".
+  return currentWorkspaceIds();
 }
 
 // `fresh --cmd cmd run orchestrator_agent_new` — New Workspace + agent.
 //
 // Local backend only: ssh/kubernetes workspaces need connection details that
 // deserve their own verb (and their own validation), and an agent asking for a
-// sibling workspace wants the local case. Runs in the background exactly like
-// the dialog's "Create in Background" — the dock shows the pending row, and
-// the caller's `RunCommand` returns as soon as the create is queued.
-function cliNewWorkspace(args: CliArgs): void {
+// sibling workspace wants the local case.
+//
+// Unlike the dialog — which returns to the user immediately and reports
+// progress on the dock — this waits for the create to finish. The caller has no dock to
+// watch, and the durable workspace id it needs does not exist until the window
+// is born; waiting is also what lets a failed create be reported as a failure
+// rather than a silent nothing.
+async function cliNewWorkspace(args: CliArgs): Promise<CliLaunchResult> {
   const cmd = cliStr(args?.agent);
   const entry = agentEntryForCmd(cmd);
-  const projectPath = cliStr(args?.path) || localProjectDefault();
+  const requestedPath = cliStr(args?.path);
+  const projectPath = requestedPath || localProjectDefault();
   const name = cliStr(args?.name);
+  // A path the caller typed has to exist. The dialog's field completes against
+  // the filesystem, so a human sees a wrong path immediately; a caller passing
+  // `--path` by hand does not, and the create would otherwise "succeed" into a
+  // workspace rooted at a directory that isn't there.
+  if (requestedPath && !editor.fileExists(editor.localPath(requestedPath))) {
+    throw new Error(`project path does not exist: ${requestedPath}`);
+  }
   const spec: CreateSpec = {
     backend: "local",
     projectPath,
@@ -9348,15 +9442,28 @@ function cliNewWorkspace(args: CliArgs): void {
   // `visit` defaults to false: an agent asking for a workspace should not yank
   // the human's focus into it. Pass `visit=true` for the dialog's
   // "Create & Visit".
-  startPendingWorkspace(spec, { visit: cliBool(args?.visit, false) });
+  const pendingId = startPendingWorkspace(spec, {
+    visit: cliBool(args?.visit, false),
+  });
+  const outcome = await awaitCreateOutcome(pendingId);
+  if (!outcome.ok) {
+    // Thrown, not returned: a failed create must fail the caller's command
+    // (non-zero exit), not hand it a result object it might mistake for a
+    // workspace. The dock keeps the row for a human to retry or dismiss.
+    throw new Error(outcome.error || "workspace creation failed");
+  }
+  return {
+    workspaceId: outcome.workspaceId ?? "",
+    windowId: outcome.windowId ?? 0,
+    root: outcome.root ?? "",
+  };
 }
 
-registerHandler("orchestrator_agent_run", (args: CliArgs) => {
-  void cliRunAgent(args ?? {});
-});
-registerHandler("orchestrator_agent_new", (args: CliArgs) => {
-  cliNewWorkspace(args ?? {});
-});
+// Both handlers *return* their result (a promise is fine): the host awaits it
+// and hands it to the caller as the command's output, so a plugin command
+// answers by returning a value like any other function.
+registerHandler("orchestrator_agent_run", (args: CliArgs) => cliRunAgent(args ?? {}));
+registerHandler("orchestrator_agent_new", (args: CliArgs) => cliNewWorkspace(args ?? {}));
 
 // Names are deliberately plain English rather than `%`-keys: these are a CLI
 // surface read by agents through `cmd list --json`, not UI labels. The
@@ -9369,6 +9476,9 @@ editor.registerCommand(
   "orchestrator_agent_run",
   "fresh-cli",
   {
+    returns:
+      "{ workspaceId, windowId, root } for the workspace the agent was launched in. " +
+      "workspaceId is durable — still valid after a restart; windowId is not.",
     args: [
       {
         name: "agent",
@@ -9397,6 +9507,10 @@ editor.registerCommand(
   "orchestrator_agent_new",
   "fresh-cli",
   {
+    returns:
+      "{ workspaceId, windowId, root } for the new workspace, once it is up. " +
+      "workspaceId is durable — record that one; windowId is valid only for this editor run. " +
+      "Waits for the create to finish, so a failure is reported as one.",
     args: [
       {
         name: "path",

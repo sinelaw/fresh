@@ -2283,11 +2283,11 @@ impl Editor {
                 // Use non-blocking version to avoid deadlock with async plugin ops
                 #[cfg(feature = "plugins")]
                 {
-                    let result = self
-                        .plugin_manager
-                        .read()
-                        .unwrap()
-                        .execute_action_async(&action_name, None);
+                    let result = self.plugin_manager.read().unwrap().execute_action_async(
+                        &action_name,
+                        None,
+                        None,
+                    );
                     if let Some(result) = result {
                         match result {
                             Ok(receiver) => {

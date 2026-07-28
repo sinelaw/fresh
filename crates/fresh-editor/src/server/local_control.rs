@@ -48,6 +48,12 @@ use crate::server::protocol::{
 /// imperceptible.
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
+/// Backstop on how long a connection handler waits for a dispatched command's
+/// answer before giving up and dropping the connection. Generous: the CLI
+/// client has its own (much shorter) deadline, so this only exists to stop a
+/// handler that never settles from pinning a thread forever.
+const COMMAND_REPLY_CEILING: Duration = Duration::from_secs(300);
+
 /// A request decoded from a nested client and handed to the editor thread.
 enum LocalControlRequest {
     /// Open files in the current window. `wait_id` is `Some` when the
@@ -86,6 +92,11 @@ struct Shared {
     /// `wait_id` -> notifier that wakes the parked handler thread once the
     /// editor reports the matching buffer closed.
     waiters: Arc<Mutex<HashMap<u64, Sender<()>>>>,
+    /// `request_id` -> the parked handler thread's reply channel, for a plugin
+    /// command whose handler is still running. A plugin command settles on the
+    /// plugin thread well after dispatch, so its reply is held here until the
+    /// outcome arrives.
+    command_replies: Arc<Mutex<HashMap<u64, Sender<ServerControl>>>>,
 }
 
 /// Process-global handle. `None` until [`start`] succeeds; the control
@@ -125,6 +136,7 @@ pub fn start() -> std::io::Result<&'static str> {
     let _ = GLOBAL.set(Shared {
         req_rx: Mutex::new(bound.req_rx),
         waiters: bound.waiters,
+        command_replies: Arc::new(Mutex::new(HashMap::new())),
     });
     let id = SESSION_ID.get_or_init(|| session_id);
     tracing::info!("Local control socket listening as session {}", id);
@@ -270,19 +282,54 @@ fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
                 args,
                 reply,
             }) => {
-                let (ok, error) =
-                    command_access::run_command_by_id(Some(editor), token.as_deref(), &id, &args);
-                if ok {
-                    changed = true;
+                match command_access::run_command_by_id(Some(editor), token.as_deref(), &id, &args)
+                {
+                    command_access::CommandDispatch::Settled { ok, error, output } => {
+                        if ok {
+                            changed = true;
+                        }
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = reply.send(ServerControl::CommandResult { ok, error, output });
+                    }
+                    // A plugin handler settles on the plugin thread, long after
+                    // dispatch. Park the client's reply channel under its
+                    // request id; the drain below answers it once the outcome
+                    // arrives, with whatever the handler returned.
+                    command_access::CommandDispatch::Pending { request_id } => {
+                        shared
+                            .command_replies
+                            .lock()
+                            .unwrap()
+                            .insert(request_id, reply);
+                        changed = true;
+                    }
                 }
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = reply.send(ServerControl::CommandResult {
-                    ok,
-                    error,
-                    output: None,
-                });
             }
             Err(_) => break,
+        }
+    }
+
+    // Answer callers whose plugin command has settled since the last pump.
+    // Scoped to this host's own waiters: the daemon drains the same queue for
+    // its IPC clients, and an unscoped drain would let each swallow the other's
+    // outcomes.
+    let settled = {
+        let waiting = shared.command_replies.lock().unwrap();
+        command_access::take_completed_where(|id| waiting.contains_key(&id))
+    };
+    for outcome in settled {
+        let reply = shared
+            .command_replies
+            .lock()
+            .unwrap()
+            .remove(&outcome.request_id);
+        if let Some(reply) = reply {
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = reply.send(ServerControl::CommandResult {
+                ok: outcome.ok,
+                error: outcome.error,
+                output: outcome.output,
+            });
         }
     }
 
@@ -446,7 +493,12 @@ fn handle_connection(
                     args,
                     reply: reply_tx,
                 });
-                if let Ok(reply) = reply_rx.recv() {
+                // Bounded, unlike the other requests: a plugin command's answer
+                // comes from a handler that could in principle never settle, and
+                // an unbounded wait would leak this thread (and the client's
+                // connection) for the life of the editor. The client gives up
+                // long before this; the ceiling is only a backstop.
+                if let Ok(reply) = reply_rx.recv_timeout(COMMAND_REPLY_CEILING) {
                     let json = serde_json::to_string(&reply).unwrap_or_default();
                     #[allow(clippy::let_underscore_must_use)]
                     let _ = conn.write_control(&json);
@@ -854,6 +906,7 @@ mod tests {
         Shared {
             req_rx: Mutex::new(bound.req_rx),
             waiters: bound.waiters,
+            command_replies: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

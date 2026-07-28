@@ -2356,23 +2356,26 @@ impl Editor {
 
     // ==================== Command/Mode Registration ====================
 
-    /// Run a plugin action, handing its handler an arguments object.
+    /// Run a plugin action, handing its handler an arguments object and
+    /// arranging for its return value to reach the caller.
     ///
     /// The keybinding / palette path (`Action::PluginAction` in `handle_action`)
-    /// calls handlers with no arguments, because a keystroke carries none. The
-    /// agent command channel does carry them — `fresh --cmd cmd run <id>
-    /// <k>=<v>` — so this is its dispatch: the `k=v` pairs become a JSON object
-    /// passed as the handler's single argument. That is what lets a plugin
-    /// expose a *parameterized* command (an agent launch, say) to an agent,
-    /// instead of only the argless "open the dialog" form a keystroke needs.
+    /// calls handlers with no arguments and ignores what they return, because a
+    /// keystroke carries nothing in and has nowhere to put an answer. The agent
+    /// command channel has both — `fresh --cmd cmd run <id> <k>=<v>` carries
+    /// arguments in and prints a result out — so this is its dispatch: the
+    /// `k=v` pairs become a JSON object passed as the handler's single
+    /// argument, and `request_id` ties the handler's eventual return value back
+    /// to the waiting caller (see `server::command_access`).
     ///
-    /// Returns an error string when the plugin runtime is unavailable or the
-    /// action could not be started; `Ok(())` means the handler was started (it
-    /// may still be running — plugin actions are async by nature).
+    /// `Ok(())` means the handler was *started*. Plugin handlers are async by
+    /// nature — they await host calls that only complete on later editor ticks
+    /// — so the result arrives later, through `command_access::take_completed`.
     pub fn run_plugin_action_with_args(
         &mut self,
         action_name: &str,
         args: &std::collections::HashMap<String, String>,
+        request_id: u64,
     ) -> Result<(), String> {
         #[cfg(feature = "plugins")]
         {
@@ -2382,11 +2385,11 @@ impl Editor {
             // guessing types the caller never declared.
             let args_json = serde_json::to_string(args)
                 .map_err(|e| format!("could not encode command arguments: {}", e))?;
-            let started = self
-                .plugin_manager
-                .read()
-                .unwrap()
-                .execute_action_async(action_name, Some(args_json));
+            let started = self.plugin_manager.read().unwrap().execute_action_async(
+                action_name,
+                Some(args_json),
+                Some(request_id),
+            );
             match started {
                 Some(Ok(receiver)) => {
                     self.pending_plugin_actions
@@ -2399,7 +2402,7 @@ impl Editor {
         }
         #[cfg(not(feature = "plugins"))]
         {
-            let _ = (action_name, args);
+            let _ = (action_name, args, request_id);
             Err("plugins not available (compiled without plugin support)".to_string())
         }
     }
@@ -2419,6 +2422,7 @@ impl Editor {
             source: CommandSource::Plugin(command.plugin_name),
             terminal_bypass: command.terminal_bypass,
             args: command.args,
+            returns: command.returns,
         };
 
         tracing::debug!(

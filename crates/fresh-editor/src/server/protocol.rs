@@ -182,6 +182,12 @@ pub struct CommandInfo {
     /// the request set `include_args`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<CommandArgInfo>,
+    /// What the command answers with, when it answers with anything — the
+    /// counterpart of `args`, and the other half of what a caller needs to use
+    /// a command it just discovered. Only populated when the request set
+    /// `include_args`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returns: Option<String>,
 }
 
 /// Schema for a single command argument, surfaced by `cmd describe`.
@@ -440,6 +446,7 @@ mod tests {
                     name: "Split: Vertical".to_string(),
                     category: Some("View".to_string()),
                     args: vec![],
+                    returns: None,
                 }],
             },
             ServerControl::CommandResult {

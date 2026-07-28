@@ -103,6 +103,10 @@ pub enum PluginRequest {
     ExecuteAction {
         action_name: String,
         args_json: Option<String>,
+        /// When set, the runtime reports the handler's return value (or its
+        /// failure) back to the editor under this id once the handler settles —
+        /// how a `RunCommand` over the agent command channel gets an answer.
+        request_id: Option<u64>,
         response: oneshot::Sender<Result<()>>,
     },
 
@@ -663,6 +667,7 @@ impl PluginThreadHandle {
         &self,
         action_name: &str,
         args_json: Option<String>,
+        request_id: Option<u64>,
     ) -> Result<oneshot::Receiver<Result<()>>> {
         tracing::trace!("execute_action_async: starting action '{}'", action_name);
         let (tx, rx) = oneshot::channel();
@@ -672,6 +677,7 @@ impl PluginThreadHandle {
             .send(PluginRequest::ExecuteAction {
                 action_name: action_name.to_string(),
                 args_json,
+                request_id,
                 response: tx,
             })
             .map_err(|_| anyhow!("Plugin thread not responding"))?;
@@ -1061,13 +1067,16 @@ async fn plugin_thread_loop(
                     Some(PluginRequest::ExecuteAction {
                         action_name,
                         args_json,
+                        request_id,
                         response,
                     }) => {
                         // Start the action without blocking - this allows us to process
                         // ResolveCallback requests that the action may be waiting for.
-                        let result = runtime
-                            .borrow_mut()
-                            .start_action(&action_name, args_json.as_deref());
+                        let result = runtime.borrow_mut().start_action(
+                            &action_name,
+                            args_json.as_deref(),
+                            request_id,
+                        );
                         fire_and_forget(response.send(result));
                         has_pending_work = true; // Action may have started async work
                     }
