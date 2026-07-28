@@ -1063,6 +1063,22 @@ impl Editor {
             self.reset_dabbrev_state();
         }
 
+        // Enter on a line that points somewhere (`editor.setLineTargets`)
+        // follows it, the same as clicking it. Intercepted here rather than
+        // inside the newline handler so the behaviour is identical whether
+        // the buffer is editable or not — an index built by a script is
+        // usually a plain file, and typing a newline into it is never what
+        // pressing Enter on an entry meant.
+        if matches!(action, Action::InsertNewline) {
+            let buffer_id = self.active_buffer();
+            if let Some(line) = self.cursor_line_in_active_buffer() {
+                if let Some(target) = self.line_target_at(buffer_id, line) {
+                    self.follow_line_target(target);
+                    return Ok(());
+                }
+            }
+        }
+
         match action {
             Action::Quit => self.quit(),
             Action::ForceQuit => {

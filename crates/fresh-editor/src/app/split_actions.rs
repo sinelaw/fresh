@@ -839,3 +839,131 @@ impl Editor {
         self.relayout();
     }
 }
+
+impl Editor {
+    /// Record which lines of a buffer point somewhere, replacing any previous
+    /// set. An empty list clears them.
+    pub(crate) fn set_line_targets(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        targets: Vec<fresh_core::api::LineTarget>,
+    ) {
+        if targets.is_empty() {
+            self.line_targets.remove(&buffer_id);
+        } else {
+            self.line_targets.insert(buffer_id, targets);
+        }
+    }
+
+    /// The 0-indexed line the primary cursor is on, in the active buffer.
+    pub(crate) fn cursor_line_in_active_buffer(&self) -> Option<usize> {
+        let position = self.active_window().active_cursors().primary().position;
+        Some(self.active_state().buffer.get_line_number(position))
+    }
+
+    /// The target on `line` of `buffer_id`, if that line has one.
+    pub(crate) fn line_target_at(
+        &self,
+        buffer_id: fresh_core::BufferId,
+        line: usize,
+    ) -> Option<fresh_core::api::LineTarget> {
+        self.line_targets
+            .get(&buffer_id)
+            .and_then(|targets| targets.iter().find(|t| t.line == line))
+            .cloned()
+    }
+
+    /// Open what a line points at.
+    ///
+    /// The destination pane is resolved by label when the target names one.
+    /// Falling back to *beside* the index — rather than into it — is
+    /// deliberate: an index that replaced itself with the first thing you
+    /// clicked would destroy the view you were navigating.
+    pub(crate) fn follow_line_target(&mut self, target: fresh_core::api::LineTarget) {
+        let source_split = self.active_split_id();
+        let destination = target
+            .into
+            .as_deref()
+            .and_then(|label| self.split_by_label(label))
+            .filter(|leaf| *leaf != source_split);
+
+        let path = {
+            let p = std::path::Path::new(&target.path);
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                self.active_window().root.join(p)
+            }
+        };
+        let line = target.target;
+
+        let leaf = match destination {
+            Some(leaf) => leaf,
+            None => {
+                // No usable label: put it in the pane next door, making one if
+                // this is the only pane.
+                match self.pane_beside(source_split) {
+                    Some(leaf) => leaf,
+                    None => match self.split_pane_impl(
+                        crate::model::event::SplitDirection::Vertical,
+                        false,
+                        0.5,
+                    ) {
+                        Ok(leaf) => leaf,
+                        Err(e) => {
+                            tracing::warn!("line target: could not open a pane: {e}");
+                            return;
+                        }
+                    },
+                }
+            }
+        };
+
+        #[cfg(feature = "plugins")]
+        if let Err(e) = self.handle_open_file_in_split(leaf.0 .0, path, line, None) {
+            tracing::warn!("line target: could not open {}: {e}", target.path);
+            return;
+        }
+        // Focus follows the jump — the user asked to go there.
+        self.split_manager_mut().set_active_split(leaf);
+    }
+
+    /// The leaf a label names, when it still exists.
+    fn split_by_label(&self, label: &str) -> Option<crate::model::event::LeafId> {
+        let (mgr, _) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())?;
+        mgr.labels()
+            .iter()
+            .find(|(_, l)| l.as_str() == label)
+            .map(|(id, _)| crate::model::event::LeafId(*id))
+            .filter(|leaf| self.split_rect(*leaf).is_some())
+    }
+
+    /// Any visible pane that isn't `this_one`, preferring the one to its right
+    /// or below — where a reader would expect the destination to appear.
+    fn pane_beside(
+        &self,
+        this_one: crate::model::event::LeafId,
+    ) -> Option<crate::model::event::LeafId> {
+        let area = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| w.editor_content_area())?;
+        let (mgr, _) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())?;
+        let panes = mgr.get_visible_buffers(area);
+        let here = panes.iter().find(|(id, _, _)| *id == this_one)?.2;
+        panes
+            .iter()
+            .filter(|(id, _, _)| *id != this_one)
+            .min_by_key(|(_, _, rect)| {
+                let after = rect.x > here.x || rect.y > here.y;
+                (!after as u32, rect.x as u32, rect.y as u32)
+            })
+            .map(|(id, _, _)| *id)
+    }
+}
