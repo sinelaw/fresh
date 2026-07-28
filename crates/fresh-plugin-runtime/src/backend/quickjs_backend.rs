@@ -1344,7 +1344,7 @@ impl JsEditorApi {
             rquickjs::Value<'js>,
         >,
         #[plugin_api(
-            ts_type = "{ terminalBypass?: boolean; args?: { name: string; required?: boolean; description?: string }[] } | null"
+            ts_type = "{ terminalBypass?: boolean; args?: { name: string; required?: boolean; description?: string }[]; returns?: string } | null"
         )]
         options: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
@@ -1423,6 +1423,10 @@ impl JsEditorApi {
             .as_ref()
             .map(command_args_from_options)
             .unwrap_or_default();
+        let returns = options_obj
+            .as_ref()
+            .and_then(|obj| obj.get::<&str, String>("returns").ok())
+            .filter(|r| !r.is_empty());
 
         // Register with editor
         let command = Command {
@@ -1433,6 +1437,7 @@ impl JsEditorApi {
             custom_contexts: context_str.into_iter().collect(),
             terminal_bypass,
             args,
+            returns,
         };
 
         Ok(self
@@ -1478,6 +1483,32 @@ impl JsEditorApi {
     pub fn execute_action(&self, action_name: String) -> bool {
         self.command_sender
             .send(PluginCommand::ExecuteAction { action_name })
+            .is_ok()
+    }
+
+    /// Answer a command that was dispatched with a request id (a `RunCommand`
+    /// from the agent command channel).
+    ///
+    /// Plugins do not normally call this: the host wraps every such dispatch so
+    /// that whatever the handler *returns* — or the promise it returns, once it
+    /// resolves — becomes the answer, and a throw becomes the failure. Call it
+    /// directly only to answer early, or to answer from somewhere other than
+    /// the handler's own return path. `output` is the JSON-encoded result the
+    /// caller prints; answering an unknown or already-answered id is a no-op.
+    pub fn complete_command(
+        &self,
+        request_id: f64,
+        ok: bool,
+        output: Option<String>,
+        error: Option<String>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::CompleteCommand {
+                request_id: request_id as u64,
+                ok,
+                output,
+                error,
+            })
             .is_ok()
     }
 
@@ -8264,7 +8295,21 @@ impl QuickJsBackend {
     /// literal; it is handed to the handler as its single argument, which is
     /// how a `RunCommand` over the agent command channel passes its `k=v` args
     /// to a plugin command. `None` calls the handler with no arguments.
-    pub fn start_action(&mut self, action_name: &str, args_json: Option<&str>) -> Result<()> {
+    ///
+    /// `request_id`, when set, makes the call *answerable*: the handler's
+    /// return value — awaited first if it is a promise — is reported back to
+    /// the editor under that id via `editor.completeCommand`, and a throw or
+    /// rejection is reported as a failure. The wrapper lives here rather than
+    /// in every plugin because a handler should stay an ordinary function that
+    /// returns a value; and it cannot be an `await` on the Rust side, because
+    /// the handler's own host calls only resolve on later editor ticks, which
+    /// this thread must stay free to service.
+    pub fn start_action(
+        &mut self,
+        action_name: &str,
+        args_json: Option<&str>,
+        request_id: Option<u64>,
+    ) -> Result<()> {
         // Handle mode_text_input:<char> — route to the plugin that registered
         // "mode_text_input" and pass the character as an argument.
         let (lookup_name, text_input_char) =
@@ -8307,8 +8352,40 @@ impl QuickJsBackend {
             "()".to_string()
         };
 
-        let code = format!(
-            r#"
+        let code = match request_id {
+            // Answerable call: settle the request with whatever the handler
+            // returns (awaiting a promise), or with its error.
+            Some(rid) => format!(
+                r#"
+            (function() {{
+                var __rid = {rid};
+                var __done = function(ok, value, err) {{
+                    var out = null;
+                    if (ok && value !== undefined && value !== null) {{
+                        try {{ out = JSON.stringify(value); }} catch (e) {{ out = String(value); }}
+                    }}
+                    editor.completeCommand(__rid, ok, out, err);
+                }};
+                try {{
+                    if (typeof globalThis.{fn} === 'function') {{
+                        Promise.resolve(globalThis.{fn}{args}).then(
+                            function(r) {{ __done(true, r, null); }},
+                            function(e) {{ __done(false, null, (e && e.message) ? String(e.message) : String(e)); }}
+                        );
+                    }} else {{
+                        __done(false, null, 'command handler {fn} is not defined');
+                    }}
+                }} catch (e) {{
+                    __done(false, null, (e && e.message) ? String(e.message) : String(e));
+                }}
+            }})();
+            "#,
+                rid = rid,
+                fn = function_name,
+                args = call_args
+            ),
+            None => format!(
+                r#"
             (function() {{
                 console.log('[JS] start_action: calling {fn}');
                 try {{
@@ -8324,10 +8401,11 @@ impl QuickJsBackend {
                 }}
             }})();
             "#,
-            fn = function_name,
-            action = action_name,
-            args = call_args
-        );
+                fn = function_name,
+                action = action_name,
+                args = call_args
+            ),
+        };
 
         tracing::info!("start_action: evaluating JS code");
         context.with(|ctx| {
@@ -10725,6 +10803,7 @@ mod tests {
             state.windows = vec![
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(1),
+                    stable_id: "ws-main".into(),
                     label: "main".into(),
                     root: std::path::PathBuf::from("/repo"),
                     project_path: std::path::PathBuf::from("/repo"),
@@ -10733,6 +10812,7 @@ mod tests {
                 },
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(2),
+                    stable_id: "ws-feat-auth".into(),
                     label: "feat-auth".into(),
                     root: std::path::PathBuf::from("/wt/feat-auth"),
                     project_path: std::path::PathBuf::from("/wt/feat-auth"),

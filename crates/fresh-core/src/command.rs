@@ -63,6 +63,12 @@ pub struct Command {
     /// agents is self-documenting rather than needing a hard-coded prompt.
     #[serde(default)]
     pub args: Vec<CommandArg>,
+    /// One line on what the command answers with, when it returns anything.
+    /// A command handler's return value is delivered to the caller (over the
+    /// agent command channel it becomes `CommandResult.output`), so a command
+    /// that returns something should say what — an id, a path, a count.
+    #[serde(default)]
+    pub returns: Option<String>,
 }
 
 /// A single suggestion item for autocomplete

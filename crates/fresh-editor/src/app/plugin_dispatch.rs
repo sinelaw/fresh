@@ -290,6 +290,9 @@ impl Editor {
                     .unwrap_or_else(|| d.root.clone());
                 fresh_core::api::WindowInfo {
                     id: fresh_core::WindowId(d.id),
+                    // A dormant shell carries the persisted id when its
+                    // workspace file had one; legacy files leave it empty.
+                    stable_id: d.stable_id.clone().unwrap_or_default(),
                     label: d.label.clone(),
                     root: normalize_plugin_path(d.root.clone()),
                     project_path: normalize_plugin_path(project_path),
@@ -322,6 +325,7 @@ impl Editor {
                     .unwrap_or(false);
                 fresh_core::api::WindowInfo {
                     id: s.id,
+                    stable_id: s.stable_id.clone(),
                     label: s.label.clone(),
                     root: normalize_plugin_path(s.root.clone()),
                     project_path: normalize_plugin_path(project_path),
@@ -1365,6 +1369,18 @@ impl Editor {
             // ==================== Vi Mode Commands ====================
             PluginCommand::ExecuteAction { action_name } => {
                 self.handle_execute_action(action_name);
+            }
+            PluginCommand::CompleteCommand {
+                request_id,
+                ok,
+                output,
+                error,
+            } => {
+                // A command dispatched over the agent channel has settled.
+                // Park the outcome where the host loop (daemon or in-process
+                // control socket) picks it up and answers the caller waiting on
+                // this request id.
+                crate::server::command_access::complete(request_id, ok, output, error);
             }
             PluginCommand::ExecuteActions { actions } => {
                 self.handle_execute_actions(actions);
@@ -3863,6 +3879,14 @@ impl Editor {
             Ok((window_id, terminal_id, buffer_id)) => {
                 let api_result = fresh_core::api::SessionWithTerminalResult {
                     window_id: window_id.0,
+                    // The durable id is minted with the window, so a caller
+                    // gets it in the same breath as the create — no lookup,
+                    // and nothing to miss if the window is closed later.
+                    stable_id: self
+                        .windows
+                        .get(&window_id)
+                        .map(|w| w.stable_id.clone())
+                        .unwrap_or_default(),
                     terminal_id: terminal_id.0 as u64,
                     buffer_id: buffer_id.0 as u64,
                 };

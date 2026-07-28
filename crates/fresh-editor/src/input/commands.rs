@@ -46,6 +46,9 @@ pub struct Command {
     /// agent command channel so `fresh --cmd cmd describe <id>` can tell an
     /// agent how to call the command.
     pub args: Vec<fresh_core::command::CommandArg>,
+    /// What the command returns to a caller that can receive a value (the
+    /// agent command channel), when it returns anything.
+    pub returns: Option<String>,
 }
 
 impl Command {
@@ -1609,6 +1612,7 @@ pub fn get_all_commands() -> Vec<Command> {
             // Built-ins declare no argument schema: the ones that take
             // arguments consume them inside `Action::from_str`.
             args: Vec::new(),
+            returns: None,
         })
         .collect()
 }

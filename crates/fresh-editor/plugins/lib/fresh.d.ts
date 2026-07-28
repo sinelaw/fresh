@@ -468,6 +468,15 @@ type WindowInfo = {
 	*/
 	id: number;
 	/**
+	* Durable workspace identity (`ws-…`), minted once when the workspace is
+	* created and carried in its on-disk snapshot. Unlike `id` — a per-process
+	* handle re-derived at every boot — this survives restarts, relabels and
+	* moves, so it is the id to hand out to anything that must still mean the
+	* same workspace later (an agent recording where it put its work, say).
+	* Empty only for a legacy workspace file written before stable ids.
+	*/
+	stable_id: string;
+	/**
 	* User-visible label (defaults to root basename).
 	*/
 	label: string;
@@ -820,9 +829,14 @@ type CreateWindowWithTerminalOptions = {
 };
 type SessionWithTerminalResult = {
 	/**
-	* The new window's id.
+	* The new window's id — a per-process handle, valid until this editor
+	* exits. Use `stableId` for anything that has to outlive the process.
 	*/
 	windowId: number;
+	/**
+	* The new workspace's durable identity (`ws-…`), stable across restarts.
+	*/
+	stableId: string;
 	/**
 	* The seeded terminal's id (for `sendTerminalInput`, etc.).
 	*/
@@ -2245,6 +2259,7 @@ interface EditorAPI {
 			required?: boolean;
 			description?: string;
 		}[];
+		returns?: string;
 	} | null): boolean;
 	/**
 	* Unregister a command by name
@@ -2258,6 +2273,18 @@ interface EditorAPI {
 	* Execute a built-in action
 	*/
 	executeAction(actionName: string): boolean;
+	/**
+	* Answer a command that was dispatched with a request id (a `RunCommand`
+	* from the agent command channel).
+	* 
+	* Plugins do not normally call this: the host wraps every such dispatch so
+	* that whatever the handler *returns* — or the promise it returns, once it
+	* resolves — becomes the answer, and a throw becomes the failure. Call it
+	* directly only to answer early, or to answer from somewhere other than
+	* the handler's own return path. `output` is the JSON-encoded result the
+	* caller prints; answering an unknown or already-answered id is a no-op.
+	*/
+	completeCommand(requestId: number, ok: boolean, output: string | null, error: string | null): boolean;
 	/**
 	* Cancel the active prompt / overlay — the same teardown the
 	* Escape key triggers. Lets a plugin dismiss a prompt it opened

@@ -3394,19 +3394,34 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
 }
 
 /// How long a command-channel client waits for the editor to answer before
-/// giving up. Replies are computed on the editor thread and sent within a frame,
-/// so this only ever trips when the editor cannot answer at all — in which case
-/// an agent must get an error it can report, not an indefinite hang. Override
-/// with `FRESH_CMD_TIMEOUT_MS` for an editor deliberately parked (e.g. under a
-/// debugger).
-fn cmd_reply_timeout() -> std::time::Duration {
-    const DEFAULT_MS: u64 = 10_000;
-    let ms = std::env::var("FRESH_CMD_TIMEOUT_MS")
+/// giving up.
+///
+/// The default suits a command that answers within a frame — a query, a split,
+/// a dispatch. A command that *does* something slow before it can answer (a
+/// workspace create runs `git worktree add` and waits for the agent process to
+/// come up) passes its own, longer bound. Either way an explicit
+/// `FRESH_CMD_TIMEOUT_MS` wins, so a caller can always widen the wait without
+/// the CLI having to guess.
+fn cmd_reply_timeout_or(default: std::time::Duration) -> std::time::Duration {
+    std::env::var("FRESH_CMD_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|ms| *ms > 0)
-        .unwrap_or(DEFAULT_MS);
-    std::time::Duration::from_millis(ms)
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// The default wait: enough for any command that answers off the editor thread.
+fn cmd_reply_timeout() -> std::time::Duration {
+    cmd_reply_timeout_or(std::time::Duration::from_secs(10))
+}
+
+/// The wait for a command that builds something first. A workspace create adds
+/// a git worktree and starts an agent, which on a large repository is seconds,
+/// not milliseconds — timing that out and reporting failure would be wrong
+/// about a create that is merely still running.
+fn cmd_build_timeout() -> std::time::Duration {
+    cmd_reply_timeout_or(std::time::Duration::from_secs(180))
 }
 
 /// Turn a bounded-read failure into an actionable message. A timeout here means
@@ -3440,11 +3455,14 @@ impl CmdConnection {
         Ok(())
     }
 
-    /// Read one reply, bounded by [`cmd_reply_timeout`].
-    fn recv(&mut self) -> AnyhowResult<Option<fresh::server::protocol::ServerControl>> {
+    /// Read one reply, waiting at most `timeout`.
+    fn recv_within(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> AnyhowResult<Option<fresh::server::protocol::ServerControl>> {
         let line = self
             .reader
-            .read_line_timeout(cmd_reply_timeout())
+            .read_line_timeout(timeout)
             .map_err(cmd_read_error)?;
         match line {
             Some(line) => Ok(Some(serde_json::from_str(&line)?)),
@@ -3477,7 +3495,7 @@ fn read_command_list(
 ) -> AnyhowResult<Vec<fresh::server::protocol::CommandInfo>> {
     use fresh::server::protocol::ServerControl;
     loop {
-        match conn.recv()? {
+        match conn.recv_within(cmd_reply_timeout())? {
             Some(ServerControl::CommandList { commands }) => return Ok(commands),
             Some(ServerControl::Error { message }) => anyhow::bail!("server error: {}", message),
             Some(_) => continue,
@@ -3490,10 +3508,11 @@ fn read_command_list(
 /// Returns `(ok, error, output)`.
 fn read_command_result(
     conn: &mut CmdConnection,
+    timeout: std::time::Duration,
 ) -> AnyhowResult<(bool, Option<String>, Option<String>)> {
     use fresh::server::protocol::ServerControl;
     loop {
-        match conn.recv()? {
+        match conn.recv_within(timeout)? {
             Some(ServerControl::CommandResult { ok, error, output }) => {
                 return Ok((ok, error, output))
             }
@@ -3624,13 +3643,19 @@ fn cmd_describe(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult
                 }
             }
         }
+        // The other half of calling a command you just discovered: what you
+        // get back. Printed only when the command declares it — most answer
+        // with nothing but their exit status.
+        if let Some(returns) = &info.returns {
+            println!("returns:  {}", returns);
+        }
     }
     Ok(())
 }
 
 /// `fresh --cmd cmd run <id> [k=v ...]` — dispatch one command by id.
 fn cmd_run(session: Option<&str>, id: &str, arg_tokens: &[&str]) -> AnyhowResult<()> {
-    run_command_id(session, id, parse_kv_args(arg_tokens))
+    run_command_id(session, id, parse_kv_args(arg_tokens), cmd_reply_timeout())
 }
 
 /// Ids of the orchestrator's headless agent-launch commands — the twins of its
@@ -3728,7 +3753,7 @@ fn agent_run(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
     ];
     const BOOLEANS: &[&str] = &["auto", "teach"];
     let args = parse_agent_flags(flags, ALLOWED, BOOLEANS)?;
-    run_command_id(session, AGENT_RUN_COMMAND, args)
+    run_command_id(session, AGENT_RUN_COMMAND, args, cmd_reply_timeout())
 }
 
 /// `fresh --cmd agent new [--path DIR] [--name NAME] [--agent CMD] ...` —
@@ -3753,7 +3778,8 @@ fn agent_new(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
     ];
     const BOOLEANS: &[&str] = &["auto", "teach", "worktree", "visit"];
     let args = parse_agent_flags(flags, ALLOWED, BOOLEANS)?;
-    run_command_id(session, AGENT_NEW_COMMAND, args)
+    // A create builds a worktree and starts an agent before it can answer.
+    run_command_id(session, AGENT_NEW_COMMAND, args, cmd_build_timeout())
 }
 
 /// `fresh --cmd split [--vertical|--horizontal]` — split alias (default vertical).
@@ -3763,7 +3789,12 @@ fn cmd_split(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
     } else {
         "split_vertical"
     };
-    run_command_id(session, id, std::collections::HashMap::new())
+    run_command_id(
+        session,
+        id,
+        std::collections::HashMap::new(),
+        cmd_reply_timeout(),
+    )
 }
 
 /// Shared `RunCommand` path: send the command, print output, and set the exit
@@ -3772,6 +3803,7 @@ fn run_command_id(
     session: Option<&str>,
     id: &str,
     args: std::collections::HashMap<String, String>,
+    timeout: std::time::Duration,
 ) -> AnyhowResult<()> {
     use fresh::server::protocol::ClientControl;
 
@@ -3782,7 +3814,7 @@ fn run_command_id(
         args,
     })?;
 
-    let (ok, error, output) = read_command_result(&mut conn)?;
+    let (ok, error, output) = read_command_result(&mut conn, timeout)?;
     if let Some(out) = output {
         if !out.is_empty() {
             println!("{}", out);

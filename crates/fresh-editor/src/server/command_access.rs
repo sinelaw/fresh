@@ -56,6 +56,132 @@ fn table() -> &'static Mutex<HashMap<String, Grant>> {
     TABLE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// ===========================================================================
+// In-flight command results
+//
+// A core action finishes inside `handle_action`, so its `CommandResult` is
+// known the moment it is dispatched. A *plugin* command doesn't: the handler
+// runs on the plugin thread and is usually async (it awaits host calls that
+// only complete on later editor ticks), so its answer — including whatever it
+// returns — arrives much later. Blocking the editor thread on it would
+// deadlock, since servicing those host calls is the editor thread's own job.
+//
+// So a plugin dispatch is *pending*: the host records which caller is waiting,
+// the plugin thread reports the outcome when the handler settles, and the host
+// answers then. This registry is the meeting point. It is process-global for
+// the same reason the token table is — one editor process, several possible
+// front doors (the daemon's IPC clients and the in-process control socket).
+// ===========================================================================
+
+/// The outcome of a plugin command, once its handler has settled.
+#[derive(Debug, Clone)]
+pub struct CommandOutcome {
+    /// The request id handed out by [`run_command_by_id`].
+    pub request_id: u64,
+    pub ok: bool,
+    /// The handler's return value, JSON-encoded (`None` when it returned
+    /// nothing). This is what `fresh --cmd cmd run <id>` prints.
+    pub output: Option<String>,
+    pub error: Option<String>,
+}
+
+/// A settled outcome plus when it was recorded, so one nobody ever claims can
+/// be reaped instead of sitting in the queue for the life of the process.
+struct QueuedOutcome {
+    outcome: CommandOutcome,
+    queued_at: std::time::Instant,
+}
+
+/// How long an unclaimed outcome is kept. Far longer than any caller waits (the
+/// CLI gives up in seconds), so this only ever collects outcomes whose caller
+/// disappeared — a disconnected client, a host that shut down mid-command.
+const OUTCOME_RETENTION: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn completions() -> &'static Mutex<Vec<QueuedOutcome>> {
+    static COMPLETED: OnceLock<Mutex<Vec<QueuedOutcome>>> = OnceLock::new();
+    COMPLETED.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Allocate the id that ties a dispatched plugin command to the caller waiting
+/// on it. Process-wide and monotonic; ids are never reused within a run.
+fn next_request_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Record a settled plugin command. Called from the editor thread when the
+/// plugin runtime reports a handler's return value (or its failure).
+pub fn complete(request_id: u64, ok: bool, output: Option<String>, error: Option<String>) {
+    if let Ok(mut done) = completions().lock() {
+        done.push(QueuedOutcome {
+            outcome: CommandOutcome {
+                request_id,
+                ok,
+                output,
+                error,
+            },
+            queued_at: std::time::Instant::now(),
+        });
+    }
+}
+
+/// Drain the settled outcomes this host is waiting on, leaving the rest queued.
+///
+/// Ownership-scoped on purpose: one editor process can run *two* front doors at
+/// once — the daemon's IPC clients and the in-process control socket — and each
+/// holds its own map of who is waiting for which request id. An unconditional
+/// drain lets whichever host ticks first swallow an outcome belonging to the
+/// other, which then waits forever for a reply that was already thrown away.
+/// So each host takes only the ids it owns (`owned`), and an outcome nobody
+/// claims stays queued until [`discard_completed_before`] reaps it.
+pub fn take_completed_where(mut owned: impl FnMut(u64) -> bool) -> Vec<CommandOutcome> {
+    let Ok(mut done) = completions().lock() else {
+        return Vec::new();
+    };
+    // Reap on the way past: an outcome whose caller vanished is claimed by
+    // nobody, and this scan is the only regular visitor to the queue.
+    let now = std::time::Instant::now();
+    let mut taken = Vec::new();
+    let mut i = 0;
+    while i < done.len() {
+        if owned(done[i].outcome.request_id) {
+            taken.push(done.remove(i).outcome);
+        } else if now.duration_since(done[i].queued_at) > OUTCOME_RETENTION {
+            done.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    taken
+}
+
+/// What [`run_command_by_id`] decided about a dispatch.
+#[derive(Debug, Clone)]
+pub enum CommandDispatch {
+    /// The command ran to completion on the editor thread (a core action) or
+    /// was refused outright. Answer the caller now.
+    Settled {
+        ok: bool,
+        error: Option<String>,
+        output: Option<String>,
+    },
+    /// A plugin handler was started and will settle later. Hold the caller
+    /// until an outcome with this id comes out of [`take_completed_where`].
+    Pending { request_id: u64 },
+}
+
+impl CommandDispatch {
+    /// A refusal that never reached a handler.
+    fn refused(error: impl Into<String>) -> Self {
+        Self::Settled {
+            ok: false,
+            error: Some(error.into()),
+            output: None,
+        }
+    }
+}
+
 /// Mint a fresh, unforgeable token string (a v4 UUID — 122 random bits). Not
 /// registered; the caller registers it with its grant via [`register`].
 pub fn new_token() -> String {
@@ -126,6 +252,11 @@ pub fn list_allowed_commands(
                 name: cmd.get_localized_name(),
                 // Commands have no palette category field to surface.
                 category: None,
+                returns: if include_args {
+                    cmd.returns.clone()
+                } else {
+                    None
+                },
                 args: if include_args {
                     cmd.args
                         .iter()
@@ -146,7 +277,9 @@ pub fn list_allowed_commands(
 /// Authorize and dispatch a single command by id on `editor`, following the
 /// same command → action → `handle_action` pipeline the command palette uses.
 ///
-/// Returns `(ok, error)` for a `CommandResult`. Refused (with `ok = false`)
+/// Returns a [`CommandDispatch`]: `Settled` for a core action (which finishes
+/// inside `handle_action`) or a refusal, `Pending` for a plugin handler whose
+/// result arrives later via [`take_completed`]. Refused (with `ok = false`)
 /// when there is no token, the token is unknown/expired, the id is not on the
 /// token's allowlist, or the id is not a real registered command. The target
 /// window is derived from the token's grant (never the client), so a token can
@@ -156,24 +289,18 @@ pub fn run_command_by_id(
     token: Option<&str>,
     id: &str,
     args: &HashMap<String, String>,
-) -> (bool, Option<String>) {
+) -> CommandDispatch {
     let Some(token) = token else {
-        return (
-            false,
-            Some("no capability token: command dispatch is not authorized".to_string()),
-        );
+        return CommandDispatch::refused("no capability token: command dispatch is not authorized");
     };
     let Some(grant) = lookup(token) else {
-        return (
-            false,
-            Some("unknown or expired capability token".to_string()),
-        );
+        return CommandDispatch::refused("unknown or expired capability token");
     };
     if !grant.allows(id) {
-        return (false, Some(format!("command not allowed: {}", id)));
+        return CommandDispatch::refused(format!("command not allowed: {}", id));
     }
     let Some(editor) = editor else {
-        return (false, Some("editor unavailable".to_string()));
+        return CommandDispatch::refused("editor unavailable");
     };
 
     // Target the token's own window when it is still live. `set_active_window`
@@ -188,7 +315,7 @@ pub fn run_command_by_id(
     // action id.
     let known = {
         let Ok(registry) = editor.command_registry().read() else {
-            return (false, Some("command registry unavailable".to_string()));
+            return CommandDispatch::refused("command registry unavailable");
         };
         registry
             .get_all()
@@ -196,7 +323,7 @@ pub fn run_command_by_id(
             .any(|c| c.action.to_action_str() == id)
     };
     if !known {
-        return (false, Some(format!("unknown command: {}", id)));
+        return CommandDispatch::refused(format!("unknown command: {}", id));
     }
 
     // Thread the string args through `Action::from_str`, which consumes
@@ -208,24 +335,31 @@ pub fn run_command_by_id(
         .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
         .collect();
     let Some(action) = Action::from_str(id, &json_args) else {
-        return (false, Some(format!("unknown command: {}", id)));
+        return CommandDispatch::refused(format!("unknown command: {}", id));
     };
 
-    // A plugin command gets its arguments handed to the handler as an object.
-    // `handle_action` can't: `Action::PluginAction` carries only a name, which
-    // is all a keystroke has to give it. Routing here instead is what makes a
-    // parameterized plugin command — `fresh --cmd cmd run orchestrator_agent_run
-    // agent=claude prompt=…` — reachable at all.
+    // A plugin command gets its arguments handed to the handler as an object,
+    // and its return value handed back to the caller. `handle_action` can do
+    // neither: `Action::PluginAction` carries only a name, which is all a
+    // keystroke has to give it, and it reports nothing back. Routing here
+    // instead is what makes a parameterized plugin command — `fresh --cmd cmd
+    // run orchestrator_agent_new path=… agent=claude` — both callable and
+    // *answerable*.
     if let Action::PluginAction(name) = &action {
-        return match editor.run_plugin_action_with_args(name, args) {
-            Ok(()) => (true, None),
-            Err(e) => (false, Some(e)),
+        let request_id = next_request_id();
+        return match editor.run_plugin_action_with_args(name, args, request_id) {
+            Ok(()) => CommandDispatch::Pending { request_id },
+            Err(e) => CommandDispatch::refused(e),
         };
     }
 
     match editor.handle_action(action) {
-        Ok(()) => (true, None),
-        Err(e) => (false, Some(format!("command failed: {}", e))),
+        Ok(()) => CommandDispatch::Settled {
+            ok: true,
+            error: None,
+            output: None,
+        },
+        Err(e) => CommandDispatch::refused(format!("command failed: {}", e)),
     }
 }
 
@@ -246,6 +380,7 @@ mod tests {
             custom_contexts: vec!["fresh-cli".to_string()],
             source: CommandSource::Plugin("orchestrator".to_string()),
             terminal_bypass: false,
+            returns: Some("{ windowId, workspaceId }".to_string()),
             args: vec![
                 CommandArg {
                     name: "agent".to_string(),
@@ -272,6 +407,7 @@ mod tests {
             id: cmd.action.to_action_str(),
             name: cmd.name.clone(),
             category: None,
+            returns: None,
             args: cmd
                 .args
                 .iter()
@@ -304,6 +440,7 @@ mod tests {
             id: cmd.action.to_action_str(),
             name: cmd.name,
             category: None,
+            returns: None,
             args: vec![CommandArgInfo {
                 name: "prompt".to_string(),
                 required: true,
@@ -327,6 +464,7 @@ mod tests {
             id: "split_vertical".to_string(),
             name: "Split Vertical".to_string(),
             category: None,
+            returns: None,
             args: Vec::new(),
         };
         let json = serde_json::to_string(&info).expect("serialize");
@@ -359,23 +497,38 @@ mod tests {
         assert_ne!(new_token(), new_token());
     }
 
+    /// A refusal is settled immediately — nothing was dispatched, so nothing
+    /// can arrive later. Returns the reason.
+    fn refusal_reason(dispatch: CommandDispatch) -> String {
+        match dispatch {
+            CommandDispatch::Settled { ok, error, .. } => {
+                assert!(!ok, "expected a refusal");
+                error.expect("a refusal carries a reason")
+            }
+            CommandDispatch::Pending { .. } => panic!("a refusal must not be dispatched"),
+        }
+    }
+
     #[test]
     fn run_command_without_token_is_refused() {
-        let (ok, error) = run_command_by_id(None, None, "split_vertical", &HashMap::new());
-        assert!(!ok);
-        assert!(error.is_some());
+        let reason = refusal_reason(run_command_by_id(
+            None,
+            None,
+            "split_vertical",
+            &HashMap::new(),
+        ));
+        assert!(reason.contains("not authorized"), "{}", reason);
     }
 
     #[test]
     fn run_command_unknown_token_is_refused() {
-        let (ok, error) = run_command_by_id(
+        let reason = refusal_reason(run_command_by_id(
             None,
             Some("not-a-real-token"),
             "split_vertical",
             &HashMap::new(),
-        );
-        assert!(!ok);
-        assert!(error.is_some());
+        ));
+        assert!(reason.contains("unknown or expired"), "{}", reason);
     }
 
     #[test]
@@ -384,12 +537,86 @@ mod tests {
         // rejected before the editor is ever touched (so `None` editor is
         // fine here — the allowlist check returns first).
         let token = mint(Grant::new(Some(1), ["save".to_string()]));
-        let (ok, error) = run_command_by_id(None, Some(&token), "split_vertical", &HashMap::new());
-        assert!(!ok);
-        assert_eq!(
-            error.as_deref(),
-            Some("command not allowed: split_vertical")
-        );
+        let reason = refusal_reason(run_command_by_id(
+            None,
+            Some(&token),
+            "split_vertical",
+            &HashMap::new(),
+        ));
+        assert_eq!(reason, "command not allowed: split_vertical");
         revoke(&token);
+    }
+
+    /// An outcome reported by the plugin runtime is picked up exactly once by
+    /// the host that owns the request — a second drain must not re-deliver it
+    /// (which would write a stray reply to an unrelated client).
+    #[test]
+    fn completed_outcomes_drain_once() {
+        // Ids are process-global; use one far from any other test's traffic.
+        let request_id = u64::MAX - 7;
+        complete(
+            request_id,
+            true,
+            Some("{\"workspaceId\":\"ws-1\"}".to_string()),
+            None,
+        );
+        let drained = take_completed_where(|id| id == request_id);
+        assert_eq!(drained.len(), 1);
+        assert!(drained[0].ok);
+        assert_eq!(
+            drained[0].output.as_deref(),
+            Some("{\"workspaceId\":\"ws-1\"}")
+        );
+        assert!(
+            take_completed_where(|id| id == request_id).is_empty(),
+            "an outcome must be delivered once"
+        );
+    }
+
+    /// Two hosts share this queue (the daemon's IPC clients and the in-process
+    /// control socket), each owning different request ids. A drain must take
+    /// only what the draining host owns and leave the rest — the bug this
+    /// scoping fixes was one host swallowing the other's outcome, leaving that
+    /// caller waiting for a reply that had already been discarded.
+    #[test]
+    fn a_drain_leaves_outcomes_owned_by_another_host() {
+        let mine = u64::MAX - 11;
+        let theirs = u64::MAX - 12;
+        complete(mine, true, None, None);
+        complete(theirs, true, None, None);
+
+        let drained = take_completed_where(|id| id == mine);
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].request_id, mine);
+
+        let other = take_completed_where(|id| id == theirs);
+        assert_eq!(
+            other.len(),
+            1,
+            "the other host's outcome must still be waiting for it"
+        );
+    }
+
+    /// An outcome older than the retention window is reaped by the next scan,
+    /// so a caller that vanished cannot grow the queue for the life of the
+    /// process. (Ages the entry directly — the alternative is a 10-minute test.)
+    #[test]
+    fn unclaimed_outcomes_are_reaped() {
+        let orphan = u64::MAX - 21;
+        complete(orphan, true, None, None);
+        {
+            let mut done = completions().lock().unwrap();
+            for q in done.iter_mut() {
+                if q.outcome.request_id == orphan {
+                    q.queued_at = std::time::Instant::now() - (OUTCOME_RETENTION * 2);
+                }
+            }
+        }
+        // A scan that claims nothing still reaps.
+        let _ = take_completed_where(|_| false);
+        assert!(
+            take_completed_where(|id| id == orphan).is_empty(),
+            "an unclaimed outcome must not linger"
+        );
     }
 }

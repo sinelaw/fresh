@@ -382,17 +382,20 @@ impl PluginManager {
     /// Execute a plugin action asynchronously. `args_json`, when set, is a JSON
     /// object handed to the handler as its single argument (the agent command
     /// channel's `RunCommand.args`); `None` calls it with no arguments, which
-    /// is what a keybinding or palette invocation does.
+    /// is what a keybinding or palette invocation does. `request_id`, when set,
+    /// asks the runtime to report the handler's return value back under that id
+    /// once it settles — how a `cmd run` gets an answer to print.
     #[cfg(feature = "plugins")]
     pub fn execute_action_async(
         &self,
         action_name: &str,
         args_json: Option<String>,
+        request_id: Option<u64>,
     ) -> Option<anyhow::Result<fresh_plugin_runtime::thread::oneshot::Receiver<anyhow::Result<()>>>>
     {
         self.inner
             .as_ref()
-            .map(|m| m.execute_action_async(action_name, args_json))
+            .map(|m| m.execute_action_async(action_name, args_json, request_id))
     }
 
     /// List all loaded plugins.

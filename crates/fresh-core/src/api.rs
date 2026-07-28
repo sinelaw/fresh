@@ -410,6 +410,14 @@ pub struct WindowInfo {
     /// Stable session id. The base session is always `1`.
     #[ts(type = "number")]
     pub id: WindowId,
+    /// Durable workspace identity (`ws-…`), minted once when the workspace is
+    /// created and carried in its on-disk snapshot. Unlike `id` — a per-process
+    /// handle re-derived at every boot — this survives restarts, relabels and
+    /// moves, so it is the id to hand out to anything that must still mean the
+    /// same workspace later (an agent recording where it put its work, say).
+    /// Empty only for a legacy workspace file written before stable ids.
+    #[serde(default)]
+    pub stable_id: String,
     /// User-visible label (defaults to root basename).
     pub label: String,
     /// Absolute project root.
@@ -3864,6 +3872,26 @@ pub enum PluginCommand {
         action_name: String,
     },
 
+    /// Report the outcome of a command dispatched with a request id — the
+    /// answer to a `RunCommand` from the agent command channel.
+    ///
+    /// Emitted by the runtime wrapper that invokes a command handler, once the
+    /// handler's return value (or promise) settles, so a plugin command can
+    /// answer its caller by simply returning a value. The editor matches
+    /// `request_id` to the waiting caller and writes it a `CommandResult`.
+    CompleteCommand {
+        /// The id the host handed out when it dispatched the command.
+        #[ts(type = "number")]
+        request_id: u64,
+        /// Whether the handler settled successfully.
+        ok: bool,
+        /// The handler's return value, JSON-encoded. `None` when it returned
+        /// nothing (or the call failed).
+        output: Option<String>,
+        /// Failure reason when `ok` is false.
+        error: Option<String>,
+    },
+
     /// Execute multiple actions in sequence, each with an optional repeat count
     /// Used by vi mode for count prefix (e.g., "3dw" = delete 3 words)
     /// All actions execute atomically with no plugin roundtrips between them
@@ -5341,9 +5369,13 @@ pub struct CreateWindowWithTerminalOptions {
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct SessionWithTerminalResult {
-    /// The new window's id.
+    /// The new window's id — a per-process handle, valid until this editor
+    /// exits. Use `stableId` for anything that has to outlive the process.
     #[ts(type = "number")]
     pub window_id: u64,
+    /// The new workspace's durable identity (`ws-…`), stable across restarts.
+    #[serde(default)]
+    pub stable_id: String,
     /// The seeded terminal's id (for `sendTerminalInput`, etc.).
     #[ts(type = "number")]
     pub terminal_id: u64,
@@ -6841,6 +6873,7 @@ mod tests {
             custom_contexts: Vec::new(),
             terminal_bypass: false,
             args: Vec::new(),
+            returns: None,
         }
     }
 
