@@ -1069,6 +1069,7 @@ impl Editor {
         // the buffer is editable or not — an index built by a script is
         // usually a plain file, and typing a newline into it is never what
         // pressing Enter on an entry meant.
+        #[cfg(feature = "plugins")]
         if matches!(action, Action::InsertNewline) {
             let buffer_id = self.active_buffer();
             if let Some(line) = self.cursor_line_in_active_buffer() {
