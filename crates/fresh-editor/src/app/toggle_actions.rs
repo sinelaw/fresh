@@ -241,11 +241,12 @@ impl Editor {
     /// every event loop (the local terminal loop in `main.rs` and the daemon
     /// server loop) shares one dismissal path rather than duplicating it.
     pub fn maybe_dismiss_wave_animation(&mut self, event: &crossterm::event::Event) -> bool {
-        use crossterm::event::{Event, KeyEventKind};
+        use crate::input::is_keystroke;
+        use crossterm::event::Event;
         if !self.wave_animation_active() {
             return false;
         }
-        let dismiss = matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press)
+        let dismiss = matches!(event, Event::Key(k) if is_keystroke(k.kind))
             || matches!(event, Event::Mouse(_));
         if dismiss {
             self.cancel_wave_animation();

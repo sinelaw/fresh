@@ -556,14 +556,14 @@ impl InputParser {
         }
 
         match final_byte {
-            b'A' => out.push(key(KeyCode::Up, modifiers_of(&params))),
-            b'B' => out.push(key(KeyCode::Down, modifiers_of(&params))),
-            b'C' => out.push(key(KeyCode::Right, modifiers_of(&params))),
-            b'D' => out.push(key(KeyCode::Left, modifiers_of(&params))),
-            b'H' => out.push(key(KeyCode::Home, modifiers_of(&params))),
-            b'F' => out.push(key(KeyCode::End, modifiers_of(&params))),
+            b'A' => out.push(csi_key(KeyCode::Up, &params)),
+            b'B' => out.push(csi_key(KeyCode::Down, &params)),
+            b'C' => out.push(csi_key(KeyCode::Right, &params)),
+            b'D' => out.push(csi_key(KeyCode::Left, &params)),
+            b'H' => out.push(csi_key(KeyCode::Home, &params)),
+            b'F' => out.push(csi_key(KeyCode::End, &params)),
             // Keypad Begin (the center "5" key), `CSI E` / `CSI 1;<mod> E`.
-            b'E' => out.push(key(KeyCode::KeypadBegin, modifiers_of(&params))),
+            b'E' => out.push(csi_key(KeyCode::KeypadBegin, &params)),
             // Modified F1–F4: xterm's SS3-derived form `CSI 1 ; <mod> {P,Q,R,S}`
             // (e.g. Shift+F3 = `ESC [ 1 ; 2 R`). *Unmodified* F1–F4 arrive as
             // SS3 (`ESC O P/Q/R/S`) and are decoded in `feed_ss3`; adding a
@@ -585,7 +585,7 @@ impl InputParser {
                     b'R' => KeyCode::F(3),
                     _ => KeyCode::F(4), // b'S'
                 };
-                out.push(key(code, modifiers_of(&params)));
+                out.push(csi_key(code, &params));
             }
             b'~' => self.dispatch_tilde(&params, out),
             b'M' | b'm' => {
@@ -605,7 +605,14 @@ impl InputParser {
                     tracing::trace!("InputParser: unrecognised CSI {:?} M/m, dropping", params);
                 }
             }
-            b'Z' => out.push(key(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            // Shift+Tab. The event type still rides in the modifier field for
+            // emulators that send one here, so decode it the same way; the
+            // modifiers are fixed because the key *is* the shifted Tab.
+            b'Z' => out.push(Event::Key(KeyEvent::new_with_kind(
+                KeyCode::BackTab,
+                KeyModifiers::SHIFT,
+                kind_of(&params),
+            ))),
             b'I' => out.push(Event::FocusGained),
             b'O' => out.push(Event::FocusLost),
             b'u' => self.dispatch_csi_u(&params, out),
@@ -632,11 +639,12 @@ impl InputParser {
         }
 
         let num: u8 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let mods = parts
-            .get(1)
-            .and_then(|s| first_subparam(s).parse().ok())
-            .unwrap_or(1);
+        let mods_field = parts.get(1).copied().unwrap_or("");
+        let mods = first_subparam(mods_field).parse().unwrap_or(1);
         let modifiers = modifiers_from_param(mods);
+        // As in `dispatch_csi_u`, the modifier field carries the kitty event
+        // type as a sub-parameter (`CSI <num> ; <mods>:<event-type> ~`).
+        let kind = event_kind_of(mods_field);
 
         // Bracketed paste start.
         if num == 200 {
@@ -679,7 +687,9 @@ impl InputParser {
                 return;
             }
         };
-        out.push(Event::Key(KeyEvent::new(keycode, modifiers)));
+        out.push(Event::Key(KeyEvent::new_with_kind(
+            keycode, modifiers, kind,
+        )));
     }
 
     /// Dispatch `CSI codepoint ; modifiers u` (fixterms / kitty keyboard).
@@ -718,9 +728,21 @@ fn event_kind_of(mods_field: &str) -> KeyEventKind {
     }
 }
 
-/// Build a `Key` event.
-fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
-    Event::Key(KeyEvent::new(code, modifiers))
+/// Build a `Key` event for a key that arrived in the *legacy* CSI form
+/// (`CSI 1 ; <mods>:<event-type> {A,B,C,D,E,F,H,P,Q,R,S}`), decoding both the
+/// modifiers and the event type from the modifier field.
+///
+/// Enabling the kitty protocol's event-type reporting does not move these keys
+/// to the CSI-u form — they keep their legacy final byte and gain a
+/// `:<event-type>` sub-parameter. Decoding only the modifiers here (and so
+/// reporting every release as a press) is what made one arrow keypress move the
+/// cursor twice (sinelaw/fresh#2796).
+fn csi_key(code: KeyCode, params: &[u8]) -> Event {
+    Event::Key(KeyEvent::new_with_kind(
+        code,
+        modifiers_of(params),
+        kind_of(params),
+    ))
 }
 
 /// The primary value of a CSI parameter field, discarding any kitty
@@ -843,6 +865,17 @@ fn is_modified_f1_f4(params: &[u8]) -> bool {
             .and_then(|f| first_subparam(f).parse::<u16>().ok()),
         Some(2..=64)
     )
+}
+
+/// Parse the event type out of the modifier field (`…;mods:event-type`) of a
+/// standard CSI parameter list. Absent field or absent sub-parameter — every
+/// sequence from a terminal that is not reporting event types — is a press.
+fn kind_of(params: &[u8]) -> KeyEventKind {
+    let params_str = std::str::from_utf8(params).unwrap_or("");
+    match params_str.find(';') {
+        Some(idx) => event_kind_of(&params_str[idx + 1..]),
+        None => KeyEventKind::Press,
+    }
 }
 
 /// Parse the modifier field (`…;mods`) of a standard CSI parameter list.

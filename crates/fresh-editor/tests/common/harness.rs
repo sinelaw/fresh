@@ -1398,6 +1398,22 @@ impl EditorTestHarness {
     /// per-key `type_text` path and from `Ctrl+V`). Routes through the
     /// editor's real `handle_input_event` so floating-panel / dock
     /// paste routing is exercised.
+    /// Deliver a raw key event through the editor's real
+    /// `handle_input_event`, preserving its [`KeyEventKind`].
+    ///
+    /// Unlike [`Self::send_key`], which calls `handle_key` directly, this goes
+    /// through the same dispatch the event loops use — so it exercises the
+    /// press/repeat/release gate that decides whether a key event is a
+    /// keystroke at all. Tests that feed terminal bytes through `InputParser`
+    /// must use this; `send_key` cannot express a release.
+    pub fn send_key_event(&mut self, key_event: crossterm::event::KeyEvent) -> anyhow::Result<()> {
+        self.editor
+            .handle_input_event(crossterm::event::Event::Key(key_event))?;
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
     pub fn send_paste(&mut self, text: &str) -> anyhow::Result<()> {
         self.editor
             .handle_input_event(crossterm::event::Event::Paste(text.to_string()))?;
