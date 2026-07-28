@@ -2997,6 +2997,11 @@ interface EditorAPI {
 	* Use this to *rearrange* what is where. `setSplitBuffer` only changes
 	* which of a pane's existing tabs is visible, so building a move out of
 	* it leaves the original tab stranded in its old pane.
+	* 
+	* Queued, like every layout mutation: the returned bool only reports that
+	* the command was sent, not that it took effect, and a read issued right
+	* after it still sees the old state. `await editor.flush()` before
+	* reading back.
 	*/
 	moveBufferToSplit(bufferId: number, splitId: number): boolean;
 	/**
@@ -3425,15 +3430,35 @@ interface EditorAPI {
 	*/
 	getEditorMode(): string | null;
 	/**
-	* Close a split
+	* Close a split.
+	* 
+	* Queued, like every layout mutation: the returned bool only reports that
+	* the command was sent, not that it took effect, and a read issued right
+	* after it still sees the old state. `await editor.flush()` before
+	* reading back.
 	*/
 	closeSplit(splitId: number): boolean;
 	/**
-	* Set the buffer displayed in a split
+	* Show one of a split's existing tabs. To *move* a buffer into a pane —
+	* and take it out of the pane it was in — use `moveBufferToSplit`.
+	* 
+	* Queued, like every layout mutation: the returned bool only reports that
+	* the command was sent, not that it took effect, and a read issued right
+	* after it still sees the old state. `await editor.flush()` before
+	* reading back.
 	*/
 	setSplitBuffer(splitId: number, bufferId: number): boolean;
 	/**
-	* Focus a specific split
+	* Move focus to a split.
+	* 
+	* To open something without taking focus in the first place, prefer
+	* `splitWindow({ keepFocus: true })` — one call, and the user's cursor
+	* never moves.
+	* 
+	* Queued, like every layout mutation: the returned bool only reports that
+	* the command was sent, not that it took effect, and a read issued right
+	* after it still sees the old state. `await editor.flush()` before
+	* reading back.
 	*/
 	focusSplit(splitId: number): boolean;
 	/**
@@ -3535,7 +3560,12 @@ interface EditorAPI {
 	*/
 	activeWindow(): number;
 	/**
-	* Set scroll position of a split
+	* Set the scroll position of a split.
+	* 
+	* Queued, like every layout mutation: the returned bool only reports that
+	* the command was sent, not that it took effect, and a read issued right
+	* after it still sees the old state. `await editor.flush()` before
+	* reading back.
 	*/
 	setSplitScroll(splitId: number, topByte: number): boolean;
 	/**
@@ -3549,8 +3579,10 @@ interface EditorAPI {
 	* (0.0–1.0, 0.5 = equal), clamped to [0.1, 0.9]. A leaf with no parent
 	* container (the only pane) is a no-op.
 	* 
-	* Note: this is fire-and-forget — the returned bool only reports that
-	* the command was queued, not whether the resize succeeded.
+	* Queued, like every layout mutation: the returned bool only reports that
+	* the command was sent, not that the resize succeeded, and a read issued
+	* right after it still sees the old widths. `await editor.flush()` before
+	* reading back.
 	*/
 	setSplitRatio(splitId: number, ratio: number): boolean;
 	/**

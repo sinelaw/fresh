@@ -3447,6 +3447,11 @@ impl JsEditorApi {
     /// Use this to *rearrange* what is where. `setSplitBuffer` only changes
     /// which of a pane's existing tabs is visible, so building a move out of
     /// it leaves the original tab stranded in its old pane.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     #[plugin_api(js_name = "moveBufferToSplit", ts_return = "boolean")]
     pub fn move_buffer_to_split(&self, buffer_id: u32, split_id: u32) -> bool {
         self.command_sender
@@ -4890,7 +4895,12 @@ impl JsEditorApi {
 
     // === Splits ===
 
-    /// Close a split
+    /// Close a split.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn close_split(&self, split_id: u32) -> bool {
         self.command_sender
             .send(PluginCommand::CloseSplit {
@@ -4899,7 +4909,13 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Set the buffer displayed in a split
+    /// Show one of a split's existing tabs. To *move* a buffer into a pane —
+    /// and take it out of the pane it was in — use `moveBufferToSplit`.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn set_split_buffer(&self, split_id: u32, buffer_id: u32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitBuffer {
@@ -4909,7 +4925,16 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Focus a specific split
+    /// Move focus to a split.
+    ///
+    /// To open something without taking focus in the first place, prefer
+    /// `splitWindow({ keepFocus: true })` — one call, and the user's cursor
+    /// never moves.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn focus_split(&self, split_id: u32) -> bool {
         self.command_sender
             .send(PluginCommand::FocusSplit {
@@ -5114,7 +5139,12 @@ impl JsEditorApi {
             .unwrap_or(1)
     }
 
-    /// Set scroll position of a split
+    /// Set the scroll position of a split.
+    ///
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that it took effect, and a read issued right
+    /// after it still sees the old state. `await editor.flush()` before
+    /// reading back.
     pub fn set_split_scroll(&self, split_id: u32, top_byte: u32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitScroll {
@@ -5134,8 +5164,10 @@ impl JsEditorApi {
     /// (0.0–1.0, 0.5 = equal), clamped to [0.1, 0.9]. A leaf with no parent
     /// container (the only pane) is a no-op.
     ///
-    /// Note: this is fire-and-forget — the returned bool only reports that
-    /// the command was queued, not whether the resize succeeded.
+    /// Queued, like every layout mutation: the returned bool only reports that
+    /// the command was sent, not that the resize succeeded, and a read issued
+    /// right after it still sees the old widths. `await editor.flush()` before
+    /// reading back.
     pub fn set_split_ratio(&self, split_id: u32, ratio: f32) -> bool {
         self.command_sender
             .send(PluginCommand::SetSplitRatio {
