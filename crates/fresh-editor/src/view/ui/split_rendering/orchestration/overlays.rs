@@ -137,7 +137,6 @@ pub(crate) fn decoration_context(
     folds: &FoldManager,
     theme: &Theme,
     highlight_context_bytes: usize,
-    highlight_timeout_ms: u64,
     view_mode: &ViewMode,
     diagnostics_inline_text: bool,
     bracket_highlight: BracketHighlightSettings,
@@ -154,15 +153,12 @@ pub(crate) fn decoration_context(
         .saturating_add(viewport_size)
         .min(state.buffer.len());
 
-    let highlight_spans = state.highlighter.highlight_viewport_within(
+    let highlight_spans = state.highlighter.highlight_viewport(
         &state.buffer,
         highlight_start,
         highlight_end,
         theme,
         highlight_context_bytes,
-        crate::primitives::highlight_engine::HighlightBudget::from_config_millis(
-            highlight_timeout_ms,
-        ),
     );
 
     // Update reference highlight overlays (debounced; creates overlays that

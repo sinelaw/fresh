@@ -168,7 +168,6 @@ pub struct PartialEditorConfig {
     pub wrap_indent: Option<bool>,
     pub wrap_column: Option<Option<usize>>,
     pub page_width: Option<Option<usize>>,
-    pub highlight_timeout_ms: Option<u64>,
     pub snapshot_interval: Option<usize>,
     pub large_file_threshold_bytes: Option<u64>,
     pub estimated_line_length: Option<usize>,
@@ -257,8 +256,6 @@ impl Merge for PartialEditorConfig {
         self.wrap_indent.merge_from(&other.wrap_indent);
         self.wrap_column.merge_from(&other.wrap_column);
         self.page_width.merge_from(&other.page_width);
-        self.highlight_timeout_ms
-            .merge_from(&other.highlight_timeout_ms);
         self.snapshot_interval.merge_from(&other.snapshot_interval);
         self.large_file_threshold_bytes
             .merge_from(&other.large_file_threshold_bytes);
@@ -619,7 +616,6 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             wrap_indent: Some(cfg.wrap_indent),
             wrap_column: Some(cfg.wrap_column),
             page_width: Some(cfg.page_width),
-            highlight_timeout_ms: Some(cfg.highlight_timeout_ms),
             snapshot_interval: Some(cfg.snapshot_interval),
             large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
             estimated_line_length: Some(cfg.estimated_line_length),
@@ -733,9 +729,6 @@ impl PartialEditorConfig {
             wrap_indent: self.wrap_indent.unwrap_or(defaults.wrap_indent),
             wrap_column: self.wrap_column.unwrap_or(defaults.wrap_column),
             page_width: self.page_width.unwrap_or(defaults.page_width),
-            highlight_timeout_ms: self
-                .highlight_timeout_ms
-                .unwrap_or(defaults.highlight_timeout_ms),
             snapshot_interval: self.snapshot_interval.unwrap_or(defaults.snapshot_interval),
             large_file_threshold_bytes: self
                 .large_file_threshold_bytes
