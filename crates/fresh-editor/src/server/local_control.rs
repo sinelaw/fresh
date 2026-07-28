@@ -884,13 +884,17 @@ mod tests {
     }
 
     /// The full `fresh --cmd script run` round trip against a host that drains
-    /// the channel: the request reaches the editor thread, `pump` authorizes it
-    /// and hands it to the runtime, and the client reads a `ScriptResult`.
+    /// the channel: the request reaches the editor thread, `pump` authorizes it,
+    /// and the client reads a `ScriptResult` back.
     ///
-    /// The editor here is built without plugins, so the answer is the runtime's
-    /// absence rather than a script's value — which is exactly the assertion
-    /// that matters. Everything up to the runtime handoff had to work for any
-    /// reply to arrive at all, and that wiring is what regressed.
+    /// The token deliberately carries *no* script grant, so the answer is a
+    /// refusal decided on the editor thread. That keeps the test about the one
+    /// thing it guards — that a queued request gets answered — and keeps it
+    /// deterministic: a granted token would hand the source to the plugin
+    /// runtime, whose completion is drained by the real editor loop and not by
+    /// `pump_shared`, so the reply would never arrive here and the test would
+    /// hang (as it did on macOS, where the runtime is live, while passing on
+    /// runners where it wasn't).
     ///
     /// Regression: only the TUI loop and the standalone web bridge pumped. The
     /// GUI tick and the session daemon (what `fresh --web` and every attached
@@ -905,7 +909,7 @@ mod tests {
         let shutdown = bound.shutdown.clone();
         let shared = shared_for(bound);
 
-        let token = command_access::mint(command_access::Grant::new(None, true));
+        let token = command_access::mint(command_access::Grant::new(None, false));
 
         // The client runs on its own thread with a blocking read, exactly like
         // the real CLI; this thread plays the host loop below.
@@ -933,22 +937,27 @@ mod tests {
             let _ = done_tx.send(got);
         });
 
-        // Host loop: pump until the client reports. Unbounded on purpose — with
-        // the regression the reply never comes and the external runner times the
-        // test out, which is the signal we want.
+        // Host loop: pump until the client reports, or give up. The deadline is
+        // the assertion — with the regression no reply is ever produced, and a
+        // bounded wait reports that as a failure here instead of hanging until
+        // the outer test runner kills the whole suite.
         let (mut editor, _temp) = pump_test_editor();
-        let (ok, error) = loop {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut answer = None;
+        while std::time::Instant::now() < deadline {
             pump_shared(&shared, &mut editor);
             if let Ok(got) = done_rx.try_recv() {
-                break got;
+                answer = Some(got);
+                break;
             }
-        };
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (ok, error) = answer.expect("a pumping host must answer a queued RunScript");
 
-        assert!(!ok, "a plugin-less editor cannot run a script");
-        let error = error.unwrap_or_default();
+        assert!(!ok, "a token without the script grant must be refused");
         assert!(
-            !error.contains("not authorized") && !error.contains("granted"),
-            "the grant must have been accepted; refused with: {error}"
+            error.unwrap_or_default().contains("not granted"),
+            "the refusal must name the missing grant"
         );
 
         client.join().unwrap();
