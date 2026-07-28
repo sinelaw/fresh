@@ -1711,7 +1711,14 @@ pub struct EditorConfig {
     pub keyboard_report_all_keys_as_escape_codes: bool,
 
     // ===== Performance =====
-    /// Maximum time in milliseconds for syntax highlighting per frame
+    /// Milliseconds a single viewport refresh may spend parsing *ahead of*
+    /// the visible region. The visible lines are always highlighted in full;
+    /// once they are covered and this budget is spent, parsing stops at the
+    /// last complete line and resumes there on the next refresh. Lower values
+    /// trade cache warmth (so scrolling re-parses more) for a shorter frame.
+    /// Applies to the TextMate backend, whose parse is a resumable line walk;
+    /// the tree-sitter backend bounds its work by size instead.
+    /// Default: 5
     #[serde(default = "default_highlight_timeout")]
     #[schemars(extend("x-section" = "Performance"))]
     pub highlight_timeout_ms: u64,

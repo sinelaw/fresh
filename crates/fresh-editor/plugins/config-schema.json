@@ -906,7 +906,7 @@
           "x-section": "Keyboard"
         },
         "highlight_timeout_ms": {
-          "description": "Maximum time in milliseconds for syntax highlighting per frame",
+          "description": "Milliseconds a single viewport refresh may spend parsing *ahead of*\nthe visible region. The visible lines are always highlighted in full;\nonce they are covered and this budget is spent, parsing stops at the\nlast complete line and resumes there on the next refresh. Lower values\ntrade cache warmth (so scrolling re-parses more) for a shorter frame.\nApplies to the TextMate backend, whose parse is a resumable line walk;\nthe tree-sitter backend bounds its work by size instead.\nDefault: 5",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,

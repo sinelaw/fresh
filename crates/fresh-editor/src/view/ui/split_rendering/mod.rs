@@ -57,6 +57,7 @@ pub struct EditorRenderConfig<'a> {
     pub line_wrap: bool,
     pub estimated_line_length: usize,
     pub highlight_context_bytes: usize,
+    pub highlight_timeout_ms: u64,
     pub relative_line_numbers: bool,
     pub use_terminal_bg: bool,
     pub show_vertical_scrollbar: bool,
@@ -88,6 +89,7 @@ impl<'a> EditorRenderConfig<'a> {
             line_wrap: editor.line_wrap,
             estimated_line_length: editor.estimated_line_length,
             highlight_context_bytes: editor.highlight_context_bytes,
+            highlight_timeout_ms: editor.highlight_timeout_ms,
             relative_line_numbers: editor.relative_line_numbers,
             use_terminal_bg: editor.use_terminal_bg,
             show_vertical_scrollbar: editor.show_vertical_scrollbar,
@@ -217,6 +219,7 @@ impl SplitRenderer {
         lsp_waiting: bool,
         estimated_line_length: usize,
         highlight_context_bytes: usize,
+        highlight_timeout_ms: u64,
         relative_line_numbers: bool,
         use_terminal_bg: bool,
         session_mode: bool,
@@ -237,6 +240,7 @@ impl SplitRenderer {
             lsp_waiting,
             estimated_line_length,
             highlight_context_bytes,
+            highlight_timeout_ms,
             relative_line_numbers,
             use_terminal_bg,
             session_mode,
@@ -514,6 +518,7 @@ mod tests {
             &empty_folds,
             &theme,
             100_000,           // default highlight context bytes
+            0,                 // no look-ahead budget in tests
             &ViewMode::Source, // Tests use source mode
             false,             // inline diagnostics off for test
             BracketHighlightSettings::default(),
@@ -620,6 +625,7 @@ mod tests {
             &empty_folds,
             &theme,
             100_000,
+            0,
             &ViewMode::Source,
             false,
             BracketHighlightSettings::default(),
@@ -3173,6 +3179,7 @@ mod tests {
             &empty_folds,
             &theme,
             100_000,
+            0,
             &ViewMode::Source,
             false,
             BracketHighlightSettings::default(),

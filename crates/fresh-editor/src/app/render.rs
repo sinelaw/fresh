@@ -4306,6 +4306,7 @@ impl Editor {
                     false, // lsp_waiting — not relevant for layout
                     self.config.editor.estimated_line_length,
                     self.config.editor.highlight_context_bytes,
+                    self.config.editor.highlight_timeout_ms,
                     self.config.editor.relative_line_numbers,
                     self.config.editor.use_terminal_bg,
                     self.session_mode || !self.software_cursor_only,
