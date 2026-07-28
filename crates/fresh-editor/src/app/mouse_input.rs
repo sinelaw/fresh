@@ -2625,6 +2625,12 @@ impl Editor {
                 }
                 Err(e) => self.set_status_message(e),
             }
+            // Maximize/restore changed every pane's geometry: reflow through
+            // the single layout funnel, exactly as the keyboard/command
+            // `toggle_maximize_split` does. Without this the mouse path left
+            // every visible terminal at its pre-toggle PTY size and scroll-back
+            // wrap column.
+            self.relayout();
             return Some(Ok(()));
         }
 
@@ -3653,6 +3659,11 @@ impl Editor {
         {
             self.set_active_buffer(buffer_id);
         }
+        // Closing a split gives its space back to the surviving panes — the
+        // same reflow `close_active_split` runs. `set_active_buffer` above only
+        // resizes terminals when the *newly focused* buffer is one, so the
+        // other surviving panes need the funnel.
+        self.relayout();
         self.set_status_message(t!("split.closed").to_string());
     }
 

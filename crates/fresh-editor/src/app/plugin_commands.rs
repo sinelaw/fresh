@@ -1092,6 +1092,10 @@ impl Editor {
         };
 
         if applied {
+            // The two panes either side of the container changed width /
+            // height — reflow through the layout funnel so their terminals
+            // follow, same as the separator drag and `adjust_split_size`.
+            self.relayout();
             tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
         } else {
             tracing::debug!(
@@ -1111,6 +1115,8 @@ impl Editor {
             .and_then(|w| w.split_manager_mut())
             .expect("active window must have a populated split layout")
             .distribute_splits_evenly();
+        // Every pane just changed size — reflow through the layout funnel.
+        self.relayout();
         tracing::debug!("Distributed splits evenly");
     }
 
