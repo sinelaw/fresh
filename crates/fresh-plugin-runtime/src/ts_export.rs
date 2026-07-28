@@ -61,6 +61,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "SplitWindowOptions" => Some(fresh_core::api::SplitWindowOptions::decl(&cfg)),
         "SplitAxis" => Some(fresh_core::api::SplitAxis::decl(&cfg)),
         "SplitPlacement" => Some(fresh_core::api::SplitPlacement::decl(&cfg)),
+        "LineTarget" => Some(fresh_core::api::LineTarget::decl(&cfg)),
         "PaneDescription" => Some(fresh_core::api::PaneDescription::decl(&cfg)),
         "WorkspaceDescription" => Some(fresh_core::api::WorkspaceDescription::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
@@ -343,6 +344,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "SplitWindowOptions",              // Options for editor.splitWindow()
     "SplitAxis",                       // SplitWindowOptions.direction
     "SplitPlacement",                  // SplitWindowOptions.place
+    "LineTarget",                      // Used by editor.setLineTargets()
     "PaneDescription",                 // Part of WorkspaceDescription
     "WorkspaceDescription",            // Returned by editor.describeWorkspace()
     "LayoutHints",                     // Used by plugins for view transforms
@@ -656,6 +658,14 @@ interface HookEventMap {
   // ── commands ─────────────────────────────────────────────────────────────
   pre_command: { action: string | Record<string, unknown> };
   post_command: { action: string | Record<string, unknown> };
+  /**
+   * NOT EMITTED. Declared here historically, but nothing in the editor ever
+   * fires it: `editor.on("idle", ...)` registers successfully and the handler
+   * is never called. Listed so that its absence is documented rather than
+   * discovered — do not build on it. For "run something later", drive it from
+   * an event that does fire (`cursor_moved`, `buffer_changed`) or from your
+   * own `spawnProcess` timer.
+   */
   idle: { milliseconds: number };
   resize: { width: number; height: number };
 

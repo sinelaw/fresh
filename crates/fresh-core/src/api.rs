@@ -612,6 +612,11 @@ pub struct SplitSnapshot {
     pub split_id: usize,
     /// Buffer currently shown in this split.
     pub buffer_id: BufferId,
+    /// Label set by `setSplitLabel`, when this pane has one. Reported here so
+    /// a later script can re-find a pane it named earlier — the ids change
+    /// across restarts, the label is what the caller chose.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Column of this pane's left edge, in terminal cells, measured from
     /// the left edge of the editor area. This is what answers "which pane
     /// is on the left" — compare `x` between panes rather than guessing
@@ -643,6 +648,10 @@ pub struct PaneDescription {
     /// `"terminal"` (a PTY), `"file"` (backed by a path), or `"virtual"`
     /// (a plugin-owned scratch buffer).
     pub kind: String,
+    /// Label set by `setSplitLabel`, when this pane has one — how a script
+    /// finds a pane it named in an earlier run.
+    #[serde(default)]
+    pub label: Option<String>,
     /// Absolute path when this pane shows a file, else `None`.
     pub path: Option<PathBuf>,
     /// Short label — the file name, or the buffer's name for the rest.
@@ -680,6 +689,29 @@ pub struct WorkspaceDescription {
     pub panes: Vec<PaneDescription>,
     /// Which pane has focus; also flagged on the pane itself.
     pub active_split_id: usize,
+}
+
+/// One clickable line in a buffer: press Enter on it, or click it, and the
+/// editor opens what it points at.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct LineTarget {
+    /// Row in the source buffer, 0-indexed, that carries this target.
+    pub line: usize,
+    /// File to open. Relative paths resolve against the window's root.
+    pub path: String,
+    /// Line to land on in that file, 0-indexed. Defaults to the top.
+    #[serde(default)]
+    #[ts(optional)]
+    pub target: Option<usize>,
+    /// Label of the pane to open into (`setSplitLabel`). When the label
+    /// names no live pane — or is omitted — the editor opens beside the
+    /// buffer holding the targets rather than replacing it, so an index
+    /// never eats its own pane.
+    #[serde(default)]
+    #[ts(optional)]
+    pub into: Option<String>,
 }
 
 /// Where a new pane goes relative to the one being split.
@@ -974,6 +1006,17 @@ pub struct ScrollbarMarker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub priority: Option<i32>,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for LineTarget {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "LineTarget",
+            message: Some(e.to_string()),
+        })
+    }
 }
 
 #[cfg(feature = "plugins")]
@@ -3970,6 +4013,22 @@ pub enum PluginCommand {
     MoveBufferToSplit {
         buffer_id: BufferId,
         split_id: SplitId,
+    },
+
+    /// Make lines of `buffer_id` clickable: a click or Enter on a listed
+    /// line opens what it points at.
+    ///
+    /// Declarative on purpose. The alternative is an `editor.on("mouse_click")`
+    /// handler, which means the author has to still be running when the user
+    /// clicks — fine for a resident plugin, useless for a one-shot script that
+    /// builds an index and exits. Here the editor owns the behaviour, so the
+    /// view keeps working after its author is gone.
+    ///
+    /// Replaces any previous targets for the buffer; an empty list clears
+    /// them.
+    SetLineTargets {
+        buffer_id: BufferId,
+        targets: Vec<LineTarget>,
     },
 
     /// Split the active pane and answer with the new pane's id and

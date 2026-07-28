@@ -233,6 +233,17 @@ impl Editor {
             }
         }
 
+        // A line that points somewhere (`editor.setLineTargets`) opens its
+        // target on click. Checked before the plugin hook so a declarative
+        // index behaves the same whether or not anything is listening — its
+        // author is typically a script that has already exited.
+        if let Some(brow) = mc_buffer_row {
+            if let Some(target) = self.line_target_at(buffer_id, brow as usize) {
+                self.follow_line_target(target);
+                return Ok(());
+            }
+        }
+
         // Dispatch MouseClick hook to plugins
         // Plugins can handle clicks on their virtual buffers
         if self

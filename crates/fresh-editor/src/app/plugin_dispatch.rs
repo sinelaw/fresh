@@ -1549,6 +1549,9 @@ impl Editor {
             PluginCommand::FlushLayout => {
                 self.flush_layout();
             }
+            PluginCommand::SetLineTargets { buffer_id, targets } => {
+                self.set_line_targets(buffer_id, targets);
+            }
             PluginCommand::SplitWindow {
                 options,
                 request_id,
@@ -6192,6 +6195,7 @@ impl Window {
                     snapshot.splits.push(fresh_core::api::SplitSnapshot {
                         split_id: leaf_id.0 .0,
                         buffer_id: buf_id,
+                        label: mgr.get_label(leaf_id.0).map(|l| l.to_string()),
                         x: rect.x,
                         y: rect.y,
                         width: rect.width,

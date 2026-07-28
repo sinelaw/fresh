@@ -881,6 +881,13 @@ pub struct Editor {
     /// `last_register`, and the `playing` guard flag).
     // `macros` moved onto `Window`.
 
+    /// Clickable lines per buffer, from `editor.setLineTargets`.
+    ///
+    /// Editor-owned rather than plugin-owned so a view outlives the script
+    /// that built it: a one-shot agent can leave behind an index whose lines
+    /// still open their targets long after it has exited.
+    line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
+
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(

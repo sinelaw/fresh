@@ -298,6 +298,12 @@ type SplitSnapshot = {
 	*/
 	bufferId: BufferId;
 	/**
+	* Label set by `setSplitLabel`, when this pane has one. Reported here so
+	* a later script can re-find a pane it named earlier — the ids change
+	* across restarts, the label is what the caller chose.
+	*/
+	label: string | null;
+	/**
 	* Column of this pane's left edge, in terminal cells, measured from
 	* the left edge of the editor area. This is what answers "which pane
 	* is on the left" — compare `x` between panes rather than guessing
@@ -323,6 +329,150 @@ type SplitSnapshot = {
 	* gutter, so it is smaller than the pane rect above.
 	*/
 	viewport: ViewportInfo;
+};
+type SplitCreated = {
+	/**
+	* The new pane's id — pass to `openFileInSplit`, `focusSplit`, ...
+	*/
+	splitId: number;
+	/**
+	* The pane the split was created from, still live and now smaller.
+	*/
+	sourceSplitId: number;
+	/**
+	* Buffer shown in the new pane.
+	*/
+	bufferId: BufferId;
+	/**
+	* Geometry of the new pane (see `SplitSnapshot`).
+	*/
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+};
+type SplitWindowOptions = {
+	/**
+	* Divider orientation. Default `"vertical"` — panes side by side.
+	*/
+	direction?: SplitAxis;
+	/**
+	* Which side the new pane lands on. Default `"after"`.
+	*/
+	place?: SplitPlacement;
+	/**
+	* First child's share of the space, 0.0–1.0. Default 0.5.
+	* "First" is the left/top pane regardless of `place`.
+	*/
+	ratio?: number;
+	/**
+	* Open this file in the new pane. Relative paths resolve against the
+	* window's root. When omitted the new pane shows the same buffer as
+	* the pane it was split from, which is what the keyboard split does.
+	*/
+	file?: string;
+	/**
+	* Leave focus where it was instead of moving it into the new pane.
+	* Default false (the new pane takes focus, matching the keyboard
+	* split).
+	*/
+	keepFocus?: boolean;
+};
+type SplitAxis = "vertical" | "horizontal";
+type SplitPlacement = "before" | "after";
+type LineTarget = {
+	/**
+	* Row in the source buffer, 0-indexed, that carries this target.
+	*/
+	line: number;
+	/**
+	* File to open. Relative paths resolve against the window's root.
+	*/
+	path: string;
+	/**
+	* Line to land on in that file, 0-indexed. Defaults to the top.
+	*/
+	target?: number;
+	/**
+	* Label of the pane to open into (`setSplitLabel`). When the label
+	* names no live pane — or is omitted — the editor opens beside the
+	* buffer holding the targets rather than replacing it, so an index
+	* never eats its own pane.
+	*/
+	into?: string;
+};
+type PaneDescription = {
+	/**
+	* Pass to `openFileInSplit`, `focusSplit`, `setSplitRatio`, ...
+	*/
+	splitId: number;
+	/**
+	* Buffer shown in this pane.
+	*/
+	bufferId: BufferId;
+	/**
+	* `"terminal"` (a PTY), `"file"` (backed by a path), or `"virtual"`
+	* (a plugin-owned scratch buffer).
+	*/
+	kind: string;
+	/**
+	* Label set by `setSplitLabel`, when this pane has one — how a script
+	* finds a pane it named in an earlier run.
+	*/
+	label: string | null;
+	/**
+	* Absolute path when this pane shows a file, else `None`.
+	*/
+	path: string | null;
+	/**
+	* Short label — the file name, or the buffer's name for the rest.
+	*/
+	name: string;
+	/**
+	* Whether this pane has focus.
+	*/
+	active: boolean;
+	/**
+	* Unsaved changes.
+	*/
+	modified: boolean;
+	/**
+	* On-screen geometry, in editor-area cells. Panes are listed left to
+	* right, top to bottom, so `panes[0]` is the leftmost/topmost; `x`
+	* and `y` say so precisely.
+	*/
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+};
+type WorkspaceDescription = {
+	/**
+	* Working directory of the active window.
+	*/
+	cwd: string;
+	/**
+	* The window this script is pointed at.
+	*/
+	windowId: bigint;
+	/**
+	* Durable id of that window — the one still valid after a restart.
+	*/
+	stableId: string;
+	/**
+	* Every open workspace, so a script can tell whether the thing it
+	* wants is in another window.
+	*/
+	windows: Array<WindowInfo>;
+	/**
+	* The active window's panes, in visual order (left to right, top to
+	* bottom).
+	*/
+	panes: Array<PaneDescription>;
+	/**
+	* Which pane has focus; also flagged on the pane itself.
+	*/
+	activeSplitId: number;
 };
 type LayoutHints = {
 	/**
@@ -3005,6 +3155,30 @@ interface EditorAPI {
 	*/
 	moveBufferToSplit(bufferId: number, splitId: number): boolean;
 	/**
+	* Make lines of a buffer clickable: a click or Enter on a listed line
+	* opens what it points at.
+	* 
+	* ```js
+	* editor.setLineTargets(bufferId, [
+	* { line: 0, path: "src/main.rs", target: 41, into: "code" },
+	* { line: 1, path: "src/lib.rs",  target: 12, into: "code" },
+	* ]);
+	* ```
+	* 
+	* `line` is the row *in this buffer*; `target` is the line to land on in
+	* the file, both 0-indexed. `into` names a pane by its `setSplitLabel`
+	* label; when it names no live pane the target opens beside this one, so
+	* an index never replaces itself with what you clicked.
+	* 
+	* The editor owns the behaviour, which is the point: a script that builds
+	* an index — a search result list, an error list, a review map — exits
+	* immediately, and a `mouse_click` handler would die with it. These
+	* targets keep working.
+	* 
+	* Replaces any previous targets for the buffer; pass `[]` to clear.
+	*/
+	setLineTargets(bufferId: number, targets: LineTarget[]): boolean;
+	/**
 	* Describe the editor as it is right now: the panes of the active
 	* window in visual order with their geometry and contents, which one
 	* has focus, the working directory, and every open workspace.
@@ -4333,6 +4507,14 @@ interface HookEventMap {
 	post_command: {
 		action: string | Record<string, unknown>;
 	};
+	/**
+	* NOT EMITTED. Declared here historically, but nothing in the editor ever
+	* fires it: `editor.on("idle", ...)` registers successfully and the handler
+	* is never called. Listed so that its absence is documented rather than
+	* discovered — do not build on it. For "run something later", drive it from
+	* an event that does fire (`cursor_moved`, `buffer_changed`) or from your
+	* own `spawnProcess` timer.
+	*/
 	idle: {
 		milliseconds: number;
 	};

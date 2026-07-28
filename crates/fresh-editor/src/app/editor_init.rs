@@ -644,6 +644,7 @@ impl Editor {
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             event_broadcaster: parts.event_broadcaster,
             #[cfg(feature = "plugins")]
+            line_targets: std::collections::HashMap::new(),
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,

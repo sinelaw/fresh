@@ -3462,6 +3462,41 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Make lines of a buffer clickable: a click or Enter on a listed line
+    /// opens what it points at.
+    ///
+    /// ```js
+    /// editor.setLineTargets(bufferId, [
+    ///   { line: 0, path: "src/main.rs", target: 41, into: "code" },
+    ///   { line: 1, path: "src/lib.rs",  target: 12, into: "code" },
+    /// ]);
+    /// ```
+    ///
+    /// `line` is the row *in this buffer*; `target` is the line to land on in
+    /// the file, both 0-indexed. `into` names a pane by its `setSplitLabel`
+    /// label; when it names no live pane the target opens beside this one, so
+    /// an index never replaces itself with what you clicked.
+    ///
+    /// The editor owns the behaviour, which is the point: a script that builds
+    /// an index — a search result list, an error list, a review map — exits
+    /// immediately, and a `mouse_click` handler would die with it. These
+    /// targets keep working.
+    ///
+    /// Replaces any previous targets for the buffer; pass `[]` to clear.
+    #[plugin_api(js_name = "setLineTargets", ts_return = "boolean")]
+    pub fn set_line_targets(
+        &self,
+        buffer_id: u32,
+        targets: Vec<fresh_core::api::LineTarget>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetLineTargets {
+                buffer_id: BufferId(buffer_id as usize),
+                targets,
+            })
+            .is_ok()
+    }
+
     // === Orientation ===
 
     /// Describe the editor as it is right now: the panes of the active
@@ -3524,6 +3559,7 @@ impl JsEditorApi {
                     split_id: split.split_id,
                     buffer_id: split.buffer_id,
                     kind: kind.to_string(),
+                    label: split.label.clone(),
                     path,
                     name,
                     active: split.split_id == active_split_id,
