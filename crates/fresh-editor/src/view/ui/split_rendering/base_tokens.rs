@@ -11,6 +11,16 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 /// Build tokens from a text buffer starting at `top_byte`, stopping roughly
 /// after `visible_count` visual lines. Honors CRLF / LF line endings and
 /// renders unsafe control characters as `BinaryByte` tokens.
+///
+/// `char_budget` is a second, independent stop condition: tokenising ends once
+/// this many characters have been emitted, whatever `lines_seen` says. The
+/// line budget alone is not enough on a file whose logical lines are far wider
+/// than the screen — `lines_seen` only advances once per
+/// [`MAX_SAFE_LINE_WIDTH`] characters inside a single line, so a 50-row
+/// viewport would ask for 54 "lines" and tokenise 540,000 characters to fill
+/// rows that hold a few thousand. Callers that know the width a row wraps at
+/// pass roughly `rows × width`; pass `None` to bound by source lines only.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_base_tokens(
     buffer: &mut Buffer,
     top_byte: usize,
@@ -19,6 +29,7 @@ pub(crate) fn build_base_tokens(
     is_binary: bool,
     line_ending: LineEnding,
     fold_skip: &[std::ops::Range<usize>],
+    char_budget: Option<usize>,
 ) -> Vec<ViewTokenWire> {
     let mut tokens = Vec::new();
 
@@ -29,6 +40,10 @@ pub(crate) fn build_base_tokens(
     }
 
     let max_lines = visible_count.saturating_add(4);
+    // Never stop before a single row's worth of text exists, however small the
+    // caller's estimate turns out to be.
+    let char_budget = char_budget.map(|b| b.max(MAX_SAFE_LINE_WIDTH.min(1024)));
+    let mut chars_seen = 0usize;
     let mut lines_seen = 0usize;
     let buffer_len = buffer.len();
     // Don't clamp `cursor` to buffer_len: `LineIterator::new` clamps
@@ -71,6 +86,14 @@ pub(crate) fn build_base_tokens(
         }
 
         let mut iter = buffer.line_iterator(cursor, estimated_line_length);
+        if let Some(budget) = char_budget {
+            // Bytes, not characters — UTF-8 runs to 4 bytes per character — so
+            // the first piece the iterator yields always covers the whole
+            // budget and the loop below never asks for a second one. Without
+            // this the iterator reads and UTF-8-decodes 100 KB of a long line
+            // to hand back text we stop consuming after a few thousand chars.
+            iter = iter.with_max_line_bytes(budget.saturating_mul(4).saturating_add(1024));
+        }
         while lines_seen < max_lines {
             let Some((line_start, line_content)) = iter.next_line() else {
                 break 'segments;
@@ -87,6 +110,13 @@ pub(crate) fn build_base_tokens(
             let mut skip_next_lf = false; // Track if we should skip \n after \r in CRLF
             let mut chars_this_line = 0usize; // Track chars to enforce MAX_SAFE_LINE_WIDTH
             for ch in line_content.chars() {
+                // Stop once the viewport's rows are covered. Unlike the
+                // `lines_seen` bound this fires inside a single long line,
+                // which is the only place it can fire at all.
+                if char_budget.is_some_and(|budget| chars_seen >= budget) {
+                    break 'segments;
+                }
+                chars_seen += 1;
                 // Limit characters per line to prevent memory exhaustion from huge lines.
                 // Insert a Break token to force wrapping at safe intervals.
                 if chars_this_line >= MAX_SAFE_LINE_WIDTH {
@@ -339,4 +369,138 @@ fn is_control_char(ch: char) -> bool {
         return false;
     }
     b < 0x20 || b == 0x7F
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::filesystem::{FileSystem, StdFileSystem};
+    use std::sync::Arc;
+
+    fn test_fs() -> Arc<dyn FileSystem + Send + Sync> {
+        Arc::new(StdFileSystem)
+    }
+
+    /// Number of source characters the token stream covers.
+    fn char_count(tokens: &[ViewTokenWire]) -> usize {
+        tokens
+            .iter()
+            .map(|t| match &t.kind {
+                ViewTokenWireKind::Text(s) => s.chars().count(),
+                ViewTokenWireKind::Break => 0,
+                _ => 1,
+            })
+            .sum()
+    }
+
+    /// The line budget alone cannot bound a file that is one enormous line:
+    /// `lines_seen` advances once per `MAX_SAFE_LINE_WIDTH` characters, so a
+    /// 50-row viewport pulls in 540,000 characters. The character budget is
+    /// what actually stops the read.
+    #[test]
+    fn char_budget_bounds_a_single_enormous_line() {
+        let content = "x".repeat(500_000);
+        let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
+
+        let unbudgeted =
+            build_base_tokens(&mut buffer, 0, 80, 50, false, LineEnding::LF, &[], None);
+        assert!(
+            char_count(&unbudgeted) > 100_000,
+            "expected the unbudgeted read to run away, got {} chars",
+            char_count(&unbudgeted)
+        );
+
+        // 50 rows at a 200-column terminal.
+        let budgeted = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            50,
+            false,
+            LineEnding::LF,
+            &[],
+            Some(50 * 200),
+        );
+        let budgeted_chars = char_count(&budgeted);
+        assert!(
+            budgeted_chars >= 50 * 200,
+            "budget must still cover every visible row, got {budgeted_chars} chars"
+        );
+        assert!(
+            budgeted_chars < 20_000,
+            "budget should stop near its bound, got {budgeted_chars} chars"
+        );
+    }
+
+    /// On ordinary content the character budget never binds — the line bound
+    /// is reached first — so the token stream is byte-for-byte what it was.
+    #[test]
+    fn char_budget_leaves_ordinary_lines_untouched() {
+        let content = (0..200)
+            .map(|i| format!("line {i} with some text"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
+
+        let unbudgeted =
+            build_base_tokens(&mut buffer, 0, 80, 30, false, LineEnding::LF, &[], None);
+        let budgeted = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            30,
+            false,
+            LineEnding::LF,
+            &[],
+            Some(30 * 200),
+        );
+
+        assert_eq!(char_count(&unbudgeted), char_count(&budgeted));
+        assert_eq!(unbudgeted.len(), budgeted.len());
+    }
+
+    /// A budget far smaller than one row still yields something to render —
+    /// the floor keeps a degenerate viewport from producing an empty frame.
+    #[test]
+    fn char_budget_has_a_floor() {
+        let content = "y".repeat(10_000);
+        let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
+
+        let tokens = build_base_tokens(&mut buffer, 0, 80, 1, false, LineEnding::LF, &[], Some(0));
+        assert!(
+            char_count(&tokens) >= 1024,
+            "floor should apply to tiny budgets"
+        );
+    }
+
+    /// Tokens must be identical whether the budget is reached or absent, up to
+    /// the point where the budgeted stream stops — a budget may truncate, but
+    /// it must never change what it does emit.
+    #[test]
+    fn char_budget_truncates_without_reshaping() {
+        let content = format!("{}\nsecond line\nthird line\n", "z".repeat(50_000));
+        let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
+
+        let unbudgeted =
+            build_base_tokens(&mut buffer, 0, 80, 40, false, LineEnding::LF, &[], None);
+        let budgeted = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            40,
+            false,
+            LineEnding::LF,
+            &[],
+            Some(4_000),
+        );
+
+        assert!(budgeted.len() <= unbudgeted.len());
+        // Every token but the last (which the budget may cut mid-run) matches.
+        for (i, tok) in budgeted.iter().take(budgeted.len() - 1).enumerate() {
+            assert_eq!(
+                tok.source_offset, unbudgeted[i].source_offset,
+                "token {i} moved"
+            );
+        }
+    }
 }

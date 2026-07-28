@@ -952,6 +952,39 @@ struct InsertCursorData {
     virtual_gap: String,
 }
 
+/// Find the start of the line containing `pos`, and report whether everything
+/// between it and `pos` is a space or a tab (the auto-dedent precondition).
+///
+/// Reads in blocks rather than a byte at a time. Each `slice_bytes` call is a
+/// piece-tree range query plus a heap allocation, so walking back one byte per
+/// iteration costs one of each per column — the dominant cost of a keystroke
+/// on a long line, and one that grows the further right the cursor sits.
+/// Materialising the whole prefix to test it for whitespace has the same
+/// problem: on a single-line file that prefix can be megabytes.
+fn line_start_and_blank_prefix(state: &EditorState, pos: usize) -> (usize, bool) {
+    const CHUNK: usize = 4096;
+    let mut end = pos;
+    let mut only_spaces = true;
+    while end > 0 {
+        let start = end.saturating_sub(CHUNK);
+        let bytes = state.buffer.slice_bytes(start..end);
+        if let Some(i) = bytes.iter().rposition(|&b| b == b'\n') {
+            if only_spaces {
+                only_spaces = bytes[i + 1..].iter().all(|&b| b == b' ' || b == b'\t');
+            }
+            return (start + i + 1, only_spaces);
+        }
+        // Once a non-blank byte is seen the answer is settled, but the scan
+        // still has to reach the line start — `line_start` is returned either
+        // way.
+        if only_spaces {
+            only_spaces = bytes.iter().all(|&b| b == b' ' || b == b'\t');
+        }
+        end = start;
+    }
+    (0, only_spaces)
+}
+
 /// Collect cursor data needed for character insertion.
 fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec<InsertCursorData> {
     // Collect cursors and sort by the effective insert position (reverse order)
@@ -989,17 +1022,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
         .into_iter()
         .map(|(cursor_id, selection, insert_position, virtual_gap)| {
             // Calculate line start for auto-dedent
-            let mut line_start = insert_position;
-            while line_start > 0 {
-                let prev = line_start - 1;
-                if state.buffer.slice_bytes(prev..prev + 1).first() == Some(&b'\n') {
-                    break;
-                }
-                line_start = prev;
-            }
-
-            let line_before_cursor = state.buffer.slice_bytes(line_start..insert_position);
-            let only_spaces = line_before_cursor.iter().all(|&b| b == b' ' || b == b'\t');
+            let (line_start, only_spaces) = line_start_and_blank_prefix(state, insert_position);
 
             let check_pos = selection.as_ref().map(|r| r.end).unwrap_or(insert_position);
             let char_after = if check_pos < state.buffer.len() {
@@ -6234,6 +6257,75 @@ mod tests {
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "(bc)");
+    }
+
+    fn state_with(text: &str) -> EditorState {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn blank_prefix_finds_line_start_after_newline() {
+        let state = state_with("abc\n    ");
+        assert_eq!(line_start_and_blank_prefix(&state, 8), (4, true));
+    }
+
+    #[test]
+    fn blank_prefix_is_false_with_text_before_cursor() {
+        let state = state_with("abc\nfoo ");
+        assert_eq!(line_start_and_blank_prefix(&state, 8), (4, false));
+    }
+
+    #[test]
+    fn blank_prefix_at_buffer_start() {
+        let state = state_with("hello");
+        assert_eq!(line_start_and_blank_prefix(&state, 0), (0, true));
+        assert_eq!(line_start_and_blank_prefix(&state, 5), (0, false));
+    }
+
+    /// The scan reads in blocks, so a line longer than one block has to keep
+    /// walking back — and has to carry the "blank so far" answer across the
+    /// block boundary rather than resetting it.
+    #[test]
+    fn blank_prefix_spans_multiple_scan_blocks() {
+        let indent = " ".repeat(10_000);
+        let state = state_with(&format!("first\n{indent}"));
+        assert_eq!(
+            line_start_and_blank_prefix(&state, 6 + indent.len()),
+            (6, true)
+        );
+
+        let mut long_line = " ".repeat(10_000);
+        long_line.push('x');
+        long_line.push_str(&" ".repeat(10_000));
+        let state = state_with(&format!("first\n{long_line}"));
+        assert_eq!(
+            line_start_and_blank_prefix(&state, 6 + long_line.len()),
+            (6, false)
+        );
+    }
+
+    /// A file that is one enormous line: the line start is byte 0 no matter
+    /// how far right the cursor sits.
+    #[test]
+    fn blank_prefix_on_single_line_file() {
+        let text = "x".repeat(200_000);
+        let state = state_with(&text);
+        assert_eq!(line_start_and_blank_prefix(&state, text.len()), (0, false));
     }
 }
 

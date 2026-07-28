@@ -1267,6 +1267,9 @@ pub(crate) fn build_base_tokens_for_hook(
         is_binary,
         line_ending,
         &[],
+        // The hook hands this stream to a plugin, which may wrap it at a width
+        // of its own choosing; budget by source lines only.
+        None,
     )
 }
 

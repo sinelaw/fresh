@@ -38,6 +38,9 @@ pub struct LineIterator<'a> {
     /// (set when starting at EOF after a trailing newline or when a newline-ending
     /// line exhausts the buffer during forward iteration)
     pending_trailing_empty_line: bool,
+    /// Cap on the bytes `next_line` will return for one line. Defaults to
+    /// [`MAX_LINE_BYTES`]; see [`LineIterator::with_max_line_bytes`].
+    max_line_bytes: usize,
 }
 
 impl<'a> LineIterator<'a> {
@@ -129,7 +132,22 @@ impl<'a> LineIterator<'a> {
             buffer_len,
             estimated_line_length,
             pending_trailing_empty_line,
+            max_line_bytes: MAX_LINE_BYTES,
         }
+    }
+
+    /// Lower the per-line read cap below the default [`MAX_LINE_BYTES`].
+    ///
+    /// A line longer than the cap is yielded as several consecutive pieces, so
+    /// a caller that will discard everything past the first few thousand bytes
+    /// of a line — the renderer, which only fills a viewport — can avoid
+    /// reading and decoding 100 KB of it. Callers that need whole logical
+    /// lines (row counts, column math) must leave the default in place.
+    ///
+    /// Clamped to `1..=MAX_LINE_BYTES`; the cap can only ever tighten.
+    pub fn with_max_line_bytes(mut self, max_line_bytes: usize) -> Self {
+        self.max_line_bytes = max_line_bytes.clamp(1, MAX_LINE_BYTES);
+        self
     }
 
     /// Get the next line (moving forward)
@@ -182,23 +200,29 @@ impl<'a> LineIterator<'a> {
 
         // If we didn't find a newline and didn't reach EOF, the line is longer than our estimate
         // Load more data iteratively (rare case for very long lines)
-        // BUT: limit to MAX_LINE_BYTES to prevent memory exhaustion from huge lines
+        // BUT: limit to `max_line_bytes` to prevent memory exhaustion from huge lines
         if !found_newline && self.current_pos + line_len < self.buffer_len {
             // Line is longer than expected, keep loading until we find newline, EOF, or hit limit
             let mut extended_chunk = chunk;
             while !found_newline
                 && self.current_pos + extended_chunk.len() < self.buffer_len
-                && extended_chunk.len() < MAX_LINE_BYTES
+                && extended_chunk.len() < self.max_line_bytes
             {
+                // Grow geometrically. Extending by a fixed `estimated_max_line_length`
+                // each round takes ~415 read-and-append round trips (each a
+                // piece-tree range query plus a realloc) to reach the 100 KB cap
+                // on a single-line file; doubling takes ~9.
                 let additional_bytes = estimated_max_line_length
+                    .max(extended_chunk.len())
                     .min(self.buffer_len - self.current_pos - extended_chunk.len())
-                    .min(MAX_LINE_BYTES - extended_chunk.len()); // Don't exceed limit
+                    .min(self.max_line_bytes - extended_chunk.len()); // Don't exceed limit
                 match self
                     .buffer
                     .get_text_range_mut(self.current_pos + extended_chunk.len(), additional_bytes)
                 {
                     Ok(mut more_data) => {
                         let start_len = extended_chunk.len();
+                        extended_chunk.reserve(more_data.len());
                         extended_chunk.append(&mut more_data);
 
                         // Scan the newly added portion
@@ -209,7 +233,7 @@ impl<'a> LineIterator<'a> {
                                 break;
                             }
                             // Also stop if we've hit the limit
-                            if line_len >= MAX_LINE_BYTES {
+                            if line_len >= self.max_line_bytes {
                                 break;
                             }
                         }
@@ -221,8 +245,8 @@ impl<'a> LineIterator<'a> {
                 }
             }
 
-            // Clamp line_len to MAX_LINE_BYTES (safety limit for huge single-line files)
-            line_len = line_len.min(MAX_LINE_BYTES).min(extended_chunk.len());
+            // Clamp line_len to the per-line read cap (safety limit for huge single-line files)
+            line_len = line_len.min(self.max_line_bytes).min(extended_chunk.len());
 
             // Use the extended chunk
             let line_bytes = &extended_chunk[..line_len];
