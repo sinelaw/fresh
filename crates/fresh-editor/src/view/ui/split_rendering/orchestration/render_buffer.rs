@@ -25,6 +25,7 @@ use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, EventLog};
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::{EditorState, ViewMode};
+use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
@@ -115,6 +116,7 @@ pub(crate) fn compute_buffer_layout(
     indentation_guide: IndentationGuideMode,
     indentation_guide_glyph: &str,
     rainbow_indentation: bool,
+    bracket_highlight: BracketHighlightSettings,
     cell_theme_map: Option<(&mut Vec<CellThemeInfo>, u16)>,
 ) -> BufferLayoutOutput {
     let _span = tracing::trace_span!("compute_buffer_layout").entered();
@@ -363,6 +365,7 @@ pub(crate) fn compute_buffer_layout(
         highlight_context_bytes,
         &view_mode,
         diagnostics_inline_text,
+        bracket_highlight,
         &view_data.lines,
     );
 
@@ -679,6 +682,7 @@ pub(crate) fn render_buffer_in_split(
         indentation_guide,
         indentation_guide_glyph,
         rainbow_indentation,
+        bracket_highlight,
         ..
     } = cfg;
     let layout_output = compute_buffer_layout(
@@ -706,6 +710,7 @@ pub(crate) fn render_buffer_in_split(
         indentation_guide,
         indentation_guide_glyph,
         rainbow_indentation,
+        bracket_highlight,
         Some((cell_theme_map, screen_width)),
     );
 

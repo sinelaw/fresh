@@ -35,6 +35,7 @@ use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
 use crate::state::EditorState;
+use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
 use crate::view::split::SplitManager;
 use crate::view::ui::tabs::TabsRenderer;
@@ -1122,6 +1123,7 @@ pub(crate) fn compute_content_layout(
     show_horizontal_scrollbar: bool,
     diagnostics_inline_text: bool,
     show_tilde: bool,
+    bracket_highlight: BracketHighlightSettings,
 ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
     let visible_buffers = split_manager.get_visible_buffers(area);
     let active_split_id = split_manager.active_split();
@@ -1236,6 +1238,7 @@ pub(crate) fn compute_content_layout(
             IndentationGuideMode::None,
             "▏",
             false,
+            bracket_highlight,
             None, // No cell theme map for layout-only computation
         );
 

@@ -10,6 +10,7 @@ pub mod basic;
 pub mod binary_file;
 pub mod block_selection;
 pub mod blog_showcases;
+pub mod bracket_highlight_settings;
 pub mod buffer_groups;
 #[cfg(feature = "plugins")]
 pub mod buffer_lifecycle;
