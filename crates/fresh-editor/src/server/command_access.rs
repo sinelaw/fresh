@@ -85,11 +85,17 @@ pub struct CommandOutcome {
     pub error: Option<String>,
 }
 
-/// A settled outcome plus when it was recorded, so one nobody ever claims can
-/// be reaped instead of sitting in the queue for the life of the process.
+/// A settled outcome plus the moment it stops being worth keeping, so one
+/// nobody ever claims can be reaped instead of sitting in the queue for the
+/// life of the process.
+///
+/// A deadline rather than an arrival time on purpose: deriving "long ago" from
+/// the current instant means subtracting from it, which panics on a machine
+/// whose monotonic clock is younger than the interval — a freshly booted CI
+/// runner, most visibly. Adding is always representable.
 struct QueuedOutcome {
     outcome: CommandOutcome,
-    queued_at: std::time::Instant,
+    expires_at: std::time::Instant,
 }
 
 /// How long an unclaimed outcome is kept. Far longer than any caller waits (the
@@ -121,7 +127,7 @@ pub fn complete(request_id: u64, ok: bool, output: Option<String>, error: Option
                 output,
                 error,
             },
-            queued_at: std::time::Instant::now(),
+            expires_at: std::time::Instant::now() + OUTCOME_RETENTION,
         });
     }
 }
@@ -147,7 +153,7 @@ pub fn take_completed_where(mut owned: impl FnMut(u64) -> bool) -> Vec<CommandOu
     while i < done.len() {
         if owned(done[i].outcome.request_id) {
             taken.push(done.remove(i).outcome);
-        } else if now.duration_since(done[i].queued_at) > OUTCOME_RETENTION {
+        } else if now >= done[i].expires_at {
             done.remove(i);
         } else {
             i += 1;
@@ -605,10 +611,12 @@ mod tests {
         let orphan = u64::MAX - 21;
         complete(orphan, true, None, None);
         {
+            // Expire it as of now; the reaping scan samples the clock after
+            // this, so it always sees the deadline as passed.
             let mut done = completions().lock().unwrap();
             for q in done.iter_mut() {
                 if q.outcome.request_id == orphan {
-                    q.queued_at = std::time::Instant::now() - (OUTCOME_RETENTION * 2);
+                    q.expires_at = std::time::Instant::now();
                 }
             }
         }
