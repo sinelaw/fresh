@@ -451,6 +451,21 @@ impl PluginThreadHandle {
                     self.reject_callback(JsCallbackId(request_id), e);
                 }
             },
+            PluginResponse::SplitWindowCreated { request_id, result } => match result {
+                Ok(split) => {
+                    let json = serde_json::to_string(&split)
+                        .unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"));
+                    self.resolve_callback(JsCallbackId(request_id), json);
+                }
+                // A failed split rejects rather than resolving to null: the
+                // caller asked for a pane and there isn't one, which should
+                // stop a script rather than have it carry on against an id
+                // that was never created.
+                Err(e) => self.reject_callback(JsCallbackId(request_id), e),
+            },
+            PluginResponse::SnapshotSynced { request_id } => {
+                self.resolve_callback(JsCallbackId(request_id), "null".to_string());
+            }
             PluginResponse::CompositeBufferCreated {
                 request_id,
                 buffer_id,

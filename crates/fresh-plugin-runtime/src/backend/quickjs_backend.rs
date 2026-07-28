@@ -91,7 +91,7 @@ use fresh_core::api::{
     ActionSpec, BufferInfo, CompositeHunk, CreateCompositeBufferOptions, EditorStateSnapshot,
     GrammarInfoSnapshot, JsCallbackId, LanguagePackConfig, LspServerPackConfig, OverlayOptions,
     PluginCommand, PluginMarker, PluginResponse, ScrollbarMarker, SearchHandleRegistry,
-    SearchHandleState, SearchTakeResult,
+    SearchHandleState, SearchTakeResult, SplitWindowOptions,
 };
 use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
@@ -1948,13 +1948,24 @@ impl JsEditorApi {
     }
 
     /// Open a file in a specific split
-    pub fn open_file_in_split(&self, split_id: u32, path: String, line: u32, column: u32) -> bool {
+    pub fn open_file_in_split(
+        &self,
+        split_id: u32,
+        path: String,
+        line: rquickjs::function::Opt<u32>,
+        column: rquickjs::function::Opt<u32>,
+    ) -> bool {
+        // `line` and `column` are optional: "show this file in that pane" is
+        // the whole request most of the time, and requiring a cursor position
+        // for it meant the natural two-argument call failed with an arity
+        // error that named no function — indistinguishable, from the caller's
+        // side, from the file simply not opening.
         self.command_sender
             .send(PluginCommand::OpenFileInSplit {
                 split_id: split_id as usize,
                 path: PathBuf::from(path),
-                line: Some(line as usize),
-                column: Some(column as usize),
+                line: line.0.map(|l| l as usize),
+                column: column.0.map(|c| c as usize),
             })
             .is_ok()
     }
@@ -3428,6 +3439,169 @@ impl JsEditorApi {
             .unwrap_or_default();
 
         self.services.translate(&plugin_name, &key, &args_map)
+    }
+
+    /// Move a buffer into `splitId`: show it there, and remove its tab from
+    /// the pane that held it before.
+    ///
+    /// Use this to *rearrange* what is where. `setSplitBuffer` only changes
+    /// which of a pane's existing tabs is visible, so building a move out of
+    /// it leaves the original tab stranded in its old pane.
+    #[plugin_api(js_name = "moveBufferToSplit", ts_return = "boolean")]
+    pub fn move_buffer_to_split(&self, buffer_id: u32, split_id: u32) -> bool {
+        self.command_sender
+            .send(PluginCommand::MoveBufferToSplit {
+                buffer_id: BufferId(buffer_id as usize),
+                split_id: fresh_core::SplitId(split_id as usize),
+            })
+            .is_ok()
+    }
+
+    // === Orientation ===
+
+    /// Describe the editor as it is right now: the panes of the active
+    /// window in visual order with their geometry and contents, which one
+    /// has focus, the working directory, and every open workspace.
+    ///
+    /// This is the call to start from. It answers "which pane is on the
+    /// left", "is that a terminal or a file", and "what am I pointed at"
+    /// in one read, instead of stitching `listSplits` + `getBufferInfo` +
+    /// `getActiveSplitId` together and still not knowing pane order.
+    ///
+    /// Reads the snapshot, so it is cheap and synchronous — but it
+    /// observes the state as of the last applied batch. After a mutation,
+    /// `await editor.flush()` first (or await the mutation itself, if it
+    /// returns a promise) or this reports what was true before it.
+    ///
+    /// ```js
+    /// const ws = editor.describeWorkspace();
+    /// const left = ws.panes[0];               // leftmost pane
+    /// const term = ws.panes.find(p => p.kind === "terminal");
+    /// ```
+    #[plugin_api(js_name = "describeWorkspace", ts_return = "WorkspaceDescription")]
+    pub fn describe_workspace<'js>(&self, ctx: rquickjs::Ctx<'js>) -> rquickjs::Result<Value<'js>> {
+        let snapshot = match self.state_snapshot.read() {
+            Ok(s) => s,
+            Err(_) => return Ok(rquickjs::Value::new_null(ctx)),
+        };
+        let active_split_id = snapshot.active_split_id;
+        let panes: Vec<fresh_core::api::PaneDescription> = snapshot
+            .splits
+            .iter()
+            .map(|split| {
+                let info = snapshot.buffers.get(&split.buffer_id);
+                let is_terminal = info.map(|i| i.is_terminal).unwrap_or(false);
+                let kind = match info {
+                    Some(i) if i.is_terminal => "terminal",
+                    Some(i) if i.path.is_some() => "file",
+                    Some(i) if i.is_virtual => "virtual",
+                    Some(_) => "file",
+                    None => "unknown",
+                };
+                // A terminal is backed by a scratch file for its scrollback.
+                // Reporting that path would invite a caller to treat a shell
+                // as a document, so a terminal pane has no path and says what
+                // it is.
+                let path = if is_terminal {
+                    None
+                } else {
+                    info.and_then(|i| i.path.clone())
+                };
+                let name = if is_terminal {
+                    "terminal".to_string()
+                } else {
+                    path.as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| format!("buffer {}", split.buffer_id.0))
+                };
+                fresh_core::api::PaneDescription {
+                    split_id: split.split_id,
+                    buffer_id: split.buffer_id,
+                    kind: kind.to_string(),
+                    path,
+                    name,
+                    active: split.split_id == active_split_id,
+                    modified: info.map(|i| i.modified).unwrap_or(false),
+                    x: split.x,
+                    y: split.y,
+                    width: split.width,
+                    height: split.height,
+                }
+            })
+            .collect();
+
+        let active = snapshot
+            .windows
+            .iter()
+            .find(|w| w.id == snapshot.active_window_id);
+        let description = fresh_core::api::WorkspaceDescription {
+            cwd: snapshot.working_dir.clone(),
+            window_id: snapshot.active_window_id.0,
+            stable_id: active.map(|w| w.stable_id.clone()).unwrap_or_default(),
+            windows: snapshot.windows.clone(),
+            panes,
+            active_split_id,
+        };
+        rquickjs_serde::to_value(ctx, &description)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    // === Layout ===
+
+    /// Split the active pane and resolve with the new pane.
+    ///
+    /// This is the primitive for arranging panes. `direction` names the
+    /// *divider*: `"vertical"` puts panes side by side (left | right),
+    /// `"horizontal"` stacks them (top / bottom). `place` says which side
+    /// the new pane lands on — `"before"` is left/top, `"after"` (the
+    /// default, and what the keyboard split does) is right/bottom.
+    ///
+    /// Resolves *after* the layout has been applied and the readable
+    /// snapshot refreshed, with the new pane's id and geometry — so
+    /// `listSplits()` / `describeWorkspace()` called next observe the split
+    /// that was just made, and "did it land on the left" is answered by the
+    /// `x` that comes back rather than by guessing.
+    ///
+    /// ```js
+    /// // Terminal on the left, README on the right:
+    /// const left = await editor.splitWindow({ direction: "vertical", place: "before" });
+    /// await editor.createTerminal({ splitId: left.splitId });
+    /// ```
+    ///
+    /// Rejects when the pane could not be created.
+    #[plugin_api(async_promise, js_name = "splitWindow", ts_return = "SplitCreated")]
+    #[qjs(rename = "_splitWindowStart")]
+    pub fn split_window_start(&self, opts: SplitWindowOptions) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::SplitWindow {
+            options: opts,
+            request_id: id,
+        });
+        id
+    }
+
+    /// Wait for every mutation queued so far to be applied, then resolve.
+    ///
+    /// Commands are queued and drained on the editor thread, so a read
+    /// issued right after a mutation reports the state from *before* it:
+    /// `setSplitRatio(...)` followed by `listSplits()` returns the old
+    /// widths. Awaiting this closes that window, which is what lets a
+    /// single script change the layout and then verify what it changed.
+    ///
+    /// ```js
+    /// editor.setSplitRatio(splitId, 0.3);
+    /// await editor.flush();
+    /// return editor.describeWorkspace();   // reflects the new ratio
+    /// ```
+    #[plugin_api(async_promise, js_name = "flush", ts_return = "void")]
+    #[qjs(rename = "_flushStart")]
+    pub fn flush_start(&self) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::SyncSnapshot { request_id: id });
+        id
     }
 
     // === Composite Buffers ===
@@ -6594,21 +6768,41 @@ impl JsEditorApi {
         id
     }
 
-    /// Get buffer text range (async, returns request_id)
+    /// Read buffer text.
+    ///
+    /// `getBufferText(id)` returns the **whole buffer** — the common case,
+    /// and the one that used to require reading `length` from
+    /// `getBufferInfo` and passing it back. `getBufferText(id, start, end)`
+    /// still reads a byte range, so existing callers are unaffected.
+    ///
+    /// Byte offsets, not character or line offsets.
     #[plugin_api(async_promise, js_name = "getBufferText", ts_return = "string")]
     #[qjs(rename = "_getBufferTextStart")]
     pub fn get_buffer_text_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
         buffer_id: u32,
-        start: u32,
-        end: u32,
+        start: rquickjs::function::Opt<u32>,
+        end: rquickjs::function::Opt<u32>,
     ) -> u64 {
         let id = self.alloc_request_id();
+        // No end offset means "to the end of the buffer": resolve it from the
+        // snapshot so the caller doesn't have to make that round trip itself.
+        let buffer_len = || {
+            self.state_snapshot
+                .read()
+                .ok()
+                .and_then(|s| {
+                    s.buffers
+                        .get(&BufferId(buffer_id as usize))
+                        .map(|b| b.length)
+                })
+                .unwrap_or(usize::MAX)
+        };
         let _ = self.command_sender.send(PluginCommand::GetBufferText {
             buffer_id: BufferId(buffer_id as usize),
-            start: start as usize,
-            end: end as usize,
+            start: start.0.unwrap_or(0) as usize,
+            end: end.0.map(|e| e as usize).unwrap_or_else(buffer_len),
             request_id: id,
         });
         id
@@ -7057,6 +7251,18 @@ impl JsEditorApi {
         });
         id
     }
+}
+
+/// The request id behind an agent script's context, if this context belongs to
+/// one.
+///
+/// `Editor::eval_agent_script` names each script's plugin `agent-script-<id>`,
+/// and `setup_context_api` publishes that name as `__pluginName__`. Reading it
+/// back is what lets a runtime-level event — which knows a context but no
+/// request — be attributed to the caller waiting on it.
+fn agent_script_request_id(ctx: &rquickjs::Ctx<'_>) -> Option<u64> {
+    let name: String = ctx.globals().get("__pluginName__").ok()?;
+    name.strip_prefix("agent-script-")?.parse().ok()
 }
 
 // =============================================================================
@@ -7530,6 +7736,36 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
                 editor.createWindowWithTerminal = _wrapAsync("_createWindowWithTerminalStart", "createWindowWithTerminal");
                 editor.reloadGrammars = _wrapAsync("_reloadGrammarsStart", "reloadGrammars");
+
+                // Everything else that follows the `_<name>Start` convention
+                // gets its promise wrapper automatically. The explicit lines
+                // above run first, so the handful that need a different
+                // wrapper (`_wrapAsyncThenable`) keep it; this only fills in
+                // what nothing has claimed.
+                //
+                // Without this, adding an async method to the Rust API left it
+                // callable only as `_fooStart` — the method existed, the types
+                // advertised it, and `editor.foo(...)` threw "not a function".
+                // From the outside that is indistinguishable from a capability
+                // the editor simply doesn't have, which is the worst kind of
+                // gap: it sends a caller off to build a workaround for
+                // something already implemented.
+                (function autoWrapAsyncMethods() {
+                    const seen = new Set();
+                    let obj = editor;
+                    while (obj && obj !== Object.prototype) {
+                        for (const key of Object.getOwnPropertyNames(obj)) {
+                            if (seen.has(key)) continue;
+                            seen.add(key);
+                            const match = /^_(.+)Start$/.exec(key);
+                            if (!match) continue;
+                            const name = match[1].charAt(0).toLowerCase() + match[1].slice(1);
+                            if (typeof editor[name] === "function") continue;
+                            editor[name] = _wrapAsync(key, name);
+                        }
+                        obj = Object.getPrototypeOf(obj);
+                    }
+                })();
                 editor.grepProject = _wrapAsync("_grepProjectStart", "grepProject");
                 editor.replaceInFile = _wrapAsync("_replaceInFileStart", "replaceInFile");
                 editor.openFileStreaming = _wrapAsync("_openFileStreamingStart", "openFileStreaming");
@@ -7673,8 +7909,9 @@ impl QuickJsBackend {
             Runtime::new().map_err(|e| anyhow!("Failed to create QuickJS runtime: {}", e))?;
 
         // Set up promise rejection tracker to catch unhandled rejections
+        let rejection_sender = command_sender.clone();
         runtime.set_host_promise_rejection_tracker(Some(Box::new(
-            |_ctx, _promise, reason, is_handled| {
+            move |ctx, _promise, reason, is_handled| {
                 if !is_handled {
                     // Format the rejection reason
                     let error_msg = if let Some(exc) = reason.as_exception() {
@@ -7688,6 +7925,27 @@ impl QuickJsBackend {
                     };
 
                     tracing::error!("Unhandled Promise rejection: {}", error_msg);
+
+                    // An agent-submitted script has a caller waiting on a
+                    // socket, and a rejection that escaped its wrapper would
+                    // otherwise settle nothing: the editor logs this line and
+                    // the agent — a different process, reading its own stderr —
+                    // sees only a timeout. Answer the request instead, so the
+                    // failure reaches the caller that asked for it.
+                    //
+                    // The script's context is named for its request id (see
+                    // `Editor::eval_agent_script`), which is how a rejection
+                    // with no other provenance finds its way home. Settling an
+                    // already-settled id is a no-op, so a late rejection after
+                    // a successful return changes nothing.
+                    if let Some(request_id) = agent_script_request_id(&ctx) {
+                        let _ = rejection_sender.send(PluginCommand::CompleteCommand {
+                            request_id,
+                            ok: false,
+                            output: None,
+                            error: Some(error_msg.clone()),
+                        });
+                    }
 
                     if should_panic_on_js_errors() {
                         // Don't panic here - we're inside an FFI callback and rquickjs catches panics.
@@ -10833,6 +11091,8 @@ mod tests {
                     modified: false,
                     length: 100,
                     is_virtual: false,
+                    is_terminal: false,
+                    line_count: Some(1),
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
@@ -10850,6 +11110,8 @@ mod tests {
                     modified: true,
                     length: 200,
                     is_virtual: false,
+                    is_terminal: false,
+                    line_count: Some(1),
                     editing_disabled: false,
                     view_mode: "source".to_string(),
                     is_composing_in_any_split: false,
