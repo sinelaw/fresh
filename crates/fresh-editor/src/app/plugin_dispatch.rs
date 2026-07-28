@@ -950,7 +950,7 @@ impl Editor {
                 title,
                 resume,
                 env,
-                command_allowlist,
+                allow_script,
                 request_id,
             } => {
                 self.handle_create_window_with_terminal(
@@ -961,7 +961,7 @@ impl Editor {
                     title,
                     resume,
                     env,
-                    command_allowlist,
+                    allow_script,
                     request_id,
                 );
             }
@@ -1619,7 +1619,7 @@ impl Editor {
                 title,
                 resume,
                 env,
-                command_allowlist,
+                allow_script,
                 request_id,
             } => {
                 self.handle_create_terminal(
@@ -1633,7 +1633,7 @@ impl Editor {
                     title,
                     resume,
                     env,
-                    command_allowlist,
+                    allow_script,
                     request_id,
                 );
             }
@@ -3840,7 +3840,7 @@ impl Editor {
         title: Option<String>,
         resume: Option<Vec<String>>,
         env: Option<std::collections::HashMap<String, String>>,
-        command_allowlist: Option<Vec<String>>,
+        allow_script: bool,
         request_id: u64,
     ) {
         let callback_id = JsCallbackId::from(request_id);
@@ -3874,7 +3874,7 @@ impl Editor {
             new_authority,
             resume,
             env,
-            command_allowlist,
+            allow_script,
         ) {
             Ok((window_id, terminal_id, buffer_id)) => {
                 let api_result = fresh_core::api::SessionWithTerminalResult {
@@ -3919,7 +3919,7 @@ impl Editor {
         title: Option<String>,
         resume: Option<Vec<String>>,
         env: Option<std::collections::HashMap<String, String>>,
-        command_allowlist: Option<Vec<String>>,
+        allow_script: bool,
         request_id: u64,
     ) {
         // Resolve target window. Explicit `windowId` wins when the
@@ -3953,13 +3953,12 @@ impl Editor {
         };
 
         // Assemble the extra env injected into the spawned terminal's child:
-        // `FRESH_BIN` plus, when `command_allowlist` is given, a capability
+        // `FRESH_BIN` plus, when `allow_script` is given, a capability
         // token bound to the TARGET window + that allowlist (with
         // `FRESH_SESSION`). This is what lets an agent spawned into an
         // *existing* window drive the editor exactly like one born via
         // `createWindowWithTerminal` — both paths share the same helper.
-        let terminal_env =
-            crate::app::terminal::agent_command_env(target_id, env, command_allowlist);
+        let terminal_env = crate::app::terminal::agent_command_env(target_id, env, allow_script);
 
         let result = {
             let target = self

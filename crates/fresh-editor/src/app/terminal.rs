@@ -113,13 +113,13 @@ pub struct PluginTerminalSpec {
 /// universally, on purpose: it guarantees `FRESH_BIN` rides the child's env
 /// regardless of the manager's own cwd/socket state.
 ///
-/// When `command_allowlist` is `Some`, mints an unforgeable capability token
-/// bound to `window` plus that allowlist and injects it as `FRESH_CMD_TOKEN`,
-/// alongside `FRESH_SESSION` — ensuring the control socket is listening first
-/// so a token never ships without a session to talk to. Token minting is
-/// deliberately caller-driven (opt-in via the allowlist), never blanket: a
-/// standing editor-driving capability belongs only in terminals a caller
-/// explicitly grants it to, not in every spawned subprocess.
+/// When `allow_script` is set, mints an unforgeable capability token bound to
+/// `window` and injects it as `FRESH_CMD_TOKEN`, alongside `FRESH_SESSION` —
+/// ensuring the control socket is listening first so a token never ships
+/// without a session to talk to. Token minting is deliberately caller-driven
+/// (opt-in), never blanket: the capability is "may drive this editor as a
+/// plugin would", which belongs only in terminals a caller explicitly grants it
+/// to, not in every spawned subprocess.
 ///
 /// Shared by `create_window_with_terminal` (agents born in a new window) and
 /// `handle_create_terminal` (agents spawned into an existing window) so both
@@ -128,7 +128,7 @@ pub struct PluginTerminalSpec {
 pub(crate) fn agent_command_env(
     window: fresh_core::WindowId,
     base_env: Option<HashMap<String, String>>,
-    command_allowlist: Option<Vec<String>>,
+    allow_script: bool,
 ) -> HashMap<String, String> {
     let mut env = base_env.unwrap_or_default();
     if let Ok(exe) = std::env::current_exe() {
@@ -136,7 +136,7 @@ pub(crate) fn agent_command_env(
             env.insert("FRESH_BIN".to_string(), exe.to_string());
         }
     }
-    if let Some(allowlist) = command_allowlist {
+    if allow_script {
         match crate::server::local_control::start() {
             Ok(session_id) => {
                 env.insert("FRESH_SESSION".to_string(), session_id.to_string());
@@ -155,7 +155,7 @@ pub(crate) fn agent_command_env(
         }
         let token = crate::server::command_access::mint(crate::server::command_access::Grant::new(
             Some(window.0),
-            allowlist,
+            true,
         ));
         env.insert("FRESH_CMD_TOKEN".to_string(), token);
     }

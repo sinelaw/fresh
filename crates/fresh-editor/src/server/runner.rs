@@ -394,15 +394,9 @@ impl Server {
                     client.id
                 );
             }
-            ClientControl::ListCommands { .. } => {
-                // No editor here, so no command registry to enumerate.
-                let reply = serde_json::to_string(&ServerControl::CommandList { commands: vec![] })
-                    .map_err(|e| io::Error::other(e.to_string()))?;
-                client.conn.write_control(&reply)?;
-            }
-            ClientControl::RunCommand { .. } => {
-                // No editor here, so nothing to dispatch against.
-                let reply = serde_json::to_string(&ServerControl::CommandResult {
+            ClientControl::RunScript { .. } => {
+                // No editor here, so nothing to evaluate against.
+                let reply = serde_json::to_string(&ServerControl::ScriptResult {
                     ok: false,
                     error: Some("no editor is running".to_string()),
                     output: None,

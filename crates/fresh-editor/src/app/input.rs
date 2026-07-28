@@ -79,54 +79,56 @@ impl Editor {
 }
 
 impl Editor {
-    /// Run a plugin action, handing its handler an arguments object and
-    /// arranging for its return value to reach the caller.
+    /// Evaluate an agent-submitted script (already wrapped by
+    /// `server::command_access`) as an ephemeral plugin.
     ///
-    /// The keybinding / palette path (`Action::PluginAction` in `handle_action`)
-    /// calls handlers with no arguments and ignores what they return, because a
-    /// keystroke carries nothing in and has nowhere to put an answer. The agent
-    /// command channel has both — `fresh --cmd cmd run <id> <k>=<v>` carries
-    /// arguments in and prints a result out — so this is its dispatch: the
-    /// `k=v` pairs become a JSON object passed as the handler's single
-    /// argument, and `request_id` ties the handler's eventual return value back
-    /// to the waiting caller (see `server::command_access`).
+    /// This is the whole of the script channel's runtime cost: the source goes
+    /// through the *existing* load-from-source path — the one `init.ts` and
+    /// "Load Plugin from Buffer" use — so it gets TypeScript transpilation, its
+    /// own context, and the full `editor` API without a line of new runtime
+    /// code. The wrapper answers the caller through `editor.completeCommand`,
+    /// which is an ordinary plugin API method, so the result travels the same
+    /// route a plugin command's return value already took.
     ///
-    /// `Ok(())` means the handler was *started*. Plugin handlers are async by
-    /// nature — they await host calls that only complete on later editor ticks
-    /// — so the result arrives later, through `command_access::take_completed`.
-    pub fn run_plugin_action_with_args(
-        &mut self,
-        action_name: &str,
-        args: &std::collections::HashMap<String, String>,
-        request_id: u64,
-    ) -> Result<(), String> {
+    /// `Ok(())` means the script was *submitted*. Success is reported later by
+    /// the script itself; only a failure to compile or to reach the runtime is
+    /// settled here, since in that case nothing will ever call
+    /// `completeCommand` and the caller would wait for an answer that cannot
+    /// come.
+    pub fn eval_agent_script(&mut self, wrapped: &str, request_id: u64) -> Result<(), String> {
         #[cfg(feature = "plugins")]
         {
-            // String values throughout: `RunCommand.args` is a string map on the
-            // wire, so a handler reading `args.auto` sees "true"/"false" and
-            // parses what it needs. Keeping the JSON faithful to the wire beats
-            // guessing types the caller never declared.
-            let args_json = serde_json::to_string(args)
-                .map_err(|e| format!("could not encode command arguments: {}", e))?;
-            let started = self.plugin_manager.read().unwrap().execute_action_async(
-                action_name,
-                Some(args_json),
-                Some(request_id),
-            );
-            match started {
-                Some(Ok(receiver)) => {
-                    self.pending_plugin_actions
-                        .push((action_name.to_string(), receiver));
-                    Ok(())
-                }
-                Some(Err(e)) => Err(format!("plugin action failed to start: {}", e)),
-                None => Err("plugin manager unavailable".to_string()),
-            }
+            // A name per request: two scripts in flight must not share a
+            // context, or the second would see (and could clobber) the first's
+            // globals.
+            let name = format!("agent-script-{}", request_id);
+            let rx = self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .load_plugin_from_source_request(wrapped, &name, true)
+                .ok_or_else(|| "plugin runtime unavailable".to_string())?;
+            // Wait for the load off the editor thread: the script's own host
+            // calls only complete on later editor ticks, which this thread must
+            // stay free to service.
+            std::thread::Builder::new()
+                .name("agent-script-load".to_string())
+                .spawn(move || {
+                    let failure = match rx.recv() {
+                        // The script is running; it answers for itself.
+                        Ok(Ok(())) => return,
+                        Ok(Err(e)) => format!("{e}"),
+                        Err(e) => format!("plugin thread closed: {e}"),
+                    };
+                    crate::server::command_access::complete(request_id, false, None, Some(failure));
+                })
+                .map_err(|e| format!("could not start script loader: {e}"))?;
+            Ok(())
         }
         #[cfg(not(feature = "plugins"))]
         {
-            let _ = (action_name, args, request_id);
-            Err("plugins not available (compiled without plugin support)".to_string())
+            let _ = (wrapped, request_id);
+            Err("scripts not available (compiled without plugin support)".to_string())
         }
     }
 

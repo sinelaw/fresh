@@ -11,11 +11,13 @@ use std::collections::HashMap;
 ///
 /// v2: added `ClientControl::OpenWindow` (open a directory as a new
 /// orchestrator window), used by the nested-terminal forwarding path.
-/// v3: added the command channel — `ClientControl::ListCommands` /
-/// `RunCommand`, `ServerControl::CommandList` / `CommandResult`, and an
-/// optional `cmd_token` on `ClientHello` (the per-workspace capability token,
-/// read from `$FRESH_CMD_TOKEN`, that authorizes command dispatch).
-pub const PROTOCOL_VERSION: u32 = 3;
+/// v3: added the agent channel — an optional `cmd_token` on `ClientHello` (the
+/// per-workspace capability token, read from `$FRESH_CMD_TOKEN`, that
+/// authorizes a launched agent to drive the editor).
+/// v4: the channel carries *scripts* rather than command ids —
+/// `ClientControl::RunScript` / `ServerControl::ScriptResult` replace the
+/// command-id verbs (`ListCommands` / `RunCommand` / `CommandList`).
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,9 +45,9 @@ pub struct ClientHello {
     /// Keys: TERM, COLORTERM, LANG, LC_ALL
     pub env: HashMap<String, Option<String>>,
     /// Per-workspace capability token (from `$FRESH_CMD_TOKEN`), presented so
-    /// the server can authorize `ListCommands` / `RunCommand` against this
-    /// workspace's allowlist. `None` for clients that carry no token (a plain
-    /// attach, an older client) — command dispatch is then refused.
+    /// the server can authorize `RunScript` against this workspace's grant.
+    /// `None` for clients that carry no token (a plain attach, an older
+    /// client) — script evaluation is then refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmd_token: Option<String>,
 }
@@ -147,57 +149,16 @@ pub enum ClientControl {
     /// embedded terminal: the directory becomes a new workspace (a `Window`)
     /// instead of launching a second editor in the terminal.
     OpenWindow { path: String },
-    /// Enumerate the editor commands the caller's `cmd_token` is allowed to
-    /// run. The server answers with `ServerControl::CommandList`, scoped to the
-    /// token's allowlist (so it can't double as a capability-probing channel).
-    /// Refused when no valid token was presented in `Hello`.
-    ListCommands {
-        /// Include each command's argument schema (else just id/name/category).
-        #[serde(default)]
-        include_args: bool,
-    },
-    /// Run one editor command by id, on the workspace the caller's token is
-    /// bound to (the target window is derived from the token, never passed in).
-    /// The server answers with `ServerControl::CommandResult`. Refused when the
-    /// id is not on the token's allowlist or no valid token was presented.
-    RunCommand {
-        id: String,
-        /// Command arguments as `key -> value` (e.g. `direction -> vertical`).
-        #[serde(default)]
-        args: HashMap<String, String>,
-    },
-}
-
-/// One entry in a `CommandList` response — a command the caller may invoke.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandInfo {
-    /// Stable command id (what `RunCommand.id` expects), e.g. `split_vertical`.
-    pub id: String,
-    /// Human-readable, localized name.
-    pub name: String,
-    /// Palette category / group, when the command has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub category: Option<String>,
-    /// Declared arguments (empty for the argless majority). Only populated when
-    /// the request set `include_args`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub args: Vec<CommandArgInfo>,
-    /// What the command answers with, when it answers with anything — the
-    /// counterpart of `args`, and the other half of what a caller needs to use
-    /// a command it just discovered. Only populated when the request set
-    /// `include_args`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub returns: Option<String>,
-}
-
-/// Schema for a single command argument, surfaced by `cmd describe`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandArgInfo {
-    pub name: String,
-    #[serde(default)]
-    pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    /// Evaluate a plugin script in this editor, on the workspace the caller's
+    /// token is bound to (the target window is derived from the token, never
+    /// passed in). The server answers with `ServerControl::ScriptResult`
+    /// carrying whatever the script's last expression evaluated to. Refused
+    /// unless the presented token was granted script access.
+    ///
+    /// The source is TypeScript (plain JS is a subset), evaluated through the
+    /// same pipeline as `init.ts` and "Load Plugin from Buffer": one QuickJS
+    /// context, the full `editor` API, `await` available at the top level.
+    RunScript { source: String },
 }
 
 /// A file to open with optional line/column position, range, and hover message
@@ -250,13 +211,10 @@ pub enum ServerControl {
     /// keeps running so the editor state is preserved and picked up cleanly
     /// when the client resumes.
     SuspendClient,
-    /// Answer to `ListCommands`: the commands the caller may run, already
-    /// scoped to the token's allowlist.
-    CommandList { commands: Vec<CommandInfo> },
-    /// Answer to `RunCommand`: whether the command dispatched, an error reason
-    /// (unknown id / not allowed / dispatch failure), and optional textual
-    /// output for the client to print.
-    CommandResult {
+    /// Answer to `RunScript`: whether the script ran to completion, the reason
+    /// it didn't (refused, failed to compile, threw), and its result value
+    /// JSON-encoded for the client to print.
+    ScriptResult {
         ok: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
@@ -405,10 +363,8 @@ mod tests {
                 }],
                 wait: false,
             },
-            ClientControl::ListCommands { include_args: true },
-            ClientControl::RunCommand {
-                id: "split_vertical".to_string(),
-                args: HashMap::new(),
+            ClientControl::RunScript {
+                source: "return editor.activeWindow();".to_string(),
             },
         ];
 
@@ -440,16 +396,7 @@ mod tests {
                 use_system_clipboard: true,
             },
             ServerControl::SuspendClient,
-            ServerControl::CommandList {
-                commands: vec![CommandInfo {
-                    id: "split_vertical".to_string(),
-                    name: "Split: Vertical".to_string(),
-                    category: Some("View".to_string()),
-                    args: vec![],
-                    returns: None,
-                }],
-            },
-            ServerControl::CommandResult {
+            ServerControl::ScriptResult {
                 ok: true,
                 error: None,
                 output: None,
@@ -463,21 +410,18 @@ mod tests {
     }
 
     #[test]
-    fn test_run_command_roundtrip() {
-        let mut args = HashMap::new();
-        args.insert("direction".to_string(), "vertical".to_string());
-        let msg = ClientControl::RunCommand {
-            id: "split".to_string(),
-            args,
+    fn test_run_script_roundtrip() {
+        // Newlines and quotes are the common case for a script, not an edge
+        // case — the wire form has to carry a whole source file intact.
+        let source = "const w = editor.activeWindow();\nreturn { \"w\": w };\n";
+        let msg = ClientControl::RunScript {
+            source: source.to_string(),
         };
         let json = serde_json::to_string(&msg).unwrap();
-        assert!(json.contains("\"type\":\"run_command\""));
+        assert!(json.contains("\"type\":\"run_script\""));
         match serde_json::from_str::<ClientControl>(&json).unwrap() {
-            ClientControl::RunCommand { id, args } => {
-                assert_eq!(id, "split");
-                assert_eq!(args.get("direction").map(String::as_str), Some("vertical"));
-            }
-            other => panic!("expected RunCommand, got {:?}", other),
+            ClientControl::RunScript { source: got } => assert_eq!(got, source),
+            other => panic!("expected RunScript, got {:?}", other),
         }
     }
 

@@ -93,7 +93,7 @@ use fresh_core::api::{
     PluginCommand, PluginMarker, PluginResponse, ScrollbarMarker, SearchHandleRegistry,
     SearchHandleState, SearchTakeResult,
 };
-use fresh_core::command::{Command, CommandArg};
+use fresh_core::command::Command;
 use fresh_core::overlay::OverlayNamespace;
 use fresh_core::text_property::TextPropertyEntry;
 use fresh_core::{BufferId, SplitId};
@@ -1343,9 +1343,7 @@ impl JsEditorApi {
         #[plugin_api(ts_type = "string | null")] context: rquickjs::function::Opt<
             rquickjs::Value<'js>,
         >,
-        #[plugin_api(
-            ts_type = "{ terminalBypass?: boolean; args?: { name: string; required?: boolean; description?: string }[]; returns?: string } | null"
-        )]
+        #[plugin_api(ts_type = "{ terminalBypass?: boolean } | null")]
         options: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
         // Use stored plugin name instead of global lookup
@@ -1405,9 +1403,9 @@ impl JsEditorApi {
             },
         );
 
-        // Extract the options bag. JS shape: `{ terminalBypass: true, args: [...] }`
-        // or omitted/null. Anything of the wrong shape is ignored — each field
-        // stays at its safe default (no bypass, no declared args).
+        // Extract the options bag. JS shape: `{ terminalBypass: true }` or
+        // omitted/null. Anything of the wrong shape is ignored — each field
+        // stays at its safe default (no bypass).
         let options_obj = options.0.and_then(|v| {
             if v.is_null() || v.is_undefined() {
                 None
@@ -1419,14 +1417,6 @@ impl JsEditorApi {
             .as_ref()
             .and_then(|obj| obj.get::<&str, bool>("terminalBypass").ok())
             .unwrap_or(false);
-        let args = options_obj
-            .as_ref()
-            .map(command_args_from_options)
-            .unwrap_or_default();
-        let returns = options_obj
-            .as_ref()
-            .and_then(|obj| obj.get::<&str, String>("returns").ok())
-            .filter(|r| !r.is_empty());
 
         // Register with editor
         let command = Command {
@@ -1436,8 +1426,6 @@ impl JsEditorApi {
             plugin_name,
             custom_contexts: context_str.into_iter().collect(),
             terminal_bypass,
-            args,
-            returns,
         };
 
         Ok(self
@@ -6903,7 +6891,7 @@ impl JsEditorApi {
             title: None,
             resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: None,
         });
 
         // Track request_id → plugin_name for async resource tracking
@@ -6924,7 +6912,7 @@ impl JsEditorApi {
             title: opts.title,
             resume: opts.resume,
             env: opts.env,
-            command_allowlist: opts.command_allowlist,
+            allow_script: opts.allow_script.unwrap_or(false),
             request_id: id,
         });
         Ok(id)
@@ -6960,7 +6948,7 @@ impl JsEditorApi {
                 title: opts.title,
                 resume: opts.resume,
                 env: opts.env,
-                command_allowlist: opts.command_allowlist,
+                allow_script: opts.allow_script.unwrap_or(false),
                 request_id: id,
             });
         Ok(id)
@@ -7069,36 +7057,6 @@ impl JsEditorApi {
         });
         id
     }
-}
-
-/// Read `options.args` from a `registerCommand` options bag: an array of
-/// `{ name, required?, description? }`. Entries without a usable `name` are
-/// skipped, and a wrong-shaped `args` yields an empty schema — a malformed
-/// declaration must never fail the registration, only leave the command
-/// undocumented.
-fn command_args_from_options(obj: &rquickjs::Object<'_>) -> Vec<CommandArg> {
-    let Ok(array) = obj.get::<&str, rquickjs::Array>("args") else {
-        return Vec::new();
-    };
-    array
-        .iter::<rquickjs::Value>()
-        .flatten()
-        .filter_map(|v| v.into_object())
-        .filter_map(|entry| {
-            let name: String = entry.get::<&str, String>("name").ok()?;
-            if name.is_empty() {
-                return None;
-            }
-            Some(CommandArg {
-                name,
-                required: entry.get::<&str, bool>("required").unwrap_or(false),
-                description: entry
-                    .get::<&str, String>("description")
-                    .ok()
-                    .filter(|d| !d.is_empty()),
-            })
-        })
-        .collect()
 }
 
 // =============================================================================

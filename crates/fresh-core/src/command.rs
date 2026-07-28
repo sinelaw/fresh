@@ -10,27 +10,6 @@ pub enum CommandSource {
     Plugin(String),
 }
 
-/// Schema for one argument a command accepts.
-///
-/// Purely declarative: it is what `fresh --cmd cmd describe <id>` prints and
-/// what an agent reads to learn how to call a command it discovered. Nothing
-/// validates against it — the command's own handler owns its semantics — so a
-/// declared argument is documentation with a machine-readable shape, not a
-/// contract the host enforces.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
-#[ts(export)]
-pub struct CommandArg {
-    /// Argument name, as passed in `RunCommand.args` (`fresh --cmd cmd run
-    /// <id> <name>=<value>`).
-    pub name: String,
-    /// Whether omitting it is an error. Advisory: the handler decides.
-    #[serde(default)]
-    pub required: bool,
-    /// One line on what the argument means and what values it takes.
-    #[serde(default)]
-    pub description: Option<String>,
-}
-
 /// A command registered by a plugin via the service bridge.
 /// This is a simplified version that the editor converts to its internal Command type.
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
@@ -56,19 +35,6 @@ pub struct Command {
     /// keyboard capture is on, matching the existing UX.
     #[serde(default)]
     pub terminal_bypass: bool,
-    /// Arguments this command accepts, declared via
-    /// `editor.registerCommand(..., { args: [...] })`. Empty for the argless
-    /// majority. Surfaced over the agent command channel (`cmd list
-    /// --include-args` / `cmd describe`) so a command a plugin exposes to
-    /// agents is self-documenting rather than needing a hard-coded prompt.
-    #[serde(default)]
-    pub args: Vec<CommandArg>,
-    /// One line on what the command answers with, when it returns anything.
-    /// A command handler's return value is delivered to the caller (over the
-    /// agent command channel it becomes `CommandResult.output`), so a command
-    /// that returns something should say what — an id, a path, a count.
-    #[serde(default)]
-    pub returns: Option<String>,
 }
 
 /// A single suggestion item for autocomplete
