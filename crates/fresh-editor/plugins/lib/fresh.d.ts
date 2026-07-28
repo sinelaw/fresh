@@ -1857,7 +1857,17 @@ type CreateVirtualBufferInExistingSplitOptions = {
 	*/
 	lineWrap?: boolean;
 	/**
-	* Initial content entries with optional properties
+	* Initial content as **spans, concatenated verbatim** — a span is a run
+	* of text with optional styling, not a line. Nothing inserts newlines
+	* for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
+	* `\n` yourself — `[{text:"a\n"},{text:"b\n"}]` is two lines.
+	*
+	* If you are an agent putting text in front of a human, prefer writing a
+	* file and opening it (`splitWindow({ file })` /
+	* `openFileInSplit(splitId, path)`): you get syntax highlighting, search,
+	* save, and ANSI escape codes rendered as colour, none of which a virtual
+	* buffer gives you. Virtual buffers are for plugin-owned panels —
+	* ephemeral, styled per span, driven by a mode's keybindings.
 	*/
 	entries?: Array<TextPropertyEntry>;
 	/**
@@ -1913,7 +1923,17 @@ type CreateVirtualBufferInSplitOptions = {
 	*/
 	before?: boolean;
 	/**
-	* Initial content entries with optional properties
+	* Initial content as **spans, concatenated verbatim** — a span is a run
+	* of text with optional styling, not a line. Nothing inserts newlines
+	* for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
+	* `\n` yourself — `[{text:"a\n"},{text:"b\n"}]` is two lines.
+	*
+	* If you are an agent putting text in front of a human, prefer writing a
+	* file and opening it (`splitWindow({ file })` /
+	* `openFileInSplit(splitId, path)`): you get syntax highlighting, search,
+	* save, and ANSI escape codes rendered as colour, none of which a virtual
+	* buffer gives you. Virtual buffers are for plugin-owned panels —
+	* ephemeral, styled per span, driven by a mode's keybindings.
 	*/
 	entries?: Array<TextPropertyEntry>;
 	/**
@@ -1962,9 +1982,29 @@ type CreateVirtualBufferOptions = {
 	*/
 	hiddenFromTabs?: boolean;
 	/**
-	* Initial content entries with optional properties
+	* Initial content as **spans, concatenated verbatim** — a span is a run
+	* of text with optional styling, not a line. Nothing inserts newlines
+	* for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
+	* `\n` yourself — `[{text:"a\n"},{text:"b\n"}]` is two lines.
+	*
+	* If you are an agent putting text in front of a human, prefer writing a
+	* file and opening it (`splitWindow({ file })` /
+	* `openFileInSplit(splitId, path)`): you get syntax highlighting, search,
+	* save, and ANSI escape codes rendered as colour, none of which a virtual
+	* buffer gives you. Virtual buffers are for plugin-owned panels —
+	* ephemeral, styled per span, driven by a mode's keybindings.
 	*/
 	entries?: Array<TextPropertyEntry>;
+	/**
+	* Show the new buffer in this existing pane instead of taking over the
+	* focused one.
+	*
+	* Without it the buffer becomes active in whichever pane has focus —
+	* which is what you want for a panel the user just asked for, and
+	* emphatically not what you want when arranging a layout, where it
+	* silently replaces whatever the user was looking at.
+	*/
+	splitId?: number;
 	/**
 	* Initial cursor line (0-indexed). Applied to the new buffer *before*
 	* it becomes the active buffer, so plugins that want to land the
@@ -3758,9 +3798,22 @@ interface EditorAPI {
 	*/
 	setBufferGroupPanelBuffer(groupId: number, panelName: string, bufferId: number): Promise<boolean>;
 	/**
-	* Set virtual buffer content (takes array of entry objects)
+	* Replace a virtual buffer's content with a list of styled **spans**.
 	* 
-	* Note: entries should be TextPropertyEntry[] - uses manual parsing for HashMap support
+	* Spans are concatenated *verbatim*: they are runs of text, not lines,
+	* and nothing inserts separators for you. `[{text:"a"},{text:"b"}]` is
+	* the single line `ab`; for two lines, write `[{text:"a\n"},{text:"b\n"}]`.
+	* A buffer built without those newlines reports a plausible `length` and
+	* a `lineCount` of 1 — read it back from `getBufferInfo` if it matters,
+	* since otherwise the mistake is only visible on screen.
+	* 
+	* If you are an agent putting text in front of a human, prefer writing a
+	* file and opening it (`splitWindow({ file })` /
+	* `openFileInSplit(splitId, path)`). A file buffer gives you syntax
+	* highlighting, search, save, and renders ANSI escape codes as colour —
+	* so command output can go straight in. Virtual buffers exist for
+	* plugin-owned panels: ephemeral, styled per span, driven by a mode's
+	* keybindings.
 	*/
 	setVirtualBufferContent(bufferId: number, entriesArr: Record<string, unknown>[]): boolean;
 	/**

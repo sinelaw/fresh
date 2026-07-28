@@ -5281,10 +5281,30 @@ pub struct CreateVirtualBufferOptions {
     #[serde(default, rename = "hiddenFromTabs")]
     #[ts(optional, rename = "hiddenFromTabs")]
     pub hidden_from_tabs: Option<bool>,
-    /// Initial content entries with optional properties
+    /// Initial content as **spans, concatenated verbatim** — a span is a run
+    /// of text with optional styling, not a line. Nothing inserts newlines
+    /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
+    /// `\n` yourself — `[{text:"a\n"},{text:"b\n"}]` is two lines.
+    ///
+    /// If you are an agent putting text in front of a human, prefer writing a
+    /// file and opening it (`splitWindow({ file })` /
+    /// `openFileInSplit(splitId, path)`): you get syntax highlighting, search,
+    /// save, and ANSI escape codes rendered as colour, none of which a virtual
+    /// buffer gives you. Virtual buffers are for plugin-owned panels —
+    /// ephemeral, styled per span, driven by a mode's keybindings.
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,
+    /// Show the new buffer in this existing pane instead of taking over the
+    /// focused one.
+    ///
+    /// Without it the buffer becomes active in whichever pane has focus —
+    /// which is what you want for a panel the user just asked for, and
+    /// emphatically not what you want when arranging a layout, where it
+    /// silently replaces whatever the user was looking at.
+    #[serde(default, rename = "splitId")]
+    #[ts(optional, rename = "splitId")]
+    pub split_id: Option<usize>,
     /// Initial cursor line (0-indexed). Applied to the new buffer *before*
     /// it becomes the active buffer, so plugins that want to land the
     /// cursor on a specific line don't have to chase a race against user
@@ -5351,7 +5371,17 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default)]
     #[ts(optional)]
     pub before: Option<bool>,
-    /// Initial content entries with optional properties
+    /// Initial content as **spans, concatenated verbatim** — a span is a run
+    /// of text with optional styling, not a line. Nothing inserts newlines
+    /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
+    /// `\n` yourself — `[{text:"a\n"},{text:"b\n"}]` is two lines.
+    ///
+    /// If you are an agent putting text in front of a human, prefer writing a
+    /// file and opening it (`splitWindow({ file })` /
+    /// `openFileInSplit(splitId, path)`): you get syntax highlighting, search,
+    /// save, and ANSI escape codes rendered as colour, none of which a virtual
+    /// buffer gives you. Virtual buffers are for plugin-owned panels —
+    /// ephemeral, styled per span, driven by a mode's keybindings.
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,
@@ -5407,7 +5437,17 @@ pub struct CreateVirtualBufferInExistingSplitOptions {
     #[serde(default, rename = "lineWrap")]
     #[ts(optional, rename = "lineWrap")]
     pub line_wrap: Option<bool>,
-    /// Initial content entries with optional properties
+    /// Initial content as **spans, concatenated verbatim** — a span is a run
+    /// of text with optional styling, not a line. Nothing inserts newlines
+    /// for you, so `[{text:"a"},{text:"b"}]` is the single line `ab`. Include
+    /// `\n` yourself — `[{text:"a\n"},{text:"b\n"}]` is two lines.
+    ///
+    /// If you are an agent putting text in front of a human, prefer writing a
+    /// file and opening it (`splitWindow({ file })` /
+    /// `openFileInSplit(splitId, path)`): you get syntax highlighting, search,
+    /// save, and ANSI escape codes rendered as colour, none of which a virtual
+    /// buffer gives you. Virtual buffers are for plugin-owned panels —
+    /// ephemeral, styled per span, driven by a mode's keybindings.
     #[serde(default)]
     #[ts(optional)]
     pub entries: Option<Vec<JsTextPropertyEntry>>,

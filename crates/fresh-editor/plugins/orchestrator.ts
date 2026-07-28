@@ -6557,6 +6557,8 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "",
   'Other workspaces and agents: `editor.getPluginApi("orchestrator")` exposes `runAgent({...})`, `newWorkspace({...})` and `listWorkspaces()`. Both launches answer with `{"workspaceId","windowId","root"}`; record `workspaceId` if you need that workspace later — it survives editor restarts, `windowId` does not. `newWorkspace` resolves once the workspace is up; the agent there then runs on its own and you do not see its output.',
   "",
+  "To put text in front of the user — command output, a report, a diff — write a file and open it (`await editor.splitWindow({ file: \"/tmp/report.md\" })`, or `editor.openFileInSplit(splitId, path)`). A file buffer gets syntax highlighting, search, save, and renders ANSI colour codes, so command output can go in raw. Reach for `createVirtualBuffer` only for a panel that should not exist on disk.",
+  "",
   "You are changing a workspace a human is looking at, so prefer reversible moves, do not close or overwrite panes you were not asked to touch, and read back what you changed before reporting success.",
   "Your script starts pointed at this window, whose id is in `FRESH_WINDOW_ID`. Treat the *active* window and pane as transient — the user keeps working while your script runs — so after an `await`, prefer calls that take an explicit id (`editor.windowPath(FRESH_WINDOW_ID, path)`, `editor.openFileInSplit(splitId, ...)`) over ones that act on whatever is focused.",
   "Scripts run to completion and are then forgotten; anything they create (a pane, a terminal, a workspace) outlives them.",
