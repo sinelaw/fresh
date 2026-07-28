@@ -886,6 +886,7 @@ pub struct Editor {
     /// Editor-owned rather than plugin-owned so a view outlives the script
     /// that built it: a one-shot agent can leave behind an index whose lines
     /// still open their targets long after it has exited.
+    #[cfg(feature = "plugins")]
     line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
 
     /// Pending plugin action receivers (for async action execution)
