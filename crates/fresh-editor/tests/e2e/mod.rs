@@ -25,6 +25,8 @@ pub mod csi_u_session_input;
 pub mod cursor_style_rendering;
 pub mod dabbrev_completion;
 #[cfg(feature = "plugins")]
+pub mod dock_dropdown_mouse;
+#[cfg(feature = "plugins")]
 pub mod dock_focus_stuck_born_attached;
 pub mod dock_panel_routing;
 #[cfg(feature = "plugins")]

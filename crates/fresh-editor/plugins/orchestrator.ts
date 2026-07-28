@@ -9990,9 +9990,12 @@ editor.on("widget_event", (e) => {
         const wasDive = dockDiveBlur;
         dockDiveBlur = false;
         dockBlurred = true;
-        // Leaving the dock also closes the project dropdown so it
-        // doesn't linger over the blurred dock.
+        // Leaving the dock also closes its dropdowns so they don't
+        // linger over the blurred dock. `dockMenu` covers the "New
+        // Task… ▾" and "Move to Folder…" overlays: they are menus, and
+        // clicking away from a menu dismisses it.
         openDialog.projectMenuOpen = false;
+        openDialog.dockMenu = null;
         // Leaving the dock resets the filter so re-entering always
         // shows the full session list. A stale filter (e.g. an old
         // "/gamma") otherwise silently hides sessions on the next
@@ -10238,6 +10241,11 @@ editor.on("widget_event", (e) => {
           // also dives (hands keyboard focus to the window). A discovered
           // on-disk worktree has no window, so both paths attach a fresh
           // session instead.
+          // Reaching the tree at all means the pointer (or the arrow
+          // keys) landed outside any open dropdown — the overlay is
+          // opaque to clicks over its own rows — so dismiss it, the way
+          // any menu goes away when you act elsewhere.
+          openDialog.dockMenu = null;
           const key = typeof payload.key === "string"
             ? payload.key
             : (openDialog.dockKeys[idx] ?? null);
