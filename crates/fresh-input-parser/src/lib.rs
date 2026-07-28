@@ -93,6 +93,16 @@ enum State {
     /// the terminator: `ST` (`ESC \`) or a legacy `BEL`. `saw_esc` records that
     /// the previous byte was an `ESC`, so the next byte can complete an `ST`.
     StringSeq { saw_esc: bool },
+    /// A buffered lone `ESC` was just resolved as the Escape key by
+    /// [`InputParser::flush`], but the stream may yet prove it was the head of a
+    /// sequence split across the flush. Only `[` is interesting here: it moves
+    /// to [`State::FlushedCsi`] to attempt a resync. Any other byte is
+    /// reprocessed from ground, exactly as if the flush had returned there.
+    EscapeFlushed,
+    /// Holding the `[` that followed a flushed `ESC`, deciding whether the
+    /// sequence continues into a mouse report (resync) or was really a literal
+    /// `[` keystroke (emit it and carry on).
+    FlushedCsi,
 }
 
 /// Incremental terminal-input parser.
@@ -108,6 +118,13 @@ pub struct InputParser {
     /// Accumulated bracketed-paste content (including the trailing end marker
     /// until it is recognised and stripped).
     paste: Vec<u8>,
+    /// Flags from the most recent kitty keyboard-flags reply (`CSI ? <flags> u`),
+    /// awaiting collection by [`InputParser::take_keyboard_flags_reply`].
+    keyboard_flags_reply: Option<u16>,
+    /// Whether the terminal has confirmed that it encodes the Escape key
+    /// unambiguously, so a lone `ESC` byte is never a key press. See
+    /// [`InputParser::set_escape_unambiguous`].
+    escape_unambiguous: bool,
 }
 
 impl Default for InputParser {
@@ -122,6 +139,8 @@ impl InputParser {
             state: State::Ground,
             buffer: Vec::with_capacity(32),
             paste: Vec::new(),
+            keyboard_flags_reply: None,
+            escape_unambiguous: false,
         }
     }
 
@@ -149,22 +168,96 @@ impl InputParser {
         self.state == State::Escape
     }
 
-    /// Resolve a buffered lone `ESC` as a standalone Escape key press.
+    /// Whether [`flush`](InputParser::flush) has anything to resolve: a lone
+    /// `ESC` awaiting its continuation, or a `[` held back after a flushed
+    /// `ESC` while the parser waits to see whether a mouse report follows.
     ///
-    /// Returns the `Esc` key event (and returns to ground) when
-    /// [`escape_pending`](InputParser::escape_pending) is true; empty
-    /// otherwise. Only the `Escape` state is flushable — a partial CSI or
-    /// UTF-8 sequence keeps waiting, since its bytes must never surface as
-    /// literal keystrokes.
+    /// Callers cap their idle wait on this (not on
+    /// [`escape_pending`](InputParser::escape_pending) alone), so a held `[`
+    /// cannot sit in the parser for longer than one grace window.
+    pub fn flush_pending(&self) -> bool {
+        matches!(
+            self.state,
+            State::Escape | State::EscapeFlushed | State::FlushedCsi
+        )
+    }
+
+    /// Record whether the terminal encodes the Escape key unambiguously, i.e.
+    /// the kitty keyboard protocol's "disambiguate escape codes" mode is active
+    /// and confirmed, so Escape arrives as `CSI 27 u` rather than a bare `0x1b`.
+    ///
+    /// This is the only *structural* escape from the ambiguity that makes
+    /// [`flush`](InputParser::flush) necessary at all: while it holds, a lone
+    /// `ESC` byte can only ever be the head of a sequence — never a key press —
+    /// so the parser waits for the continuation indefinitely instead of guessing
+    /// on a timer. Callers must set it only on a *confirmed* reply (`CSI ? <flags> u`
+    /// with the disambiguate bit set), never on an optimistic push: a terminal
+    /// that silently ignored the push still sends a bare `0x1b` for Escape, and
+    /// on those the timer is the only option (sinelaw/fresh#2793).
+    pub fn set_escape_unambiguous(&mut self, unambiguous: bool) {
+        self.escape_unambiguous = unambiguous;
+    }
+
+    /// Whether the terminal has confirmed unambiguous Escape encoding.
+    pub fn escape_unambiguous(&self) -> bool {
+        self.escape_unambiguous
+    }
+
+    /// Take the flags from the most recent kitty keyboard-flags reply
+    /// (`CSI ? <flags> u`), if one arrived since the last call.
+    ///
+    /// Bit 0 (`0b1`) is "disambiguate escape codes"; a caller that queried with
+    /// `CSI ? u` uses this to decide [`set_escape_unambiguous`](InputParser::set_escape_unambiguous).
+    pub fn take_keyboard_flags_reply(&mut self) -> Option<u16> {
+        self.keyboard_flags_reply.take()
+    }
+
+    /// Resolve whatever [`flush_pending`](InputParser::flush_pending) reports:
+    /// a buffered lone `ESC` becomes a standalone Escape key press, and a `[`
+    /// held after an earlier flush becomes the literal `[` keystroke it turned
+    /// out to be. Empty when nothing is pending.
+    ///
+    /// Only these states are flushable — a partial CSI or UTF-8 sequence keeps
+    /// waiting, since its bytes must never surface as literal keystrokes.
+    ///
+    /// A lone `ESC` is *not* flushed once the terminal has confirmed
+    /// unambiguous Escape encoding
+    /// ([`set_escape_unambiguous`](InputParser::set_escape_unambiguous)): there
+    /// the byte cannot be a key press, so flushing it could only tear a split
+    /// sequence apart.
     pub fn flush(&mut self) -> Vec<Event> {
-        if !self.escape_pending() {
-            return Vec::new();
+        match self.state {
+            State::Escape => {
+                if self.escape_unambiguous {
+                    return Vec::new();
+                }
+                // Emitted now for a responsive Escape, but the stream may still
+                // reveal a continuation: park in `EscapeFlushed` so a mouse
+                // report split across the flush can be resynced rather than
+                // sprayed into a focused embedded terminal as literal keys.
+                self.state = State::EscapeFlushed;
+                vec![Event::Key(KeyEvent::new(
+                    KeyCode::Esc,
+                    KeyModifiers::empty(),
+                ))]
+            }
+            // The stream went idle again without a continuation: the `ESC` was
+            // genuinely the Escape key (already emitted) and nothing is held.
+            State::EscapeFlushed => {
+                self.state = State::Ground;
+                Vec::new()
+            }
+            // A `[` was held to see whether a mouse report followed; it did
+            // not, so it was a literal `[` keystroke after all.
+            State::FlushedCsi => {
+                self.state = State::Ground;
+                vec![Event::Key(KeyEvent::new(
+                    KeyCode::Char('['),
+                    KeyModifiers::empty(),
+                ))]
+            }
+            _ => Vec::new(),
         }
-        self.state = State::Ground;
-        vec![Event::Key(KeyEvent::new(
-            KeyCode::Esc,
-            KeyModifiers::empty(),
-        ))]
     }
 
     /// Process a single byte, appending any completed events to `out`.
@@ -217,8 +310,70 @@ impl InputParser {
                         continue;
                     }
                 }
+                State::EscapeFlushed => {
+                    if !self.feed_escape_flushed(byte) {
+                        continue;
+                    }
+                }
+                State::FlushedCsi => {
+                    if !self.feed_flushed_csi(byte, out) {
+                        continue;
+                    }
+                }
             }
             break;
+        }
+    }
+
+    /// `EscapeFlushed` state: a lone `ESC` was flushed as the Escape key and
+    /// this is the next byte to arrive. `[` means the flush may have split a
+    /// control sequence, so hold it and let [`Self::feed_flushed_csi`] decide;
+    /// anything else means the Escape really was standalone, so the byte is
+    /// reprocessed from ground (returning `false`).
+    fn feed_escape_flushed(&mut self, byte: u8) -> bool {
+        if byte == b'[' {
+            self.state = State::FlushedCsi;
+            true
+        } else {
+            self.state = State::Ground;
+            false
+        }
+    }
+
+    /// `FlushedCsi` state: decide what the `[` after a flushed `ESC` belonged to.
+    ///
+    /// A mouse introducer (`M` for legacy X10, `<` for SGR) means the flush tore
+    /// a mouse report in half: hand the rest to the normal mouse machinery so it
+    /// decodes into the `Mouse` event the terminal meant to send, instead of
+    /// reaching a focused embedded terminal's child pty as `^[[M…` garbage
+    /// (sinelaw/fresh#2793). The spurious Escape key was already emitted — that
+    /// much is unavoidable once the timer has fired — but the report's own bytes
+    /// never surface as literal input.
+    ///
+    /// Anything else was a literal `[` keystroke that happened to follow an
+    /// Escape: emit it and reprocess this byte from ground. Deliberately narrow
+    /// (guessing at arbitrary CSI sequences would swallow real keystrokes); the
+    /// mouse case is the one that floods.
+    fn feed_flushed_csi(&mut self, byte: u8, out: &mut Vec<Event>) -> bool {
+        match byte {
+            b'M' => {
+                self.state = State::X10 {
+                    buf: [0; 3],
+                    have: 0,
+                };
+                true
+            }
+            b'<' => {
+                self.buffer.clear();
+                self.buffer.push(b'<');
+                self.state = State::Csi;
+                true
+            }
+            _ => {
+                out.push(key(KeyCode::Char('['), KeyModifiers::empty()));
+                self.state = State::Ground;
+                false
+            }
         }
     }
 
@@ -548,6 +703,21 @@ impl InputParser {
         // rather than misdecoding it (the flags reply used to surface as a NUL
         // key). `<` is the SGR mouse introducer and is handled in the match.
         if matches!(params.first(), Some(b'?') | Some(b'>')) {
+            // The kitty keyboard-flags reply is the one device reply this parser
+            // acts on rather than merely discarding: it is the only way to know
+            // whether "disambiguate escape codes" is really active, and thus
+            // whether a lone `ESC` can ever be the Escape key. Recorded for
+            // `take_keyboard_flags_reply`; still never emitted as a key event.
+            if final_byte == b'u' && params.first() == Some(&b'?') {
+                if let Ok(flags) = std::str::from_utf8(&params[1..])
+                    .unwrap_or("")
+                    .trim()
+                    .parse::<u16>()
+                {
+                    tracing::debug!("InputParser: kitty keyboard flags reply: {flags:#b}");
+                    self.keyboard_flags_reply = Some(flags);
+                }
+            }
             tracing::trace!(
                 "InputParser: discarding CSI reply, final {:#04x}",
                 final_byte
