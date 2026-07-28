@@ -2133,7 +2133,8 @@ impl Window {
     }
 
     /// Resize all this window's visible terminal PTYs to match their
-    /// current split dimensions. Reads the window's cached
+    /// current split dimensions, and re-pin the scroll-back view's grid
+    /// wrap column to the same pane width. Reads the window's cached
     /// `terminal_width` / `terminal_height` for the screen size.
     pub fn resize_visible_terminals(&mut self) {
         let editor_area = self.editor_content_area();
@@ -2143,6 +2144,10 @@ impl Window {
         };
         let visible_buffers = mgr.get_visible_buffers(editor_area);
 
+        // (split, terminal buffer, pty cols, pty rows, grid cols). Collected
+        // first because applying it needs `&mut self` for both the terminal
+        // manager and the split view states.
+        let mut plan: Vec<(crate::model::event::LeafId, BufferId, u16, u16, u16)> = Vec::new();
         for (split_id, buffer_id, split_area) in visible_buffers {
             if self.terminal_buffers.contains_key(&buffer_id) {
                 // A split hides its scrollbar (grid reclaims the column)
@@ -2152,13 +2157,51 @@ impl Window {
                 // matches the rendered `content_rect`.
                 let showing_live_grid = !self.split_terminal_scrollback(split_id, buffer_id);
                 let scrollbar_cols = if showing_live_grid { 0 } else { 1 };
+                // The column count this pane lays terminal content out at,
+                // whichever view it shows: the live grid is drawn at exactly
+                // this width, and a split in scroll-back reserves the scrollbar
+                // column out of it, which puts the text `content_rect` at the
+                // same width. That shared value is what the scroll-back view
+                // must wrap at.
+                let grid_cols = split_area.width.saturating_sub(1);
                 // Tab bar takes 1 row; reserve 1 row for chrome and the
                 // scrollbar column (when shown) on the right.
                 let content_height = split_area.height.saturating_sub(2);
-                let content_width = split_area.width.saturating_sub(1 + scrollbar_cols);
+                let content_width = grid_cols.saturating_sub(scrollbar_cols);
 
-                if content_width > 0 && content_height > 0 {
-                    self.resize_terminal(buffer_id, content_width, content_height);
+                plan.push((
+                    split_id,
+                    buffer_id,
+                    content_width,
+                    content_height,
+                    grid_cols,
+                ));
+            }
+        }
+
+        for (split_id, buffer_id, content_width, content_height, grid_cols) in plan {
+            if content_width > 0 && content_height > 0 {
+                self.resize_terminal(buffer_id, content_width, content_height);
+            }
+
+            // Re-pin the grid wrap column of this split's scroll-back view.
+            // `sync_terminal_to_buffer` pins the capture-time width on entry,
+            // but nothing revisited it when the *pane* later changed width
+            // (a sibling split created or closed, a maximize toggled, a
+            // dock/explorer drag). The captured backing file holds unwrapped
+            // logical lines, so a stale, wider column simply clipped every
+            // line at the pane edge and lost the rest (fresh#2649 follow-up).
+            // Pushing it here keeps it on the same one-directional funnel as
+            // the PTY size, for every split showing the terminal.
+            if grid_cols > 0 {
+                if let Some(vs) = self
+                    .buffers
+                    .split_view_states_mut()
+                    .and_then(|vs_map| vs_map.get_mut(&split_id))
+                {
+                    if let Some(buf_state) = vs.buffer_state_mut(buffer_id) {
+                        buf_state.viewport.wrap_column = Some(grid_cols as usize);
+                    }
                 }
             }
         }

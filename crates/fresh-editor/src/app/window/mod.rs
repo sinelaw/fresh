@@ -2616,6 +2616,9 @@ impl Window {
     /// that entered scroll-back reserves a scrollbar column, so the PTY
     /// may be resized one column narrower afterwards while the captured
     /// content still lays out at the width it was captured at).
+    /// When the *pane* changes width the authority is
+    /// `resize_visible_terminals`, which re-pins it to the new pane width
+    /// on the same funnel that pushes the PTY size.
     pub(crate) fn enforce_terminal_grid_wrap(&mut self) {
         if self.terminal_buffers.is_empty() {
             return;
