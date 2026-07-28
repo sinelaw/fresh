@@ -4315,6 +4315,9 @@ impl Editor {
                     self.config.editor.show_horizontal_scrollbar,
                     self.config.editor.diagnostics_inline_text,
                     self.config.editor.show_tilde,
+                    crate::view::bracket_highlight_overlay::BracketHighlightSettings::from_config(
+                        &self.config.editor,
+                    ),
                 )
             })
             .expect("active window must have a populated split layout");

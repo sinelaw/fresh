@@ -32,6 +32,7 @@ use crate::model::buffer::Buffer;
 use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
+use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::split::SplitManager;
 use ratatui::layout::Rect;
 use std::collections::HashMap;
@@ -66,6 +67,7 @@ pub struct EditorRenderConfig<'a> {
     pub indentation_guide: IndentationGuideMode,
     pub indentation_guide_glyph: &'a str,
     pub rainbow_indentation: bool,
+    pub bracket_highlight: BracketHighlightSettings,
     pub hide_current_line_on_selection: bool,
     pub background_fade: f32,
     pub software_cursor_only: bool,
@@ -96,6 +98,7 @@ impl<'a> EditorRenderConfig<'a> {
             indentation_guide: editor.indentation_guide,
             indentation_guide_glyph: &editor.indentation_guide_glyph,
             rainbow_indentation: editor.rainbow_indentation,
+            bracket_highlight: BracketHighlightSettings::from_config(editor),
             hide_current_line_on_selection: editor.hide_current_line_on_selection,
             background_fade,
             software_cursor_only,
@@ -223,6 +226,7 @@ impl SplitRenderer {
         show_horizontal_scrollbar: bool,
         diagnostics_inline_text: bool,
         show_tilde: bool,
+        bracket_highlight: BracketHighlightSettings,
     ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
         orchestration::compute_content_layout(
             area,
@@ -242,6 +246,7 @@ impl SplitRenderer {
             show_horizontal_scrollbar,
             diagnostics_inline_text,
             show_tilde,
+            bracket_highlight,
         )
     }
 
@@ -511,6 +516,7 @@ mod tests {
             100_000,           // default highlight context bytes
             &ViewMode::Source, // Tests use source mode
             false,             // inline diagnostics off for test
+            BracketHighlightSettings::default(),
             &[],
         );
 
@@ -616,6 +622,7 @@ mod tests {
             100_000,
             &ViewMode::Source,
             false,
+            BracketHighlightSettings::default(),
             &[],
         );
 
@@ -3168,6 +3175,7 @@ mod tests {
             100_000,
             &ViewMode::Source,
             false,
+            BracketHighlightSettings::default(),
             &[],
         );
 
