@@ -323,6 +323,24 @@ impl EditorServer {
                 }
             }
 
+            // Drain nested-forward requests (file/dir opens from a `fresh` run
+            // in an embedded terminal, and the `fresh --cmd` command channel)
+            // before anything else, exactly like the TUI loop (main.rs), the
+            // GUI tick (gui::EditorApp::tick) and the standalone web loop
+            // (webui::run). The daemon hosts terminals of its own — `fresh
+            // --web` runs here — so an agent workspace spawned in one gets a
+            // `FRESH_SESSION` / `FRESH_CMD_TOKEN` pointing at the in-process
+            // control socket. Without this drain the request reached the
+            // editor thread's queue and stayed there: the handler thread parked
+            // on a reply that never came and `fresh --cmd cmd list` hung in the
+            // agent's terminal. Cheap no-op until the socket is bound; never
+            // blocks.
+            if let Some(ref mut editor) = self.editor {
+                if crate::server::local_control::pump(editor) {
+                    needs_render = true;
+                }
+            }
+
             // Accept new connections
             tracing::debug!("[server] main loop: calling accept()");
             match self.listener.accept() {
