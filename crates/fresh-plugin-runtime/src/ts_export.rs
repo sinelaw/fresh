@@ -57,6 +57,12 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "ScreenSize" => Some(ScreenSize::decl(&cfg)),
         "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
         "SplitSnapshot" => Some(SplitSnapshot::decl(&cfg)),
+        "SplitCreated" => Some(fresh_core::api::SplitCreated::decl(&cfg)),
+        "SplitWindowOptions" => Some(fresh_core::api::SplitWindowOptions::decl(&cfg)),
+        "SplitAxis" => Some(fresh_core::api::SplitAxis::decl(&cfg)),
+        "SplitPlacement" => Some(fresh_core::api::SplitPlacement::decl(&cfg)),
+        "PaneDescription" => Some(fresh_core::api::PaneDescription::decl(&cfg)),
+        "WorkspaceDescription" => Some(fresh_core::api::WorkspaceDescription::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
         "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
         "LayoutHints" => Some(LayoutHints::decl(&cfg)),
@@ -333,6 +339,12 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ScreenSize",                      // Used by editor.getScreenSize()
     "KeyEventPayload",                 // Used by editor.getNextKey()
     "SplitSnapshot",                   // Used by editor.listSplits()
+    "SplitCreated",                    // Resolved by editor.splitWindow()
+    "SplitWindowOptions",              // Options for editor.splitWindow()
+    "SplitAxis",                       // SplitWindowOptions.direction
+    "SplitPlacement",                  // SplitWindowOptions.place
+    "PaneDescription",                 // Part of WorkspaceDescription
+    "WorkspaceDescription",            // Returned by editor.describeWorkspace()
     "LayoutHints",                     // Used by plugins for view transforms
     "ViewTokenWire",                   // Used by plugins for view transforms
     "ViewTokenWireKind",               // Used by ViewTokenWire
