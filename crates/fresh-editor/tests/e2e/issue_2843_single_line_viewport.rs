@@ -96,3 +96,66 @@ fn wheel_after_scrollbar_jump_continues_from_the_jump_position() {
          is a jump, not a scroll. Screen:\n{after}"
     );
 }
+
+/// Foreground colour of the first cell of `needle` on screen.
+fn fg_of(harness: &EditorTestHarness, needle: &str) -> Option<ratatui::style::Color> {
+    let (col, row) = harness.find_text_on_screen(needle)?;
+    harness.get_cell_style(col, row).map(|s| s.fg)?
+}
+
+/// A single-line JSON whose tail carries a string and a number, behind a
+/// padding string long enough that the tail is over a hundred KB in. After
+/// scrolling to the bottom, the two tail tokens must render in their own
+/// syntax colours.
+///
+/// The bug asked the highlighter for a byte window anchored at `top_byte`
+/// and one screen row wide (`0..952` on the issue's file) no matter how far
+/// the viewport had scrolled into the line, so every row past the first few
+/// wrapped ones was painted by whatever single span happened to overlap
+/// that window — uniformly, with no structure — or left undecorated.
+#[test]
+fn wrapped_long_line_keeps_syntax_colours_when_scrolled_to_the_tail() {
+    const WIDTH: u16 = 100;
+    const HEIGHT: u16 = 30;
+
+    let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
+    let dir = harness.project_dir().unwrap();
+    let path = dir.join("one_line.json");
+
+    // ~150 KB of padding inside one JSON string, then a string value and a
+    // numeric value. No trailing newline: the whole file is one line, and the
+    // tail sits well past the first screenful of wrap segments.
+    let padding = "pad ".repeat(37_500);
+    let content = format!(r#"{{"pad":"{padding}","tag":"ZZSTRINGZZ","num":424242}}"#);
+    std::fs::write(&path, &content).unwrap();
+
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    // Jump to the bottom of the scrollbar track so the tail is on screen.
+    let (_, last_content_row) = harness.content_area_rows();
+    harness
+        .mouse_click(scrollbar_col(WIDTH), last_content_row as u16)
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("ZZSTRINGZZ") && screen.contains("424242"),
+        "precondition: the line's tail should be visible after a scrollbar \
+         jump to the bottom. Screen:\n{screen}"
+    );
+
+    let string_fg = fg_of(&harness, "ZZSTRINGZZ")
+        .unwrap_or_else(|| panic!("no style for the tail string. Screen:\n{screen}"));
+    let number_fg = fg_of(&harness, "424242")
+        .unwrap_or_else(|| panic!("no style for the tail number. Screen:\n{screen}"));
+
+    assert_ne!(
+        string_fg, number_fg,
+        "after scrolling into a soft-wrapped line the tail's string and number \
+         must still be syntax-coloured differently (string {string_fg:?}, \
+         number {number_fg:?}) — identical colours mean the decoration pass is \
+         still describing the top of the line. Screen:\n{screen}"
+    );
+}
