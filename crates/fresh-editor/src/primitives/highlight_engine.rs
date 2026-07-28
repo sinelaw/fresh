@@ -54,9 +54,15 @@ use syntect::parsing::SyntaxSet;
 /// (`editor.highlight_timeout_ms`).
 ///
 /// Parsing always runs far enough to cover the visible region first — the
-/// budget only bounds the extra context parsed *past* `viewport_end`. So a
-/// tight value costs look-ahead (the next scroll re-parses instead of hitting
-/// the cache), never visibly unhighlighted text.
+/// budget only bounds the extra context parsed *past* `viewport_end`, so a
+/// tight value never leaves visible text unhighlighted.
+///
+/// What it does cost is cache warmth. `highlight_viewport` only reports a
+/// cache hit once the cached range reaches `parse_end`, so a refresh that
+/// stops short leaves the next one re-parsing the remainder instead. That is
+/// why the setting is opt-in (see `editor.highlight_timeout_ms`): capping by
+/// default would reintroduce the per-frame re-parse cost the cache exists to
+/// avoid.
 #[derive(Debug, Clone, Copy)]
 pub struct HighlightBudget {
     deadline: Option<Instant>,
@@ -68,11 +74,21 @@ impl HighlightBudget {
         Self { deadline: None }
     }
 
-    /// Allow `ms` milliseconds of look-ahead, starting now. Zero means "stop
-    /// as soon as the viewport is covered".
+    /// Allow `ms` milliseconds of look-ahead, starting now. Zero is already
+    /// spent, i.e. "stop as soon as the viewport is covered".
     pub fn from_millis(ms: u64) -> Self {
         Self {
             deadline: Some(Instant::now() + Duration::from_millis(ms)),
+        }
+    }
+
+    /// Read `editor.highlight_timeout_ms`, where `0` means "no cap" — the
+    /// setting's off switch, and its default.
+    pub fn from_config_millis(ms: u64) -> Self {
+        if ms == 0 {
+            Self::unlimited()
+        } else {
+            Self::from_millis(ms)
         }
     }
 

@@ -160,7 +160,9 @@ pub(crate) fn decoration_context(
         highlight_end,
         theme,
         highlight_context_bytes,
-        crate::primitives::highlight_engine::HighlightBudget::from_millis(highlight_timeout_ms),
+        crate::primitives::highlight_engine::HighlightBudget::from_config_millis(
+            highlight_timeout_ms,
+        ),
     );
 
     // Update reference highlight overlays (debounced; creates overlays that

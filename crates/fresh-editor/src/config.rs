@@ -1712,13 +1712,18 @@ pub struct EditorConfig {
 
     // ===== Performance =====
     /// Milliseconds a single viewport refresh may spend parsing *ahead of*
-    /// the visible region. The visible lines are always highlighted in full;
-    /// once they are covered and this budget is spent, parsing stops at the
-    /// last complete line and resumes there on the next refresh. Lower values
-    /// trade cache warmth (so scrolling re-parses more) for a shorter frame.
+    /// the visible region, or `0` for no cap. The visible lines are always
+    /// highlighted in full; once they are covered and this budget is spent,
+    /// parsing stops at the last complete line and resumes there on the next
+    /// refresh.
+    /// Off by default because it is a real trade, not free: a refresh that
+    /// stops short leaves the highlight cache short of the range a cache hit
+    /// needs, so the next refresh re-parses the remainder. On a large file
+    /// that costs more total work than it saves in any one frame. Set it only
+    /// when a bounded frame matters more than steady-state cost.
     /// Applies to the TextMate backend, whose parse is a resumable line walk;
     /// the tree-sitter backend bounds its work by size instead.
-    /// Default: 5
+    /// Default: 0
     #[serde(default = "default_highlight_timeout")]
     #[schemars(extend("x-section" = "Performance"))]
     pub highlight_timeout_ms: u64,
@@ -1827,7 +1832,7 @@ fn default_scroll_offset() -> usize {
 }
 
 fn default_highlight_timeout() -> u64 {
-    5
+    0
 }
 
 fn default_snapshot_interval() -> usize {
