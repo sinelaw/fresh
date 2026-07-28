@@ -65,3 +65,6 @@ bun.lockb
 dist
 .amp/
 .worktrees/
+
+# Generated single-line perf fixture (scripts/gen-single-line-bench.py)
+bench-single-line-*.txt
