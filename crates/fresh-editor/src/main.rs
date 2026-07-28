@@ -3504,9 +3504,9 @@ fn read_command_result(
     }
 }
 
-/// Dispatch a `--cmd cmd ...` / `--cmd split ...` / `--cmd workspace ...`
-/// invocation against a running editor. `tokens` is the full `--cmd` vector
-/// (leading verb included).
+/// Dispatch a `--cmd cmd ...` / `--cmd split ...` / `--cmd workspace ...` /
+/// `--cmd agent ...` invocation against a running editor. `tokens` is the full
+/// `--cmd` vector (leading verb included).
 fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
     let (session, rest) = extract_session_flag(tokens);
     let session = session.as_deref();
@@ -3540,6 +3540,15 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
             ["new", dir, ..] => workspace_new(session, dir),
             _ => {
                 eprintln!("usage: fresh --cmd workspace new <dir>");
+                std::process::exit(2);
+            }
+        },
+        Some("agent") => match &rest[1..] {
+            ["run", flags @ ..] => agent_run(session, flags),
+            ["new", flags @ ..] => agent_new(session, flags),
+            _ => {
+                eprintln!("usage: fresh --cmd agent <run|new> [--agent CMD] [--prompt TEXT] ...");
+                eprintln!("       (`fresh --cmd cmd describe orchestrator_agent_new --json` lists every option)");
                 std::process::exit(2);
             }
         },
@@ -3622,6 +3631,129 @@ fn cmd_describe(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult
 /// `fresh --cmd cmd run <id> [k=v ...]` — dispatch one command by id.
 fn cmd_run(session: Option<&str>, id: &str, arg_tokens: &[&str]) -> AnyhowResult<()> {
     run_command_id(session, id, parse_kv_args(arg_tokens))
+}
+
+/// Ids of the orchestrator's headless agent-launch commands — the twins of its
+/// "Run Agent…" and "New Workspace" dialogs. The `agent` CLI verbs are thin
+/// aliases over `RunCommand` against these, so the flags below and the dialog
+/// fields stay one implementation.
+const AGENT_RUN_COMMAND: &str = "orchestrator_agent_run";
+const AGENT_NEW_COMMAND: &str = "orchestrator_agent_new";
+
+/// Turn `--flag value` / `--flag=value` / bare `--flag` tokens into the `k=v`
+/// argument map `RunCommand` carries.
+///
+/// `allowed` maps a flag name to the argument name it sets (they differ where
+/// the CLI reads better hyphenated: `--new-branch` → `new_branch`). A bare
+/// boolean flag sets `"true"`, and its `--no-` form sets `"false"`, so
+/// `--auto` / `--no-teach` work the way a person expects. An unknown flag is a
+/// hard error rather than a silent no-op: an agent that mistypes a flag must
+/// find out, not watch its launch quietly ignore half of what it asked for.
+fn parse_agent_flags(
+    flags: &[&str],
+    allowed: &[(&str, &str)],
+    booleans: &[&str],
+) -> AnyhowResult<std::collections::HashMap<String, String>> {
+    let mut args = std::collections::HashMap::new();
+    let lookup = |name: &str| -> Option<String> {
+        allowed
+            .iter()
+            .find(|(flag, _)| *flag == name)
+            .map(|(_, arg)| (*arg).to_string())
+    };
+
+    let mut i = 0;
+    while i < flags.len() {
+        let token = flags[i];
+        let Some(name) = token.strip_prefix("--") else {
+            anyhow::bail!("unexpected argument '{}': expected --flag values", token);
+        };
+        // `--flag=value` carries its value inline.
+        let (name, inline) = match name.split_once('=') {
+            Some((n, v)) => (n, Some(v.to_string())),
+            None => (name, None),
+        };
+
+        // `--no-<flag>` negates a boolean.
+        if let Some(positive) = name.strip_prefix("no-") {
+            if booleans.contains(&positive) {
+                if let Some(arg) = lookup(positive) {
+                    args.insert(arg, "false".to_string());
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+
+        let Some(arg) = lookup(name) else {
+            anyhow::bail!(
+                "unknown flag '--{}'; accepted: {}",
+                name,
+                allowed
+                    .iter()
+                    .map(|(f, _)| format!("--{}", f))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        };
+
+        if let Some(value) = inline {
+            args.insert(arg, value);
+            i += 1;
+            continue;
+        }
+        if booleans.contains(&name) {
+            args.insert(arg, "true".to_string());
+            i += 1;
+            continue;
+        }
+        let Some(value) = flags.get(i + 1) else {
+            anyhow::bail!("flag '--{}' needs a value", name);
+        };
+        args.insert(arg, (*value).to_string());
+        i += 2;
+    }
+    Ok(args)
+}
+
+/// `fresh --cmd agent run [--agent CMD] [--prompt TEXT] [--auto] [--no-teach]`
+/// — launch a coding agent in the CURRENT workspace. The alias for the editor's
+/// "Run Agent…" dialog, with the same options.
+fn agent_run(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
+    const ALLOWED: &[(&str, &str)] = &[
+        ("agent", "agent"),
+        ("prompt", "prompt"),
+        ("auto", "auto"),
+        ("teach", "teach"),
+    ];
+    const BOOLEANS: &[&str] = &["auto", "teach"];
+    let args = parse_agent_flags(flags, ALLOWED, BOOLEANS)?;
+    run_command_id(session, AGENT_RUN_COMMAND, args)
+}
+
+/// `fresh --cmd agent new [--path DIR] [--name NAME] [--agent CMD] ...` —
+/// create a workspace (a git worktree by default) and launch a coding agent in
+/// it. The alias for the "New Workspace" dialog, with the same options.
+///
+/// Returns as soon as the create is queued, exactly like the dialog's "Create
+/// in Background": the workspace comes up on the editor's own thread and the
+/// dock carries its progress.
+fn agent_new(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
+    const ALLOWED: &[(&str, &str)] = &[
+        ("path", "path"),
+        ("name", "name"),
+        ("agent", "agent"),
+        ("prompt", "prompt"),
+        ("auto", "auto"),
+        ("teach", "teach"),
+        ("branch", "branch"),
+        ("new-branch", "new_branch"),
+        ("worktree", "worktree"),
+        ("visit", "visit"),
+    ];
+    const BOOLEANS: &[&str] = &["auto", "teach", "worktree", "visit"];
+    let args = parse_agent_flags(flags, ALLOWED, BOOLEANS)?;
+    run_command_id(session, AGENT_NEW_COMMAND, args)
 }
 
 /// `fresh --cmd split [--vertical|--horizontal]` — split alias (default vertical).
@@ -4368,7 +4500,7 @@ fn real_main() -> AnyhowResult<()> {
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["cmd", ..] | ["split", ..] | ["workspace", ..] => {
+            ["cmd", ..] | ["split", ..] | ["workspace", ..] | ["agent", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }
@@ -5358,6 +5490,89 @@ mod tests {
         let (session, rest) = extract_session_flag(&["cmd", "list", "--session"]);
         assert_eq!(session, None);
         assert_eq!(rest, vec!["cmd", "list"]);
+    }
+
+    /// The flags the `agent` verbs accept, as `agent_new` declares them.
+    const TEST_AGENT_FLAGS: &[(&str, &str)] = &[
+        ("path", "path"),
+        ("agent", "agent"),
+        ("prompt", "prompt"),
+        ("auto", "auto"),
+        ("teach", "teach"),
+        ("new-branch", "new_branch"),
+    ];
+    const TEST_AGENT_BOOLEANS: &[&str] = &["auto", "teach"];
+
+    /// `--flag value`, `--flag=value`, a bare boolean, and the hyphenated flag
+    /// that maps to an underscored argument name all reach the args map.
+    #[test]
+    fn test_parse_agent_flags_value_and_boolean_forms() {
+        let args = parse_agent_flags(
+            &[
+                "--agent",
+                "claude --model opus",
+                "--prompt=fix the bug",
+                "--auto",
+                "--new-branch",
+                "feature/x",
+            ],
+            TEST_AGENT_FLAGS,
+            TEST_AGENT_BOOLEANS,
+        )
+        .expect("flags parse");
+        assert_eq!(
+            args.get("agent").map(String::as_str),
+            Some("claude --model opus")
+        );
+        assert_eq!(args.get("prompt").map(String::as_str), Some("fix the bug"));
+        assert_eq!(args.get("auto").map(String::as_str), Some("true"));
+        assert_eq!(
+            args.get("new_branch").map(String::as_str),
+            Some("feature/x")
+        );
+        assert_eq!(args.len(), 4);
+    }
+
+    /// `--no-<flag>` turns a boolean off — the form that lets a caller opt out
+    /// of a default-on option like `teach`.
+    #[test]
+    fn test_parse_agent_flags_negated_boolean() {
+        let args = parse_agent_flags(&["--no-teach"], TEST_AGENT_FLAGS, TEST_AGENT_BOOLEANS)
+            .expect("flags parse");
+        assert_eq!(args.get("teach").map(String::as_str), Some("false"));
+    }
+
+    /// A mistyped flag fails loudly. Silently dropping it would launch an agent
+    /// with a prompt or a branch the caller believes it passed.
+    #[test]
+    fn test_parse_agent_flags_rejects_unknown_flag() {
+        let err = parse_agent_flags(&["--promt", "typo"], TEST_AGENT_FLAGS, TEST_AGENT_BOOLEANS)
+            .expect_err("unknown flag must be an error");
+        assert!(
+            err.to_string().contains("--promt"),
+            "error should name the offending flag: {}",
+            err
+        );
+    }
+
+    /// A value-taking flag left without a value is an error, not an empty
+    /// value: `--prompt` alone is a mistake, and running the agent with no
+    /// prompt would hide it.
+    #[test]
+    fn test_parse_agent_flags_missing_value_is_an_error() {
+        let err = parse_agent_flags(&["--prompt"], TEST_AGENT_FLAGS, TEST_AGENT_BOOLEANS)
+            .expect_err("missing value must be an error");
+        assert!(err.to_string().contains("needs a value"), "{}", err);
+    }
+
+    /// A stray positional is rejected — `fresh --cmd agent run claude` is a
+    /// plausible mistake for `--agent claude`, and must not silently launch a
+    /// bare terminal.
+    #[test]
+    fn test_parse_agent_flags_rejects_positional() {
+        let err = parse_agent_flags(&["claude"], TEST_AGENT_FLAGS, TEST_AGENT_BOOLEANS)
+            .expect_err("positional must be an error");
+        assert!(err.to_string().contains("claude"), "{}", err);
     }
 
     #[test]

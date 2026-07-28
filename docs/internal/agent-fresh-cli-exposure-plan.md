@@ -130,6 +130,23 @@ The system prompt then says *"run `fresh cmd list --json` to see everything you
 can do, then `fresh cmd run <id>`"* — discovery is self-describing, so the command
 set is never hard-coded into the prompt, and it always reflects the live grant.
 
+*Arguments (LANDED).* `RunCommand.args` reaches a **plugin** command's handler as
+an object, not just a core action's `Action::from_str` — so a plugin can expose a
+*parameterized* command to agents, which a keystroke-shaped `Action::PluginAction`
+(a name and nothing else) could not carry. Commands declare their parameters at
+registration (`editor.registerCommand(..., { args: [...] })`) and `cmd describe
+<id> --json` prints them, so a command is self-documenting rather than needing its
+parameters written into the agent's prompt.
+
+*Launching agents (LANDED).* The first users of the above are the headless twins
+of the Orchestrator's two dialogs — `orchestrator_agent_run` (Run Agent, current
+workspace) and `orchestrator_agent_new` (New Workspace + agent), with the CLI
+aliases `fresh --cmd agent run` / `fresh --cmd agent new`. Both submit through the
+dialog's own path, so the CLI and the form stay one implementation. This is the
+general shape for the rest: a dialog that collects parameters can grow a headless
+twin that takes the same parameters as declared arguments, without a bespoke RPC
+per feature.
+
 **Phase 3 — bidirectional + remote reach.** Add read-back (`ServerControl`
 responses for active file / selection / workspace list) so an agent can act on
 editor state, and propagate a session handle across remote wrappers (or add an

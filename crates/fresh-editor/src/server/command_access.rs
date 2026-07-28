@@ -22,7 +22,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::app::Editor;
 use crate::input::keybindings::Action;
-use crate::server::protocol::CommandInfo;
+use crate::server::protocol::{CommandArgInfo, CommandInfo};
 
 /// What a capability token is permitted to do.
 #[derive(Debug, Clone, Default)]
@@ -101,13 +101,14 @@ pub fn is_allowed(token: &str, command_id: &str) -> bool {
 /// allowlist are returned, so `ListCommands` can't double as a probe of the
 /// full command set.
 ///
-/// `include_args` is accepted for protocol symmetry but currently has no
-/// effect: the command registry carries no argument schema, so every entry's
-/// `args` is empty. TODO: populate once commands declare an arg schema.
+/// `include_args` fills each entry's argument schema from the registry — what a
+/// plugin declared via `editor.registerCommand(..., { args: [...] })`. It is
+/// off for a plain `cmd list` (an id + name per line) and on for `cmd
+/// describe`, which is where an agent goes to learn how to call a command.
 pub fn list_allowed_commands(
     editor: &Editor,
     grant: &Grant,
-    _include_args: bool,
+    include_args: bool,
 ) -> Vec<CommandInfo> {
     let Ok(registry) = editor.command_registry().read() else {
         return Vec::new();
@@ -125,8 +126,18 @@ pub fn list_allowed_commands(
                 name: cmd.get_localized_name(),
                 // Commands have no palette category field to surface.
                 category: None,
-                // No arg schema in the registry yet (see fn doc TODO).
-                args: Vec::new(),
+                args: if include_args {
+                    cmd.args
+                        .iter()
+                        .map(|a| CommandArgInfo {
+                            name: a.name.clone(),
+                            required: a.required,
+                            description: a.description.clone(),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                },
             })
         })
         .collect()
@@ -200,6 +211,18 @@ pub fn run_command_by_id(
         return (false, Some(format!("unknown command: {}", id)));
     };
 
+    // A plugin command gets its arguments handed to the handler as an object.
+    // `handle_action` can't: `Action::PluginAction` carries only a name, which
+    // is all a keystroke has to give it. Routing here instead is what makes a
+    // parameterized plugin command — `fresh --cmd cmd run orchestrator_agent_run
+    // agent=claude prompt=…` — reachable at all.
+    if let Action::PluginAction(name) = &action {
+        return match editor.run_plugin_action_with_args(name, args) {
+            Ok(()) => (true, None),
+            Err(e) => (false, Some(e)),
+        };
+    }
+
     match editor.handle_action(action) {
         Ok(()) => (true, None),
         Err(e) => (false, Some(format!("command failed: {}", e))),
@@ -209,6 +232,106 @@ pub fn run_command_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::commands::{Command as EditorCommand, CommandSource};
+    use fresh_core::command::CommandArg;
+
+    /// A registry entry for a plugin command that declares two arguments —
+    /// what `editor.registerCommand(..., { args: [...] })` produces.
+    fn plugin_command_with_args() -> EditorCommand {
+        EditorCommand {
+            name: "Run Agent (headless)".to_string(),
+            description: "Launch a coding agent".to_string(),
+            action: Action::PluginAction("orchestrator_agent_run".to_string()),
+            contexts: Vec::new(),
+            custom_contexts: vec!["fresh-cli".to_string()],
+            source: CommandSource::Plugin("orchestrator".to_string()),
+            terminal_bypass: false,
+            args: vec![
+                CommandArg {
+                    name: "agent".to_string(),
+                    required: false,
+                    description: Some("Agent command line".to_string()),
+                },
+                CommandArg {
+                    name: "prompt".to_string(),
+                    required: true,
+                    description: None,
+                },
+            ],
+        }
+    }
+
+    /// The registry's declared arguments reach the `CommandInfo` a caller sees.
+    /// This is the whole point of `include_args`: an agent that discovers a
+    /// command through `cmd describe` must learn how to call it, rather than
+    /// needing the parameters hard-coded into its prompt.
+    #[test]
+    fn declared_args_are_surfaced_when_requested() {
+        let cmd = plugin_command_with_args();
+        let info = CommandInfo {
+            id: cmd.action.to_action_str(),
+            name: cmd.name.clone(),
+            category: None,
+            args: cmd
+                .args
+                .iter()
+                .map(|a| CommandArgInfo {
+                    name: a.name.clone(),
+                    required: a.required,
+                    description: a.description.clone(),
+                })
+                .collect(),
+        };
+        assert_eq!(info.id, "orchestrator_agent_run");
+        assert_eq!(info.args.len(), 2);
+        assert_eq!(info.args[0].name, "agent");
+        assert!(!info.args[0].required);
+        assert_eq!(
+            info.args[0].description.as_deref(),
+            Some("Agent command line")
+        );
+        assert_eq!(info.args[1].name, "prompt");
+        assert!(info.args[1].required);
+    }
+
+    /// A command's declared arguments survive the JSON round trip the control
+    /// socket puts them through — `cmd describe --json` is an agent-facing
+    /// contract, so the wire shape matters as much as the in-process one.
+    #[test]
+    fn command_info_args_round_trip_over_the_wire() {
+        let cmd = plugin_command_with_args();
+        let info = CommandInfo {
+            id: cmd.action.to_action_str(),
+            name: cmd.name,
+            category: None,
+            args: vec![CommandArgInfo {
+                name: "prompt".to_string(),
+                required: true,
+                description: Some("Initial prompt".to_string()),
+            }],
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        let back: CommandInfo = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.args.len(), 1);
+        assert_eq!(back.args[0].name, "prompt");
+        assert!(back.args[0].required);
+        assert_eq!(back.args[0].description.as_deref(), Some("Initial prompt"));
+    }
+
+    /// A command with no declared arguments serializes without an `args` key at
+    /// all, keeping `cmd list` output (one line per command) unchanged for the
+    /// argless majority.
+    #[test]
+    fn argless_command_omits_args_on_the_wire() {
+        let info = CommandInfo {
+            id: "split_vertical".to_string(),
+            name: "Split Vertical".to_string(),
+            category: None,
+            args: Vec::new(),
+        };
+        let json = serde_json::to_string(&info).expect("serialize");
+        assert!(!json.contains("args"), "unexpected args key in {}", json);
+    }
 
     #[test]
     fn mint_register_lookup_revoke() {

@@ -119,7 +119,7 @@ editor.setStatus("Test i18n plugin loaded");
     let _rx = harness
         .editor()
         .plugin_manager()
-        .execute_action_async("test_i18n_action")
+        .execute_action_async("test_i18n_action", None)
         .unwrap()
         .unwrap();
     println!("Action started...");
@@ -168,7 +168,7 @@ editor.setStatus("Test i18n plugin loaded");
     let _rx = harness
         .editor()
         .plugin_manager()
-        .execute_action_async("test_i18n_action")
+        .execute_action_async("test_i18n_action", None)
         .unwrap()
         .unwrap();
 

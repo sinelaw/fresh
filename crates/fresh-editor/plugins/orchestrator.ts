@@ -6533,7 +6533,16 @@ const AGENT_REGISTRY: AgentEntry[] = [
 // binds the minted `FRESH_CMD_TOKEN` to exactly these ids on the new window —
 // the token is always present; the "Teach Fresh CLI" toggle only controls
 // whether the agent is *told* about it (the system-prompt injection).
-const FRESH_CLI_DEFAULT_ALLOWLIST = ["split_vertical", "split_horizontal"];
+// `orchestrator_agent_run` / `orchestrator_agent_new` are the headless twins of
+// the Run-Agent and New-Workspace dialogs (see "Headless twins of the dialog"),
+// so an agent can start a sibling agent the same way a human does. Both are
+// scoped to the calling workspace by the token, like every other entry here.
+const FRESH_CLI_DEFAULT_ALLOWLIST = [
+  "split_vertical",
+  "split_horizontal",
+  "orchestrator_agent_run",
+  "orchestrator_agent_new",
+];
 
 // System prompt injected (via flag or AGENTS.md) when "Teach Fresh CLI" is on.
 // Teaches the agent the verbatim `fresh` CLI verbs it can drive the editor
@@ -6543,8 +6552,12 @@ const FRESH_CLI_SYSTEM_PROMPT = [
   "Always invoke it through the `$FRESH_BIN` environment variable — it points at the exact editor binary running this workspace, so its `--cmd` verbs and `--help` match this build (never rely on a bare `fresh` from PATH, which may be a different version).",
   'Discover what you can do: `"$FRESH_BIN" --cmd cmd list --json` (lists the commands you\'re allowed to run in this workspace).',
   'Run one: `"$FRESH_BIN" --cmd cmd run <id>` (e.g. `"$FRESH_BIN" --cmd cmd run split_vertical`), or the shortcut `"$FRESH_BIN" --cmd split --vertical`.',
+  'See what arguments a command takes: `"$FRESH_BIN" --cmd cmd describe <id> --json`; pass them as `<name>=<value>` pairs to `cmd run`.',
   'Open a file in this workspace: `"$FRESH_BIN" <path>` (this blocks until you close the file, so use it for hand-offs, not quick peeks).',
   'Open another project as a new workspace: `"$FRESH_BIN" --cmd workspace new <dir>`.',
+  'Start another coding agent alongside you, in this workspace: `"$FRESH_BIN" --cmd agent run --agent claude --prompt "<task>"`.',
+  'Start one in a NEW workspace (its own git worktree): `"$FRESH_BIN" --cmd agent new --agent claude --prompt "<task>" [--path <repo>] [--name <workspace>] [--new-branch <branch>]`.',
+  "Both agent verbs return as soon as the launch is queued — the new agent runs on its own; you are not blocked and you do not get its output.",
   "These commands act only on the current workspace.",
 ].join("\n");
 
@@ -9251,6 +9264,186 @@ async function launchAgentInCurrentWorkspace(
   }
 }
 
+// =============================================================================
+// Headless twins of the dialog — the agent (CLI) entry points
+//
+// The two dialogs above are how a *human* launches an agent. An agent driving
+// the editor from its shell has no way to fill in a form, so each dialog gets a
+// headless command with the same parameters, submitting through the very same
+// path (`launchAgentInCurrentWorkspace` / `captureCreateSpec` +
+// `startPendingWorkspace`). One launch pipeline, two front doors — a fix or a
+// new agent flag reaches both without being implemented twice.
+//
+// Reached over the command channel, so arguments arrive as a string map:
+//   fresh --cmd cmd run orchestrator_agent_run agent=claude prompt="fix the bug"
+//   fresh --cmd agent new --path /repo --agent claude --prompt "…"   (CLI alias)
+// Every argument is optional; omitted ones take the dialog's own defaults.
+// =============================================================================
+
+// Argument values arrive as strings over the wire. Accept the spellings a
+// person (or an agent copying a flag) would actually write; anything else is
+// the default, never an error — a create must not fail over `auto=yes`.
+function cliBool(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  const v = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return fallback;
+}
+
+function cliStr(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+// The `agent` argument is a command line, exactly like the dialog's "Agent
+// Command" field: a bare agent name (`claude`), a name with flags
+// (`claude --model opus`), or any other command. Empty ⇒ a plain terminal.
+type CliArgs = Record<string, string | undefined>;
+
+// `fresh --cmd cmd run orchestrator_agent_run` — Run Agent in THIS workspace.
+async function cliRunAgent(args: CliArgs): Promise<void> {
+  const cmd = cliStr(args?.agent);
+  const entry = agentEntryForCmd(cmd);
+  // Mirror `submitForm`'s current-workspace branch: the per-agent options are
+  // only honoured for an agent whose registry entry supports each, so a bare
+  // terminal never gets stray flags appended.
+  await launchAgentInCurrentWorkspace(cmd, {
+    auto: !!entry?.auto && cliBool(args?.auto, false),
+    prompt: entry?.prompt ? cliStr(args?.prompt) : "",
+    teachFreshCli: !!entry?.systemPrompt && cliBool(args?.teach, true),
+  });
+}
+
+// `fresh --cmd cmd run orchestrator_agent_new` — New Workspace + agent.
+//
+// Local backend only: ssh/kubernetes workspaces need connection details that
+// deserve their own verb (and their own validation), and an agent asking for a
+// sibling workspace wants the local case. Runs in the background exactly like
+// the dialog's "Create in Background" — the dock shows the pending row, and
+// the caller's `RunCommand` returns as soon as the create is queued.
+function cliNewWorkspace(args: CliArgs): void {
+  const cmd = cliStr(args?.agent);
+  const entry = agentEntryForCmd(cmd);
+  const projectPath = cliStr(args?.path) || localProjectDefault();
+  const name = cliStr(args?.name);
+  const spec: CreateSpec = {
+    backend: "local",
+    projectPath,
+    // "" ⇒ `runLocalCreate` allocates the next `<project>-N` name, the same
+    // default the dialog's placeholder shows.
+    name,
+    cmd,
+    auto: !!entry?.auto && cliBool(args?.auto, false),
+    startPrompt: entry?.prompt ? cliStr(args?.prompt) : "",
+    teachFreshCli: !!entry?.systemPrompt && cliBool(args?.teach, true),
+    branch: cliStr(args?.branch),
+    newBranch: cliStr(args?.new_branch),
+    // Worktree by default (the dialog's default too); `runLocalCreate` demotes
+    // it to false on its own when the path isn't a git tree.
+    createWorktree: cliBool(args?.worktree, true),
+    displayLabel: name || editor.pathBasename(projectPath) ||
+      editor.t("dock.pending_default_name"),
+    displayProject: projectPath,
+  };
+  // `visit` defaults to false: an agent asking for a workspace should not yank
+  // the human's focus into it. Pass `visit=true` for the dialog's
+  // "Create & Visit".
+  startPendingWorkspace(spec, { visit: cliBool(args?.visit, false) });
+}
+
+registerHandler("orchestrator_agent_run", (args: CliArgs) => {
+  void cliRunAgent(args ?? {});
+});
+registerHandler("orchestrator_agent_new", (args: CliArgs) => {
+  cliNewWorkspace(args ?? {});
+});
+
+// Names are deliberately plain English rather than `%`-keys: these are a CLI
+// surface read by agents through `cmd list --json`, not UI labels. The
+// `fresh-cli` context is never activated, which keeps them out of the command
+// palette — a human wanting either of these wants the dialog, which asks for
+// the parameters these commands take as arguments.
+editor.registerCommand(
+  "Run Agent (headless)",
+  "Launch a coding agent in the current workspace, without the dialog",
+  "orchestrator_agent_run",
+  "fresh-cli",
+  {
+    args: [
+      {
+        name: "agent",
+        description:
+          "Agent command line, e.g. `claude` or `claude --model opus`. Empty runs a plain terminal.",
+      },
+      {
+        name: "prompt",
+        description: "Initial prompt handed to the agent at launch (agents that take one).",
+      },
+      {
+        name: "auto",
+        description: "true/false — run the agent in its reduced-approval mode. Default false.",
+      },
+      {
+        name: "teach",
+        description:
+          "true/false — inject the Fresh CLI system prompt so the agent can drive the editor. Default true.",
+      },
+    ],
+  },
+);
+editor.registerCommand(
+  "New Workspace with Agent (headless)",
+  "Create a workspace (git worktree by default) and launch a coding agent in it, without the dialog",
+  "orchestrator_agent_new",
+  "fresh-cli",
+  {
+    args: [
+      {
+        name: "path",
+        description: "Project directory the workspace roots at. Default: this workspace's project.",
+      },
+      {
+        name: "name",
+        description: "Workspace name. Default: the next auto-generated `<project>-N`.",
+      },
+      {
+        name: "agent",
+        description:
+          "Agent command line, e.g. `claude` or `claude --model opus`. Empty runs a plain terminal.",
+      },
+      {
+        name: "prompt",
+        description: "Initial prompt handed to the agent at launch (agents that take one).",
+      },
+      {
+        name: "auto",
+        description: "true/false — run the agent in its reduced-approval mode. Default false.",
+      },
+      {
+        name: "teach",
+        description:
+          "true/false — inject the Fresh CLI system prompt so the agent can drive the editor. Default true.",
+      },
+      {
+        name: "branch",
+        description: "Existing branch to check out in the new worktree. Default: the repo's default branch.",
+      },
+      {
+        name: "new_branch",
+        description: "Create the worktree on a new branch of this name, cut from `branch`.",
+      },
+      {
+        name: "worktree",
+        description:
+          "true/false — create a git worktree for the workspace. Default true (ignored for a non-git path).",
+      },
+      {
+        name: "visit",
+        description: "true/false — move focus into the new workspace once it is up. Default false.",
+      },
+    ],
+  },
+);
 
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`

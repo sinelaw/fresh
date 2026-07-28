@@ -96,9 +96,13 @@ pub enum PluginRequest {
         response: oneshot::Sender<Result<()>>,
     },
 
-    /// Execute a plugin action
+    /// Execute a plugin action. `args_json`, when set, is a JSON object handed
+    /// to the handler as its single argument — how the agent command channel
+    /// passes `RunCommand.args` through to a plugin command. `None` calls the
+    /// handler with no arguments (the keybinding / palette path).
     ExecuteAction {
         action_name: String,
+        args_json: Option<String>,
         response: oneshot::Sender<Result<()>>,
     },
 
@@ -655,7 +659,11 @@ impl PluginThreadHandle {
     ///
     /// Returns a receiver that will receive the result when the action completes.
     /// The caller should poll this while processing commands to avoid deadlock.
-    pub fn execute_action_async(&self, action_name: &str) -> Result<oneshot::Receiver<Result<()>>> {
+    pub fn execute_action_async(
+        &self,
+        action_name: &str,
+        args_json: Option<String>,
+    ) -> Result<oneshot::Receiver<Result<()>>> {
         tracing::trace!("execute_action_async: starting action '{}'", action_name);
         let (tx, rx) = oneshot::channel();
         self.request_sender
@@ -663,6 +671,7 @@ impl PluginThreadHandle {
             .ok_or_else(|| anyhow!("Plugin thread shut down"))?
             .send(PluginRequest::ExecuteAction {
                 action_name: action_name.to_string(),
+                args_json,
                 response: tx,
             })
             .map_err(|_| anyhow!("Plugin thread not responding"))?;
@@ -1051,11 +1060,14 @@ async fn plugin_thread_loop(
                 match request {
                     Some(PluginRequest::ExecuteAction {
                         action_name,
+                        args_json,
                         response,
                     }) => {
                         // Start the action without blocking - this allows us to process
                         // ResolveCallback requests that the action may be waiting for.
-                        let result = runtime.borrow_mut().start_action(&action_name);
+                        let result = runtime
+                            .borrow_mut()
+                            .start_action(&action_name, args_json.as_deref());
                         fire_and_forget(response.send(result));
                         has_pending_work = true; // Action may have started async work
                     }
@@ -1185,6 +1197,7 @@ async fn handle_request(
         PluginRequest::ExecuteAction {
             action_name,
             response,
+            ..
         } => {
             // This is handled in plugin_thread_loop with select! for concurrent processing
             // If we get here, it's an unexpected state
