@@ -653,6 +653,12 @@ impl Editor {
             } => {
                 self.handle_set_split_buffer(split_id, buffer_id);
             }
+            PluginCommand::MoveBufferToSplit {
+                buffer_id,
+                split_id,
+            } => {
+                self.handle_move_buffer_to_split(buffer_id, split_id);
+            }
             PluginCommand::SetSplitScroll { split_id, top_byte } => {
                 self.handle_set_split_scroll(split_id, top_byte);
             }
@@ -1542,6 +1548,21 @@ impl Editor {
             }
             PluginCommand::FlushLayout => {
                 self.flush_layout();
+            }
+            PluginCommand::SplitWindow {
+                options,
+                request_id,
+            } => {
+                self.handle_split_window(options, request_id);
+            }
+            PluginCommand::SyncSnapshot { request_id } => {
+                // Everything queued ahead of this has been applied by now
+                // (the queue is FIFO), so refreshing the snapshot here is
+                // what makes the caller's next read observe its own writes.
+                self.update_plugin_state_snapshot();
+                self.send_plugin_response(fresh_core::api::PluginResponse::SnapshotSynced {
+                    request_id,
+                });
             }
             PluginCommand::CompositeNextHunk { buffer_id } => {
                 self.handle_composite_next_hunk(buffer_id);
@@ -5971,6 +5992,9 @@ impl Window {
                     .unwrap_or(false)
             });
             let is_preview = self.is_buffer_preview(*buffer_id);
+            // A terminal pane and a plugin scratch pane are both "virtual";
+            // only the window knows which one has a PTY behind it.
+            let is_terminal = self.is_terminal_buffer(*buffer_id);
             // Which splits currently hold this buffer — lets plugins
             // implement "focus existing if visible, else open new"
             // without tracking split ids across editor restarts
@@ -5986,7 +6010,9 @@ impl Window {
                 path: state.buffer.file_path().map(|p| p.to_path_buf()),
                 modified: state.buffer.is_modified(),
                 length: state.buffer.len(),
+                line_count: state.buffer.line_count(),
                 is_virtual,
+                is_terminal,
                 editing_disabled: state.editing_disabled,
                 view_mode: view_mode.to_string(),
                 is_composing_in_any_split,
@@ -6056,9 +6082,12 @@ impl Window {
         // which is what `editor.getCursorPosition()` then sees.
         let active_buf_id = snapshot.active_buffer_id;
         let active_split_id = self.effective_active_pair().0;
+        // Captured before the closure borrows `self`: the panes' rects are
+        // derived from the same area the renderer lays out into, so the
+        // geometry a plugin reads matches the cells actually drawn.
+        let content_area = self.editor_content_area();
         self.buffers
             .with_all_mut(|buffers_mut, mgr, vs_map| {
-                let _ = mgr; // active_split_id was computed above
                 if let Some(active_vs) = vs_map.get(&active_split_id) {
                     // Primary cursor (from SplitViewState)
                     let active_cursors = &active_vs.cursors;
@@ -6138,9 +6167,20 @@ impl Window {
                     snapshot.selected_text = None;
                 }
 
-                // Per-split snapshot
+                // Per-split snapshot.
+                //
+                // Walked through the layout rather than the view-state map so
+                // the list comes out in *visual* order — left to right, top to
+                // bottom — and carries each pane's on-screen rect. A caller
+                // asking "which pane is on the left" can then compare `x`
+                // instead of guessing from an iteration order that used to be
+                // a HashMap's.
                 snapshot.splits.clear();
-                for (leaf_id, vs) in vs_map.iter() {
+                let laid_out = mgr.get_visible_buffers(content_area);
+                for (leaf_id, _buf, rect) in laid_out {
+                    let Some(vs) = vs_map.get(&leaf_id) else {
+                        continue;
+                    };
                     let buf_id = vs.active_buffer;
                     let top_line = buffers_mut.get(&buf_id).and_then(|state| {
                         if state.buffer.line_count().is_some() {
@@ -6152,6 +6192,10 @@ impl Window {
                     snapshot.splits.push(fresh_core::api::SplitSnapshot {
                         split_id: leaf_id.0 .0,
                         buffer_id: buf_id,
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: rect.height,
                         viewport: ViewportInfo {
                             top_byte: vs.viewport.top_byte,
                             top_line,

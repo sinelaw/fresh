@@ -18,16 +18,42 @@ use super::Editor;
 impl Editor {
     /// Split the current pane horizontally
     pub fn split_pane_horizontal(&mut self) {
-        self.split_pane_impl(crate::model::event::SplitDirection::Horizontal);
+        // Failure is already reported on the status line inside
+        // `split_pane_impl`; a keystroke has no caller to hand a Result to.
+        if let Err(e) =
+            self.split_pane_impl(crate::model::event::SplitDirection::Horizontal, false, 0.5)
+        {
+            tracing::debug!("split_pane_horizontal: {e}");
+        }
     }
 
     /// Split the current pane vertically
     pub fn split_pane_vertical(&mut self) {
-        self.split_pane_impl(crate::model::event::SplitDirection::Vertical);
+        if let Err(e) =
+            self.split_pane_impl(crate::model::event::SplitDirection::Vertical, false, 0.5)
+        {
+            tracing::debug!("split_pane_vertical: {e}");
+        }
     }
 
-    /// Common split creation logic
-    fn split_pane_impl(&mut self, direction: crate::model::event::SplitDirection) {
+    /// Common split creation logic.
+    ///
+    /// `before` places the new pane first — left for a vertical divider,
+    /// above for a horizontal one. The keyboard commands always pass
+    /// `false` (new pane right/below); the plugin API's `splitWindow` is
+    /// what exposes the other side, so an agent can say "put the terminal
+    /// on the left" without a swap dance afterwards.
+    ///
+    /// `ratio` is the *first* child's share of the space, regardless of
+    /// which side the new pane landed on.
+    ///
+    /// Returns the new pane's id, or the reason it could not be created.
+    pub(crate) fn split_pane_impl(
+        &mut self,
+        direction: crate::model::event::SplitDirection,
+        before: bool,
+        ratio: f32,
+    ) -> Result<crate::model::event::LeafId, String> {
         // Splitting the layout is a commitment gesture for any preview tab:
         // the user is setting up their working environment around it. Promote
         // before touching the split tree so the invariant "preview is anchored
@@ -74,10 +100,13 @@ impl Editor {
                     )>>()
             });
 
-        match self
-            .split_manager_mut()
-            .split_active(direction, current_buffer_id, 0.5)
-        {
+        let split_outcome = self.split_manager_mut().split_active_positioned(
+            direction,
+            current_buffer_id,
+            ratio,
+            before,
+        );
+        match split_outcome {
             Ok(new_split_id) => {
                 let mut view_state = SplitViewState::with_buffer(
                     self.terminal_width,
@@ -146,17 +175,19 @@ impl Editor {
                     crate::model::event::SplitDirection::Vertical => t!("split.vertical"),
                 };
                 self.set_status_message(msg.to_string());
+                // A new split changes every sibling pane's width/height.
+                // Reflow through the single layout funnel so existing
+                // terminals shrink to their new pane immediately, instead of
+                // waiting for the next unrelated resize trigger.
+                self.relayout();
+                Ok(new_split_id)
             }
             Err(e) => {
                 self.set_status_message(t!("split.error", error = e.to_string()).to_string());
+                self.relayout();
+                Err(e)
             }
         }
-
-        // A new split changes every sibling pane's width/height. Reflow
-        // through the single layout funnel so existing terminals shrink to
-        // their new pane immediately, instead of waiting for the next
-        // unrelated resize trigger.
-        self.relayout();
     }
 
     /// Close the active split
@@ -623,5 +654,188 @@ impl Editor {
                 buffer_id: next_buf,
             },
         );
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Editor {
+    /// Handle `editor.splitWindow(...)` — the plugin/agent entry point for
+    /// creating a pane.
+    ///
+    /// Everything a caller needs comes back in the response: the new pane's
+    /// id *and* its geometry, so "did the terminal land on the left" is
+    /// answerable without a follow-up read. The snapshot is refreshed before
+    /// answering, so a caller that awaits this can immediately
+    /// `listSplits()` / `describeWorkspace()` and see its own change.
+    pub(crate) fn handle_split_window(
+        &mut self,
+        options: fresh_core::api::SplitWindowOptions,
+        request_id: u64,
+    ) {
+        use fresh_core::api::{SplitAxis, SplitCreated, SplitPlacement};
+
+        let direction = match options.direction.unwrap_or_default() {
+            SplitAxis::Vertical => crate::model::event::SplitDirection::Vertical,
+            SplitAxis::Horizontal => crate::model::event::SplitDirection::Horizontal,
+        };
+        let before = matches!(options.place.unwrap_or_default(), SplitPlacement::Before);
+        // Clamp rather than reject: a ratio outside the usable band would be
+        // pinned by the layout anyway, and failing a whole split over it
+        // would be a worse answer than the pane the caller asked for.
+        let ratio = options.ratio.unwrap_or(0.5).clamp(0.05, 0.95);
+
+        let source_split_id = self.active_split_id();
+
+        let new_split_id = match self.split_pane_impl(direction, before, ratio) {
+            Ok(id) => id,
+            Err(e) => {
+                self.send_plugin_response(fresh_core::api::PluginResponse::SplitWindowCreated {
+                    request_id,
+                    result: Err(e),
+                });
+                return;
+            }
+        };
+
+        // Open the requested file *in the new pane*. Doing it here rather
+        // than making the caller follow up with `openFileInSplit` is the
+        // difference between one call and two, and removes the window where
+        // the new pane briefly shows the wrong buffer.
+        if let Some(file) = options.file.as_deref().filter(|f| !f.trim().is_empty()) {
+            let path = self.resolve_workspace_path(file);
+            if let Err(e) = self.handle_open_file_in_split(new_split_id.0 .0, path, None, None) {
+                tracing::warn!("splitWindow: could not open {} in new pane: {}", file, e);
+            }
+        }
+
+        if options.keep_focus.unwrap_or(false) {
+            self.split_manager_mut().set_active_split(source_split_id);
+        }
+
+        // Geometry has to be computed after the layout settles, which
+        // `split_pane_impl`'s relayout has already done.
+        let rect = self.split_rect(new_split_id).unwrap_or_default();
+        let buffer_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(_, vs)| vs.get(&new_split_id))
+            .map(|vs| vs.active_buffer)
+            .unwrap_or(self.active_buffer());
+
+        // Refresh before answering: the caller awaiting this response is
+        // very likely about to read the layout back.
+        self.update_plugin_state_snapshot();
+        self.send_plugin_response(fresh_core::api::PluginResponse::SplitWindowCreated {
+            request_id,
+            result: Ok(SplitCreated {
+                split_id: new_split_id.0 .0,
+                source_split_id: source_split_id.0 .0,
+                buffer_id,
+                x: rect.x,
+                y: rect.y,
+                width: rect.width,
+                height: rect.height,
+            }),
+        });
+    }
+
+    /// The active pane's id.
+    pub(crate) fn active_split_id(&self) -> crate::model::event::LeafId {
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.active_split())
+            .expect("active window must have a populated split layout")
+    }
+
+    /// Where a pane currently sits on screen, in editor-area cells.
+    /// `None` once the leaf is gone (closed, or collapsed by its last tab).
+    pub(crate) fn split_rect(
+        &self,
+        leaf: crate::model::event::LeafId,
+    ) -> Option<ratatui::layout::Rect> {
+        let area = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| w.editor_content_area())?;
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .and_then(|(mgr, _)| {
+                mgr.get_visible_buffers(area)
+                    .into_iter()
+                    .find(|(id, _, _)| *id == leaf)
+                    .map(|(_, _, rect)| rect)
+            })
+    }
+
+    /// Resolve a caller-supplied path against the window's root, so a script
+    /// can say `"README.md"` and mean the obvious thing.
+    fn resolve_workspace_path(&self, path: &str) -> std::path::PathBuf {
+        let p = std::path::Path::new(path);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.active_window().root.join(p)
+        }
+    }
+}
+
+#[cfg(feature = "plugins")]
+impl Editor {
+    /// Move a buffer into `target` — show it there, and drop its tab from
+    /// whatever pane held it before.
+    ///
+    /// The difference from `setSplitBuffer` is the second half. Setting a
+    /// pane's active buffer leaves the original tab where it was, so a script
+    /// arranging panes ends up stranding tabs it never asked to keep.
+    pub(crate) fn handle_move_buffer_to_split(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        split_id: fresh_core::SplitId,
+    ) {
+        use crate::model::event::LeafId;
+
+        let target = LeafId(split_id);
+        if !self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .contains_key(&buffer_id)
+        {
+            tracing::error!("Buffer {:?} not found for MoveBufferToSplit", buffer_id);
+            return;
+        }
+
+        // Every pane that currently holds it, except the destination.
+        let sources: Vec<LeafId> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.splits_for_buffer(buffer_id))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|leaf| *leaf != target)
+            .collect();
+
+        // Show it in the destination first: dropping the last tab from a pane
+        // can collapse that pane, and doing it in this order means the buffer
+        // is never momentarily displayed nowhere.
+        self.handle_set_split_buffer(split_id, buffer_id);
+
+        for source in sources {
+            if let Some(vs) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&source)
+            {
+                vs.remove_buffer(buffer_id);
+            }
+        }
+        self.relayout();
     }
 }

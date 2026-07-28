@@ -277,6 +277,13 @@ pub enum PluginResponse {
         request_id: u64,
         split_id: Option<SplitId>,
     },
+    /// Response to `SplitWindow`: the new pane, or why it couldn't be made.
+    SplitWindowCreated {
+        request_id: u64,
+        result: Result<SplitCreated, String>,
+    },
+    /// Response to `SyncSnapshot`: everything queued earlier is applied.
+    SnapshotSynced { request_id: u64 },
     /// Response to `WatchPath`. `handle` is the editor's stable
     /// id for this watcher, used both as the cancellation token
     /// for `UnwatchPath` and as the routing key in
@@ -301,6 +308,8 @@ impl PluginResponse {
             | Self::BufferLineCount { request_id, .. }
             | Self::CompositeBufferCreated { request_id, .. }
             | Self::SplitByLabel { request_id, .. }
+            | Self::SplitWindowCreated { request_id, .. }
+            | Self::SnapshotSynced { request_id }
             | Self::WatchPathRegistered { request_id, .. } => *request_id,
         }
     }
@@ -490,8 +499,23 @@ pub struct BufferInfo {
     pub modified: bool,
     /// Length of buffer in bytes
     pub length: usize,
+    /// Number of lines, when the buffer has been indexed. `None` for a very
+    /// large file whose line index hasn't been built yet — the one case
+    /// where the count genuinely isn't known.
+    ///
+    /// Worth reading after writing content: a buffer built from spans that
+    /// forgot their newlines reports a plausible `length` and one line,
+    /// which is otherwise only visible by looking at the screen.
+    #[serde(default)]
+    pub line_count: Option<usize>,
     /// Whether this is a virtual buffer (not backed by a file)
     pub is_virtual: bool,
+    /// Whether this buffer is a live terminal (a PTY, not text). Terminal
+    /// buffers are also `is_virtual`; this distinguishes "a shell is
+    /// running here" from a plugin-owned scratch buffer, which is what
+    /// `describeWorkspace()` reports as the pane's `kind`.
+    #[serde(default)]
+    pub is_terminal: bool,
     /// Whether editing is disabled for this buffer.
     #[serde(default)]
     pub editing_disabled: bool,
@@ -588,8 +612,160 @@ pub struct SplitSnapshot {
     pub split_id: usize,
     /// Buffer currently shown in this split.
     pub buffer_id: BufferId,
+    /// Column of this pane's left edge, in terminal cells, measured from
+    /// the left edge of the editor area. This is what answers "which pane
+    /// is on the left" — compare `x` between panes rather than guessing
+    /// from list order.
+    pub x: u16,
+    /// Row of this pane's top edge, in terminal cells, measured from the
+    /// top of the editor area. Compare `y` to tell top from bottom.
+    pub y: u16,
+    /// Pane width in cells, separator excluded.
+    pub width: u16,
+    /// Pane height in cells, separator excluded.
+    pub height: u16,
     /// Viewport (top byte / dimensions) for this split's active buffer.
+    /// This is the *text* viewport: it excludes the tab bar and any
+    /// gutter, so it is smaller than the pane rect above.
     pub viewport: ViewportInfo,
+}
+
+/// One pane, as `describeWorkspace()` reports it: what is in it, where it
+/// is, and the ids needed to act on it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct PaneDescription {
+    /// Pass to `openFileInSplit`, `focusSplit`, `setSplitRatio`, ...
+    pub split_id: usize,
+    /// Buffer shown in this pane.
+    pub buffer_id: BufferId,
+    /// `"terminal"` (a PTY), `"file"` (backed by a path), or `"virtual"`
+    /// (a plugin-owned scratch buffer).
+    pub kind: String,
+    /// Absolute path when this pane shows a file, else `None`.
+    pub path: Option<PathBuf>,
+    /// Short label — the file name, or the buffer's name for the rest.
+    pub name: String,
+    /// Whether this pane has focus.
+    pub active: bool,
+    /// Unsaved changes.
+    pub modified: bool,
+    /// On-screen geometry, in editor-area cells. Panes are listed left to
+    /// right, top to bottom, so `panes[0]` is the leftmost/topmost; `x`
+    /// and `y` say so precisely.
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// The answer to "what does the editor look like right now" — the call an
+/// agent makes before deciding what to change.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct WorkspaceDescription {
+    /// Working directory of the active window.
+    pub cwd: PathBuf,
+    /// The window this script is pointed at.
+    pub window_id: u64,
+    /// Durable id of that window — the one still valid after a restart.
+    pub stable_id: String,
+    /// Every open workspace, so a script can tell whether the thing it
+    /// wants is in another window.
+    pub windows: Vec<WindowInfo>,
+    /// The active window's panes, in visual order (left to right, top to
+    /// bottom).
+    pub panes: Vec<PaneDescription>,
+    /// Which pane has focus; also flagged on the pane itself.
+    pub active_split_id: usize,
+}
+
+/// Where a new pane goes relative to the one being split.
+///
+/// With `direction: "vertical"` (a vertical divider, panes side by side),
+/// `Before` puts the new pane on the **left** and `After` on the right.
+/// With `direction: "horizontal"`, `Before` is **above** and `After` below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, rename_all = "lowercase")]
+pub enum SplitPlacement {
+    /// New pane first: left (vertical) or above (horizontal).
+    Before,
+    /// New pane second: right (vertical) or below (horizontal). The
+    /// default, and what the `split_vertical` / `split_horizontal`
+    /// commands do.
+    #[default]
+    After,
+}
+
+/// Which way the divider runs when splitting a pane.
+///
+/// Named for the *divider*, not the stacking, which is the convention
+/// vim and tmux use and the opposite of what "horizontal layout" suggests
+/// in some editors — so the two cases are spelled out on each variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export, rename_all = "lowercase")]
+pub enum SplitAxis {
+    /// A vertical divider: panes sit **side by side** (left | right).
+    #[default]
+    Vertical,
+    /// A horizontal divider: panes are **stacked** (top / bottom).
+    Horizontal,
+}
+
+/// Options for `editor.splitWindow()`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct SplitWindowOptions {
+    /// Divider orientation. Default `"vertical"` — panes side by side.
+    #[serde(default)]
+    #[ts(optional)]
+    pub direction: Option<SplitAxis>,
+    /// Which side the new pane lands on. Default `"after"`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub place: Option<SplitPlacement>,
+    /// First child's share of the space, 0.0–1.0. Default 0.5.
+    /// "First" is the left/top pane regardless of `place`.
+    #[serde(default)]
+    #[ts(optional)]
+    pub ratio: Option<f32>,
+    /// Open this file in the new pane. Relative paths resolve against the
+    /// window's root. When omitted the new pane shows the same buffer as
+    /// the pane it was split from, which is what the keyboard split does.
+    #[serde(default)]
+    #[ts(optional)]
+    pub file: Option<String>,
+    /// Leave focus where it was instead of moving it into the new pane.
+    /// Default false (the new pane takes focus, matching the keyboard
+    /// split).
+    #[serde(default)]
+    #[ts(optional)]
+    pub keep_focus: Option<bool>,
+}
+
+/// What `editor.splitWindow()` resolves to: the new pane, already
+/// laid out, so a caller can confirm where it landed without a
+/// follow-up `listSplits()`.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct SplitCreated {
+    /// The new pane's id — pass to `openFileInSplit`, `focusSplit`, ...
+    pub split_id: usize,
+    /// The pane the split was created from, still live and now smaller.
+    pub source_split_id: usize,
+    /// Buffer shown in the new pane.
+    pub buffer_id: BufferId,
+    /// Geometry of the new pane (see `SplitSnapshot`).
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
 }
 
 /// Payload delivered to a plugin's `editor.getNextKey()` Promise when
@@ -798,6 +974,22 @@ pub struct ScrollbarMarker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub priority: Option<i32>,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for SplitWindowOptions {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        // An omitted options bag means "all defaults", so `splitWindow()`
+        // with no argument is the plain vertical split a caller expects.
+        if value.is_undefined() || value.is_null() {
+            return Ok(Self::default());
+        }
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "SplitWindowOptions",
+            message: Some(e.to_string()),
+        })
+    }
 }
 
 #[cfg(feature = "plugins")]
@@ -3769,6 +3961,35 @@ pub enum PluginCommand {
     /// lazily during the render cycle.
     FlushLayout,
 
+    /// Move a buffer's tab from whichever pane holds it into `split_id`,
+    /// removing it from the source pane rather than leaving a copy behind.
+    ///
+    /// `SetSplitBuffer` only changes which of a pane's tabs is showing, so
+    /// building "this buffer belongs over there" out of it strands the
+    /// original tab in the pane it came from.
+    MoveBufferToSplit {
+        buffer_id: BufferId,
+        split_id: SplitId,
+    },
+
+    /// Split the active pane and answer with the new pane's id and
+    /// geometry. The layout mutation is applied — and the readable
+    /// snapshot refreshed — before the response is sent, so a caller that
+    /// awaits it can immediately read back what it just built.
+    SplitWindow {
+        options: SplitWindowOptions,
+        request_id: u64,
+    },
+
+    /// Answer once every command queued ahead of this one has been
+    /// applied and the plugin-visible snapshot has been refreshed.
+    ///
+    /// Mutations are queued and drained on the editor thread, so a read
+    /// issued in the same breath as a mutation sees the state from
+    /// *before* it. Awaiting this is what lets one script mutate and then
+    /// verify.
+    SyncSnapshot { request_id: u64 },
+
     /// Navigate to the next hunk in a composite buffer
     CompositeNextHunk { buffer_id: BufferId },
 
@@ -6491,6 +6712,8 @@ mod tests {
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
                 modified: true,
                 length: 100,
+                line_count: Some(1),
+                is_terminal: false,
                 is_virtual: false,
                 editing_disabled: false,
                 view_mode: "source".to_string(),
@@ -6538,6 +6761,8 @@ mod tests {
                     path: Some(std::path::PathBuf::from("/file1.txt")),
                     modified: false,
                     length: 50,
+                    line_count: Some(1),
+                    is_terminal: false,
                     is_virtual: false,
                     editing_disabled: false,
                     view_mode: "source".to_string(),
@@ -6555,6 +6780,8 @@ mod tests {
                     path: Some(std::path::PathBuf::from("/file2.txt")),
                     modified: true,
                     length: 100,
+                    line_count: Some(1),
+                    is_terminal: false,
                     is_virtual: false,
                     editing_disabled: false,
                     view_mode: "source".to_string(),
@@ -6572,6 +6799,8 @@ mod tests {
                     path: None,
                     modified: false,
                     length: 0,
+                    line_count: Some(1),
+                    is_terminal: false,
                     is_virtual: true,
                     editing_disabled: false,
                     view_mode: "source".to_string(),

@@ -298,7 +298,29 @@ type SplitSnapshot = {
 	*/
 	bufferId: BufferId;
 	/**
+	* Column of this pane's left edge, in terminal cells, measured from
+	* the left edge of the editor area. This is what answers "which pane
+	* is on the left" — compare `x` between panes rather than guessing
+	* from list order.
+	*/
+	x: number;
+	/**
+	* Row of this pane's top edge, in terminal cells, measured from the
+	* top of the editor area. Compare `y` to tell top from bottom.
+	*/
+	y: number;
+	/**
+	* Pane width in cells, separator excluded.
+	*/
+	width: number;
+	/**
+	* Pane height in cells, separator excluded.
+	*/
+	height: number;
+	/**
 	* Viewport (top byte / dimensions) for this split's active buffer.
+	* This is the *text* viewport: it excludes the tab bar and any
+	* gutter, so it is smaller than the pane rect above.
 	*/
 	viewport: ViewportInfo;
 };
@@ -417,9 +439,26 @@ type BufferInfo = {
 	*/
 	length: number;
 	/**
+	* Number of lines, when the buffer has been indexed. `None` for a very
+	* large file whose line index hasn't been built yet — the one case
+	* where the count genuinely isn't known.
+	*
+	* Worth reading after writing content: a buffer built from spans that
+	* forgot their newlines reports a plausible `length` and one line,
+	* which is otherwise only visible by looking at the screen.
+	*/
+	line_count: number | null;
+	/**
 	* Whether this is a virtual buffer (not backed by a file)
 	*/
 	is_virtual: boolean;
+	/**
+	* Whether this buffer is a live terminal (a PTY, not text). Terminal
+	* buffers are also `is_virtual`; this distinguishes "a shell is
+	* running here" from a plugin-owned scratch buffer, which is what
+	* `describeWorkspace()` reports as the pane's `kind`.
+	*/
+	is_terminal: boolean;
 	/**
 	* Whether editing is disabled for this buffer.
 	*/
@@ -2459,7 +2498,7 @@ interface EditorAPI {
 	/**
 	* Open a file in a specific split
 	*/
-	openFileInSplit(splitId: number, path: string, line: number, column: number): boolean;
+	openFileInSplit(splitId: number, path: string, line?: number, column?: number): boolean;
 	/**
 	* Open `path` as a regular buffer in forced large-file (file-backed)
 	* mode. The file is created (empty) if missing — designed for
@@ -2911,6 +2950,77 @@ interface EditorAPI {
 	* Translate a key for a specific plugin
 	*/
 	pluginTranslate(pluginName: string, key: string, args?: Record<string, unknown>): string;
+	/**
+	* Move a buffer into `splitId`: show it there, and remove its tab from
+	* the pane that held it before.
+	* 
+	* Use this to *rearrange* what is where. `setSplitBuffer` only changes
+	* which of a pane's existing tabs is visible, so building a move out of
+	* it leaves the original tab stranded in its old pane.
+	*/
+	moveBufferToSplit(bufferId: number, splitId: number): boolean;
+	/**
+	* Describe the editor as it is right now: the panes of the active
+	* window in visual order with their geometry and contents, which one
+	* has focus, the working directory, and every open workspace.
+	* 
+	* This is the call to start from. It answers "which pane is on the
+	* left", "is that a terminal or a file", and "what am I pointed at"
+	* in one read, instead of stitching `listSplits` + `getBufferInfo` +
+	* `getActiveSplitId` together and still not knowing pane order.
+	* 
+	* Reads the snapshot, so it is cheap and synchronous — but it
+	* observes the state as of the last applied batch. After a mutation,
+	* `await editor.flush()` first (or await the mutation itself, if it
+	* returns a promise) or this reports what was true before it.
+	* 
+	* ```js
+	* const ws = editor.describeWorkspace();
+	* const left = ws.panes[0];               // leftmost pane
+	* const term = ws.panes.find(p => p.kind === "terminal");
+	* ```
+	*/
+	describeWorkspace(): WorkspaceDescription;
+	/**
+	* Split the active pane and resolve with the new pane.
+	* 
+	* This is the primitive for arranging panes. `direction` names the
+	* *divider*: `"vertical"` puts panes side by side (left | right),
+	* `"horizontal"` stacks them (top / bottom). `place` says which side
+	* the new pane lands on — `"before"` is left/top, `"after"` (the
+	* default, and what the keyboard split does) is right/bottom.
+	* 
+	* Resolves *after* the layout has been applied and the readable
+	* snapshot refreshed, with the new pane's id and geometry — so
+	* `listSplits()` / `describeWorkspace()` called next observe the split
+	* that was just made, and "did it land on the left" is answered by the
+	* `x` that comes back rather than by guessing.
+	* 
+	* ```js
+	* // Terminal on the left, README on the right:
+	* const left = await editor.splitWindow({ direction: "vertical", place: "before" });
+	* await editor.createTerminal({ splitId: left.splitId });
+	* ```
+	* 
+	* Rejects when the pane could not be created.
+	*/
+	splitWindow(opts: SplitWindowOptions): Promise<SplitCreated>;
+	/**
+	* Wait for every mutation queued so far to be applied, then resolve.
+	* 
+	* Commands are queued and drained on the editor thread, so a read
+	* issued right after a mutation reports the state from *before* it:
+	* `setSplitRatio(...)` followed by `listSplits()` returns the old
+	* widths. Awaiting this closes that window, which is what lets a
+	* single script change the layout and then verify what it changed.
+	* 
+	* ```js
+	* editor.setSplitRatio(splitId, 0.3);
+	* await editor.flush();
+	* return editor.describeWorkspace();   // reflects the new ratio
+	* ```
+	*/
+	flush(): Promise<void>;
 	/**
 	* Create a composite buffer (async)
 	* 
@@ -3831,9 +3941,16 @@ interface EditorAPI {
 	*/
 	spawnProcessWait(processId: number): Promise<SpawnResult>;
 	/**
-	* Get buffer text range (async, returns request_id)
+	* Read buffer text.
+	* 
+	* `getBufferText(id)` returns the **whole buffer** — the common case,
+	* and the one that used to require reading `length` from
+	* `getBufferInfo` and passing it back. `getBufferText(id, start, end)`
+	* still reads a byte range, so existing callers are unaffected.
+	* 
+	* Byte offsets, not character or line offsets.
 	*/
-	getBufferText(bufferId: number, start: number, end: number): Promise<string>;
+	getBufferText(bufferId: number, start?: number, end?: number): Promise<string>;
 	/**
 	* Delay/sleep (async, returns request_id)
 	*/

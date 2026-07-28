@@ -6541,19 +6541,27 @@ const FRESH_CLI_ALLOW_SCRIPT = true;
 // Teaches the agent the verbatim `fresh` CLI verbs it can drive the editor
 // with. Keep the command strings exact — they're the agent's only reference.
 const FRESH_CLI_SYSTEM_PROMPT = [
-  "You are running inside a Fresh editor workspace and can drive it by submitting TypeScript to the editor's plugin runtime.",
-  "Always invoke the CLI through the `$FRESH_BIN` environment variable — it points at the exact editor binary running this workspace, so its verbs match this build (never rely on a bare `fresh` from PATH, which may be a different version).",
-  'Run a script: `"$FRESH_BIN" --cmd script run <file>`, or pipe it on stdin (`... --cmd script run <<\'EOF\' ... EOF`). Whatever the script returns is printed as JSON; a throw exits non-zero with the message.',
-  'The script body is an async function: `await` works at the top level, and `return value` is how you answer. The `editor` global is the same API plugins use.',
-  'Read the API before you write a script: `"$FRESH_BIN" --cmd script types` prints the paths of `fresh.d.ts` (the whole `editor` API) and `plugins.d.ts` (what each loaded plugin exports). These are large — grep them for what you need rather than reading them end to end.',
-  'Reach a plugin\'s own API with `editor.getPluginApi("<name>")`, e.g. the orchestrator that manages workspaces and agents.',
-  'Start another coding agent alongside you, in this workspace: `const r = await editor.getPluginApi("orchestrator").runAgent({ agent: "claude", prompt: "<task>" }); return r;`',
-  'Start one in a NEW workspace (its own git worktree): `return await editor.getPluginApi("orchestrator").newWorkspace({ agent: "claude", prompt: "<task>", path: "<repo>", newBranch: "<branch>" });`',
-  'Both answer with `{"workspaceId","windowId","root"}`. Record `workspaceId` if you need to refer to that workspace later — it stays valid across editor restarts; `windowId` does not.',
-  "`newWorkspace` resolves once the workspace is up (or rejects); after that the agent there runs on its own — you are not blocked and you do not see its output.",
-  'Open a file in this workspace: `"$FRESH_BIN" <path>` (this blocks until you close the file, so use it for hand-offs, not quick peeks).',
-  "Your script starts out pointed at the workspace you are in, and `FRESH_WINDOW_ID` holds that window's id. Treat the *active* window as transient — the user keeps working while your script runs, so after an `await` it may be someone else's. Prefer calls that take a window id explicitly (`editor.windowPath(FRESH_WINDOW_ID, path)`, `editor.openFileInBackground(path, FRESH_WINDOW_ID)`) over ones that act on whatever is focused.",
-  "Scripts run to completion and are then forgotten; anything they create (a terminal, a workspace) outlives them.",
+  "You are running inside a Fresh editor workspace and can drive it — change what is on screen, open files, split panes, start other agents — by submitting TypeScript to the editor's plugin runtime.",
+  "Always invoke the CLI through the `$FRESH_BIN` environment variable — it points at the exact editor binary running this workspace, so its verbs match this build (never rely on a bare `fresh` from PATH).",
+  "",
+  "The loop for any request about the editor is: orient, find the capability, act and verify in one script.",
+  "",
+  '1. ORIENT. `"$FRESH_BIN" --cmd script run <<\'EOF\'\nreturn editor.describeWorkspace();\nEOF` — one call gives you the panes of this window in visual order (left to right) with their geometry, what each one holds (`kind` is "terminal", "file" or "virtual"), which has focus, the cwd, and every open workspace. Start here rather than guessing.',
+  '2. FIND. `"$FRESH_BIN" --cmd script api <query>` searches the API by name and description and prints matching signatures with their docs — e.g. `script api split`, `script api terminal`. Use it instead of grepping the declaration files; `script types` prints their paths if you want the whole thing, but they are thousands of lines.',
+  '3. ACT, THEN VERIFY, in the same script. `"$FRESH_BIN" --cmd script run <<\'EOF\' ... EOF` (or pass a file). The body is an async function: `await` works at the top level and `return value` is how you answer; the result prints as JSON, a throw exits non-zero with the message.',
+  '4. CHECK FIRST when unsure. `"$FRESH_BIN" --cmd script check <file>` parses the script and flags any `editor.*` name that does not exist, without running it. A misremembered method name is otherwise indistinguishable from a missing feature.',
+  "",
+  "Mutations are queued and applied on the editor thread, so a read in the same script sees the state from *before* them unless you wait. Either await the mutation (the ones that answer, like `splitWindow`, resolve after they are applied) or `await editor.flush()` before reading. Verifying in the same run is what turns one round trip into an answer instead of a guess.",
+  "",
+  "Layout, concretely: `editor.splitWindow({ direction, place, ratio, file })` makes a pane and resolves with its id and geometry. `direction` names the divider — \"vertical\" puts panes side by side, \"horizontal\" stacks them. `place` is \"before\" (left/top) or \"after\" (right/bottom, the default). So \"terminal on the left, README on the right\", starting from a terminal pane, is one call: `await editor.splitWindow({ direction: \"vertical\", place: \"after\", file: \"README.md\" })`. Use `editor.moveBufferToSplit(bufferId, splitId)` to move something between panes rather than leaving a copy behind.",
+  "",
+  'Other workspaces and agents: `editor.getPluginApi("orchestrator")` exposes `runAgent({...})`, `newWorkspace({...})` and `listWorkspaces()`. Both launches answer with `{"workspaceId","windowId","root"}`; record `workspaceId` if you need that workspace later — it survives editor restarts, `windowId` does not. `newWorkspace` resolves once the workspace is up; the agent there then runs on its own and you do not see its output.',
+  "",
+  "You are changing a workspace a human is looking at, so prefer reversible moves, do not close or overwrite panes you were not asked to touch, and read back what you changed before reporting success.",
+  "Your script starts pointed at this window, whose id is in `FRESH_WINDOW_ID`. Treat the *active* window and pane as transient — the user keeps working while your script runs — so after an `await`, prefer calls that take an explicit id (`editor.windowPath(FRESH_WINDOW_ID, path)`, `editor.openFileInSplit(splitId, ...)`) over ones that act on whatever is focused.",
+  "Scripts run to completion and are then forgotten; anything they create (a pane, a terminal, a workspace) outlives them.",
+  "If you need the raw list of everything callable, `Object.getOwnPropertyNames(Object.getPrototypeOf(editor))` enumerates it at runtime.",
+  'Opening a file for a human to look at: `"$FRESH_BIN" <path>` blocks until they close it, so use it for hand-offs, not for peeks — a script with `editor.openFileInSplit` does not block.',
 ].join("\n");
 
 // Marker wrapping the injected block so an existing user file (codex/opencode
@@ -9384,6 +9392,33 @@ export type NewWorkspaceOptions = RunAgentOptions & {
   visit?: boolean;
 };
 
+/// One workspace, as `listWorkspaces()` reports it.
+export type WorkspaceSummary = {
+  /** Durable identity — survives editor restarts. Record this one. */
+  workspaceId: string;
+  /** Per-process window id; valid only for this editor run. */
+  windowId: number;
+  /** Display name shown on the dock. */
+  name: string;
+  /** Filesystem root (the worktree, for a worktree workspace). */
+  root: string;
+  /** The project this workspace was cut from. */
+  projectPath: string;
+  /** Checked-out branch, when known. */
+  branch?: string;
+  /** Whether the agent in this workspace is producing output right now. */
+  agentState: "working" | "idle";
+  /** Terminal tab title — in practice the agent's command line, since the
+   *  launcher titles the tab with it. Empty when the pane has no title. */
+  title: string;
+  /** Working-tree summary, when a git probe has completed. `dirty` counts
+   *  changed paths; `ahead`/`behind` are relative to the upstream. */
+  git?: { branch?: string; dirty?: number; ahead?: number; behind?: number };
+  /** Backend kind for a remote workspace (`ssh`, `docker`, …), absent for
+   *  a local one. */
+  backend?: string;
+};
+
 /// Public surface of the bundled `orchestrator` plugin, reachable through
 /// `editor.getPluginApi("orchestrator")`.
 export type OrchestratorApi = {
@@ -9399,6 +9434,10 @@ export type OrchestratorApi = {
    *  born, and waiting is what lets a failed create reject rather than
    *  silently do nothing. */
   newWorkspace(options?: NewWorkspaceOptions): Promise<AgentLaunchResult>;
+  /** Every workspace the dock is tracking, in dock order — what a caller
+   *  needs to find the one it made earlier, or to report on all of them.
+   *  Reads the live model, so it reflects creations made moments ago. */
+  listWorkspaces(): WorkspaceSummary[];
 };
 
 declare global {
@@ -9490,7 +9529,38 @@ async function newWorkspace(
   };
 }
 
-editor.exportPluginApi("orchestrator", { runAgent, newWorkspace });
+function listWorkspaces(): WorkspaceSummary[] {
+  // Reconcile first: a workspace created seconds ago (by a script, or by
+  // the dialog) is only in the model once the host's window list has been
+  // folded in, and a caller listing right after creating should see it.
+  reconcileSessions();
+  const windows = editor.listWindows();
+  return [...orchestratorSessions.values()].map((session) => {
+    const win = windows.find((w) => w.id === session.id);
+    const git = session.git?.info;
+    return {
+      workspaceId: win?.stable_id ?? "",
+      windowId: session.id,
+      name: session.label,
+      root: session.root,
+      projectPath: session.projectPath,
+      branch: session.branch ?? git?.branch,
+      agentState: session.state,
+      title: session.terminalTitle ?? "",
+      git: git
+        ? {
+          branch: git.branch,
+          dirty: git.dirty,
+          ahead: git.ahead,
+          behind: git.behind,
+        }
+        : undefined,
+      backend: session.remote?.kind,
+    };
+  });
+}
+
+editor.exportPluginApi("orchestrator", { runAgent, newWorkspace, listWorkspaces });
 
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`
