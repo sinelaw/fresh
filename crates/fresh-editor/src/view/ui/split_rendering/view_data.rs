@@ -34,6 +34,110 @@ pub(super) struct ViewData {
     pub lines: Vec<ViewLine>,
 }
 
+/// Width at which one visual row wraps.
+///
+/// Wrapping is always applied for safety, but with different thresholds. When
+/// line_wrap is on: wrap at viewport width (or `wrap_column` if set). When
+/// line_wrap is off: wrap at `MAX_SAFE_LINE_WIDTH` to prevent memory
+/// exhaustion from extremely long lines.
+///
+/// When wrapping is on, reserve the last content column so the end-of-line
+/// cursor never lands on top of the vertical scrollbar. The cursor sits one
+/// column past the last rendered character, so a row that fills
+/// `content_width` exactly would place the EOL cursor on the scrollbar track
+/// (which is drawn in the column immediately to the right of the content
+/// area). `saturating_sub` keeps this safe at very small widths where the
+/// guard inside `apply_wrapping_transform` will short-circuit anyway.
+fn effective_wrap_width(
+    viewport: &Viewport,
+    line_wrap_enabled: bool,
+    content_width: usize,
+) -> usize {
+    if !line_wrap_enabled {
+        return MAX_SAFE_LINE_WIDTH;
+    }
+    if viewport.grid_wrap {
+        // Terminal-grid wrap (fresh#2649): wrap at exactly the capture-time
+        // PTY column count. No EOL-cursor column is reserved and no clamp to
+        // the content width — the grid is one column wider than the
+        // scroll-back content area (the live view reclaims the scrollbar
+        // column), and clamping or reserving would re-wrap every full-width
+        // grid row one cell early, reflowing the whole view on entry. Full
+        // rows render with their last cell under the scrollbar, exactly like
+        // the non-wrapped exit frame always has.
+        return viewport.grid_cols();
+    }
+    let base = if let Some(col) = viewport.wrap_column {
+        col.min(content_width)
+    } else {
+        content_width
+    };
+    base.saturating_sub(1).max(1)
+}
+
+/// Character budget for [`build_base_tokens`], or `None` to bound the read by
+/// source lines alone.
+///
+/// Only meaningful under soft wrap. There, a logical line occupies
+/// `ceil(width / effective_width)` rows, so the rows the renderer can possibly
+/// draw are covered by about `rows × effective_width` characters — a few
+/// thousand, against the ~540,000 an unbudgeted read pulls in on a
+/// single-line file (`lines_seen` advances only once per `MAX_SAFE_LINE_WIDTH`
+/// characters, so the line bound never fires inside one long line).
+///
+/// With wrapping off there is no budget to give: a long line is chopped into
+/// rows of `MAX_SAFE_LINE_WIDTH` columns each, so covering the viewport's rows
+/// genuinely costs `rows × MAX_SAFE_LINE_WIDTH` characters.
+fn base_char_budget(
+    viewport: &Viewport,
+    line_wrap_enabled: bool,
+    effective_width: usize,
+    adjusted_visible_count: usize,
+    cursor_positions: &[usize],
+) -> Option<usize> {
+    if !line_wrap_enabled {
+        return None;
+    }
+
+    // Rows the caller may draw: the renderer skips `top_view_line_offset` rows
+    // of the first logical line before the visible window starts, and those
+    // skipped rows still have to be built.
+    let rows = viewport
+        .top_view_line_offset
+        .saturating_add(adjusted_visible_count)
+        .saturating_add(4);
+
+    // Characters per row and columns per row are not the same number: a
+    // double-width glyph fills two columns, a combining mark or ZWJ fills
+    // none, and a tab fills up to `tab_size`. Only the zero-width direction
+    // can make a row consume *more* characters than columns, so pad
+    // generously rather than trying to be exact — over-reading a little is
+    // free next to the 50× the budget saves.
+    let mut budget = rows
+        .saturating_mul(effective_width.max(1))
+        .saturating_mul(2)
+        .saturating_add(1024);
+
+    // The scroll math (`ensure_visible_in_layout`) locates the cursor by
+    // searching the rows this build produces, so the build must reach the
+    // cursor even when it sits past the budgeted window — otherwise a cursor
+    // moved far down a long wrapped line would never scroll into view.
+    if let Some(furthest) = cursor_positions
+        .iter()
+        .copied()
+        .filter(|&pos| pos >= viewport.top_byte)
+        .max()
+    {
+        budget = budget.max(
+            (furthest - viewport.top_byte)
+                .saturating_add(effective_width.saturating_mul(2))
+                .saturating_add(1024),
+        );
+    }
+
+    Some(budget)
+}
+
 /// Run the entire view pipeline for the current viewport:
 /// base tokens → (optional plugin transform) → soft breaks → conceal →
 /// wrapping → [`ViewLine`] conversion → virtual lines → folding.
@@ -74,6 +178,11 @@ pub(super) fn build_view_data(
     // depth for any tokens produced by plugin view transforms).
     let fold_skip = fold_skip_set(&state.buffer, &state.marker_list, folds);
 
+    // Width one visual row wraps at. Computed here — before the token build
+    // rather than just before `apply_wrapping_transform` — because it also
+    // sizes the token build's character budget (see `base_char_budget`).
+    let effective_width = effective_wrap_width(viewport, line_wrap_enabled, content_width);
+
     // Build base token stream from source, skipping any source-byte range
     // that falls inside a collapsed fold.
     let base_tokens = build_base_tokens(
@@ -84,6 +193,13 @@ pub(super) fn build_view_data(
         is_binary,
         line_ending,
         &fold_skip,
+        base_char_budget(
+            viewport,
+            line_wrap_enabled,
+            effective_width,
+            adjusted_visible_count,
+            cursor_positions,
+        ),
     );
 
     // Use plugin transform if available, otherwise use base tokens
@@ -141,43 +257,8 @@ pub(super) fn build_view_data(
         }
     }
 
-    // Apply wrapping transform - always enabled for safety, but with
-    // different thresholds. When line_wrap is on: wrap at viewport width (or
-    // wrap_column if set). When line_wrap is off: wrap at
-    // MAX_SAFE_LINE_WIDTH to prevent memory exhaustion from extremely long
-    // lines.
-    //
-    // When wrapping is on, reserve the last content column so the
-    // end-of-line cursor never lands on top of the vertical scrollbar.
-    // The cursor sits one column past the last rendered character, so
-    // a row that fills `content_width` exactly would place the EOL
-    // cursor on the scrollbar track (which is drawn in the column
-    // immediately to the right of the content area).  `saturating_sub`
-    // keeps this safe at very small widths where the guard inside
-    // `apply_wrapping_transform` will short-circuit anyway.
-    let effective_width = if line_wrap_enabled {
-        if viewport.grid_wrap {
-            // Terminal-grid wrap (fresh#2649): wrap at exactly the
-            // capture-time PTY column count. No EOL-cursor column is
-            // reserved and no clamp to the content width — the grid is one
-            // column wider than the scroll-back content area (the live view
-            // reclaims the scrollbar column), and clamping or reserving
-            // would re-wrap every full-width grid row one cell early,
-            // reflowing the whole view on entry. Full rows render with
-            // their last cell under the scrollbar, exactly like the
-            // non-wrapped exit frame always has.
-            viewport.grid_cols()
-        } else {
-            let base = if let Some(col) = viewport.wrap_column {
-                col.min(content_width)
-            } else {
-                content_width
-            };
-            base.saturating_sub(1).max(1)
-        }
-    } else {
-        MAX_SAFE_LINE_WIDTH
-    };
+    // Wrapping is applied below at `effective_width` (computed before the
+    // token build, above).
     let hanging_indent = line_wrap_enabled && viewport.wrap_indent && !viewport.grid_wrap;
 
     // Splice inline virtual text (inlay hints) into the stream BEFORE
@@ -346,7 +427,17 @@ pub(super) fn build_view_data(
                     }
                 }
             }
-            if !has_injected {
+            // `j == source_lines.len()` means nothing after this group proves
+            // where it ends: the window may have stopped mid-line, either at
+            // the row budget (`base_char_budget`) or at the `visible_count`
+            // line bound. Caching a partial run would tell every later reader
+            // the logical line is shorter than it is, so publish only groups a
+            // following row closes off. On a file that is one enormous line
+            // this skips the writeback entirely — which is what we want there
+            // anyway: the entry would be a deep copy of every row of that line,
+            // stored once and evicted before any reader could use it.
+            let group_is_complete = j < source_lines.len();
+            if !has_injected && group_is_complete {
                 // Slice `source_lines[i..j]` corresponds to one logical
                 // line with no plugin-injected reshaping.  Store it.
                 //

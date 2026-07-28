@@ -1318,7 +1318,10 @@ impl TextBuffer {
     /// NOTE: Currently loads entire buffers on-demand. Future optimization would split
     /// large pieces and load only LOAD_CHUNK_SIZE chunks at a time.
     pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Result<Vec<u8>> {
-        let _span = tracing::info_span!("get_text_range_mut", offset, bytes).entered();
+        // `trace`, not `info`: this fires once per chunk of every line read, so
+        // on a long-line file an enabled span formats its fields thousands of
+        // times per frame — enough to show up as several percent of total CPU.
+        let _span = tracing::trace_span!("get_text_range_mut", offset, bytes).entered();
         if bytes == 0 {
             return Ok(Vec::new());
         }

@@ -33,6 +33,7 @@ Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate ins
 
 ### Bug Fixes
 
+* **Editing a file that is one very long line is much faster** - a file with no line breaks (minified JS, a one-line JSON blob, a long log record) made every frame tokenize and wrap ~540 KB of text to fill a screen that holds a few thousand characters, and every keystroke walk back to the line start one byte at a time — so typing got slower the further right the cursor was. Both now scale with the viewport instead of the line.
 * **Orchestrator & dock**
   * Codex "Auto mode" works again (it was passing a flag recent Codex CLI rejects).
   * Dock rows are fully clickable in compact (list) view, ordered by recency, and auto-name themselves from their terminal.
