@@ -476,6 +476,105 @@ struct PreparedLine {
     ends_with_newline: bool,
 }
 
+/// Longest logical line highlighted in full. Beyond this, only the
+/// window of the line around the viewport is parsed (see
+/// [`prepare_line_window`]).
+///
+/// Syntect parses a line in one shot, so a pathological line (minified
+/// JS/JSON one-liners are routinely hundreds of KB) costs O(line length)
+/// per parse. Worse, such a line is usually the *whole file* and carries
+/// no trailing newline, so the cache can never commit a safe tail state
+/// (see `extend_cache_forward`) and every render re-parses all of it —
+/// which is what pinned a CPU core on a 441 KB single-line JSON.
+/// Set to `MAX_PARSE_BYTES` deliberately: at or below that size the
+/// parse range is the whole file, so a huge line is parsed once and
+/// committed at EOF (exact colours, cached, no per-frame cost). Only
+/// past it — where the parse range is already a viewport window and the
+/// EOF commit cannot apply — is windowing the lesser evil.
+const MAX_HIGHLIGHT_LINE_BYTES: usize = MAX_PARSE_BYTES;
+
+/// Extra bytes parsed either side of the viewport inside an over-long
+/// line, so small scrolls stay inside the parsed window and spans that
+/// start just off-screen still reach it.
+const HUGE_LINE_WINDOW_PAD: usize = 4 * 1024;
+
+/// Prepare only the viewport-overlapping window of an over-long line.
+///
+/// Returns `None` when the line is short enough to parse whole (the
+/// normal path) or the window isn't valid UTF-8. On `Some`, the caller
+/// parses the window at the returned ABSOLUTE offset using a *clone* of
+/// the parse state: the skipped bytes never reach syntect, so the state
+/// after the line is taken to be the state before it. That is an
+/// approximation (a huge line that opens a string or block comment would
+/// mis-colour what follows), and it is the same trade every editor makes
+/// for pathological lines — bounded, predictable work beats correct
+/// colours nobody can read.
+fn prepare_line_window(
+    content_bytes: &[u8],
+    pos: usize,
+    line_end: usize,
+    line_abs_start: usize,
+    viewport_start: usize,
+    viewport_end: usize,
+) -> Option<(usize, PreparedLine)> {
+    let line_bytes = &content_bytes[pos..line_end];
+    // Content length excludes the terminator, which must never land
+    // inside the window (syntect treats `\n` as the line end).
+    let content_len = line_bytes.len() - {
+        let mut n = 0;
+        if line_bytes.last() == Some(&b'\n') {
+            n += 1;
+            if line_bytes.len() >= 2 && line_bytes[line_bytes.len() - 2] == b'\r' {
+                n += 1;
+            }
+        }
+        n
+    };
+    if content_len <= MAX_HIGHLIGHT_LINE_BYTES {
+        return None;
+    }
+
+    // Desired window in absolute bytes, clamped to the line's content
+    // and to the per-parse budget.
+    let line_abs_end = line_abs_start + content_len;
+    let mut start = viewport_start
+        .saturating_sub(HUGE_LINE_WINDOW_PAD)
+        .max(line_abs_start)
+        .min(line_abs_end);
+    let mut end = viewport_end
+        .saturating_add(HUGE_LINE_WINDOW_PAD)
+        .min(line_abs_end)
+        .max(start);
+    if end - start > MAX_HIGHLIGHT_LINE_BYTES {
+        end = start + MAX_HIGHLIGHT_LINE_BYTES;
+    }
+
+    // Snap to UTF-8 char boundaries (widening start, narrowing end) so
+    // the slice decodes.
+    let rel = |abs: usize| pos + (abs - line_abs_start);
+    while start > line_abs_start && (content_bytes[rel(start)] & 0xC0) == 0x80 {
+        start -= 1;
+    }
+    while end > start && end < line_abs_end && (content_bytes[rel(end)] & 0xC0) == 0x80 {
+        end -= 1;
+    }
+    if end <= start {
+        return None;
+    }
+
+    let slice = std::str::from_utf8(&content_bytes[rel(start)..rel(end)]).ok()?;
+    Some((
+        start,
+        PreparedLine {
+            // No trailing `\n`: the window is a line fragment, so
+            // syntect must not see it as a completed line.
+            line_for_syntect: slice.to_string(),
+            line_content_len: slice.len(),
+            ends_with_newline: false,
+        },
+    ))
+}
+
 /// Slice the line starting at `pos` from `content_bytes` and prepare
 /// it for `parse_line`. Returns `(line_end, line_byte_len, prepared)`:
 /// callers always advance by `line_byte_len` to `line_end`; `prepared`
@@ -1276,7 +1375,33 @@ impl TextMateEngine {
 
             let (line_end, line_byte_len, prepared) = prepare_line_at(content_bytes, pos);
             let mut newline_terminated = false;
-            if let Some(prepared) = prepared {
+            // Over-long line: parse only the viewport window, from a
+            // clone of the state, so the per-frame cost is bounded by
+            // the window rather than the line (see prepare_line_window).
+            if let Some((window_offset, window)) = prepare_line_window(
+                content_bytes,
+                pos,
+                line_end,
+                current_offset,
+                viewport_start,
+                viewport_end,
+            ) {
+                let mut windowed = snapshot.clone();
+                self.parse_snapshot_line(
+                    &mut windowed,
+                    &window,
+                    window_offset,
+                    |byte_start, byte_end, category| {
+                        new_spans.push(CachedSpan {
+                            range: byte_start..byte_end,
+                            category,
+                        });
+                    },
+                );
+                // `snapshot` is deliberately untouched: the state after
+                // the line is taken to be the state before it.
+                newline_terminated = prepared.is_some_and(|p| p.ends_with_newline);
+            } else if let Some(prepared) = prepared {
                 let parse_ok = self.parse_snapshot_line(
                     &mut snapshot,
                     &prepared,
@@ -1301,6 +1426,19 @@ impl TextMateEngine {
                 safe_offset = current_offset;
                 safe_snapshot = snapshot.clone();
             }
+        }
+
+        // The trailing partial line is committable when the parse
+        // reached the buffer end: those bytes are final unless the
+        // buffer grows, and both cache-consuming paths in
+        // `highlight_viewport` require `last_buffer_len == buffer.len()`
+        // (plus no pending edit), so a grown buffer can never resume
+        // from this state. Without this, a file that is one huge line
+        // with no trailing newline (a minified JSON one-liner) can
+        // never commit anything and re-parses in full on every frame.
+        if parse_end >= buf_len {
+            safe_offset = current_offset;
+            safe_snapshot = snapshot.clone();
         }
 
         self.stats.bytes_parsed += parse_end - extension_start;
@@ -1396,7 +1534,36 @@ impl TextMateEngine {
             // state continuity, but their spans wouldn't be returned anyway.
             let collect_spans = current_offset + line_byte_len > desired_parse_start;
             let mut newline_terminated = false;
-            if let Some(prepared) = prepared {
+            // Over-long line: parse only the viewport window, from a
+            // clone of the state (see prepare_line_window).
+            if let Some((window_offset, window)) = prepare_line_window(
+                content_bytes,
+                pos,
+                line_end,
+                current_offset,
+                viewport_start,
+                viewport_end,
+            ) {
+                let mut windowed = snapshot.clone();
+                self.parse_snapshot_line(
+                    &mut windowed,
+                    &window,
+                    window_offset,
+                    |byte_start, byte_end, category| {
+                        if !collect_spans {
+                            return;
+                        }
+                        let clamped_start = byte_start.max(desired_parse_start);
+                        if clamped_start < byte_end {
+                            spans.push(CachedSpan {
+                                range: clamped_start..byte_end,
+                                category,
+                            });
+                        }
+                    },
+                );
+                newline_terminated = prepared.is_some_and(|p| p.ends_with_newline);
+            } else if let Some(prepared) = prepared {
                 let parse_ok = self.parse_snapshot_line(
                     &mut snapshot,
                     &prepared,
@@ -1441,6 +1608,14 @@ impl TextMateEngine {
             for (marker_id, _) in markers_here {
                 self.checkpoint_states.insert(marker_id, snapshot.clone());
             }
+        }
+
+        // Same EOF rule as `extend_cache_forward`: a trailing partial
+        // line that ends at the buffer end is committable, because the
+        // cache-consuming paths require an unchanged buffer length.
+        if parse_end >= buffer.len() {
+            safe_offset = current_offset;
+            safe_snapshot = snapshot.clone();
         }
 
         self.stats.bytes_parsed += parse_end.saturating_sub(actual_start);
@@ -2521,21 +2696,23 @@ mod tests {
         }
     }
 
-    /// When a buffer is parsed with no trailing newline (the streaming
-    /// case for `git show` output between writes), the engine must not
-    /// commit cache tail state at the end of the partial trailing line.
-    /// With syntect's `Diff` grammar (line-anchored `^\+.*` etc.), the
-    /// state at end-of-input has popped `markup.inserted`, so any
-    /// follow-up parse from there would see the rest of the line as a
-    /// new line in `source.diff` and emit no scope — losing the bg
-    /// inside otherwise-green `+` lines.
+    /// A buffer parsed to its end with no trailing newline (the
+    /// streaming case for `git show` output between writes) DOES commit
+    /// its trailing partial line to the cache.
     ///
-    /// This test pins the boundary the cache commits at: after parsing
-    /// a buffer ending mid-line, `cache.range.end` must be the last
-    /// newline (or `desired_parse_start` if no newline was seen), not
-    /// the end of the partial line.
+    /// The bytes are final unless the buffer grows, and both
+    /// cache-consuming paths in `highlight_viewport` require
+    /// `last_buffer_len == buffer.len()` and no pending edit — so a
+    /// grown buffer can never resume from this state. That length gate,
+    /// not the commit boundary, is what prevents the streaming artefact;
+    /// `test_streaming_partial_diff_line_keeps_bg_when_rest_arrives`
+    /// pins the rendered outcome.
+    ///
+    /// Committing here is what lets a file that is one huge line with no
+    /// trailing newline (a minified JSON one-liner, fresh#2838) be
+    /// parsed once instead of re-parsed on every frame.
     #[test]
-    fn test_partial_trailing_line_not_committed_to_cache() {
+    fn test_partial_trailing_line_committed_when_parse_reaches_eof() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
         let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
@@ -2550,13 +2727,63 @@ mod tests {
             let (cache_end, has_tail) = tm.cache_commit_for_test();
             assert_eq!(
                 cache_end,
-                "+complete\n".len(),
-                "cache should commit at the last newline, not into the partial \
-                 trailing line — committing past the newline causes streaming \
-                 forward-extension to parse the line's continuation in the wrong \
-                 grammar context, losing the diff bg."
+                content.len(),
+                "a parse that reached the buffer end should commit the whole \
+                 range, so the next frame is a cache hit rather than a re-parse"
             );
-            assert!(has_tail, "tail state should be saved at the safe boundary");
+            assert!(
+                has_tail,
+                "tail state should be saved at the commit boundary"
+            );
+        }
+    }
+
+    /// Behavioural guard for the streaming case: when more bytes of a
+    /// partially-streamed `+` line arrive, every byte of the completed
+    /// line must still carry the diff-add background.
+    ///
+    /// This is the artefact the "never commit past the last newline"
+    /// rule exists to prevent (see `extend_cache_forward`): with
+    /// syntect's line-anchored `Diff` grammar, resuming from a state
+    /// captured mid-line parses the continuation in `source.diff` with
+    /// no scope, leaving a bg-less dark bar inside an otherwise green
+    /// line.  Unlike `test_partial_trailing_line_not_committed_to_cache`
+    /// (which pins where the cache commits), this asserts the rendered
+    /// outcome, so it stays valid if the commit strategy changes.
+    #[test]
+    fn test_streaming_partial_diff_line_keeps_bg_when_rest_arrives() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("commit.diff"), None, &registry);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // Refresh 1: the second `+` line has only partially arrived.
+        let first = "+complete\n+partial";
+        let buf1 = Buffer::from_str(first, 0, test_fs());
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            let _ = tm.highlight_viewport(&buf1, 0, first.len(), &theme, 0);
+        }
+
+        // Refresh 2: the rest of that same line (and its newline) arrived.
+        let second = "+complete\n+partial line continues to here\n";
+        let buf2 = Buffer::from_str(second, 0, test_fs());
+        if let HighlightEngine::TextMate(ref mut tm) = engine {
+            let spans = tm.highlight_viewport(&buf2, 0, second.len(), &theme, 0);
+            let line_start = "+complete\n".len();
+            let line_end = second.len() - 1; // exclude the trailing newline
+            for byte_pos in line_start..line_end {
+                let span = spans
+                    .iter()
+                    .find(|s| s.range.start <= byte_pos && s.range.end > byte_pos);
+                assert_eq!(
+                    span.and_then(|s| s.bg),
+                    Some(theme.diff_add_bg),
+                    "byte {} (`{}`) of the completed `+` line lost its diff bg — \
+                     the streaming continuation was parsed from a mid-line state",
+                    byte_pos,
+                    second[byte_pos..byte_pos + 1].escape_debug(),
+                );
+            }
         }
     }
 
