@@ -3162,6 +3162,19 @@ fn run_open_files_command(
 /// caller should abort quietly — a message has already been printed), and
 /// `Err` on a protocol-level error.
 fn client_handshake(conn: &fresh::server::ipc::ClientConnection) -> AnyhowResult<bool> {
+    client_handshake_reading(conn, || Ok(conn.read_control()?))
+}
+
+/// [`client_handshake`], but with the reply read through a caller-supplied
+/// reader. The command-channel client passes a deadline-bounded one so a server
+/// that accepts the connection and then goes quiet is an error, not a hang.
+fn client_handshake_reading<F>(
+    conn: &fresh::server::ipc::ClientConnection,
+    mut read_reply: F,
+) -> AnyhowResult<bool>
+where
+    F: FnMut() -> AnyhowResult<Option<String>>,
+{
     use fresh::server::protocol::{
         ClientControl, ClientHello, ServerControl, TermSize, PROTOCOL_VERSION,
     };
@@ -3170,8 +3183,7 @@ fn client_handshake(conn: &fresh::server::ipc::ClientConnection) -> AnyhowResult
     let hello = ClientHello::new(TermSize::new(80, 24));
     conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello))?)?;
 
-    let response = conn
-        .read_control()?
+    let response = read_reply()?
         .ok_or_else(|| anyhow::anyhow!("Server closed connection during handshake"))?;
 
     match serde_json::from_str::<ServerControl>(&response)? {
@@ -3381,48 +3393,112 @@ fn resolve_cmd_socket(session_override: Option<&str>) -> AnyhowResult<SocketPath
     Ok(socket_paths)
 }
 
-/// Connect to the resolved socket and complete the client handshake.
-fn connect_cmd(socket_paths: &SocketPaths) -> AnyhowResult<fresh::server::ipc::ClientConnection> {
+/// How long a command-channel client waits for the editor to answer before
+/// giving up. Replies are computed on the editor thread and sent within a frame,
+/// so this only ever trips when the editor cannot answer at all — in which case
+/// an agent must get an error it can report, not an indefinite hang. Override
+/// with `FRESH_CMD_TIMEOUT_MS` for an editor deliberately parked (e.g. under a
+/// debugger).
+fn cmd_reply_timeout() -> std::time::Duration {
+    const DEFAULT_MS: u64 = 10_000;
+    let ms = std::env::var("FRESH_CMD_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .unwrap_or(DEFAULT_MS);
+    std::time::Duration::from_millis(ms)
+}
+
+/// Turn a bounded-read failure into an actionable message. A timeout here means
+/// the editor accepted the connection but never answered — the signature of a
+/// build whose event loop doesn't drain the control socket.
+fn cmd_read_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::TimedOut {
+        anyhow::anyhow!(
+            "the Fresh editor accepted the connection but did not answer within {:?}. \
+             It may be busy, or running a build without command-channel support; \
+             raise the wait with FRESH_CMD_TIMEOUT_MS if it is merely slow.",
+            cmd_reply_timeout()
+        )
+    } else {
+        anyhow::Error::from(e)
+    }
+}
+
+/// A live command-channel connection: the socket plus the reader that carries
+/// bytes buffered between replies. One reader for the whole exchange — a fresh
+/// one per read would drop anything that arrived in the same chunk as the
+/// previous message.
+struct CmdConnection {
+    conn: fresh::server::ipc::ClientConnection,
+    reader: fresh::server::ipc::ControlReader,
+}
+
+impl CmdConnection {
+    fn send(&self, msg: &fresh::server::protocol::ClientControl) -> AnyhowResult<()> {
+        self.conn.write_control(&serde_json::to_string(msg)?)?;
+        Ok(())
+    }
+
+    /// Read one reply, bounded by [`cmd_reply_timeout`].
+    fn recv(&mut self) -> AnyhowResult<Option<fresh::server::protocol::ServerControl>> {
+        let line = self
+            .reader
+            .read_line_timeout(cmd_reply_timeout())
+            .map_err(cmd_read_error)?;
+        match line {
+            Some(line) => Ok(Some(serde_json::from_str(&line)?)),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Connect to the resolved socket and complete the client handshake. Reads are
+/// deadline-bounded, so the client can never hang on an editor that accepts the
+/// connection and then never answers.
+fn connect_cmd(socket_paths: &SocketPaths) -> AnyhowResult<CmdConnection> {
     let conn = fresh::server::ipc::ClientConnection::connect(socket_paths)?;
-    if !client_handshake(&conn)? {
+    let mut reader = conn.control_reader();
+    let accepted = client_handshake_reading(&conn, || {
+        reader
+            .read_line_timeout(cmd_reply_timeout())
+            .map_err(cmd_read_error)
+    })?;
+    if !accepted {
         // client_handshake already printed the mismatch reason.
         anyhow::bail!("handshake with the Fresh editor failed");
     }
-    Ok(conn)
+    Ok(CmdConnection { conn, reader })
 }
 
-/// Read control replies until a `CommandList` arrives (or an error/EOF).
+/// Read control replies until a `CommandList` arrives (or an error/EOF/timeout).
 fn read_command_list(
-    conn: &fresh::server::ipc::ClientConnection,
+    conn: &mut CmdConnection,
 ) -> AnyhowResult<Vec<fresh::server::protocol::CommandInfo>> {
     use fresh::server::protocol::ServerControl;
     loop {
-        match conn.read_control()? {
-            Some(line) => match serde_json::from_str::<ServerControl>(&line)? {
-                ServerControl::CommandList { commands } => return Ok(commands),
-                ServerControl::Error { message } => anyhow::bail!("server error: {}", message),
-                _ => continue,
-            },
+        match conn.recv()? {
+            Some(ServerControl::CommandList { commands }) => return Ok(commands),
+            Some(ServerControl::Error { message }) => anyhow::bail!("server error: {}", message),
+            Some(_) => continue,
             None => anyhow::bail!("server closed the connection before answering"),
         }
     }
 }
 
-/// Read control replies until a `CommandResult` arrives (or an error/EOF).
+/// Read control replies until a `CommandResult` arrives (or an error/EOF/timeout).
 /// Returns `(ok, error, output)`.
 fn read_command_result(
-    conn: &fresh::server::ipc::ClientConnection,
+    conn: &mut CmdConnection,
 ) -> AnyhowResult<(bool, Option<String>, Option<String>)> {
     use fresh::server::protocol::ServerControl;
     loop {
-        match conn.read_control()? {
-            Some(line) => match serde_json::from_str::<ServerControl>(&line)? {
-                ServerControl::CommandResult { ok, error, output } => {
-                    return Ok((ok, error, output))
-                }
-                ServerControl::Error { message } => anyhow::bail!("server error: {}", message),
-                _ => continue,
-            },
+        match conn.recv()? {
+            Some(ServerControl::CommandResult { ok, error, output }) => {
+                return Ok((ok, error, output))
+            }
+            Some(ServerControl::Error { message }) => anyhow::bail!("server error: {}", message),
+            Some(_) => continue,
             None => anyhow::bail!("server closed the connection before answering"),
         }
     }
@@ -3480,11 +3556,11 @@ fn cmd_list(session: Option<&str>, flags: &[&str]) -> AnyhowResult<()> {
     let json = flags.contains(&"--json");
 
     let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::ListCommands {
+    let mut conn = connect_cmd(&socket)?;
+    conn.send(&ClientControl::ListCommands {
         include_args: false,
-    })?)?;
-    let mut commands = read_command_list(&conn)?;
+    })?;
+    let mut commands = read_command_list(&mut conn)?;
     commands.sort_by(|a, b| a.id.cmp(&b.id));
 
     if json {
@@ -3504,11 +3580,9 @@ fn cmd_describe(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult
     let json = flags.contains(&"--json");
 
     let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::ListCommands {
-        include_args: true,
-    })?)?;
-    let commands = read_command_list(&conn)?;
+    let mut conn = connect_cmd(&socket)?;
+    conn.send(&ClientControl::ListCommands { include_args: true })?;
+    let commands = read_command_list(&mut conn)?;
 
     let info = match commands.iter().find(|c| c.id == id) {
         Some(info) => info,
@@ -3570,13 +3644,13 @@ fn run_command_id(
     use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
-    let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::RunCommand {
+    let mut conn = connect_cmd(&socket)?;
+    conn.send(&ClientControl::RunCommand {
         id: id.to_string(),
         args,
-    })?)?;
+    })?;
 
-    let (ok, error, output) = read_command_result(&conn)?;
+    let (ok, error, output) = read_command_result(&mut conn)?;
     if let Some(out) = output {
         if !out.is_empty() {
             println!("{}", out);
@@ -3608,9 +3682,9 @@ fn workspace_new(session: Option<&str>, dir: &str) -> AnyhowResult<()> {
 
     let socket = resolve_cmd_socket(session)?;
     let conn = connect_cmd(&socket)?;
-    conn.write_control(&serde_json::to_string(&ClientControl::OpenWindow {
+    conn.send(&ClientControl::OpenWindow {
         path: abs.to_string_lossy().into_owned(),
-    })?)?;
+    })?;
     // OpenWindow is fire-and-forget (the server sends no reply), matching
     // `forward_to_session`.
     Ok(())

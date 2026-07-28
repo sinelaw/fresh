@@ -185,7 +185,13 @@ pub fn pump(editor: &mut Editor) -> bool {
     let Some(shared) = GLOBAL.get() else {
         return false;
     };
+    pump_shared(shared, editor)
+}
 
+/// The body of [`pump`], against an explicit [`Shared`] rather than the
+/// process-global one — so a test can drive a socket bound by
+/// [`bind_and_spawn`] without touching (or racing on) the global.
+fn pump_shared(shared: &Shared, editor: &mut Editor) -> bool {
     let mut changed = false;
 
     // Drain decoded requests. The lock is only contended for the brief
@@ -530,12 +536,23 @@ fn read_msg(
 
 /// A unique-per-process session id: `local-<pid>-<nanos>`. The nanosecond
 /// component guards against pid reuse across quick successive runs.
+///
+/// The clock component is truncated to its low 40 bits and printed in hex (10
+/// chars instead of 19). The id becomes a socket *filename* under the runtime
+/// dir, and a Unix `sockaddr_un` path is capped at ~108 bytes — a shorter name
+/// leaves that much more headroom for the runtime dir itself before `bind`
+/// fails outright. 40 bits of nanoseconds still spans ~18 minutes, far longer
+/// than the window in which a pid could plausibly be recycled.
 fn generate_session_id() -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    format!("local-{}-{}", std::process::id(), nanos)
+    format!(
+        "local-{}-{:x}",
+        std::process::id(),
+        (nanos as u64) & 0xFF_FFFF_FFFF
+    )
 }
 
 #[cfg(test)]
@@ -827,6 +844,137 @@ mod tests {
             }
             other => panic!("expected RunCommand, got {}", req_kind(&other)),
         }
+
+        bound.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// Build a `Shared` over an already-bound control socket, so a test can run
+    /// the editor-thread half (`pump_shared`) exactly as a host loop does.
+    fn shared_for(bound: BoundControl) -> Shared {
+        Shared {
+            req_rx: Mutex::new(bound.req_rx),
+            waiters: bound.waiters,
+        }
+    }
+
+    /// An editor for the pump half of the round trip. Plugins stay off: the
+    /// commands under test are built-ins, and a plugin runtime would only add
+    /// startup cost.
+    fn pump_test_editor() -> (Editor, TempDir) {
+        let temp = TempDir::new().unwrap();
+        let dir_context = crate::config_io::DirectoryContext::for_testing(temp.path());
+        let editor = Editor::new(
+            crate::config::Config::default(),
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            std::sync::Arc::new(crate::model::filesystem::StdFileSystem),
+        )
+        .expect("editor");
+        (editor, temp)
+    }
+
+    /// The full `fresh --cmd cmd list` round trip against a host that drains the
+    /// channel: the request reaches the editor thread, `pump` answers it from
+    /// the command registry scoped to the caller's token, and the client reads a
+    /// `CommandList`.
+    ///
+    /// Regression: only the TUI loop and the standalone web bridge pumped. The
+    /// GUI tick and the session daemon (what `fresh --web` and every attached
+    /// terminal run) did not, so the request sat in the queue, the handler
+    /// thread parked on a reply that was never produced, and `fresh --cmd cmd
+    /// list` hung forever in the agent's terminal.
+    #[test]
+    fn list_commands_is_answered_when_the_host_pumps() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("list-cmd-pump-test", dir.path());
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+        let shutdown = bound.shutdown.clone();
+        let shared = shared_for(bound);
+
+        let token = command_access::mint(command_access::Grant::new(
+            None,
+            ["split_vertical".to_string()],
+        ));
+
+        // The client runs on its own thread with a blocking read, exactly like
+        // the real CLI; this thread plays the host loop below.
+        let (done_tx, done_rx) = mpsc::channel::<Vec<String>>();
+        let client_paths = paths.clone();
+        let client_token = token.clone();
+        let client = std::thread::spawn(move || {
+            let conn = connect_client_with_token(&client_paths, &client_token);
+            conn.write_control(
+                &serde_json::to_string(&ClientControl::ListCommands {
+                    include_args: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+            let line = conn
+                .read_control()
+                .expect("read reply")
+                .expect("reply present");
+            let ids = match serde_json::from_str::<ServerControl>(&line).expect("parse reply") {
+                ServerControl::CommandList { commands } => {
+                    commands.into_iter().map(|c| c.id).collect()
+                }
+                other => panic!("expected CommandList, got {:?}", other),
+            };
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = done_tx.send(ids);
+        });
+
+        // Host loop: pump until the client reports. Unbounded on purpose — with
+        // the regression the reply never comes and the external runner times the
+        // test out, which is the signal we want.
+        let (mut editor, _temp) = pump_test_editor();
+        let ids = loop {
+            pump_shared(&shared, &mut editor);
+            if let Ok(ids) = done_rx.try_recv() {
+                break ids;
+            }
+        };
+
+        assert_eq!(
+            ids,
+            vec!["split_vertical".to_string()],
+            "the reply must carry exactly the commands the token allows"
+        );
+
+        client.join().unwrap();
+        command_access::revoke(&token);
+        shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// A host that accepts the connection but never drains the channel (the
+    /// regression above, and any older editor build an agent may be talking to)
+    /// must not park the client forever: the CLI's deadline-bounded read gives
+    /// up with `TimedOut` so the agent gets a diagnosable error instead of a
+    /// hang. The short deadline here *is* the unit under test — no reply can
+    /// ever arrive, so there is nothing to race with.
+    #[test]
+    fn client_read_times_out_when_the_host_never_pumps() {
+        let dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("list-cmd-nopump-test", dir.path());
+        // Note: no `pump` — `bound` holds the receiving end and never drains it.
+        let bound = bind_and_spawn(paths.clone()).expect("bind");
+
+        let conn = connect_client(&paths);
+        conn.write_control(
+            &serde_json::to_string(&ClientControl::ListCommands {
+                include_args: false,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = conn
+            .control_reader()
+            .read_line_timeout(Duration::from_millis(100))
+            .expect_err("a host that never answers must not block the client forever");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
 
         bound.shutdown.store(true, Ordering::SeqCst);
     }

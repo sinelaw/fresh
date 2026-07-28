@@ -9,6 +9,7 @@
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use interprocess::local_socket::{
     prelude::*, Listener, ListenerNonblockingMode, ListenerOptions, Stream,
@@ -314,6 +315,100 @@ impl StreamWrapper {
     }
 }
 
+/// A deadline-bounded, buffered line reader over a control stream.
+///
+/// [`ClientConnection::read_control`] blocks until a newline arrives, which is
+/// right for a client that has attached to an editor and follows it for the
+/// rest of its life. It is wrong for the one-shot `fresh --cmd cmd …` clients
+/// an agent runs: if the editor never answers — an old build, or one whose
+/// event loop doesn't drain the control socket — the agent hangs forever with
+/// nothing to report. Reads here fail with [`io::ErrorKind::TimedOut`] instead,
+/// so a stuck editor surfaces as a diagnosable error.
+///
+/// Bytes read past the first newline stay in this reader's own buffer, so
+/// consecutive reads on one connection never lose a message that arrived in the
+/// same chunk as its predecessor — the hazard of building a fresh [`BufReader`]
+/// per call.
+pub struct ControlReader {
+    stream: StreamWrapper,
+    buf: Vec<u8>,
+}
+
+impl ControlReader {
+    /// How long to sleep between polls while waiting for the next chunk. Small
+    /// enough to be invisible on a live editor (replies come back in one frame),
+    /// large enough not to spin a core while waiting.
+    const POLL_INTERVAL: Duration = Duration::from_millis(2);
+
+    /// Wrap a control stream. Cheap: shares the underlying stream (no I/O until
+    /// the first read), so the reader can outlive the borrow it was made from
+    /// and carry its buffered bytes across a whole exchange.
+    pub fn new(stream: &StreamWrapper) -> Self {
+        Self {
+            stream: stream.clone(),
+            buf: Vec::new(),
+        }
+    }
+
+    /// Read one newline-terminated control message, waiting at most `timeout`.
+    ///
+    /// Returns `Ok(Some(line))` for a complete message (newline included, as
+    /// [`ClientConnection::read_control`] does), `Ok(None)` when the peer closed
+    /// the connection with nothing buffered, and `Err` with kind `TimedOut` when
+    /// the deadline passes first.
+    pub fn read_line_timeout(&mut self, timeout: Duration) -> io::Result<Option<String>> {
+        let deadline = Instant::now() + timeout;
+        let mut chunk = [0u8; 4096];
+
+        loop {
+            if let Some(line) = self.take_line() {
+                return Ok(Some(line));
+            }
+
+            match self.stream.try_read(&mut chunk) {
+                // EOF. A newline-less tail is handed back rather than dropped so
+                // a truncated message fails to parse loudly instead of looking
+                // like a clean close.
+                Ok(0) => return Ok(self.take_rest()),
+                Ok(n) => {
+                    self.buf.extend_from_slice(&chunk[..n]);
+                    continue;
+                }
+                Err(e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out waiting for a control message",
+                ));
+            }
+            std::thread::sleep(Self::POLL_INTERVAL.min(deadline - now));
+        }
+    }
+
+    /// Split off the first complete line in the buffer, if there is one.
+    fn take_line(&mut self) -> Option<String> {
+        let end = self.buf.iter().position(|b| *b == b'\n')? + 1;
+        let rest = self.buf.split_off(end);
+        let line = std::mem::replace(&mut self.buf, rest);
+        Some(String::from_utf8_lossy(&line).into_owned())
+    }
+
+    /// Take whatever is buffered, `None` when empty.
+    fn take_rest(&mut self) -> Option<String> {
+        if self.buf.is_empty() {
+            return None;
+        }
+        let line = std::mem::take(&mut self.buf);
+        Some(String::from_utf8_lossy(&line).into_owned())
+    }
+}
+
 /// Helper to map Windows pipe errors to WouldBlock
 #[inline]
 fn map_windows_pipe_error(result: io::Result<usize>) -> io::Result<usize> {
@@ -478,6 +573,14 @@ impl ClientConnection {
         }
     }
 
+    /// A deadline-bounded reader over this connection's control stream, for
+    /// clients that must not hang when the editor never answers (see
+    /// [`ControlReader`]). Hold on to one reader for the whole exchange: it
+    /// carries the bytes buffered between reads.
+    pub fn control_reader(&self) -> ControlReader {
+        ControlReader::new(&self.control)
+    }
+
     /// Write a control message
     pub fn write_control(&self, msg: &str) -> io::Result<()> {
         self.control.write_all(msg.as_bytes())?;
@@ -608,6 +711,85 @@ mod tests {
 
         // No sockets exist, should return false (nothing to clean)
         assert!(!paths.cleanup_if_stale());
+    }
+
+    /// Connect a client to a freshly bound listener and return both ends.
+    #[cfg(unix)]
+    fn connected_pair(paths: &SocketPaths) -> (ServerConnection, ClientConnection) {
+        use std::thread;
+
+        let mut listener = ServerListener::bind(paths.clone()).unwrap();
+        let client_paths = paths.clone();
+        let client = thread::spawn(move || ClientConnection::connect(&client_paths).unwrap());
+        let server_conn = loop {
+            if let Some(c) = listener.accept().unwrap() {
+                break c;
+            }
+        };
+        // The listener owns the socket files; keep it alive for the caller's
+        // lifetime by leaking it (the temp dir cleans up).
+        std::mem::forget(listener);
+        (server_conn, client.join().unwrap())
+    }
+
+    /// Two messages written back-to-back arrive in one chunk. A reader that
+    /// rebuilt its buffer per call (what `read_control` does with a fresh
+    /// `BufReader`) would drop the second; `ControlReader` keeps it.
+    #[cfg(unix)]
+    #[test]
+    fn control_reader_keeps_a_second_message_from_the_same_chunk() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("ctrl-reader-chunk", temp_dir.path());
+        let (server_conn, client_conn) = connected_pair(&paths);
+
+        server_conn.write_control("{\"first\":1}").unwrap();
+        server_conn.write_control("{\"second\":2}").unwrap();
+
+        let mut reader = client_conn.control_reader();
+        let first = reader
+            .read_line_timeout(Duration::from_secs(30))
+            .unwrap()
+            .expect("first message");
+        let second = reader
+            .read_line_timeout(Duration::from_secs(30))
+            .unwrap()
+            .expect("second message");
+        assert_eq!(first.trim(), "{\"first\":1}");
+        assert_eq!(second.trim(), "{\"second\":2}");
+    }
+
+    /// A peer that accepts the connection and then goes quiet must not park the
+    /// reader forever — this is the `fresh --cmd cmd list` hang, bounded. The
+    /// deadline is the unit under test: nothing is ever written, so there is no
+    /// race between "reply arrives" and "deadline passes".
+    #[cfg(unix)]
+    #[test]
+    fn control_reader_times_out_when_nothing_is_written() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("ctrl-reader-timeout", temp_dir.path());
+        let (_server_conn, client_conn) = connected_pair(&paths);
+
+        let err = client_conn
+            .control_reader()
+            .read_line_timeout(Duration::from_millis(50))
+            .expect_err("a silent peer must not block the reader forever");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    /// A closed connection reports EOF rather than waiting out the deadline.
+    #[cfg(unix)]
+    #[test]
+    fn control_reader_reports_eof_when_the_peer_closes() {
+        let temp_dir = TempDir::new().unwrap();
+        let paths = SocketPaths::for_session_name_in_dir("ctrl-reader-eof", temp_dir.path());
+        let (server_conn, client_conn) = connected_pair(&paths);
+        drop(server_conn);
+
+        let msg = client_conn
+            .control_reader()
+            .read_line_timeout(Duration::from_secs(30))
+            .expect("EOF is not an error");
+        assert!(msg.is_none(), "expected EOF, got {:?}", msg);
     }
 
     /// Regression test for the embedded-terminal copy hang.

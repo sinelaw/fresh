@@ -137,8 +137,21 @@ pub(crate) fn agent_command_env(
         }
     }
     if let Some(allowlist) = command_allowlist {
-        if let Ok(session_id) = crate::server::local_control::start() {
-            env.insert("FRESH_SESSION".to_string(), session_id.to_string());
+        match crate::server::local_control::start() {
+            Ok(session_id) => {
+                env.insert("FRESH_SESSION".to_string(), session_id.to_string());
+            }
+            // The token still ships (it is what authorizes the agent), but with
+            // no socket to present it to every `fresh --cmd …` the agent runs
+            // fails with "not inside a Fresh session". Silently swallowing that
+            // made it look like the CLI itself was broken, so say what happened
+            // — the cause is environmental (e.g. a socket path over the
+            // platform's `sun_path` limit), not something the agent can fix.
+            Err(e) => tracing::warn!(
+                "Local control socket unavailable ({}); the agent terminal gets a \
+                 command token but no FRESH_SESSION to use it with",
+                e
+            ),
         }
         let token = crate::server::command_access::mint(crate::server::command_access::Grant::new(
             Some(window.0),
