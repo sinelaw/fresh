@@ -4262,15 +4262,15 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
-    // Agent command-channel verbs (`cmd`, `split`, `workspace`) run against a
-    // live editor and never spawn a daemon, so handle them here — before the
-    // `Args` conversion, whose slice match would otherwise reject them as
-    // unknown commands. The `_ =>` fallthrough leaves every other `--cmd`
-    // invocation to the existing `Args::from` routing.
+    // The agent script verbs run against a live editor and never spawn a
+    // daemon, so handle them here — before the `Args` conversion, whose slice
+    // match would otherwise reject them as unknown commands. The `_ =>`
+    // fallthrough leaves every other `--cmd` invocation to the existing
+    // `Args::from` routing.
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["cmd", ..] | ["split", ..] | ["workspace", ..] | ["agent", ..] => {
+            ["script", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }
@@ -5242,24 +5242,23 @@ mod tests {
 
     #[test]
     fn test_extract_session_flag_removes_pair_anywhere() {
-        let (session, rest) =
-            extract_session_flag(&["cmd", "run", "--session", "proj", "split_vertical"]);
+        let (session, rest) = extract_session_flag(&["script", "run", "--session", "proj", "s.ts"]);
         assert_eq!(session.as_deref(), Some("proj"));
-        assert_eq!(rest, vec!["cmd", "run", "split_vertical"]);
+        assert_eq!(rest, vec!["script", "run", "s.ts"]);
     }
 
     #[test]
     fn test_extract_session_flag_absent() {
-        let (session, rest) = extract_session_flag(&["cmd", "list", "--json"]);
+        let (session, rest) = extract_session_flag(&["script", "types"]);
         assert_eq!(session, None);
-        assert_eq!(rest, vec!["cmd", "list", "--json"]);
+        assert_eq!(rest, vec!["script", "types"]);
     }
 
     #[test]
     fn test_extract_session_flag_dangling_value_ignored() {
-        let (session, rest) = extract_session_flag(&["cmd", "list", "--session"]);
+        let (session, rest) = extract_session_flag(&["script", "types", "--session"]);
         assert_eq!(session, None);
-        assert_eq!(rest, vec!["cmd", "list"]);
+        assert_eq!(rest, vec!["script", "types"]);
     }
 
     #[test]
