@@ -284,6 +284,48 @@ impl Window {
         self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, true)
     }
 
+    /// Pick the `fresh-terminal-…` file stem for a new persistent terminal in
+    /// `terminal_root`, avoiding any stem a *live* terminal in this window is
+    /// already writing to.
+    ///
+    /// Terminal files are named after the terminal id, and ids restart at 0
+    /// every editor run — but a restored terminal keeps the backing path it
+    /// was saved with while taking a fresh id. Restore a workspace whose
+    /// terminals were saved as `…-1` / `…-2` and the ids handed out are 0 / 1,
+    /// so the next terminal the user opens is offered `…-1` — a file another,
+    /// still-running terminal owns. Both would then stream into one file and
+    /// the new terminal's scroll-back would show the other's history
+    /// (fresh#2836). A `-<n>` disambiguator keeps them apart; the workspace
+    /// persists the resolved path, so the name never has to be re-derivable.
+    ///
+    /// A stem left behind by a terminal that is *not* live (an earlier run, a
+    /// crash) is reused as-is: the spawn opens it [`BackingMode::Fresh`] and
+    /// truncates, so no stale scrollback survives and the files don't pile up.
+    fn free_terminal_file_stem(
+        &self,
+        terminal_root: &std::path::Path,
+        terminal_id: TerminalId,
+    ) -> String {
+        let base = format!("fresh-terminal-{}", terminal_id.0);
+        let taken = |stem: &str| {
+            let backing = terminal_root.join(format!("{stem}.txt"));
+            let log = terminal_root.join(format!("{stem}.log"));
+            self.terminal_backing_files
+                .values()
+                .chain(self.terminal_log_files.values())
+                .any(|p| *p == backing || *p == log)
+        };
+        if !taken(&base) {
+            return base;
+        }
+        // Bounded scan; the loop only runs while every candidate is owned by a
+        // live terminal, and a window can't hold that many.
+        (1..u32::MAX)
+            .map(|n| format!("{base}-{n}"))
+            .find(|stem| !taken(stem))
+            .unwrap_or(base)
+    }
+
     fn spawn_terminal_session_impl(
         &mut self,
         cwd: Option<PathBuf>,
@@ -312,7 +354,7 @@ impl Window {
         // to the same path.
         let predicted_terminal_id = self.terminal_manager.next_terminal_id();
         let name_stem = if persistent {
-            format!("fresh-terminal-{}", predicted_terminal_id.0)
+            self.free_terminal_file_stem(&terminal_root, predicted_terminal_id)
         } else {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -354,21 +396,22 @@ impl Window {
             rows,
             Some(working_dir),
             Some(log_path.clone()),
-            Some(backing_path),
+            Some(backing_path.clone()),
+            // A brand-new terminal: its transcripts start empty even if an
+            // earlier run left files on these paths.
+            crate::services::terminal::BackingMode::Fresh,
             wrapper,
             env_delta,
             extra_env,
         ) {
             Ok(terminal_id) => {
                 self.terminal_log_files.insert(terminal_id, log_path);
-                // If the actual terminal id differs from the predicted
-                // one, move the backing-file entry to the real id and
-                // rename to the persistent (no-eph-suffix) form. This
-                // mirrors the pre-migration behaviour exactly.
+                // If the actual terminal id differs from the predicted one,
+                // re-key the backing entry onto the real id — keeping the
+                // *same* path, which is the one the manager's reader thread
+                // is already streaming into.
                 if terminal_id != predicted_terminal_id {
                     self.terminal_backing_files.remove(&predicted_terminal_id);
-                    let backing_path =
-                        terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
                     self.terminal_backing_files
                         .insert(terminal_id, backing_path);
                 }
@@ -409,7 +452,8 @@ impl Window {
                 if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
-                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+                let stem = self.free_terminal_file_stem(&root, terminal_id);
+                root.join(format!("{stem}.txt"))
             });
 
         // Ensure the file exists — but DON'T truncate if it already has
@@ -921,7 +965,8 @@ impl Window {
                 if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
-                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+                let stem = self.free_terminal_file_stem(&root, terminal_id);
+                root.join(format!("{stem}.txt"))
             });
 
         if !terminal_backing_fs().exists(&backing_file) {
@@ -1099,6 +1144,9 @@ impl Window {
             spec.cwd,
             spec.log_path.clone(),
             spec.backing_path.clone(),
+            // Same terminal reborn: append to its existing transcript rather
+            // than blanking the scrollback the user still has on screen.
+            crate::services::terminal::BackingMode::Continue,
             wrapper,
             env_delta,
             HashMap::new(),

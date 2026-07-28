@@ -555,6 +555,24 @@ impl Editor {
             self.windows.insert(id, built);
         }
 
+        // Active-window only: the restored active buffer never went through a
+        // focus path, so nothing has derived the terminal live/scrollback
+        // state from it. A restored terminal is created live (empty scrollback
+        // set), but `key_context` is still `Normal` and the buffer still
+        // loads editing-disabled — so without this it comes up *focused but
+        // inert*: keys don't reach the PTY and the pane shows the static
+        // backing-file view instead of the live grid. With a quiet shell that
+        // is invisible (the first keystroke, or output plus
+        // `jump_to_end_on_output`, flips it live); with a terminal that prints
+        // on its own — an agent, a `tail -f`, anything with a clock — the
+        // restored pane just sits there frozen. Deriving the flags here is the
+        // same move the remote-reconnect respawn makes for the same reason.
+        // A restored *exited* terminal is not a terminal buffer (the exit path
+        // drops the binding), so this correctly leaves it read-only.
+        if id == self.active_window {
+            self.sync_terminal_mode_to_active_buffer();
+        }
+
         // Active-window only: refresh the plugin snapshot and fire
         // buffer_activated for the restored active buffer. Background
         // (inactive) window restores must NOT fire these focus effects.
@@ -888,6 +906,9 @@ impl crate::app::window::Window {
             terminal.cwd.clone(),
             Some(log_path.clone()),
             Some(backing_path.clone()),
+            // Restore: this terminal's own saved transcript — keep streaming
+            // into it so the restored buffer keeps its scrollback.
+            crate::services::terminal::BackingMode::Continue,
             wrapper_for_spawn,
             env_delta,
             std::collections::HashMap::new(),
