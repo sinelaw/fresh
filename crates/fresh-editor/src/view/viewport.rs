@@ -360,7 +360,17 @@ impl Viewport {
                 );
                 crate::view::line_wrap_cache::placeholder_layout_for_row_count(n)
             };
-            if let Some((cache, pipeline_inputs_ver)) = cache {
+            // The cache is keyed by `line_start`, so an entry is only
+            // reusable if `line_text` really is that whole line. Callers
+            // that pass a prefix (cursor-row math) or a `LineIterator`
+            // piece cut at the read budget would otherwise store a short
+            // count under the line's key and every later lookup — from
+            // the wheel, the scrollbar clamp, ensure-visible — would read
+            // it back (issue #2843: a 100 KB piece of a 441 KB line
+            // cached 916 rows for a 4130-row line). Trailing `\r\n` is
+            // trimmed off `line_text`, hence the 2-byte slack.
+            let covers_whole_line = line_text.len() + 2 >= line_end.saturating_sub(line_start);
+            if let Some((cache, pipeline_inputs_ver)) = cache.filter(|_| covers_whole_line) {
                 use crate::view::line_wrap_cache::{CacheViewMode, LineWrapKey};
                 let key = LineWrapKey {
                     pipeline_inputs_version: pipeline_inputs_ver,
@@ -736,7 +746,7 @@ impl Viewport {
 
             // Get the line content to calculate how many visual rows it has
             let line_start = iter.current_position();
-            let (line_end, line_content) = if let Some((_, content)) = iter.next_line() {
+            let (line_end, line_content) = if let Some((_, content)) = iter.next_logical_line() {
                 let end = iter.current_position();
                 (end, content.trim_end_matches(['\n', '\r']).to_string())
             } else {
@@ -795,16 +805,16 @@ impl Viewport {
 
         // First, handle any existing top_view_line_offset
         // Get current line's visual row count to see how many rows are left in it
-        let (current_line_end, current_line_content) = if let Some((_, content)) = iter.next_line()
-        {
-            let end = iter.current_position();
-            let c = content.trim_end_matches(['\n', '\r']).to_string();
-            // Reset iterator to start of this line for later use
-            iter = buffer.line_iterator(current_top, 80);
-            (end, c)
-        } else {
-            (current_top, String::new())
-        };
+        let (current_line_end, current_line_content) =
+            if let Some((_, content)) = iter.next_logical_line() {
+                let end = iter.current_position();
+                let c = content.trim_end_matches(['\n', '\r']).to_string();
+                // Reset iterator to start of this line for later use
+                iter = buffer.line_iterator(current_top, 80);
+                (end, c)
+            } else {
+                (current_top, String::new())
+            };
 
         let current_visual_rows = Self::count_visual_rows_for_line(
             current_top,
@@ -833,7 +843,7 @@ impl Viewport {
         self.top_view_line_offset = 0;
 
         // Move to next line
-        if iter.next_line().is_none() {
+        if iter.next_logical_line().is_none() {
             // Already at end of buffer
             return;
         }
@@ -848,7 +858,7 @@ impl Viewport {
                 return;
             }
 
-            let (line_end, line_content) = if let Some((_, content)) = iter.next_line() {
+            let (line_end, line_content) = if let Some((_, content)) = iter.next_logical_line() {
                 let end = iter.current_position();
                 (end, content.trim_end_matches(['\n', '\r']).to_string())
             } else {
@@ -912,7 +922,7 @@ impl Viewport {
         let mut iter = buffer.line_iterator(self.top_byte, 80);
 
         // First, count rows in current line (from top_view_line_offset to end)
-        if let Some((line_start, content)) = iter.next_line() {
+        if let Some((line_start, content)) = iter.next_logical_line() {
             let line_end = iter.current_position();
             let line_content = content.trim_end_matches(['\n', '\r']).to_string();
             let line_visual_rows = Self::count_visual_rows_for_line(
@@ -928,7 +938,7 @@ impl Viewport {
         }
 
         // Count rows in subsequent lines
-        while let Some((line_start, content)) = iter.next_line() {
+        while let Some((line_start, content)) = iter.next_logical_line() {
             let line_end = iter.current_position();
             let line_content = content.trim_end_matches(['\n', '\r']).to_string();
             visual_rows_remaining += Self::count_visual_rows_for_line(
@@ -997,7 +1007,7 @@ impl Viewport {
         // Build visual row positions from scan_start to end of file
         let mut positions: Vec<(usize, usize)> = Vec::new();
         let mut iter = buffer.line_iterator(scan_start, 80);
-        while let Some((line_start, content)) = iter.next_line() {
+        while let Some((line_start, content)) = iter.next_logical_line() {
             let line_end = iter.current_position();
             let line_content = content.trim_end_matches(['\n', '\r']).to_string();
             let visual_rows_in_line = Self::count_visual_rows_for_line(
@@ -1658,7 +1668,7 @@ impl Viewport {
         let mut iter = buffer.line_iterator(proposed_top_byte, 80);
         let mut visual_rows = 0;
 
-        while let Some((line_start, content)) = iter.next_line() {
+        while let Some((line_start, content)) = iter.next_logical_line() {
             let line_end = iter.current_position();
             let line_text = content.trim_end_matches(['\n', '\r']);
             visual_rows += Self::count_visual_rows_for_line(
@@ -2515,7 +2525,7 @@ impl Viewport {
         let mut iter = buffer.line_iterator(self.top_byte, 80);
         let mut screen_row: usize = 0;
 
-        while let Some((line_byte, content)) = iter.next_line() {
+        while let Some((line_byte, content)) = iter.next_logical_line() {
             if line_byte >= line_start {
                 break;
             }
@@ -2540,7 +2550,7 @@ impl Viewport {
         let (screen_col, additional_rows) = if let Some(ref config) = wrap_config {
             // Get the line text for wrapping
             let mut line_iter = buffer.line_iterator(line_start, 80);
-            let line_text = if let Some((_start, content)) = line_iter.next_line() {
+            let line_text = if let Some((_start, content)) = line_iter.next_logical_line() {
                 // Remove trailing newline if present
                 content.trim_end_matches(['\n', '\r']).to_string()
             } else {
