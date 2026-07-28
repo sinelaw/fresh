@@ -95,6 +95,7 @@ pub mod issue_2605_format_selection_range;
 pub mod issue_2796_key_release_duplicates;
 #[cfg(feature = "plugins")]
 pub mod issue_2810_session_escape_flush;
+pub mod issue_2843_single_line_viewport;
 pub mod issue_779_after_eof_shade;
 pub mod issue_close_file_in_split_hides_buffer_group;
 pub mod language_dialog_esc_cancels_edit;

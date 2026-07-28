@@ -240,6 +240,33 @@ impl<'a> LineIterator<'a> {
         Some((line_start, line_string))
     }
 
+    /// Get the next *logical* line — never split at a chunk boundary.
+    ///
+    /// `next_line` caps each yielded piece at `MAX_LINE_BYTES` so a file
+    /// that is one huge line can be read without materializing all of it
+    /// at once. That cap is a read budget, not document structure: code
+    /// that reasons about layout (how many visual rows a line occupies,
+    /// where the *next* line starts) must not mistake a 100 KB read
+    /// offset for a line start, or scroll math snaps the viewport to it
+    /// (issue #2843). Such callers use this method, which re-joins the
+    /// pieces until a real terminator or EOF.
+    ///
+    /// The trade-off is the one already accepted elsewhere for wrapped
+    /// layout (`VisualRowIndex` reads whole lines via `Buffer::get_line`):
+    /// the returned `String` is as long as the logical line.
+    pub fn next_logical_line(&mut self) -> Option<(usize, String)> {
+        let (line_start, mut content) = self.next_line()?;
+        // A piece that stopped short of a terminator while bytes remain was
+        // cut by the read budget — keep pulling until the line really ends.
+        while !content.ends_with('\n') && self.current_pos < self.buffer_len {
+            match self.next_line() {
+                Some((_, more)) => content.push_str(&more),
+                None => break,
+            }
+        }
+        Some((line_start, content))
+    }
+
     /// Get the previous line (moving backward)
     /// Uses direct byte scanning which works even with unloaded chunks
     pub fn prev(&mut self) -> Option<(usize, String)> {
@@ -685,6 +712,70 @@ mod tests {
             10,
             "Iterator at byte 10 should be at line start already"
         );
+    }
+
+    /// `next_logical_line` must hide the `MAX_LINE_BYTES` read budget: a line
+    /// longer than a chunk is still yielded as *one* line ending at the real
+    /// terminator, and iteration lands on the next line's start rather than on
+    /// a chunk boundary.
+    ///
+    /// Not visible on screen directly — it is the primitive the wrapped-scroll
+    /// math reads through, where a chunk boundary posing as a line start snaps
+    /// the viewport to byte 100,000 (issue #2843).
+    #[test]
+    fn test_next_logical_line_spans_chunk_boundaries() {
+        // First line straddles several MAX_LINE_BYTES chunks; second is short.
+        let long_line = "x".repeat(super::MAX_LINE_BYTES * 2 + 1234);
+        let content = format!("{long_line}\nsecond\n");
+        let mut buffer = TextBuffer::from_bytes(content.into_bytes(), test_fs());
+
+        // `next_line` splits it — that is the read budget doing its job.
+        let mut chunked = buffer.line_iterator(0, 200);
+        let (_, first_chunk) = chunked.next_line().expect("first chunk");
+        assert_eq!(
+            first_chunk.len(),
+            super::MAX_LINE_BYTES,
+            "next_line should stop at the read budget"
+        );
+        assert_ne!(
+            chunked.current_position(),
+            long_line.len() + 1,
+            "precondition: next_line does not reach the real line end"
+        );
+
+        // `next_logical_line` rejoins the pieces.
+        let mut iter = buffer.line_iterator(0, 200);
+        let (start, line) = iter.next_logical_line().expect("first logical line");
+        assert_eq!(start, 0);
+        assert_eq!(
+            line.len(),
+            long_line.len() + 1,
+            "the whole line plus its newline should be returned as one line"
+        );
+        assert!(line.ends_with('\n'));
+        assert_eq!(
+            iter.current_position(),
+            long_line.len() + 1,
+            "iteration should land on the next line's start, not a chunk boundary"
+        );
+
+        let (second_start, second) = iter.next_logical_line().expect("second logical line");
+        assert_eq!(second_start, long_line.len() + 1);
+        assert_eq!(second, "second\n");
+    }
+
+    /// A final line with no terminator must still come back whole, and the
+    /// iterator must then report EOF rather than looping on the tail.
+    #[test]
+    fn test_next_logical_line_unterminated_tail() {
+        let long_line = "y".repeat(super::MAX_LINE_BYTES + 7);
+        let mut buffer = TextBuffer::from_bytes(long_line.clone().into_bytes(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 200);
+        let (start, line) = iter.next_logical_line().expect("logical line");
+        assert_eq!(start, 0);
+        assert_eq!(line.len(), long_line.len());
+        assert!(iter.next_logical_line().is_none(), "should be at EOF");
     }
 
     /// Test that large single-line files are chunked correctly and all data is preserved.
