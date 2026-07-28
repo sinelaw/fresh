@@ -5972,34 +5972,46 @@ impl JsEditorApi {
     pub fn create_virtual_buffer_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
-        opts: fresh_core::api::CreateVirtualBufferOptions,
+        mut opts: fresh_core::api::CreateVirtualBufferOptions,
     ) -> rquickjs::Result<u64> {
         let id = self.alloc_request_id();
 
-        // Convert JsTextPropertyEntry to TextPropertyEntry
-        let entries: Vec<TextPropertyEntry> = opts
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| TextPropertyEntry {
-                text: e.text,
-                properties: e.properties.unwrap_or_default(),
-                style: e.style,
-                inline_overlays: e.inline_overlays.unwrap_or_default(),
-                segments: e.segments.unwrap_or_default(),
-                pad_to_chars: e.pad_to_chars,
-                truncate_to_chars: e.truncate_to_chars,
-            })
-            .collect();
+        let entries = initial_entries(opts.entries.take());
+
+        // Track request_id → plugin_name for async resource tracking
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+
+        // An explicit `splitId` means "put it there", which is the
+        // existing-split path. Without this the option was accepted and
+        // ignored, and the buffer took over the focused pane instead —
+        // clobbering whatever the user was looking at.
+        if let Some(split_id) = opts.split_id {
+            let _ = self
+                .command_sender
+                .send(PluginCommand::CreateVirtualBufferInExistingSplit {
+                    name: opts.name,
+                    mode: opts.mode.unwrap_or_default(),
+                    read_only: opts.read_only.unwrap_or(false),
+                    entries,
+                    split_id: fresh_core::SplitId(split_id),
+                    show_line_numbers: opts.show_line_numbers.unwrap_or(false),
+                    show_cursors: opts.show_cursors.unwrap_or(true),
+                    editing_disabled: opts.editing_disabled.unwrap_or(false),
+                    // The plain constructor has no line-wrap option; the
+                    // existing-split command does, so pass its default.
+                    line_wrap: None,
+                    initial_cursor_line: opts.initial_cursor_line,
+                    request_id: Some(id),
+                });
+            return Ok(id);
+        }
 
         tracing::debug!(
             "_createVirtualBufferStart: sending CreateVirtualBufferWithContent command, request_id={}",
             id
         );
-        // Track request_id → plugin_name for async resource tracking
-        if let Ok(mut owners) = self.async_resource_owners.lock() {
-            owners.insert(id, self.plugin_name.clone());
-        }
         let _ = self
             .command_sender
             .send(PluginCommand::CreateVirtualBufferWithContent {
@@ -6028,25 +6040,11 @@ impl JsEditorApi {
     pub fn create_virtual_buffer_in_split_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
-        opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
+        mut opts: fresh_core::api::CreateVirtualBufferInSplitOptions,
     ) -> rquickjs::Result<u64> {
         let id = self.alloc_request_id();
 
-        // Convert JsTextPropertyEntry to TextPropertyEntry
-        let entries: Vec<TextPropertyEntry> = opts
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| TextPropertyEntry {
-                text: e.text,
-                properties: e.properties.unwrap_or_default(),
-                style: e.style,
-                inline_overlays: e.inline_overlays.unwrap_or_default(),
-                segments: e.segments.unwrap_or_default(),
-                pad_to_chars: e.pad_to_chars,
-                truncate_to_chars: e.truncate_to_chars,
-            })
-            .collect();
+        let entries = initial_entries(opts.entries.take());
 
         // Track request_id → plugin_name for async resource tracking
         if let Ok(mut owners) = self.async_resource_owners.lock() {
@@ -6084,25 +6082,11 @@ impl JsEditorApi {
     pub fn create_virtual_buffer_in_existing_split_start(
         &self,
         _ctx: rquickjs::Ctx<'_>,
-        opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
+        mut opts: fresh_core::api::CreateVirtualBufferInExistingSplitOptions,
     ) -> rquickjs::Result<u64> {
         let id = self.alloc_request_id();
 
-        // Convert JsTextPropertyEntry to TextPropertyEntry
-        let entries: Vec<TextPropertyEntry> = opts
-            .entries
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| TextPropertyEntry {
-                text: e.text,
-                properties: e.properties.unwrap_or_default(),
-                style: e.style,
-                inline_overlays: e.inline_overlays.unwrap_or_default(),
-                segments: e.segments.unwrap_or_default(),
-                pad_to_chars: e.pad_to_chars,
-                truncate_to_chars: e.truncate_to_chars,
-            })
-            .collect();
+        let entries = initial_entries(opts.entries.take());
 
         // Track request_id → plugin_name for async resource tracking
         if let Ok(mut owners) = self.async_resource_owners.lock() {
@@ -6223,9 +6207,22 @@ impl JsEditorApi {
         id
     }
 
-    /// Set virtual buffer content (takes array of entry objects)
+    /// Replace a virtual buffer's content with a list of styled **spans**.
     ///
-    /// Note: entries should be TextPropertyEntry[] - uses manual parsing for HashMap support
+    /// Spans are concatenated *verbatim*: they are runs of text, not lines,
+    /// and nothing inserts separators for you. `[{text:"a"},{text:"b"}]` is
+    /// the single line `ab`; for two lines, write `[{text:"a\n"},{text:"b\n"}]`.
+    /// A buffer built without those newlines reports a plausible `length` and
+    /// a `lineCount` of 1 — read it back from `getBufferInfo` if it matters,
+    /// since otherwise the mistake is only visible on screen.
+    ///
+    /// If you are an agent putting text in front of a human, prefer writing a
+    /// file and opening it (`splitWindow({ file })` /
+    /// `openFileInSplit(splitId, path)`). A file buffer gives you syntax
+    /// highlighting, search, save, and renders ANSI escape codes as colour —
+    /// so command output can go straight in. Virtual buffers exist for
+    /// plugin-owned panels: ephemeral, styled per span, driven by a mode's
+    /// keybindings.
     pub fn set_virtual_buffer_content<'js>(
         &self,
         ctx: rquickjs::Ctx<'js>,
@@ -7251,6 +7248,30 @@ impl JsEditorApi {
         });
         id
     }
+}
+
+/// Interpret the value `setVirtualBufferContent` was handed: a string, an
+/// array of strings, or an array of styled-span objects.
+/// Convert the `entries` option — styled spans — into what the editor stores.
+///
+/// Shared by the three `createVirtualBuffer*` entry points, which previously
+/// carried three identical copies of this mapping.
+fn initial_entries(
+    entries: Option<Vec<fresh_core::api::JsTextPropertyEntry>>,
+) -> Vec<TextPropertyEntry> {
+    entries
+        .unwrap_or_default()
+        .into_iter()
+        .map(|e| TextPropertyEntry {
+            text: e.text,
+            properties: e.properties.unwrap_or_default(),
+            style: e.style,
+            inline_overlays: e.inline_overlays.unwrap_or_default(),
+            segments: e.segments.unwrap_or_default(),
+            pad_to_chars: e.pad_to_chars,
+            truncate_to_chars: e.truncate_to_chars,
+        })
+        .collect()
 }
 
 /// The request id behind an agent script's context, if this context belongs to
