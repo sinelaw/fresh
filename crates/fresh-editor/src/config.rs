@@ -1711,23 +1711,6 @@ pub struct EditorConfig {
     pub keyboard_report_all_keys_as_escape_codes: bool,
 
     // ===== Performance =====
-    /// Milliseconds a single viewport refresh may spend parsing *ahead of*
-    /// the visible region, or `0` for no cap. The visible lines are always
-    /// highlighted in full; once they are covered and this budget is spent,
-    /// parsing stops at the last complete line and resumes there on the next
-    /// refresh.
-    /// Off by default because it is a real trade, not free: a refresh that
-    /// stops short leaves the highlight cache short of the range a cache hit
-    /// needs, so the next refresh re-parses the remainder. On a large file
-    /// that costs more total work than it saves in any one frame. Set it only
-    /// when a bounded frame matters more than steady-state cost.
-    /// Applies to the TextMate backend, whose parse is a resumable line walk;
-    /// the tree-sitter backend bounds its work by size instead.
-    /// Default: 0
-    #[serde(default = "default_highlight_timeout")]
-    #[schemars(extend("x-section" = "Performance"))]
-    pub highlight_timeout_ms: u64,
-
     /// Undo history snapshot interval (number of edits between snapshots)
     #[serde(default = "default_snapshot_interval")]
     #[schemars(extend("x-section" = "Performance"))]
@@ -1831,10 +1814,6 @@ fn default_scroll_offset() -> usize {
     3
 }
 
-fn default_highlight_timeout() -> u64 {
-    0
-}
-
 fn default_snapshot_interval() -> usize {
     100
 }
@@ -1898,7 +1877,6 @@ impl Default for EditorConfig {
             wrap_indent: true,
             wrap_column: None,
             page_width: default_page_width(),
-            highlight_timeout_ms: default_highlight_timeout(),
             snapshot_interval: default_snapshot_interval(),
             large_file_threshold_bytes: default_large_file_threshold(),
             estimated_line_length: default_estimated_line_length(),

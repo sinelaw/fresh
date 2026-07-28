@@ -47,63 +47,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use syntect::parsing::SyntaxSet;
-
-/// Wall-clock cap on the look-ahead one viewport refresh may spend
-/// (`editor.highlight_timeout_ms`).
-///
-/// Parsing always runs far enough to cover the visible region first — the
-/// budget only bounds the extra context parsed *past* `viewport_end`, so a
-/// tight value never leaves visible text unhighlighted.
-///
-/// What it does cost is cache warmth. `highlight_viewport` only reports a
-/// cache hit once the cached range reaches `parse_end`, so a refresh that
-/// stops short leaves the next one re-parsing the remainder instead. That is
-/// why the setting is opt-in (see `editor.highlight_timeout_ms`): capping by
-/// default would reintroduce the per-frame re-parse cost the cache exists to
-/// avoid.
-#[derive(Debug, Clone, Copy)]
-pub struct HighlightBudget {
-    deadline: Option<Instant>,
-}
-
-impl HighlightBudget {
-    /// Parse as far as the viewport and context ask for, however long it takes.
-    pub fn unlimited() -> Self {
-        Self { deadline: None }
-    }
-
-    /// Allow `ms` milliseconds of look-ahead, starting now. Zero is already
-    /// spent, i.e. "stop as soon as the viewport is covered".
-    pub fn from_millis(ms: u64) -> Self {
-        Self {
-            deadline: Some(Instant::now() + Duration::from_millis(ms)),
-        }
-    }
-
-    /// Read `editor.highlight_timeout_ms`, where `0` means "no cap" — the
-    /// setting's off switch, and its default.
-    pub fn from_config_millis(ms: u64) -> Self {
-        if ms == 0 {
-            Self::unlimited()
-        } else {
-            Self::from_millis(ms)
-        }
-    }
-
-    /// Whether the budget is spent. Always false when unlimited.
-    fn expired(&self) -> bool {
-        self.deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-    }
-}
-
-impl Default for HighlightBudget {
-    fn default() -> Self {
-        Self::unlimited()
-    }
-}
 
 /// Map TextMate scope to highlight category
 fn scope_to_category(scope: &str) -> Option<HighlightCategory> {
@@ -1101,28 +1045,6 @@ impl TextMateEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        self.highlight_viewport_within(
-            buffer,
-            viewport_start,
-            viewport_end,
-            theme,
-            context_bytes,
-            HighlightBudget::unlimited(),
-        )
-    }
-
-    /// [`highlight_viewport`](Self::highlight_viewport) with a cap on
-    /// look-ahead past the viewport. See [`HighlightBudget`].
-    #[allow(clippy::too_many_arguments)]
-    pub fn highlight_viewport_within(
-        &mut self,
-        buffer: &Buffer,
-        viewport_start: usize,
-        viewport_end: usize,
-        theme: &Theme,
-        context_bytes: usize,
-        budget: HighlightBudget,
-    ) -> Vec<HighlightSpan> {
         let buf_len = buffer.len();
         let (desired_parse_start, parse_end) = if buf_len <= MAX_PARSE_BYTES {
             (0, buf_len)
@@ -1165,7 +1087,6 @@ impl TextMateEngine {
                 viewport_start,
                 viewport_end,
                 theme,
-                budget,
             );
         }
 
@@ -1204,7 +1125,6 @@ impl TextMateEngine {
             viewport_end,
             theme,
             context_bytes,
-            budget,
         )
     }
 
@@ -1395,7 +1315,6 @@ impl TextMateEngine {
     /// Forward extension path (see module docs). Caller checks the cache
     /// exists, has a `tail_state`, has no dirty edits, and `cache.range.end
     /// < parse_end`.
-    #[allow(clippy::too_many_arguments)]
     fn extend_cache_forward(
         &mut self,
         buffer: &Buffer,
@@ -1403,7 +1322,6 @@ impl TextMateEngine {
         viewport_start: usize,
         viewport_end: usize,
         theme: &Theme,
-        budget: HighlightBudget,
     ) -> Vec<HighlightSpan> {
         self.stats.cache_misses += 1;
         let buf_len = buffer.len();
@@ -1448,9 +1366,6 @@ impl TextMateEngine {
         // refresh costs at most one extra `parse_line` and is correct.
         let mut safe_offset = extension_start;
         let mut safe_snapshot = snapshot.clone();
-        // Set when the look-ahead budget cut the walk short, so the
-        // end-of-buffer commit below knows the walk didn't reach the end.
-        let mut stopped_on_budget = false;
 
         while pos < content_bytes.len() {
             if bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
@@ -1510,14 +1425,6 @@ impl TextMateEngine {
             if newline_terminated {
                 safe_offset = current_offset;
                 safe_snapshot = snapshot.clone();
-                // Stop extending once the visible region is covered and the
-                // refresh has spent its look-ahead budget. Only at a newline:
-                // the commit below is anchored on `safe_offset`, so the next
-                // refresh resumes from exactly here.
-                if current_offset >= viewport_end && budget.expired() {
-                    stopped_on_budget = true;
-                    break;
-                }
             }
         }
 
@@ -1529,14 +1436,12 @@ impl TextMateEngine {
         // from this state. Without this, a file that is one huge line
         // with no trailing newline (a minified JSON one-liner) can
         // never commit anything and re-parses in full on every frame.
-        // A budget-shortened walk never reached the end, so it is
-        // excluded — its own commit already stands at the last newline.
-        if !stopped_on_budget && parse_end >= buf_len {
+        if parse_end >= buf_len {
             safe_offset = current_offset;
             safe_snapshot = snapshot.clone();
         }
 
-        self.stats.bytes_parsed += current_offset.saturating_sub(extension_start);
+        self.stats.bytes_parsed += parse_end - extension_start;
 
         Self::merge_adjacent_spans(&mut new_spans);
 
@@ -1586,7 +1491,6 @@ impl TextMateEngine {
         viewport_end: usize,
         theme: &Theme,
         _context_bytes: usize,
-        budget: HighlightBudget,
     ) -> Vec<HighlightSpan> {
         self.stats.cache_misses += 1;
         self.dirty_from = None; // consumed
@@ -1617,9 +1521,6 @@ impl TextMateEngine {
         // refresh re-parses it from scratch.
         let mut safe_offset = actual_start;
         let mut safe_snapshot = snapshot.clone();
-        // Set when the look-ahead budget cut the walk short, so the
-        // end-of-buffer commit below knows the walk didn't reach the end.
-        let mut stopped_on_budget = false;
 
         while pos < content_bytes.len() {
             if create_checkpoints && bytes_since_checkpoint >= CHECKPOINT_INTERVAL {
@@ -1707,29 +1608,17 @@ impl TextMateEngine {
             for (marker_id, _) in markers_here {
                 self.checkpoint_states.insert(marker_id, snapshot.clone());
             }
-
-            // Stop once the visible region is covered and the refresh has
-            // spent its look-ahead budget. Only at a newline: the commit
-            // below already models "stopped short", caching up to
-            // `safe_offset` with the matching tail state, so the next refresh
-            // forward-extends from exactly here.
-            if newline_terminated && current_offset >= viewport_end && budget.expired() {
-                stopped_on_budget = true;
-                break;
-            }
         }
 
         // Same EOF rule as `extend_cache_forward`: a trailing partial
         // line that ends at the buffer end is committable, because the
-        // cache-consuming paths require an unchanged buffer length. A
-        // budget-shortened walk never got there, so it keeps the commit
-        // its own break left at the last newline.
-        if !stopped_on_budget && parse_end >= buffer.len() {
+        // cache-consuming paths require an unchanged buffer length.
+        if parse_end >= buffer.len() {
             safe_offset = current_offset;
             safe_snapshot = snapshot.clone();
         }
 
-        self.stats.bytes_parsed += current_offset.saturating_sub(actual_start);
+        self.stats.bytes_parsed += parse_end.saturating_sub(actual_start);
 
         Self::merge_adjacent_spans(&mut spans);
 
@@ -1950,44 +1839,13 @@ impl HighlightEngine {
         theme: &Theme,
         context_bytes: usize,
     ) -> Vec<HighlightSpan> {
-        self.highlight_viewport_within(
-            buffer,
-            viewport_start,
-            viewport_end,
-            theme,
-            context_bytes,
-            HighlightBudget::unlimited(),
-        )
-    }
-
-    /// [`highlight_viewport`](Self::highlight_viewport) with a look-ahead cap.
-    ///
-    /// Only the TextMate backend can honour it: its parse is a resumable line
-    /// walk, so it can stop past the viewport and forward-extend on the next
-    /// refresh. The tree-sitter backend parses its range in one
-    /// uninterruptible call and bounds work by `MAX_PARSE_BYTES` instead.
-    #[allow(clippy::too_many_arguments)]
-    pub fn highlight_viewport_within(
-        &mut self,
-        buffer: &Buffer,
-        viewport_start: usize,
-        viewport_end: usize,
-        theme: &Theme,
-        context_bytes: usize,
-        budget: HighlightBudget,
-    ) -> Vec<HighlightSpan> {
         match self {
             Self::TreeSitter(h) => {
                 h.highlight_viewport(buffer, viewport_start, viewport_end, theme, context_bytes)
             }
-            Self::TextMate(h) => h.highlight_viewport_within(
-                buffer,
-                viewport_start,
-                viewport_end,
-                theme,
-                context_bytes,
-                budget,
-            ),
+            Self::TextMate(h) => {
+                h.highlight_viewport(buffer, viewport_start, viewport_end, theme, context_bytes)
+            }
             Self::None => Vec::new(),
         }
     }
@@ -2528,53 +2386,6 @@ mod tests {
         assert!(
             stats.convergences >= 1,
             "the edit must converge at a checkpoint after the fence"
-        );
-    }
-
-    /// `editor.highlight_timeout_ms` caps look-ahead, never the visible
-    /// region: a spent budget stops the parse right after the viewport
-    /// instead of walking the rest of the file (issue #2842).
-    ///
-    /// Uses a zero budget so the cutoff is a deterministic "as soon as the
-    /// viewport is covered", with no dependence on how fast the parse runs.
-    #[test]
-    fn test_highlight_budget_caps_lookahead_past_viewport() {
-        let registry =
-            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
-        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
-        let content = "plain prose line\n".repeat(4000);
-        let buffer = Buffer::from_str(&content, 0, test_fs());
-        let viewport_end = 1_000;
-        assert!(
-            viewport_end * 10 < content.len(),
-            "there must be far more file than viewport for the cap to show up"
-        );
-
-        let parsed_with = |budget: HighlightBudget| {
-            let mut engine = HighlightEngine::for_file(Path::new("README.md"), None, &registry);
-            let HighlightEngine::TextMate(ref mut tm) = engine else {
-                panic!("expected TextMate engine for .md");
-            };
-            let spans = tm.highlight_viewport_within(&buffer, 0, viewport_end, &theme, 0, budget);
-            (tm.stats().bytes_parsed, spans.len())
-        };
-
-        let (unlimited, unlimited_spans) = parsed_with(HighlightBudget::unlimited());
-        let (capped, capped_spans) = parsed_with(HighlightBudget::from_millis(0));
-
-        assert!(
-            capped >= viewport_end,
-            "the visible region must be parsed in full whatever the budget \
-             (parsed {capped} bytes for a viewport ending at {viewport_end})"
-        );
-        assert!(
-            capped < unlimited,
-            "a spent budget must cut the look-ahead short \
-             (capped {capped} bytes vs unlimited {unlimited})"
-        );
-        assert_eq!(
-            capped_spans, unlimited_spans,
-            "the spans returned for the viewport must not depend on the budget"
         );
     }
 
