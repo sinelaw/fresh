@@ -60,6 +60,22 @@ fn tab_row_col_of_str(screen: &str, needle: &str) -> Option<u16> {
     Some(line[..byte_idx].chars().count() as u16)
 }
 
+/// Column of the last character of the *terminal* tab's name on the tab row,
+/// for a window holding `[No Name]` plus one terminal. Walks left from that
+/// tab's close button (the row's second "×") past the padding, so the caller
+/// never has to know what the spawned shell is called — the title is the
+/// foreground process name and differs per platform and per CI runner.
+fn terminal_tab_name_col(screen: &str) -> Option<u16> {
+    let row: Vec<char> = screen.lines().nth(1)?.chars().collect();
+    let mut closes = row.iter().enumerate().filter(|(_, c)| **c == '×');
+    closes.next()?; // the [No Name] tab's close button
+    let close_col = closes.next()?.0; // the terminal tab's
+    row[..close_col]
+        .iter()
+        .rposition(|c| !c.is_whitespace() && *c != '×')
+        .map(|p| p as u16)
+}
+
 /// The rendered text of the LEFT pane of a two-pane vertical split: every
 /// screen row truncated at the vertical separator. Lets an assertion say
 /// "this appeared in *that* pane" when both panes show the same terminal.
@@ -5021,17 +5037,7 @@ fn test_mouse_maximize_button_resizes_terminal() {
 #[test]
 #[cfg(not(windows))] // Uses Unix shell
 fn test_tab_drag_split_resizes_terminal() {
-    let mut config = Config::default();
-    // Pin the shell so the tab's title (and therefore the drag origin) is
-    // deterministic.
-    config.terminal.shell = Some(TerminalShellConfig {
-        command: "/bin/sh".to_string(),
-        args: Vec::new(),
-    });
-    let mut harness = match EditorTestHarness::with_config(120, 30, config) {
-        Ok(h) => h,
-        Err(_) => return,
-    };
+    let mut harness = harness_or_return!(120, 30);
 
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
@@ -5054,9 +5060,11 @@ fn test_tab_drag_split_resizes_terminal() {
     );
 
     // Drag the terminal's tab onto the right edge of the content area, which
-    // is the "split right" drop zone (the rightmost 25% of the pane).
+    // is the "split right" drop zone (the rightmost 25% of the pane). Only a
+    // press on the tab's *name* starts a drag, so aim at the title rather than
+    // its close button.
     let screen = harness.screen_to_string();
-    let tab_col = tab_row_col_of_str(&screen, "sh")
+    let tab_col = terminal_tab_name_col(&screen)
         .unwrap_or_else(|| panic!("expected the terminal's tab on the tab row:\n{screen}"));
     harness.mouse_drag(tab_col, 1, 115, 15).unwrap();
     harness.render().unwrap();
