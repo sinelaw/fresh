@@ -333,6 +333,37 @@ pub(super) fn calculate_viewport_end(
     viewport_end
 }
 
+/// Source-byte span actually covered by `rows` — the visual rows that will
+/// be drawn this frame.
+///
+/// With soft wrap on, `calculate_viewport_end` cannot describe the visible
+/// window: one logical line can occupy *every* row, and the top row can sit
+/// thousands of wrap segments into it (`top_view_line_offset`), so the
+/// decoration pass needs a span that starts where the drawn rows start, not
+/// at the line's `top_byte`. The rows already carry a source byte per
+/// character, so read the window off them (issue #2843: past the first few
+/// wrapped rows of a 441 KB single-line JSON the request stayed at
+/// `0..952`, and every row below rendered in whatever single span happened
+/// to overlap it).
+///
+/// Cost is proportional to the screen, not the line. Returns `None` when no
+/// drawn row carries source bytes (all-virtual rows, past-EOF filler), so
+/// callers keep their previous window.
+pub(super) fn visible_source_span(rows: &[ViewLine]) -> Option<(usize, usize)> {
+    let mut span: Option<(usize, usize)> = None;
+    for row in rows {
+        for (ch, src) in row.text.chars().zip(row.char_source_bytes.iter()) {
+            let Some(start) = *src else { continue };
+            let end = start.saturating_add(ch.len_utf8());
+            span = Some(match span {
+                Some((lo, hi)) => (lo.min(start), hi.max(end)),
+                None => (start, end),
+            });
+        }
+    }
+    span
+}
+
 /// Draw the separator line between two splits.
 pub(super) fn render_separator(
     buf: &mut ratatui::buffer::Buffer,
