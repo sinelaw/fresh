@@ -724,15 +724,7 @@ impl Editor {
 
         // Check if click is in navigation area
         if layout.is_in_nav(x, y) {
-            // Get shortcut labels for hit testing
-            let shortcut_labels: Vec<&str> = self
-                .active_window_mut()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
-                .unwrap_or_default();
-
-            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
+            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y) {
                 // Get the path from the shortcut and navigate there
                 let target_path = self
                     .active_window_mut()
@@ -843,14 +835,7 @@ impl Editor {
 
         // Check navigation shortcuts
         if layout.is_in_nav(x, y) {
-            let shortcut_labels: Vec<&str> = self
-                .active_window()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
-                .unwrap_or_default();
-
-            if let Some(idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
+            if let Some(idx) = layout.nav_shortcut_at(x, y) {
                 return Some(HoverTarget::FileBrowserNavShortcut(idx));
             }
         }

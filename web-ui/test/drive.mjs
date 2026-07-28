@@ -74,6 +74,16 @@ check('editor reports the open menu', sm.regions.menuOpen != null);
 check('dropdown rows rendered as native .mitem', (await page.locator('.mitem').count()) >= 4);
 check('dropdown shows accelerators (e.g. Ctrl+N)', (await page.locator('.mitem .accel').count()) >= 1);
 check('NO cells/svg inside the dropdown', (await page.locator('.dropdown svg').count()) === 0);
+// Blanket leakage guard. The per-surface checks above only cover surfaces
+// somebody remembered to add — the file browser shipped its whole popup as a
+// cell slab for months precisely because it was a SIBLING of `.palette`, so
+// `.palette svg` never saw it. Buffer interiors (and the picker's preview
+// pane, which is a real buffer render) are the only legitimate cell users.
+const cellLeaks = () => page.evaluate(() => [...document.querySelectorAll('svg.cells')]
+  .filter(s => !s.closest('.pane-content,.pane-gutter,.ppreview'))
+  .map(s => (s.parentElement || {}).className || '?'));
+check('NO cell SVG anywhere outside pane interiors / the preview pane',
+  (await cellLeaks()).length === 0, JSON.stringify(await cellLeaks()));
 await page.screenshot({ path: `${SHOTS}/22-native-menu.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 
@@ -758,27 +768,78 @@ await page.waitForTimeout(800);
 const mf1 = await page.evaluate(() => window.fresh.frames);
 check('idle mousemove over an unchanged buffer pushes (almost) no frames', mf1 - mf0 <= 3, `frames ${mf0}->${mf1}`);
 
-console.log('\n[Open File prompt: input line surfaced at the bottom (cell browser stays in the pane)]');
-// Action::Open starts an OpenFile prompt whose file browser is drawn into the
-// PANE cells; the prompt's input line must still project so the web has a path
-// box to type into (the TUI draws it on the bottom prompt row).
+console.log('\n[Open File: a NATIVE file browser card, not a slab of cells]');
+// Action::Open starts an OpenFile prompt. The whole dialog — path, prompt
+// input, nav shortcuts, toggles, sortable headers and the entry rows — is
+// projected semantically (`Editor::file_browser_view`) and rendered as DOM;
+// every click routes back to the cell span the TUI laid that element out at,
+// so the editor stays the only thing that hit-tests.
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 await page.request.post(URL + '/action', { data: { action: 'open' } });
-await page.waitForFunction(() => !!window.fresh.scene.regions.palette, { timeout: 5000 }).catch(() => {});
+await page.waitForFunction(() => !!document.querySelector('.palette.filebrowser'), { timeout: 5000 }).catch(() => {});
+await page.waitForFunction(() => ((window.fresh.scene.regions.palette || {}).browser || {}).loading === false, { timeout: 5000 }).catch(() => {});
+const fb = () => page.evaluate(() => JSON.parse(JSON.stringify((window.fresh.scene.regions.palette || {}).browser || null)));
+const b0 = await fb();
+check('Open File projects a semantic file browser', !!b0 && Array.isArray(b0.rows) && b0.rows.length > 0,
+  JSON.stringify(b0 && { path: b0.path, rows: b0.rows.length }));
+check('every interactive element carries its cell span',
+  !!b0 && [...b0.toggles, ...b0.shortcuts, ...b0.columns].every(e => e.w > 0));
+check('file browser is native DOM rows', (await page.locator('.palette.filebrowser .fbrow').count()) >= 1);
+check('NO cells/svg inside the file browser', (await page.locator('.palette.filebrowser svg').count()) === 0);
+check('the native row window matches the editor viewport',
+  (await page.locator('.palette.filebrowser .fbrow').count()) === b0.rows.length);
+// The status bar yields its row to the prompt in the TUI; the web must not
+// draw a stale one under the dialog.
+check('status bar does not project while the prompt owns the row',
+  !(await scene(page)).regions.statusbar);
 await page.keyboard.type('src/');
 await page.waitForFunction(() => (window.fresh.scene.regions.palette || {}).query === 'src/', { timeout: 5000 }).catch(() => {});
-const op = (await scene(page)).regions.palette;
-check('Open File projects a palette (scene.regions.palette non-null)', !!op && op.promptType === 'openfile', JSON.stringify(op && { q: op.query, t: op.promptType }));
-check('Open File input bar shows the typed path', !!op && op.query === 'src/', op && op.query);
-check('Open File has NO native suggestion list (browser is in the pane cells)', !!op && op.listRect == null && op.outerRect == null, JSON.stringify(op && { l: op.listRect, o: op.outerRect }));
-check('Open File renders a native input-only bar', (await page.locator('.palette.input-only .pinput').count()) >= 1);
-check('Open File does NOT render a suggestion list', (await page.locator('.palette .plist').count()) === 0);
-const opBox = await page.locator('.palette').boundingBox();
-const opGridBottom = await page.evaluate(() => { const m = window.fresh.metrics; return m.ay + window.fresh.scene.h * m.ch; });
-check('Open File input bar hugs the bottom of the cell grid (TUI prompt row)', !!opBox && Math.abs((opBox.y + opBox.height) - opGridBottom) <= 3, `bottom=${opBox && (opBox.y + opBox.height)} grid=${opGridBottom}`);
+check('the prompt input inside the card shows the typed path',
+  (await page.locator('.palette.filebrowser .pinput .q').innerText()).includes('src/'));
+check('no cell SVG leaks while the file browser is open', (await cellLeaks()).length === 0,
+  JSON.stringify(await cellLeaks()));
 await page.screenshot({ path: `${SHOTS}/33-openfile-prompt.png` });
+
+// Clicks travel back through the editor's own hit-tests. Clear the typed
+// filter first: filtering re-scores the list, so DOM row N and the row N
+// captured before typing are not the same entry.
+for (let i = 0; i < 4; i++) { await page.keyboard.press('Backspace'); }
+await page.waitForTimeout(300);
+const b1 = await fb();
+const dirIdx = b1.rows.findIndex(r => r.isDir && r.name !== '..');
+if (dirIdx >= 0) {
+  await page.locator('.palette.filebrowser .fbrow').nth(dirIdx).click();
+  await page.waitForTimeout(250);
+  const afterClick = await fb();
+  check('clicking a row selects it in the editor', afterClick.selected === b1.rows[dirIdx].index,
+    `selected=${afterClick.selected} want=${b1.rows[dirIdx].index}`);
+  await page.locator('.palette.filebrowser .fbrow').nth(dirIdx).dblclick();
+  await page.waitForTimeout(400);
+  const afterNav = await fb();
+  check('double-clicking a directory navigates into it',
+    !!afterNav && afterNav.path.endsWith('/' + b1.rows[dirIdx].name),
+    `path=${afterNav && afterNav.path} want .../${b1.rows[dirIdx].name}`);
+}
+await page.locator('.palette.filebrowser .fbcol-size').click();
+await page.waitForTimeout(250);
+check('clicking a column header re-sorts through the editor',
+  (await fb()).columns.find(c => c.name === 'size').active);
+const hidden0 = (await fb()).toggles.find(t => t.name === 'showHidden').active;
+await page.locator('.palette.filebrowser .fbtoggle').first().click();
+await page.waitForTimeout(300);
+check('clicking a checkbox toggles it through the editor',
+  (await fb()).toggles.find(t => t.name === 'showHidden').active === !hidden0);
 await page.keyboard.press('Escape'); await page.waitForTimeout(150);
 check('Escape closed the Open File prompt', !(await scene(page)).regions.palette);
+check('status bar comes back once the prompt releases the row',
+  !!(await scene(page)).regions.statusbar);
+// Save As and Switch Project are the same dialog.
+for (const act of ['save_as', 'switch_project']) {
+  await page.request.post(URL + '/action', { data: { action: act } });
+  await page.waitForTimeout(400);
+  check(`${act} renders the same native card`, (await page.locator('.palette.filebrowser').count()) === 1);
+  await page.keyboard.press('Escape'); await page.waitForTimeout(200);
+}
 // Regression: the normal command palette (Ctrl+P) still renders its list.
 await page.locator('body').click();
 await page.keyboard.press('Control+p');

@@ -48,23 +48,127 @@ function searchOptionsEl(p){
   return bar;
 }
 
-// Input-only prompt (OpenFile / SaveFileAs / SwitchProject): the bottom
-// prompt-row input bar, plus the cell-painted file-browser band above it.
-// The TUI paints that band across chrome the web renders natively (with the
-// file explorer open, the name column lands in explorer cells that pane
-// slices never carry), so the bridge ships the WHOLE popup band as cells
-// (palette.browserRect/browserCells) and it's drawn here as one block.
-// Clicks/wheel on it route through the normal pixel→cell path straight into
-// the editor's existing file-browser hit-test.
-function paletteInputOnlyEls(p){
-  const out=[];
-  if(p.browserRect&&p.browserCells){
-    const b=div("region pbrowser"); place(b,p.browserRect);
-    b.innerHTML=cellsSvg(p.browserCells,p.browserRect.w);
-    out.push(b);
+// ---- native file browser (OpenFile / SaveFileAs / SwitchProject) ---------
+// The editor owns the directory, the entry window, the selection, the sort and
+// the toggles; we render them natively from `palette.browser`
+// (`Editor::file_browser_view`) and forward every click back through
+// handle_mouse at the CELL SPAN the TUI laid that element out at — which the
+// editor's own file-browser hit-tests resolve. Nothing here re-derives a
+// position: the spans come from the renderer.
+//
+// The row window is deliberately the editor's own (`scrollOffset` …
+// `+ visibleRows`): rendering more rows than the editor believes are visible
+// would desync every click from `click_to_index`.
+function fbClick(col,row,dbl){
+  return e=>{ e.preventDefault(); e.stopPropagation();
+    sendMouse({kind:"down",button:"left",col,row,count:dbl?e.detail:1}); };
+}
+// Click target for a recorded span: its middle cell, so a padded native
+// control can never round outside the span the editor hit-tests.
+function spanCell(s){ return {col:s.x+Math.floor((s.w||1)/2), row:s.y}; }
+
+function fileBrowserEl(b,p){
+  const el=div("palette centered filebrowser");
+  // Title bar: the directory being browsed + the same close affordance the
+  // command palette has.
+  const tb=div("ptitlebar");
+  // Path: the leading directories shrink with an ellipsis, the last segment
+  // never does — so a deep path still tells you where you are.
+  const tt=div("ptbtext fbpath"); tt.title=b.path;
+  const cut=b.path.lastIndexOf("/");
+  const phead=document.createElement("span"); phead.className="fbphead";
+  phead.textContent=cut>0?b.path.slice(0,cut):"";
+  const ptail=document.createElement("span"); ptail.className="fbptail";
+  ptail.textContent=cut>=0?b.path.slice(cut):b.path;
+  tt.appendChild(phead); tt.appendChild(ptail);
+  tb.appendChild(tt);
+  const xb=document.createElement("span"); xb.className="ptbclose"; xb.textContent="✕"; xb.title="Close (Esc)";
+  xb.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendKey({key:"Escape"}); };
+  tb.appendChild(xb); el.appendChild(tb);
+
+  // The prompt input — inside the card, where the TUI's prompt row logically
+  // belongs to this dialog even though the grid puts it on the last row.
+  const bar=div("pinput");
+  if(p.message){ const m=document.createElement("span"); m.className="pmsg"; m.textContent=p.message; bar.appendChild(m); }
+  const q=document.createElement("span"); q.className="q";
+  q.innerHTML=esc(p.query||"")+'<span class="caret2">&nbsp;</span>';
+  bar.appendChild(q); scrollToCaret(q);
+  if(p.status){ const st=document.createElement("span"); st.className="status"; st.textContent=p.status; bar.appendChild(st); }
+  el.appendChild(bar);
+
+  // Toolbar: navigation shortcuts on the left, checkbox toggles on the right.
+  const tools=div("fbtools");
+  const nav=div("fbnav");
+  for(const s of b.shortcuts){
+    const c=div("fbchip"+(s.selected?" sel":""));
+    c.textContent=s.label; if(s.description) c.title=s.description;
+    const cell=spanCell(s); c.onmousedown=fbClick(cell.col,cell.row);
+    nav.appendChild(c);
   }
-  out.push(paletteInputOnlyEl(p));
-  return out;
+  tools.appendChild(nav);
+  const tog=div("fbtoggles");
+  for(const t of b.toggles){
+    const c=div("fbtoggle"+(t.active?" on":""));
+    const box=document.createElement("span"); box.className="fbbox"; box.textContent=t.active?"✓":""; c.appendChild(box);
+    const lb=document.createElement("span"); lb.textContent=t.label; c.appendChild(lb);
+    if(t.shortcut){ const k=document.createElement("span"); k.className="fbkey"; k.textContent=t.shortcut; c.appendChild(k); }
+    const cell=spanCell(t); c.onmousedown=fbClick(cell.col,cell.row);
+    tog.appendChild(c);
+  }
+  tools.appendChild(tog);
+  el.appendChild(tools);
+
+  // Column headers — clicking one re-sorts through the editor.
+  const head=div("fbhead");
+  for(const c of b.columns){
+    const h=div("fbcol fbcol-"+c.name+(c.active?" sort":""));
+    h.textContent=c.label+(c.active?(c.ascending?" ▲":" ▼"):"");
+    const cell=spanCell(c); h.onmousedown=fbClick(cell.col,cell.row);
+    head.appendChild(h);
+  }
+  el.appendChild(head);
+
+  // Rows. A double-click opens (or descends into) the entry, exactly like the
+  // TUI: the browser's click count rides along and the editor's own
+  // double-click path decides what that means.
+  const list=div("fbrows");
+  if(b.loading){ const l=div("fbempty"); l.textContent="Loading…"; list.appendChild(l); }
+  else if(b.error){ const l=div("fbempty fberr"); l.textContent=b.error; list.appendChild(l); }
+  else if(!b.rows.length){ const l=div("fbempty"); l.textContent="(empty)"; list.appendChild(l); }
+  for(const r of b.rows){
+    const row=div("fbrow"+(r.selected?" sel":"")+(r.isDir?" dir":"")+(r.matchesFilter?"":" nomatch"));
+    const nm=document.createElement("span"); nm.className="fbname";
+    nm.textContent=r.name+(r.isDir?"/":(r.isSymlink?"@":"")); nm.title=r.name;
+    const sz=document.createElement("span"); sz.className="fbsize"; sz.textContent=r.size||"—";
+    const md=document.createElement("span"); md.className="fbmod"; md.textContent=r.modified||"—";
+    row.appendChild(nm); row.appendChild(sz); row.appendChild(md);
+    row.onmousedown=fbClick(b.listRect.x+1,r.row,true);
+    list.appendChild(row);
+  }
+  // Wheel scrolls through the editor's own scroll offset, like the palette list.
+  list.addEventListener("wheel",e=>{ e.stopPropagation();
+    sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:b.listRect.x+1,row:b.listRect.y,
+      n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});
+  el.appendChild(list);
+
+  const foot=div("fbfoot");
+  const cnt=document.createElement("span");
+  cnt.textContent=b.selected!=null?((b.selected+1)+" / "+b.total):(b.total+" items");
+  foot.appendChild(cnt);
+  el.appendChild(foot);
+  return el;
+}
+
+// Input-only prompt (OpenFile / SaveFileAs / SwitchProject / plain inputs).
+// With a file browser attached the whole dialog is one native card (the prompt
+// input lives inside it); without one it stays the bottom prompt-row bar.
+function paletteInputOnlyEls(p){
+  if(p.browser){
+    const scrim=div("modal-scrim");
+    scrim.onmousedown=e=>{ e.preventDefault(); e.stopPropagation(); sendKey({key:"Escape"}); };
+    return [scrim, fileBrowserEl(p.browser,p)];
+  }
+  return [paletteInputOnlyEl(p)];
 }
 function paletteInputOnlyEl(p){
   const el=div("palette input-only");

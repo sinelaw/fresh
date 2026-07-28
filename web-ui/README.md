@@ -13,9 +13,11 @@ the core; each frontend only renders it.
 - **Chrome is native DOM/CSS**, rendered from the editor's **semantic
   projections** in `crates/fresh-editor/src/view/scene.rs` (`Editor::menu_view()`,
   `tab_bar_view()`, `status_view()`, `palette_view()`, `popups_view()`,
-  `file_explorer_view()`, `trust_dialog_view()`, `widgets_view()`,
-  `context_menu_view()`, `keybinding_editor_view()`, `settings_view()`): menu bar
-  + dropdowns, tabs, status bar, command palette, popups, file explorer, trust
+  `file_explorer_view()`, `file_browser_view()`, `trust_dialog_view()`,
+  `widgets_view()`, `context_menu_view()`, `keybinding_editor_view()`,
+  `settings_view()`): menu bar
+  + dropdowns, tabs, status bar, command palette, popups, file explorer, the
+  Open File / Save As / Switch Project browser, trust
   dialog, context menus, plugin widgets/dock, the keybinding editor and the full
   Settings modal.
 - **Buffer interior is SVG** — the pipeline's real, syntax-highlighted cells. The
@@ -108,7 +110,7 @@ Pick a numeric prefix that places a new file where its concern belongs; gaps
 | `20-cells.js` | icon set, cell-grid SVG renderer, TUI theme → CSS variables |
 | `30-render.js` | per-region DOM patching, motion (FX), `render()` |
 | `40-menu.js` / `45-tabs.js` / `55-status.js` | native chrome builders |
-| `50-palette.js` | palette / picker / prompts + file-browser band |
+| `50-palette.js` | palette / picker / prompts + the native file browser |
 | `60-popups.js` | native popups |
 | `65-widgets.js` | plugin widget tree + Settings / keybinding editor / aux modals |
 | `70-panels.js` | trust dialog, file explorer, border drag handles |

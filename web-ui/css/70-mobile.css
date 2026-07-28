@@ -109,6 +109,14 @@
   body.mobile .palette .prow .ptext{flex:1 1 100%}
   body.mobile .palette .prow .pdesc{flex:1 1 100%;white-space:normal;overflow:visible;text-overflow:clip}
   body.mobile .palette .prow .pkey{display:none}
+  /* File browser on a phone: the Modified column is the first thing to go
+     (names are what you navigate by), rows get finger-sized padding, and the
+     list is sized in dvh like the palette's. */
+  body.mobile .palette.filebrowser .fbrows{max-height:62dvh!important}
+  body.mobile .palette.filebrowser .fbhead,body.mobile .palette.filebrowser .fbrow{
+    grid-template-columns:1fr 80px;padding:7px 14px}
+  body.mobile .palette.filebrowser .fbcol-modified,body.mobile .palette.filebrowser .fbmod{display:none}
+  body.mobile .palette.filebrowser .fbkey{display:none}
   body.mobile .settings-modal,body.mobile .kbedit{left:2vw!important;right:2vw!important;
     width:96vw!important;top:42px!important;bottom:calc(var(--m-bottom,124px) + 6px)!important;
     height:auto!important;max-height:none!important;transform:none!important}
