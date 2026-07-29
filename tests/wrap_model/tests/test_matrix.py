@@ -291,6 +291,29 @@ def test_placement_reads_no_text(rule_name: str, kinds: frozenset[str], view_mod
     assert m.line_builds == 0
 
 
+@pytest.mark.parametrize("margin", PLACEMENT_MARGINS)
+@pytest.mark.parametrize("rule_name", ["wrap", "wrap+gutter", "grid", "nowrap"])
+def test_placement_under_folds(rule_name: str, margin: int) -> None:
+    """Placement holds with a fold collapsed, without a fold correction anywhere.
+
+    The case the Rust currently refuses to handle — `compute_buffer_layout`
+    steps aside entirely when any fold is collapsed, because the index counted
+    rows that were not drawn. With folded lines occupying no rows, the same
+    contract applies unchanged, which is the point of putting them in the
+    coordinate system rather than correcting for them at each consumer.
+    """
+    for height in (1, 3, 6):
+        model = build(MULTILINE, rule_name, frozenset({"fold"}), "source", height=height)
+        vp = model.viewport
+        assert model.index.total_rows() == len(full_rows(model))
+        for byte in placement_probe_bytes(model):
+            vp.ensure_visible(byte, margin)
+            assert vp.cursor_visible(byte)
+            assert not vp.ensure_visible(byte, margin)
+            vp.recenter(byte)
+            assert vp.cursor_visible(byte)
+
+
 # -- multi-line documents ----------------------------------------------------
 
 
@@ -360,15 +383,56 @@ def test_folded_bytes_are_never_drawn(rule_name: str) -> None:
             assert not any(lo <= src < hi for lo, hi in folded)
 
 
-def test_fold_does_not_disturb_the_index() -> None:
-    """The index is fold-blind by design — folds are a drawing concern.
+def test_folded_lines_occupy_no_rows() -> None:
+    """A collapsed line is not a visual row, so the index must not count it.
 
-    Keeping them out of the coordinate system is what stops a fold toggle from
-    invalidating anything.
+    This reverses an earlier stance — the index used to be deliberately
+    fold-blind, on the grounds that folds are a drawing concern and keeping them
+    out meant a fold toggle invalidated nothing. That is true but it buys the
+    wrong thing: a coordinate that counts rows nobody can scroll to makes the
+    scrollbar size itself wrong, the wheel move a different distance than it
+    reports, and page-down land short. Every consumer then needs its own fold
+    correction, which is exactly the family of fallbacks this work is removing.
+
+    A toggle now bumps `fold_version` and rebuilds, which is cheap because
+    folding is a deliberate, rare action — unlike typing, which is what the
+    repair path actually exists for.
     """
     plain = build(MULTILINE, "wrap", frozenset(), "source")
     folded = build(MULTILINE, "wrap", frozenset({"fold"}), "source")
-    assert plain.index.total_rows() == folded.index.total_rows()
+    assert folded.index.total_rows() < plain.index.total_rows()
+
+
+@pytest.mark.parametrize("rule_name", ["wrap", "wrap+gutter", "grid", "nowrap"])
+def test_index_row_count_matches_drawn_rows_under_folds(rule_name: str) -> None:
+    """The index's total is what a full render actually draws.
+
+    The property that lets placement, the scrollbar and the wheel all read the
+    same number instead of each correcting it.
+    """
+    model = build(MULTILINE, rule_name, frozenset({"fold"}), "source", height=10_000)
+    assert model.index.total_rows() == len(model.render().rows)
+
+
+def test_fold_toggle_invalidates_the_index() -> None:
+    """Adding a fold changes `pipeline_version`, so the next build is a rebuild.
+
+    Without this the index keeps reporting rows for lines that stopped being
+    drawn, and nothing detects it — the failure is silent and looks like a
+    scrolling bug much later.
+    """
+    model = build(MULTILINE, "wrap", frozenset(), "source")
+    model.index.ensure_built()
+    before = model.index.total_rows()
+    version_before = model.decorations.pipeline_version()
+
+    from wrap_model.decorations import Fold
+
+    start = model.buffer.line_start_offset(1)
+    model.decorations.add_fold(Fold(start, model.buffer.line_end_offset(2)))
+    assert model.decorations.pipeline_version() != version_before
+    model.index.ensure_built()
+    assert model.index.total_rows() < before
 
 
 # -- geometry changes --------------------------------------------------------

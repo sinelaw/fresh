@@ -37,6 +37,7 @@ from .metrics import bump
 from .tokens import Kind, Token
 from .transforms import (
     apply_conceal_ranges,
+    apply_fold_skip,
     apply_soft_breaks,
     splice_inline_virtual_text,
 )
@@ -74,6 +75,15 @@ class LineWrap:
     #: — it is in the carry — so indented continuations stay resumable.)
     resumable: list[bool] = field(default_factory=lambda: [True])
     virtual_rows: int = 0
+    #: Every byte of this line is inside a collapsed fold, so it draws nothing.
+    #:
+    #: A visual row is a row on screen, so a coordinate system counting rows has
+    #: to leave these out — otherwise the scrollbar sizes itself to rows nobody
+    #: can scroll to, the wheel moves a different distance than it says, and
+    #: page-down lands short. Keeping folds out of the index instead means every
+    #: consumer needs its own fold correction, which is where the fallbacks come
+    #: from.
+    hidden: bool = False
 
     @property
     def wrap_rows(self) -> int:
@@ -81,6 +91,8 @@ class LineWrap:
 
     @property
     def total_rows(self) -> int:
+        if self.hidden:
+            return 0
         return self.wrap_rows + self.virtual_rows
 
     def virtual_rows_before(self) -> int:
@@ -212,7 +224,27 @@ class WrapIndex:
             end = self.buffer.line_end_offset(line)
             hints = [h for h in deco.inline_virtual if start <= h.position < end]
             toks = splice_inline_virtual_text(toks, hints)
+        folds = deco.fold_skip()
+        if folds:
+            toks = apply_fold_skip(toks, folds)
         return toks
+
+    def _line_is_hidden(self, line: int) -> bool:
+        """Is every byte of `line` inside a collapsed range?
+
+        A fold's header line only *partly* overlaps its range — its own text is
+        still drawn, with the folded tail skipped — so it is not hidden. The
+        lines after it are, and those are the ones that must stop occupying
+        rows.
+        """
+        folds = self.decorations.fold_skip()
+        if not folds:
+            return False
+        start = self.buffer.line_start_offset(line)
+        end = self.buffer.line_end_offset(line)
+        if start >= end:
+            return any(lo <= start < hi for lo, hi in folds)
+        return any(lo <= start and end <= hi for lo, hi in folds)
 
     def _virtual_rows(self, line: int) -> int:
         start = self.buffer.line_start_offset(line)
@@ -231,7 +263,13 @@ class WrapIndex:
         self.stats_lines_wrapped += 1
         self.stats_rows_wrapped += len(out.rows)
         starts, carries, resumable = self._rows_to_starts(out.rows, out.tokens, line_start, 0)
-        return LineWrap(starts, carries, resumable, self._virtual_rows(line))
+        return LineWrap(
+            starts,
+            carries,
+            resumable,
+            self._virtual_rows(line),
+            hidden=self._line_is_hidden(line),
+        )
 
     @staticmethod
     def _row_is_resumable(row: RowInfo, out: list[Token]) -> bool:

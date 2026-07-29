@@ -103,18 +103,24 @@ class Decorations:
     inline_virtual: list[InlineVirtualText] = field(default_factory=list)
     virtual_lines: list[VirtualLine] = field(default_factory=list)
     folds: list[Fold] = field(default_factory=list)
+    #: Bumped whenever a fold is added or removed. Folds are part of the
+    #: coordinate system (a collapsed line occupies no visual row), so a toggle
+    #: has to invalidate the index the same way any other decoration change
+    #: does — otherwise row numbers keep counting rows that are no longer drawn.
+    fold_version: int = 0
 
     soft_break_version: int = 0
     conceal_version: int = 0
     inline_virtual_version: int = 0
     virtual_line_version: int = 0
 
-    def pipeline_version(self) -> tuple[int, int, int, int]:
+    def pipeline_version(self) -> tuple[int, int, int, int, int]:
         return (
             self.soft_break_version,
             self.conceal_version,
             self.inline_virtual_version,
             self.virtual_line_version,
+            self.fold_version,
         )
 
     # -- activation-filtered views ------------------------------------------
@@ -176,6 +182,7 @@ class Decorations:
 
     def add_fold(self, f: Fold) -> None:
         self.folds.append(f)
+        self.fold_version += 1
 
     def shift_for_edit(self, start: int, delta: int) -> None:
         """Move anchors after an edit, the way marker-anchored decorations do."""
