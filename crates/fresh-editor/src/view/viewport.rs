@@ -1205,13 +1205,24 @@ impl Viewport {
         };
         let max_top = total_rows.saturating_sub(viewport_height);
 
+        // `fine_tune_scroll_up`, in row space. An upward scroll through wrapped
+        // rows is started by a pre-render pass whose placement is coarser than
+        // this one's, and it can leave the cursor one row further from the top
+        // than the margin asks for. That is a legal resting position, so neither
+        // margin test fires — and then the viewport never moves again on any
+        // later press, so scrolling stalls in the middle of the buffer
+        // (fresh#1574's up-arrow invariant). While the flag is set, the cursor
+        // is pinned *at* the margin rather than merely kept out of it.
+        let fine_tune = self.scrolled_up_in_wrap && self.line_wrap_enabled;
+        self.scrolled_up_in_wrap = false;
+
         let in_top_margin = cursor_row < top_row + margin;
         let in_bottom_margin = cursor_row + margin + 1 > top_row + viewport_height;
-        if !in_top_margin && !in_bottom_margin {
+        if !fine_tune && !in_top_margin && !in_bottom_margin {
             return false;
         }
 
-        let target_top = if in_top_margin {
+        let target_top = if fine_tune || in_top_margin {
             cursor_row.saturating_sub(margin)
         } else {
             (cursor_row + margin + 1).saturating_sub(viewport_height)
@@ -1227,13 +1238,17 @@ impl Viewport {
         true
     }
 
-    /// `build_anchored` says the rows were built starting at the viewport's own
-    /// anchor rather than at the logical line's first row. When they were,
-    /// `top_view_line_offset` is no longer an index into `view_lines`, and the
-    /// vertical phases below — every one of which reads or writes it as one —
-    /// must not run. They have nothing to do anyway: `ensure_visible_in_rows`
-    /// settled the cursor's row against the margin before the build, in absolute
-    /// row space where no such reinterpretation is possible.
+    /// `rows_settled` says [`Self::ensure_visible_in_rows`] already placed the
+    /// viewport against the margin, in absolute row space, before the build. The
+    /// vertical phases below must not run when it did, for two reasons that
+    /// arrive together:
+    ///
+    /// * The margin is already satisfied. Applying it again scrolls a second
+    ///   time and leaves the cursor *outside* the margin it was just centred
+    ///   in — after which nothing scrolls on the next key press (fresh#1574).
+    /// * When the build was also anchored, `top_view_line_offset` is no longer
+    ///   an index into `view_lines`, and every phase below reads or writes it
+    ///   as one.
     ///
     /// Only the horizontal column scroll still runs, since it works from
     /// `cursor_view_line` — a plain index into the rows it was handed.
@@ -1242,7 +1257,7 @@ impl Viewport {
         view_lines: &[ViewLine],
         cursor: &Cursor,
         gutter_width: usize,
-        build_anchored: bool,
+        rows_settled: bool,
     ) -> bool {
         // Check if we should skip sync due to session restore
         // This prevents the restored scroll position from being overwritten
@@ -1291,7 +1306,7 @@ impl Viewport {
         // Each phase below is tried in order; the first one that actually moves
         // the viewport returns `true`. They share no mutable state beyond
         // `self`, so the early returns keep the happy path easy to follow.
-        if !build_anchored {
+        if !rows_settled {
             if self.fine_tune_scroll_up(view_lines, cursor_view_line, viewport_height) {
                 return true;
             }

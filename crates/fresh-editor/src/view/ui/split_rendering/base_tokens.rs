@@ -577,15 +577,24 @@ pub(crate) fn build_line_tokens(
         .min(buffer_len);
     let estimated = buffer.estimated_line_length().max(1);
 
-    // A line longer than `MAX_LINE_BYTES` is yielded in pieces, and each piece
-    // counts as a "line" against the read budget — so ask for enough of them to
-    // cover this one.
-    let pieces = line_end.saturating_sub(line_start) / MAX_LINE_BYTES + 1;
+    // The whole line, however long: this feeds the wrap index, and an index
+    // that has seen only part of a line reports a row count for the part. A
+    // scrollbar reading that maps the whole track onto the prefix.
+    //
+    // `build_base_tokens`'s budget counts *units*, and a single long line
+    // spends two kinds. `LineIterator` yields it in `MAX_LINE_BYTES` pieces
+    // and each piece costs one; independently, the forced-break counter inside
+    // the character loop costs one per `MAX_SAFE_LINE_WIDTH` characters — the
+    // smaller of the two by 10×, and the one this used to overlook. Bytes are
+    // an upper bound on characters, so deriving both from byte length can only
+    // over-ask.
+    let line_bytes = line_end.saturating_sub(line_start);
+    let units = line_bytes / MAX_SAFE_LINE_WIDTH + line_bytes / MAX_LINE_BYTES + 2;
     let mut tokens = build_base_tokens(
         buffer,
         line_start,
         estimated,
-        pieces,
+        units,
         false,
         line_ending,
         &[],

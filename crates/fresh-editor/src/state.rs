@@ -580,6 +580,25 @@ impl EditorState {
         ))
     }
 
+    /// Whether [`Self::wrap_indices`] is a faithful model of the rows that will
+    /// be drawn — the precondition for treating it as the authority on scroll
+    /// position or as a build anchor.
+    ///
+    /// The index derives a line's rows from that line's own bytes and the
+    /// geometry, and from nothing else. Three plugin decorations move row
+    /// boundaries without changing either: soft breaks (markdown_compose wraps
+    /// each paragraph to its own, narrower width), conceals (hidden spans make
+    /// rows hold more), and inline virtual text (spliced in before wrapping).
+    /// With any of them live the index still answers, but its rows are not the
+    /// drawn rows, and the answers are wrong in the direction that matters —
+    /// too few rows, so scrolling clamps before the end of the buffer.
+    ///
+    /// Virtual *lines* are not in this list: they are whole extra rows, and the
+    /// index counts them through the callback `ensure_built` takes.
+    pub fn wrap_index_models_layout(&self) -> bool {
+        self.soft_breaks.is_empty() && self.conceals.is_empty() && self.virtual_texts.is_empty()
+    }
+
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
     /// Pre-edit line coordinates the wrap index's repair needs.
     ///
