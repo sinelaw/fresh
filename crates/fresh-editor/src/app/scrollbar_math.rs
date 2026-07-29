@@ -104,6 +104,8 @@ fn total_rows(
         let hi = virtual_positions.partition_point(|p| *p < end);
         (hi - lo) as u32
     };
+    // Resolved before `entry` takes `&mut state`.
+    let decorations = state.index_decorations(geometry.view_mode);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,
@@ -111,6 +113,7 @@ fn total_rows(
         pipeline_inputs_ver,
         line_ending,
         &virtual_rows,
+        &decorations,
     );
     index.total_rows() as usize
 }

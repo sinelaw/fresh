@@ -35,6 +35,66 @@ pub struct WrapIndexGeometry {
     pub view_mode: CacheViewMode,
 }
 
+/// Plugin decorations that move row boundaries, snapshotted for one build.
+///
+/// Owned data rather than a borrow of the managers, because the build holds
+/// `&mut Buffer` and a `&EditorState` alongside it does not borrow. Resolve it
+/// with [`crate::state::EditorState::index_decorations`] before the build.
+///
+/// Cursor-blind by construction: every query is made with an empty cursor list.
+/// That is the index's defining convention, not an approximation — scroll
+/// position must not change because a cursor moved, which is also why
+/// `pipeline_inputs_version` leaves cursor position out. Cursor-dependent
+/// activation belongs to the renderer's window, where it is cheap and local.
+#[derive(Debug, Clone, Default)]
+pub struct IndexDecorations {
+    /// Sorted `(byte, indent)`.
+    pub soft_breaks: Vec<(usize, u16)>,
+    /// Sorted by start; `None` replacement means "hide", `Some` means "replace".
+    pub conceals: Vec<(std::ops::Range<usize>, Option<String>)>,
+    /// Inline hints, styleless — the index measures and never draws.
+    pub inline_hints: Vec<crate::view::ui::split_rendering::transforms::InlineHint>,
+}
+
+impl IndexDecorations {
+    pub fn is_empty(&self) -> bool {
+        self.soft_breaks.is_empty() && self.conceals.is_empty() && self.inline_hints.is_empty()
+    }
+
+    /// The decorations touching `line_start..line_end`, as the transforms want
+    /// them. Conceals are kept whenever they *overlap* the line rather than
+    /// start inside it: one spanning a line break still hides part of this line.
+    fn for_line(
+        &self,
+        line_start: usize,
+        line_end: usize,
+    ) -> (
+        Vec<(usize, u16)>,
+        Vec<(std::ops::Range<usize>, Option<&str>)>,
+        Vec<crate::view::ui::split_rendering::transforms::InlineHint>,
+    ) {
+        let breaks = self
+            .soft_breaks
+            .iter()
+            .filter(|(p, _)| *p >= line_start && *p < line_end)
+            .copied()
+            .collect();
+        let conceals = self
+            .conceals
+            .iter()
+            .filter(|(r, _)| r.start < line_end && r.end > line_start)
+            .map(|(r, t)| (r.clone(), t.as_deref()))
+            .collect();
+        let hints = self
+            .inline_hints
+            .iter()
+            .filter(|h| h.anchor >= line_start && h.anchor < line_end)
+            .cloned()
+            .collect();
+        (breaks, conceals, hints)
+    }
+}
+
 /// Row structure of one logical line.
 #[derive(Debug, Clone)]
 pub struct LineWrap {
@@ -174,6 +234,12 @@ pub struct WrapIndex {
     /// the effective text differs without the buffer changing, which local
     /// repair cannot express — see [`WrapIndex::damage_all`].
     pipeline_inputs_version: u64,
+    /// The decorations this build was made with, kept so repair rebuilds a line
+    /// the same way the full build did. Safe to hold across edits: any change to
+    /// the decorations themselves bumps `pipeline_inputs_version`, which forces a
+    /// rebuild rather than a repair, so a repair only ever sees a pure-text edit
+    /// against the snapshot it was built with.
+    decorations: IndexDecorations,
 }
 
 impl WrapIndex {
@@ -198,6 +264,7 @@ impl WrapIndex {
         pipeline_inputs_version: u64,
         line_ending: LineEnding,
         virtual_rows: &dyn Fn(usize, usize) -> u32,
+        decorations: &IndexDecorations,
     ) {
         if self.is_built_for(&geometry, pipeline_inputs_version) {
             return;
@@ -206,13 +273,21 @@ impl WrapIndex {
         let mut lines = Vec::with_capacity(line_count);
         for line in 0..line_count {
             let vrows = line_virtual_rows(buffer, line, virtual_rows);
-            lines.push(build_line(buffer, line, geometry.rule, line_ending, vrows));
+            lines.push(build_line(
+                buffer,
+                line,
+                geometry.rule,
+                line_ending,
+                vrows,
+                decorations,
+            ));
         }
         let counts: Vec<u32> = lines.iter().map(|l| l.total_rows()).collect();
         self.rows.rebuild(&counts);
         self.lines = lines;
         self.geometry = Some(geometry);
         self.pipeline_inputs_version = pipeline_inputs_version;
+        self.decorations = decorations.clone();
         self.built = true;
     }
 
@@ -387,7 +462,14 @@ impl WrapIndex {
         let mut rebuilt = Vec::new();
         for line in first..=new_last {
             let vrows = line_virtual_rows(buffer, line, virtual_rows);
-            rebuilt.push(build_line(buffer, line, rule, line_ending, vrows));
+            rebuilt.push(build_line(
+                buffer,
+                line,
+                rule,
+                line_ending,
+                vrows,
+                &self.decorations,
+            ));
         }
         let end = (old_last + 1).min(self.lines.len());
         self.lines.splice(first..end, rebuilt);
@@ -557,7 +639,7 @@ impl WrapIndex {
     ) {
         let old_total = self.lines[line].total_rows();
         let vrows = line_virtual_rows(buffer, line, virtual_rows);
-        self.lines[line] = build_line(buffer, line, rule, line_ending, vrows);
+        self.lines[line] = build_line(buffer, line, rule, line_ending, vrows, &self.decorations);
         let new_total = self.lines[line].total_rows();
         self.rows.set(line, old_total, new_total);
     }
@@ -601,6 +683,46 @@ fn line_virtual_rows(
     virtual_rows(start, end)
 }
 
+/// Canonical token stream for one logical line: the renderer's decoration chain.
+///
+/// Runs exactly what `build_view_data` runs — soft breaks, then conceals, then
+/// inline hints — because rows the index reports have to be the rows that get
+/// drawn. Wrapping the raw line instead was the gap `wrap_index_models_layout`
+/// papered over: markdown_compose wraps each paragraph to its own narrower
+/// width, so an index blind to that under-counts and scrolling clamps before
+/// the end of the buffer.
+fn line_token_stream(
+    buffer: &mut Buffer,
+    line: usize,
+    line_ending: LineEnding,
+    decorations: &IndexDecorations,
+) -> Vec<ViewTokenWire> {
+    use crate::view::ui::split_rendering::transforms::{
+        apply_conceal_ranges, apply_soft_breaks, splice_inline_virtual_text,
+    };
+
+    let mut tokens = build_line_tokens(buffer, line, line_ending);
+    if decorations.is_empty() {
+        return tokens;
+    }
+    let line_start = buffer.line_start_offset(line).unwrap_or(0);
+    let line_end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or_else(|| buffer.len())
+        .min(buffer.len());
+    let (breaks, conceals, hints) = decorations.for_line(line_start, line_end);
+    if !breaks.is_empty() {
+        tokens = apply_soft_breaks(tokens, &breaks);
+    }
+    if !conceals.is_empty() {
+        tokens = apply_conceal_ranges(tokens, &conceals);
+    }
+    if !hints.is_empty() {
+        tokens = splice_inline_virtual_text(tokens, &hints);
+    }
+    tokens
+}
+
 /// Wrap one logical line from scratch.
 ///
 /// Built from the *real* tokenizer rather than from raw line text: the
@@ -614,9 +736,10 @@ fn build_line(
     rule: WrapRule,
     line_ending: LineEnding,
     virtual_rows: u32,
+    decorations: &IndexDecorations,
 ) -> LineWrap {
     let line_start = buffer.line_start_offset(line).unwrap_or(0);
-    let tokens = build_line_tokens(buffer, line, line_ending);
+    let tokens = line_token_stream(buffer, line, line_ending, decorations);
     let out = WrapMachine::run(tokens, rule);
     let (row_starts, carries, resumable) = rows_to_starts(&out, line_start, 0);
     LineWrap {
@@ -857,7 +980,14 @@ mod tests {
 
     fn built(buffer: &mut Buffer, width: usize) -> WrapIndex {
         let mut index = WrapIndex::default();
-        index.ensure_built(buffer, geometry(width), 0, LineEnding::LF, &no_virtual);
+        index.ensure_built(
+            buffer,
+            geometry(width),
+            0,
+            LineEnding::LF,
+            &no_virtual,
+            &IndexDecorations::default(),
+        );
         index
     }
 
@@ -1062,6 +1192,7 @@ mod tests {
                 0,
                 LineEnding::LF,
                 &no_virtual,
+                &IndexDecorations::default(),
             );
         }
         let narrow = set.get(&geometry(16)).expect("built").total_rows();

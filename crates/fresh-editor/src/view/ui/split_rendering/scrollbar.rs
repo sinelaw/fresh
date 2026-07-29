@@ -269,6 +269,8 @@ pub(super) fn scrollbar_visual_row_counts(
     };
 
     let line_ending = state.buffer.line_ending();
+    // Resolved before `entry` takes `&mut state`.
+    let decorations = state.index_decorations(geometry.view_mode);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,
@@ -276,6 +278,7 @@ pub(super) fn scrollbar_visual_row_counts(
         pipeline_inputs_ver,
         line_ending,
         &virtual_rows,
+        &decorations,
     );
 
     let total_visual_rows = index.total_rows() as usize;
