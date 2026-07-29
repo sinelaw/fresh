@@ -41,6 +41,16 @@ pub struct Viewport {
     /// Scroll offset (lines to keep visible above/below cursor)
     pub scroll_offset: usize,
 
+    /// True while the row-space pass places this viewport vertically — set
+    /// each frame by the render path when a wrap index exists for the split's
+    /// geometry. While set, the byte-oriented `ensure_visible` yields its
+    /// vertical half entirely: two passes deciding vertical placement is
+    /// fresh#1574, and the byte pass's wrap counting is the one that
+    /// disagrees with what is drawn. It stays for two jobs only — horizontal
+    /// column scroll with wrap off, and vertical placement on files beyond
+    /// the index's size ceilings, where no row space exists to decide in.
+    pub(crate) row_pass_owns_placement: bool,
+
     /// Horizontal scroll offset (columns to keep visible left/right of cursor)
     pub horizontal_scroll_offset: usize,
 
@@ -164,6 +174,7 @@ impl Viewport {
             width,
             height,
             scroll_offset: 3,
+            row_pass_owns_placement: false,
             horizontal_scroll_offset: 5,
             line_wrap_enabled: false,
             grid_wrap: false,
@@ -1159,6 +1170,7 @@ impl Viewport {
         index: &crate::view::wrap_index::WrapIndex,
         buffer: &crate::model::buffer::Buffer,
         cursor_byte: usize,
+        expansion: Option<&CursorLineExpansion>,
     ) -> bool {
         if self.should_skip_resize_sync() || self.should_skip_ensure_visible() {
             return false;
@@ -1168,10 +1180,40 @@ impl Viewport {
             return false;
         }
 
-        let total_rows = index.total_rows() as usize;
+        // Effective rows: the canonical index with the cursor's one divergent
+        // line expanded to its drawn row count. Placement must target the row
+        // the cursor is *drawn* on, and clamp against the rows that will
+        // actually exist — a document that fits the window canonically can
+        // exceed it revealed, and the canonical clamp would forbid the scroll
+        // that shows the cursor at all. See the model's
+        // `EditorModel.ensure_cursor_visible`, which this mirrors exactly.
+        let (exp_line_start, exp_first, exp_canonical, exp_drawn) = match expansion {
+            Some(e) => (
+                e.line_start,
+                e.first_row as usize,
+                e.canonical_rows,
+                e.drawn_rows,
+            ),
+            None => (usize::MAX, 0, 0, 0),
+        };
+        let delta = exp_drawn.saturating_sub(exp_canonical);
+
+        let total_rows = index.total_rows() as usize + delta;
         let top_line = buffer.get_line_number(self.top_byte());
-        let top_row = index.line_first_row(top_line) as usize + self.top_view_line_offset();
-        let cursor_row = index.row_of_byte(buffer, cursor_byte) as usize;
+        let canonical_top = index.line_first_row(top_line) as usize + self.top_view_line_offset();
+        let top_row = if delta > 0 && self.top_byte() == exp_line_start {
+            // An anchor inside the divergent line counts drawn rows — that is
+            // how the anchored build slices the cursor-aware stream.
+            exp_first + self.top_view_line_offset()
+        } else if delta > 0 && canonical_top >= exp_first + exp_canonical {
+            canonical_top + delta
+        } else {
+            canonical_top
+        };
+        let cursor_row = match expansion {
+            Some(e) => e.cursor_row_drawn as usize,
+            None => index.row_of_byte(buffer, cursor_byte) as usize,
+        };
 
         // Same margin rule as the layout pass, in absolute rows — including its
         // guard, which is `top_view_line_offset > 0`, i.e. "the viewport is
@@ -1199,14 +1241,27 @@ impl Viewport {
         } else {
             (cursor_row + margin + 1).saturating_sub(viewport_height)
         };
+
         let new_top = target_top.min(max_top);
         if new_top == top_row {
             return apply_margin;
         }
 
-        let addr = index.byte_of_row(buffer, new_top as u32);
-        self.set_top_byte(buffer.line_start_offset(addr.line).unwrap_or(0));
-        self.set_top_view_line_offset(addr.row_in_line);
+        if delta > 0 && new_top >= exp_first && new_top < exp_first + exp_drawn {
+            // Target lands inside the expanded line: anchor at its start with a
+            // drawn-row offset, which the anchored build interprets directly.
+            self.set_top_byte(exp_line_start);
+            self.set_top_view_line_offset(new_top - exp_first);
+        } else {
+            let canonical_target = if delta > 0 && new_top >= exp_first + exp_drawn {
+                new_top - delta
+            } else {
+                new_top
+            };
+            let addr = index.byte_of_row(buffer, canonical_target as u32);
+            self.set_top_byte(buffer.line_start_offset(addr.line).unwrap_or(0));
+            self.set_top_view_line_offset(addr.row_in_line);
+        }
         apply_margin
     }
 
@@ -1709,7 +1764,12 @@ impl Viewport {
         let cursor_line_start = buffer.line_iterator(cursor.position, 80).current_position();
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
 
-        let (cursor_is_visible, cursor_near_top) = if cursor_line_start < self.top_byte() {
+        let (cursor_is_visible, cursor_near_top) = if self.row_pass_owns_placement {
+            // Vertical placement belongs to the row pass; claiming the cursor
+            // is visible short-circuits every scroll below while the
+            // horizontal handling further down still runs.
+            (true, false)
+        } else if cursor_line_start < self.top_byte() {
             (false, true)
         } else if self.line_wrap_enabled {
             self.check_wrapped_visibility(
@@ -2875,4 +2935,26 @@ mod tests {
             lines_from_top
         );
     }
+}
+
+/// The cursor's line, expanded to the rows the frame will actually draw.
+///
+/// The index is canonical (cursor-blind); the frame renders the cursor's line
+/// cursor-aware. Activation scopes are line-local, so this one line is the
+/// only place the two can disagree — and placement has to work in the drawn
+/// rows or it parks the cursor outside the margin band and the next press
+/// finds nothing to do (fresh#1574's stall). Resolved by the render path,
+/// which has the managers and the cursors; `None` means no divergence.
+#[derive(Debug, Clone, Copy)]
+pub struct CursorLineExpansion {
+    /// Byte where the divergent line starts.
+    pub line_start: usize,
+    /// The line's first row, canonical == drawn (rows above never diverge).
+    pub first_row: u32,
+    /// Rows the canonical index gives the line.
+    pub canonical_rows: usize,
+    /// Rows the cursor-aware wrap gives it.
+    pub drawn_rows: usize,
+    /// The row the cursor is drawn on, in effective rows.
+    pub cursor_row_drawn: u32,
 }

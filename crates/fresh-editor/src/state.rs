@@ -595,14 +595,21 @@ impl EditorState {
         crate::view::ui::split_rendering::fold_skip_set(&self.buffer, &self.marker_list, folds)
     }
 
+    /// Resolve the decorations the wrap index builds from.
+    ///
+    /// `cursors` must be empty for the index itself — the index is canonical,
+    /// or scroll position would change when a cursor moved. The one legitimate
+    /// non-empty caller is the render path's cursor-line expansion, which
+    /// re-wraps a single line the way the frame will draw it.
     pub fn index_decorations(
         &self,
         view_mode: crate::view::line_wrap_cache::CacheViewMode,
         folds: Vec<std::ops::Range<usize>>,
+        cursors: &[usize],
     ) -> crate::view::wrap_index::IndexDecorations {
         use crate::view::line_wrap_cache::CacheViewMode;
         let end = self.buffer.len().saturating_add(1);
-        let no_cursors: [usize; 0] = [];
+        let no_cursors = cursors;
 
         let soft_breaks = if self.soft_breaks.is_empty() {
             Vec::new()

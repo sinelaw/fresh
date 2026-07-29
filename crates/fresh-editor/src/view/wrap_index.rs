@@ -360,6 +360,12 @@ impl WrapIndex {
     }
 
     /// Absolute row index of `line`'s first row.
+    /// One line's canonical wrap structure, for the render path's
+    /// cursor-line expansion.
+    pub fn line_wrap(&self, line: usize) -> Option<&LineWrap> {
+        self.lines.get(line)
+    }
+
     pub fn line_first_row(&self, line: usize) -> u32 {
         self.rows.prefix(line)
     }
@@ -436,11 +442,15 @@ impl WrapIndex {
             return (row, 0);
         }
         let lw = &self.lines[addr.line];
-        let mut idx = addr.row_in_line;
+        // `row_in_line` is a drawn offset — virtual rows above the line count —
+        // but `resumable` is indexed by wrap row. A non-virtual address is
+        // always at or past the virtual block, so the subtraction is safe; the
+        // walk-back distance is the same in both spaces.
+        let mut idx = addr.row_in_line.saturating_sub(lw.virtual_rows as usize);
         while idx > 0 && !lw.resumable[idx] {
             idx -= 1;
         }
-        let skip = (addr.row_in_line - idx) as u32;
+        let skip = (addr.row_in_line.saturating_sub(lw.virtual_rows as usize) - idx) as u32;
         (row - skip, skip)
     }
 
@@ -811,6 +821,26 @@ fn line_token_stream(
 /// the `Space`-overflow back-up (issue #1363) — which only fires on `Space`
 /// tokens — never ran in them, and their counts could differ from what the
 /// renderer drew. Sharing the tokenizer makes that class of drift impossible.
+/// Drawn row starts of one line under `decorations`, line-relative.
+///
+/// The render path's cursor-line expansion: the index is canonical, but the
+/// frame draws the cursor's line cursor-aware, and placement must target the
+/// row the cursor is *drawn* on. Same pipeline as [`build_line`], for exactly
+/// one line, with cursor-aware decorations resolved by the caller.
+pub(crate) fn line_drawn_row_starts(
+    buffer: &mut Buffer,
+    line: usize,
+    rule: WrapRule,
+    line_ending: LineEnding,
+    decorations: &IndexDecorations,
+) -> Vec<u32> {
+    let line_start = buffer.line_start_offset(line).unwrap_or(0);
+    let tokens = line_token_stream(buffer, line, line_ending, decorations, None);
+    let out = WrapMachine::run(tokens, rule);
+    let (row_starts, _, _) = rows_to_starts(&out, line_start, 0);
+    row_starts
+}
+
 fn build_line(
     buffer: &mut Buffer,
     line: usize,
@@ -1402,7 +1432,7 @@ mod tests {
             let cursor_byte = index.byte_of_row(&buffer, cursor_row as u32).byte;
             viewport.set_top_byte(0);
             viewport.set_top_view_line_offset(0);
-            viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte);
+            viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte, None);
 
             let top_line = buffer.get_line_number(viewport.top_byte());
             let top_row = index.line_first_row(top_line) as usize + viewport.top_view_line_offset();
@@ -1435,7 +1465,7 @@ mod tests {
         viewport.line_wrap_enabled = true;
         // No `ViewLine` is materialised anywhere in this call; it reads the
         // index only.
-        assert!(viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte));
+        assert!(viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte, None));
         assert!(viewport.top_view_line_offset() > 0 || viewport.top_byte() > 0);
     }
 
