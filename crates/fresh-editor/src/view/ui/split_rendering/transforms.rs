@@ -29,6 +29,22 @@ pub(crate) fn apply_wrapping_transform(
     gutter_width: usize,
     hanging_indent: bool,
 ) -> Vec<ViewTokenWire> {
+    apply_wrapping_transform_from(tokens, content_width, gutter_width, hanging_indent, None)
+}
+
+/// As [`apply_wrapping_transform`], resuming from a previous row's carry.
+///
+/// `carry` is `Some` when the caller starts mid-line — the renderer beginning at
+/// a viewport anchor rather than at the logical line's start. Resuming with the
+/// row's carry is what makes that produce the same rows the line-start build
+/// would have; see `wrap_machine::RowCarry`.
+pub(crate) fn apply_wrapping_transform_from(
+    tokens: Vec<ViewTokenWire>,
+    content_width: usize,
+    gutter_width: usize,
+    hanging_indent: bool,
+    carry: Option<crate::view::wrap_machine::RowCarry>,
+) -> Vec<ViewTokenWire> {
     let rule = WrapRule::Word {
         content_width,
         gutter_width,
@@ -39,7 +55,10 @@ pub(crate) fn apply_wrapping_transform(
     if rule.is_degenerate() {
         return tokens;
     }
-    WrapMachine::run(tokens, rule).tokens
+    match carry {
+        Some(carry) => WrapMachine::run_from(tokens, rule, carry).tokens,
+        None => WrapMachine::run(tokens, rule).tokens,
+    }
 }
 
 /// Terminal-grid wrap: break at **exact column boundaries** every `cols`

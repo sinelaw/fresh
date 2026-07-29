@@ -534,6 +534,7 @@ pub fn compute_line_layout(
         // No character budget: callers ask this for the line's *total* visual
         // row count, so a viewport-sized read would under-report it.
         None,
+        false,
     );
 
     let is_compose = matches!(geom.view_mode, CacheViewMode::Compose);

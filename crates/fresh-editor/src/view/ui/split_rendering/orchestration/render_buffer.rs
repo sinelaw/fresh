@@ -16,6 +16,7 @@ use super::super::post_pass::{
     apply_background_to_lines, render_column_guides, render_cursor_column_bg, render_ruler_bg,
 };
 use super::super::view_data::build_view_data;
+use super::super::view_data::BuildAnchor;
 use super::contexts::SelectionContext;
 use super::overlays::{decoration_context, selection_context};
 use super::render_line::{render_view_lines, LastLineEnd, LineRenderInput, LineRenderOutput};
@@ -200,6 +201,7 @@ pub(crate) fn compute_buffer_layout(
     //
     // Only when the index is already built for this geometry: building it here
     // would trade one O(buffer) pass for another.
+    let mut build_anchor: Option<BuildAnchor> = None;
     if view_transform.is_none() && !state.wrap_indices.is_empty() {
         let geometry = wrap_index_geometry_for(viewport, &state.buffer, line_wrap, &view_mode);
         let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
@@ -217,6 +219,12 @@ pub(crate) fn compute_buffer_layout(
             if let Some(index) = state.wrap_indices.get(&geometry) {
                 viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
             }
+            // Resolve the anchor *after* the scroll decision, so the build
+            // starts where the frame will actually draw.
+            build_anchor = state
+                .wrap_indices
+                .get(&geometry)
+                .and_then(|index| resolve_build_anchor(index, &state.buffer, viewport));
         }
     }
 
@@ -235,6 +243,7 @@ pub(crate) fn compute_buffer_layout(
             folds,
             theme,
             &cursor_positions,
+            build_anchor,
         )
     };
 
@@ -264,6 +273,9 @@ pub(crate) fn compute_buffer_layout(
             folds,
             theme,
             &cursor_positions,
+            // A sync scroll moved the viewport; the anchor described where it
+            // used to be.
+            None,
         );
         viewport.scroll_to_end_of_view(&rebuilt.lines);
         (rebuilt, None)
@@ -274,7 +286,12 @@ pub(crate) fn compute_buffer_layout(
     // Ensure cursor is visible using Layout-aware check (handles virtual lines)
     let primary = *cursors.primary();
     let top_byte_before_scroll = viewport.top_byte;
-    let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
+    let scrolled = viewport.ensure_visible_in_layout(
+        &view_data.lines,
+        &primary,
+        gutter_width,
+        build_anchor.is_some(),
+    );
 
     // If we scrolled AND `top_byte` changed, rebuild view_data from the new
     // top_byte (the old view_data no longer matches what's visible).  We
@@ -307,8 +324,12 @@ pub(crate) fn compute_buffer_layout(
                 folds,
                 theme,
                 &cursor_positions,
+                // Same: the viewport moved, so the old anchor no longer applies.
+                None,
             );
-            let _ = viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width);
+            // The rebuild is unanchored, so the layout pass owns the offsets again.
+            let _ =
+                viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width, false);
             rebuilt
         } else {
             view_data
@@ -376,7 +397,7 @@ pub(crate) fn compute_buffer_layout(
     // no overlays — because the request never moved off the line's start
     // (issue #2843).
     let (viewport_start, viewport_end) = if line_wrap {
-        let first_drawn = viewport.top_view_line_offset.min(view_data.lines.len());
+        let first_drawn = view_data.first_drawn.min(view_data.lines.len());
         let drawn = &view_data.lines[first_drawn..];
         let drawn = &drawn[..drawn.len().min(adjusted_visible_count)];
         visible_source_span(drawn).unwrap_or((viewport_start, viewport_end))
@@ -398,7 +419,7 @@ pub(crate) fn compute_buffer_layout(
         &view_data.lines,
     );
 
-    let calculated_offset = viewport.top_view_line_offset;
+    let calculated_offset = view_data.first_drawn;
 
     tracing::trace!(
         top_byte = viewport.top_byte,
@@ -765,6 +786,35 @@ pub(crate) fn render_buffer_in_split(
     );
 
     view_line_mappings
+}
+
+/// Where the build should start for this viewport, if the index can say.
+///
+/// The anchor is the viewport's own first row, walked back to the nearest row
+/// the wrap can be resumed at — usually the same row, since every row of a plain
+/// long line is resumable. `None` when the viewport is already at a logical line
+/// start (nothing to save) or when the walk-back would cover the whole prefix
+/// anyway.
+fn resolve_build_anchor(
+    index: &crate::view::wrap_index::WrapIndex,
+    buffer: &crate::model::buffer::Buffer,
+    viewport: &Viewport,
+) -> Option<BuildAnchor> {
+    if viewport.top_view_line_offset == 0 {
+        return None;
+    }
+    let top_line = buffer.get_line_number(viewport.top_byte);
+    let anchor_row = index.line_first_row(top_line) + viewport.top_view_line_offset as u32;
+    let (start_row, walk_back) = index.resumable_row_at_or_before(buffer, anchor_row);
+    let addr = index.byte_of_row(buffer, start_row);
+    if addr.is_virtual || addr.byte < viewport.top_byte {
+        return None;
+    }
+    Some(BuildAnchor {
+        byte: addr.byte,
+        carry: addr.carry,
+        skip: walk_back as usize,
+    })
 }
 
 /// Geometry the wrap index is keyed by for this split.
