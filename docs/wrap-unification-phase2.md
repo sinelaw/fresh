@@ -154,6 +154,80 @@ built. That interacts with `total_rows()` being exact, which the scrollbar
 depends on — so it needs its own design pass, and possibly a model change
 first, rather than being improvised.
 
+## Compose mode: what it actually is, and the design that covers it
+
+Phase B's two remaining e2e failures (`issue_1574` up-arrow invariants,
+compose table arrow-down reach) were first blamed on the plugin view-transform
+API bypassing the index. **That diagnosis was wrong.** Reading
+`plugins/markdown_compose.ts`: it migrated off `view_transform_request`
+entirely (its own comment at :1755 — soft wrapping is now marker soft breaks).
+Compose is built from exactly the decorations C2 taught the index:
+
+| plugin call | namespace | what it makes |
+|---|---|---|
+| `addSoftBreak` | `md-wrap` | per-paragraph wrap at `composeWidth` |
+| `addConceal` | `md-syntax` | syntax hiding, table chrome glyphs |
+| `addVirtualLine` | table-border ns | table border rows |
+| `setLayoutHints` | — | `composeWidth` |
+
+All of it driven by `lines_changed` — an async, fire-and-forget hook that only
+covers lines that have become visible. So the index *can* model compose; the
+failures come from two narrower divergences, and the model already answers one
+of them.
+
+### Divergence A — cursor reveal (explains issue_1574)
+
+Activation scopes live on the markers (`view/activation.rs`); the renderer
+evaluates them with the real cursors, while the index and scroll math pass
+`&[]` by documented design — the canonical, no-cursor-anywhere rendering
+(`conceal.rs:273`). So the cursor's own line draws revealed — different row
+count — while placement computed its target in canonical rows. Result: a
+press scrolls by a canonically-correct amount that is wrong on screen, the
+cursor lands rows below the margin, and minimality then correctly declines to
+move — the observed "stall" at screen row 6.
+
+The model solved this in `editor.py::_stable_anchor` and **the Rust never
+ported it**: when an active scope starts above the render anchor inside the
+same logical line, back the anchor up to the scope start and skip the delta
+rows (capped at 2 × height). The canonical coordinate stays authoritative;
+the renderer absorbs the reveal locally.
+
+### Divergence B — decoration lag (explains compose reach)
+
+`lines_changed` decorates lazily and only what has been visible. The
+canonical index therefore undercounts rows for unvisited regions, placement
+and the scroll clamp act on those stale counts — and since phase B deleted
+the post-render pass, **nothing re-places when the decorations arrive**.
+Placement now runs only on input events; the old layout pass incidentally
+re-corrected every frame against rendered rows. The model does not model lag
+at all: its decorations are synchronous.
+
+### The design, model-first
+
+* **M-A** — placement × activation cells in the matrix. Today's activation
+  tests assert the index is undamaged by cursor movement and that revealing
+  changes the drawn text; nothing asserts the *rendered* cursor is on screen.
+  Add cells asserting the cursor byte appears in the rendered window
+  (`char_source_bytes`) across the placement probes — this is the property
+  that would have caught issue_1574 before any Rust was written.
+* **M-B** — decoration-lag simulation: decorations arrive in deferred batches
+  tied to render visits; property: once no batch is pending, ensure_visible +
+  render shows the cursor (convergence), and the clamp admits the true end of
+  the document.
+* **E-A** — port `_stable_anchor` into the anchored build in `render_buffer`.
+* **E-B** — placement keyed to the index: when `pipeline_inputs_version`
+  changes, mark placement dirty and re-run `ensure_visible_in_rows` at frame
+  start. This is the model's semantics (placement recomputed per render) made
+  incremental.
+* **Kept as a hard boundary** — the `view_transform.is_none()` gate in
+  `render_buffer`. A genuine replacement token stream is arbitrary plugin
+  output; the index cannot model it and should not try. Compose does not use
+  it; anything that still does gets the transform path.
+
+Explicitly *not* the design: restoring the deleted layout-pass phases. The
+canonical coordinate stays the single authority; A and B are a render-local
+stitch and a recompute trigger, not a second opinion on placement.
+
 Aside from the profile, not ours: the plugin thread shows `json_to_js_value` →
 `JS_NewStringLen` → `utf8_scan` at 2.7% of the atom event. Off the critical
 path, but if it ships the whole long line to plugins per keystroke it deserves
