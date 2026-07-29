@@ -324,6 +324,13 @@ pub struct EditorState {
     /// version + geometry).  See
     /// `crate::view::visual_row_index` for invariants.
     pub visual_row_index: crate::view::visual_row_index::VisualRowIndex,
+    /// Row structure per rendered geometry.
+    ///
+    /// Lives with the buffer because damage is a buffer event, but is keyed by
+    /// geometry because row boundaries are a property of the *view* — two splits
+    /// on this buffer at different widths hold different entries and each is
+    /// repaired independently. See `crate::view::wrap_index`.
+    pub wrap_indices: crate::view::wrap_index::WrapIndexSet,
 
     /// Forward coordinate mapper: remaps a byte coordinate captured at an older
     /// buffer `version()` to the current version. Fed at the marker-adjustment
@@ -427,6 +434,7 @@ impl EditorState {
             display_name: "Text".to_string(),
             line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
             visual_row_index: crate::view::visual_row_index::VisualRowIndex::default(),
+            wrap_indices: crate::view::wrap_index::WrapIndexSet::default(),
             coord_map: crate::model::coord_map::CoordMap::default(),
             scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager::default(),
             scrollbar_marker_buckets:
@@ -584,6 +592,51 @@ impl EditorState {
     }
 
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers
+    /// Pre-edit line coordinates the wrap index's repair needs.
+    ///
+    /// Captured *before* the buffer changes: repair locates the damaged row in
+    /// the old layout, so it needs the old line numbering. Reconstructing it
+    /// afterwards would mean keeping a shadow copy of the line index.
+    fn wrap_damage_coords(&self, start: usize, removed: usize) -> (usize, usize, usize) {
+        let line_before = self.buffer.get_line_number(start);
+        let line_start_before = self.buffer.line_start_offset(line_before).unwrap_or(0);
+        let line_end_before = self.buffer.get_line_number(start + removed);
+        (line_before, line_start_before, line_end_before)
+    }
+
+    /// Repair every geometry's row structure after a buffer edit.
+    ///
+    /// Local by construction: boundaries before the edit's row are untouched,
+    /// and the rest resynchronises within a row or two. This is what makes a
+    /// keystroke on a 500 KB single-line file cost rows rather than the line.
+    fn repair_wrap_indices(&mut self, damage: crate::view::wrap_index::EditDamage) {
+        if self.wrap_indices.is_empty() {
+            return;
+        }
+        let line_ending = self.buffer.line_ending();
+        // Snapshot the virtual-line anchors so the lookup borrows this list
+        // rather than `self`, whose buffer the repair holds mutably.
+        let virtual_positions: Vec<usize> = if self.virtual_texts.is_empty() {
+            Vec::new()
+        } else {
+            let mut v: Vec<usize> = self
+                .virtual_texts
+                .query_lines_in_range(&self.marker_list, 0, self.buffer.len() + 1)
+                .into_iter()
+                .map(|(pos, _)| pos)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        let virtual_rows = |start: usize, end: usize| -> u32 {
+            let lo = virtual_positions.partition_point(|p| *p < start);
+            let hi = virtual_positions.partition_point(|p| *p < end);
+            (hi - lo) as u32
+        };
+        self.wrap_indices
+            .damage_bytes(&mut self.buffer, damage, line_ending, &virtual_rows);
+    }
+
     fn apply_insert(
         &mut self,
         cursors: &mut Cursors,
@@ -592,6 +645,8 @@ impl EditorState {
         cursor_id: crate::model::event::CursorId,
     ) {
         let newlines_inserted = text.matches('\n').count();
+        let (line_before, line_start_before, line_end_before) =
+            self.wrap_damage_coords(position, 0);
 
         // CRITICAL: Adjust markers BEFORE modifying buffer
         self.marker_list.adjust_for_insert(position, text.len());
@@ -601,6 +656,15 @@ impl EditorState {
 
         // Insert text into buffer
         self.buffer.insert(position, text);
+
+        self.repair_wrap_indices(crate::view::wrap_index::EditDamage {
+            start: position,
+            removed: 0,
+            inserted: text.len(),
+            line_before,
+            line_start_before,
+            line_end_before,
+        });
 
         // Record the edit for forward coordinate mapping, keyed by the
         // post-edit version — same shift the marker tree just applied.
@@ -654,6 +718,8 @@ impl EditorState {
         deleted_text: &str,
     ) {
         let len = range.len();
+        let (line_before, line_start_before, line_end_before) =
+            self.wrap_damage_coords(range.start, len);
 
         // Count newlines deleted BEFORE the primary cursor's original position.
         // For backspace: cursor was at range.end, so all deleted newlines are before it.
@@ -684,6 +750,15 @@ impl EditorState {
 
         // Delete from buffer
         self.buffer.delete(range.clone());
+
+        self.repair_wrap_indices(crate::view::wrap_index::EditDamage {
+            start: range.start,
+            removed: len,
+            inserted: 0,
+            line_before,
+            line_start_before,
+            line_end_before,
+        });
 
         // Record the edit for forward coordinate mapping, keyed by the
         // post-edit version — same shift the marker tree just applied.

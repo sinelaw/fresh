@@ -188,7 +188,7 @@ impl WrapIndex {
         geometry: WrapIndexGeometry,
         pipeline_inputs_version: u64,
         line_ending: LineEnding,
-        virtual_rows_for_line: &dyn Fn(usize) -> u32,
+        virtual_rows: &dyn Fn(usize, usize) -> u32,
     ) {
         if self.is_built_for(&geometry, pipeline_inputs_version) {
             return;
@@ -196,13 +196,8 @@ impl WrapIndex {
         let line_count = buffer.line_count().unwrap_or(1).max(1);
         let mut lines = Vec::with_capacity(line_count);
         for line in 0..line_count {
-            lines.push(build_line(
-                buffer,
-                line,
-                geometry.rule,
-                line_ending,
-                virtual_rows_for_line(line),
-            ));
+            let vrows = line_virtual_rows(buffer, line, virtual_rows);
+            lines.push(build_line(buffer, line, geometry.rule, line_ending, vrows));
         }
         let counts: Vec<u32> = lines.iter().map(|l| l.total_rows()).collect();
         self.rows.rebuild(&counts);
@@ -331,7 +326,7 @@ impl WrapIndex {
         buffer: &mut Buffer,
         edit: EditDamage,
         line_ending: LineEnding,
-        virtual_rows_for_line: &dyn Fn(usize) -> u32,
+        virtual_rows: &dyn Fn(usize, usize) -> u32,
     ) {
         if !self.built {
             return;
@@ -354,18 +349,12 @@ impl WrapIndex {
                 edit.line_end_before,
                 new_last,
                 line_ending,
-                virtual_rows_for_line,
+                virtual_rows,
             );
             return;
         }
 
-        self.repair_line(
-            buffer,
-            geometry.rule,
-            edit,
-            line_ending,
-            virtual_rows_for_line,
-        );
+        self.repair_line(buffer, geometry.rule, edit, line_ending, virtual_rows);
     }
 
     /// Rebuild old lines `[first, old_last]` as new lines `[first, new_last]`.
@@ -382,18 +371,13 @@ impl WrapIndex {
         old_last: usize,
         new_last: usize,
         line_ending: LineEnding,
-        virtual_rows_for_line: &dyn Fn(usize) -> u32,
+        virtual_rows: &dyn Fn(usize, usize) -> u32,
     ) {
         let first = first.min(self.lines.len());
         let mut rebuilt = Vec::new();
         for line in first..=new_last {
-            rebuilt.push(build_line(
-                buffer,
-                line,
-                rule,
-                line_ending,
-                virtual_rows_for_line(line),
-            ));
+            let vrows = line_virtual_rows(buffer, line, virtual_rows);
+            rebuilt.push(build_line(buffer, line, rule, line_ending, vrows));
         }
         let end = (old_last + 1).min(self.lines.len());
         self.lines.splice(first..end, rebuilt);
@@ -413,7 +397,7 @@ impl WrapIndex {
         rule: WrapRule,
         edit: EditDamage,
         line_ending: LineEnding,
-        virtual_rows_for_line: &dyn Fn(usize) -> u32,
+        virtual_rows: &dyn Fn(usize, usize) -> u32,
     ) {
         let line = edit.line_before;
         if line >= self.lines.len() {
@@ -438,10 +422,11 @@ impl WrapIndex {
             resume_idx -= 1;
         }
         if !self.lines[line].resumable[resume_idx] {
-            self.rebuild_one(buffer, line, rule, line_ending, virtual_rows_for_line);
+            self.rebuild_one(buffer, line, rule, line_ending, virtual_rows);
             return;
         }
 
+        let vrows = line_virtual_rows(buffer, line, virtual_rows);
         let line_start = buffer.line_start_offset(line).unwrap_or(0);
         let resume_rel = self.lines[line].row_starts[resume_idx];
         let resume_carry = self.lines[line].carries[resume_idx];
@@ -454,7 +439,7 @@ impl WrapIndex {
         // longer address anything while the line still has content.
         let tail = tokens_from(&stream, resume_byte);
         if !resume_is_safe(&stream, resume_byte) || (tail.is_empty() && !stream.is_empty()) {
-            self.rebuild_one(buffer, line, rule, line_ending, virtual_rows_for_line);
+            self.rebuild_one(buffer, line, rule, line_ending, virtual_rows);
             return;
         }
 
@@ -547,7 +532,7 @@ impl WrapIndex {
         lw.row_starts = starts;
         lw.carries = carries;
         lw.resumable = resumable;
-        lw.virtual_rows = virtual_rows_for_line(line);
+        lw.virtual_rows = vrows;
         let new_total = lw.total_rows();
         self.rows.set(line, old_total, new_total);
     }
@@ -558,10 +543,11 @@ impl WrapIndex {
         line: usize,
         rule: WrapRule,
         line_ending: LineEnding,
-        virtual_rows_for_line: &dyn Fn(usize) -> u32,
+        virtual_rows: &dyn Fn(usize, usize) -> u32,
     ) {
         let old_total = self.lines[line].total_rows();
-        self.lines[line] = build_line(buffer, line, rule, line_ending, virtual_rows_for_line(line));
+        let vrows = line_virtual_rows(buffer, line, virtual_rows);
+        self.lines[line] = build_line(buffer, line, rule, line_ending, vrows);
         let new_total = self.lines[line].total_rows();
         self.rows.set(line, old_total, new_total);
     }
@@ -589,6 +575,20 @@ impl EditDamage {
     pub fn end_old(&self) -> usize {
         self.start + self.removed
     }
+}
+
+/// Virtual rows anchored in `line`, resolved through the caller's span lookup.
+fn line_virtual_rows(
+    buffer: &mut Buffer,
+    line: usize,
+    virtual_rows: &dyn Fn(usize, usize) -> u32,
+) -> u32 {
+    let start = buffer.line_start_offset(line).unwrap_or(0);
+    let end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or_else(|| buffer.len())
+        .min(buffer.len());
+    virtual_rows(start, end)
 }
 
 /// Wrap one logical line from scratch.
@@ -841,7 +841,7 @@ mod tests {
         }
     }
 
-    fn no_virtual(_line: usize) -> u32 {
+    fn no_virtual(_line_start: usize, _line_end: usize) -> u32 {
         0
     }
 
@@ -1033,6 +1033,72 @@ mod tests {
         assert_eq!(tree.total(), 19);
     }
 
+    /// Two views on one buffer at different widths keep separate row
+    /// structures, and one edit repairs both.
+    ///
+    /// A single shared index would be rebuilt from scratch on every frame that
+    /// alternated between the two splits, which is the thrash `WrapIndexSet`
+    /// exists to prevent.
+    #[test]
+    fn each_geometry_keeps_its_own_rows_and_both_repair() {
+        let text = long_line(200);
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let mut set = WrapIndexSet::default();
+
+        for width in [16usize, 40] {
+            set.entry(geometry(width)).ensure_built(
+                &mut buffer,
+                geometry(width),
+                0,
+                LineEnding::LF,
+                &no_virtual,
+            );
+        }
+        let narrow = set.get(&geometry(16)).expect("built").total_rows();
+        let wide = set.get(&geometry(40)).expect("built").total_rows();
+        assert!(narrow > wide, "narrower pane must need more rows");
+
+        let start = buffer.len();
+        let line_before = buffer.get_line_number(start);
+        let line_start_before = buffer.line_start_offset(line_before).unwrap_or(0);
+        buffer.insert(start, "X");
+        set.damage_bytes(
+            &mut buffer,
+            EditDamage {
+                start,
+                removed: 0,
+                inserted: 1,
+                line_before,
+                line_start_before,
+                line_end_before: line_before,
+            },
+            LineEnding::LF,
+            &no_virtual,
+        );
+
+        for width in [16usize, 40] {
+            let repaired = set.get(&geometry(width)).expect("present");
+            let fresh = built(&mut buffer, width);
+            assert_eq!(
+                structure(repaired),
+                structure(&fresh),
+                "geometry {width} diverged after the shared edit"
+            );
+        }
+    }
+
+    /// The set is bounded: a buffer shown in more geometries than the cap
+    /// evicts the least recently used, which only costs a rebuild.
+    #[test]
+    fn geometry_set_is_bounded() {
+        let mut set = WrapIndexSet::default();
+        for width in 10..20usize {
+            set.entry(geometry(width));
+        }
+        assert!(set.get(&geometry(19)).is_some(), "newest kept");
+        assert!(set.get(&geometry(10)).is_none(), "oldest evicted");
+    }
+
     /// A line with no decorations is resumable at every row — the case the whole
     /// design exists for, where the renderer never has to walk back.
     #[test]
@@ -1045,5 +1111,89 @@ mod tests {
         }
         let last = index.total_rows() - 1;
         assert_eq!(index.resumable_row_at_or_before(&buffer, last), (last, 0));
+    }
+}
+
+/// Per-buffer collection of wrap indices, one per geometry in use.
+///
+/// Row structure depends on the buffer's content *and* on geometry — pane
+/// width, gutter, wrap flags, view mode — and those live on opposite sides of
+/// the ownership split: content and decorations are per buffer, geometry is per
+/// rendered view. Two splits showing the same buffer at different widths have
+/// genuinely different row structures.
+///
+/// So the set lives with the buffer and is keyed by geometry. Each view looks up
+/// its own entry; an edit damages every entry at once, because the edit is a
+/// property of the buffer, not of any one view. A single shared index would
+/// instead be rebuilt from scratch on every frame that alternated between two
+/// splits — the thrash this shape exists to prevent.
+///
+/// Capped: a buffer visible in more geometries than this is vanishingly rare,
+/// and the eviction only costs a rebuild.
+#[derive(Debug, Default)]
+pub struct WrapIndexSet {
+    entries: Vec<(WrapIndexGeometry, WrapIndex)>,
+}
+
+/// Views on one buffer beyond this many distinct geometries evict the oldest.
+const MAX_GEOMETRIES: usize = 4;
+
+impl WrapIndexSet {
+    /// The index for `geometry`, creating it if this geometry is new.
+    ///
+    /// The returned index may need building; the caller decides whether to pay
+    /// for that now (see [`WrapIndex::ensure_built`]).
+    pub fn entry(&mut self, geometry: WrapIndexGeometry) -> &mut WrapIndex {
+        if let Some(pos) = self.entries.iter().position(|(g, _)| *g == geometry) {
+            // Move to the back so eviction drops the least recently used.
+            let entry = self.entries.remove(pos);
+            self.entries.push(entry);
+        } else {
+            if self.entries.len() >= MAX_GEOMETRIES {
+                self.entries.remove(0);
+            }
+            self.entries.push((geometry, WrapIndex::default()));
+        }
+        &mut self.entries.last_mut().expect("just pushed").1
+    }
+
+    /// The index for `geometry` if it exists, without creating one.
+    pub fn get(&self, geometry: &WrapIndexGeometry) -> Option<&WrapIndex> {
+        self.entries
+            .iter()
+            .find(|(g, _)| g == geometry)
+            .map(|(_, i)| i)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Repair every geometry after a buffer edit.
+    ///
+    /// An edit changes the text all views share, so each index repairs against
+    /// the same damage — cheaply, since repair is local.
+    pub fn damage_bytes(
+        &mut self,
+        buffer: &mut Buffer,
+        edit: EditDamage,
+        line_ending: LineEnding,
+        virtual_rows: &dyn Fn(usize, usize) -> u32,
+    ) {
+        for (_, index) in &mut self.entries {
+            index.damage_bytes(buffer, edit, line_ending, virtual_rows);
+        }
+    }
+
+    /// A plugin input changed; every geometry rebuilds lazily.
+    pub fn damage_all(&mut self) {
+        for (_, index) in &mut self.entries {
+            index.damage_all();
+        }
+    }
+
+    /// Drop everything — used when the buffer is replaced wholesale.
+    pub fn clear(&mut self) {
+        self.entries.clear();
     }
 }
