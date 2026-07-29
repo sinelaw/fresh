@@ -101,6 +101,7 @@ Repair additionally requires:
 | 3b — renderer starts at the anchor row | `2fc8b06` | done — **the 59%** |
 | 3 — row-space wheel scrolling | `8433fc1` | done — the 1.4% |
 | — LSP position reads only the prefix | `55924c1` | done — the 2.3% |
+| 3d — collapse the last standalone wrap walks | `4f5ebca` | done |
 | 3c — `ViewAnchor` replaces the coordinate pair | — | optional cleanup |
 | 4 — delete `line_wrap_cache` + writeback | — | optional cleanup |
 
@@ -112,6 +113,45 @@ Repair additionally requires:
 | 16.9% | scrollbar re-wrapped the line per keystroke | wrap index, repaired not invalidated (`a5bd195`) |
 | 1.4% | wheel scroll read the line twice per event | row arithmetic (`8433fc1`) |
 | 2.3% | hover timer copied the line per tick | prefix read (`55924c1`) |
+
+### Phase 3d — one wrap rule, in fact as well as in name (`4f5ebca`)
+
+Phases 1–3 made `WrapMachine` the rule but left five walks that still derived
+row boundaries themselves. All five are now drivers over the machine, so nothing
+outside it decides where a row ends:
+
+| was | now |
+|---|---|
+| `wrap_str_to_width` (112 lines, virtual lines) | rows projected into byte ranges |
+| `viewport::compute_wrap_row_count_for_text` | deleted — duplicate of `count_visual_rows_for_text` |
+| `viewport::wrap_segment_source_bytes` | reads `RowInfo.source_byte` |
+| `line_wrap_cache::for_each_grid_row_start` | deleted — `grid_segment_source_bytes` drives the Grid rule |
+| `layout_for_plain_text{,_grid}` | one body, parameterized by `WrapRule` |
+
+The remaining grapheme walk in `view/` is `ViewLineIterator` — a different
+stage (tokens → `ViewLine`), not wrapping.
+
+Two stages the migration had made redundant also went:
+
+* `calculate_viewport_end` walked logical lines every frame; under soft wrap the
+  drawn rows answer the decoration window and its result was discarded
+  (fresh#2843). It now runs only when the rows can't answer.
+* `Viewport::wrap_row_cache` was a `LineWrapCache` storing counts as
+  `Vec<ViewLine>` **of that length** — thousands of empty `ViewLine`s per miss on
+  a long line, with a byte-budget evictor to contain them. Now `RowCountCache`:
+  same key, `u32` value, entry cap. `placeholder_layout_for_row_count` is gone.
+
+The agreement test `wrap_str_to_width_matches_apply_wrapping_transform` was kept
+but re-aimed: with one implementation it can no longer catch drift, so it now
+pins the *projection* — that the byte ranges tile the input exactly as the
+machine's chunks do, dropping nothing at a row boundary.
+
+Not collapsed: `count_visual_rows_for_text_with_soft_breaks` /
+`count_segment_rows_with_indent` still segment a line at soft breaks and count
+each segment with a prepended indent, rather than running `apply_soft_breaks`
+over a real token stream. Doing it properly needs the tokenizer, hence a
+`&Buffer`, which this caller doesn't have — it takes `&str`. Left for phase 4,
+when `materialize_rows` gives every reader a buffer.
 
 What remains is cleanup, not performance. 3c replaces `(top_byte,
 top_view_line_offset)` with a single anchor — 147 uses across 12 files, most in
@@ -134,8 +174,7 @@ Do not collapse this back into a single index: a frame alternating between two
 splits would rebuild from scratch each time. `each_geometry_keeps_its_own_rows_and_both_repair`
 and `geometry_set_is_bounded` guard it.
 
-Baseline to keep green: `cargo test -p fresh-editor --lib` (3164 passing; the
-count dropped from 3171 when `visual_row_index.rs` was deleted with its tests),
+Baseline to keep green: `cargo test -p fresh-editor --lib` (3173 passing),
 `cargo clippy -p fresh-editor --all-targets` clean, `cargo fmt --all`.
 Model: `cd tests/wrap_model && .venv/bin/python -m pytest` (993).
 
@@ -160,13 +199,19 @@ Goal: kill the 16.9% scrollbar path and the 1.4% scroll path.
    `find_max_visual_scroll_position`, `clamp_top_byte_wrapped` reduce to row
    arithmetic.
 
-Deletes on completion: `view/visual_row_index.rs`, `count_visual_rows_for_text`,
-`count_visual_rows_for_text_with_soft_breaks`, `count_segment_rows_with_indent`,
-`count_visual_rows_for_text_grid`, `for_each_grid_row_start`,
-`grid_segment_source_bytes`, `compute_wrap_row_count_for_text`,
-`wrap_segment_source_bytes`, `Viewport::count_visual_rows_for_line`,
-`Viewport::wrap_row_cache`, `count_visual_rows_via_pipeline`,
-`placeholder_layout_for_row_count`.
+Deletes on completion. Struck through where 2b or 3d landed them:
+
+* ~~`view/visual_row_index.rs`~~, ~~`count_visual_rows_via_pipeline`~~ (2b, 3d)
+* ~~`for_each_grid_row_start`~~, ~~`compute_wrap_row_count_for_text`~~,
+  ~~`placeholder_layout_for_row_count`~~ (3d)
+* `count_visual_rows_for_text{,_grid}`, `grid_segment_source_bytes`,
+  `wrap_segment_source_bytes` — kept, but each is now a ~15-line driver over
+  `WrapMachine` rather than an implementation. Deleting them means deleting
+  their callers, which is phase 4.
+* `count_visual_rows_for_text_with_soft_breaks`,
+  `count_segment_rows_with_indent`, `Viewport::count_visual_rows_for_line`,
+  `Viewport::wrap_row_cache` — still standing; all four are on the
+  pre-first-render fallback path, so they go when phase 4 removes it.
 
 ## Phase 3 — plan
 
