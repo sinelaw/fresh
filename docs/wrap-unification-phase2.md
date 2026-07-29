@@ -95,11 +95,69 @@ one against what the model says the answer should be.
 |---|---|
 | Model `ensure_visible` minimality + `recenter`, property + 160-cell matrix | done — `e9794ce` |
 | C1 — `splice_inline_virtual_text` made pure (`resolve_inline_hints`) | done — `d5aa3f8` |
-| C2 — index runs the decoration chain | next |
-| C3 — index models folds | |
-| A — `ViewAnchor` | |
+| C2 — index runs the decoration chain | done — `ee0a61f` |
+| C3 — index models folds | done |
+| P1 — repair adopts the post-edit version | done |
+| P2 — `repair_line` reads from its resume row | done |
+| P3 — ASCII fast path + pre-sized row buffers | done |
+| A — `ViewAnchor` | next |
 | B — one placement pass | |
 | D — delete the shadow pipelines | |
+| P4 — first build is still O(buffer) | not started |
+
+All three gates from #2850 are gone except `inside_wrapped_line`, which needs A.
+
+## What the profile of #2850 added (P1–P4)
+
+Profiling a keystroke on the 500 KB single-line file, after #2850:
+
+| | |
+|---|---|
+| 75.9% | render, of which 52.4% `build_view_data` and 15.6% a **full index rebuild** |
+| 11.1% | `handle_key`, of which 10.5% `repair_wrap_indices` — **discarded** by that rebuild |
+
+**P1 — the repair was pointless.** `pipeline_inputs_version` was written only
+by `ensure_built`, and folds in `buffer.version()`, so every edit staled it.
+`damage_bytes` updated `lines` and `rows` and left the version alone, so the
+next `is_built_for` failed and rebuilt everything. ~26% of a keystroke doing the
+same work twice. Fixed by adopting the post-edit version in `damage_bytes`;
+sound because a repair only ever describes a text edit, and decoration versions
+move through `damage_all` instead.
+
+*Lesson worth keeping:* a cache whose validity check is separate from its
+update path will silently stop being a cache. The repair tests all passed —
+they compared repair against rebuild, which is exactly what still happened.
+Nothing asserted that the repair was *used*. A metric-style test (`line_builds`
+after a keystroke) would have caught it, and the Python model already counts
+that; the Rust has no equivalent.
+
+**P2 — `repair_line` tokenised the whole line to use its tail**, then cloned
+the tail and dropped the prefix, per character typed, inside the routine whose
+purpose is to be O(rows). Now reads from the resume byte.
+
+**P3 — `InCB_Extend` at 7.81% self**, the hottest symbol in the profile: an
+Indic-conjunct-break lookup per character on ASCII text. Plus five per-row
+buffers growing from zero capacity once per rendered row. Both fixed.
+
+**P4 — the unit of work is the logical line, everywhere.**
+`build_line_tokens(buffer, line, ..)`, `build_line`, `repair_line`, and
+`ensure_built`'s `for line in 0..line_count` all take a line index and process
+it whole. With 10,000 short lines that is free; with one 500 KB line every
+"per-line" operation is a full-buffer scan. P1 and P2 stop it happening *per
+keystroke*, but the first build after opening the file is still O(buffer), and
+so is any `damage_all` (any plugin decoration change).
+
+Not yet planned, and it is the last structural O(buffer) left. The shape of a
+fix: build lazily per line on first query rather than eagerly for the whole
+buffer, with the Fenwick tree seeded from an estimate and corrected as lines are
+built. That interacts with `total_rows()` being exact, which the scrollbar
+depends on — so it needs its own design pass, and possibly a model change
+first, rather than being improvised.
+
+Aside from the profile, not ours: the plugin thread shows `json_to_js_value` →
+`JS_NewStringLen` → `utf8_scan` at 2.7% of the atom event. Off the critical
+path, but if it ships the whole long line to plugins per keystroke it deserves
+its own look.
 
 ### C2, concretely
 
