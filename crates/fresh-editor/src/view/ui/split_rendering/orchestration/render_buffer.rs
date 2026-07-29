@@ -219,7 +219,14 @@ pub(crate) fn compute_buffer_layout(
     // stalls (fresh#1574's up-arrow invariant).
     let mut rows_settled = false;
     if view_transform.is_none() && !state.wrap_indices.is_empty() && folds.is_empty() {
-        let geometry = wrap_index_geometry_for(viewport, &state.buffer, line_wrap, &view_mode);
+        let fold_ranges = state.fold_ranges(folds);
+        let geometry = wrap_index_geometry_for(
+            viewport,
+            &state.buffer,
+            line_wrap,
+            &view_mode,
+            crate::view::wrap_index::fold_signature(&fold_ranges),
+        );
         let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
             state.buffer.version(),
             state.soft_breaks.version(),
@@ -856,6 +863,7 @@ pub(crate) fn wrap_index_geometry_for(
     buffer: &crate::model::buffer::Buffer,
     line_wrap: bool,
     view_mode: &ViewMode,
+    fold_signature: u64,
 ) -> crate::view::wrap_index::WrapIndexGeometry {
     use crate::primitives::line_wrapping::WrapConfig;
     use crate::view::line_wrap_cache::CacheViewMode;
@@ -893,5 +901,6 @@ pub(crate) fn wrap_index_geometry_for(
         } else {
             CacheViewMode::Source
         },
+        fold_signature,
     }
 }

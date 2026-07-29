@@ -24,7 +24,7 @@
 
 use crate::model::buffer::{Buffer, LineEnding};
 use crate::view::line_wrap_cache::CacheViewMode;
-use crate::view::ui::split_rendering::base_tokens::build_line_tokens;
+use crate::view::ui::split_rendering::base_tokens::build_line_tokens_from;
 use crate::view::wrap_machine::{RowCarry, RowInfo, WrapMachine, WrapOutput, WrapRule};
 use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 
@@ -33,6 +33,34 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 pub struct WrapIndexGeometry {
     pub rule: WrapRule,
     pub view_mode: CacheViewMode,
+    /// Hash of the collapsed fold ranges, or 0 when nothing is folded.
+    ///
+    /// Folds live on the split, not the buffer — two panes on one file can fold
+    /// differently — so they are part of the *view* half of the key, next to
+    /// the rule and the view mode, rather than the buffer-global decorations.
+    ///
+    /// They are in the key at all because a collapsed line occupies no visual
+    /// row, and a coordinate system that counts rows nobody can scroll to gives
+    /// the scrollbar phantom rows and makes the wheel move a different distance
+    /// than it reports. Keeping folds out instead means every consumer applies
+    /// its own correction, which is what `folds.is_empty()` was standing in for
+    /// — the render path did not correct for folds, it declined to run.
+    pub fold_signature: u64,
+}
+
+/// Hash the collapsed ranges into a [`WrapIndexGeometry::fold_signature`].
+pub fn fold_signature(folds: &[std::ops::Range<usize>]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    if folds.is_empty() {
+        return 0;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for r in folds {
+        r.start.hash(&mut h);
+        r.end.hash(&mut h);
+    }
+    // 0 means "nothing folded"; a real fold set must never collide with it.
+    h.finish() | 1
 }
 
 /// Plugin decorations that move row boundaries, snapshotted for one build.
@@ -54,11 +82,34 @@ pub struct IndexDecorations {
     pub conceals: Vec<(std::ops::Range<usize>, Option<String>)>,
     /// Inline hints, styleless — the index measures and never draws.
     pub inline_hints: Vec<crate::view::ui::split_rendering::transforms::InlineHint>,
+    /// Collapsed byte ranges, sorted by start. Per split, unlike the rest —
+    /// see [`WrapIndexGeometry::fold_signature`], which keys the index on them.
+    pub folds: Vec<std::ops::Range<usize>>,
 }
 
 impl IndexDecorations {
     pub fn is_empty(&self) -> bool {
-        self.soft_breaks.is_empty() && self.conceals.is_empty() && self.inline_hints.is_empty()
+        self.soft_breaks.is_empty()
+            && self.conceals.is_empty()
+            && self.inline_hints.is_empty()
+            && self.folds.is_empty()
+    }
+
+    /// Is every byte of `line_start..line_end` inside a collapsed range?
+    ///
+    /// A fold's header line only *partly* overlaps its range — its own text is
+    /// still drawn with the folded tail skipped — so it is not hidden. The lines
+    /// after it are, and those are the ones that must stop occupying rows.
+    fn line_is_hidden(&self, line_start: usize, line_end: usize) -> bool {
+        if self.folds.is_empty() {
+            return false;
+        }
+        if line_start >= line_end {
+            return self.folds.iter().any(|r| r.contains(&line_start));
+        }
+        self.folds
+            .iter()
+            .any(|r| r.start <= line_start && line_end <= r.end)
     }
 
     /// The decorations touching `line_start..line_end`, as the transforms want
@@ -114,6 +165,9 @@ pub struct LineWrap {
     pub resumable: Vec<bool>,
     /// Plugin virtual lines anchored in this logical line.
     pub virtual_rows: u32,
+    /// Every byte of this line is inside a collapsed fold, so it draws nothing
+    /// and occupies no visual row.
+    pub hidden: bool,
 }
 
 impl Default for LineWrap {
@@ -123,6 +177,7 @@ impl Default for LineWrap {
             carries: vec![RowCarry::default()],
             resumable: vec![true],
             virtual_rows: 0,
+            hidden: false,
         }
     }
 }
@@ -133,6 +188,9 @@ impl LineWrap {
     }
 
     pub fn total_rows(&self) -> u32 {
+        if self.hidden {
+            return 0;
+        }
         self.wrap_rows() + self.virtual_rows
     }
 }
@@ -412,6 +470,7 @@ impl WrapIndex {
         edit: EditDamage,
         line_ending: LineEnding,
         virtual_rows: &dyn Fn(usize, usize) -> u32,
+        new_pipeline_inputs_version: u64,
     ) {
         if !self.built {
             return;
@@ -419,6 +478,18 @@ impl WrapIndex {
         let Some(geometry) = self.geometry else {
             return;
         };
+        // Adopt the post-edit version, or the repair is wasted: the version
+        // folds in `buffer.version()`, so every edit changes it, and the next
+        // `ensure_built` would find the index stale and rebuild the whole buffer
+        // from scratch — after this method had just done the incremental work.
+        // Measured at ~26% of a keystroke on a single-line file: the repair
+        // (10.5%) and then the full rebuild (15.6%) that discarded it.
+        //
+        // Sound because a repair only ever describes a *text* edit. The
+        // decoration managers' versions are the other half of this value and
+        // they cannot move in the same call — a decoration change comes through
+        // `damage_all`, which invalidates instead.
+        self.pipeline_inputs_version = new_pipeline_inputs_version;
         let new_last = buffer.get_line_number(edit.start + edit.inserted);
         let spans_lines = edit.line_end_before != edit.line_before || new_last != edit.line_before;
         let line_count = buffer.line_count().unwrap_or(1).max(1);
@@ -522,8 +593,16 @@ impl WrapIndex {
         let line_start = buffer.line_start_offset(line).unwrap_or(0);
         let resume_rel = self.lines[line].row_starts[resume_idx];
         let resume_carry = self.lines[line].carries[resume_idx];
-        let stream = build_line_tokens(buffer, line, line_ending);
         let resume_byte = line_start + resume_rel as usize;
+        // Decoration-aware, and read from the resume row rather than the line's
+        // start: repair is meant to cost rows, not the line.
+        let stream = line_token_stream(
+            buffer,
+            line,
+            line_ending,
+            &self.decorations,
+            Some(resume_byte),
+        );
 
         // The *new* stream may open this row with injected content the resume
         // cannot reconstruct (an edit can move a hint or a soft break onto a row
@@ -696,12 +775,14 @@ fn line_token_stream(
     line: usize,
     line_ending: LineEnding,
     decorations: &IndexDecorations,
+    from_byte: Option<usize>,
 ) -> Vec<ViewTokenWire> {
     use crate::view::ui::split_rendering::transforms::{
         apply_conceal_ranges, apply_soft_breaks, splice_inline_virtual_text,
     };
 
-    let mut tokens = build_line_tokens(buffer, line, line_ending);
+    let mut tokens =
+        build_line_tokens_from(buffer, line, line_ending, &decorations.folds, from_byte);
     if decorations.is_empty() {
         return tokens;
     }
@@ -739,14 +820,19 @@ fn build_line(
     decorations: &IndexDecorations,
 ) -> LineWrap {
     let line_start = buffer.line_start_offset(line).unwrap_or(0);
-    let tokens = line_token_stream(buffer, line, line_ending, decorations);
+    let tokens = line_token_stream(buffer, line, line_ending, decorations, None);
     let out = WrapMachine::run(tokens, rule);
     let (row_starts, carries, resumable) = rows_to_starts(&out, line_start, 0);
+    let line_end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or_else(|| buffer.len())
+        .min(buffer.len());
     LineWrap {
         row_starts,
         carries,
         resumable,
         virtual_rows,
+        hidden: decorations.line_is_hidden(line_start, line_end),
     }
 }
 
@@ -1422,9 +1508,16 @@ impl WrapIndexSet {
         edit: EditDamage,
         line_ending: LineEnding,
         virtual_rows: &dyn Fn(usize, usize) -> u32,
+        new_pipeline_inputs_version: u64,
     ) {
         for (_, index) in &mut self.entries {
-            index.damage_bytes(buffer, edit, line_ending, virtual_rows);
+            index.damage_bytes(
+                buffer,
+                edit,
+                line_ending,
+                virtual_rows,
+                new_pipeline_inputs_version,
+            );
         }
     }
 

@@ -271,6 +271,8 @@ impl crate::app::window::Window {
 
         // Get the buffer state and calculate target position using RELATIVE movement
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
+        // Resolved before the mutable buffer borrow below.
+        let fold_ranges = fold_ranges_for_split(self, split_id, buffer_id);
         let scroll_position = if let Some(state) = &mut self.buffers.get_mut(&buffer_id) {
             let scrollbar_height = scrollbar_rect.height as usize;
             if scrollbar_height == 0 {
@@ -302,6 +304,7 @@ impl crate::app::window::Window {
                         show_line_numbers,
                         grid_cols,
                         pipeline_inputs_ver,
+                        fold_ranges.clone(),
                     )
                 } else {
                     // Small file without line wrap: thumb follows mouse
@@ -487,6 +490,8 @@ impl crate::app::window::Window {
 
         // Get the buffer state and calculate scroll position
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
+        // Resolved before the mutable buffer borrow below.
+        let fold_ranges = fold_ranges_for_split(self, split_id, buffer_id);
         let scroll_position = if let Some(state) = &mut self.buffers.get_mut(&buffer_id) {
             let buffer_len = state.buffer.len();
 
@@ -511,6 +516,7 @@ impl crate::app::window::Window {
                         show_line_numbers,
                         grid_cols,
                         pipeline_inputs_ver,
+                        fold_ranges.clone(),
                     )
                 } else {
                     // Small file without line wrap: use line-based calculation for precision
@@ -690,4 +696,30 @@ impl crate::app::window::Window {
         }
         Ok(())
     }
+}
+
+/// Collapsed byte ranges for one split, for the scroll-math entry points.
+///
+/// Folds live on the split, and a collapsed line occupies no visual row, so the
+/// scrollbar and the drag must read the same fold-aware row space the renderer
+/// does — otherwise the thumb sizes itself to rows that are not drawn and a jump
+/// lands somewhere else than where it pointed.
+fn fold_ranges_for_split(
+    window: &crate::app::window::Window,
+    split_id: LeafId,
+    buffer_id: BufferId,
+) -> Vec<std::ops::Range<usize>> {
+    let Some(folds) = window
+        .buffers
+        .splits()
+        .map(|(_, vs)| vs)
+        .and_then(|vs| vs.get(&split_id))
+        .map(|vs| &vs.folds)
+    else {
+        return Vec::new();
+    };
+    let Some(state) = window.buffers.get(&buffer_id) else {
+        return Vec::new();
+    };
+    state.fold_ranges(folds)
 }

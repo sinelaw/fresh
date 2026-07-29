@@ -475,6 +475,10 @@ pub(crate) fn render_content(
                 .and_then(|vs| vs.get_mut(&split_id))
                 .map(|vs| &mut vs.folds)
                 .unwrap_or(&mut empty_folds);
+            // Resolved here, while the split's folds are in hand: the scrollbar
+            // reads the same row space the render does, and that space now
+            // excludes collapsed lines.
+            let scrollbar_fold_ranges = state.fold_ranges(folds);
 
             let _render_buf_span = tracing::trace_span!("render_buffer_in_split").entered();
 
@@ -530,7 +534,13 @@ pub(crate) fn render_content(
             let buffer_len = state.buffer.len();
             let (total_lines, top_line, marker_basis) = {
                 let _span = tracing::trace_span!("scrollbar_line_counts").entered();
-                scrollbar_line_counts(state, &viewport, large_file_threshold_bytes, buffer_len)
+                scrollbar_line_counts(
+                    state,
+                    &viewport,
+                    large_file_threshold_bytes,
+                    buffer_len,
+                    scrollbar_fold_ranges,
+                )
             };
 
             // Render vertical scrollbar for this split and get thumb position

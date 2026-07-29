@@ -51,6 +51,7 @@ fn scroll_geometry(
     wrap_width: usize,
     show_line_numbers: bool,
     grid_cols: Option<usize>,
+    fold_signature: u64,
 ) -> WrapIndexGeometry {
     let rule = if let Some(cols) = grid_cols {
         // Terminal scroll-back counts exact-column rows at the grid width — the
@@ -74,6 +75,7 @@ fn scroll_geometry(
         // fixed convention, matching what the renderer's queries use.
         rule,
         view_mode: CacheViewMode::Source,
+        fold_signature,
     }
 }
 
@@ -82,6 +84,7 @@ fn total_rows(
     state: &mut EditorState,
     geometry: WrapIndexGeometry,
     pipeline_inputs_ver: u64,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> usize {
     let line_ending = state.buffer.line_ending();
     // Snapshot virtual-line anchors so the per-line lookup borrows this list
@@ -105,7 +108,7 @@ fn total_rows(
         (hi - lo) as u32
     };
     // Resolved before `entry` takes `&mut state`.
-    let decorations = state.index_decorations(geometry.view_mode);
+    let decorations = state.index_decorations(geometry.view_mode, fold_ranges);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,
@@ -131,13 +134,15 @@ pub(crate) fn scrollbar_jump_visual(
     show_line_numbers: bool,
     grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 {
         return (0, 0);
     }
 
-    let geometry = scroll_geometry(state, wrap_width, show_line_numbers, grid_cols);
-    let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver);
+    let fold_sig = crate::view::wrap_index::fold_signature(&fold_ranges);
+    let geometry = scroll_geometry(state, wrap_width, show_line_numbers, grid_cols, fold_sig);
+    let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver, fold_ranges);
     if total_visual_rows == 0 {
         return (0, 0);
     }
@@ -178,13 +183,15 @@ pub(crate) fn scrollbar_drag_relative_visual(
     show_line_numbers: bool,
     grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 
-    let geometry = scroll_geometry(state, wrap_width, show_line_numbers, grid_cols);
-    let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver);
+    let fold_sig = crate::view::wrap_index::fold_signature(&fold_ranges);
+    let geometry = scroll_geometry(state, wrap_width, show_line_numbers, grid_cols, fold_sig);
+    let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver, fold_ranges);
     if total_visual_rows == 0 {
         return (0, 0);
     }

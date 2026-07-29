@@ -566,6 +566,26 @@ pub(crate) fn build_line_tokens(
     buffer: &mut Buffer,
     line: usize,
     line_ending: LineEnding,
+    fold_skip: &[std::ops::Range<usize>],
+) -> Vec<ViewTokenWire> {
+    build_line_tokens_from(buffer, line, line_ending, fold_skip, None)
+}
+
+/// [`build_line_tokens`], but starting at `from_byte` instead of the line's
+/// start.
+///
+/// Repair needs only the tail from its resume row, and reading the prefix to
+/// throw it away is the difference between O(rows) and O(line): on a 500 KB
+/// single-line file the untargeted version tokenised and allocated the whole
+/// line for every character typed. `from_byte` must be a visual-row start the
+/// caller got from the index, which is what makes skipping the backward scan
+/// sound.
+pub(crate) fn build_line_tokens_from(
+    buffer: &mut Buffer,
+    line: usize,
+    line_ending: LineEnding,
+    fold_skip: &[std::ops::Range<usize>],
+    from_byte: Option<usize>,
 ) -> Vec<ViewTokenWire> {
     use crate::primitives::line_iterator::MAX_LINE_BYTES;
 
@@ -588,18 +608,20 @@ pub(crate) fn build_line_tokens(
     // smaller of the two by 10×, and the one this used to overlook. Bytes are
     // an upper bound on characters, so deriving both from byte length can only
     // over-ask.
-    let line_bytes = line_end.saturating_sub(line_start);
+    let start = from_byte.filter(|b| *b > line_start && *b < line_end);
+    let read_from = start.unwrap_or(line_start);
+    let line_bytes = line_end.saturating_sub(read_from);
     let units = line_bytes / MAX_SAFE_LINE_WIDTH + line_bytes / MAX_LINE_BYTES + 2;
     let mut tokens = build_base_tokens(
         buffer,
-        line_start,
+        read_from,
         estimated,
         units,
         false,
         line_ending,
-        &[],
+        fold_skip,
         None,
-        false,
+        start.is_some(),
     );
     // The read runs past the line end; keep only this line, and drop its
     // terminator — a newline belongs to the line break, not to a row.
