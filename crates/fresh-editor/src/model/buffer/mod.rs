@@ -2870,16 +2870,14 @@ impl TextBuffer {
             .map(|pos| (pos.line, pos.column))
             .unwrap_or_else(|| (byte_pos / 80, 0)); // Estimate if metadata unavailable
 
-        // Get the line content
-        if let Some(line_bytes) = self.get_line(line) {
-            // Convert byte offset to UTF-16 code units
-            let text_before = &line_bytes[..column_bytes.min(line_bytes.len())];
-            let text_str = String::from_utf8_lossy(text_before);
-            let utf16_offset = text_str.encode_utf16().count();
-            (line, utf16_offset)
-        } else {
-            (line, 0)
-        }
+        // Read only the prefix, not the whole line. `get_line` copies the
+        // entire line before the slice below discards everything past the
+        // cursor — on a file that is one enormous line that is a full copy per
+        // call, and this runs on every hover-timer tick.
+        let line_start = byte_pos.saturating_sub(column_bytes);
+        let prefix = self.slice_bytes(line_start..byte_pos);
+        let utf16_offset = String::from_utf8_lossy(&prefix).encode_utf16().count();
+        (line, utf16_offset)
     }
 
     /// Convert LSP position (line, UTF-16 code units) to byte position
