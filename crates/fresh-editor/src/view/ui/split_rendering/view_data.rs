@@ -10,7 +10,7 @@ use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
     apply_conceal_ranges, apply_grid_wrapping_transform, apply_soft_breaks,
-    apply_wrapping_transform, inject_virtual_lines, splice_inline_virtual_text,
+    apply_wrapping_transform_from, inject_virtual_lines, splice_inline_virtual_text,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
@@ -32,6 +32,33 @@ fn md_syntax_namespace() -> fresh_core::overlay::OverlayNamespace {
 pub(super) struct ViewData {
     /// Display lines with all token information preserved.
     pub lines: Vec<ViewLine>,
+    /// Index in `lines` of the viewport's first *drawn* row.
+    ///
+    /// Rows before it were built only because the wrap could not be resumed
+    /// exactly at the anchor — a row opening with injected content the carry
+    /// cannot reconstruct forces a walk back to the nearest resumable row (see
+    /// `WrapIndex::resumable_row_at_or_before`). On a plain long line this is
+    /// zero and the build starts exactly at the viewport.
+    ///
+    /// Before the build was anchored this was always `top_view_line_offset`,
+    /// because `lines` began at the logical line's first row and the renderer
+    /// discarded everything above the viewport — the O(scroll-depth) cost this
+    /// replaces.
+    pub first_drawn: usize,
+}
+
+/// Where the build starts, when the caller could resolve a resumable row.
+///
+/// Without one the build begins at `viewport.top_byte` — the logical line's
+/// start — and every row above the viewport is built and thrown away.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct BuildAnchor {
+    /// Byte of the first row to build; certified to be a visual-row start.
+    pub byte: usize,
+    /// Wrap state to resume that row with.
+    pub carry: crate::view::wrap_machine::RowCarry,
+    /// Rows built before the viewport's first drawn row.
+    pub skip: usize,
 }
 
 /// Width at which one visual row wraps.
@@ -89,21 +116,21 @@ fn effective_wrap_width(
 /// rows of `MAX_SAFE_LINE_WIDTH` columns each, so covering the viewport's rows
 /// genuinely costs `rows × MAX_SAFE_LINE_WIDTH` characters.
 fn base_char_budget(
-    viewport: &Viewport,
     line_wrap_enabled: bool,
     effective_width: usize,
     adjusted_visible_count: usize,
     cursor_positions: &[usize],
+    rows_before_window: usize,
+    start_byte: usize,
 ) -> Option<usize> {
     if !line_wrap_enabled {
         return None;
     }
 
-    // Rows the caller may draw: the renderer skips `top_view_line_offset` rows
-    // of the first logical line before the visible window starts, and those
-    // skipped rows still have to be built.
-    let rows = viewport
-        .top_view_line_offset
+    // Rows the build must cover: the window, plus whatever precedes it. With an
+    // anchor that prefix is the walk-back to a resumable row — usually zero.
+    // Without one it is every row of the logical line above the viewport.
+    let rows = rows_before_window
         .saturating_add(adjusted_visible_count)
         .saturating_add(4);
 
@@ -125,11 +152,11 @@ fn base_char_budget(
     if let Some(furthest) = cursor_positions
         .iter()
         .copied()
-        .filter(|&pos| pos >= viewport.top_byte)
+        .filter(|&pos| pos >= start_byte)
         .max()
     {
         budget = budget.max(
-            (furthest - viewport.top_byte)
+            (furthest - start_byte)
                 .saturating_add(effective_width.saturating_mul(2))
                 .saturating_add(1024),
         );
@@ -161,6 +188,7 @@ pub(super) fn build_view_data(
     folds: &FoldManager,
     theme: &Theme,
     cursor_positions: &[usize],
+    anchor: Option<BuildAnchor>,
 ) -> ViewData {
     let adjusted_visible_count = fold_adjusted_visible_count(
         &state.buffer,
@@ -185,21 +213,31 @@ pub(super) fn build_view_data(
 
     // Build base token stream from source, skipping any source-byte range
     // that falls inside a collapsed fold.
+    // With an anchor the build starts at the viewport's own row rather than at
+    // the logical line's start, so nothing above the window is built at all —
+    // and the budget needs to cover only the window, not the prefix leading to
+    // it. Without one, both fall back to the line-start behaviour.
+    let (start_byte, resume_carry, rows_before_window) = match anchor {
+        Some(a) => (a.byte, Some(a.carry), a.skip),
+        None => (viewport.top_byte, None, viewport.top_view_line_offset),
+    };
     let base_tokens = build_base_tokens(
         &mut state.buffer,
-        viewport.top_byte,
+        start_byte,
         estimated_line_length,
         adjusted_visible_count,
         is_binary,
         line_ending,
         &fold_skip,
         base_char_budget(
-            viewport,
             line_wrap_enabled,
             effective_width,
             adjusted_visible_count,
             cursor_positions,
+            rows_before_window,
+            start_byte,
         ),
+        anchor.is_some(),
     );
 
     // Use plugin transform if available, otherwise use base tokens
@@ -293,7 +331,15 @@ pub(super) fn build_view_data(
         // scroll math's `for_each_grid_row_start` (fresh#2649 symptom 2).
         apply_grid_wrapping_transform(tokens, effective_width)
     } else {
-        apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent)
+        apply_wrapping_transform_from(
+            tokens,
+            effective_width,
+            gutter_width,
+            hanging_indent,
+            // Resuming at the anchor's carry is what makes a mid-line start
+            // produce the same rows the line-start build would have.
+            resume_carry,
+        )
     };
 
     // Convert tokens to display lines using the view pipeline.
@@ -510,5 +556,8 @@ pub(super) fn build_view_data(
         &placeholder_style,
     );
 
-    ViewData { lines }
+    ViewData {
+        lines,
+        first_drawn: rows_before_window,
+    }
 }

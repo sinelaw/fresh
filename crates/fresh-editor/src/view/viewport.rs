@@ -1277,11 +1277,22 @@ impl Viewport {
         true
     }
 
+    /// `build_anchored` says the rows were built starting at the viewport's own
+    /// anchor rather than at the logical line's first row. When they were,
+    /// `top_view_line_offset` is no longer an index into `view_lines`, and the
+    /// vertical phases below — every one of which reads or writes it as one —
+    /// must not run. They have nothing to do anyway: `ensure_visible_in_rows`
+    /// settled the cursor's row against the margin before the build, in absolute
+    /// row space where no such reinterpretation is possible.
+    ///
+    /// Only the horizontal column scroll still runs, since it works from
+    /// `cursor_view_line` — a plain index into the rows it was handed.
     pub fn ensure_visible_in_layout(
         &mut self,
         view_lines: &[ViewLine],
         cursor: &Cursor,
         gutter_width: usize,
+        build_anchored: bool,
     ) -> bool {
         // Check if we should skip sync due to session restore
         // This prevents the restored scroll position from being overwritten
@@ -1330,14 +1341,19 @@ impl Viewport {
         // Each phase below is tried in order; the first one that actually moves
         // the viewport returns `true`. They share no mutable state beyond
         // `self`, so the early returns keep the happy path easy to follow.
-        if self.fine_tune_scroll_up(view_lines, cursor_view_line, viewport_height) {
-            return true;
-        }
-        if self.scroll_cursor_within_margin(view_lines, cursor_view_line, viewport_height) {
-            return true;
-        }
-        if self.reveal_virtual_lines_above(view_lines, cursor_view_line, viewport_height) {
-            return true;
+        if !build_anchored {
+            if self.fine_tune_scroll_up(view_lines, cursor_view_line, viewport_height) {
+                return true;
+            }
+            if self.scroll_cursor_within_margin(view_lines, cursor_view_line, viewport_height) {
+                return true;
+            }
+            if self.reveal_virtual_lines_above(view_lines, cursor_view_line, viewport_height) {
+                return true;
+            }
+        } else {
+            // The row-space pass consumed this signal's purpose.
+            self.scrolled_up_in_wrap = false;
         }
         self.scroll_cursor_column_into_view(view_lines, cursor, cursor_view_line, gutter_width);
         false

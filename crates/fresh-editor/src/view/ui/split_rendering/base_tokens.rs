@@ -20,6 +20,11 @@ use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 /// viewport would ask for 54 "lines" and tokenise 540,000 characters to fill
 /// rows that hold a few thousand. Callers that know the width a row wraps at
 /// pass roughly `rows × width`; pass `None` to bound by source lines only.
+///
+/// `start_mid_line` means `top_byte` is a *visual row* start rather than a
+/// logical line start — the caller obtained it from the wrap index — so the read
+/// begins there instead of scanning back. That is the difference between reading
+/// a viewport and reading everything above it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_base_tokens(
     buffer: &mut Buffer,
@@ -30,6 +35,7 @@ pub(crate) fn build_base_tokens(
     line_ending: LineEnding,
     fold_skip: &[std::ops::Range<usize>],
     char_budget: Option<usize>,
+    start_mid_line: bool,
 ) -> Vec<ViewTokenWire> {
     let mut tokens = Vec::new();
 
@@ -85,7 +91,11 @@ pub(crate) fn build_base_tokens(
             continue;
         }
 
-        let mut iter = buffer.line_iterator(cursor, estimated_line_length);
+        let mut iter = if start_mid_line && cursor == top_byte {
+            buffer.line_iterator_from_mid_line(cursor, estimated_line_length)
+        } else {
+            buffer.line_iterator(cursor, estimated_line_length)
+        };
         if let Some(budget) = char_budget {
             // Bytes, not characters — UTF-8 runs to 4 bytes per character — so
             // the first piece the iterator yields always covers the whole
@@ -402,8 +412,17 @@ mod tests {
         let content = "x".repeat(500_000);
         let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
 
-        let unbudgeted =
-            build_base_tokens(&mut buffer, 0, 80, 50, false, LineEnding::LF, &[], None);
+        let unbudgeted = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            50,
+            false,
+            LineEnding::LF,
+            &[],
+            None,
+            false,
+        );
         assert!(
             char_count(&unbudgeted) > 100_000,
             "expected the unbudgeted read to run away, got {} chars",
@@ -420,6 +439,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(50 * 200),
+            false,
         );
         let budgeted_chars = char_count(&budgeted);
         assert!(
@@ -442,8 +462,17 @@ mod tests {
             .join("\n");
         let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
 
-        let unbudgeted =
-            build_base_tokens(&mut buffer, 0, 80, 30, false, LineEnding::LF, &[], None);
+        let unbudgeted = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            30,
+            false,
+            LineEnding::LF,
+            &[],
+            None,
+            false,
+        );
         let budgeted = build_base_tokens(
             &mut buffer,
             0,
@@ -453,6 +482,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(30 * 200),
+            false,
         );
 
         assert_eq!(char_count(&unbudgeted), char_count(&budgeted));
@@ -466,7 +496,17 @@ mod tests {
         let content = "y".repeat(10_000);
         let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
 
-        let tokens = build_base_tokens(&mut buffer, 0, 80, 1, false, LineEnding::LF, &[], Some(0));
+        let tokens = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            1,
+            false,
+            LineEnding::LF,
+            &[],
+            Some(0),
+            false,
+        );
         assert!(
             char_count(&tokens) >= 1024,
             "floor should apply to tiny budgets"
@@ -481,8 +521,17 @@ mod tests {
         let content = format!("{}\nsecond line\nthird line\n", "z".repeat(50_000));
         let mut buffer = Buffer::from_bytes(content.into_bytes(), test_fs());
 
-        let unbudgeted =
-            build_base_tokens(&mut buffer, 0, 80, 40, false, LineEnding::LF, &[], None);
+        let unbudgeted = build_base_tokens(
+            &mut buffer,
+            0,
+            80,
+            40,
+            false,
+            LineEnding::LF,
+            &[],
+            None,
+            false,
+        );
         let budgeted = build_base_tokens(
             &mut buffer,
             0,
@@ -492,6 +541,7 @@ mod tests {
             LineEnding::LF,
             &[],
             Some(4_000),
+            false,
         );
 
         assert!(budgeted.len() <= unbudgeted.len());
@@ -540,6 +590,7 @@ pub(crate) fn build_line_tokens(
         line_ending,
         &[],
         None,
+        false,
     );
     // The read runs past the line end; keep only this line, and drop its
     // terminator — a newline belongs to the line break, not to a row.

@@ -278,6 +278,9 @@ fn build_pane_render_data(
             &empty_folds,
             theme,
             &[], // composite panes render cursor-blind
+            // Composite previews render from the top of the source buffer;
+            // there is no scrolled viewport to anchor to.
+            None,
         );
 
         let mut line_to_view_line: HashMap<usize, usize> = HashMap::new();
