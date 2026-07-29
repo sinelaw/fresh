@@ -108,7 +108,7 @@ fn total_rows(
         (hi - lo) as u32
     };
     // Resolved before `entry` takes `&mut state`.
-    let decorations = state.index_decorations(geometry.view_mode, fold_ranges);
+    let decorations = state.index_decorations(geometry.view_mode, fold_ranges, &[]);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,

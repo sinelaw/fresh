@@ -250,7 +250,7 @@ pub(crate) fn compute_buffer_layout(
                 let hi = virtual_positions.partition_point(|p| *p < end);
                 (hi - lo) as u32
             };
-            let decorations = state.index_decorations(geometry.view_mode, fold_ranges);
+            let decorations = state.index_decorations(geometry.view_mode, fold_ranges.clone(), &[]);
             let index = state.wrap_indices.entry(geometry);
             index.ensure_built(
                 &mut state.buffer,
@@ -260,12 +260,89 @@ pub(crate) fn compute_buffer_layout(
                 &virtual_rows,
                 &decorations,
             );
+
+            // Cursor-line expansion: the frame draws the cursor's line
+            // cursor-aware, so placement must target the row the cursor is
+            // *drawn* on and clamp against the rows that will actually exist.
+            // Activation scopes are line-local, so this one line is the only
+            // possible divergence; everything else stays canonical. Mirrors
+            // the model's `EditorModel.ensure_cursor_visible`.
+            let cursor_line = state.buffer.get_line_number(cursor_byte);
+            let cl_start = state.buffer.line_start_offset(cursor_line).unwrap_or(0);
+            let cl_end = state
+                .buffer
+                .line_start_offset(cursor_line + 1)
+                .unwrap_or_else(|| state.buffer.len());
+            let divergent = state
+                .conceals
+                .earliest_cursor_divergence(cl_start, cl_end, &state.marker_list, &cursor_positions)
+                .is_some()
+                || state
+                    .soft_breaks
+                    .earliest_cursor_divergence(
+                        cl_start,
+                        cl_end,
+                        &state.marker_list,
+                        &cursor_positions,
+                    )
+                    .is_some();
+            let expansion = if divergent {
+                let canonical = state
+                    .wrap_indices
+                    .get(&geometry)
+                    .and_then(|i| i.line_wrap(cursor_line))
+                    .filter(|lw| !lw.hidden)
+                    .map(|lw| lw.wrap_rows());
+                let first_row = state
+                    .wrap_indices
+                    .get(&geometry)
+                    .map(|i| i.row_of_byte(&state.buffer, cl_start));
+                match (canonical, first_row) {
+                    (Some(canonical_rows), Some(first_row)) => {
+                        let aware = state.index_decorations(
+                            geometry.view_mode,
+                            state.fold_ranges(folds),
+                            &cursor_positions,
+                        );
+                        let starts = crate::view::wrap_index::line_drawn_row_starts(
+                            &mut state.buffer,
+                            cursor_line,
+                            geometry.rule,
+                            line_ending,
+                            &aware,
+                        );
+                        let rel = cursor_byte.saturating_sub(cl_start) as u32;
+                        let within = starts.partition_point(|s| *s <= rel).saturating_sub(1);
+                        Some(crate::view::viewport::CursorLineExpansion {
+                            line_start: cl_start,
+                            first_row,
+                            canonical_rows: canonical_rows as usize,
+                            drawn_rows: starts.len().max(1),
+                            cursor_row_drawn: first_row + within as u32,
+                        })
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
             if let Some(index) = state.wrap_indices.get(&geometry) {
-                viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
+                viewport.ensure_visible_in_rows(
+                    index,
+                    &state.buffer,
+                    cursor_byte,
+                    expansion.as_ref(),
+                );
+                viewport.row_pass_owns_placement = true;
                 // Resolve the anchor *after* the scroll decision, so the build
                 // starts where the frame will actually draw.
                 build_anchor = resolve_build_anchor(index, state, viewport, &cursor_positions);
             }
+        } else {
+            // Beyond the size ceilings with no index built: the byte-oriented
+            // pass is the only vertical authority there is.
+            viewport.row_pass_owns_placement = false;
         }
     }
 
