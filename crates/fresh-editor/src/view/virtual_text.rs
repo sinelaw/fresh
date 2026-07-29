@@ -154,7 +154,7 @@ pub struct VirtualTextManager {
     /// Monotonic version, bumped on every mutation.  Folded into
     /// `pipeline_inputs_version` so that adding / removing virtual
     /// lines (e.g. markdown_compose's table borders) invalidates
-    /// `LineWrapCache` / `VisualRowIndex` entries — same mechanism
+    /// `LineWrapCache` / `WrapIndex` entries — same mechanism
     /// `SoftBreakManager` and `ConcealManager` use.
     version: u32,
 }

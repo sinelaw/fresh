@@ -16,7 +16,6 @@
 
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
-use crate::primitives::display_width::str_width;
 use std::ops::Range;
 
 /// Standard tab width for terminal display
@@ -326,12 +325,13 @@ pub const WRAP_MAX_LOOKBACK: usize = 16;
 /// of `0` degenerates to one chunk covering the whole input (the
 /// caller decides how to render a zero-width row).
 ///
-/// The algorithm mirrors the inner Text-token char-split path of
-/// `view::ui::split_rendering::transforms::apply_wrapping_transform` —
-/// keep the two in sync if either changes.  Tabs and ANSI escapes are
-/// out of scope for this helper; callers needing tab-aware wrapping
-/// (the source-line path) handle them in their own pre/post passes.
+/// This is a driver over [`WrapMachine`](crate::view::wrap_machine::WrapMachine)
+/// under the `Word` rule, so virtual-line wrapping and source-line wrapping
+/// are the same algorithm by construction rather than by agreement.
 pub fn wrap_str_to_width(text: &str, wrap_width: usize) -> Vec<Range<usize>> {
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
+    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
+
     if text.is_empty() {
         return Vec::new();
     }
@@ -341,112 +341,38 @@ pub fn wrap_str_to_width(text: &str, wrap_width: usize) -> Vec<Range<usize>> {
         return std::iter::once(0..text.len()).collect();
     }
 
-    use unicode_segmentation::UnicodeSegmentation;
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(text.to_string()),
+        style: None,
+    }];
+    let out = WrapMachine::run(
+        tokens,
+        WrapRule::Word {
+            content_width: wrap_width,
+            gutter_width: 0,
+            hanging_indent: false,
+        },
+    );
 
-    let graphemes: Vec<(usize, &str)> = text.grapheme_indices(true).collect();
-    let word_bounds: Vec<usize> = text.split_word_bound_indices().map(|(b, _)| b).collect();
-    let text_len = text.len();
-
-    let mut chunks: Vec<Range<usize>> = Vec::new();
-    let mut grapheme_idx = 0;
-    // Monotonic cursor into `word_bounds` so the per-chunk boundary search
-    // is amortised O(1) rather than rescanning from byte 0.
-    let mut wb_lo: usize = 0;
-
-    while grapheme_idx < graphemes.len() {
-        let chunk_start_byte = graphemes[grapheme_idx].0;
-
-        // Greedy fill: how many graphemes fit in `wrap_width`?
-        let mut chunk_visual_width = 0usize;
-        let mut chunk_grapheme_count = 0usize;
-        for &(_b, g) in &graphemes[grapheme_idx..] {
-            let g_width = str_width(g);
-            if chunk_visual_width + g_width > wrap_width && chunk_grapheme_count > 0 {
-                break;
-            }
-            chunk_visual_width += g_width;
-            chunk_grapheme_count += 1;
-        }
-        // Forward-progress guarantee for an oversized lone grapheme.
-        if chunk_grapheme_count == 0 {
-            chunk_grapheme_count = 1;
-        }
-
-        let slice_end_hard = if grapheme_idx + chunk_grapheme_count < graphemes.len() {
-            graphemes[grapheme_idx + chunk_grapheme_count].0
-        } else {
-            text_len
-        };
-
-        // Boundary preference within `[floor_byte, slice_end_hard]`.  Floor
-        // is row-relative — we only enter this loop on a fresh row, so
-        // `current_line_width` would be 0 and `chunk_floor_from_cursor`
-        // collapses to `row_floor`.
-        let row_floor = wrap_width
-            .saturating_sub(WRAP_MAX_LOOKBACK)
-            .max(wrap_width / 2);
-        let floor_byte = if row_floor < chunk_grapheme_count {
-            graphemes[grapheme_idx + row_floor].0
-        } else {
-            slice_end_hard
-        };
-
-        // Advance `wb_lo` past entries already at or before chunk start.
-        while wb_lo < word_bounds.len() && word_bounds[wb_lo] <= chunk_start_byte {
-            wb_lo += 1;
-        }
-        let mut wb_hi = wb_lo;
-        while wb_hi < word_bounds.len() && word_bounds[wb_hi] <= slice_end_hard {
-            wb_hi += 1;
-        }
-
-        // Largest boundary in `[floor_byte, slice_end_hard]`.
-        let mut best_target_byte = word_bounds[wb_lo..wb_hi]
-            .iter()
-            .rev()
-            .copied()
-            .find(|&b| b >= floor_byte);
-        // `text.len()` is a virtual boundary if it falls inside the window —
-        // this stops a chunk that happens to end exactly at the text end
-        // from being shrunk to an earlier boundary (which would leak chars
-        // onto the next row).
-        if text_len > chunk_start_byte
-            && text_len >= floor_byte
-            && text_len <= slice_end_hard
-            && best_target_byte.is_none_or(|b| text_len > b)
-        {
-            best_target_byte = Some(text_len);
-        }
-
-        let chunk_end_byte = if let Some(target_byte) = best_target_byte {
-            let new_count = graphemes[grapheme_idx..]
-                .iter()
-                .position(|(b, _)| *b == target_byte)
-                .unwrap_or(chunk_grapheme_count);
-            if new_count > 0 && new_count < chunk_grapheme_count {
-                chunk_grapheme_count = new_count;
-                if grapheme_idx + new_count < graphemes.len() {
-                    graphemes[grapheme_idx + new_count].0
-                } else {
-                    text_len
-                }
-            } else {
-                slice_end_hard
-            }
-        } else {
-            slice_end_hard
-        };
-
-        chunks.push(chunk_start_byte..chunk_end_byte);
-        grapheme_idx += chunk_grapheme_count;
+    // Each row's first content token carries the byte it starts at; the row
+    // runs to wherever the next one starts.  The machine's Text chunks
+    // concatenate back to the input, so the ranges tile `0..text.len()`.
+    let starts: Vec<usize> = out.rows.iter().filter_map(|r| r.source_byte).collect();
+    if starts.is_empty() {
+        return std::iter::once(0..text.len()).collect();
     }
-
-    chunks
+    starts
+        .iter()
+        .enumerate()
+        .map(|(i, &start)| start..starts.get(i + 1).copied().unwrap_or(text.len()))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitives::display_width::str_width;
 
     #[test]
     fn test_visual_width_ascii() {

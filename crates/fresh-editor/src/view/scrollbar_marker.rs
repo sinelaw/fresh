@@ -25,7 +25,7 @@
 //! The buckets are cached and rebuilt only when their [`BucketKey`] changes
 //! (marker set, buffer content, geometry, or basis), so a steady-state frame
 //! costs one key comparison. This is the same version-keyed staleness idiom as
-//! [`crate::view::visual_row_index::VisualRowIndex`].
+//! [`crate::view::line_wrap_cache::LineWrapCache`].
 
 use std::collections::{BTreeMap, HashSet};
 

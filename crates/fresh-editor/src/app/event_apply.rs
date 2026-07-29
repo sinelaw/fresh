@@ -776,7 +776,7 @@ impl Editor {
         // `seen_byte_ranges`, re-fire `lines_changed` for all visible
         // lines, and rebuild every conceal/soft-break marker — bumping the
         // manager versions and invalidating the whole `LineWrapCache` and
-        // `VisualRowIndex` per keypress (the compose-mode arrow-key lag).
+        // the wrap index per keypress (the compose-mode arrow-key lag).
         //
         // A structure-changing edit (a newline inserted or deleted) still
         // needs a full refresh, for a subtler reason: it renumbers every row

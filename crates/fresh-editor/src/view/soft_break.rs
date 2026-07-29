@@ -201,7 +201,7 @@ impl SoftBreakManager {
     ///
     /// `cursors` are the rendering split's cursor byte positions, used to
     /// evaluate cursor-dependent activation rules. Pass `&[]` for
-    /// cursor-blind consumers (scroll math, `VisualRowIndex`) — they see
+    /// cursor-blind consumers (scroll math, `WrapIndex`) — they see
     /// the canonical "no cursor anywhere" rendering.
     pub fn query_viewport(
         &self,

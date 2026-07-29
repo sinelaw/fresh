@@ -177,12 +177,12 @@ pub(super) fn project_scrollbar_markers(
 /// Calculate scrollbar position based on visual rows (for line-wrapped content).
 /// Returns `(total_visual_rows, top_visual_row)`.
 ///
-/// Both numbers come from the per-state [`VisualRowIndex`] in O(log N_lines).
+/// Both numbers come from the per-state [`WrapIndex`] in O(log N_lines).
 /// The index is built lazily and reused across frames whenever its key
 /// (pipeline-input version + geometry) is unchanged — so a steady-state
 /// scroll where only `top_byte` moves never re-walks the buffer.
 ///
-/// [`VisualRowIndex`]: crate::view::visual_row_index::VisualRowIndex
+/// [`WrapIndex`]: crate::view::wrap_index::WrapIndex
 pub(super) fn scrollbar_visual_row_counts(
     state: &mut EditorState,
     viewport: &Viewport,

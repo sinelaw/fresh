@@ -376,16 +376,6 @@ pub(crate) fn compute_buffer_layout(
         .buffer
         .populate_line_cache(viewport.top_byte, adjusted_visible_count);
 
-    let viewport_start = viewport.top_byte;
-    let viewport_end = calculate_viewport_end(
-        state,
-        viewport_start,
-        estimated_line_length,
-        adjusted_visible_count,
-        viewport.left_column,
-        render_area.width as usize,
-    );
-
     // `calculate_viewport_end` walks *logical lines* from `top_byte` and
     // clamps each to one screen row's worth of columns — the right model for
     // horizontal scrolling, where a long line shows one row's window of
@@ -396,13 +386,30 @@ pub(crate) fn compute_buffer_layout(
     // leaves every row past the first few undecorated — no syntax colours,
     // no overlays — because the request never moved off the line's start
     // (issue #2843).
-    let (viewport_start, viewport_end) = if line_wrap {
+    //
+    // The rows already answer it under wrap, so the line walk only runs when
+    // they can't — the unwrapped path, or drawn rows that carry no source
+    // bytes at all.
+    let wrapped_span = line_wrap.then(|| {
         let first_drawn = view_data.first_drawn.min(view_data.lines.len());
         let drawn = &view_data.lines[first_drawn..];
         let drawn = &drawn[..drawn.len().min(adjusted_visible_count)];
-        visible_source_span(drawn).unwrap_or((viewport_start, viewport_end))
-    } else {
-        (viewport_start, viewport_end)
+        visible_source_span(drawn)
+    });
+    let (viewport_start, viewport_end) = match wrapped_span.flatten() {
+        Some(span) => span,
+        None => {
+            let viewport_start = viewport.top_byte;
+            let viewport_end = calculate_viewport_end(
+                state,
+                viewport_start,
+                estimated_line_length,
+                adjusted_visible_count,
+                viewport.left_column,
+                render_area.width as usize,
+            );
+            (viewport_start, viewport_end)
+        }
     };
 
     let decorations = decoration_context(
