@@ -2083,6 +2083,27 @@ pub enum WidgetSpec {
         /// the host owns focus.
         #[serde(default)]
         focused: bool,
+        /// Which column the cursor sits in: `true` = Included,
+        /// `false` = Available. Seed only, like `included` — host
+        /// instance state takes over after first render. Hosts that
+        /// drive the control themselves (Settings) keep re-supplying
+        /// it so the rendered cursor tracks their own state.
+        #[serde(default)]
+        active_included: bool,
+        /// Cursor row within the Available column. Seed only (see
+        /// `active_included`).
+        #[serde(default)]
+        available_cursor: u32,
+        /// Cursor row within the Included column. Seed only (see
+        /// `active_included`).
+        #[serde(default)]
+        included_cursor: u32,
+        /// Optional one-line key hint rendered under the columns
+        /// (e.g. `↑↓:Move  Shift+←→:Add/Remove`). Empty = omitted.
+        /// The control's keys are not guessable from its shape, so
+        /// hosts are expected to supply their own localized copy.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        hint: String,
         /// Number of body rows the columns occupy. Plugin computes
         /// from its viewport.
         #[serde(default = "default_dual_visible_rows")]

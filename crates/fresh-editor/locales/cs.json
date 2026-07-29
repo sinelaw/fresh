@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "Šířka psaní nastavena na %{value}",
   "settings.dual_list_enter_hint": "Enter pro úpravu",
   "settings.dual_list_shift_hint": "Shift+←→ přesun  Shift+↑↓ pořadí",
+  "settings.dual_list_keys_hint": "↑↓ Vybrat  ←→ Přepnout sloupec  Shift+←→ Přesunout položku  Shift+↑↓ Pořadí  Esc Hotovo",
+  "settings.help_duallist": "↑↓:Vybrat  ←→:Sloupec  Shift+←→:Přesunout  Shift+↑↓:Pořadí  Esc:Hotovo",
   "settings.editing_config": "Úprava konfigurace %{layer}: %{path}",
   "settings.failed_to_apply": "Použití nastavení selhalo: %{error}",
   "settings.failed_to_open": "Otevření nastavení selhalo: %{error}",

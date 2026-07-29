@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "作成幅を %{value} に設定",
   "settings.dual_list_enter_hint": "Enterで編集",
   "settings.dual_list_shift_hint": "Shift+←→ 移動  Shift+↑↓ 並べ替え",
+  "settings.dual_list_keys_hint": "↑↓ 選択  ←→ 列を切り替え  Shift+←→ 項目を移動  Shift+↑↓ 並べ替え  Esc 完了",
+  "settings.help_duallist": "↑↓:選択  ←→:列  Shift+←→:移動  Shift+↑↓:並べ替え  Esc:完了",
   "settings.editing_config": "%{layer} 設定を編集中: %{path}",
   "settings.failed_to_apply": "設定の適用に失敗: %{error}",
   "settings.failed_to_open": "設定を開くのに失敗: %{error}",

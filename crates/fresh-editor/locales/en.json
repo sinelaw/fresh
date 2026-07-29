@@ -1426,6 +1426,8 @@
   "settings.help_default": "↑↓:Navigate  Tab:Next  Enter:Edit  /:Search  Esc:Close",
   "settings.dual_list_enter_hint": "Enter to edit",
   "settings.dual_list_shift_hint": "Shift+←→ move  Shift+↑↓ reorder",
+  "settings.dual_list_keys_hint": "↑↓ Select  ←→ Switch column  Shift+←→ Move item  Shift+↑↓ Reorder  Esc Done",
+  "settings.help_duallist": "↑↓:Select  ←→:Column  Shift+←→:Move  Shift+↑↓:Reorder  Esc:Done",
   "settings.field.editor.whitespace_show": "Show Whitespace",
   "settings.field.editor.whitespace_spaces_leading": "Leading Spaces",
   "settings.field.editor.whitespace_spaces_inner": "Inner Spaces",

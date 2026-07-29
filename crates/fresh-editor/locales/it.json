@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "Larghezza composizione impostata a %{value}",
   "settings.dual_list_enter_hint": "Invio per modificare",
   "settings.dual_list_shift_hint": "Shift+←→ sposta  Shift+↑↓ riordina",
+  "settings.dual_list_keys_hint": "↑↓ Seleziona  ←→ Cambia colonna  Shift+←→ Sposta elemento  Shift+↑↓ Riordina  Esc Fatto",
+  "settings.help_duallist": "↑↓:Seleziona  ←→:Colonna  Shift+←→:Sposta  Shift+↑↓:Riordina  Esc:Fatto",
   "settings.editing_config": "Modifica configurazione %{layer}: %{path}",
   "settings.failed_to_apply": "Impossibile applicare le impostazioni: %{error}",
   "settings.failed_to_open": "Impossibile aprire le impostazioni: %{error}",

@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "Ancho de composición establecido a %{value}",
   "settings.dual_list_enter_hint": "Enter para editar",
   "settings.dual_list_shift_hint": "Shift+←→ mover  Shift+↑↓ reordenar",
+  "settings.dual_list_keys_hint": "↑↓ Seleccionar  ←→ Cambiar columna  Shift+←→ Mover elemento  Shift+↑↓ Reordenar  Esc Listo",
+  "settings.help_duallist": "↑↓:Seleccionar  ←→:Columna  Shift+←→:Mover  Shift+↑↓:Reordenar  Esc:Listo",
   "settings.editing_config": "Editando configuración de %{layer}: %{path}",
   "settings.failed_to_apply": "Error al aplicar configuración: %{error}",
   "settings.failed_to_open": "Error al abrir configuración: %{error}",

@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "Ширину композиції встановлено на %{value}",
   "settings.dual_list_enter_hint": "Enter для редагування",
   "settings.dual_list_shift_hint": "Shift+←→ перемістити  Shift+↑↓ порядок",
+  "settings.dual_list_keys_hint": "↑↓ Вибір  ←→ Змінити стовпець  Shift+←→ Перемістити елемент  Shift+↑↓ Порядок  Esc Готово",
+  "settings.help_duallist": "↑↓:Вибір  ←→:Стовпець  Shift+←→:Перемістити  Shift+↑↓:Порядок  Esc:Готово",
   "settings.editing_config": "Редагування конфігурації %{layer}: %{path}",
   "settings.failed_to_apply": "Не вдалося застосувати налаштування: %{error}",
   "settings.failed_to_open": "Не вдалося відкрити налаштування: %{error}",
