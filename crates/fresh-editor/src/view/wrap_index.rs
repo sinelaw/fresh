@@ -1051,6 +1051,7 @@ mod tests {
 
     fn geometry(width: usize) -> WrapIndexGeometry {
         WrapIndexGeometry {
+            fold_signature: 0,
             rule: WrapRule::Word {
                 content_width: width,
                 gutter_width: 0,
@@ -1112,6 +1113,58 @@ mod tests {
             },
             LineEnding::LF,
             &no_virtual,
+            0,
+        );
+    }
+
+    /// A repair must leave the index *usable*, not merely correct.
+    ///
+    /// `pipeline_inputs_version` folds in `buffer.version()`, so every edit
+    /// changes it. For one release `damage_bytes` updated the rows and left the
+    /// version stale, so the next `ensure_built` found the index out of date and
+    /// rebuilt the whole buffer — the repair ran and was thrown away, ~26% of a
+    /// keystroke doing the same work twice.
+    ///
+    /// Nothing caught it: `repair_equals_rebuild` compares a repaired index
+    /// against a rebuilt one, which is exactly what kept happening. Equality was
+    /// never the property at risk. This asserts the one that was.
+    #[test]
+    fn a_repair_leaves_the_index_current() {
+        let text = long_line(200);
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let mut index = built(&mut buffer, 20);
+        let geom = geometry(20);
+
+        let start = buffer.len() / 2;
+        let line_before = buffer.get_line_number(start);
+        let line_start_before = buffer.line_start_offset(line_before).unwrap_or(0);
+        buffer.insert(start, "x");
+        let after =
+            crate::view::line_wrap_cache::pipeline_inputs_version(buffer.version(), 0, 0, 0);
+        assert!(
+            !index.is_built_for(&geom, after),
+            "precondition: the edit must have staled the version"
+        );
+
+        index.damage_bytes(
+            &mut buffer,
+            EditDamage {
+                start,
+                removed: 0,
+                inserted: 1,
+                line_before,
+                line_start_before,
+                line_end_before: line_before,
+            },
+            LineEnding::LF,
+            &no_virtual,
+            after,
+        );
+
+        assert!(
+            index.is_built_for(&geom, after),
+            "the repair left the index stale, so the next render rebuilds and \
+             the repair was wasted"
         );
     }
 
@@ -1301,6 +1354,7 @@ mod tests {
             },
             LineEnding::LF,
             &no_virtual,
+            0,
         );
 
         for width in [16usize, 40] {
