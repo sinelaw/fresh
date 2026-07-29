@@ -215,14 +215,43 @@ at all: its decorations are synchronous.
   render shows the cursor (convergence), and the clamp admits the true end of
   the document.
 * **E-A** — port `_stable_anchor` into the anchored build in `render_buffer`.
-* **E-B** — placement keyed to the index: when `pipeline_inputs_version`
-  changes, mark placement dirty and re-run `ensure_visible_in_rows` at frame
-  start. This is the model's semantics (placement recomputed per render) made
-  incremental.
-* **Kept as a hard boundary** — the `view_transform.is_none()` gate in
-  `render_buffer`. A genuine replacement token stream is arbitrary plugin
-  output; the index cannot model it and should not try. Compose does not use
-  it; anything that still does gets the transform path.
+  **Done.**
+* **E-B** — placement keyed to the index: build-if-stale in the render gate,
+  then place, every frame. **Done** — and it is what fixed the compose reach
+  test. Bounded by the scrollbar's size ceilings.
+* ~~Kept as a hard boundary — the `view_transform` gate~~ **Dropped
+  entirely.** Nothing used the API; markdown_compose migrated off it long
+  ago. `ViewTransformPayload`, both plugin commands, the hook, the per-split
+  storage and every render branch are gone, and the model's mirror went with
+  them.
+
+### What fresh#1574 actually was
+
+Instrumenting the failing e2e disproved the reveal-divergence theory for
+that test (`delta=0` throughout): the byte-oriented pre-render
+`ensure_visible` — which phase B was supposed to retire and did not —
+scrolled two rows for a one-row cursor move, and the row pass then found
+the canonical cursor in-band and *correctly* declined to fix it. Two
+authorities, again. The row pass now sets `row_pass_owns_placement` each
+frame it places; the byte pass yields its vertical half while owned and
+survives for exactly two jobs: horizontal column scroll with wrap off, and
+files beyond the index's size ceilings, where no row space exists.
+
+The reveal divergence is real all the same — the model's dense-reveal
+fixture proves it, including the clamp case (a document that fits the
+window canonically can exceed it revealed) — and the effective-row
+placement (`CursorLineExpansion`, `cursor_visual_row`,
+`ensure_cursor_visible`) handles it in both model and Rust.
+
+### Remaining
+
+* **P4** — first index build still O(buffer); `damage_all` (every compose
+  `lines_changed` batch) now rebuilds with the decoration chain attached.
+  The lag model (`test_arrival_is_a_rebuild_not_a_repair`) states the
+  contract; the cost needs a design pass on lazy per-line builds with an
+  exact `total_rows()`.
+* Retire the byte pass's vertical half outright once the beyond-ceiling
+  case has a row-space answer (a coarse index, or per-chunk builds).
 
 Explicitly *not* the design: restoring the deleted layout-pass phases. The
 canonical coordinate stays the single authority; A and B are a render-local
