@@ -236,9 +236,19 @@ pub(crate) fn compute_buffer_layout(
             .get(&geometry)
             .is_some_and(|index| index.is_built_for(&geometry, inputs_version));
         if ready {
-            if let Some(index) = state.wrap_indices.get(&geometry) {
-                viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
-                rows_settled = true;
+            // The row-space pass runs only where the layout pass is weakest and
+            // this work is aimed: the viewport parked *inside* a wrapped line,
+            // where `top_view_line_offset` carries the position and the layout
+            // pass can only see rows built from the line's start. Everywhere
+            // else the layout pass keeps the behaviour it has, rather than
+            // having it approximated here — it has accumulated a lot of it.
+            let inside_wrapped_line =
+                viewport.line_wrap_enabled && viewport.top_view_line_offset > 0;
+            if inside_wrapped_line {
+                if let Some(index) = state.wrap_indices.get(&geometry) {
+                    viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
+                    rows_settled = true;
+                }
             }
             // Resolve the anchor *after* the scroll decision, so the build
             // starts where the frame will actually draw.
