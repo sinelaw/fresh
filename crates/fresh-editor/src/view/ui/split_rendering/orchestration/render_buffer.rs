@@ -409,7 +409,12 @@ pub(crate) fn compute_buffer_layout(
     // Ensure cursor is visible using Layout-aware check (handles virtual lines)
     let primary = *cursors.primary();
     let top_byte_before_scroll = viewport.top_byte();
-    let scrolled = viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width);
+    let scrolled = viewport.ensure_visible_in_layout_with_render_width(
+        &view_data.lines,
+        &primary,
+        render_area.width as usize,
+        gutter_width,
+    );
 
     // If we scrolled AND `top_byte` changed, rebuild view_data from the new
     // top_byte (the old view_data no longer matches what's visible).  We
@@ -445,7 +450,12 @@ pub(crate) fn compute_buffer_layout(
                 None,
             );
             // The rebuild is unanchored, so the layout pass owns the offsets again.
-            let _ = viewport.ensure_visible_in_layout(&rebuilt.lines, &primary, gutter_width);
+            let _ = viewport.ensure_visible_in_layout_with_render_width(
+                &rebuilt.lines,
+                &primary,
+                render_area.width as usize,
+                gutter_width,
+            );
             rebuilt
         } else {
             view_data

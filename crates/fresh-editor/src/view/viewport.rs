@@ -1373,6 +1373,22 @@ impl Viewport {
         cursor: &Cursor,
         gutter_width: usize,
     ) -> bool {
+        let render_width = self.width as usize;
+        self.ensure_visible_in_layout_with_render_width(
+            view_lines,
+            cursor,
+            render_width,
+            gutter_width,
+        )
+    }
+
+    pub(crate) fn ensure_visible_in_layout_with_render_width(
+        &mut self,
+        view_lines: &[ViewLine],
+        cursor: &Cursor,
+        render_width: usize,
+        gutter_width: usize,
+    ) -> bool {
         // Check if we should skip sync due to session restore
         // This prevents the restored scroll position from being overwritten
         if self.should_skip_resize_sync() {
@@ -1420,7 +1436,13 @@ impl Viewport {
         // `ensure_visible_in_rows`, which runs before anything is built and
         // decides in absolute rows; this pass sees only the window it was
         // handed and cannot reach past it, which is what made the two disagree.
-        self.scroll_cursor_column_into_view(view_lines, cursor, cursor_view_line, gutter_width);
+        self.scroll_cursor_column_into_view(
+            view_lines,
+            cursor,
+            cursor_view_line,
+            render_width,
+            gutter_width,
+        );
         false
     }
 
@@ -1433,6 +1455,7 @@ impl Viewport {
         view_lines: &[ViewLine],
         cursor: &Cursor,
         cursor_view_line: usize,
+        render_width: usize,
         gutter_width: usize,
     ) {
         if cursor_view_line >= view_lines.len() {
@@ -1483,14 +1506,20 @@ impl Viewport {
         let line_visual_width = line
             .visual_width()
             .saturating_sub(usize::from(line.ends_with_newline));
-        self.ensure_column_visible_simple(cursor_visual_col, line_visual_width, gutter_width);
+        self.ensure_column_visible_simple(
+            cursor_visual_col,
+            line_visual_width,
+            render_width,
+            gutter_width,
+        );
     }
 
-    /// Simple column visibility check (doesn't need buffer)
+    /// Renderer/layout-only column visibility check using laid-out line geometry.
     fn ensure_column_visible_simple(
         &mut self,
         column: usize,
         line_length: usize,
+        render_width: usize,
         gutter_width: usize,
     ) {
         // Skip if line wrapping is enabled (all columns visible via wrapping)
@@ -1499,10 +1528,10 @@ impl Viewport {
             return;
         }
 
-        let scrollbar_width = 1;
-        let visible_width = (self.width as usize)
-            .saturating_sub(gutter_width)
-            .saturating_sub(scrollbar_width);
+        // `render_width` is the geometry used to build and draw these lines.
+        // It may be narrower than this viewport in compose mode, and already
+        // accounts for a shown vertical scrollbar column.
+        let visible_width = render_width.saturating_sub(gutter_width);
 
         if visible_width == 0 {
             return;
@@ -2315,13 +2344,10 @@ impl Viewport {
         line_length: usize,
         buffer: &mut Buffer,
     ) {
-        // Calculate visible width (accounting for line numbers gutter which is dynamic)
+        // `self.width` is the content width; split layout has already removed
+        // any vertical scrollbar column.
         let gutter_width = self.gutter_width(buffer);
-        // Also account for scrollbar (always present, takes 1 column)
-        let scrollbar_width = 1;
-        let visible_width = (self.width as usize)
-            .saturating_sub(gutter_width)
-            .saturating_sub(scrollbar_width);
+        let visible_width = (self.width as usize).saturating_sub(gutter_width);
 
         if visible_width == 0 {
             return; // Terminal too narrow
@@ -2848,6 +2874,35 @@ mod tests {
             expected_bottom,
             lines_from_top
         );
+    }
+
+    #[test]
+    fn ensure_column_visible_simple_uses_explicit_render_width() {
+        // Compose mode can render a narrow centered page inside a wide viewport.
+        let mut vp = Viewport::new(80, 24);
+        vp.line_wrap_enabled = false;
+        vp.horizontal_scroll_offset = 0;
+
+        vp.ensure_column_visible_simple(12, 13, 6, 0);
+
+        assert_eq!(
+            vp.left_column, 7,
+            "the layout path must use its passed render width, not viewport width"
+        );
+    }
+
+    #[test]
+    fn ensure_column_visible_does_not_reserve_scrollbar_inside_content_width() {
+        let mut buffer = Buffer::from_str_test("x".repeat(20).as_str());
+        let mut vp = Viewport::new(10, 24);
+        vp.line_wrap_enabled = false;
+        vp.horizontal_scroll_offset = 0;
+
+        // The one-line buffer has a six-column gutter, leaving columns 0..=3
+        // visible within the viewport's content width.
+        vp.ensure_column_visible(3, 20, &mut buffer);
+
+        assert_eq!(vp.left_column, 0);
     }
 
     #[test]

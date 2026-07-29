@@ -300,6 +300,7 @@ pub mod unnamed_buffer_persistence;
 pub mod unsaved_change_gutter;
 pub mod update_notification;
 pub mod vertical_rulers;
+pub mod vertical_scrollbar_cursor_extent;
 #[cfg(feature = "plugins")]
 pub mod vi_mode;
 #[cfg(feature = "plugins")]
