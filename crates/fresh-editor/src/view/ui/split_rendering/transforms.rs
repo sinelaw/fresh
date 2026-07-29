@@ -448,6 +448,43 @@ struct InlineHintCell {
     style: Option<ViewTokenStyle>,
 }
 
+/// One inline hint, resolved: everything the splice needs and no borrow of
+/// editor state.
+#[derive(Debug, Clone)]
+pub struct InlineHint {
+    /// Source byte the hint is anchored to.
+    pub anchor: usize,
+    pub text: String,
+    pub position: VirtualTextPosition,
+    /// `None` when the caller passed no theme — the scroll-math and index
+    /// paths, where only the cell's *width* matters and nothing is drawn.
+    pub style: Option<ViewTokenStyle>,
+}
+
+/// Resolve the inline hints anchored in `start..end`.
+///
+/// The state-dependent half of the splice, split out so the transform itself is
+/// pure. `theme` is `Some` on the draw path (so hint colours resolve) and `None`
+/// wherever the output is measured but never drawn.
+pub fn resolve_inline_hints(
+    state: &EditorState,
+    theme: Option<&Theme>,
+    start: usize,
+    end: usize,
+) -> Vec<InlineHint> {
+    state
+        .virtual_texts
+        .query_inline_in_range(&state.marker_list, start, end)
+        .into_iter()
+        .map(|(anchor, vtext)| InlineHint {
+            anchor,
+            text: vtext.text.clone(),
+            position: vtext.position,
+            style: theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t))),
+        })
+        .collect()
+}
+
 /// Splice inline virtual text (`BeforeChar` / `AfterChar` inlay hints) into
 /// the token stream as styled `source_offset: None` Text cells, **before**
 /// wrapping.
@@ -467,42 +504,37 @@ struct InlineHintCell {
 ///     newline (an end-of-line hint).
 ///   - `AfterChar`:  `" {text}"`.
 ///
-/// `theme` is `Some` on the draw path (so hint colours resolve) and `None`
-/// on the wrap-cache / scroll-math path, where only cell *width* matters and
-/// the output is never drawn.
+/// Takes hints already resolved by [`resolve_inline_hints`] rather than
+/// `&EditorState`, which is what lets the wrap index call it: the index builds
+/// behind `&mut Buffer`, and a `&EditorState` alongside that does not borrow.
+/// It also puts this transform on the same footing as the others in this
+/// module — a pure function of tokens and decorations.
 pub fn splice_inline_virtual_text(
     tokens: Vec<ViewTokenWire>,
-    state: &EditorState,
-    theme: Option<&Theme>,
-    start: usize,
-    end: usize,
+    hints: &[InlineHint],
 ) -> Vec<ViewTokenWire> {
-    let inline = state
-        .virtual_texts
-        .query_inline_in_range(&state.marker_list, start, end);
-    if inline.is_empty() {
+    if hints.is_empty() {
         return tokens;
     }
 
-    // Group by anchor byte, preserving the query's (position, priority)
+    // Group by anchor byte, preserving the resolver's (position, priority)
     // order. `before` stores the raw hint text — its leading-space padding
     // depends on whether the anchor cell is a newline, decided while
     // walking the token stream below.
     let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>)>> = HashMap::new();
     let mut after: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
-    for (pos, vtext) in inline {
-        let style = theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t)));
-        match vtext.position {
+    for hint in hints {
+        match hint.position {
             VirtualTextPosition::BeforeChar => {
                 before
-                    .entry(pos)
+                    .entry(hint.anchor)
                     .or_default()
-                    .push((vtext.text.clone(), style));
+                    .push((hint.text.clone(), hint.style.clone()));
             }
             VirtualTextPosition::AfterChar => {
-                after.entry(pos).or_default().push(InlineHintCell {
-                    text: format!(" {}", vtext.text),
-                    style,
+                after.entry(hint.anchor).or_default().push(InlineHintCell {
+                    text: format!(" {}", hint.text),
+                    style: hint.style.clone(),
                 });
             }
             // Line-level positions are handled by `inject_virtual_lines`.

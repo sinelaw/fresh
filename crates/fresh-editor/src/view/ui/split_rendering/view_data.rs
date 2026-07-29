@@ -10,7 +10,8 @@ use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
     apply_conceal_ranges, apply_grid_wrapping_transform, apply_soft_breaks,
-    apply_wrapping_transform_from, inject_virtual_lines, splice_inline_virtual_text,
+    apply_wrapping_transform_from, inject_virtual_lines, resolve_inline_hints,
+    splice_inline_virtual_text,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
@@ -322,8 +323,10 @@ pub(super) fn build_view_data(
             })
             .max()
             .unwrap_or(viewport.top_byte);
-        tokens =
-            splice_inline_virtual_text(tokens, state, Some(theme), viewport.top_byte, viewport_end);
+        tokens = splice_inline_virtual_text(
+            tokens,
+            &resolve_inline_hints(state, Some(theme), viewport.top_byte, viewport_end),
+        );
     }
 
     tokens = if line_wrap_enabled && viewport.grid_wrap {
