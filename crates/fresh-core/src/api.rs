@@ -7014,7 +7014,7 @@ mod tests {
         let viewport = api.get_viewport();
         assert!(viewport.is_some());
         let viewport = viewport.unwrap();
-        assert_eq!(viewport.top_byte(), 100);
+        assert_eq!(viewport.top_byte, 100);
         assert_eq!(viewport.left_column, 5);
         assert_eq!(viewport.width, 80);
         assert_eq!(viewport.height, 24);
