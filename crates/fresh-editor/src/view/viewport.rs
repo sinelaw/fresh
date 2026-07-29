@@ -1209,6 +1209,74 @@ impl Viewport {
     /// * `gutter_width` - Width of the gutter (for cursor positioning)
     ///
     /// Returns true if scrolling occurred.
+    /// Scroll the cursor into view using **absolute visual rows**, before any
+    /// rows are built.
+    ///
+    /// The layout-based [`Self::ensure_visible_in_layout`] can only run *after*
+    /// `build_view_data`, so the frame has to build rows to discover it needs to
+    /// scroll and then rebuild because it did — the up-to-three builds per frame
+    /// in `compute_buffer_layout`. Deciding in row space needs no rows at all:
+    /// the wrap index answers "which row is the cursor on" with a binary search.
+    ///
+    /// Returns `true` if the viewport moved. The viewport keeps its
+    /// `(top_byte, top_view_line_offset)` pair — a new absolute top row is
+    /// converted back through `byte_of_row`, so this changes *how* the decision
+    /// is made, not what the viewport is.
+    ///
+    /// Only the margin phase lives here. Revealing virtual lines above the
+    /// cursor and horizontal column scrolling still need materialised rows and
+    /// stay in the layout pass, which finds the cursor already in range and does
+    /// nothing further.
+    pub fn ensure_visible_in_rows(
+        &mut self,
+        index: &crate::view::wrap_index::WrapIndex,
+        buffer: &crate::model::buffer::Buffer,
+        cursor_byte: usize,
+    ) -> bool {
+        if self.should_skip_resize_sync() || self.should_skip_ensure_visible() {
+            return false;
+        }
+        let viewport_height = self.visible_line_count();
+        if viewport_height == 0 {
+            return false;
+        }
+
+        let total_rows = index.total_rows() as usize;
+        let top_line = buffer.get_line_number(self.top_byte);
+        let top_row = index.line_first_row(top_line) as usize + self.top_view_line_offset;
+        let cursor_row = index.row_of_byte(buffer, cursor_byte) as usize;
+
+        // Same margin rule as the layout pass, in absolute rows.
+        let apply_margin = self.line_wrap_enabled || top_row > 0;
+        let margin = if apply_margin {
+            self.scroll_offset.min(viewport_height / 2)
+        } else {
+            0
+        };
+        let max_top = total_rows.saturating_sub(viewport_height);
+
+        let in_top_margin = cursor_row < top_row + margin;
+        let in_bottom_margin = cursor_row + margin + 1 > top_row + viewport_height;
+        if !in_top_margin && !in_bottom_margin {
+            return false;
+        }
+
+        let target_top = if in_top_margin {
+            cursor_row.saturating_sub(margin)
+        } else {
+            (cursor_row + margin + 1).saturating_sub(viewport_height)
+        };
+        let new_top = target_top.min(max_top);
+        if new_top == top_row {
+            return false;
+        }
+
+        let addr = index.byte_of_row(buffer, new_top as u32);
+        self.top_byte = buffer.line_start_offset(addr.line).unwrap_or(0);
+        self.top_view_line_offset = addr.row_in_line;
+        true
+    }
+
     pub fn ensure_visible_in_layout(
         &mut self,
         view_lines: &[ViewLine],
