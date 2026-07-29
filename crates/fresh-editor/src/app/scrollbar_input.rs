@@ -46,8 +46,7 @@ impl crate::app::window::Window {
                         return Ok(());
                     }
 
-                    let viewport = explorer.viewport_height.max(1);
-                    let max_scroll = count.saturating_sub(viewport);
+                    let max_scroll = explorer.max_scroll_offset();
                     let current_offset = explorer.get_scroll_offset();
                     let new_offset = if delta < 0 {
                         current_offset.saturating_sub(delta.unsigned_abs() as usize)

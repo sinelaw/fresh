@@ -237,34 +237,24 @@ impl FileExplorerRenderer {
             );
         }
 
-        // Viewport height already applied above (before the `draw` early-out).
-        let viewport_height = viewport_height_pre;
-
         let display_nodes = view.get_display_nodes();
-        let scroll_offset = view.get_scroll_offset();
+        let viewport_indices = view.viewport_display_indices();
         let selected_index = view.get_selected_index();
-
-        // Clamp scroll_offset to valid range to prevent panic after tree mutations
-        // (e.g., when deleting a folder with many children while scrolled down)
-        // Issue #562: scroll_offset can become larger than display_nodes.len()
-        let scroll_offset = scroll_offset.min(display_nodes.len());
-
-        // Only render the visible subset of items (for manual scroll control)
-        // This prevents ratatui's List widget from auto-scrolling
-        let visible_end = (scroll_offset + viewport_height).min(display_nodes.len());
-        let visible_items = &display_nodes[scroll_offset..visible_end];
+        let selected_viewport_index = selected_index
+            .and_then(|selected| viewport_indices.iter().position(|&i| i == selected));
 
         // Available width for content (subtract borders and cursor indicator)
         let content_width = area.width.saturating_sub(3) as usize;
 
         let multi_selection = view.multi_selection();
 
-        // Create list items for visible nodes only
-        let items: Vec<ListItem> = visible_items
+        // Create list items for the viewport only. `viewport_indices` starts
+        // with any sticky ancestor rows, followed by the ordinary scrolled
+        // rows, and is also used by mouse hit-testing.
+        let items: Vec<ListItem> = viewport_indices
             .iter()
-            .enumerate()
-            .map(|(viewport_idx, &(node_id, indent))| {
-                let actual_idx = scroll_offset + viewport_idx;
+            .filter_map(|&actual_idx| {
+                let &(node_id, indent) = display_nodes.get(actual_idx)?;
                 let is_selected = selected_index == Some(actual_idx);
                 let is_multi_selected = multi_selection.contains(&node_id);
                 let fuzzy_match = if search_active {
@@ -272,7 +262,7 @@ impl FileExplorerRenderer {
                 } else {
                     None
                 };
-                Self::render_node(
+                Some(Self::render_node(
                     view,
                     deco,
                     node_id,
@@ -287,7 +277,7 @@ impl FileExplorerRenderer {
                     cut_paths,
                     tree_indicator_collapsed,
                     tree_indicator_expanded,
-                )
+                ))
             })
             .collect();
 
@@ -326,39 +316,34 @@ impl FileExplorerRenderer {
                 Style::default().bg(theme.current_line_bg)
             });
 
-        // Create list state for scrolling
-        // Since we're only passing visible items, the selection is relative to viewport
+        // Since we're only passing viewport items, selection is a screen-row
+        // index rather than an offset into the full flattened tree.
         let mut list_state = ListState::default();
-        if let Some(selected) = selected_index {
-            if selected >= scroll_offset && selected < scroll_offset + viewport_height {
-                // Selected item is in the visible range
-                list_state.select(Some(selected - scroll_offset));
-            }
+        if let Some(selected) = selected_viewport_index {
+            list_state.select(Some(selected));
         }
 
         frame.render_stateful_widget(list, area, &mut list_state);
 
         // Refine the selected row with its highlight keys (focused → selection
         // background, blurred → current-line background).
-        if let Some(selected) = selected_index {
-            if selected >= scroll_offset && selected < scroll_offset + viewport_height {
-                let row = area.y + 1 + (selected - scroll_offset) as u16;
-                let inner_x = area.x + 1;
-                let inner_w = area.width.saturating_sub(2);
-                let bg_key = if is_focused {
-                    "editor.selection_bg"
-                } else {
-                    "editor.current_line_bg"
-                };
-                rec.run(
-                    inner_x,
-                    row,
-                    inner_w,
-                    Some("editor.fg"),
-                    Some(bg_key),
-                    "File Explorer",
-                );
-            }
+        if let Some(selected) = selected_viewport_index {
+            let row = area.y + 1 + selected as u16;
+            let inner_x = area.x + 1;
+            let inner_w = area.width.saturating_sub(2);
+            let bg_key = if is_focused {
+                "editor.selection_bg"
+            } else {
+                "editor.current_line_bg"
+            };
+            rec.run(
+                inner_x,
+                row,
+                inner_w,
+                Some("editor.fg"),
+                Some(bg_key),
+                "File Explorer",
+            );
         }
 
         // Render close button "×" at the right side of the title bar
@@ -368,21 +353,19 @@ impl FileExplorerRenderer {
         // We render a cursor indicator character and position the hardware cursor there
         // The hardware cursor provides efficient terminal-native blinking
         if is_focused {
-            if let Some(selected) = selected_index {
-                if selected >= scroll_offset && selected < scroll_offset + viewport_height {
-                    // Position at the left edge of the selected row (after border)
-                    let cursor_x = area.x + 1;
-                    let cursor_y = area.y + 1 + (selected - scroll_offset) as u16;
+            if let Some(selected) = selected_viewport_index {
+                // Position at the left edge of the selected row (after border)
+                let cursor_x = area.x + 1;
+                let cursor_y = area.y + 1 + selected as u16;
 
-                    // Render a cursor indicator character that the hardware cursor will blink over
-                    let cursor_indicator = ratatui::widgets::Paragraph::new("▌")
-                        .style(Style::default().fg(theme.cursor));
-                    let cursor_area = ratatui::layout::Rect::new(cursor_x, cursor_y, 1, 1);
-                    frame.render_widget(cursor_indicator, cursor_area);
+                // Render a cursor indicator character that the hardware cursor will blink over
+                let cursor_indicator =
+                    ratatui::widgets::Paragraph::new("▌").style(Style::default().fg(theme.cursor));
+                let cursor_area = ratatui::layout::Rect::new(cursor_x, cursor_y, 1, 1);
+                frame.render_widget(cursor_indicator, cursor_area);
 
-                    // Position hardware cursor here for blinking effect
-                    frame.set_cursor_position((cursor_x, cursor_y));
-                }
+                // Position hardware cursor here for blinking effect
+                frame.set_cursor_position((cursor_x, cursor_y));
             }
         }
     }

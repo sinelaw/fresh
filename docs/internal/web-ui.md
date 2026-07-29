@@ -38,7 +38,7 @@ Strengths to preserve through any of the work below:
 6. **Accessibility**: screen-reader access to buffer and chrome, focus visibility, keyboard-only completeness.
 7. **Deployment**: survives being more than one localhost tab — authentication, TLS, reconnect, more than one concurrent client.
 
-Two things VS Code has that are **editor-core feature gaps, not web-frontend gaps**, and therefore out of scope here: the minimap and sticky scroll (neither exists in the TUI; the web renders what the pipeline renders). Pixel-smooth *sub-cell* scrolling is likewise bounded by the cell model itself — the web can only scroll in whole visual rows for as long as the pipeline thinks in cells. These belong to core rendering discussions, not this doc.
+The minimap remains an **editor-core feature gap, not a web-frontend gap**, and therefore is out of scope here. Explorer sticky scroll is derived by the core and projected to both renderers. Pixel-smooth *sub-cell* scrolling is likewise bounded by the cell model itself — the web can only scroll in whole visual rows for as long as the pipeline thinks in cells. These belong to core rendering discussions, not this doc.
 
 ## 3. Design gaps — PLANNED, decisions needed before code
 

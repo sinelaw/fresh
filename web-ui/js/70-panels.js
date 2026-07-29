@@ -41,8 +41,12 @@ function fileExplorerEl(fe){
   const title=div("fx-title"); title.textContent=fe.title||"Explorer"; el.appendChild(title);
   const list=div("fx-list");
   const n=Math.max(0,(fe.viewportHeight||fe.rect.h)), start=fe.scrollOffset||0;
+  // Newer cores provide the exact screen-row mapping, including sticky
+  // ancestors. Keep the contiguous fallback for compatibility with an older
+  // core while the web assets are being refreshed.
+  const viewportRows=fe.viewportRows||Array.from({length:n},(_,j)=>start+j);
   for(let j=0;j<n;j++){
-    const idx=start+j, r=fe.rows[idx]; if(!r) break;
+    const idx=viewportRows[j], r=fe.rows[idx]; if(!r) break;
     const row=div("fx-row"+(idx===fe.selected?" sel":""));
     row.style.paddingLeft=(6 + r.depth*10)+"px";
     const chev=document.createElement("span"); chev.className="fx-chev";
@@ -87,4 +91,3 @@ function borderDragHandle(bx, by, h){
   };
   return grip;
 }
-
