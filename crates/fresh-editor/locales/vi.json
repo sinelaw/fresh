@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "Đã đặt độ rộng soạn thảo thành %{value}",
   "settings.dual_list_enter_hint": "Enter để chỉnh sửa",
   "settings.dual_list_shift_hint": "Shift+←→ di chuyển  Shift+↑↓ sắp xếp",
+  "settings.dual_list_keys_hint": "↑↓ Chọn  ←→ Đổi cột  Shift+←→ Di chuyển mục  Shift+↑↓ Sắp xếp  Esc Xong",
+  "settings.help_duallist": "↑↓:Chọn  ←→:Cột  Shift+←→:Di chuyển  Shift+↑↓:Sắp xếp  Esc:Xong",
   "settings.editing_config": "Đang chỉnh sửa cấu hình %{layer}: %{path}",
   "settings.failed_to_apply": "Áp dụng cài đặt thất bại: %{error}",
   "settings.failed_to_open": "Mở cài đặt thất bại: %{error}",

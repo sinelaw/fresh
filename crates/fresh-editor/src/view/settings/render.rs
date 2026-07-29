@@ -1411,6 +1411,66 @@ fn hit_rect(
     Rect::default()
 }
 
+/// Build the click geometry for a `DualList` from the cells the widget
+/// renderer just painted.
+///
+/// The widget emits one `dual_focus` hit per occupied cell, carrying
+/// the column name and the row index the settings state indexes by.
+/// Converting each hit's byte range against its own row text (the same
+/// conversion [`hit_rect`] does) keeps the rects correct no matter how
+/// the columns were laid out or how far the panel is scrolled.
+fn dual_list_layout(
+    out: &crate::widgets::RenderOutput,
+    area: Rect,
+    skip_rows: u16,
+) -> crate::view::controls::DualListLayout {
+    use crate::primitives::display_width::str_width;
+    use crate::view::controls::{DualListLayout, DualListRowArea};
+
+    let mut layout = DualListLayout {
+        full_area: area,
+        ..Default::default()
+    };
+    for h in &out.hits {
+        if h.widget_kind != "dual_list" || h.event_type != "dual_focus" {
+            continue;
+        }
+        let (Some(column), Some(index)) = (
+            h.payload.get("column").and_then(|v| v.as_str()),
+            h.payload.get("index").and_then(|v| v.as_u64()),
+        ) else {
+            continue;
+        };
+        let Some(dst) = (h.buffer_row as u16).checked_sub(skip_rows) else {
+            continue;
+        };
+        if dst >= area.height {
+            continue;
+        }
+        let Some(entry) = out.entries.get(h.buffer_row as usize) else {
+            continue;
+        };
+        let text = entry.text.trim_end_matches('\n');
+        let s = h.byte_start.min(text.len());
+        let e = h.byte_end.min(text.len());
+        let x = str_width(&text[..s]) as u16;
+        if x >= area.width {
+            continue;
+        }
+        let w = (str_width(&text[s..e]).max(1) as u16).min(area.width - x);
+        let row = DualListRowArea {
+            area: Rect::new(area.x + x, area.y + dst, w, 1),
+            index: index as usize,
+        };
+        match column {
+            "available" => layout.available_rows.push(row),
+            "included" => layout.included_rows.push(row),
+            _ => {}
+        }
+    }
+    layout
+}
+
 /// Render the appropriate control for a setting
 ///
 /// # Arguments
@@ -1652,23 +1712,31 @@ fn render_control(
             ControlLayoutInfo::TextList { rows }
         }
 
-        SettingControl::DualList(_) => {
+        SettingControl::DualList(state) => {
+            // A keyed widget takes its focus from `focus_key`, not from
+            // the spec's `focused` flag, so the picker only paints its
+            // cursor once we name it as the focused widget. Gate that on
+            // *editing*, not mere selection: outside edit mode ↑↓ walks
+            // the settings list, and a cursor drawn inside the columns
+            // would promise a movement the arrows don't make.
+            let focus_key = if state.editing { name } else { "" };
             // View migrated to the widget `DualList` kind (two-column
             // Available/Included picker); editing still runs through the
-            // settings input path. Mouse hit geometry is approximate for
-            // now (keyboard nav is the primary path).
-            render_control_via_widget(
+            // settings input path. The click geometry is read back from
+            // the cells the widget actually painted, so a click lands on
+            // the row under the pointer instead of nowhere.
+            let out = render_control_via_widget(
                 frame,
                 area,
                 control,
                 name,
                 theme,
                 skip_rows,
-                "",
+                focus_key,
                 label_width,
                 prev,
             );
-            ControlLayoutInfo::DualList(Default::default())
+            ControlLayoutInfo::DualList(dual_list_layout(&out, area, skip_rows))
         }
 
         SettingControl::Map(state) => {
@@ -2113,6 +2181,12 @@ fn render_footer(
         t!("settings.help_search").to_string()
     } else if footer_focused {
         t!("settings.help_footer").to_string()
+    } else if state.is_editing_dual_list() {
+        // The generic "Enter:Edit" line is actively wrong once the
+        // two-column picker has the keyboard — Enter no longer starts
+        // an edit, and none of the keys that do move items appear in
+        // it.
+        t!("settings.help_duallist").to_string()
     } else {
         t!("settings.help_default").to_string()
     };

@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "编辑宽度设置为 %{value}",
   "settings.dual_list_enter_hint": "Enter编辑",
   "settings.dual_list_shift_hint": "Shift+←→ 移动  Shift+↑↓ 排序",
+  "settings.dual_list_keys_hint": "↑↓ 选择  ←→ 切换列  Shift+←→ 移动条目  Shift+↑↓ 排序  Esc 完成",
+  "settings.help_duallist": "↑↓:选择  ←→:列  Shift+←→:移动  Shift+↑↓:排序  Esc:完成",
   "settings.editing_config": "正在编辑 %{layer} 配置：%{path}",
   "settings.failed_to_apply": "应用设置失败：%{error}",
   "settings.failed_to_open": "打开设置失败：%{error}",

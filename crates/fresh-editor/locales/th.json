@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "ตั้งค่าความกว้างในการเขียนเป็น %{value}",
   "settings.dual_list_enter_hint": "Enter เพื่อแก้ไข",
   "settings.dual_list_shift_hint": "Shift+←→ ย้าย  Shift+↑↓ เรียงลำดับ",
+  "settings.dual_list_keys_hint": "↑↓ เลือก  ←→ สลับคอลัมน์  Shift+←→ ย้ายรายการ  Shift+↑↓ เรียงลำดับ  Esc เสร็จ",
+  "settings.help_duallist": "↑↓:เลือก  ←→:คอลัมน์  Shift+←→:ย้าย  Shift+↑↓:เรียงลำดับ  Esc:เสร็จ",
   "settings.editing_config": "กำลังแก้ไขคอนфิก %{layer}: %{path}",
   "settings.failed_to_apply": "ใช้การตั้งค่าไม่สำเร็จ: %{error}",
   "settings.failed_to_open": "เปิดการตั้งค่าไม่สำเร็จ: %{error}",

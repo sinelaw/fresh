@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "Schreibbreite auf %{value} gesetzt",
   "settings.dual_list_enter_hint": "Enter zum Bearbeiten",
   "settings.dual_list_shift_hint": "Shift+←→ verschieben  Shift+↑↓ umsortieren",
+  "settings.dual_list_keys_hint": "↑↓ Auswählen  ←→ Spalte wechseln  Shift+←→ Eintrag verschieben  Shift+↑↓ Umsortieren  Esc Fertig",
+  "settings.help_duallist": "↑↓:Auswählen  ←→:Spalte  Shift+←→:Verschieben  Shift+↑↓:Umsortieren  Esc:Fertig",
   "settings.editing_config": "%{layer}-Konfiguration bearbeiten: %{path}",
   "settings.failed_to_apply": "Einstellungen konnten nicht angewendet werden: %{error}",
   "settings.failed_to_open": "Einstellungen konnten nicht geöffnet werden: %{error}",

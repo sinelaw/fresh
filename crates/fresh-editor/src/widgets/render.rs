@@ -661,13 +661,23 @@ fn render_collected(
             excluded,
             label,
             focused,
+            active_included,
+            available_cursor,
+            included_cursor,
+            hint,
             visible_rows,
             key,
         } => collect_dual_list(
             options,
-            included,
-            excluded,
+            DualListSeed {
+                included,
+                excluded,
+                active_included: *active_included,
+                available_cursor: *available_cursor as usize,
+                included_cursor: *included_cursor as usize,
+            },
             label,
+            hint,
             *focused,
             *visible_rows,
             key.as_deref(),
@@ -4329,21 +4339,50 @@ fn cell(s: &str, width: usize) -> String {
 fn dual_col_width(panel_width: u32) -> usize {
     // `u32::MAX` means flex is disabled (tests / unbounded) — fall
     // back to a readable fixed width. Otherwise split the panel in
-    // two with a two-column gap, clamped to a sane range.
+    // two, reserving each column's cursor gutter plus the gap
+    // between them, and clamp to a sane range.
     let width = if panel_width == u32::MAX {
         40
     } else {
         panel_width
     };
-    ((width.saturating_sub(4)) / 2).clamp(8, 40) as usize
+    let chrome = (2 * DUAL_GUTTER_W + 2) as u32;
+    ((width.saturating_sub(chrome)) / 2).clamp(8, 40) as usize
+}
+
+/// Display width of the per-column cursor gutter: one marker glyph
+/// plus a separating space.
+const DUAL_GUTTER_W: usize = 2;
+/// Cursor marker for the column the keyboard is currently driving.
+/// Filled triangle, matching [`FOCUS_MARKER`].
+const DUAL_CURSOR_ACTIVE: &str = "▸ ";
+/// Cursor marker for the *other* column — where the cursor will land
+/// if the user switches columns. Hollow so the two are distinguishable
+/// in a monochrome capture, not only by color.
+const DUAL_CURSOR_IDLE: &str = "▹ ";
+/// Marker under the active column's header, pointing down into it.
+const DUAL_COLUMN_ACTIVE: &str = "▾ ";
+/// Blank gutter — the same width as the markers, so rows and headers
+/// never reflow as the cursor or the active column moves.
+const DUAL_GUTTER_BLANK: &str = "  ";
+
+/// Spec-supplied starting state for a `DualList`, used when the host
+/// has no instance state for the widget yet — or, for hosts that own
+/// the control's state themselves (Settings), on every frame.
+struct DualListSeed<'a> {
+    included: &'a [String],
+    excluded: &'a [String],
+    active_included: bool,
+    available_cursor: usize,
+    included_cursor: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
 fn collect_dual_list(
     options: &[DualListOption],
-    spec_included: &[String],
-    excluded: &[String],
+    seed: DualListSeed<'_>,
     label: &str,
+    hint: &str,
     focused: bool,
     visible_rows: u32,
     key: Option<&str>,
@@ -4353,9 +4392,18 @@ fn collect_dual_list(
     panel_width: u32,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
+    let excluded = seed.excluded;
     let is_focused = match key {
         Some(k) if !k.is_empty() => k == focus_key,
         _ => focused,
+    };
+    let seed_state = || {
+        (
+            seed.included.to_vec(),
+            seed.active_included,
+            seed.available_cursor,
+            seed.included_cursor,
+        )
     };
     // Instance state is authoritative after first render.
     let (included, active_included, mut avail_cur, mut incl_cur) = match key {
@@ -4371,9 +4419,9 @@ fn collect_dual_list(
                 *available_cursor as usize,
                 *included_cursor as usize,
             ),
-            _ => (spec_included.to_vec(), false, 0, 0),
+            _ => seed_state(),
         },
-        _ => (spec_included.to_vec(), false, 0, 0),
+        _ => seed_state(),
     };
     let included = dual_sanitize_included(options, &included);
     let available = dual_available_values(options, &included, excluded);
@@ -4411,19 +4459,51 @@ fn collect_dual_list(
         ensure_trailing_newline(&mut e);
         out.entries.push(e);
     }
-    // Header row.
-    let header = format!("{}  {}", cell("Available", col_w), cell("Included", col_w));
-    let mut header_entry = TextPropertyEntry::text(&header);
-    header_entry.inline_overlays.push(InlineOverlay {
-        start: 0,
-        end: header.len(),
-        style: OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key(KEY_SECTION_LABEL_FG)),
-            ..Default::default()
+    // Header row. Each title carries the same two-column gutter its
+    // cells do, and the column the keyboard is driving is marked with
+    // `▾ ` plus the accent fg — so "which side am I on?" survives both
+    // a monochrome terminal and a color-only reading.
+    let avail_active = is_focused && !active_included;
+    let incl_active = is_focused && active_included;
+    let avail_head = format!(
+        "{}{}",
+        if avail_active {
+            DUAL_COLUMN_ACTIVE
+        } else {
+            DUAL_GUTTER_BLANK
         },
-        properties: Default::default(),
-        unit: OffsetUnit::Byte,
-    });
+        cell("Available", col_w)
+    );
+    let incl_head = format!(
+        "{}{}",
+        if incl_active {
+            DUAL_COLUMN_ACTIVE
+        } else {
+            DUAL_GUTTER_BLANK
+        },
+        cell("Included", col_w)
+    );
+    let header = format!("{avail_head}  {incl_head}");
+    let head_left = 0..avail_head.len();
+    let head_right = (avail_head.len() + 2)..header.len();
+    let mut header_entry = TextPropertyEntry::text(&header);
+    for (range, active) in [(head_left, avail_active), (head_right, incl_active)] {
+        header_entry.inline_overlays.push(InlineOverlay {
+            start: range.start,
+            end: range.end,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(if active {
+                    KEY_SECTION_LABEL_FG
+                } else {
+                    KEY_COMPLETION_DIM_FG
+                })),
+                bold: active,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
     ensure_trailing_newline(&mut header_entry);
     let header_row = out.entries.len() as u32;
     out.entries.push(header_entry);
@@ -4439,8 +4519,22 @@ fn collect_dual_list(
         let right_val = included.get(i);
         let left = left_val.map(|v| dual_label(options, v)).unwrap_or("");
         let right = right_val.map(|v| dual_label(options, v)).unwrap_or("");
-        let left_cell = cell(left, col_w);
-        let right_cell = cell(right, col_w);
+        // Per-column cursor gutter. The active column's cursor row
+        // gets the filled `▸ `, the idle column's the hollow `▹ ` so
+        // both cursors are readable at once — the idle marker is what
+        // tells you where Left/Right will drop you. Rows that hold no
+        // cursor still reserve the two columns, so nothing shifts as
+        // the cursor moves.
+        let left_gutter = dual_cursor_marker(
+            is_focused && left_val.is_some() && i == avail_cur,
+            !active_included,
+        );
+        let right_gutter = dual_cursor_marker(
+            is_focused && right_val.is_some() && i == incl_cur,
+            active_included,
+        );
+        let left_cell = format!("{left_gutter}{}", cell(left, col_w));
+        let right_cell = format!("{right_gutter}{}", cell(right, col_w));
         let text = format!("{}  {}", left_cell, right_cell);
         let left_start = 0usize;
         let left_end = left_cell.len();
@@ -4448,8 +4542,10 @@ fn collect_dual_list(
         let right_end = right_start + right_cell.len();
 
         let mut entry = TextPropertyEntry::text(&text);
-        // Cursor highlight on the active column's cursor row (only
-        // when the widget is focused).
+        // Cursor highlight, spanning the marker *and* the label so the
+        // whole cell reads as one selected row. The active column gets
+        // the full fg/bg flip; the idle column gets a dimmed marker
+        // only (below) so the two never compete for attention.
         if is_focused {
             let (hs, he) = if active_included {
                 if right_val.is_some() && i == incl_cur {
@@ -4470,6 +4566,25 @@ fn collect_dual_list(
                         fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
                         bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
                         bold: true,
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+            // Idle-column marker: dimmed, no background, so it reads
+            // as "the other cursor is parked here".
+            let idle = if active_included {
+                (left_val.is_some() && i == avail_cur).then_some(left_start)
+            } else {
+                (right_val.is_some() && i == incl_cur).then_some(right_start)
+            };
+            if let Some(start) = idle {
+                entry.inline_overlays.push(InlineOverlay {
+                    start,
+                    end: start + DUAL_CURSOR_IDLE.len(),
+                    style: OverlayOptions {
+                        fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_DIM_FG)),
                         ..Default::default()
                     },
                     properties: Default::default(),
@@ -4507,7 +4622,39 @@ fn collect_dual_list(
         }
         out.entries.push(entry);
     }
+
+    // Key hint under the columns. The control's bindings (Shift+←→ to
+    // move an item across, Shift+↑↓ to reorder) aren't guessable from
+    // its shape, so the host supplies a localized one-liner and it
+    // rides with the control instead of only in a panel footer.
+    if !hint.is_empty() {
+        let text = format!("{DUAL_GUTTER_BLANK}{hint}");
+        let mut e = TextPropertyEntry::text(&text);
+        e.inline_overlays.push(InlineOverlay {
+            start: 0,
+            end: text.len(),
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_PLACEHOLDER_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+        ensure_trailing_newline(&mut e);
+        out.entries.push(e);
+    }
     out
+}
+
+/// The two-column gutter a `DualList` cell leads with: `▸ ` when the
+/// cursor is on this cell and its column is the active one, `▹ ` when
+/// the cursor is parked here in the idle column, two spaces otherwise.
+fn dual_cursor_marker(on_cursor: bool, column_active: bool) -> &'static str {
+    match (on_cursor, column_active) {
+        (true, true) => DUAL_CURSOR_ACTIVE,
+        (true, false) => DUAL_CURSOR_IDLE,
+        _ => DUAL_GUTTER_BLANK,
+    }
 }
 
 /// Render a `Button` to a single `TextPropertyEntry`.
@@ -9057,9 +9204,130 @@ mod tests {
             excluded: Vec::new(),
             label: "Elements".into(),
             focused: false,
+            active_included: false,
+            available_cursor: 0,
+            included_cursor: 0,
+            hint: String::new(),
             visible_rows: 3,
             key: key.map(|k| k.to_string()),
         }
+    }
+
+    /// Focused dual list seeded straight from the spec — the shape
+    /// Settings renders, where the host owns cursor + active column and
+    /// re-supplies them every frame.
+    fn make_dual_focused(
+        options: &[(&str, &str)],
+        included: &[&str],
+        active_included: bool,
+        available_cursor: u32,
+        included_cursor: u32,
+        hint: &str,
+    ) -> WidgetSpec {
+        WidgetSpec::DualList {
+            options: opts(options),
+            included: included.iter().map(|s| s.to_string()).collect(),
+            excluded: Vec::new(),
+            label: "Elements".into(),
+            focused: true,
+            active_included,
+            available_cursor,
+            included_cursor,
+            hint: hint.to_string(),
+            visible_rows: 3,
+            key: None,
+        }
+    }
+
+    /// Rows the picker paints for a spec-seeded, focused dual list.
+    fn dual_rows(spec: &WidgetSpec) -> Vec<String> {
+        let (out, _hits, _state) = render_no_focus(spec, &HashMap::new());
+        out.iter()
+            .map(|e| e.text.trim_end_matches('\n').to_string())
+            .collect()
+    }
+
+    #[test]
+    fn dual_list_marks_cursor_and_active_column_with_glyphs() {
+        // Cursor on "Beta" in Available; Included holds "Gamma".
+        let spec = make_dual_focused(
+            &[("a", "Alpha"), ("b", "Beta"), ("g", "Gamma")],
+            &["g"],
+            false,
+            1,
+            0,
+            "",
+        );
+        let rows = dual_rows(&spec);
+        // Header marks the Available column, not Included.
+        let header = &rows[1];
+        assert!(
+            header.contains("▾ Available"),
+            "active column unmarked: {header:?}"
+        );
+        assert!(
+            !header.contains("▾ Included"),
+            "idle column marked active: {header:?}"
+        );
+        // Body: filled marker on the Available cursor row, hollow one
+        // on the idle Included cursor.
+        assert!(rows[2].contains("  Alpha"), "row 0: {:?}", rows[2]);
+        assert!(rows[2].contains("▹ Gamma"), "idle cursor: {:?}", rows[2]);
+        assert!(rows[3].contains("▸ Beta"), "active cursor: {:?}", rows[3]);
+    }
+
+    #[test]
+    fn dual_list_cursor_glyphs_follow_the_active_column() {
+        let spec = make_dual_focused(
+            &[("a", "Alpha"), ("b", "Beta"), ("g", "Gamma")],
+            &["g"],
+            true,
+            1,
+            0,
+            "",
+        );
+        let rows = dual_rows(&spec);
+        assert!(rows[1].contains("▾ Included"), "header: {:?}", rows[1]);
+        // Filled marker moved to Included; Available keeps the hollow one.
+        assert!(rows[2].contains("▸ Gamma"), "active cursor: {:?}", rows[2]);
+        assert!(rows[3].contains("▹ Beta"), "idle cursor: {:?}", rows[3]);
+    }
+
+    #[test]
+    fn dual_list_unfocused_renders_no_cursor_glyphs() {
+        let spec = make_dual(&[("a", "Alpha")], &[], None);
+        let joined = dual_rows(&spec).join("\n");
+        assert!(!joined.contains('▸'), "{joined:?}");
+        assert!(!joined.contains('▹'), "{joined:?}");
+        assert!(!joined.contains('▾'), "{joined:?}");
+    }
+
+    #[test]
+    fn dual_list_appends_hint_row_when_supplied() {
+        let hint = "↑↓ Select  Shift+←→ Move item";
+        let spec = make_dual_focused(&[("a", "Alpha")], &[], false, 0, 0, hint);
+        let rows = dual_rows(&spec);
+        assert_eq!(rows.last().map(|r| r.trim()), Some(hint));
+        // ...and nothing extra when the host supplies no hint.
+        let bare = make_dual_focused(&[("a", "Alpha")], &[], false, 0, 0, "");
+        assert_eq!(dual_rows(&bare).len(), rows.len() - 1);
+    }
+
+    #[test]
+    fn dual_list_cell_hits_cover_the_cursor_gutter() {
+        // The gutter is part of the cell, so clicking the marker (or
+        // the blank column reserved for it) selects that row.
+        let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], None);
+        let (out, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let h = hits
+            .iter()
+            .find(|h| h.payload["column"] == "available")
+            .expect("available cell hit");
+        let row = &out[h.buffer_row as usize].text;
+        let cell = &row[h.byte_start..h.byte_end];
+        assert_eq!(h.byte_start, 0, "cell should start at the gutter");
+        assert!(cell.starts_with("  "), "gutter not in the hit: {cell:?}");
+        assert!(cell.contains("Alpha"), "label not in the hit: {cell:?}");
     }
 
     #[test]

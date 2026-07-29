@@ -1361,6 +1361,8 @@
   "settings.compose_width_set": "작성 너비가 %{value}(으)로 설정됨",
   "settings.dual_list_enter_hint": "Enter로 편집",
   "settings.dual_list_shift_hint": "Shift+←→ 이동  Shift+↑↓ 순서변경",
+  "settings.dual_list_keys_hint": "↑↓ 선택  ←→ 열 전환  Shift+←→ 항목 이동  Shift+↑↓ 순서변경  Esc 완료",
+  "settings.help_duallist": "↑↓:선택  ←→:열  Shift+←→:이동  Shift+↑↓:순서변경  Esc:완료",
   "settings.editing_config": "%{layer} 설정 편집 중: %{path}",
   "settings.failed_to_apply": "설정 적용 실패: %{error}",
   "settings.failed_to_open": "설정 열기 실패: %{error}",
