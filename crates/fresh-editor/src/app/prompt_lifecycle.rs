@@ -331,7 +331,7 @@ impl Editor {
         };
         let (viewport_top_byte, viewport_top_view_line_offset, viewport_left_column) = {
             let vp = self.active_viewport();
-            (vp.top_byte, vp.top_view_line_offset, vp.left_column)
+            (vp.top_byte(), vp.top_view_line_offset(), vp.left_column)
         };
 
         self.active_window_mut().goto_line_preview = Some(super::GotoLinePreviewSnapshot {
@@ -410,8 +410,8 @@ impl Editor {
             .get_mut(&snap.split_id)
         {
             let vp = &mut view_state.viewport;
-            vp.top_byte = snap.viewport_top_byte;
-            vp.top_view_line_offset = snap.viewport_top_view_line_offset;
+            vp.set_top_byte(snap.viewport_top_byte);
+            vp.set_top_view_line_offset(snap.viewport_top_view_line_offset);
             vp.left_column = snap.viewport_left_column;
             // The cursor we just restored is already consistent with this
             // viewport; don't let ensure_visible re-scroll on the next render.

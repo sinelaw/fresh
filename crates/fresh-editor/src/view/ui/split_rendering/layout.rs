@@ -158,8 +158,8 @@ pub(super) fn sync_viewport_to_content(
     // hidden cursor and push the panel's header chrome off-screen
     // (issue #2434 follow-up).
     if pin_to_top {
-        viewport.top_byte = 0;
-        viewport.top_view_line_offset = 0;
+        viewport.set_top_byte(0);
+        viewport.set_top_view_line_offset(0);
         viewport.left_column = 0;
         return;
     }

@@ -261,7 +261,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
             .unwrap_or((0, 20));
 
         // Remember the viewport we computed overlays for so we can detect
@@ -352,7 +352,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| vs.viewport.top_byte);
+            .map(|vs| vs.viewport.top_byte());
         if current_top != self.active_window_mut().search_overlay_top_byte {
             self.refresh_search_overlays();
             true

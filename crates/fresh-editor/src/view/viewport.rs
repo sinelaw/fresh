@@ -2,20 +2,34 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursor;
 use crate::primitives::line_wrapping::WrapConfig;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
+/// The first visible row, as a buffer byte.
+///
+/// `row_offset` is a signed displacement from the row `byte` addresses. Zero for
+/// ordinary rows. It goes negative when the viewport starts on an injected row —
+/// a plugin virtual line drawn above its anchor — because such a row owns no
+/// byte of its own and can only be described relative to one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ViewAnchor {
+    pub byte: usize,
+    pub row_offset: isize,
+}
+
 /// The viewport - what portion of the buffer is visible
 #[derive(Debug, Clone)]
 pub struct Viewport {
-    /// Byte position of the first visible line
-    /// **This is the authoritative source of truth for all viewport operations**
-    /// The line number for this byte is obtained from Buffer's LineCache
-    pub top_byte: usize,
-
-    /// View line offset within the current top_byte position
-    /// Used when virtual lines precede source content at top_byte.
-    /// For example, if top_byte=0 and there are 120 virtual lines before
-    /// source line 1, top_view_line_offset=100 means skip the first 100
-    /// virtual lines and start rendering from virtual line 101.
-    pub top_view_line_offset: usize,
+    /// Where the viewport starts, as one coordinate.
+    ///
+    /// The pair it replaces — a logical-line byte plus a row offset inside that
+    /// line — is the root of this module's remaining complexity. `top_byte` had
+    /// to be a *line start*, so on a file that is one enormous line it was
+    /// pinned at 0 and the whole scroll position lived in the offset, which the
+    /// renderer could only satisfy by building every row from byte 0 and
+    /// discarding the ones above the viewport. Two coordinates also need
+    /// reconciling with each other, which is what `snap_to_logical_line_start`,
+    /// `scrolled_up_in_wrap` and the fresh#1574 patch pair all are.
+    ///
+    /// One coordinate has nothing to reconcile. See `wrap_model/viewport.py`.
+    pub anchor: ViewAnchor,
 
     /// Left column offset (horizontal scroll position)
     pub left_column: usize,
@@ -127,11 +141,36 @@ pub struct Viewport {
 }
 
 impl Viewport {
+    /// Byte the viewport starts at.
+    ///
+    /// Still a logical-line start everywhere except an anchored render, which is
+    /// the migration this pair is being collapsed into: once every consumer
+    /// reads `anchor` directly these two accessors go away.
+    #[inline]
+    pub fn top_byte(&self) -> usize {
+        self.anchor.byte
+    }
+
+    #[inline]
+    pub fn set_top_byte(&mut self, byte: usize) {
+        self.anchor.byte = byte;
+    }
+
+    /// Rows into the logical line at [`Self::top_byte`] that the viewport starts.
+    #[inline]
+    pub fn top_view_line_offset(&self) -> usize {
+        self.anchor.row_offset.max(0) as usize
+    }
+
+    #[inline]
+    pub fn set_top_view_line_offset(&mut self, rows: usize) {
+        self.anchor.row_offset = rows as isize;
+    }
+
     /// Create a new viewport
     pub fn new(width: u16, height: u16) -> Self {
         Self {
-            top_byte: 0,
-            top_view_line_offset: 0,
+            anchor: ViewAnchor::default(),
             left_column: 0,
             width,
             height,
@@ -457,15 +496,15 @@ impl Viewport {
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
     ) -> usize {
-        if !self.line_wrap_enabled || self.top_view_line_offset == 0 {
-            return self.top_byte;
+        if !self.line_wrap_enabled || self.top_view_line_offset() == 0 {
+            return self.top_byte();
         }
 
-        let line_start = self.top_byte;
+        let line_start = self.top_byte();
         let mut iter = buffer.line_iterator(line_start, 80);
         let line_content = match iter.next_line() {
             Some((_, content)) => content.trim_end_matches(['\n', '\r']).to_string(),
-            None => return self.top_byte,
+            None => return self.top_byte(),
         };
         let line_end = line_start + line_content.len();
 
@@ -480,7 +519,7 @@ impl Viewport {
             .iter()
             .any(|p| *p >= line_start && *p <= line_end);
         if touches_soft_break || touches_virtual {
-            return self.top_byte;
+            return self.top_byte();
         }
 
         let wrap_config = self.make_wrap_config(buffer);
@@ -500,9 +539,9 @@ impl Viewport {
             )
         };
         let idx = self
-            .top_view_line_offset
+            .top_view_line_offset()
             .min(seg_bytes.len().saturating_sub(1));
-        seg_bytes.get(idx).copied().unwrap_or(self.top_byte)
+        seg_bytes.get(idx).copied().unwrap_or(self.top_byte())
     }
 
     /// Scroll by `delta` visual rows using the wrap index — the whole of wheel
@@ -522,8 +561,9 @@ impl Viewport {
         buffer: &Buffer,
         delta: isize,
     ) {
-        let top_line = buffer.get_line_number(self.top_byte);
-        let top_row = index.line_first_row(top_line) as isize + self.top_view_line_offset as isize;
+        let top_line = buffer.get_line_number(self.top_byte());
+        let top_row =
+            index.line_first_row(top_line) as isize + self.top_view_line_offset() as isize;
         let total = index.total_rows() as isize;
         let max_top = (total - self.visible_line_count() as isize).max(0);
         let new_top = (top_row + delta).clamp(0, max_top);
@@ -531,8 +571,8 @@ impl Viewport {
             return;
         }
         let addr = index.byte_of_row(buffer, new_top as u32);
-        self.top_byte = buffer.line_start_offset(addr.line).unwrap_or(0);
-        self.top_view_line_offset = addr.row_in_line;
+        self.set_top_byte(buffer.line_start_offset(addr.line).unwrap_or(0));
+        self.set_top_view_line_offset(addr.row_in_line);
     }
 
     /// Scroll up by N lines (byte-based)
@@ -550,7 +590,7 @@ impl Viewport {
         if self.line_wrap_enabled {
             self.scroll_up_visual(buffer, soft_breaks, virtual_lines, lines);
         } else {
-            let mut iter = buffer.line_iterator(self.top_byte, 80);
+            let mut iter = buffer.line_iterator(self.top_byte(), 80);
             for _ in 0..lines {
                 if iter.prev().is_none() {
                     break;
@@ -585,8 +625,8 @@ impl Viewport {
                     break;
                 }
             }
-            self.top_byte = iter.current_position();
-            self.top_view_line_offset = 0;
+            self.set_top_byte(iter.current_position());
+            self.set_top_view_line_offset(0);
             return;
         }
 
@@ -619,8 +659,8 @@ impl Viewport {
             0
         };
 
-        self.top_byte = line_start;
-        self.top_view_line_offset = match_row_in_line;
+        self.set_top_byte(line_start);
+        self.set_top_view_line_offset(match_row_in_line);
         self.scroll_up(buffer, &[], &[], half);
     }
 
@@ -639,7 +679,7 @@ impl Viewport {
         if self.line_wrap_enabled {
             self.scroll_down_visual(buffer, soft_breaks, virtual_lines, lines);
         } else {
-            let mut iter = buffer.line_iterator(self.top_byte, 80);
+            let mut iter = buffer.line_iterator(self.top_byte(), 80);
             for _ in 0..lines {
                 if iter.next_line().is_none() {
                     break;
@@ -669,13 +709,13 @@ impl Viewport {
         // We need to move backwards through visual rows
         // Start from current top_byte and count backwards
         let mut rows_remaining = visual_rows;
-        let mut current_byte = self.top_byte;
+        let mut current_byte = self.top_byte();
 
         // First, check if we have a top_view_line_offset (mid-line position)
         // If so, we can scroll up within the current line first
-        if self.top_view_line_offset > 0 {
-            let rows_in_offset = self.top_view_line_offset.min(rows_remaining);
-            self.top_view_line_offset -= rows_in_offset;
+        if self.top_view_line_offset() > 0 {
+            let rows_in_offset = self.top_view_line_offset().min(rows_remaining);
+            self.set_top_view_line_offset(self.top_view_line_offset() - rows_in_offset);
             rows_remaining -= rows_in_offset;
             if rows_remaining == 0 {
                 return;
@@ -689,8 +729,8 @@ impl Viewport {
             // Move to previous line
             if iter.prev().is_none() {
                 // Hit beginning of buffer
-                self.top_byte = 0;
-                self.top_view_line_offset = 0;
+                self.set_top_byte(0);
+                self.set_top_view_line_offset(0);
                 return;
             }
 
@@ -718,8 +758,8 @@ impl Viewport {
             if visual_rows_in_line >= rows_remaining {
                 // This line has enough visual rows to satisfy the remaining scroll
                 // Position at the appropriate segment within this line
-                self.top_byte = line_start;
-                self.top_view_line_offset = visual_rows_in_line - rows_remaining;
+                self.set_top_byte(line_start);
+                self.set_top_view_line_offset(visual_rows_in_line - rows_remaining);
                 return;
             }
 
@@ -728,8 +768,8 @@ impl Viewport {
             current_byte = line_start;
         }
 
-        self.top_byte = current_byte;
-        self.top_view_line_offset = 0;
+        self.set_top_byte(current_byte);
+        self.set_top_view_line_offset(0);
     }
 
     /// Scroll down by N visual rows (for line-wrapped content)
@@ -750,7 +790,7 @@ impl Viewport {
         let buffer_len = buffer.len();
 
         let mut rows_remaining = visual_rows;
-        let current_top = self.top_byte;
+        let current_top = self.top_byte();
         let mut iter = buffer.line_iterator(current_top, 80);
 
         // First, handle any existing top_view_line_offset
@@ -775,7 +815,7 @@ impl Viewport {
             virtual_lines,
             Some((&mut self.wrap_row_cache, buffer_version)),
         );
-        let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset);
+        let rows_left_in_current = current_visual_rows.saturating_sub(self.top_view_line_offset());
 
         if rows_remaining < rows_left_in_current {
             // Can satisfy scroll within current line, but we still
@@ -783,14 +823,14 @@ impl Viewport {
             // of the buffer, advancing `top_view_line_offset` can push
             // the viewport past the point where it can be filled with
             // real content, leaving past-EOF `~` rows below.
-            self.top_view_line_offset += rows_remaining;
+            self.set_top_view_line_offset(self.top_view_line_offset() + rows_remaining);
             self.apply_visual_scroll_limit(buffer, soft_breaks, virtual_lines, &wrap_config);
             return;
         }
 
         // Move past the current line
         rows_remaining -= rows_left_in_current;
-        self.top_view_line_offset = 0;
+        self.set_top_view_line_offset(0);
 
         // Move to next line
         if iter.next_logical_line().is_none() {
@@ -829,8 +869,8 @@ impl Viewport {
 
             if rows_remaining < visual_rows_in_line {
                 // This line has enough visual rows to satisfy the scroll
-                self.top_byte = line_start;
-                self.top_view_line_offset = rows_remaining;
+                self.set_top_byte(line_start);
+                self.set_top_view_line_offset(rows_remaining);
                 // Apply visual-row-aware scroll limit
                 self.apply_visual_scroll_limit(buffer, soft_breaks, virtual_lines, &wrap_config);
                 return;
@@ -842,8 +882,8 @@ impl Viewport {
             if rows_remaining == 0 {
                 // Exactly consumed this line, position at start of next
                 let next_pos = iter.current_position();
-                self.top_byte = next_pos;
-                self.top_view_line_offset = 0;
+                self.set_top_byte(next_pos);
+                self.set_top_view_line_offset(0);
                 // Apply visual-row-aware scroll limit
                 self.apply_visual_scroll_limit(buffer, soft_breaks, virtual_lines, &wrap_config);
                 return;
@@ -869,7 +909,7 @@ impl Viewport {
         let buffer_version = buffer.version();
         // Count visual rows from current position to end of buffer
         let mut visual_rows_remaining = 0;
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut iter = buffer.line_iterator(self.top_byte(), 80);
 
         // First, count rows in current line (from top_view_line_offset to end)
         if let Some((line_start, content)) = iter.next_logical_line() {
@@ -884,7 +924,7 @@ impl Viewport {
                 virtual_lines,
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
-            visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset);
+            visual_rows_remaining += line_visual_rows.saturating_sub(self.top_view_line_offset());
         }
 
         // Count rows in subsequent lines
@@ -918,8 +958,8 @@ impl Viewport {
                 wrap_config,
                 viewport_height,
             );
-            self.top_byte = max_byte;
-            self.top_view_line_offset = max_offset;
+            self.set_top_byte(max_byte);
+            self.set_top_view_line_offset(max_offset);
         }
     }
 
@@ -1003,7 +1043,7 @@ impl Viewport {
         }
 
         // Find the current view line index that corresponds to top_byte
-        let current_idx = self.find_view_line_for_byte(view_lines, self.top_byte);
+        let current_idx = self.find_view_line_for_byte(view_lines, self.top_byte());
 
         // Calculate target index
         let target_idx = if line_offset >= 0 {
@@ -1022,7 +1062,7 @@ impl Viewport {
                 "scroll_view_lines: offset={}, current_idx={}, target_idx={}, clamped_idx={}, new_top_byte={}",
                 line_offset, current_idx, target_idx, clamped_idx, new_top_byte
             );
-            self.top_byte = new_top_byte;
+            self.set_top_byte(new_top_byte);
         }
     }
 
@@ -1089,7 +1129,7 @@ impl Viewport {
             }
         }
         // No source bytes found at all - keep current position
-        Some(self.top_byte)
+        Some(self.top_byte())
     }
 
     /// Set `top_byte` and `top_view_line_offset` so that
@@ -1136,14 +1176,14 @@ impl Viewport {
             if let Some(new_top_byte) =
                 self.get_source_byte_for_view_line(view_lines, line_start_idx)
             {
-                self.top_byte = new_top_byte;
+                self.set_top_byte(new_top_byte);
             }
-            self.top_view_line_offset = target_idx.saturating_sub(line_start_idx);
+            self.set_top_view_line_offset(target_idx.saturating_sub(line_start_idx));
         } else {
             // Classic behavior: absolute offset, source-byte top.
-            self.top_view_line_offset = target_idx;
+            self.set_top_view_line_offset(target_idx);
             if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, target_idx) {
-                self.top_byte = new_top_byte;
+                self.set_top_byte(new_top_byte);
             }
         }
     }
@@ -1197,8 +1237,8 @@ impl Viewport {
         }
 
         let total_rows = index.total_rows() as usize;
-        let top_line = buffer.get_line_number(self.top_byte);
-        let top_row = index.line_first_row(top_line) as usize + self.top_view_line_offset;
+        let top_line = buffer.get_line_number(self.top_byte());
+        let top_row = index.line_first_row(top_line) as usize + self.top_view_line_offset();
         let cursor_row = index.row_of_byte(buffer, cursor_byte) as usize;
 
         // Same margin rule as the layout pass, in absolute rows — including its
@@ -1208,7 +1248,7 @@ impl Viewport {
         // pass deliberately leaves off, because there the byte-oriented
         // pre-render `ensure_visible` has already placed the cursor and a second
         // margin just pushes it a few rows further from the edge.
-        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset > 0;
+        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset() > 0;
         let margin = if apply_margin {
             self.scroll_offset.min(viewport_height / 2)
         } else {
@@ -1255,8 +1295,8 @@ impl Viewport {
         }
 
         let addr = index.byte_of_row(buffer, new_top as u32);
-        self.top_byte = buffer.line_start_offset(addr.line).unwrap_or(0);
-        self.top_view_line_offset = addr.row_in_line;
+        self.set_top_byte(buffer.line_start_offset(addr.line).unwrap_or(0));
+        self.set_top_view_line_offset(addr.row_in_line);
         apply_margin
     }
 
@@ -1305,7 +1345,7 @@ impl Viewport {
                 view_lines.len(),
                 viewport_height,
                 cursor.position,
-                self.top_byte,
+                self.top_byte(),
             );
             self.scrolled_up_in_wrap = false;
             return false;
@@ -1318,8 +1358,8 @@ impl Viewport {
             "ensure_visible_in_layout: enter cursor_pos={} cursor_view_line={} top_view_line_offset={} top_byte={} viewport_height={} view_lines.len={} line_wrap_enabled={}",
             cursor.position,
             cursor_view_line,
-            self.top_view_line_offset,
-            self.top_byte,
+            self.top_view_line_offset(),
+            self.top_byte(),
             viewport_height,
             view_lines.len(),
             self.line_wrap_enabled,
@@ -1377,17 +1417,17 @@ impl Viewport {
         let max_top_candidate = view_lines.len().saturating_sub(viewport_height);
         let target_top = cursor_view_line.saturating_sub(desired_offset);
         let new_offset = target_top.min(max_top_candidate);
-        if new_offset == self.top_view_line_offset {
+        if new_offset == self.top_view_line_offset() {
             return false;
         }
 
         tracing::trace!(
             "ensure_visible_in_layout: fine-tune scroll-up offset {} -> {} (cursor_view_line={})",
-            self.top_view_line_offset,
+            self.top_view_line_offset(),
             new_offset,
             cursor_view_line,
         );
-        self.top_view_line_offset = new_offset;
+        self.set_top_view_line_offset(new_offset);
         true
     }
 
@@ -1422,10 +1462,10 @@ impl Viewport {
         viewport_height: usize,
     ) -> bool {
         // The effective top view line is the offset we've scrolled through.
-        let effective_top = self.top_view_line_offset;
+        let effective_top = self.top_view_line_offset();
         let effective_bottom = effective_top + viewport_height;
 
-        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset > 0;
+        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset() > 0;
         let effective_offset = if apply_margin {
             self.scroll_offset.min(viewport_height / 2)
         } else {
@@ -1481,13 +1521,13 @@ impl Viewport {
         // that direction (e.g. at the very top or very bottom of the
         // document), keep the viewport put and fall through to the
         // virtual-lines / horizontal-scroll handling below.
-        if new_offset == self.top_view_line_offset {
+        if new_offset == self.top_view_line_offset() {
             tracing::trace!(
                 "ensure_visible_in_layout: in margin but clamped — target_top={} max_top={} new_offset={} top_view_line_offset={} cursor_view_line={} in_top_margin={} in_bottom_margin={}",
                 target_top,
                 max_top,
                 new_offset,
-                self.top_view_line_offset,
+                self.top_view_line_offset(),
                 cursor_view_line,
                 in_top_margin,
                 in_bottom_margin,
@@ -1497,7 +1537,7 @@ impl Viewport {
 
         tracing::trace!(
             "ensure_visible_in_layout: scrolling from offset {} to {}, cursor_view_line={}, in_top_margin={}, in_bottom_margin={}",
-            self.top_view_line_offset,
+            self.top_view_line_offset(),
             new_offset,
             cursor_view_line,
             in_top_margin,
@@ -1533,7 +1573,7 @@ impl Viewport {
         cursor_view_line: usize,
         viewport_height: usize,
     ) -> bool {
-        let effective_top = self.top_view_line_offset;
+        let effective_top = self.top_view_line_offset();
         let cursor_position_in_viewport = cursor_view_line.saturating_sub(effective_top);
         if cursor_position_in_viewport != 0 || cursor_view_line == 0 {
             return false;
@@ -1556,20 +1596,20 @@ impl Viewport {
         // the cursor should be at the bottom of the visible area at most.
         let max_scroll_up = virtual_lines_above.min(viewport_height.saturating_sub(1));
         let new_offset = effective_top.saturating_sub(max_scroll_up);
-        if new_offset == self.top_view_line_offset {
+        if new_offset == self.top_view_line_offset() {
             return false;
         }
 
         tracing::trace!(
             "ensure_visible_in_layout: showing {} virtual lines above cursor, scrolling from {} to {}",
             virtual_lines_above,
-            self.top_view_line_offset,
+            self.top_view_line_offset(),
             new_offset
         );
-        self.top_view_line_offset = new_offset;
+        self.set_top_view_line_offset(new_offset);
         // Also update top_byte to match the new scroll position
         if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, new_offset) {
-            self.top_byte = new_top_byte;
+            self.set_top_byte(new_top_byte);
         }
         true
     }
@@ -1697,12 +1737,12 @@ impl Viewport {
 
         let viewport_height = self.visible_line_count();
         if viewport_height == 0 {
-            self.top_byte = proposed_top_byte;
+            self.set_top_byte(proposed_top_byte);
             return;
         }
 
         if buffer.is_empty() {
-            self.top_byte = 0;
+            self.set_top_byte(0);
             return;
         }
 
@@ -1752,13 +1792,13 @@ impl Viewport {
                 Some((&mut self.wrap_row_cache, buffer_version)),
             );
             if visual_rows >= viewport_height {
-                self.top_byte = proposed_top_byte;
+                self.set_top_byte(proposed_top_byte);
                 return;
             }
         }
 
         if visual_rows >= viewport_height {
-            self.top_byte = proposed_top_byte;
+            self.set_top_byte(proposed_top_byte);
             return;
         }
 
@@ -1773,12 +1813,12 @@ impl Viewport {
         );
         // Only backtrack if the proposed position is past the maximum
         if proposed_top_byte > max_byte
-            || (proposed_top_byte == max_byte && self.top_view_line_offset > max_offset)
+            || (proposed_top_byte == max_byte && self.top_view_line_offset() > max_offset)
         {
-            self.top_byte = max_byte;
-            self.top_view_line_offset = max_offset;
+            self.set_top_byte(max_byte);
+            self.set_top_view_line_offset(max_offset);
         } else {
-            self.top_byte = proposed_top_byte;
+            self.set_top_byte(proposed_top_byte);
         }
     }
 
@@ -1804,7 +1844,7 @@ impl Viewport {
                     "DEBUG: Full viewport available, setting top_byte={}",
                     proposed_top_byte
                 );
-                self.top_byte = proposed_top_byte;
+                self.set_top_byte(proposed_top_byte);
                 return;
             }
         }
@@ -1821,7 +1861,7 @@ impl Viewport {
                 "DEBUG: Enough lines to fill viewport, setting top_byte={}",
                 proposed_top_byte
             );
-            self.top_byte = proposed_top_byte;
+            self.set_top_byte(proposed_top_byte);
             return;
         }
 
@@ -1858,7 +1898,7 @@ impl Viewport {
             "DEBUG: After backtracking, setting top_byte={}",
             final_top_byte
         );
-        self.top_byte = final_top_byte;
+        self.set_top_byte(final_top_byte);
     }
 
     /// Scroll to a specific line (byte-based)
@@ -1900,12 +1940,12 @@ impl Viewport {
             return false;
         }
         let max_top = view_lines.len().saturating_sub(viewport_height);
-        if self.top_view_line_offset == max_top {
+        if self.top_view_line_offset() == max_top {
             return false;
         }
-        self.top_view_line_offset = max_top;
+        self.set_top_view_line_offset(max_top);
         if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, max_top) {
-            self.top_byte = new_top_byte;
+            self.set_top_byte(new_top_byte);
         }
         true
     }
@@ -1963,7 +2003,7 @@ impl Viewport {
         let _span = tracing::trace_span!(
             "ensure_visible",
             cursor_pos = cursor.position,
-            top_byte = self.top_byte,
+            top_byte = self.top_byte(),
         )
         .entered();
 
@@ -1972,8 +2012,8 @@ impl Viewport {
         // actual visible top. Defer to `ensure_visible_in_layout` unless the
         // cursor is so far below that the layout-aware path can't reach it
         // either (issue #1574 / #1689 follow-up).
-        if self.top_view_line_offset > 0 && cursor.position >= self.top_byte {
-            let top_line = buffer.get_line_number(self.top_byte);
+        if self.top_view_line_offset() > 0 && cursor.position >= self.top_byte() {
+            let top_line = buffer.get_line_number(self.top_byte());
             let cursor_line = buffer.get_line_number(cursor.position);
             let viewport_height = self.visible_line_count().max(1);
             if cursor_line < top_line.saturating_add(viewport_height.saturating_mul(2)) {
@@ -1998,7 +2038,7 @@ impl Viewport {
         tracing::trace!(
             "ensure_visible: cursor={}, top_byte={}, viewport_lines={}, line_wrap={}",
             cursor.position,
-            self.top_byte,
+            self.top_byte(),
             viewport_lines,
             self.line_wrap_enabled
         );
@@ -2008,7 +2048,7 @@ impl Viewport {
         let cursor_line_start = buffer.line_iterator(cursor.position, 80).current_position();
         let effective_offset = self.scroll_offset.min(viewport_lines / 2);
 
-        let (cursor_is_visible, cursor_near_top) = if cursor_line_start < self.top_byte {
+        let (cursor_is_visible, cursor_near_top) = if cursor_line_start < self.top_byte() {
             (false, true)
         } else if self.line_wrap_enabled {
             self.check_wrapped_visibility(
@@ -2166,7 +2206,7 @@ impl Viewport {
         hidden_ranges: &[(usize, usize)],
     ) -> (bool, bool) {
         let wrap_config = self.make_wrap_config(buffer);
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut iter = buffer.line_iterator(self.top_byte(), 80);
         let mut visual_rows: usize = 0;
         let mut cursor_near_top = false;
 
@@ -2231,7 +2271,7 @@ impl Viewport {
         effective_offset: usize,
         hidden_ranges: &[(usize, usize)],
     ) -> (bool, bool) {
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut iter = buffer.line_iterator(self.top_byte(), 80);
         let mut lines_from_top: usize = 0;
 
         while iter.current_position() < cursor_line_start && lines_from_top < viewport_lines {
@@ -2305,7 +2345,9 @@ impl Viewport {
         // teleport the cursor many rows down (issue #1574, step 16).
         if cursor_near_top && visual_rows_counted >= target_visual_rows {
             self.set_top_byte_with_limit(buffer, &[], &[], cursor_line_start);
-            self.top_view_line_offset = cursor_segment_idx_in_line.saturating_sub(effective_offset);
+            self.set_top_view_line_offset(
+                cursor_segment_idx_in_line.saturating_sub(effective_offset),
+            );
             self.scrolled_up_in_wrap = true;
             return;
         }
@@ -2352,7 +2394,7 @@ impl Viewport {
 
         let new_top_byte = iter.current_position();
         self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
-        self.top_view_line_offset = top_offset_in_landing_line;
+        self.set_top_view_line_offset(top_offset_in_landing_line);
         if cursor_near_top {
             self.scrolled_up_in_wrap = true;
         }
@@ -2389,7 +2431,7 @@ impl Viewport {
 
         let new_top_byte = iter.current_position();
         self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
-        self.top_view_line_offset = 0;
+        self.set_top_view_line_offset(0);
     }
 
     /// Ensure a line is visible with scroll offset applied
@@ -2416,7 +2458,7 @@ impl Viewport {
 
         // Check if the line is already visible by iterating from top_byte
         let visible_count = self.visible_line_count();
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut iter = buffer.line_iterator(self.top_byte(), 80);
         let mut lines_from_top = 0;
         let mut target_is_visible = false;
 
@@ -2593,7 +2635,7 @@ impl Viewport {
         // occupy multiple visual rows; counting logical lines anchors
         // popups (e.g. completion) to the wrong screen row in heavily
         // wrapped buffers — see issue #1794.
-        let mut iter = buffer.line_iterator(self.top_byte, 80);
+        let mut iter = buffer.line_iterator(self.top_byte(), 80);
         let mut screen_row: usize = 0;
 
         while let Some((line_byte, content)) = iter.next_logical_line() {
@@ -2647,7 +2689,7 @@ impl Viewport {
         // If `top_byte` sits mid-line (visual offset into the first
         // visible logical line), the on-screen origin is shifted up by
         // that offset.
-        let total_row = (screen_row + additional_rows).saturating_sub(self.top_view_line_offset);
+        let total_row = (screen_row + additional_rows).saturating_sub(self.top_view_line_offset());
 
         // Return (x, y) which is (col, row)
         (screen_col, total_row as u16)
@@ -2665,7 +2707,7 @@ mod tests {
         let vp = Viewport::new(80, 24);
         assert_eq!(vp.width, 80);
         assert_eq!(vp.height, 24);
-        assert_eq!(vp.top_byte, 0);
+        assert_eq!(vp.top_byte(), 0);
     }
 
     #[test]
@@ -2683,15 +2725,15 @@ mod tests {
 
         vp.scroll_down(&mut buffer, &[], &[], 10);
         // Check that we scrolled down (top_byte should be > 0)
-        assert!(vp.top_byte > 0);
+        assert!(vp.top_byte() > 0);
 
-        let prev_top = vp.top_byte;
+        let prev_top = vp.top_byte();
         vp.scroll_up(&mut buffer, &[], &[], 5);
         // Check that we scrolled up (top_byte should be less than before)
-        assert!(vp.top_byte < prev_top);
+        assert!(vp.top_byte() < prev_top);
 
         vp.scroll_up(&mut buffer, &[], &[], 100);
-        assert_eq!(vp.top_byte, 0); // Can't scroll past 0
+        assert_eq!(vp.top_byte(), 0); // Can't scroll past 0
     }
 
     #[test]
@@ -2708,8 +2750,8 @@ mod tests {
         let pos = buffer.line_start_offset(29).unwrap();
         vp.center_on_position(&mut buffer, pos);
 
-        assert_eq!(buffer.get_line_number(vp.top_byte), 29 - 12);
-        assert_eq!(vp.top_view_line_offset, 0);
+        assert_eq!(buffer.get_line_number(vp.top_byte()), 29 - 12);
+        assert_eq!(vp.top_view_line_offset(), 0);
     }
 
     #[test]
@@ -2740,12 +2782,12 @@ mod tests {
         // Visual-row centering lands the top inside the wrapped line just
         // above the match (line 18), not back at logical line 14.
         assert_eq!(
-            buffer.get_line_number(vp.top_byte),
+            buffer.get_line_number(vp.top_byte()),
             18,
             "top should sit within the wrapped line above the match"
         );
         assert!(
-            vp.top_view_line_offset > 0,
+            vp.top_view_line_offset() > 0,
             "top should be partway down the wrapped line's visual rows"
         );
     }
@@ -2759,13 +2801,13 @@ mod tests {
         // Line within scroll offset should adjust viewport
         vp.ensure_line_visible(&mut buffer, 2);
         // top_byte should be close to the beginning since line 2 is near the top
-        assert!(vp.top_byte < 100);
+        assert!(vp.top_byte() < 100);
 
         // Line far below should scroll down
         vp.ensure_line_visible(&mut buffer, 50);
-        assert!(vp.top_byte > 0);
+        assert!(vp.top_byte() > 0);
         // Verify the line is now visible by checking we can iterate to it
-        let mut iter = buffer.line_iterator(vp.top_byte, 80);
+        let mut iter = buffer.line_iterator(vp.top_byte(), 80);
         let mut found = false;
         for _ in 0..vp.visible_line_count() {
             if iter.next_line().is_none() {
@@ -2797,7 +2839,7 @@ mod tests {
         vp.ensure_visible(&mut buffer, &cursor, &[]);
 
         // Verify cursor is now visible by checking we scrolled appropriately
-        assert!(vp.top_byte > 0);
+        assert!(vp.top_byte() > 0);
     }
 
     #[test]
@@ -2856,10 +2898,10 @@ mod tests {
         // Scroll down to show lines 10-19 (top_byte at line 10)
         // scroll_to uses 1-based line numbers, so line 10 = argument 10
         vp.scroll_to(&mut buffer, 10);
-        let _old_top_byte = vp.top_byte;
+        let _old_top_byte = vp.top_byte();
 
         // Verify we scrolled to around line 10
-        let top_line = buffer.get_line_number(vp.top_byte);
+        let top_line = buffer.get_line_number(vp.top_byte());
         assert!(
             top_line >= 9,
             "Should have scrolled down to at least line 10"
@@ -2883,7 +2925,7 @@ mod tests {
 
         // Verify that viewport scrolled up to make cursor visible
         // The viewport should now be positioned so cursor (line 5) is visible
-        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let new_top_line = buffer.get_line_number(vp.top_byte());
         let cursor_line = buffer.get_line_number(line_5_byte);
         assert!(
             cursor_line >= new_top_line,
@@ -2920,7 +2962,7 @@ mod tests {
         let mut vp = Viewport::new(80, 10); // 10 lines visible
 
         // Start at top (line 1 visible)
-        assert_eq!(vp.top_byte, 0);
+        assert_eq!(vp.top_byte(), 0);
 
         // Move cursor to line 15 (below viewport)
         let mut iter = buffer.line_iterator(0, 80);
@@ -2939,7 +2981,7 @@ mod tests {
 
         // Verify cursor is placed near the bottom scroll margin (not centered)
         // With minimal scroll, cursor below viewport is placed at (viewport - scroll_offset) from top
-        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let new_top_line = buffer.get_line_number(vp.top_byte());
         let cursor_line = buffer.get_line_number(line_15_byte);
         let lines_from_top = cursor_line.saturating_sub(new_top_line);
 
@@ -3026,10 +3068,10 @@ mod tests {
                 }
             }
         }
-        vp.top_byte = line_5_byte;
-        vp.top_view_line_offset = 2; // > 0 → triggers the early-return path
+        vp.set_top_byte(line_5_byte);
+        vp.set_top_view_line_offset(2); // > 0 → triggers the early-return path
 
-        let top_before = vp.top_byte;
+        let top_before = vp.top_byte();
 
         // Move cursor to line 100 — way below `top_byte` (10*2=20 viewport
         // heights of 1 source line each, so cursor at line 100 is well
@@ -3049,14 +3091,15 @@ mod tests {
         vp.ensure_visible(&mut buffer, &cursor, &[]);
 
         assert_ne!(
-            vp.top_byte, top_before,
+            vp.top_byte(),
+            top_before,
             "ensure_visible must scroll when the cursor is far below the viewport \
              top, even in wrap mode with `top_view_line_offset > 0`. Pre-fix this \
              early-returned at the top of `ensure_visible` and the viewport stalled."
         );
 
         // Cursor should now be inside the viewport's source-line range.
-        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let new_top_line = buffer.get_line_number(vp.top_byte());
         let cursor_line = buffer.get_line_number(line_100_byte);
         let viewport_height = vp.visible_line_count();
         assert!(
@@ -3093,10 +3136,10 @@ mod tests {
                 }
             }
         }
-        vp.top_byte = line_5_byte;
-        vp.top_view_line_offset = 2;
+        vp.set_top_byte(line_5_byte);
+        vp.set_top_view_line_offset(2);
 
-        let top_before = vp.top_byte;
+        let top_before = vp.top_byte();
 
         // Cursor at line 8 — only 3 lines below top, well within 2x
         // viewport height (=20). Should hit the early-return: viewport
@@ -3116,10 +3159,12 @@ mod tests {
         vp.ensure_visible(&mut buffer, &cursor, &[]);
 
         assert_eq!(
-            vp.top_byte, top_before,
+            vp.top_byte(),
+            top_before,
             "Cursor close below top in wrap mode must still defer to \
              ensure_visible_in_layout (the #1574 invariant). Got top_byte={}, expected {}",
-            vp.top_byte, top_before
+            vp.top_byte(),
+            top_before
         );
     }
 
@@ -3149,7 +3194,7 @@ mod tests {
 
         vp.ensure_visible(&mut buffer, &cursor, &[]);
 
-        let new_top_line = buffer.get_line_number(vp.top_byte);
+        let new_top_line = buffer.get_line_number(vp.top_byte());
         let cursor_line = buffer.get_line_number(target_byte);
         let lines_from_top = cursor_line.saturating_sub(new_top_line);
 

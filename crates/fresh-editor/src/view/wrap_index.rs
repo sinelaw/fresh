@@ -1400,12 +1400,12 @@ mod tests {
 
         for cursor_row in (0..total).step_by(7) {
             let cursor_byte = index.byte_of_row(&buffer, cursor_row as u32).byte;
-            viewport.top_byte = 0;
-            viewport.top_view_line_offset = 0;
+            viewport.set_top_byte(0);
+            viewport.set_top_view_line_offset(0);
             viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte);
 
-            let top_line = buffer.get_line_number(viewport.top_byte);
-            let top_row = index.line_first_row(top_line) as usize + viewport.top_view_line_offset;
+            let top_line = buffer.get_line_number(viewport.top_byte());
+            let top_row = index.line_first_row(top_line) as usize + viewport.top_view_line_offset();
             let actual_cursor_row = index.row_of_byte(&buffer, cursor_byte) as usize;
             assert!(
                 (top_row..top_row + visible).contains(&actual_cursor_row),
@@ -1436,7 +1436,7 @@ mod tests {
         // No `ViewLine` is materialised anywhere in this call; it reads the
         // index only.
         assert!(viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte));
-        assert!(viewport.top_view_line_offset > 0 || viewport.top_byte > 0);
+        assert!(viewport.top_view_line_offset() > 0 || viewport.top_byte() > 0);
     }
 
     /// Wheel scrolling is arithmetic: it moves by whole rows, stays clamped,
@@ -1455,8 +1455,8 @@ mod tests {
         let height = viewport.visible_line_count();
 
         let top_row = |vp: &Viewport| {
-            let line = buffer.get_line_number(vp.top_byte);
-            index.line_first_row(line) as usize + vp.top_view_line_offset
+            let line = buffer.get_line_number(vp.top_byte());
+            index.line_first_row(line) as usize + vp.top_view_line_offset()
         };
 
         viewport.scroll_visual_rows(&index, &buffer, 7);

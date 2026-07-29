@@ -401,8 +401,10 @@ impl crate::app::window::Window {
             .expect("active window must have a populated split layout")
             .get_mut(&split_id)
         {
-            view_state.viewport.top_byte = scroll_position.0;
-            view_state.viewport.top_view_line_offset = scroll_position.1;
+            view_state.viewport.set_top_byte(scroll_position.0);
+            view_state
+                .viewport
+                .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
             view_state.viewport.set_skip_ensure_visible();
         }
@@ -588,8 +590,10 @@ impl crate::app::window::Window {
             .expect("active window must have a populated split layout")
             .get_mut(&split_id)
         {
-            view_state.viewport.top_byte = scroll_position.0;
-            view_state.viewport.top_view_line_offset = scroll_position.1;
+            view_state.viewport.set_top_byte(scroll_position.0);
+            view_state
+                .viewport
+                .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
             view_state.viewport.set_skip_ensure_visible();
         }

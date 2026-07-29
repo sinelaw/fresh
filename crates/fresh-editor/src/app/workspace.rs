@@ -1466,9 +1466,12 @@ impl crate::app::window::Window {
                         (file_state.cursor.sticky_column != 0)
                             .then_some(file_state.cursor.sticky_column);
 
-                    buf_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
-                    buf_state.viewport.top_view_line_offset =
-                        file_state.scroll.top_view_line_offset;
+                    buf_state
+                        .viewport
+                        .set_top_byte(file_state.scroll.top_byte.min(max_pos));
+                    buf_state
+                        .viewport
+                        .set_top_view_line_offset(file_state.scroll.top_view_line_offset);
                     buf_state.viewport.left_column = file_state.scroll.left_column;
                     buf_state.viewport.set_skip_resize_sync();
 
@@ -1477,7 +1480,7 @@ impl crate::app::window::Window {
                     // before the user closed) the restore re-creates an off-screen
                     // cursor that arrow keys can't escape (the wrap-mode early return
                     // in `viewport.rs::ensure_visible` no-ops for any cursor whose
-                    // byte position is `>= viewport.top_byte`). Reconcile so the
+                    // byte position is `>= viewport.top_byte()`). Reconcile so the
                     // restored view always shows the cursor (#1689 follow-up).
                     if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                         super::navigation::reconcile_restored_buffer_view(
@@ -1576,7 +1579,7 @@ impl crate::app::window::Window {
                         "Restored keyed state for {:?}: cursor={}, top_byte={}, view_mode={:?}",
                         rel_path,
                         cursor_pos,
-                        buf_state.viewport.top_byte,
+                        buf_state.viewport.top_byte(),
                         buf_state.view_mode,
                     );
                 }
@@ -1963,8 +1966,8 @@ impl crate::app::window::Window {
                 })
                 .collect(),
             scroll: SerializedScroll {
-                top_byte: view_state.viewport.top_byte,
-                top_view_line_offset: view_state.viewport.top_view_line_offset,
+                top_byte: view_state.viewport.top_byte(),
+                top_view_line_offset: view_state.viewport.top_view_line_offset(),
                 left_column: view_state.viewport.left_column,
             },
             view_mode: Default::default(),
@@ -3083,8 +3086,8 @@ fn serialize_split_view_state(
                     })
                     .collect(),
                 scroll: SerializedScroll {
-                    top_byte: buf_state.viewport.top_byte,
-                    top_view_line_offset: buf_state.viewport.top_view_line_offset,
+                    top_byte: buf_state.viewport.top_byte(),
+                    top_view_line_offset: buf_state.viewport.top_view_line_offset(),
                     left_column: buf_state.viewport.left_column,
                 },
                 view_mode: match buf_state.view_mode {

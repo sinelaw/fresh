@@ -6150,13 +6150,13 @@ impl Window {
                     // Viewport — get from SplitViewState (the authoritative source)
                     let top_line = buffers_mut.get(&active_buf_id).and_then(|state| {
                         if state.buffer.line_count().is_some() {
-                            Some(state.buffer.get_line_number(active_vs.viewport.top_byte))
+                            Some(state.buffer.get_line_number(active_vs.viewport.top_byte()))
                         } else {
                             None
                         }
                     });
                     snapshot.viewport = Some(ViewportInfo {
-                        top_byte: active_vs.viewport.top_byte,
+                        top_byte: active_vs.viewport.top_byte(),
                         top_line,
                         left_column: active_vs.viewport.left_column,
                         width: active_vs.viewport.width,
@@ -6187,7 +6187,7 @@ impl Window {
                     let buf_id = vs.active_buffer;
                     let top_line = buffers_mut.get(&buf_id).and_then(|state| {
                         if state.buffer.line_count().is_some() {
-                            Some(state.buffer.get_line_number(vs.viewport.top_byte))
+                            Some(state.buffer.get_line_number(vs.viewport.top_byte()))
                         } else {
                             None
                         }
@@ -6201,7 +6201,7 @@ impl Window {
                         width: rect.width,
                         height: rect.height,
                         viewport: ViewportInfo {
-                            top_byte: vs.viewport.top_byte,
+                            top_byte: vs.viewport.top_byte(),
                             top_line,
                             left_column: vs.viewport.left_column,
                             width: vs.viewport.width,

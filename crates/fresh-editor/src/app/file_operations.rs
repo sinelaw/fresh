@@ -489,7 +489,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.left_column))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.left_column))
             .unwrap_or((0, 0));
         let old_cursors = self.active_cursors().clone();
 
@@ -560,7 +560,9 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
-            view_state.viewport.top_byte = old_top_byte.min(new_file_size);
+            view_state
+                .viewport
+                .set_top_byte(old_top_byte.min(new_file_size));
             view_state.viewport.left_column = old_left_column;
         }
 

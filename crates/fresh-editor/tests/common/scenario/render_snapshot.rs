@@ -324,7 +324,7 @@ pub struct RenderSnapshotExpect {
     #[serde(default)]
     pub cursor_byte_in: Option<(usize, usize)>,
     /// The cursor's logical byte position (the snapshot's
-    /// `viewport.top_byte`-anchored window via `visible_byte_range`)
+    /// `viewport.top_byte()`-anchored window via `visible_byte_range`)
     /// must include this byte. Used for "after Ctrl+End the doc
     /// end is visible" style claims.
     #[serde(default)]

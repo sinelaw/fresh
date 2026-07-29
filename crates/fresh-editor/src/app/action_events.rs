@@ -125,7 +125,7 @@ impl crate::app::window::Window {
                 .expect("active window must have a populated split layout")
                 .get(&split_id)?
                 .viewport;
-            Some((vp.top_byte, vp.top_view_line_offset))
+            Some((vp.top_byte(), vp.top_view_line_offset()))
         };
 
         let old_pos = viewport_pos(self)?;

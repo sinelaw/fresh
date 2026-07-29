@@ -40,8 +40,8 @@ fn set_top_line(harness: &mut EditorTestHarness, line: usize) {
             .unwrap_or_else(|| buffer.len())
     };
     let viewport = harness.editor_mut().active_viewport_mut();
-    viewport.top_byte = top_byte;
-    viewport.top_view_line_offset = 0;
+    viewport.set_top_byte(top_byte);
+    viewport.set_top_view_line_offset(0);
 
     let cursors = harness.editor_mut().active_cursors_mut();
     cursors.primary_mut().position = top_byte;
@@ -416,8 +416,8 @@ fn test_folded_viewport_inside_range_fills_lines() {
                 .unwrap_or_else(|| buffer.len())
         };
         let viewport = harness.editor_mut().active_viewport_mut();
-        viewport.top_byte = top_byte;
-        viewport.top_view_line_offset = 0;
+        viewport.set_top_byte(top_byte);
+        viewport.set_top_view_line_offset(0);
         viewport.set_skip_ensure_visible();
     }
     {
@@ -1114,8 +1114,8 @@ fn test_gutter_highlight_correct_at_end_of_large_file() {
     cursors.primary_mut().position = target_byte;
     cursors.primary_mut().anchor = None;
     let viewport = harness.editor_mut().active_viewport_mut();
-    viewport.top_byte = target_byte;
-    viewport.top_view_line_offset = 0;
+    viewport.set_top_byte(target_byte);
+    viewport.set_top_view_line_offset(0);
 
     harness.render().unwrap();
 

@@ -246,7 +246,7 @@ pub(crate) fn compute_buffer_layout(
             // else the layout pass keeps the behaviour it has, rather than
             // having it approximated here — it has accumulated a lot of it.
             let inside_wrapped_line =
-                viewport.line_wrap_enabled && viewport.top_view_line_offset > 0;
+                viewport.line_wrap_enabled && viewport.top_view_line_offset() > 0;
             if inside_wrapped_line {
                 if let Some(index) = state.wrap_indices.get(&geometry) {
                     viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
@@ -293,7 +293,7 @@ pub(crate) fn compute_buffer_layout(
     // If the sync adjustment changed top_byte, rebuild view_data before
     // ensure_visible_in_layout runs (so it sees the correct view lines).
     let (view_data, view_transform_for_rebuild) = if sync_scrolled {
-        viewport.top_view_line_offset = 0;
+        viewport.set_top_view_line_offset(0);
         let rebuilt = build_view_data(
             state,
             viewport,
@@ -319,7 +319,7 @@ pub(crate) fn compute_buffer_layout(
 
     // Ensure cursor is visible using Layout-aware check (handles virtual lines)
     let primary = *cursors.primary();
-    let top_byte_before_scroll = viewport.top_byte;
+    let top_byte_before_scroll = viewport.top_byte();
     let scrolled =
         viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width, rows_settled);
 
@@ -338,9 +338,9 @@ pub(crate) fn compute_buffer_layout(
     // erase the scroll that `ensure_visible_in_layout` just applied
     // (issue #1574, Up-arrow jumpy variant: cy 5→7 at step 13 of the
     // width-sweep).
-    let view_data = if scrolled && viewport.top_byte != top_byte_before_scroll {
+    let view_data = if scrolled && viewport.top_byte() != top_byte_before_scroll {
         if let Some(vt) = view_transform_for_rebuild {
-            viewport.top_view_line_offset = 0;
+            viewport.set_top_view_line_offset(0);
             let rebuilt = build_view_data(
                 state,
                 viewport,
@@ -368,7 +368,7 @@ pub(crate) fn compute_buffer_layout(
         view_data
     };
 
-    let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
+    let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte());
 
     let selection = selection_context(state, cursors);
 
@@ -397,14 +397,14 @@ pub(crate) fn compute_buffer_layout(
         &state.buffer,
         &state.marker_list,
         folds,
-        viewport.top_byte,
+        viewport.top_byte(),
         visible_count,
     );
 
     // Populate line cache to ensure chunks are loaded for rendering.
     let _ = state
         .buffer
-        .populate_line_cache(viewport.top_byte, adjusted_visible_count);
+        .populate_line_cache(viewport.top_byte(), adjusted_visible_count);
 
     // `calculate_viewport_end` walks *logical lines* from `top_byte` and
     // clamps each to one screen row's worth of columns — the right model for
@@ -429,7 +429,7 @@ pub(crate) fn compute_buffer_layout(
     let (viewport_start, viewport_end) = match wrapped_span.flatten() {
         Some(span) => span,
         None => {
-            let viewport_start = viewport.top_byte;
+            let viewport_start = viewport.top_byte();
             let viewport_end = calculate_viewport_end(
                 state,
                 viewport_start,
@@ -459,8 +459,8 @@ pub(crate) fn compute_buffer_layout(
     let calculated_offset = view_data.first_drawn;
 
     tracing::trace!(
-        top_byte = viewport.top_byte,
-        top_view_line_offset = viewport.top_view_line_offset,
+        top_byte = viewport.top_byte(),
+        top_view_line_offset = viewport.top_view_line_offset(),
         calculated_offset,
         view_data_lines = view_data.lines.len(),
         "view line offset calculation"
@@ -468,7 +468,7 @@ pub(crate) fn compute_buffer_layout(
     let (view_lines_to_render, adjusted_view_anchor) =
         if calculated_offset > 0 && calculated_offset < view_data.lines.len() {
             let sliced = &view_data.lines[calculated_offset..];
-            let adjusted_anchor = calculate_view_anchor(sliced, viewport.top_byte);
+            let adjusted_anchor = calculate_view_anchor(sliced, viewport.top_byte());
             (sliced, adjusted_anchor)
         } else {
             (&view_data.lines[..], view_anchor)
@@ -837,14 +837,14 @@ fn resolve_build_anchor(
     buffer: &crate::model::buffer::Buffer,
     viewport: &Viewport,
 ) -> Option<BuildAnchor> {
-    if viewport.top_view_line_offset == 0 {
+    if viewport.top_view_line_offset() == 0 {
         return None;
     }
-    let top_line = buffer.get_line_number(viewport.top_byte);
-    let anchor_row = index.line_first_row(top_line) + viewport.top_view_line_offset as u32;
+    let top_line = buffer.get_line_number(viewport.top_byte());
+    let anchor_row = index.line_first_row(top_line) + viewport.top_view_line_offset() as u32;
     let (start_row, walk_back) = index.resumable_row_at_or_before(buffer, anchor_row);
     let addr = index.byte_of_row(buffer, start_row);
-    if addr.is_virtual || addr.byte < viewport.top_byte {
+    if addr.is_virtual || addr.byte < viewport.top_byte() {
         return None;
     }
     Some(BuildAnchor {

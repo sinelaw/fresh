@@ -79,8 +79,8 @@ pub(super) fn scrollbar_line_counts(
         );
     }
 
-    let top_line = if viewport.top_byte < buffer_len {
-        state.buffer.get_line_number(viewport.top_byte)
+    let top_line = if viewport.top_byte() < buffer_len {
+        state.buffer.get_line_number(viewport.top_byte())
     } else {
         0
     };
@@ -286,8 +286,8 @@ pub(super) fn scrollbar_visual_row_counts(
     );
 
     let total_visual_rows = index.total_rows() as usize;
-    let top_visual_row = index.row_of_byte(&state.buffer, viewport.top_byte) as usize
-        + viewport.top_view_line_offset;
+    let top_visual_row = index.row_of_byte(&state.buffer, viewport.top_byte()) as usize
+        + viewport.top_view_line_offset();
     let top_visual_row = top_visual_row.min(total_visual_rows.saturating_sub(1));
 
     (total_visual_rows, top_visual_row)
@@ -306,7 +306,7 @@ pub(super) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Vi
 
     let visible_lines = viewport.height as usize + 5;
     let mut lines_scanned = 0usize;
-    let mut iter = state.buffer.line_iterator(viewport.top_byte, 80);
+    let mut iter = state.buffer.line_iterator(viewport.top_byte(), 80);
     loop {
         if lines_scanned >= visible_lines {
             break;
@@ -362,7 +362,7 @@ pub(super) fn render_scrollbar(
     }
 
     let buffer_len = state.buffer.len();
-    let viewport_top = viewport.top_byte;
+    let viewport_top = viewport.top_byte();
     let viewport_height_lines = height;
 
     let (thumb_start, thumb_size) = if buffer_len > large_file_threshold_bytes as usize {

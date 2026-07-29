@@ -605,8 +605,8 @@ pub(crate) fn render_content(
                 if let Some(view_state) = view_states.get_mut(&split_id) {
                     tracing::trace!(
                         "Writing back viewport: top_byte={}, top_view_line_offset={}, skip_ensure_visible={}",
-                        viewport.top_byte,
-                        viewport.top_view_line_offset,
+                        viewport.top_byte(),
+                        viewport.top_view_line_offset(),
                         viewport.should_skip_ensure_visible()
                     );
                     view_state.viewport = viewport.clone();

@@ -2327,8 +2327,8 @@ impl Window {
                     // line start), not on the line start hidden above.
                     let cursor_byte = anchor_byte.saturating_add(prepended.bytes).min(total_bytes);
                     view_state.cursors.primary_mut().position = cursor_byte;
-                    view_state.viewport.top_byte = anchor_byte;
-                    view_state.viewport.top_view_line_offset = prepended.rows;
+                    view_state.viewport.set_top_byte(anchor_byte);
+                    view_state.viewport.set_top_view_line_offset(prepended.rows);
                     view_state.viewport.left_column = 0;
                 }
             }

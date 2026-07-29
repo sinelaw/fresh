@@ -484,7 +484,7 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn viewport_top_byte(&self) -> usize {
-        self.active_viewport().top_byte
+        self.active_viewport().top_byte()
     }
 
     fn terminal_width(&self) -> u16 {
@@ -899,7 +899,7 @@ impl EditorTestApi for crate::app::Editor {
     }
 
     fn top_line_number(&mut self) -> usize {
-        let top_byte = self.active_viewport().top_byte;
+        let top_byte = self.active_viewport().top_byte();
         self.active_state_mut().buffer.get_line_number(top_byte)
     }
 
