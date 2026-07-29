@@ -588,7 +588,10 @@ pub fn compute_line_layout(
     // feeds scroll-math / coordinate queries (never drawn), so only cell
     // width matters, not colour.
     if !state.virtual_texts.is_empty() {
-        tokens = splice_inline_virtual_text(tokens, state, None, line_start, line_end);
+        let hints = crate::view::ui::split_rendering::transforms::resolve_inline_hints(
+            state, None, line_start, line_end,
+        );
+        tokens = splice_inline_virtual_text(tokens, &hints);
     }
 
     // Step 4: wrap (only when line-wrap is actually enabled).  When
