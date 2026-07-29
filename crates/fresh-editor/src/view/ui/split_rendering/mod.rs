@@ -2030,6 +2030,7 @@ mod tests {
         let empty_folds = FoldManager::new();
 
         let geometry = WrapIndexGeometry {
+            fold_signature: 0,
             rule: WrapRule::Word {
                 content_width: width - 1,
                 gutter_width: 0,
