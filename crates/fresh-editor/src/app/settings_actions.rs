@@ -317,7 +317,6 @@ impl Editor {
     fn invalidate_live_editor_layout_after_settings_save(&mut self) {
         for window in self.windows.values_mut() {
             for state in window.buffers.as_map_mut().values_mut() {
-                state.line_wrap_cache.clear();
                 state.wrap_indices.clear();
             }
 
