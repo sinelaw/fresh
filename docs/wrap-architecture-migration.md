@@ -93,12 +93,27 @@ Repair additionally requires:
 |---|---|---|
 | Model + tests | `f8ca42e` | done — 993 tests, mypy strict, ruff clean |
 | 1 — `WrapMachine` | `413eb19` | done — transforms are drivers |
-| 2 — `WrapIndex` | `e015328` | done — not yet wired to consumers |
-| 2b — scrollbar + scroll math onto the index | — | **next** |
-| 3 — `ViewAnchor`, O(viewport) renderer | — | pending |
+| 2 — `WrapIndex` | `e015328` | done |
+| 2 — state wiring, per-geometry `WrapIndexSet` | `4e733e1` | done |
+| 2b — scrollbar + scroll math onto the index | `a5bd195` | done — `visual_row_index.rs` deleted |
+| 3 — `ViewAnchor`, O(viewport) renderer | — | **next** |
 | 4 — delete `line_wrap_cache` + writeback | — | pending |
 
-Baseline to keep green: `cargo test -p fresh-editor --lib` (3169 passing),
+### Ownership shape (settled)
+
+`EditorState` holds a **`WrapIndexSet`**, not one index. Row structure depends
+on the buffer's content *and* on geometry, and those sit on opposite sides of
+the ownership split: content and decorations are per buffer, geometry is per
+rendered view. The set therefore lives with the buffer — damage is a buffer
+event — and is keyed by geometry so two splits at different widths keep separate
+row structures. One edit repairs every entry. Capped at four geometries, LRU.
+
+Do not collapse this back into a single index: a frame alternating between two
+splits would rebuild from scratch each time. `each_geometry_keeps_its_own_rows_and_both_repair`
+and `geometry_set_is_bounded` guard it.
+
+Baseline to keep green: `cargo test -p fresh-editor --lib` (3164 passing; the
+count dropped from 3171 when `visual_row_index.rs` was deleted with its tests),
 `cargo clippy -p fresh-editor --all-targets` clean, `cargo fmt --all`.
 Model: `cd tests/wrap_model && .venv/bin/python -m pytest` (993).
 
