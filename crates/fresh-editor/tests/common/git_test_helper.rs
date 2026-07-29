@@ -349,6 +349,41 @@ A sample project for testing.
         copy_plugin(&plugins_dir, "git_gutter");
     }
 
+    /// Configure local stand-ins for the `difft` external diff tool and the
+    /// `delta` pager. The fake difft intentionally emits side-by-side output
+    /// instead of a unified diff, matching the configuration from issue #2721
+    /// without requiring either tool to be installed on the test machine.
+    #[cfg(unix)]
+    pub fn setup_external_diff_and_pager(&self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let difft = self.create_file(
+            "difft",
+            "#!/bin/sh\nprintf '%s\\n' 'src/main.rs --- Rust' '1 fn main() | 1 fn main()'\n",
+        );
+        let delta = self.create_file("delta", "#!/bin/sh\ncat\n");
+
+        for tool in [&difft, &delta] {
+            fs::set_permissions(tool, fs::Permissions::from_mode(0o755))
+                .expect("Failed to make fake diff tool executable");
+        }
+
+        for (key, value) in [
+            ("diff.external", difft.to_string_lossy()),
+            ("core.pager", delta.to_string_lossy()),
+        ] {
+            let output = git_command(&self.path)
+                .args(["config", "--local", key, value.as_ref()])
+                .output()
+                .expect("Failed to configure fake diff tool");
+            assert!(
+                output.status.success(),
+                "git config {key} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
     /// Set up live diff plugin for live-diff e2e tests
     pub fn setup_live_diff_plugin(&self) {
         let plugins_dir = self.path.join("plugins");

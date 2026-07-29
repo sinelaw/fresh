@@ -4,6 +4,7 @@ use crate::common::git_test_helper::{DirGuard, GitTestRepo};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use ratatui::style::Color;
 
 // =============================================================================
 // Test Helpers
@@ -198,6 +199,54 @@ fn start_server(config: Config) {
     println!("Git gutter screen:\n{}", screen);
 }
 
+/// Regression test for issue #2721: user-configured external diff tools may
+/// emit side-by-side output, but the gutter parser requires a unified diff.
+#[test]
+#[cfg(unix)]
+fn test_git_gutter_ignores_external_diff_and_pager() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_gutter_plugin();
+    repo.setup_external_diff_and_pager();
+
+    repo.modify_file(
+        "src/main.rs",
+        r#"fn main() {
+    println!("Modified while difft is configured!");
+    let config = load_config();
+    start_server(config);
+}
+
+fn load_config() -> Config {
+    Config::default()
+}
+
+fn start_server(config: Config) {
+    println!("Starting server...");
+}
+"#,
+    );
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    open_file(&mut harness, &repo.path, "src/main.rs");
+    wait_for_indicator(&mut harness, "│");
+
+    assert!(
+        has_gutter_indicator(&harness.screen_to_string(), "│"),
+        "Git gutter indicator should appear even when diff.external and core.pager are configured"
+    );
+}
+
 /// Test that git gutter updates after saving a file
 // TODO: Fix git gutter tests on Windows - they fail due to git command output differences
 #[test]
@@ -264,6 +313,26 @@ fn test_git_gutter_updates_after_save() {
 
     let screen = harness.screen_to_string();
     println!("After save screen:\n{}", screen);
+
+    let (row, added_line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("// New comment"))
+        .expect("New comment should be visible after save");
+    assert_eq!(
+        added_line.chars().next(),
+        Some('│'),
+        "Saved Git gutter indicator should remain in its original position"
+    );
+
+    let indicator_style = harness
+        .get_cell_style(0, row as u16)
+        .expect("Git gutter indicator cell should have a style");
+    assert_eq!(
+        indicator_style.fg,
+        Some(Color::Rgb(80, 250, 123)),
+        "Saved Git gutter indicator should turn green"
+    );
 }
 
 /// Test that git gutter shows added lines indicator
