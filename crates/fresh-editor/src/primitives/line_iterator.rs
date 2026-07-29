@@ -25,7 +25,7 @@ use crate::model::buffer::TextBuffer;
 /// Maximum bytes to return per "line" to prevent memory exhaustion from huge single-line files.
 /// Lines longer than this are split into multiple chunks, each treated as a separate "line".
 /// This is generous enough for any practical line while preventing OOM from 10MB+ lines.
-const MAX_LINE_BYTES: usize = 100_000;
+pub(crate) const MAX_LINE_BYTES: usize = 100_000;
 
 pub struct LineIterator<'a> {
     buffer: &'a mut TextBuffer,
