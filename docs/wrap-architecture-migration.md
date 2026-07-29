@@ -96,10 +96,30 @@ Repair additionally requires:
 | 2 — `WrapIndex` | `e015328` | done |
 | 2 — state wiring, per-geometry `WrapIndexSet` | `4e733e1` | done |
 | 2b — scrollbar + scroll math onto the index | `a5bd195` | done — `visual_row_index.rs` deleted |
-| 3a — mid-line iteration (`from_mid_line`) | — | done |
-| 3b — renderer starts at the anchor row | — | **next** |
-| 3c — `ViewAnchor` replaces the coordinate pair | — | pending |
-| 4 — delete `line_wrap_cache` + writeback | — | pending |
+| 3a — mid-line iteration (`from_mid_line`) | `f2d6b6e` | done |
+| 3 — row-space `ensure_visible` | `dfb9f67` | done |
+| 3b — renderer starts at the anchor row | `2fc8b06` | done — **the 59%** |
+| 3 — row-space wheel scrolling | `8433fc1` | done — the 1.4% |
+| — LSP position reads only the prefix | `55924c1` | done — the 2.3% |
+| 3c — `ViewAnchor` replaces the coordinate pair | — | optional cleanup |
+| 4 — delete `line_wrap_cache` + writeback | — | optional cleanup |
+
+### All four profiled paths are closed
+
+| share | path | how |
+|---|---|---|
+| 59% | renderer built every row from byte 0 | anchored build (`2fc8b06`) |
+| 16.9% | scrollbar re-wrapped the line per keystroke | wrap index, repaired not invalidated (`a5bd195`) |
+| 1.4% | wheel scroll read the line twice per event | row arithmetic (`8433fc1`) |
+| 2.3% | hover timer copied the line per tick | prefix read (`55924c1`) |
+
+What remains is cleanup, not performance. 3c replaces `(top_byte,
+top_view_line_offset)` with a single anchor — 147 uses across 12 files, most in
+`viewport.rs`. Its value is deleting `snap_to_logical_line_start` and the
+fresh#1574 patch pair outright rather than bypassing them, which `2fc8b06` does
+by construction (the anchored build skips every phase that reads the offset as
+an index). Phase 4 deletes `LineWrapCache` once `materialize_rows` replaces its
+readers.
 
 ### Ownership shape (settled)
 
