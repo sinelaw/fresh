@@ -234,6 +234,29 @@ impl SoftBreakManager {
         results
     }
 
+    /// Earliest soft break in `start..end` whose cursor-dependent activation
+    /// currently differs from the canonical evaluation. See
+    /// `ConcealManager::earliest_cursor_divergence` — same contract.
+    pub fn earliest_cursor_divergence(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        cursors: &[usize],
+    ) -> Option<usize> {
+        self.breaks
+            .iter()
+            .filter_map(|b| {
+                let a = b.activation.as_ref()?;
+                let pos = b.position(marker_list);
+                if pos < start || pos >= end {
+                    return None;
+                }
+                (a.is_active(pos, cursors) != a.is_active(pos, &[])).then_some(pos)
+            })
+            .min()
+    }
+
     /// Returns true if there are no soft breaks
     pub fn is_empty(&self) -> bool {
         self.breaks.is_empty()

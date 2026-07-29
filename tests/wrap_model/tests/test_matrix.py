@@ -402,6 +402,57 @@ def test_placement_shows_the_cursor_the_renderer_draws(
                 )
 
 
+@pytest.mark.parametrize("kinds", CURSOR_KINDS)
+@pytest.mark.parametrize("rule_name", ["wrap", "wrap+indent"])
+def test_placement_pins_the_rendered_cursor_inside_the_margin(
+    rule_name: str, kinds: frozenset[str]
+) -> None:
+    """The margin band is a promise about the *drawn* cursor, not the canonical one.
+
+    `test_placement_shows_the_cursor_the_renderer_draws` pins visibility;
+    fresh#1574's stall shows visibility is not enough. If placement satisfies
+    the margin in canonical rows while the cursor's own line renders
+    cursor-aware, the drawn cursor parks a few rows outside the band — still
+    visible — and minimality then correctly refuses to move on the next press,
+    so an upward walk stalls mid-document. The fix is not a second pass; it is
+    computing the row that placement targets from the cursor-aware wrap of the
+    one line that can diverge (`cursor_visual_row`), and this asserts exactly
+    that: after `ensure_cursor_visible`, the rendered cursor row sits inside
+    the effective band, except where the document edge makes that impossible.
+    """
+    for height in (4, 6, 9):
+        for margin in (1, 2, 3):
+            model = build(TEXT, rule_name, kinds, "compose", height=height)
+            for byte in placement_probe_bytes(model):
+                if byte >= len(model.buffer):
+                    continue
+                model.cursors = (byte,)
+                model.ensure_cursor_visible(margin)
+                frame = model.render()
+                rendered_row = next(
+                    (
+                        i
+                        for i, row in enumerate(frame.rows)
+                        if byte in {b for b in row.char_source_bytes if b is not None}
+                    ),
+                    None,
+                )
+                assert rendered_row is not None, (
+                    f"h={height} m={margin} cursor {byte} not drawn at all"
+                )
+                m = model.viewport.effective_margin(margin)
+                at_top_edge = model.viewport.top_row() == 0
+                at_bottom_edge = model.viewport.top_row() >= model.viewport.max_top_row()
+                if not (m <= rendered_row <= height - 1 - m):
+                    assert (rendered_row < m and at_top_edge) or (
+                        rendered_row > height - 1 - m and at_bottom_edge
+                    ), (
+                        f"h={height} m={margin} cursor {byte}: drawn on row "
+                        f"{rendered_row}, outside band [{m}, {height - 1 - m}], "
+                        f"and not explained by a document edge"
+                    )
+
+
 # -- folds -------------------------------------------------------------------
 
 

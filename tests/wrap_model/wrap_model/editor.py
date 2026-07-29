@@ -22,10 +22,11 @@ pathological scope can't cost more than a couple of viewports.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .base_tokens import LineEnding, build_base_tokens
+from .base_tokens import LineEnding, build_base_tokens, line_tokens, strip_trailing_newline
 from .buffer import TextBuffer
 from .decorations import Decorations, VirtualLine, VirtualLinePos
 from .row_layout import LineStart, ViewLine, rows_from_tokens
@@ -175,6 +176,129 @@ class EditorModel:
         for d in ready:
             d.apply(self.decorations)
         return len(ready)
+
+    def _divergent_positions(self, start: int, end: int) -> list[int]:
+        """Decoration positions in `[start, end)` whose activation currently
+        differs from the canonical (cursor-less) evaluation — i.e. whose scope
+        holds a cursor. Scopes are line-local, so every such position shares a
+        line with the cursor that activated it."""
+        out = [
+            c.start
+            for c in self.decorations.conceals
+            if c.scope is not None
+            and any(c.scope.contains(cur) for cur in self.cursors)
+            and start <= c.start < end
+        ]
+        out += [
+            b.position
+            for b in self.decorations.soft_breaks
+            if b.scope is not None
+            and any(b.scope.contains(cur) for cur in self.cursors)
+            and start <= b.position < end
+        ]
+        return out
+
+    def cursor_visual_row(self, byte: int) -> int:
+        """The row the cursor is *drawn* on.
+
+        Canonical (`index.row_of_byte`) everywhere except the cursor's own
+        line: that line renders cursor-aware, so a revealed conceal or an
+        activation-toggled soft break above the cursor inside the line shifts
+        which row the cursor lands on. Activation scopes are line-local, so no
+        other line can diverge — the correction is one line's wrap, O(line).
+        """
+        line = self.buffer.get_line_number(byte)
+        line_start = self.buffer.line_start_offset(line)
+        if not self._divergent_positions(line_start, byte):
+            return self.index.row_of_byte(byte)
+        toks = strip_trailing_newline(line_tokens(self.buffer, line, self.line_ending))
+        toks = self._decorate(toks, self.cursors, line_start)
+        out = WrapMachine.run(toks, self.geometry.rule)
+        starts, _, _ = self.index._rows_to_starts(out.rows, out.tokens, line_start, 0)
+        rel = byte - line_start
+        within = max(0, bisect_right(starts, rel) - 1)
+        return self.index.row_of_byte(line_start) + within
+
+    def _cursor_line_expansion(self) -> tuple[int, int, int, int]:
+        """`(line_start_byte, first_row, canonical_rows, drawn_rows)` of the
+        primary cursor's line. Canonical == drawn when nothing on the line
+        diverges, which is every line but at most one: activation scopes are
+        line-local, so only the cursor's own line can render differently from
+        the index."""
+        byte = self.cursors[0]
+        line = self.buffer.get_line_number(byte)
+        line_start = self.buffer.line_start_offset(line)
+        first = self.index.row_of_byte(line_start)
+        canonical = self.index.lines[line].total_rows
+        # Divergence anywhere in the line changes its drawn row count.
+        next_start = (
+            self.buffer.line_start_offset(line + 1)
+            if line + 1 < self.buffer.line_count()
+            else len(self.buffer)
+        )
+        if not self._divergent_positions(line_start, next_start):
+            return line_start, first, canonical, canonical
+        toks = strip_trailing_newline(line_tokens(self.buffer, line, self.line_ending))
+        toks = self._decorate(toks, self.cursors, line_start)
+        out = WrapMachine.run(toks, self.geometry.rule)
+        starts, _, _ = self.index._rows_to_starts(out.rows, out.tokens, line_start, 0)
+        return line_start, first, canonical, len(starts)
+
+    def ensure_cursor_visible(self, margin: int = 0) -> bool:
+        """Place the *drawn* cursor inside the margin band.
+
+        The editor's placement entry point, and the model of what the Rust
+        render path must do. It works in **effective rows** — the canonical
+        index with the cursor's one divergent line expanded to its drawn row
+        count — because both halves of placement go wrong in canonical rows
+        when the cursor's line renders cursor-aware:
+
+        * the *target*: the drawn cursor sits `delta` rows below the canonical
+          row, so a canonical placement parks it outside the band and
+          minimality then correctly refuses to move (fresh#1574's stall);
+        * the *clamp*: a document that fits the window canonically can exceed
+          it revealed, and the canonical `max_top_row` forbids the scroll that
+          would show the cursor at all.
+
+        The anchor this sets uses drawn-row `row_offset` semantics, which is
+        what `render` already implements — its window slice is over the built,
+        cursor-aware rows.
+        """
+        vp = self.viewport
+        byte = self.cursors[0]
+        line_start, first, canonical, drawn = self._cursor_line_expansion()
+        delta = drawn - canonical
+        row_eff = self.cursor_visual_row(byte)
+
+        # Current top, in effective rows. An anchor inside the cursor's line
+        # counts drawn rows (that is how render slices); one past it shifts by
+        # the expansion.
+        base = self.index.row_of_byte(vp.anchor.byte)
+        if vp.anchor.byte == line_start and delta:
+            top_eff = first + max(vp.anchor.row_offset, 0)
+        elif base >= first + canonical:
+            top_eff = vp.top_row() + delta
+        else:
+            top_eff = vp.top_row()
+
+        m = vp.effective_margin(margin)
+        total_eff = self.index.total_rows() + delta
+        if row_eff < top_eff + m:
+            target = row_eff - m
+        elif row_eff > top_eff + vp.height - 1 - m:
+            target = row_eff - vp.height + 1 + m
+        else:
+            return False
+        target = max(0, min(target, max(total_eff - vp.height, 0)))
+
+        old_anchor = vp.anchor
+        if target < first or delta == 0:
+            vp.set_top_row(target)
+        elif target < first + drawn:
+            vp.anchor = ViewAnchor(line_start, target - first)
+        else:
+            vp.set_top_row(target - delta)
+        return vp.anchor != old_anchor
 
     def _stable_anchor(self, anchor: ViewAnchor) -> tuple[ViewAnchor, int]:
         """Back the anchor up out of an active cursor scope; return rows to skip.

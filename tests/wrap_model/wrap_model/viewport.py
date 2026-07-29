@@ -148,8 +148,21 @@ class Viewport:
         So the postcondition is `cursor_visible`, plus `satisfies_margin`
         whenever any reachable top would have.
         """
+        return self.ensure_visible_at_row(self.index.row_of_byte(cursor_byte), margin)
+
+    def ensure_visible_at_row(self, row: int, margin: int = 0) -> bool:
+        """[`ensure_visible`] with the cursor's row supplied by the caller.
+
+        The row a placement must satisfy is the row the cursor is *drawn* on.
+        For a cursor-blind consumer that is `index.row_of_byte` and the byte
+        overload above is exact. The editor passes an activation-corrected row
+        instead (`EditorModel.cursor_visual_row`), because the cursor's own
+        line renders cursor-aware and can wrap onto different rows than the
+        canonical index says — placing against the canonical row then parks
+        the drawn cursor outside the margin band, and minimality (correctly)
+        refuses to fix it on the next press. That stall is fresh#1574.
+        """
         m = self.effective_margin(margin)
-        row = self.index.row_of_byte(cursor_byte)
         top = self.top_row()
         if row < top + m:
             target = row - m
