@@ -142,12 +142,12 @@ impl crate::app::window::Window {
                 view_state.viewport.clear_skip_ensure_visible();
 
                 let cursor_pos = view_state.cursors.primary().position;
-                let top_byte_before = view_state.viewport.top_byte;
+                let top_byte_before = view_state.viewport.top_byte();
 
                 // 2. Best-effort scroll via the existing line-aware routine.
                 view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
 
-                let scrolled = view_state.viewport.top_byte != top_byte_before;
+                let scrolled = view_state.viewport.top_byte() != top_byte_before;
 
                 // 3. Post-condition check — derive line numbers (cheap, exact for
                 // non-large files; estimated for large files) and confirm the cursor
@@ -246,7 +246,7 @@ fn is_cursor_line_visible(
     cursor_pos: usize,
 ) -> bool {
     let viewport = &view_state.viewport;
-    let top_line = buffer.get_line_number(viewport.top_byte);
+    let top_line = buffer.get_line_number(viewport.top_byte());
     let cursor_line = buffer.get_line_number(cursor_pos);
     let viewport_height = viewport.visible_line_count();
     cursor_line >= top_line && cursor_line < top_line.saturating_add(viewport_height)
@@ -262,7 +262,7 @@ fn is_cursor_line_visible(
 /// prior bug or via plugin scroll-to-position — the restore re-creates an
 /// off-screen cursor that arrow keys can't escape (the wrap-mode early
 /// return in `viewport.rs::ensure_visible` kicks in for any cursor whose
-/// byte position is `>= viewport.top_byte`, which is true for *all* cursors
+/// byte position is `>= viewport.top_byte()`, which is true for *all* cursors
 /// below the viewport top — so naive Up/Down can never bring the viewport
 /// back to the cursor).
 ///
@@ -287,8 +287,8 @@ pub(crate) fn reconcile_restored_buffer_view(
             break;
         }
     }
-    buf_state.viewport.top_byte = iter.current_position();
-    buf_state.viewport.top_view_line_offset = 0;
+    buf_state.viewport.set_top_byte(iter.current_position());
+    buf_state.viewport.set_top_view_line_offset(0);
     // Restore code already calls set_skip_resize_sync; we don't need to also
     // pin against ensure_visible because the next render will see the cursor
     // is already inside the viewport range we just chose.

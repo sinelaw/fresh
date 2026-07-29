@@ -234,7 +234,7 @@ impl Editor {
                     .map(|(_, vs)| vs)
                     .expect("active window must have a populated split layout")
                     .get(&split_id)
-                    .map(|vs| vs.viewport.top_byte)
+                    .map(|vs| vs.viewport.top_byte())
                     .unwrap_or(0);
 
                 let __active_id = self.active_window;
@@ -695,7 +695,7 @@ impl Editor {
                 .expect("active window must have a populated split layout")
             {
                 let current = (
-                    view_state.viewport.top_byte,
+                    view_state.viewport.top_byte(),
                     view_state.viewport.width,
                     view_state.viewport.height,
                 );
@@ -733,7 +733,11 @@ impl Editor {
                             .get(&buffer_id)
                             .and_then(|state| {
                                 if state.buffer.line_count().is_some() {
-                                    Some(state.buffer.get_line_number(view_state.viewport.top_byte))
+                                    Some(
+                                        state
+                                            .buffer
+                                            .get_line_number(view_state.viewport.top_byte()),
+                                    )
                                 } else {
                                     None
                                 }
@@ -742,7 +746,7 @@ impl Editor {
                             "Firing viewport_changed hook: split={:?} buffer={:?} top_byte={} top_line={:?}",
                             split_id,
                             buffer_id,
-                            view_state.viewport.top_byte,
+                            view_state.viewport.top_byte(),
                             top_line
                         );
                         self.plugin_manager.read().unwrap().run_hook(
@@ -750,7 +754,7 @@ impl Editor {
                             crate::services::plugins::hooks::HookArgs::ViewportChanged {
                                 split_id: (*split_id).into(),
                                 buffer_id,
-                                top_byte: view_state.viewport.top_byte,
+                                top_byte: view_state.viewport.top_byte(),
                                 top_line,
                                 width: view_state.viewport.width,
                                 height: view_state.viewport.height,
@@ -780,7 +784,7 @@ impl Editor {
                 (
                     *split_id,
                     (
-                        view_state.viewport.top_byte,
+                        view_state.viewport.top_byte(),
                         view_state.viewport.width,
                         view_state.viewport.height,
                     ),
@@ -2212,7 +2216,7 @@ impl Editor {
 
     /// Ensure the active split's cursor is in view, then synchronise scroll-sync groups.
     ///
-    /// Order matters: `sync_scroll_groups` reads the `viewport.top_byte` that
+    /// Order matters: `sync_scroll_groups` reads the `viewport.top_byte()` that
     /// `pre_sync_ensure_visible` just updated.  Doing it after the render would
     /// produce a one-frame lag on cursor moves that trigger a scroll-sync anchor
     /// change (e.g. `G` in a side-by-side diff).
@@ -2264,7 +2268,8 @@ impl Editor {
                         .expect("active window present")
                         .get(&buffer_id)
                     {
-                        let start_line = state.buffer.get_line_number(view_state.viewport.top_byte);
+                        let start_line =
+                            state.buffer.get_line_number(view_state.viewport.top_byte());
                         let visible_lines =
                             view_state.viewport.visible_line_count().saturating_sub(1);
                         let end_line = start_line.saturating_add(visible_lines);
@@ -2309,7 +2314,7 @@ impl Editor {
                 .iter()
                 .filter_map(|(split_id, vs)| {
                     mgr.get_buffer_id((*split_id).into())
-                        .map(|bid| (bid, vs.viewport.top_byte, vs.viewport.height))
+                        .map(|bid| (bid, vs.viewport.top_byte(), vs.viewport.height))
                 })
                 .collect()
         };
@@ -3193,7 +3198,7 @@ impl Editor {
                     .overlays
                     .clear_namespace(&preview_ns, &mut state.marker_list);
                 if let Some(re) = &preview_regex {
-                    let visible_start = pstate.view_state.viewport.top_byte;
+                    let visible_start = pstate.view_state.viewport.top_byte();
                     let visible_rows = pstate.view_state.viewport.height as usize;
                     let mut visible_end = visible_start;
                     {

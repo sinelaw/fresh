@@ -3296,7 +3296,7 @@ impl Editor {
                         }
                     }
                     let new_top_byte = iter.current_position();
-                    view_state.viewport.top_byte = new_top_byte;
+                    view_state.viewport.set_top_byte(new_top_byte);
                     // Mark to skip ensure_visible on next render so the scroll isn't undone
                     view_state.viewport.set_skip_ensure_visible();
                 }
@@ -5385,13 +5385,13 @@ impl Editor {
                 // Viewport - get from SplitViewState (the authoritative source)
                 let top_line = self.buffers.get(&self.active_buffer()).and_then(|state| {
                     if state.buffer.line_count().is_some() {
-                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte))
+                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte()))
                     } else {
                         None
                     }
                 });
                 snapshot.viewport = Some(ViewportInfo {
-                    top_byte: active_vs.viewport.top_byte,
+                    top_byte: active_vs.viewport.top_byte(),
                     top_line,
                     left_column: active_vs.viewport.left_column,
                     width: active_vs.viewport.width,

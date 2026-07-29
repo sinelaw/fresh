@@ -81,7 +81,7 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(split_id)
-                .map(|vs| vs.viewport.top_byte)
+                .map(|vs| vs.viewport.top_byte())
                 .unwrap_or(0);
             let compose_width = self
                 .windows
@@ -164,7 +164,7 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(&split_id)
-                .map(|vs| vs.viewport.top_byte)
+                .map(|vs| vs.viewport.top_byte())
                 .unwrap_or(0);
             let compose_width = self
                 .windows
@@ -357,7 +357,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| vs.viewport.top_byte)
+            .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split (adjusts content rect for centered layout)

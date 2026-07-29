@@ -853,9 +853,9 @@ fn create_fold(
         .add(&mut state.marker_list, start_byte, end_byte, placeholder);
 
     // If the viewport top is now inside the folded range, move it to the header.
-    if buf_state.viewport.top_byte >= start_byte && buf_state.viewport.top_byte < end_byte {
-        buf_state.viewport.top_byte = header_byte;
-        buf_state.viewport.top_view_line_offset = 0;
+    if buf_state.viewport.top_byte() >= start_byte && buf_state.viewport.top_byte() < end_byte {
+        buf_state.viewport.set_top_byte(header_byte);
+        buf_state.viewport.set_top_view_line_offset(0);
     }
 }
 

@@ -50,7 +50,7 @@ pub(super) struct ViewData {
 
 /// Where the build starts, when the caller could resolve a resumable row.
 ///
-/// Without one the build begins at `viewport.top_byte` — the logical line's
+/// Without one the build begins at `viewport.top_byte()` — the logical line's
 /// start — and every row above the viewport is built and thrown away.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct BuildAnchor {
@@ -195,7 +195,7 @@ pub(super) fn build_view_data(
         &state.buffer,
         &state.marker_list,
         folds,
-        viewport.top_byte,
+        viewport.top_byte(),
         visible_count,
     );
 
@@ -220,7 +220,7 @@ pub(super) fn build_view_data(
     // it. Without one, both fall back to the line-start behaviour.
     let (start_byte, resume_carry, rows_before_window) = match anchor {
         Some(a) => (a.byte, Some(a.carry), a.skip),
-        None => (viewport.top_byte, None, viewport.top_view_line_offset),
+        None => (viewport.top_byte(), None, viewport.top_view_line_offset()),
     };
     let base_tokens = build_base_tokens(
         &mut state.buffer,
@@ -254,10 +254,10 @@ pub(super) fn build_view_data(
             .iter()
             .filter_map(|t| t.source_offset)
             .next_back()
-            .unwrap_or(viewport.top_byte)
+            .unwrap_or(viewport.top_byte())
             + 1;
         let soft_breaks = state.soft_breaks.query_viewport(
-            viewport.top_byte,
+            viewport.top_byte(),
             viewport_end,
             &state.marker_list,
             cursor_positions,
@@ -281,11 +281,11 @@ pub(super) fn build_view_data(
             .iter()
             .filter_map(|t| t.source_offset)
             .next_back()
-            .unwrap_or(viewport.top_byte)
+            .unwrap_or(viewport.top_byte())
             + 1;
         let exclude_ns = (!is_compose).then(md_syntax_namespace);
         let conceal_ranges = state.conceals.query_viewport_excluding(
-            viewport.top_byte,
+            viewport.top_byte(),
             viewport_end,
             &state.marker_list,
             exclude_ns.as_ref(),
@@ -322,10 +322,10 @@ pub(super) fn build_view_data(
                 Some(start + len)
             })
             .max()
-            .unwrap_or(viewport.top_byte);
+            .unwrap_or(viewport.top_byte());
         tokens = splice_inline_virtual_text(
             tokens,
-            &resolve_inline_hints(state, Some(theme), viewport.top_byte, viewport_end),
+            &resolve_inline_hints(state, Some(theme), viewport.top_byte(), viewport_end),
         );
     }
 

@@ -502,8 +502,8 @@ mod tests {
         let selection = selection_context(&state, &cursors);
         let _ = state
             .buffer
-            .populate_line_cache(viewport.top_byte, visible_count);
-        let viewport_start = viewport.top_byte;
+            .populate_line_cache(viewport.top_byte(), visible_count);
+        let viewport_start = viewport.top_byte();
         let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
@@ -576,7 +576,7 @@ mod tests {
         let mut cursors = crate::model::cursor::Cursors::new();
         cursors.primary_mut().position = 0;
         let mut viewport = Viewport::new(20, 10);
-        viewport.top_byte = top_byte;
+        viewport.set_top_byte(top_byte);
         state.margins.left_config.enabled = false;
 
         let render_area = Rect::new(0, 0, 20, 10);
@@ -602,7 +602,7 @@ mod tests {
             // there is no resolved anchor to start from.
             None,
         );
-        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
+        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte());
 
         let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
         state.margins.update_width_for_buffer(estimated_lines, true);
@@ -611,8 +611,8 @@ mod tests {
         let selection = selection_context(&state, &cursors);
         let _ = state
             .buffer
-            .populate_line_cache(viewport.top_byte, visible_count);
-        let viewport_start = viewport.top_byte;
+            .populate_line_cache(viewport.top_byte(), visible_count);
+        let viewport_start = viewport.top_byte();
         let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
@@ -2081,8 +2081,8 @@ mod tests {
             }
             let mut viewport = Viewport::new(width as u16, 8);
             viewport.line_wrap_enabled = true;
-            viewport.top_byte = 0;
-            viewport.top_view_line_offset = offset;
+            viewport.set_top_byte(0);
+            viewport.set_top_view_line_offset(offset);
 
             let unanchored = build(&mut state, &viewport, None);
 
@@ -3271,8 +3271,8 @@ mod tests {
         let selection = selection_context(&state, &cursors);
         let _ = state
             .buffer
-            .populate_line_cache(viewport.top_byte, visible_count);
-        let viewport_start = viewport.top_byte;
+            .populate_line_cache(viewport.top_byte(), visible_count);
+        let viewport_start = viewport.top_byte();
         let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,

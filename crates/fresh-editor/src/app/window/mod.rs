@@ -1759,8 +1759,8 @@ impl Window {
                 view_state
                     .viewport
                     .scroll_to(&mut state.buffer, target_line);
-                view_state.viewport.top_byte = clamped_byte;
-                view_state.viewport.top_view_line_offset = 0;
+                view_state.viewport.set_top_byte(clamped_byte);
+                view_state.viewport.set_top_view_line_offset(0);
                 view_state.viewport.set_skip_ensure_visible();
             });
     }
@@ -1816,7 +1816,7 @@ impl Window {
                 buf_state.cursors.primary_mut().position = cursor_pos;
                 buf_state.cursors.primary_mut().anchor =
                     file_state.cursor.anchor.map(|a| a.min(max_pos));
-                buf_state.viewport.top_byte = file_state.scroll.top_byte;
+                buf_state.viewport.set_top_byte(file_state.scroll.top_byte);
                 buf_state.viewport.left_column = file_state.scroll.left_column;
                 crate::app::navigation::reconcile_restored_buffer_view(
                     buf_state,
@@ -1913,7 +1913,7 @@ impl Window {
                 // Resolved before the mutable buffer borrow below: the
                 // row-space path needs only `&Buffer`.
                 let scroll_geometry = wrap_scroll_geometry(view_state, state);
-                let top_byte_before = view_state.viewport.top_byte;
+                let top_byte_before = view_state.viewport.top_byte();
                 if let Some(tokens) = view_transform_tokens {
                     use crate::view::ui::view_pipeline::ViewLineIterator;
                     let view_lines: Vec<_> =
@@ -1955,7 +1955,7 @@ impl Window {
                 let buffer = &mut state.buffer;
                 if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
                     if !folds.is_empty() {
-                        let top_line = buffer.get_line_number(view_state.viewport.top_byte);
+                        let top_line = buffer.get_line_number(view_state.viewport.top_byte());
                         if let Some(range) = folds
                             .resolved_ranges(buffer, &state.marker_list)
                             .iter()
@@ -1969,8 +1969,8 @@ impl Window {
                             let target_byte = buffer
                                 .line_start_offset(target_line)
                                 .unwrap_or_else(|| buffer.len());
-                            view_state.viewport.top_byte = target_byte;
-                            view_state.viewport.top_view_line_offset = 0;
+                            view_state.viewport.set_top_byte(target_byte);
+                            view_state.viewport.set_top_view_line_offset(0);
                         }
                     }
                 }
@@ -1978,7 +1978,7 @@ impl Window {
                     "scroll_split_by_lines: delta={}, top_byte {} -> {}",
                     delta,
                     top_byte_before,
-                    view_state.viewport.top_byte
+                    view_state.viewport.top_byte()
                 );
             });
     }
@@ -3021,8 +3021,8 @@ impl Window {
                 })
                 .collect(),
             scroll: SerializedScroll {
-                top_byte: buf_state.viewport.top_byte,
-                top_view_line_offset: buf_state.viewport.top_view_line_offset,
+                top_byte: buf_state.viewport.top_byte(),
+                top_view_line_offset: buf_state.viewport.top_view_line_offset(),
                 left_column: buf_state.viewport.left_column,
             },
             view_mode: Default::default(),
@@ -3076,7 +3076,7 @@ impl Window {
         let (top_byte, viewport_height) =
             if let Some(view_state) = self.buffers.splits().and_then(|(_, vs)| vs.get(&split_id)) {
                 (
-                    view_state.viewport.top_byte,
+                    view_state.viewport.top_byte(),
                     view_state.viewport.height as usize,
                 )
             } else {
@@ -3479,7 +3479,7 @@ impl Window {
             .expect("active window must have a populated split layout")
             .1
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
             .unwrap_or((0, 20));
 
         let state = self.active_state_mut();

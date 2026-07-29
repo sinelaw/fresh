@@ -149,7 +149,7 @@ impl crate::app::window::Window {
                     return None;
                 }
 
-                let active_top_byte = vs_map.get(&active_split)?.viewport.top_byte;
+                let active_top_byte = vs_map.get(&active_split)?.viewport.top_byte();
                 let active_buffer_id = mgr.buffer_for_split(active_split)?;
                 let buffer_state = self.buffers.get(&active_buffer_id)?;
                 let buffer_len = buffer_state.buffer.len();
@@ -207,7 +207,7 @@ impl crate::app::window::Window {
                 .buffers
                 .splits()
                 .expect("window must have a populated split layout");
-            let active_top_byte = vs_map.get(&active_split).map(|vs| vs.viewport.top_byte);
+            let active_top_byte = vs_map.get(&active_split).map(|vs| vs.viewport.top_byte());
             let active_viewport_height = vs_map
                 .get(&active_split)
                 .map(|vs| vs.viewport.visible_line_count())
@@ -245,7 +245,7 @@ impl crate::app::window::Window {
                         .expect("window must have a populated split layout");
                     for other_split in other_splits {
                         if let Some(view_state) = vs_map_mut.get_mut(&other_split) {
-                            view_state.viewport.top_byte = top_byte;
+                            view_state.viewport.set_top_byte(top_byte);
                             view_state.viewport.sync_scroll_to_end = at_bottom;
                         }
                     }

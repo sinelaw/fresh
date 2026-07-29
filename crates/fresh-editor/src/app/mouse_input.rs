@@ -1403,7 +1403,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte)
+            .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split
@@ -1573,7 +1573,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte)
+            .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split
@@ -2302,7 +2302,7 @@ impl Editor {
                     .map(|(_, vs)| vs)
                     .expect("active window must have a populated split layout")
                     .get(&split_id)
-                    .map(|vs| (vs.viewport.top_byte, vs.viewport.top_view_line_offset));
+                    .map(|vs| (vs.viewport.top_byte(), vs.viewport.top_view_line_offset()));
                 if let Some((top_byte, top_view_line_offset)) = snap {
                     let ms = &mut self.active_window_mut().mouse_state;
                     ms.drag_start_top_byte = Some(top_byte);
@@ -3090,7 +3090,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte)
+            .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split

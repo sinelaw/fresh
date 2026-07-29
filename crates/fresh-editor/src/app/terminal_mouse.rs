@@ -242,7 +242,7 @@ impl Window {
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&split_id))
-            .map(|vs| (vs.viewport.top_byte, vs.compose_width))
+            .map(|vs| (vs.viewport.top_byte(), vs.compose_width))
             .unwrap_or((0, None));
 
         // `allow_gutter_click = false`: a click in the gutter isn't on a path.
@@ -608,7 +608,7 @@ impl super::Editor {
         let (_, view_states) = win.buffers.splits()?;
         let vs = view_states.get(&split_id)?;
         let state = win.buffers.get(&buffer_id)?;
-        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte);
+        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte());
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
@@ -623,7 +623,7 @@ impl super::Editor {
         // wrong buffer line entirely).
         if vs.viewport.grid_wrap && vs.viewport.line_wrap_enabled {
             let cols = vs.viewport.grid_cols();
-            let mut remaining = vs.viewport.top_view_line_offset + grid_row;
+            let mut remaining = vs.viewport.top_view_line_offset() + grid_row;
             let mut line_idx = top_line;
             loop {
                 let Some(bytes) = state.buffer.get_line(line_idx) else {

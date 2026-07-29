@@ -256,7 +256,7 @@ fn build_pane_render_data(
 
         let pane_width = layout.widths.get(pane_idx).copied().unwrap_or(80);
         let mut viewport = crate::view::viewport::Viewport::new(pane_width, content_height);
-        viewport.top_byte = top_byte;
+        viewport.set_top_byte(top_byte);
         viewport.line_wrap_enabled = false;
 
         let pane_width = layout.widths.get(pane_idx).copied().unwrap_or(80) as usize;
