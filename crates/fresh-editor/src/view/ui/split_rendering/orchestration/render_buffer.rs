@@ -821,7 +821,7 @@ fn resolve_build_anchor(
 ///
 /// Must match what `scrollbar_line_counts` builds, or the render path would look
 /// up an entry that is never populated and silently fall back to the layout pass.
-fn wrap_index_geometry_for(
+pub(crate) fn wrap_index_geometry_for(
     viewport: &Viewport,
     buffer: &crate::model::buffer::Buffer,
     line_wrap: bool,

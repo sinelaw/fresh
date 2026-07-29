@@ -585,6 +585,36 @@ impl Viewport {
         seg_bytes.get(idx).copied().unwrap_or(self.top_byte)
     }
 
+    /// Scroll by `delta` visual rows using the wrap index — the whole of wheel
+    /// scrolling, as arithmetic.
+    ///
+    /// Replaces what `scroll_up_visual` / `scroll_down_visual` /
+    /// `apply_visual_scroll_limit` do by reading text: each of those walks the
+    /// logical line counting wrap segments, so a wheel event on a file that is
+    /// one enormous line reads and re-decodes that line twice. Here the index
+    /// already knows which row is where, so nothing is read at all.
+    ///
+    /// The viewport keeps its `(top_byte, top_view_line_offset)` pair; the new
+    /// absolute row is converted back through `byte_of_row`.
+    pub fn scroll_visual_rows(
+        &mut self,
+        index: &crate::view::wrap_index::WrapIndex,
+        buffer: &Buffer,
+        delta: isize,
+    ) {
+        let top_line = buffer.get_line_number(self.top_byte);
+        let top_row = index.line_first_row(top_line) as isize + self.top_view_line_offset as isize;
+        let total = index.total_rows() as isize;
+        let max_top = (total - self.visible_line_count() as isize).max(0);
+        let new_top = (top_row + delta).clamp(0, max_top);
+        if new_top == top_row {
+            return;
+        }
+        let addr = index.byte_of_row(buffer, new_top as u32);
+        self.top_byte = buffer.line_start_offset(addr.line).unwrap_or(0);
+        self.top_view_line_offset = addr.row_in_line;
+    }
+
     /// Scroll up by N lines (byte-based)
     /// When line_wrap_enabled is true, scrolls by visual rows instead of logical lines
     ///

@@ -18,6 +18,8 @@ mod folding;
 mod gutter;
 mod layout;
 mod orchestration;
+
+pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
 mod post_pass;
 mod scrollbar;
 mod spans;

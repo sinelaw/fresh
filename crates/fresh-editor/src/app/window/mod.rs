@@ -1910,7 +1910,9 @@ impl Window {
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
                 let soft_breaks = state.collect_soft_break_positions();
                 let virtual_lines = state.collect_virtual_line_positions();
-                let buffer = &mut state.buffer;
+                // Resolved before the mutable buffer borrow below: the
+                // row-space path needs only `&Buffer`.
+                let scroll_geometry = wrap_scroll_geometry(view_state, state);
                 let top_byte_before = view_state.viewport.top_byte;
                 if let Some(tokens) = view_transform_tokens {
                     use crate::view::ui::view_pipeline::ViewLineIterator;
@@ -1919,10 +1921,22 @@ impl Window {
                     view_state
                         .viewport
                         .scroll_view_lines(&view_lines, delta as isize);
+                } else if let Some(geometry) = scroll_geometry {
+                    // Row arithmetic off the wrap index: no text is read, so a
+                    // wheel event on a file that is one enormous line costs the
+                    // same as on any other. The byte-walking fallback below only
+                    // runs before the index has been built for this geometry.
+                    let index = state
+                        .wrap_indices
+                        .get(&geometry)
+                        .expect("geometry resolved from a built index");
+                    view_state
+                        .viewport
+                        .scroll_visual_rows(index, &state.buffer, delta as isize);
                 } else if delta < 0 {
                     let lines_to_scroll = delta.unsigned_abs() as usize;
                     view_state.viewport.scroll_up(
-                        buffer,
+                        &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
                         lines_to_scroll,
@@ -1930,7 +1944,7 @@ impl Window {
                 } else {
                     let lines_to_scroll = delta as usize;
                     view_state.viewport.scroll_down(
-                        buffer,
+                        &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
                         lines_to_scroll,
@@ -1938,6 +1952,7 @@ impl Window {
                 }
                 view_state.viewport.set_skip_ensure_visible();
 
+                let buffer = &mut state.buffer;
                 if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
                     if !folds.is_empty() {
                         let top_line = buffer.get_line_number(view_state.viewport.top_byte);
@@ -4242,4 +4257,35 @@ mod exited_terminal_tests {
         assert!(!e.resumes_agent());
         assert_eq!(e.program_name(), Some("bash"));
     }
+}
+
+/// The wrap-index geometry for a split, when one is already built for it.
+///
+/// `None` means the byte-walking scroll path must be used — before the first
+/// render there is nothing to read row positions from, and building an index
+/// here would trade a cheap walk for an O(buffer) pass.
+fn wrap_scroll_geometry(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
+    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
+        return None;
+    }
+    let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
+        state.buffer.version(),
+        state.soft_breaks.version(),
+        state.conceals.version(),
+        state.virtual_texts.version(),
+    );
+    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
+        &view_state.viewport,
+        &state.buffer,
+        view_state.viewport.line_wrap_enabled,
+        &crate::state::ViewMode::Source,
+    );
+    state
+        .wrap_indices
+        .get(&geometry)
+        .is_some_and(|index| index.is_built_for(&geometry, inputs_version))
+        .then_some(geometry)
 }
