@@ -758,7 +758,7 @@ use std::collections::BTreeMap;
 /// The Layout represents the computed display state for a view.
 ///
 /// This is **View state**, not Buffer state. Each split has its own Layout
-/// computed from its view_transform (or base tokens if no transform).
+/// computed from its base tokens.
 ///
 /// The Layout provides:
 /// - ViewLines for the current viewport region

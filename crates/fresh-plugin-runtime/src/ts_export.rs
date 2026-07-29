@@ -646,14 +646,6 @@ interface HookEventMap {
      * coordinate-mapping APIs to repair stale offsets from this batch. */
     epoch: number;
   };
-  view_transform_request: {
-    buffer_id: number;
-    split_id: number;
-    viewport_start: number;
-    viewport_end: number;
-    tokens: ViewTokenWire[];
-    cursor_positions: number[];
-  };
 
   // ── commands ─────────────────────────────────────────────────────────────
   pre_command: { action: string | Record<string, unknown> };
@@ -1430,8 +1422,6 @@ mod tests {
             "addSoftBreak",
             "clearSoftBreakNamespace",
             "clearSoftBreaksInRange",
-            "submitViewTransform",
-            "clearViewTransform",
             "setLayoutHints",
             "setFileExplorerDecorations",
             "clearFileExplorerDecorations",

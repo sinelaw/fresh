@@ -4143,77 +4143,8 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    // === View Transform ===
-
-    /// Submit a view transform for a buffer/split
-    ///
-    /// Accepts tokens in the simple format:
-    ///   {kind: "text"|"newline"|"space"|"break", text: "...", sourceOffset: N, style?: {...}}
-    ///
-    /// Also accepts the TypeScript-defined format for backwards compatibility:
-    ///   {kind: {Text: "..."} | "Newline" | "Space" | "Break", source_offset: N, style?: {...}}
-    #[allow(clippy::too_many_arguments)]
-    pub fn submit_view_transform<'js>(
-        &self,
-        _ctx: rquickjs::Ctx<'js>,
-        buffer_id: u32,
-        split_id: Option<u32>,
-        start: u32,
-        end: u32,
-        tokens: Vec<rquickjs::Object<'js>>,
-        layout_hints: rquickjs::function::Opt<rquickjs::Object<'js>>,
-    ) -> rquickjs::Result<bool> {
-        use fresh_core::api::{LayoutHints, ViewTokenWire, ViewTransformPayload};
-
-        let tokens: Vec<ViewTokenWire> = tokens
-            .into_iter()
-            .enumerate()
-            .map(|(idx, obj)| {
-                // Try to parse the token, with detailed error messages
-                parse_view_token(&obj, idx)
-            })
-            .collect::<rquickjs::Result<Vec<_>>>()?;
-
-        // Parse layout hints if provided
-        let parsed_layout_hints = if let Some(hints_obj) = layout_hints.into_inner() {
-            let compose_width: Option<u16> = hints_obj.get("composeWidth").ok();
-            let column_guides: Option<Vec<u16>> = hints_obj.get("columnGuides").ok();
-            Some(LayoutHints {
-                compose_width,
-                column_guides,
-            })
-        } else {
-            None
-        };
-
-        let payload = ViewTransformPayload {
-            range: (start as usize)..(end as usize),
-            tokens,
-            layout_hints: parsed_layout_hints,
-        };
-
-        Ok(self
-            .command_sender
-            .send(PluginCommand::SubmitViewTransform {
-                buffer_id: BufferId(buffer_id as usize),
-                split_id: split_id.map(|id| SplitId(id as usize)),
-                payload,
-            })
-            .is_ok())
-    }
-
-    /// Clear view transform for a buffer/split
-    pub fn clear_view_transform(&self, buffer_id: u32, split_id: Option<u32>) -> bool {
-        self.command_sender
-            .send(PluginCommand::ClearViewTransform {
-                buffer_id: BufferId(buffer_id as usize),
-                split_id: split_id.map(|id| SplitId(id as usize)),
-            })
-            .is_ok()
-    }
-
     /// Set layout hints (compose width, column guides) for a buffer/split
-    /// without going through the view_transform pipeline.
+    /// directly.
     pub fn set_layout_hints<'js>(
         &self,
         buffer_id: u32,

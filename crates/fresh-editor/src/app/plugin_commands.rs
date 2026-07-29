@@ -9,7 +9,7 @@ use crate::view::split::SplitViewState;
 use anyhow::Result as AnyhowResult;
 use fresh_core::api::{
     GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
-    ReplaceResult, ViewTransformPayload,
+    ReplaceResult,
 };
 use std::sync::Arc;
 
@@ -1016,13 +1016,13 @@ impl Editor {
 
         // Plugin sends arbitrary SplitId — convert to LeafId at the boundary.
         // Go through set_pane_buffer so tree + SVS stay consistent (the
-        // downstream view_state block tweaks open_buffers/view_transform
+        // downstream view_state block tweaks open_buffers/view state
         // further, but the primitive is what keeps the invariant).
         let leaf_id = LeafId(split_id);
         self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
         tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
 
-        // Switch per-buffer view state — the new buffer's own view_transform
+        // Switch per-buffer view state — the new buffer's own decorations
         // and compose_width will be restored (or defaults if first time)
         if let Some(view_state) = self
             .windows
@@ -1930,62 +1930,6 @@ impl Editor {
             .get_mut(&target_split)
         {
             view_state.viewport.line_wrap_enabled = enabled;
-        }
-    }
-
-    /// Handle SubmitViewTransform command
-    pub(super) fn handle_submit_view_transform(
-        &mut self,
-        buffer_id: BufferId,
-        split_id: Option<SplitId>,
-        payload: ViewTransformPayload,
-    ) {
-        let target_split = split_id
-            .map(LeafId)
-            .unwrap_or(self.split_manager().active_split());
-        let term_w = self.terminal_width;
-        let term_h = self.terminal_height;
-        let active_id = self.active_window;
-        let view_state = self
-            .windows
-            .get_mut(&active_id)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .entry(target_split)
-            .or_insert_with(|| SplitViewState::with_buffer(term_w, term_h, buffer_id));
-        // Reject stale view transforms — the buffer was edited since the
-        // view_transform_request that produced this response, so the token
-        // source_offsets are from before the edit. Applying them would cause
-        // conceals to appear at wrong positions for one frame (flicker).
-        if view_state.view_transform_stale {
-            tracing::trace!(
-                "Rejecting stale SubmitViewTransform for split {:?}",
-                target_split
-            );
-            return;
-        }
-        view_state.view_transform = Some(payload);
-    }
-
-    /// Handle ClearViewTransform command
-    pub(super) fn handle_clear_view_transform(&mut self, split_id: Option<SplitId>) {
-        let target_split = split_id.map(LeafId).unwrap_or(
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split(),
-        );
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
-            view_state.view_transform = None;
-            view_state.compose_width = None;
         }
     }
 

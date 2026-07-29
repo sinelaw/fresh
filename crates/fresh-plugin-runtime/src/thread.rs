@@ -356,7 +356,7 @@ impl PluginThreadHandle {
 
     /// Non-blocking check: does any loaded plugin subscribe to `hook_name`?
     /// Used by the renderer to skip building expensive hook args (e.g.
-    /// the full tokenized viewport for `view_transform_request`) when
+    /// the full tokenized viewport) when
     /// nothing would consume them. Reads from the shared
     /// `event_handlers` registry directly — no channel round-trip.
     pub fn has_subscribers(&self, hook_name: &str) -> bool {

@@ -27,10 +27,10 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection, SplitId};
 use crate::model::marker::MarkerList;
+use crate::state::ViewMode;
 use crate::view::folding::FoldManager;
 use crate::view::ui::view_pipeline::Layout;
 use crate::view::viewport::Viewport;
-use crate::{services::plugins::api::ViewTransformPayload, state::ViewMode};
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -179,14 +179,6 @@ pub struct BufferViewState {
     /// source of truth.
     pub line_wrap_override: Option<bool>,
 
-    /// Optional view transform payload
-    pub view_transform: Option<ViewTransformPayload>,
-
-    /// True when the buffer was edited since the last view_transform_request hook fired.
-    /// While true, incoming SubmitViewTransform commands are rejected as stale
-    /// (their tokens have source_offsets from before the edit).
-    pub view_transform_stale: bool,
-
     /// Plugin-managed state (arbitrary key-value pairs).
     /// Plugins can store per-buffer-per-split state here via the `setViewState`/`getViewState` API.
     /// Persisted across sessions via workspace serialization.
@@ -240,8 +232,6 @@ impl BufferViewState {
             highlight_current_line: true,
             line_numbers_override: None,
             line_wrap_override: None,
-            view_transform: None,
-            view_transform_stale: false,
             plugin_state: std::collections::HashMap::new(),
             folds: FoldManager::new(),
         }
@@ -300,8 +290,6 @@ impl Clone for BufferViewState {
             highlight_current_line: self.highlight_current_line,
             line_numbers_override: self.line_numbers_override,
             line_wrap_override: self.line_wrap_override,
-            view_transform: self.view_transform.clone(),
-            view_transform_stale: self.view_transform_stale,
             plugin_state: self.plugin_state.clone(),
             // Fold markers are per-view; clones start with no folded ranges.
             folds: FoldManager::new(),
@@ -338,7 +326,7 @@ pub struct SplitViewState {
     /// Horizontal scroll offset for the tabs in this split
     pub tab_scroll_offset: usize,
 
-    /// Computed layout for this view (from view_transform or base tokens)
+    /// Computed layout for this view
     /// This is View state - each split has its own Layout
     pub layout: Option<Layout>,
 
@@ -489,7 +477,7 @@ impl SplitViewState {
     /// Returns the Layout - never returns None. Following VSCode's ViewModel pattern.
     ///
     /// # Arguments
-    /// * `tokens` - ViewTokenWire array (from view_transform or built from buffer)
+    /// * `tokens` - ViewTokenWire array built from the buffer
     /// * `source_range` - The byte range this layout covers
     /// * `tab_size` - Tab width for rendering
     pub fn ensure_layout(

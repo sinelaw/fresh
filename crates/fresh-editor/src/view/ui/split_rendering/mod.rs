@@ -275,7 +275,6 @@ impl SplitRenderer {
         view_mode: crate::state::ViewMode,
         compose_width: Option<u16>,
         compose_column_guides: Option<Vec<u16>>,
-        view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
         buffer_id: BufferId,
         session_mode: bool,
         rulers: &[usize],
@@ -309,7 +308,6 @@ impl SplitRenderer {
             view_mode,
             compose_width,
             compose_column_guides,
-            view_transform,
             buffer_id,
             /* hide_cursor */ true,
             session_mode,
@@ -325,7 +323,7 @@ impl SplitRenderer {
     }
 
     /// Public wrapper for building base tokens - used by render.rs for the
-    /// view_transform_request hook.
+    /// plugin hooks.
     pub fn build_base_tokens_for_hook(
         buffer: &mut Buffer,
         top_byte: usize,
@@ -479,7 +477,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             visible_count,
             false, // line wrap disabled for tests
@@ -588,7 +585,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             visible_count,
             false,
@@ -1265,7 +1261,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             viewport.visible_line_count(),
             false,
@@ -1307,7 +1302,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             viewport.visible_line_count(),
             false,
@@ -2055,7 +2049,6 @@ mod tests {
             let view_data = build_view_data(
                 state,
                 viewport,
-                None,
                 80,
                 viewport.visible_line_count(),
                 true,
@@ -3248,7 +3241,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             visible_count,
             false,

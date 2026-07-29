@@ -100,24 +100,8 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        // Get view_transform tokens from SplitViewState (if any)
-        let view_transform_tokens = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&target_split)
-            .and_then(|vs| vs.view_transform.as_ref())
-            .map(|vt| vt.tokens.clone());
-
         let tab_size = self.config().editor.tab_size;
-        self.scroll_split_by_lines(
-            buffer_id,
-            target_split,
-            delta,
-            view_transform_tokens,
-            tab_size,
-        );
+        self.scroll_split_by_lines(buffer_id, target_split, delta, tab_size);
 
         Ok(())
     }

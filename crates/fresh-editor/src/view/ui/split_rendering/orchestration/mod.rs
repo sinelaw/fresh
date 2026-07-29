@@ -510,7 +510,6 @@ pub(crate) fn render_content(
                 view_prefs.view_mode,
                 view_prefs.compose_width,
                 view_prefs.compose_column_guides,
-                view_prefs.view_transform,
                 buffer_id,
                 hide_cursor,
                 session_mode,
@@ -1249,7 +1248,6 @@ pub(crate) fn compute_content_layout(
             lsp_waiting,
             view_prefs.view_mode,
             view_prefs.compose_width,
-            view_prefs.view_transform,
             estimated_line_length,
             highlight_context_bytes,
             relative_line_numbers,
@@ -1278,7 +1276,7 @@ pub(crate) fn compute_content_layout(
     view_line_mappings
 }
 
-/// Public wrapper for building base tokens - used by render.rs for the view_transform_request hook
+/// Public wrapper for building base tokens.
 pub(crate) fn build_base_tokens_for_hook(
     buffer: &mut Buffer,
     top_byte: usize,

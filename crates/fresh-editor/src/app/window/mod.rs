@@ -1892,9 +1892,7 @@ impl Window {
     }
 
     /// Scroll `leaf_id`'s viewport by `delta` lines (negative = up,
-    /// positive = down). Honours `view_transform_tokens` when present
-    /// (uses view-aware scrolling) and falls back to buffer-based
-    /// `scroll_up` / `scroll_down`. After scrolling, skips
+    /// positive = down). After scrolling, skips
     /// ensure_visible and snaps the viewport top to a fold boundary
     /// if the new top byte landed inside a collapsed fold.
     /// `tab_size` is needed for view-line tokenization.
@@ -1903,7 +1901,6 @@ impl Window {
         buffer_id: BufferId,
         leaf_id: LeafId,
         delta: i32,
-        view_transform_tokens: Option<Vec<fresh_core::api::ViewTokenWire>>,
         tab_size: usize,
     ) {
         self.buffers
@@ -1914,14 +1911,7 @@ impl Window {
                 // row-space path needs only `&Buffer`.
                 let scroll_geometry = wrap_scroll_geometry(view_state, state);
                 let top_byte_before = view_state.viewport.top_byte();
-                if let Some(tokens) = view_transform_tokens {
-                    use crate::view::ui::view_pipeline::ViewLineIterator;
-                    let view_lines: Vec<_> =
-                        ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
-                    view_state
-                        .viewport
-                        .scroll_view_lines(&view_lines, delta as isize);
-                } else if let Some(geometry) = scroll_geometry {
+                if let Some(geometry) = scroll_geometry {
                     // Row arithmetic off the wrap index: no text is read, so a
                     // wheel event on a file that is one enormous line costs the
                     // same as on any other. The byte-walking fallback below only
@@ -3911,8 +3901,6 @@ impl Window {
         for split_id in splits_for_buffer {
             if let Some(view_state) = vs_map.get_mut(&split_id) {
                 view_state.invalidate_layout();
-                view_state.view_transform = None;
-                view_state.view_transform_stale = true;
             }
         }
     }
@@ -4032,23 +4020,12 @@ impl Window {
                 continue;
             };
 
-            let view_transform_tokens = vs_map
-                .get(&split_id)
-                .and_then(|vs| vs.view_transform.as_ref())
-                .map(|vt| vt.tokens.clone());
-
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
                     let buffer = &mut state.buffer;
-                    if let Some(tokens) = view_transform_tokens {
-                        let view_lines: Vec<_> =
-                            ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
-                        view_state
-                            .viewport
-                            .scroll_view_lines(&view_lines, line_offset);
-                    } else if line_offset > 0 {
+                    if line_offset > 0 {
                         view_state.viewport.scroll_down(
                             buffer,
                             &soft_breaks,

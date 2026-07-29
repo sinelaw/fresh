@@ -19,7 +19,6 @@ use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine, ViewLineIterator};
 use crate::view::viewport::Viewport;
-use fresh_core::api::ViewTransformPayload;
 
 /// markdown_compose's conceal namespace (`md-syntax`): the cell-separator /
 /// emphasis-marker conceals that turn raw `|`/`**` into the composed table. Only
@@ -179,7 +178,6 @@ fn base_char_budget(
 pub(super) fn build_view_data(
     state: &mut EditorState,
     viewport: &Viewport,
-    view_transform: Option<ViewTransformPayload>,
     estimated_line_length: usize,
     visible_count: usize,
     line_wrap_enabled: bool,
@@ -241,9 +239,7 @@ pub(super) fn build_view_data(
         anchor.is_some(),
     );
 
-    // Use plugin transform if available, otherwise use base tokens
-    let has_view_transform = view_transform.is_some();
-    let mut tokens = view_transform.map(|vt| vt.tokens).unwrap_or(base_tokens);
+    let mut tokens = base_tokens;
 
     // Apply soft breaks — marker-based line wrapping that survives edits
     // without flicker. Only apply in Compose mode; Source mode shows the raw
@@ -348,11 +344,7 @@ pub(super) fn build_view_data(
     // Convert tokens to display lines using the view pipeline.
     let is_binary = state.buffer.is_binary();
     let ansi_aware = !is_binary;
-    let at_buffer_end = if has_view_transform {
-        // View transforms supply their own token streams; the trailing
-        // empty line logic doesn't apply to them.
-        false
-    } else {
+    let at_buffer_end = {
         let max_source_offset = tokens
             .iter()
             .filter_map(|t| t.source_offset)
@@ -362,7 +354,7 @@ pub(super) fn build_view_data(
     };
     // Skip folded source ranges at the iterator level. Most folded content
     // is already absent from `tokens` (pre-skipped in `build_base_tokens`);
-    // this handles plugin view transforms whose token stream predates the
+    // this handles decoration-injected content whose stream predates the
     // skip.
     // `Beginning` claims the stream starts at a logical line, which the gutter
     // reads as "print this line's number". An anchored build starts at the

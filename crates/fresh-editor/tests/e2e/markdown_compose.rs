@@ -9,7 +9,7 @@ use std::path::PathBuf;
 ///
 ///   1. **before** – stable compose view (conceals active, soft-wrapped)
 ///   2. **mid-frame** – immediately after the buffer edit, before the plugin
-///      has responded with a fresh view_transform
+///      has responded with fresh decorations
 ///   3. **after** – once the plugin async response has been processed
 ///
 /// The assertion is strict: the *only* difference between frames in the content
@@ -191,7 +191,7 @@ fn test_compose_mode_typing_no_flicker() {
     assert!(
         continuation_rows >= 5,
         "Compose soft-wrapping should produce continuation rows (found {}).  \
-         Is the view_transform active?\n\
+         Is compose soft-wrapping active?\n\
          Content:\n{}",
         continuation_rows,
         before_content.join("\n"),
@@ -199,10 +199,8 @@ fn test_compose_mode_typing_no_flicker() {
 
     // ── Type a single character, then wait for the renderer to settle ──
     //
-    // Step 1: buffer edit. invalidate_layouts_for_buffer clears
-    // view_transform synchronously; the plugin sees lines_changed on
-    // its thread and asynchronously sends back a fresh
-    // SubmitViewTransform.
+    // Step 1: buffer edit. The plugin sees lines_changed on its thread
+    // and asynchronously refreshes its soft breaks and conceals.
     harness
         .editor_mut()
         .handle_key(KeyCode::Char('x'), KeyModifiers::NONE)
@@ -212,7 +210,7 @@ fn test_compose_mode_typing_no_flicker() {
     //
     // The previous version of this test captured a "mid-frame" with a
     // bare `harness.render()` immediately after the keypress. That
-    // bet on the plugin's `view_transform_request` reply arriving
+    // bet on the plugin's async reply arriving
     // inside the same render call (Editor::render drains pending
     // plugin commands non-blockingly partway through). On Linux the
     // QuickJS round-trip happens to land in time; on Windows the
