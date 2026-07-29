@@ -1158,6 +1158,41 @@ mod tests {
         assert!(viewport.top_view_line_offset > 0 || viewport.top_byte > 0);
     }
 
+    /// Wheel scrolling is arithmetic: it moves by whole rows, stays clamped,
+    /// and is reversible — the model's `scroll_by_rows`, and no text is read.
+    #[test]
+    fn scroll_visual_rows_is_arithmetic() {
+        use crate::view::viewport::Viewport;
+
+        let text = long_line(300);
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let index = built(&mut buffer, 20);
+        let total = index.total_rows() as usize;
+
+        let mut viewport = Viewport::new(20, 10);
+        viewport.line_wrap_enabled = true;
+        let height = viewport.visible_line_count();
+
+        let top_row = |vp: &Viewport| {
+            let line = buffer.get_line_number(vp.top_byte);
+            index.line_first_row(line) as usize + vp.top_view_line_offset
+        };
+
+        viewport.scroll_visual_rows(&index, &buffer, 7);
+        assert_eq!(top_row(&viewport), 7);
+        viewport.scroll_visual_rows(&index, &buffer, -7);
+        assert_eq!(top_row(&viewport), 0, "scrolling is reversible");
+
+        viewport.scroll_visual_rows(&index, &buffer, 10_000);
+        assert_eq!(
+            top_row(&viewport),
+            total.saturating_sub(height),
+            "clamped to the last full page"
+        );
+        viewport.scroll_visual_rows(&index, &buffer, -10_000);
+        assert_eq!(top_row(&viewport), 0);
+    }
+
     /// A line with no decorations is resumable at every row — the case the whole
     /// design exists for, where the renderer never has to walk back.
     #[test]
