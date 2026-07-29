@@ -152,6 +152,145 @@ def test_no_row_exceeds_the_width(rule_name: str, kinds: frozenset[str], view_mo
         assert row.visual_width <= limit, repr(row.text)
 
 
+# -- viewport placement ------------------------------------------------------
+#
+# `ensure_visible` and `recenter` are the operations the Rust has three
+# competing implementations of, and the disagreements between them were never
+# about wrapping — they were about *where the viewport lands*. So these run the
+# same placement contract over every configuration that changes row structure,
+# because a decoration that shifts rows is exactly what made two passes that
+# looked equivalent stop being equivalent.
+
+PLACEMENT_MARGINS = [0, 1, 3]
+PLACEMENT_HEIGHTS = [1, 2, 5, 8]
+
+
+def placement_probe_bytes(model: EditorModel) -> list[int]:
+    """A cursor byte on every row, plus the two ends of the buffer."""
+    probes = {0, len(model.buffer)}
+    for row in range(model.index.total_rows()):
+        addr = model.index.byte_of_row(row)
+        if not addr.is_virtual:
+            probes.add(addr.byte)
+    return sorted(probes)
+
+
+@pytest.mark.parametrize("margin", PLACEMENT_MARGINS)
+@pytest.mark.parametrize(("rule_name", "kinds", "view_mode"), MATRIX)
+def test_ensure_visible_is_minimal_and_idempotent(
+    rule_name: str, kinds: frozenset[str], view_mode: str, margin: int
+) -> None:
+    """The contract the Rust must satisfy, in every configuration.
+
+    Three claims, and the middle one is the one that has actually broken:
+
+    1. the cursor ends up visible;
+    2. no top strictly nearer the old one satisfies the margin — an overshoot
+       leaves the cursor outside the band it was moved into, and the *next*
+       press then finds nothing to do (fresh#1574's stall);
+    3. calling again moves nothing, so two passes both running it cannot
+       compound into a double scroll.
+    """
+    for height in PLACEMENT_HEIGHTS:
+        model = build(TEXT, rule_name, kinds, view_mode, height=height)
+        vp = model.viewport
+        for start_top in (0, 2, vp.max_top_row()):
+            for byte in placement_probe_bytes(model):
+                vp.set_top_row(start_top)
+                old = vp.top_row()
+                vp.ensure_visible(byte, margin)
+                new = vp.top_row()
+
+                assert vp.cursor_visible(byte)
+                for candidate in range(min(old, new), max(old, new)):
+                    nearer = candidate if new > old else candidate + 1
+                    assert not vp.satisfies_margin(nearer, byte, margin), (
+                        f"{rule_name}/{view_mode} h={height} m={margin}: top {nearer} "
+                        f"already satisfied the margin; {old}->{new} overshot"
+                    )
+
+                assert not vp.ensure_visible(byte, margin)
+                assert vp.top_row() == new
+
+
+@pytest.mark.parametrize("margin", PLACEMENT_MARGINS)
+@pytest.mark.parametrize(("rule_name", "kinds", "view_mode"), MATRIX)
+def test_ensure_visible_misses_the_margin_only_when_unreachable(
+    rule_name: str, kinds: frozenset[str], view_mode: str, margin: int
+) -> None:
+    """Margin unmet only when no top in range would have met it.
+
+    Distinguishing "clamped at the document edge" from "scrolled too little"
+    matters because they demand opposite responses, and a caller that cannot
+    tell them apart adds a second scroll to fix the first — which is how the
+    layout pass and the row pass ended up fighting.
+    """
+    for height in PLACEMENT_HEIGHTS:
+        model = build(TEXT, rule_name, kinds, view_mode, height=height)
+        vp = model.viewport
+        for byte in placement_probe_bytes(model):
+            vp.ensure_visible(byte, margin)
+            if vp.satisfies_margin(vp.top_row(), byte, margin):
+                continue
+            assert not any(
+                vp.satisfies_margin(t, byte, margin) for t in range(vp.max_top_row() + 1)
+            ), f"{rule_name}/{view_mode} h={height} m={margin}: a reachable top did satisfy it"
+
+
+@pytest.mark.parametrize(("rule_name", "kinds", "view_mode"), MATRIX)
+def test_recenter_centres_or_clamps(rule_name: str, kinds: frozenset[str], view_mode: str) -> None:
+    """Centred, or clamped to an end — and never anywhere else.
+
+    Recenter is `ensure_visible` against a different target row. Giving it its
+    own scroll path is how `Action::Recenter` drifted from ordinary scrolling in
+    the first place, so the matrix pins them to the same arithmetic.
+    """
+    for height in PLACEMENT_HEIGHTS:
+        model = build(TEXT, rule_name, kinds, view_mode, height=height)
+        vp = model.viewport
+        for byte in placement_probe_bytes(model):
+            vp.recenter(byte)
+            ideal = model.index.row_of_byte(byte) - (height - 1) // 2
+            assert vp.top_row() == max(0, min(ideal, vp.max_top_row()))
+            assert vp.cursor_visible(byte)
+
+
+@pytest.mark.parametrize(("rule_name", "kinds", "view_mode"), MATRIX)
+def test_recenter_survives_the_visibility_pass(
+    rule_name: str, kinds: frozenset[str], view_mode: str
+) -> None:
+    """The frame's own pass must not undo what the user just asked for."""
+    for height in (3, 5, 8):
+        model = build(TEXT, rule_name, kinds, view_mode, height=height)
+        vp = model.viewport
+        for byte in placement_probe_bytes(model):
+            vp.recenter(byte)
+            centred = vp.top_row()
+            assert not vp.ensure_visible(byte, margin=(height - 1) // 2)
+            assert vp.top_row() == centred
+
+
+@pytest.mark.parametrize(("rule_name", "kinds", "view_mode"), MATRIX)
+def test_placement_reads_no_text(rule_name: str, kinds: frozenset[str], view_mode: str) -> None:
+    """Deciding where to scroll builds no rows and reads no bytes.
+
+    The property that collapses the frame's build-scroll-rebuild cycle: if
+    placement needed materialised rows it would have to build them first, which
+    is the O(scroll depth) cost the whole design exists to remove.
+    """
+    from wrap_model.metrics import measure
+
+    model = build(TEXT, rule_name, kinds, view_mode, height=5)
+    model.index.ensure_built()
+    probes = placement_probe_bytes(model)
+    with measure() as m:
+        for byte in probes:
+            model.viewport.ensure_visible(byte, margin=2)
+            model.viewport.recenter(byte)
+    assert m.rows_materialized == 0
+    assert m.line_builds == 0
+
+
 # -- multi-line documents ----------------------------------------------------
 
 

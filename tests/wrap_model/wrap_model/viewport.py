@@ -102,24 +102,85 @@ class Viewport:
 
     # -- cursor visibility ---------------------------------------------------
 
-    def ensure_visible(self, cursor_byte: int, margin: int = 0) -> bool:
-        """Scroll the minimum amount to bring the cursor's row into view.
+    def effective_margin(self, margin: int) -> int:
+        """`margin` clamped so the safe band cannot close.
 
-        Runs in row space *before* anything is built, which is what collapses
+        With `height` rows and a margin at each end the band is
+        `height - 2*margin` rows wide, so a margin of `height // 2` or more
+        leaves nothing to be inside and both edge tests fire at once. Callers
+        pass a configured preference (`scroll_offset`); this is what it means.
+        """
+        return max(0, min(margin, (self.height - 1) // 2))
+
+    def satisfies_margin(self, top: int, cursor_byte: int, margin: int = 0) -> bool:
+        """Would the cursor sit outside both margin bands with the view at `top`?
+
+        The predicate `ensure_visible` establishes, factored out because the
+        minimality property is stated in terms of it.
+        """
+        m = self.effective_margin(margin)
+        row = self.index.row_of_byte(cursor_byte)
+        return top + m <= row <= top + self.height - 1 - m
+
+    def ensure_visible(self, cursor_byte: int, margin: int = 0) -> bool:
+        """Scroll the *minimum* number of rows to satisfy the margin.
+
+        Runs in row space before anything is built, which is what collapses
         `compute_buffer_layout`'s up-to-three `build_view_data` calls per frame
         to one: the old code had to build rows to find out whether it needed to
         scroll, then rebuild because it had.
+
+        Minimum is a real claim, and the one the Rust got wrong twice: no top
+        strictly between the old one and the new one satisfies the margin.
+        Equivalently, the cursor ends up *on* the margin band's edge, never
+        past it — a pass that overshoots leaves the cursor outside the band it
+        just moved it into, and then the next key press finds nothing to do
+        (fresh#1574). Returns whether the viewport moved.
+
+        Two ways this legitimately ends with the margin *unsatisfied*, both
+        clamping rather than exceptions:
+
+        * Near the document's start or end there may be no top that satisfies
+          it — the first row cannot have three rows above it. The cursor is
+          still visible; it just sits closer to the edge than the margin asks.
+        * A document shorter than the viewport pins `top` at 0.
+
+        So the postcondition is `cursor_visible`, plus `satisfies_margin`
+        whenever any reachable top would have.
+        """
+        m = self.effective_margin(margin)
+        row = self.index.row_of_byte(cursor_byte)
+        top = self.top_row()
+        if row < top + m:
+            target = row - m
+        elif row > top + self.height - 1 - m:
+            target = row - self.height + 1 + m
+        else:
+            return False
+        self.set_top_row(target)
+        return self.top_row() != top
+
+    def recenter(self, cursor_byte: int) -> bool:
+        """Put the cursor's row in the middle of the viewport (Ctrl+L).
+
+        Unlike `ensure_visible` this is unconditional and *maximal*: the user
+        asked for the cursor to be centred, so it moves even when the cursor is
+        already comfortably visible. The two are otherwise the same operation
+        against a different target row, which is why they belong side by side —
+        `Action::Recenter` reaching for its own scroll path is how the two
+        drifted apart before.
+
+        The centre is `(height - 1) // 2` rows down: the upper of the two middle
+        rows on an even height, so a 2-row viewport centres on its first row
+        rather than scrolling the cursor to the bottom.
+
+        Clamped like every other scroll, so near the document's ends the cursor
+        lands off-centre rather than the view scrolling past the edge.
         """
         row = self.index.row_of_byte(cursor_byte)
         top = self.top_row()
-        bottom = top + self.height - 1
-        if row < top + margin:
-            self.set_top_row(row - margin)
-            return True
-        if row > bottom - margin:
-            self.set_top_row(row - self.height + 1 + margin)
-            return True
-        return False
+        self.set_top_row(row - (self.height - 1) // 2)
+        return self.top_row() != top
 
     def cursor_visible(self, cursor_byte: int) -> bool:
         row = self.index.row_of_byte(cursor_byte)
