@@ -318,7 +318,7 @@ impl Editor {
         for window in self.windows.values_mut() {
             for state in window.buffers.as_map_mut().values_mut() {
                 state.line_wrap_cache.clear();
-                state.visual_row_index.clear();
+                state.wrap_indices.clear();
             }
 
             if let Some((_, view_states)) = window.buffers.splits_mut() {

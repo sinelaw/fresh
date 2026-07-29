@@ -46,8 +46,6 @@ pub mod ui;
 pub mod viewport;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod virtual_text;
-#[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod visual_row_index;
 
 /// Byte <-> visual row, repaired rather than invalidated.
 pub mod wrap_index;
