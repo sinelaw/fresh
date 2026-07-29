@@ -89,6 +89,55 @@ around it). Rewriting a characterization test is legitimate when the thing it
 characterizes is deliberately removed — but say so in the commit, and check each
 one against what the model says the answer should be.
 
+## Progress
+
+| step | state |
+|---|---|
+| Model `ensure_visible` minimality + `recenter`, property + 160-cell matrix | done — `e9794ce` |
+| C1 — `splice_inline_virtual_text` made pure (`resolve_inline_hints`) | done — `d5aa3f8` |
+| C2 — index runs the decoration chain | next |
+| C3 — index models folds | |
+| A — `ViewAnchor` | |
+| B — one placement pass | |
+| D — delete the shadow pipelines | |
+
+### C2, concretely
+
+`WrapIndex::build_line` currently does `build_line_tokens` → `WrapMachine::run`.
+It must do what `wrap_model/wrap_index.py::_line_token_stream` does:
+
+```
+line_tokens → apply_soft_breaks → apply_conceal_ranges
+            → splice_inline_virtual_text → WrapMachine::run
+```
+
+All three transforms are now pure, so the only question is how the decorations
+reach a build that holds `&mut Buffer`. Snapshot them into plain data before the
+borrow — extending the pattern `ensure_built`'s `virtual_rows` closure already
+sets — rather than handing the index a `&EditorState`:
+
+* soft breaks: `SoftBreakManager::query_viewport` over the whole buffer, with an
+  empty cursor list. Cursor-blind is not an approximation here, it is the
+  convention the index is already keyed on: scroll math must not change because
+  a cursor moved, and `pipeline_inputs_version` deliberately does not include
+  cursor position.
+* conceals: `query_viewport_excluding`, same, with the `md-syntax` namespace
+  excluded outside compose — the geometry already carries `view_mode`, so this
+  is decidable at build time.
+* inline hints: `resolve_inline_hints(state, None, ..)` — `None` theme, since
+  the index measures and never draws.
+
+Then delete `wrap_index_models_layout` and the compose carve-out in
+`wrap_scroll_geometry`.
+
+Watch: repair. `WrapIndex::repair` resyncs on unmodified text past every
+decoration in the line, and the decoration list is currently consulted only for
+that floor. Once decorations are *in* the built rows, an edit that moves a
+decoration has to damage the line even when the text either side is unchanged —
+`pipeline_inputs_version` already forces a full rebuild on any manager version
+bump, so the repair path only needs to stay correct for pure-text edits, but
+confirm that rather than assume it.
+
 ## Phase C — the index models what is drawn
 
 `WrapIndex::build_line` currently runs `build_line_tokens` → `WrapMachine`. It
