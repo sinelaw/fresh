@@ -4268,10 +4268,7 @@ fn wrap_scroll_geometry(
     view_state: &crate::view::split::SplitViewState,
     state: &crate::state::EditorState,
 ) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
-    if !view_state.viewport.line_wrap_enabled
-        || state.wrap_indices.is_empty()
-        || !state.wrap_index_models_layout()
-    {
+    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
         return None;
     }
     let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(

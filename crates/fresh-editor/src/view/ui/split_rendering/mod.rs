@@ -2043,6 +2043,7 @@ mod tests {
             0,
             crate::model::buffer::LineEnding::LF,
             &|_, _| 0,
+            &Default::default(),
         );
 
         let build = |state: &mut EditorState,

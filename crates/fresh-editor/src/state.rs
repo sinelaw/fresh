@@ -580,23 +580,57 @@ impl EditorState {
         ))
     }
 
-    /// Whether [`Self::wrap_indices`] is a faithful model of the rows that will
-    /// be drawn — the precondition for treating it as the authority on scroll
-    /// position or as a build anchor.
+    /// Snapshot the decorations that move row boundaries, for a wrap-index
+    /// build.
     ///
-    /// The index derives a line's rows from that line's own bytes and the
-    /// geometry, and from nothing else. Three plugin decorations move row
-    /// boundaries without changing either: soft breaks (markdown_compose wraps
-    /// each paragraph to its own, narrower width), conceals (hidden spans make
-    /// rows hold more), and inline virtual text (spliced in before wrapping).
-    /// With any of them live the index still answers, but its rows are not the
-    /// drawn rows, and the answers are wrong in the direction that matters —
-    /// too few rows, so scrolling clamps before the end of the buffer.
+    /// Owned data, resolved before the build takes `&mut Buffer` — the build
+    /// cannot hold a `&EditorState` alongside that. Queried over the whole
+    /// buffer, since the index covers every line, and with **no cursors**:
+    /// cursor-dependent activation is the renderer's business, and letting it
+    /// reach the index would mean scroll position changed when a cursor moved.
     ///
-    /// Virtual *lines* are not in this list: they are whole extra rows, and the
-    /// index counts them through the callback `ensure_built` takes.
-    pub fn wrap_index_models_layout(&self) -> bool {
-        self.soft_breaks.is_empty() && self.conceals.is_empty() && self.virtual_texts.is_empty()
+    /// `view_mode` decides the one namespace that is mode-specific:
+    /// markdown_compose's `md-syntax` conceals are emitted whenever any split
+    /// composes the buffer, so a Source-mode split must ignore them — the same
+    /// gate `build_view_data` applies.
+    pub fn index_decorations(
+        &self,
+        view_mode: crate::view::line_wrap_cache::CacheViewMode,
+    ) -> crate::view::wrap_index::IndexDecorations {
+        use crate::view::line_wrap_cache::CacheViewMode;
+        let end = self.buffer.len().saturating_add(1);
+        let no_cursors: [usize; 0] = [];
+
+        let soft_breaks = if self.soft_breaks.is_empty() {
+            Vec::new()
+        } else {
+            self.soft_breaks
+                .query_viewport(0, end, &self.marker_list, &no_cursors)
+        };
+
+        let conceals = if self.conceals.is_empty() {
+            Vec::new()
+        } else {
+            let exclude = (!matches!(view_mode, CacheViewMode::Compose))
+                .then(|| fresh_core::overlay::OverlayNamespace::from_string("md-syntax".into()));
+            self.conceals
+                .query_viewport_excluding(0, end, &self.marker_list, exclude.as_ref(), &no_cursors)
+                .into_iter()
+                .map(|(r, t)| (r, t.map(str::to_owned)))
+                .collect()
+        };
+
+        let inline_hints = if self.virtual_texts.is_empty() {
+            Vec::new()
+        } else {
+            crate::view::ui::split_rendering::transforms::resolve_inline_hints(self, None, 0, end)
+        };
+
+        crate::view::wrap_index::IndexDecorations {
+            soft_breaks,
+            conceals,
+            inline_hints,
+        }
     }
 
     /// Handle an Insert event - adjusts markers, buffer, highlighter, cursors, and line numbers

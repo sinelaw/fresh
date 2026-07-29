@@ -218,11 +218,7 @@ pub(crate) fn compute_buffer_layout(
     // it — after which the next key press finds nothing to do and scrolling
     // stalls (fresh#1574's up-arrow invariant).
     let mut rows_settled = false;
-    if view_transform.is_none()
-        && !state.wrap_indices.is_empty()
-        && folds.is_empty()
-        && state.wrap_index_models_layout()
-    {
+    if view_transform.is_none() && !state.wrap_indices.is_empty() && folds.is_empty() {
         let geometry = wrap_index_geometry_for(viewport, &state.buffer, line_wrap, &view_mode);
         let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
             state.buffer.version(),
