@@ -22,6 +22,7 @@ pathological scope can't cost more than a couple of viewports.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .base_tokens import LineEnding, build_base_tokens
@@ -56,15 +57,19 @@ class Frame:
 
 
 @dataclass(slots=True)
-class PluginViewTransform:
-    """A plugin that replaces the token stream wholesale.
+class LazyDecoration:
+    """One decoration a plugin will add after its line has been drawn.
 
-    Such a stream has no relationship to source bytes, so it bypasses the index
-    entirely — exactly as today. The viewport keeps absolute-offset semantics for
-    that split and the scrollbar falls back to approximate mode.
+    Models the `lines_changed` contract markdown compose is built on: the hook
+    is fire-and-forget and viewport-driven, so a line's soft breaks, conceals
+    and virtual lines exist only after the editor has rendered that line and
+    the plugin's round-trip has come back. Until then the canonical index
+    counts the line undecorated — and anything placed against those counts is
+    placed against rows that are about to change.
     """
 
-    tokens: list[Token]
+    line: int
+    apply: Callable[[Decorations], None]
 
 
 class EditorModel:
@@ -96,7 +101,9 @@ class EditorModel:
         # owns no byte.
         self.viewport.set_top_row(0)
         self.cursors: tuple[int, ...] = (0,)
-        self.view_transform: PluginViewTransform | None = None
+        # -- lazy decoration arrival (the lines_changed model) ---------------
+        self.lazy_decorations: list[LazyDecoration] = []
+        self._lines_seen: set[int] = set()
 
     # -- editing -------------------------------------------------------------
 
@@ -152,6 +159,23 @@ class EditorModel:
             tokens = splice_inline_virtual_text(tokens, hints)
         return tokens
 
+    def pump_lines_changed(self) -> int:
+        """Deliver pending decorations for every line a frame has shown.
+
+        One call is one plugin round-trip. Returns how many decorations
+        arrived; each arrival bumps the owning version, so the index sees the
+        change exactly the way the Rust's `damage_all` does. Placement is NOT
+        re-run here — that is the point. The caller decides when to re-place,
+        because that is the decision the editor has to get right.
+        """
+        ready = [d for d in self.lazy_decorations if d.line in self._lines_seen]
+        if not ready:
+            return 0
+        self.lazy_decorations = [d for d in self.lazy_decorations if d.line not in self._lines_seen]
+        for d in ready:
+            d.apply(self.decorations)
+        return len(ready)
+
     def _stable_anchor(self, anchor: ViewAnchor) -> tuple[ViewAnchor, int]:
         """Back the anchor up out of an active cursor scope; return rows to skip.
 
@@ -186,23 +210,6 @@ class EditorModel:
         """Build exactly the rows the viewport shows."""
         height = self.viewport.height
         top_row = self.viewport.top_row()
-
-        if self.view_transform is not None:
-            wrapped = WrapMachine.run(self.view_transform.tokens, self.geometry.rule)
-            rows = rows_from_tokens(wrapped.tokens, tabs=self.geometry.rule.tabs)
-            window = rows[top_row : top_row + height]
-            return Frame(
-                rows=window,
-                top_row=top_row,
-                scrollbar=ScrollbarState(
-                    total_rows=max(len(rows), 1),
-                    top_row=top_row,
-                    height=height,
-                    exact=False,
-                ),
-                anchor=self.viewport.anchor,
-                rows_built=len(rows),
-            )
 
         anchor, skip = self._stable_anchor(self.viewport.anchor)
         # Back up to a row the wrap machine can actually resume at. Zero-cost on
@@ -258,6 +265,10 @@ class EditorModel:
         start = max(skip + leading_virtual + self.viewport.anchor.row_offset, 0)
         window = rows[start:][:height]
 
+        for row in window:
+            for b in row.char_source_bytes:
+                if b is not None:
+                    self._lines_seen.add(self.buffer.get_line_number(b))
         return Frame(
             rows=window,
             top_row=top_row,
@@ -321,7 +332,7 @@ def _virtual_row(v: VirtualLine) -> ViewLine:
 __all__ = [
     "EditorModel",
     "Frame",
-    "PluginViewTransform",
+    "LazyDecoration",
     "ViewAnchor",
     "Viewport",
     "WrapGeometry",

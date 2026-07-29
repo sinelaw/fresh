@@ -367,6 +367,41 @@ def test_cursor_inside_a_scope_reveals_it(kinds: frozenset[str]) -> None:
     assert revealed
 
 
+@pytest.mark.parametrize("kinds", CURSOR_KINDS)
+@pytest.mark.parametrize("rule_name", ["wrap", "wrap+indent"])
+def test_placement_shows_the_cursor_the_renderer_draws(
+    rule_name: str, kinds: frozenset[str]
+) -> None:
+    """Placement is canonical; the frame is cursor-aware; the user sees the frame.
+
+    The two activation tests above pin that the index is undamaged and that
+    revealing changes the drawn text. Neither says where the cursor *lands*, and
+    that is the property that actually broke in the Rust (fresh#1574's stall
+    variant): placement computed a canonically-correct top, the cursor's line
+    rendered revealed with a different row count, and the cursor sat rows below
+    the margin on screen. So: after ensure_visible, the rendered window must
+    contain the cursor's byte — in every activation configuration, at every
+    probe, for the frame the user is actually shown.
+    """
+    for height in (2, 4, 7):
+        for margin in (0, 1, 2):
+            model = build(TEXT, rule_name, kinds, "compose", height=height)
+            for byte in placement_probe_bytes(model):
+                if byte >= len(model.buffer):
+                    continue  # EOF owns no cell
+                model.cursors = (byte,)
+                model.viewport.ensure_visible(byte, margin)
+                shown = {
+                    b
+                    for row in model.render().rows
+                    for b in row.char_source_bytes
+                    if b is not None
+                }
+                assert byte in shown, (
+                    f"h={height} m={margin} cursor byte {byte} not in rendered window"
+                )
+
+
 # -- folds -------------------------------------------------------------------
 
 
