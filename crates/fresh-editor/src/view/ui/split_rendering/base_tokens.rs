@@ -504,3 +504,51 @@ mod tests {
         }
     }
 }
+
+/// Base tokens for exactly one logical line, without its terminating newline.
+///
+/// This is what feeds [`crate::view::wrap_index::WrapIndex`]. It goes through
+/// the same tokenizer the renderer uses rather than wrapping raw line text in a
+/// synthetic `Text` token: the count-only helpers that did the latter never
+/// produced `Space` tokens, so the space-overflow back-up (issue #1363) could
+/// not fire in them and their row counts could disagree with what was drawn.
+pub(crate) fn build_line_tokens(
+    buffer: &mut Buffer,
+    line: usize,
+    line_ending: LineEnding,
+) -> Vec<ViewTokenWire> {
+    use crate::primitives::line_iterator::MAX_LINE_BYTES;
+
+    let line_start = buffer.line_start_offset(line).unwrap_or(0);
+    let buffer_len = buffer.len();
+    let line_end = buffer
+        .line_start_offset(line + 1)
+        .unwrap_or(buffer_len)
+        .min(buffer_len);
+    let estimated = buffer.estimated_line_length().max(1);
+
+    // A line longer than `MAX_LINE_BYTES` is yielded in pieces, and each piece
+    // counts as a "line" against the read budget — so ask for enough of them to
+    // cover this one.
+    let pieces = line_end.saturating_sub(line_start) / MAX_LINE_BYTES + 1;
+    let mut tokens = build_base_tokens(
+        buffer,
+        line_start,
+        estimated,
+        pieces,
+        false,
+        line_ending,
+        &[],
+        None,
+    );
+    // The read runs past the line end; keep only this line, and drop its
+    // terminator — a newline belongs to the line break, not to a row.
+    tokens.retain(|t| t.source_offset.is_none_or(|o| o < line_end));
+    while matches!(
+        tokens.last().map(|t| &t.kind),
+        Some(ViewTokenWireKind::Newline)
+    ) {
+        tokens.pop();
+    }
+    tokens
+}
