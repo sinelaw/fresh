@@ -12,9 +12,8 @@ from conftest import single_long_line, texts, word_texts
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from wrap_model.editor import EditorModel, PluginViewTransform
+from wrap_model.editor import EditorModel
 from wrap_model.row_layout import LineStart
-from wrap_model.tokens import Token
 from wrap_model.wrap_machine import WrapRule
 
 SETTINGS = settings(max_examples=120, suppress_health_check=[HealthCheck.too_slow], deadline=None)
@@ -287,23 +286,6 @@ def test_scrollbar_tracks_scrolling() -> None:
     model.viewport.scroll_by_rows(10_000)
     bottom_thumb = model.viewport.scrollbar().thumb()
     assert bottom_thumb[0] > top_thumb[0]
-
-
-def test_plugin_view_transform_bypasses_the_index() -> None:
-    """A plugin stream has no source bytes, so it keeps absolute-offset semantics."""
-    model = EditorModel("ignored source", rule=WrapRule.word(20), height=2)
-    model.view_transform = PluginViewTransform(
-        tokens=[
-            Token.text_tok("alpha", None),
-            Token.newline(None),
-            Token.text_tok("beta", None),
-            Token.newline(None),
-            Token.text_tok("gamma", None),
-        ]
-    )
-    frame = model.render()
-    assert [r.text for r in frame.rows] == ["alpha", "beta"]
-    assert not frame.scrollbar.exact
 
 
 def test_editing_does_not_move_the_viewport() -> None:

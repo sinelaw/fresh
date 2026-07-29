@@ -28,7 +28,7 @@ from .decorations import (
     VirtualLine,
     VirtualLinePos,
 )
-from .editor import EditorModel, Frame, PluginViewTransform
+from .editor import EditorModel, Frame, LazyDecoration
 from .row_layout import LineStart, ViewLine
 from .tokens import Kind, Token
 from .viewport import ScrollbarState, ViewAnchor, Viewport
@@ -45,10 +45,10 @@ __all__ = [
     "Frame",
     "InlineVirtualText",
     "Kind",
+    "LazyDecoration",
     "LineIterator",
     "LineStart",
     "LineWrap",
-    "PluginViewTransform",
     "RowAddr",
     "RowCarry",
     "RuleKind",
