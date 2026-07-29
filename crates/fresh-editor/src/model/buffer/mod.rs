@@ -3215,6 +3215,18 @@ impl TextBuffer {
         LineIterator::new(self, byte_pos, estimated_line_length)
     }
 
+    /// Iterate forward from exactly `byte_pos`, with no backward scan.
+    ///
+    /// See [`LineIterator::from_mid_line`]: the caller must have obtained
+    /// `byte_pos` from the wrap index, so it is known to be a visual-row start.
+    pub fn line_iterator_from_mid_line(
+        &mut self,
+        byte_pos: usize,
+        estimated_line_length: usize,
+    ) -> LineIterator<'_> {
+        LineIterator::from_mid_line(self, byte_pos, estimated_line_length)
+    }
+
     /// Iterate over lines starting from a given byte offset, with line numbers
     ///
     /// This is a more efficient alternative to using line_iterator() + offset_to_position()
