@@ -205,6 +205,22 @@ impl<'a> ViewLineIterator<'a> {
         self
     }
 
+    /// Declare how the first emitted line begins.
+    ///
+    /// `LineStart::Beginning` — the default — means "no preceding token", which
+    /// for the gutter reads as "start of a logical line, print its number". That
+    /// is only true when the token stream starts at one. An anchored build
+    /// starts at the viewport's own row, which on a wrapped line is a
+    /// continuation: without this the first drawn row of a scrolled-into long
+    /// line gets a line number that the same row does not have when reached by
+    /// scrolling one row at a time.
+    ///
+    /// The caller knows because `RowCarry.on_continuation` says so.
+    pub fn starting_at(mut self, line_start: LineStart) -> Self {
+        self.next_line_start = line_start;
+        self
+    }
+
     /// Expand a tab to spaces based on current column and configured tab_size
     #[inline]
     fn tab_expansion_width(&self, col: usize) -> usize {

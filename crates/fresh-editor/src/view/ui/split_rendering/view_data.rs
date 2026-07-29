@@ -16,7 +16,7 @@ use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
-use crate::view::ui::view_pipeline::{ViewLine, ViewLineIterator};
+use crate::view::ui::view_pipeline::{LineStart, ViewLine, ViewLineIterator};
 use crate::view::viewport::Viewport;
 use fresh_core::api::ViewTransformPayload;
 
@@ -361,6 +361,14 @@ pub(super) fn build_view_data(
     // is already absent from `tokens` (pre-skipped in `build_base_tokens`);
     // this handles plugin view transforms whose token stream predates the
     // skip.
+    // `Beginning` claims the stream starts at a logical line, which the gutter
+    // reads as "print this line's number". An anchored build starts at the
+    // viewport's own row instead, and on a wrapped line that row is a
+    // continuation — the anchor's carry is what knows the difference.
+    let first_line_start = match anchor {
+        Some(a) if a.carry.on_continuation => LineStart::AfterBreak,
+        _ => LineStart::Beginning,
+    };
     let source_lines: Vec<ViewLine> = ViewLineIterator::new(
         &tokens,
         is_binary,
@@ -368,6 +376,7 @@ pub(super) fn build_view_data(
         state.buffer_settings.tab_size,
         at_buffer_end,
     )
+    .starting_at(first_line_start)
     .with_fold_skip(&fold_skip)
     .collect();
 

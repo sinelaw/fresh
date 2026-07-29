@@ -83,6 +83,15 @@ pub struct RowAddr {
     pub row: u32,
     pub byte: usize,
     pub line: usize,
+    /// Drawn rows between the line's first row and this one — what
+    /// `Viewport::top_view_line_offset` means, and every consumer stores it
+    /// there.
+    ///
+    /// Counts the line's virtual rows, so `line_first_row(line) + row_in_line`
+    /// reconstructs `row` exactly. Using the wrap-segment index here instead
+    /// silently drops `virtual_rows`, and the reconstruction lands that many
+    /// rows above where it started — a round trip that loses rows every time
+    /// the viewport is re-derived from the pair.
     pub row_in_line: usize,
     pub carry: RowCarry,
     pub is_virtual: bool,
@@ -262,7 +271,7 @@ impl WrapIndex {
                 row,
                 byte: line_start,
                 line,
-                row_in_line: 0,
+                row_in_line: row_in_line as usize,
                 carry: RowCarry::default(),
                 is_virtual: true,
             };
@@ -272,7 +281,8 @@ impl WrapIndex {
             row,
             byte: line_start + lw.row_starts[idx] as usize,
             line,
-            row_in_line: idx,
+            // Drawn-row offset, not `idx`: the virtual rows above are drawn too.
+            row_in_line: idx + lw.virtual_rows as usize,
             carry: lw.carries[idx],
             is_virtual: false,
         }

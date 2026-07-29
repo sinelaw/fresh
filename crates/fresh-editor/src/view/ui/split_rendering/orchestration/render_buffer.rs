@@ -201,8 +201,28 @@ pub(crate) fn compute_buffer_layout(
     //
     // Only when the index is already built for this geometry: building it here
     // would trade one O(buffer) pass for another.
+    //
+    // Not when a fold is collapsed. The index maps bytes to rows as if nothing
+    // were hidden — it has no fold model — so with a fold active its row numbers
+    // are not the rows being drawn. Deciding the scroll from them puts the
+    // cursor in the wrong place, and because an anchored build also switches
+    // off the layout pass's vertical phases, nothing downstream can correct it.
     let mut build_anchor: Option<BuildAnchor> = None;
-    if view_transform.is_none() && !state.wrap_indices.is_empty() {
+    // Whether the row-space pass ran — which is what decides who owns vertical
+    // placement, and is *not* the same question as whether an anchor resolved.
+    // The pass lands on a logical line start often enough (it is where a scroll
+    // up naturally stops), and there `top_view_line_offset` is 0, so no anchor
+    // is needed. Reading that as "the row pass did not run" lets the layout pass
+    // apply the margin a second time on top of a viewport that already
+    // satisfies it, over-scrolling by the margin and leaving the cursor outside
+    // it — after which the next key press finds nothing to do and scrolling
+    // stalls (fresh#1574's up-arrow invariant).
+    let mut rows_settled = false;
+    if view_transform.is_none()
+        && !state.wrap_indices.is_empty()
+        && folds.is_empty()
+        && state.wrap_index_models_layout()
+    {
         let geometry = wrap_index_geometry_for(viewport, &state.buffer, line_wrap, &view_mode);
         let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
             state.buffer.version(),
@@ -218,6 +238,7 @@ pub(crate) fn compute_buffer_layout(
         if ready {
             if let Some(index) = state.wrap_indices.get(&geometry) {
                 viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
+                rows_settled = true;
             }
             // Resolve the anchor *after* the scroll decision, so the build
             // starts where the frame will actually draw.
@@ -286,12 +307,8 @@ pub(crate) fn compute_buffer_layout(
     // Ensure cursor is visible using Layout-aware check (handles virtual lines)
     let primary = *cursors.primary();
     let top_byte_before_scroll = viewport.top_byte;
-    let scrolled = viewport.ensure_visible_in_layout(
-        &view_data.lines,
-        &primary,
-        gutter_width,
-        build_anchor.is_some(),
-    );
+    let scrolled =
+        viewport.ensure_visible_in_layout(&view_data.lines, &primary, gutter_width, rows_settled);
 
     // If we scrolled AND `top_byte` changed, rebuild view_data from the new
     // top_byte (the old view_data no longer matches what's visible).  We

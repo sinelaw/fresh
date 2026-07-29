@@ -161,6 +161,47 @@ by construction (the anchored build skips every phase that reads the offset as
 an index). Phase 4 deletes `LineWrapCache` once `materialize_rows` replaces its
 readers.
 
+### When the index may be believed (learned the hard way)
+
+The index derives a line's rows from that line's own bytes and the geometry, and
+from nothing else. Four things change the drawn rows without changing either, so
+with any of them live the index still answers and the answer is not the screen:
+
+| | why the rows move | guard |
+|---|---|---|
+| collapsed folds | rows are hidden | `folds.is_empty()` in `compute_buffer_layout` |
+| soft breaks | markdown_compose wraps each paragraph to its own narrower width | `EditorState::wrap_index_models_layout` |
+| conceals | hidden spans let rows hold more | same |
+| inline virtual text | spliced in before wrapping | same |
+
+Virtual *lines* are fine — whole extra rows, counted through the callback
+`ensure_built` takes.
+
+Every failure was in the same direction: too few rows, so scrolling clamps
+before the end of the buffer. Both scroll authorities — the wheel path's
+`wrap_scroll_geometry` and the render path's anchor gate — check this before
+using the index. `VisualRowIndex` had soft-break awareness (it ran
+`count_visual_rows_for_text_with_soft_breaks` per line); the replacement does
+not, and until it does, compose mode uses the byte-walking path it always used.
+
+### Two authorities, one margin
+
+`ensure_visible_in_rows` and `ensure_visible_in_layout` both place the viewport
+against the scroll margin, so exactly one may run per frame. The flag that
+decides is `rows_settled` — *did the row-space pass run* — and not, as it first
+was, "was an anchor resolved". Those come apart precisely when the row pass
+lands on a logical line start, which is where a scroll up naturally stops:
+`top_view_line_offset` is 0, no anchor is needed, and reading that as "the row
+pass didn't run" let the layout pass apply the margin a second time. The cursor
+ends up *outside* the margin it was just centred in, and every later press finds
+nothing to do (fresh#1574's up-arrow invariant).
+
+The row pass also has to reproduce `fine_tune_scroll_up`: while
+`scrolled_up_in_wrap` is set the cursor is pinned *at* the margin, not merely
+kept out of it. Without that, the coarser pre-render pass leaves the cursor a
+row further down than the margin asks, neither margin test fires, and scrolling
+stalls mid-buffer for the same reason.
+
 ### Ownership shape (settled)
 
 `EditorState` holds a **`WrapIndexSet`**, not one index. Row structure depends
