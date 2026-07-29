@@ -2982,3 +2982,23 @@ mod boundary_overlap {
         assert!(matches.len() <= 1);
     }
 }
+
+/// The LSP converter reads only the prefix before the cursor, and gets the
+/// UTF-16 column right for multi-byte and astral characters.
+#[test]
+fn position_to_lsp_position_counts_utf16_from_the_line_start() {
+    // "héllo" — é is 2 bytes / 1 UTF-16 unit; "𝄞" is 4 bytes / 2 units.
+    let text = "ascii\nhéllo 𝄞 tail\nlast";
+    let buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+
+    let line1 = text.find("héllo").expect("line 1 present");
+    assert_eq!(buffer.position_to_lsp_position(line1), (1, 0));
+
+    // Just past "héllo " — 6 characters, all in the BMP.
+    let after_word = line1 + "héllo ".len();
+    assert_eq!(buffer.position_to_lsp_position(after_word), (1, 6));
+
+    // Past the astral clef: 6 + 2 UTF-16 units.
+    let after_clef = after_word + "𝄞".len();
+    assert_eq!(buffer.position_to_lsp_position(after_clef), (1, 8));
+}
