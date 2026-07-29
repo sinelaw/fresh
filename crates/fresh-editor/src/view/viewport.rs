@@ -1168,10 +1168,15 @@ impl Viewport {
     /// in `compute_buffer_layout`. Deciding in row space needs no rows at all:
     /// the wrap index answers "which row is the cursor on" with a binary search.
     ///
-    /// Returns `true` if the viewport moved. The viewport keeps its
-    /// `(top_byte, top_view_line_offset)` pair — a new absolute top row is
-    /// converted back through `byte_of_row`, so this changes *how* the decision
-    /// is made, not what the viewport is.
+    /// Returns whether this pass **owns vertical placement** for the frame —
+    /// not whether it moved anything. The caller forwards it to
+    /// [`Self::ensure_visible_in_layout`] as `rows_settled`, and the two must
+    /// not both apply the margin. "Decided not to scroll" is still owning the
+    /// decision, so a `true` return with no movement is normal.
+    ///
+    /// The viewport keeps its `(top_byte, top_view_line_offset)` pair — a new
+    /// absolute top row is converted back through `byte_of_row`, so this changes
+    /// *how* the decision is made, not what the viewport is.
     ///
     /// Only the margin phase lives here. Revealing virtual lines above the
     /// cursor and horizontal column scrolling still need materialised rows and
@@ -1196,8 +1201,14 @@ impl Viewport {
         let top_row = index.line_first_row(top_line) as usize + self.top_view_line_offset;
         let cursor_row = index.row_of_byte(buffer, cursor_byte) as usize;
 
-        // Same margin rule as the layout pass, in absolute rows.
-        let apply_margin = self.line_wrap_enabled || top_row > 0;
+        // Same margin rule as the layout pass, in absolute rows — including its
+        // guard, which is `top_view_line_offset > 0`, i.e. "the viewport is
+        // parked inside a wrapped line". Not `top_row > 0`, which is true after
+        // any scroll at all: with wrap off that turns on a margin the layout
+        // pass deliberately leaves off, because there the byte-oriented
+        // pre-render `ensure_visible` has already placed the cursor and a second
+        // margin just pushes it a few rows further from the edge.
+        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset > 0;
         let margin = if apply_margin {
             self.scroll_offset.min(viewport_height / 2)
         } else {
@@ -1219,23 +1230,34 @@ impl Viewport {
         let in_top_margin = cursor_row < top_row + margin;
         let in_bottom_margin = cursor_row + margin + 1 > top_row + viewport_height;
         if !fine_tune && !in_top_margin && !in_bottom_margin {
-            return false;
+            return apply_margin;
         }
 
+        // Scrolling *up* stops at the first row of the line the viewport already
+        // starts on. The layout phase this replaces could not go further: it
+        // works in viewport-relative coordinates, so its top-margin target
+        // saturates at zero and all it can do is walk `top_view_line_offset`
+        // back down to the line's first row. Moving `top_byte` to an earlier
+        // line is the byte-oriented pre-render pass's job, and doing it here too
+        // pulls the viewport up a few rows on ordinary downward movement — which
+        // is what `anti_recenter_dropped_leaves_cursor_at_viewport_bottom`
+        // notices. The wrapped-line walk fresh#1574 needs is entirely within
+        // this bound.
+        let line_top_row = index.line_first_row(top_line) as usize;
         let target_top = if fine_tune || in_top_margin {
-            cursor_row.saturating_sub(margin)
+            cursor_row.saturating_sub(margin).max(line_top_row)
         } else {
             (cursor_row + margin + 1).saturating_sub(viewport_height)
         };
         let new_top = target_top.min(max_top);
         if new_top == top_row {
-            return false;
+            return apply_margin;
         }
 
         let addr = index.byte_of_row(buffer, new_top as u32);
         self.top_byte = buffer.line_start_offset(addr.line).unwrap_or(0);
         self.top_view_line_offset = addr.row_in_line;
-        true
+        apply_margin
     }
 
     /// `rows_settled` says [`Self::ensure_visible_in_rows`] already placed the
