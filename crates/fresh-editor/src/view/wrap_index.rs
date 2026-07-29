@@ -1,6 +1,6 @@
 //! Byte ↔ visual row: the coordinate service.
 //!
-//! Replaces [`crate::view::visual_row_index::VisualRowIndex`] and the row-count
+//! Replaces the deleted `VisualRowIndex` and the row-count
 //! side of the wrap caches. Two things make it different from what it replaces,
 //! and both are the point:
 //!

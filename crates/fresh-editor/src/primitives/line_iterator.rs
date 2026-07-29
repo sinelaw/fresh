@@ -310,7 +310,7 @@ impl<'a> LineIterator<'a> {
     /// pieces until a real terminator or EOF.
     ///
     /// The trade-off is the one already accepted elsewhere for wrapped
-    /// layout (`VisualRowIndex` reads whole lines via `Buffer::get_line`):
+    /// layout (the wrap index reads whole lines via `Buffer::get_line`):
     /// the returned `String` is as long as the logical line.
     pub fn next_logical_line(&mut self) -> Option<(usize, String)> {
         let (line_start, mut content) = self.next_line()?;

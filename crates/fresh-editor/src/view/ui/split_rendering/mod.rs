@@ -3381,12 +3381,12 @@ mod tests {
         );
     }
 
-    /// Agreement test: the standalone `wrap_str_to_width` helper used by
-    /// the virtual-line path must produce the same chunk boundaries as
-    /// `apply_wrapping_transform` does for a single Text token starting
-    /// on a fresh row (no tabs, no ANSI, no hanging indent).  This
-    /// pins the two implementations together so the doc-comment claim
-    /// "virtual lines wrap like source lines" stays honest.
+    /// `wrap_str_to_width` reports the machine's rows as byte *ranges*,
+    /// projected from each row's first source byte.  Both it and
+    /// `apply_wrapping_transform` now drive the same `WrapMachine`, so what
+    /// this pins is the projection: the ranges must tile the input exactly
+    /// as the machine's Text chunks do, with nothing dropped or duplicated
+    /// at a row boundary.
     #[test]
     fn wrap_str_to_width_matches_apply_wrapping_transform() {
         use crate::primitives::visual_layout::wrap_str_to_width;

@@ -123,7 +123,7 @@ pub struct Viewport {
     /// detected here, but in the absence of plugins the per-line row
     /// count depends only on buffer content + geometry, which is what
     /// this cache covers.
-    pub(crate) wrap_row_cache: crate::view::line_wrap_cache::LineWrapCache,
+    pub(crate) wrap_row_cache: crate::view::line_wrap_cache::RowCountCache,
 }
 
 impl Viewport {
@@ -149,12 +149,10 @@ impl Viewport {
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
             scrolled_up_in_wrap: false,
-            // 512 KiB byte budget — the scroll hot paths only ever
-            // touch a handful of nearby lines per event, so this cache
-            // doesn't need to remember every line of every buffer.
-            wrap_row_cache: crate::view::line_wrap_cache::LineWrapCache::with_byte_budget(
-                512 * 1024,
-            ),
+            // The scroll hot paths only ever touch a handful of nearby
+            // lines per event, so this memo doesn't need to remember
+            // every line of every buffer.
+            wrap_row_cache: crate::view::line_wrap_cache::RowCountCache::with_capacity(2048),
         }
     }
 
@@ -277,7 +275,7 @@ impl Viewport {
         wrap_config: &WrapConfig,
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
-        cache: Option<(&mut crate::view::line_wrap_cache::LineWrapCache, u64)>,
+        cache: Option<(&mut crate::view::line_wrap_cache::RowCountCache, u64)>,
     ) -> usize {
         // Plugin virtual lines (e.g. markdown_compose's `┌─┬─┐` table
         // borders) draw real rows the renderer paints; without them
@@ -344,21 +342,16 @@ impl Viewport {
                 .max(2);
 
             // The viewport-local cache is a count-only memoization for
-            // the scroll hot paths — it doesn't need real ViewLine
-            // layout.  Compute the row count via the pure wrap helper
-            // and wrap it in a placeholder `Vec<ViewLine>` so the
-            // shared `LineWrapCache` value type is honoured; consumers
-            // of this cache only read `.len()`.  The cross-consumer
-            // cache on `EditorState` holds real `ViewLine`s populated
-            // from the full pipeline.
+            // the scroll hot paths — it holds row counts, not layout.
+            // The cross-consumer cache on `EditorState` is the one that
+            // holds real `ViewLine`s from the full pipeline.
             let compute = || {
-                let n = compute_wrap_row_count_for_text(
+                crate::view::line_wrap_cache::count_visual_rows_for_text(
                     line_text,
                     effective_width,
                     wrap_config.gutter_width,
                     wrap_config.hanging_indent,
-                );
-                crate::view::line_wrap_cache::placeholder_layout_for_row_count(n)
+                )
             };
             // The cache is keyed by `line_start`, so an entry is only
             // reusable if `line_text` really is that whole line. Callers
@@ -384,78 +377,30 @@ impl Viewport {
                     // Grid mode returns before this cache path.
                     grid_wrap: false,
                     // Scroll math is cursor-blind by convention (matches
-                    // `VisualRowIndex` and its own cursor-free inputs).
+                    // `WrapIndex` and its own cursor-free inputs).
                     cursor_sig: 0,
                 };
-                return cache.get_or_insert_with(key, compute).len() + extra_virtual_rows;
+                return cache.get_or_insert_with(key, compute) as usize + extra_virtual_rows;
             }
-            compute().len() + extra_virtual_rows
+            compute() as usize + extra_virtual_rows
         }
     }
-}
-
-/// Compute the visual-row count for a single line's text by running
-/// `apply_wrapping_transform` on a single-Text-token input and walking
-/// the output token stream. Module-private helper shared by the cache
-/// hit and miss paths of `count_visual_rows_for_line`.
-fn compute_wrap_row_count_for_text(
-    line_text: &str,
-    effective_width: usize,
-    gutter_width: usize,
-    hanging_indent: bool,
-) -> u32 {
-    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
-    use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
-
-    let tokens = vec![ViewTokenWire {
-        source_offset: Some(0),
-        kind: ViewTokenWireKind::Text(line_text.to_string()),
-        style: None,
-    }];
-    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-    // Count non-empty visual rows.  `apply_wrapping_transform` can emit a
-    // *trailing* `Break` when the last chunk fills `effective_width` exactly
-    // — that Break is width-triggered and is followed by nothing, so it
-    // doesn't represent a real wrap. Walk the stream, start a new row on
-    // each Break, and only count rows that contained at least one content
-    // token.
-    let mut rows: u32 = 0;
-    let mut row_has_content = false;
-    for t in &wrapped {
-        match &t.kind {
-            ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => {
-                if row_has_content {
-                    rows += 1;
-                }
-                row_has_content = false;
-            }
-            ViewTokenWireKind::Text(s) => {
-                if !s.is_empty() {
-                    row_has_content = true;
-                }
-            }
-            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                row_has_content = true;
-            }
-        }
-    }
-    if row_has_content {
-        rows += 1;
-    }
-    rows.max(1)
 }
 
 /// Source byte at the start of each visual (word-wrap) row of `line_text`,
 /// where `line_start` is the absolute byte offset of the line.  The Nth
 /// entry is the byte position that the renderer draws at the start of the
-/// Nth visual row — the counterpart to [`compute_wrap_row_count_for_text`]
-/// (which only returns the row *count*).  Used to translate the viewport's
+/// Nth visual row — the byte counterpart of
+/// [`count_visual_rows_for_text`](crate::view::line_wrap_cache::count_visual_rows_for_text)
+/// (which returns only the row *count*).  Used to translate the viewport's
 /// `top_view_line_offset` (a visual-row index inside the logical line at
 /// `top_byte`) back into a buffer byte so PageUp/PageDown can land the
 /// cursor on the row actually shown at the top of the viewport — without
 /// this, a single hugely-wrapped line maps every visual row back to the
 /// line's start byte.
+///
+/// Drives the same machine as the renderer, so the byte mapping and the
+/// drawn rows cannot disagree.
 fn wrap_segment_source_bytes(
     line_text: &str,
     line_start: usize,
@@ -463,7 +408,7 @@ fn wrap_segment_source_bytes(
     gutter_width: usize,
     hanging_indent: bool,
 ) -> Vec<usize> {
-    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
     use fresh_core::api::{ViewTokenWire, ViewTokenWireKind};
 
     let tokens = vec![ViewTokenWire {
@@ -471,44 +416,19 @@ fn wrap_segment_source_bytes(
         kind: ViewTokenWireKind::Text(line_text.to_string()),
         style: None,
     }];
-    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-
-    // Walk the stream exactly the way `compute_wrap_row_count_for_text`
-    // does (start a new row on each `Break`, only count rows with real
-    // content) but record the first content token's source byte per row.
-    let mut rows: Vec<usize> = Vec::new();
-    let mut row_has_content = false;
-    let mut row_first_byte: Option<usize> = None;
-    let note_content = |row_first_byte: &mut Option<usize>, src: Option<usize>| {
-        if row_first_byte.is_none() {
-            *row_first_byte = src;
-        }
-    };
-    for t in &wrapped {
-        match &t.kind {
-            ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => {
-                if row_has_content {
-                    rows.push(row_first_byte.unwrap_or(line_start));
-                }
-                row_has_content = false;
-                row_first_byte = None;
-            }
-            ViewTokenWireKind::Text(s) => {
-                if !s.is_empty() {
-                    row_has_content = true;
-                    note_content(&mut row_first_byte, t.source_offset);
-                }
-            }
-            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                row_has_content = true;
-                note_content(&mut row_first_byte, t.source_offset);
-            }
-        }
-    }
-    if row_has_content {
-        rows.push(row_first_byte.unwrap_or(line_start));
-    }
+    let out = WrapMachine::run(
+        tokens,
+        WrapRule::Word {
+            content_width: effective_width,
+            gutter_width,
+            hanging_indent,
+        },
+    );
+    let mut rows: Vec<usize> = out
+        .rows
+        .iter()
+        .map(|r| r.source_byte.unwrap_or(line_start))
+        .collect();
     if rows.is_empty() {
         rows.push(line_start);
     }
@@ -2087,8 +2007,8 @@ impl Viewport {
                 // (cursor's own row), so the target is 1 more than the no-wrap case.
                 //
                 // TODO: this backward walk calls `layout_for_plain_text` directly,
-                // bypassing both `LineWrapCache` and the `VisualRowIndex` tier-2
-                // cache. Migrating requires threading `&mut EditorState` through
+                // bypassing both `LineWrapCache` and the `WrapIndex`.
+                // Migrating requires threading `&mut EditorState` through
                 // `ensure_visible` and its 6 call sites; left as a follow-up since
                 // folds force a fallback path here anyway.
                 self.scroll_to_cursor_wrapped(

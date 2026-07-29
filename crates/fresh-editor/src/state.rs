@@ -1632,7 +1632,7 @@ impl EditorState {
         }
         // query_viewport already returns pairs sorted by ascending position.
         // Cursor-blind: scroll math consumers see the canonical "no cursor
-        // anywhere" break set, consistent with `VisualRowIndex`.
+        // anywhere" break set, consistent with `WrapIndex`.
         self.soft_breaks
             .query_viewport(0, self.buffer.len() + 1, &self.marker_list, &[])
     }
