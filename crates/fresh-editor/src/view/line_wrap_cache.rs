@@ -818,7 +818,7 @@ pub fn count_visual_rows_for_text(
     gutter_width: usize,
     hanging_indent: bool,
 ) -> u32 {
-    use crate::view::ui::split_rendering::transforms::apply_wrapping_transform;
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
     use fresh_core::api::ViewTokenWire;
 
     let tokens = vec![ViewTokenWire {
@@ -826,32 +826,35 @@ pub fn count_visual_rows_for_text(
         kind: ViewTokenWireKind::Text(line_text.to_string()),
         style: None,
     }];
-    let wrapped = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
-    let mut rows: u32 = 0;
-    let mut row_has_content = false;
-    for t in &wrapped {
-        match &t.kind {
-            ViewTokenWireKind::Newline => break,
-            ViewTokenWireKind::Break => {
-                if row_has_content {
-                    rows += 1;
-                }
-                row_has_content = false;
-            }
-            ViewTokenWireKind::Text(s) => {
-                if !s.is_empty() {
-                    row_has_content = true;
-                }
-            }
-            ViewTokenWireKind::Space | ViewTokenWireKind::BinaryByte(_) => {
-                row_has_content = true;
-            }
-        }
+    let out = WrapMachine::run(
+        tokens,
+        WrapRule::Word {
+            content_width: effective_width,
+            gutter_width,
+            hanging_indent,
+        },
+    );
+    (out.rows.len() as u32).max(1)
+}
+
+/// Row count under the terminal-grid rule (fresh#2649).
+///
+/// Drives the same machine as the renderer, so the count and the drawn rows
+/// cannot disagree — the divergence that made scroll-back stick.
+pub fn count_visual_rows_for_text_grid(line_text: &str, cols: usize) -> u32 {
+    use crate::view::wrap_machine::{WrapMachine, WrapRule};
+    use fresh_core::api::ViewTokenWire;
+
+    if cols == 0 {
+        return 1;
     }
-    if row_has_content {
-        rows += 1;
-    }
-    rows.max(1)
+    let tokens = vec![ViewTokenWire {
+        source_offset: Some(0),
+        kind: ViewTokenWireKind::Text(line_text.to_string()),
+        style: None,
+    }];
+    let out = WrapMachine::run(tokens, WrapRule::Grid { cols });
+    (out.rows.len() as u32).max(1)
 }
 
 /// Walk `line_text` with the terminal-grid wrap rule and call `f` with the
@@ -919,12 +922,6 @@ fn for_each_grid_row_start<F: FnMut(usize)>(line_text: &str, cols: usize, mut f:
 /// `VisualRowIndex` build for terminal scroll-back buffers, where the old
 /// word-wrap counter's per-line transform allocations were part of what made
 /// whole-buffer scans expensive (fresh#2608).
-pub fn count_visual_rows_for_text_grid(line_text: &str, cols: usize) -> u32 {
-    let mut rows: u32 = 0;
-    for_each_grid_row_start(line_text, cols, |_| rows += 1);
-    rows.max(1)
-}
-
 /// Byte offset (relative to `line_start`) of each grid-wrap visual row of
 /// `line_text` at `cols` columns. Grid-mode counterpart of
 /// `viewport::wrap_segment_source_bytes` — PageUp/PageDown use it to find

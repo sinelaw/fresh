@@ -314,16 +314,6 @@ pub struct EditorState {
     /// different key so stale entries are never returned — see
     /// `docs/internal/line-wrap-cache-plan.md`.
     pub line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache,
-
-    /// Whole-buffer prefix-sum index over per-line visual row counts.
-    /// Sits one tier above `line_wrap_cache`: answers
-    /// "what visual row contains byte B?" / "what byte sits at row R?"
-    /// in O(log N_lines) for scrollbar drag, scrollbar render, and
-    /// `ensure_visible` wrapped scrolling.  Built lazily from
-    /// `line_wrap_cache`; same invalidation source (pipeline-input
-    /// version + geometry).  See
-    /// `crate::view::visual_row_index` for invariants.
-    pub visual_row_index: crate::view::visual_row_index::VisualRowIndex,
     /// Row structure per rendered geometry.
     ///
     /// Lives with the buffer because damage is a buffer event, but is keyed by
@@ -433,7 +423,6 @@ impl EditorState {
             language: "text".to_string(),
             display_name: "Text".to_string(),
             line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
-            visual_row_index: crate::view::visual_row_index::VisualRowIndex::default(),
             wrap_indices: crate::view::wrap_index::WrapIndexSet::default(),
             coord_map: crate::model::coord_map::CoordMap::default(),
             scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager::default(),

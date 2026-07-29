@@ -150,20 +150,22 @@ pub(super) fn project_scrollbar_markers(
             .to_vec()
         }
         MarkerBasis::VisualRows { .. } => {
-            // The visual-row index was just built by
-            // `scrollbar_visual_row_counts` for this same frame and geometry;
-            // this path only reads it, never triggers the O(all-lines) build.
-            let index = &state.visual_row_index;
+            // The wrap index was built by `scrollbar_visual_row_counts` for
+            // this same frame and geometry; this path only reads it. Markers
+            // project onto a line's *first* row so a marker on a wrapped line
+            // lands at the line's start, not inside it.
+            let index = state
+                .wrap_indices
+                .most_recent()
+                .expect("visual-row basis implies a built wrap index");
+            let buffer = &state.buffer;
             scrollbar_marker::project(
                 &state.scrollbar_markers,
                 &mut buckets,
                 basis,
                 track_height,
                 content_version,
-                |byte| {
-                    let (line_idx, _) = index.line_for_byte(byte);
-                    index.line_first_row(line_idx) as u64
-                },
+                |byte| index.line_first_row(buffer.get_line_number(byte)) as u64,
             )
             .to_vec()
         }
@@ -188,7 +190,9 @@ pub(super) fn scrollbar_visual_row_counts(
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
     use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode};
-    use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
+    use crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH;
+    use crate::view::wrap_index::WrapIndexGeometry;
+    use crate::view::wrap_machine::WrapRule;
 
     if buffer_len == 0 {
         return (1, 0);
@@ -219,27 +223,65 @@ pub(super) fn scrollbar_visual_row_counts(
         state.virtual_texts.version(),
     );
 
-    let key = VisualRowIndexKey {
-        pipeline_inputs_version: pipeline_inputs_ver,
+    // The wrap index answers both numbers directly: `total_rows` is O(1) off the
+    // Fenwick tree and `row_of_byte` is a binary search. The path this replaced
+    // re-wrapped every logical line on every keystroke, because its key folded in
+    // the buffer version — 16.9% of a frame on a single-line file.
+    let geometry = WrapIndexGeometry {
+        rule: if viewport.grid_wrap {
+            WrapRule::Grid {
+                cols: effective_width,
+            }
+        } else if viewport.line_wrap_enabled {
+            WrapRule::Word {
+                content_width: effective_width,
+                gutter_width,
+                hanging_indent,
+            }
+        } else {
+            // Without soft wrap every logical line is one visual row until the
+            // safety chop, which no practical line reaches.
+            WrapRule::Chop {
+                chars: MAX_SAFE_LINE_WIDTH,
+            }
+        },
         view_mode: CacheViewMode::Source,
-        effective_width: effective_width as u32,
-        gutter_width: gutter_width as u16,
-        wrap_column: None,
-        hanging_indent,
-        line_wrap_enabled: viewport.line_wrap_enabled,
-        grid_wrap: viewport.grid_wrap,
     };
-    ensure_built(state, &key);
 
-    let total_visual_rows = state.visual_row_index.total_rows() as usize;
-    let total_visual_rows = total_visual_rows.max(1);
+    // Snapshot virtual-line anchors so the per-line lookup borrows this list
+    // rather than `state`, whose buffer the build holds mutably.
+    let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
+        Vec::new()
+    } else {
+        let mut v: Vec<usize> = state
+            .virtual_texts
+            .query_lines_in_range(&state.marker_list, 0, buffer_len + 1)
+            .into_iter()
+            .map(|(pos, _)| pos)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let virtual_rows = |start: usize, end: usize| -> u32 {
+        let lo = virtual_positions.partition_point(|p| *p < start);
+        let hi = virtual_positions.partition_point(|p| *p < end);
+        (hi - lo) as u32
+    };
 
-    // Top visual row: first row of the line containing `top_byte`,
-    // plus the wrap-segment offset within that line.
-    let (line_idx, _) = state.visual_row_index.line_for_byte(viewport.top_byte);
-    let top_first_row = state.visual_row_index.line_first_row(line_idx) as usize;
-    let top_visual_row =
-        (top_first_row + viewport.top_view_line_offset).min(total_visual_rows.saturating_sub(1));
+    let line_ending = state.buffer.line_ending();
+    let index = state.wrap_indices.entry(geometry);
+    index.ensure_built(
+        &mut state.buffer,
+        geometry,
+        pipeline_inputs_ver,
+        line_ending,
+        &virtual_rows,
+    );
+
+    let total_visual_rows = index.total_rows() as usize;
+    let top_visual_row = index.row_of_byte(&state.buffer, viewport.top_byte) as usize
+        + viewport.top_view_line_offset;
+    let top_visual_row = top_visual_row.min(total_visual_rows.saturating_sub(1));
 
     (total_visual_rows, top_visual_row)
 }
@@ -561,8 +603,8 @@ mod tests {
             "small wrapped buffer should report wrapped-row count (>100), got {total}"
         );
         assert!(
-            state.visual_row_index.line_count() > 0,
-            "small wrapped buffer should build the visual-row index"
+            !state.wrap_indices.is_empty(),
+            "small wrapped buffer should build a wrap index for this geometry"
         );
         assert!(
             matches!(basis, MarkerBasis::VisualRows { .. }),
@@ -594,10 +636,9 @@ mod tests {
             total, n,
             "large wrapped buffer should use the logical-line count, not wrapped rows"
         );
-        assert_eq!(
-            state.visual_row_index.line_count(),
-            0,
-            "large wrapped buffer must not build the O(all-lines) visual-row index"
+        assert!(
+            state.wrap_indices.is_empty(),
+            "large wrapped buffer must not build the O(all-lines) wrap index"
         );
         assert!(
             matches!(basis, MarkerBasis::LogicalLines { total } if total == n as u64),
@@ -676,10 +717,9 @@ mod tests {
             cells.iter().any(|c| c.is_some()),
             "the marker should land somewhere on the track"
         );
-        assert_eq!(
-            state.visual_row_index.line_count(),
-            0,
-            "byte-basis projection must not touch the visual-row index"
+        assert!(
+            state.wrap_indices.is_empty(),
+            "byte-basis projection must not build a wrap index"
         );
     }
 

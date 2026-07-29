@@ -1169,6 +1169,14 @@ impl WrapIndexSet {
         self.entries.is_empty()
     }
 
+    /// The most recently used entry.
+    ///
+    /// For readers that run immediately after the frame's own `entry()` call
+    /// and want the geometry it just used, without rebuilding it.
+    pub fn most_recent(&self) -> Option<&WrapIndex> {
+        self.entries.last().map(|(_, index)| index)
+    }
+
     /// Repair every geometry after a buffer edit.
     ///
     /// An edit changes the text all views share, so each index repairs against
