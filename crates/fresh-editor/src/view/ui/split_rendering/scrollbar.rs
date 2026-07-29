@@ -22,8 +22,8 @@ use ratatui::widgets::Widget;
 /// because the per-line word-wrap cost is much higher than a raw byte scan.
 /// Line count is the loop-iteration driver; the byte bound catches buffers with
 /// few but very long lines.
-const MAX_WRAP_SCROLLBAR_LINES: usize = 5_000;
-const MAX_WRAP_SCROLLBAR_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_WRAP_SCROLLBAR_LINES: usize = 5_000;
+pub(crate) const MAX_WRAP_SCROLLBAR_BYTES: usize = 2 * 1024 * 1024;
 
 /// Compute scrollbar line counts: `(total_lines, top_line)`, plus the
 /// coordinate basis those counts are expressed in.

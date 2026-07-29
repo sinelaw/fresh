@@ -194,13 +194,18 @@ pub(crate) fn compute_buffer_layout(
     // a cursor that has drifted into the scroll margin — is settled with no rows
     // built at all, and the layout pass then finds nothing left to do.
     //
-    // Only when the index is already built for this geometry: building it here
-    // would trade one O(buffer) pass for another. (The fold carve-out that used
-    // to sit beside this is gone: folds are in the geometry key now, and a
-    // collapsed line occupies no index row — the index rows *are* the drawn
-    // rows.)
+    // Build the index if it is stale, then place. With repair keeping the
+    // version current across text edits, a stale index here means a
+    // decoration batch arrived — compose's `lines_changed` round-trip — and
+    // re-placing against the fresh rows is exactly the re-place-on-arrival
+    // trigger the model requires (`test_arrival_without_replacement_loses_
+    // the_cursor`): nothing else re-runs placement, because the post-render
+    // fixup pass is gone. Bounded by the scrollbar's size ceilings so a huge
+    // file never builds an index just to place the viewport. (The fold
+    // carve-out that used to sit here is gone: folds are in the geometry key
+    // now, so index rows *are* drawn rows.)
     let mut build_anchor: Option<BuildAnchor> = None;
-    if !state.wrap_indices.is_empty() {
+    {
         let fold_ranges = state.fold_ranges(folds);
         let geometry = wrap_index_geometry_for(
             viewport,
@@ -216,20 +221,51 @@ pub(crate) fn compute_buffer_layout(
             state.virtual_texts.version(),
         );
         let cursor_byte = cursors.primary().position;
-        let ready = state
-            .wrap_indices
-            .get(&geometry)
-            .is_some_and(|index| index.is_built_for(&geometry, inputs_version));
-        if ready {
+        let buffer_len = state.buffer.len();
+        let within_bounds = buffer_len
+            <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_BYTES
+            && (buffer_len == 0
+                || state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
+                    <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_LINES);
+        if within_bounds || state.wrap_indices.get(&geometry).is_some() {
+            let line_ending = state.buffer.line_ending();
+            // Snapshot virtual-line anchors so the per-line lookup borrows
+            // this list rather than `state`, whose buffer the build holds
+            // mutably (same shape as scrollbar_math::total_rows).
+            let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
+                Vec::new()
+            } else {
+                let end = state.buffer.len() + 1;
+                let mut v: Vec<usize> = state
+                    .virtual_texts
+                    .query_lines_in_range(&state.marker_list, 0, end)
+                    .into_iter()
+                    .map(|(pos, _)| pos)
+                    .collect();
+                v.sort_unstable();
+                v
+            };
+            let virtual_rows = |start: usize, end: usize| -> u32 {
+                let lo = virtual_positions.partition_point(|p| *p < start);
+                let hi = virtual_positions.partition_point(|p| *p < end);
+                (hi - lo) as u32
+            };
+            let decorations = state.index_decorations(geometry.view_mode, fold_ranges);
+            let index = state.wrap_indices.entry(geometry);
+            index.ensure_built(
+                &mut state.buffer,
+                geometry,
+                inputs_version,
+                line_ending,
+                &virtual_rows,
+                &decorations,
+            );
             if let Some(index) = state.wrap_indices.get(&geometry) {
                 viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
+                // Resolve the anchor *after* the scroll decision, so the build
+                // starts where the frame will actually draw.
+                build_anchor = resolve_build_anchor(index, state, viewport, &cursor_positions);
             }
-            // Resolve the anchor *after* the scroll decision, so the build
-            // starts where the frame will actually draw.
-            build_anchor = state
-                .wrap_indices
-                .get(&geometry)
-                .and_then(|index| resolve_build_anchor(index, &state.buffer, viewport));
         }
     }
 
@@ -798,23 +834,72 @@ pub(crate) fn render_buffer_in_split(
 /// anyway.
 fn resolve_build_anchor(
     index: &crate::view::wrap_index::WrapIndex,
-    buffer: &crate::model::buffer::Buffer,
+    state: &EditorState,
     viewport: &Viewport,
+    cursors: &[usize],
 ) -> Option<BuildAnchor> {
+    let buffer = &state.buffer;
     if viewport.top_view_line_offset() == 0 {
         return None;
     }
     let top_line = buffer.get_line_number(viewport.top_byte());
-    let anchor_row = index.line_first_row(top_line) + viewport.top_view_line_offset() as u32;
+    let line_start = buffer.line_start_offset(top_line).unwrap_or(0);
+    let mut anchor_row = index.line_first_row(top_line) + viewport.top_view_line_offset() as u32;
+    let mut stable_skip = 0u32;
+
+    // The model's `_stable_anchor`. The index is canonical (no cursors), but
+    // the frame is cursor-aware: a conceal or soft break whose activation
+    // scope currently holds a cursor is applied differently on screen than in
+    // the index. If such a decoration sits *above* the anchor inside the same
+    // logical line, the canonical carry at the anchor does not describe the
+    // stream the frame will draw from it — the rows drift, the cursor lands
+    // rows away from where placement put it, and minimal placement then
+    // correctly refuses to move (fresh#1574's stall). Backing the anchor up to
+    // the divergence point and skipping the canonical row delta stitches the
+    // two coordinate systems at a byte where they still agree.
+    let anchor_byte = index.byte_of_row(buffer, anchor_row).byte;
+    let divergence = [
+        state.conceals.earliest_cursor_divergence(
+            line_start,
+            anchor_byte,
+            &state.marker_list,
+            cursors,
+        ),
+        state.soft_breaks.earliest_cursor_divergence(
+            line_start,
+            anchor_byte,
+            &state.marker_list,
+            cursors,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    if let Some(div) = divergence {
+        let div_row = index.row_of_byte(buffer, div);
+        let delta = anchor_row.saturating_sub(div_row);
+        // Capped like the model: a divergence further back than a couple of
+        // screens is cheaper to handle by not anchoring at all.
+        if delta > 0 && (delta as usize) <= 2 * viewport.visible_line_count() {
+            anchor_row = div_row;
+            stable_skip = delta;
+        } else if delta > 0 {
+            return None;
+        }
+    }
+
     let (start_row, walk_back) = index.resumable_row_at_or_before(buffer, anchor_row);
     let addr = index.byte_of_row(buffer, start_row);
-    if addr.is_virtual || addr.byte < viewport.top_byte() {
+    // The stable anchor deliberately lands above `top_byte`; anything before
+    // the top line's own start would mean resuming across a line boundary,
+    // where the walk-back has failed — build unanchored instead.
+    if addr.is_virtual || addr.byte < line_start {
         return None;
     }
     Some(BuildAnchor {
         byte: addr.byte,
         carry: addr.carry,
-        skip: walk_back as usize,
+        skip: (walk_back + stable_skip) as usize,
     })
 }
 
