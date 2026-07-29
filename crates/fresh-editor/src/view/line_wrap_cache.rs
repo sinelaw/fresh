@@ -372,41 +372,6 @@ fn layout_for_plain_text_under(
     lines
 }
 
-/// Look up a line's layout in the cache, running the mini-pipeline to
-/// fill on miss.  The primary read-path entry point for consumers that
-/// need full `ViewLine` layout (not just row count).
-///
-/// Guarantees that the value returned matches what the renderer would
-/// produce for the same line under the same pipeline inputs: same
-/// function chain is called either way, so cache hit and miss are
-/// indistinguishable to the caller.
-pub fn layout_for_line(
-    state: &mut EditorState,
-    line_start: usize,
-    line_end: usize,
-    geom: &WrapGeometry,
-    cursors: &[usize],
-) -> Arc<Vec<ViewLine>> {
-    let version = pipeline_inputs_version(
-        state.buffer.version(),
-        state.soft_breaks.version(),
-        state.conceals.version(),
-        state.virtual_texts.version(),
-    );
-    let key = geom.key(
-        line_start,
-        version,
-        cursor_sig_for_line(cursors, line_start, line_end),
-    );
-    if let Some(cached) = state.line_wrap_cache.get(&key) {
-        return cached;
-    }
-    let layout = compute_line_layout(state, line_start, line_end, geom, cursors);
-    let arc = Arc::new(layout);
-    state.line_wrap_cache.put(key, arc.clone());
-    arc
-}
-
 /// Given a logical line's layout and a character position within the
 /// LOGICAL line (not the ViewLine), return `(segment_idx,
 /// col_in_segment)` — the index of the `ViewLine` the character falls

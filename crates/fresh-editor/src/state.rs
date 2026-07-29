@@ -307,13 +307,6 @@ pub struct EditorState {
     // instead of copying its fields, to avoid duplication between the two structs.
     pub display_name: String,
 
-    /// Per-logical-line visual-row-count cache (pipeline-output).
-    /// Populated by both the renderer (as a side effect of rendering a
-    /// visible frame) and the scroll-math miss handler.  Entries are
-    /// keyed on every pipeline input; mutations to any input produce a
-    /// different key so stale entries are never returned — see
-    /// `docs/internal/line-wrap-cache-plan.md`.
-    pub line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache,
     /// Row structure per rendered geometry.
     ///
     /// Lives with the buffer because damage is a buffer event, but is keyed by
@@ -422,7 +415,6 @@ impl EditorState {
             folding_ranges: LspFoldRanges::new(),
             language: "text".to_string(),
             display_name: "Text".to_string(),
-            line_wrap_cache: crate::view::line_wrap_cache::LineWrapCache::default(),
             wrap_indices: crate::view::wrap_index::WrapIndexSet::default(),
             coord_map: crate::model::coord_map::CoordMap::default(),
             scrollbar_markers: crate::view::scrollbar_marker::ScrollbarMarkerManager::default(),
