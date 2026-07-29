@@ -191,6 +191,35 @@ pub(crate) fn compute_buffer_layout(
     // movement changes what's active without any marker churn).
     let cursor_positions = cursors.positions();
 
+    // Decide the scroll *before* building. The layout-based pass below can only
+    // run on materialised rows, so it makes the frame build rows to discover it
+    // needs to scroll and then rebuild because it did. In row space the wrap
+    // index answers "which row is the cursor on" directly, so the common case —
+    // a cursor that has drifted into the scroll margin — is settled with no rows
+    // built at all, and the layout pass then finds nothing left to do.
+    //
+    // Only when the index is already built for this geometry: building it here
+    // would trade one O(buffer) pass for another.
+    if view_transform.is_none() && !state.wrap_indices.is_empty() {
+        let geometry = wrap_index_geometry_for(viewport, &state.buffer, line_wrap, &view_mode);
+        let inputs_version = crate::view::line_wrap_cache::pipeline_inputs_version(
+            state.buffer.version(),
+            state.soft_breaks.version(),
+            state.conceals.version(),
+            state.virtual_texts.version(),
+        );
+        let cursor_byte = cursors.primary().position;
+        let ready = state
+            .wrap_indices
+            .get(&geometry)
+            .is_some_and(|index| index.is_built_for(&geometry, inputs_version));
+        if ready {
+            if let Some(index) = state.wrap_indices.get(&geometry) {
+                viewport.ensure_visible_in_rows(index, &state.buffer, cursor_byte);
+            }
+        }
+    }
+
     let view_data = {
         let _span = tracing::trace_span!("build_view_data").entered();
         build_view_data(
@@ -736,4 +765,53 @@ pub(crate) fn render_buffer_in_split(
     );
 
     view_line_mappings
+}
+
+/// Geometry the wrap index is keyed by for this split.
+///
+/// Must match what `scrollbar_line_counts` builds, or the render path would look
+/// up an entry that is never populated and silently fall back to the layout pass.
+fn wrap_index_geometry_for(
+    viewport: &Viewport,
+    buffer: &crate::model::buffer::Buffer,
+    line_wrap: bool,
+    view_mode: &ViewMode,
+) -> crate::view::wrap_index::WrapIndexGeometry {
+    use crate::primitives::line_wrapping::WrapConfig;
+    use crate::view::line_wrap_cache::CacheViewMode;
+    use crate::view::wrap_machine::WrapRule;
+
+    let rule = if viewport.grid_wrap {
+        WrapRule::Grid {
+            cols: viewport.grid_cols().max(1),
+        }
+    } else if line_wrap {
+        let gutter_width = viewport.gutter_width(buffer);
+        let wrap_config = WrapConfig::new(
+            viewport.width as usize,
+            gutter_width,
+            true,
+            viewport.wrap_indent,
+        );
+        WrapRule::Word {
+            content_width: wrap_config
+                .first_line_width
+                .saturating_add(gutter_width)
+                .max(2),
+            gutter_width,
+            hanging_indent: wrap_config.hanging_indent,
+        }
+    } else {
+        WrapRule::Chop {
+            chars: crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH,
+        }
+    };
+    crate::view::wrap_index::WrapIndexGeometry {
+        rule,
+        view_mode: if matches!(view_mode, ViewMode::PageView) {
+            CacheViewMode::Compose
+        } else {
+            CacheViewMode::Source
+        },
+    }
 }

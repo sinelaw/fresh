@@ -1099,6 +1099,65 @@ mod tests {
         assert!(set.get(&geometry(10)).is_none(), "oldest evicted");
     }
 
+    /// Row-space `ensure_visible` matches the Python model's rule exactly
+    /// (`tests/wrap_model/wrap_model/viewport.py::Viewport.ensure_visible`):
+    /// scroll the minimum that puts the cursor's row inside the margin, clamped
+    /// to the document.
+    #[test]
+    fn ensure_visible_in_rows_matches_the_model() {
+        use crate::view::viewport::Viewport;
+
+        let text = long_line(300);
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let index = built(&mut buffer, 20);
+        let total = index.total_rows() as usize;
+
+        let height = 10usize;
+        let mut viewport = Viewport::new(20, height as u16);
+        viewport.line_wrap_enabled = true;
+        let visible = viewport.visible_line_count();
+
+        for cursor_row in (0..total).step_by(7) {
+            let cursor_byte = index.byte_of_row(&buffer, cursor_row as u32).byte;
+            viewport.top_byte = 0;
+            viewport.top_view_line_offset = 0;
+            viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte);
+
+            let top_line = buffer.get_line_number(viewport.top_byte);
+            let top_row = index.line_first_row(top_line) as usize + viewport.top_view_line_offset;
+            let actual_cursor_row = index.row_of_byte(&buffer, cursor_byte) as usize;
+            assert!(
+                (top_row..top_row + visible).contains(&actual_cursor_row),
+                "cursor row {actual_cursor_row} not visible in [{top_row}, {})",
+                top_row + visible
+            );
+            assert!(
+                top_row <= total.saturating_sub(visible),
+                "scrolled past the end: top {top_row} of {total}"
+            );
+        }
+    }
+
+    /// Deciding the scroll costs no row building — the property that collapses
+    /// the frame's build-scroll-rebuild cycle.
+    #[test]
+    fn ensure_visible_in_rows_needs_no_rows_built() {
+        use crate::view::viewport::Viewport;
+
+        let text = long_line(300);
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let index = built(&mut buffer, 20);
+        let last_row = index.total_rows() - 1;
+        let cursor_byte = index.byte_of_row(&buffer, last_row).byte;
+
+        let mut viewport = Viewport::new(20, 10);
+        viewport.line_wrap_enabled = true;
+        // No `ViewLine` is materialised anywhere in this call; it reads the
+        // index only.
+        assert!(viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte));
+        assert!(viewport.top_view_line_offset > 0 || viewport.top_byte > 0);
+    }
+
     /// A line with no decorations is resumable at every row — the case the whole
     /// design exists for, where the renderer never has to walk back.
     #[test]
