@@ -166,7 +166,6 @@ impl crate::app::window::Window {
                     view_state
                         .viewport
                         .center_on_position(&mut state.buffer, cursor_pos);
-                    view_state.viewport.scrolled_up_in_wrap = false;
                     view_state.viewport.set_skip_ensure_visible();
                 }
 

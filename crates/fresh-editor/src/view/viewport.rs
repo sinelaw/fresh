@@ -110,17 +110,6 @@ pub struct Viewport {
     /// rendering after the adjustment is applied.
     pub sync_scroll_to_end: bool,
 
-    /// Set by the byte-oriented `ensure_visible` when it scrolled UP in wrap
-    /// mode (cursor was above the viewport and we shifted `top_byte` to an
-    /// earlier logical line).  Consumed by `ensure_visible_in_layout`, which
-    /// then pulls `top_view_line_offset` down so the cursor lands at exactly
-    /// `effective_offset` rows from the viewport top — correcting the
-    /// off-by-one that arises because `wrap_line` (used here) and
-    /// `apply_wrapping_transform` (used by the real render pipeline) disagree
-    /// by one wrap segment for some long paragraphs (issue #1574, Up-arrow
-    /// jumpy variant).
-    pub(crate) scrolled_up_in_wrap: bool,
-
     /// Small per-viewport row-count cache used by the scroll hot paths
     /// (`scroll_down_visual`, `apply_visual_scroll_limit`, etc.) to
     /// avoid re-running `apply_wrapping_transform` on the same logical
@@ -187,7 +176,6 @@ impl Viewport {
             skip_ensure_visible: false,
             max_line_length_seen: 0,
             sync_scroll_to_end: false,
-            scrolled_up_in_wrap: false,
             // The scroll hot paths only ever touch a handful of nearby
             // lines per event, so this memo doesn't need to remember
             // every line of every buffer.
@@ -1132,62 +1120,6 @@ impl Viewport {
         Some(self.top_byte())
     }
 
-    /// Set `top_byte` and `top_view_line_offset` so that
-    /// `view_lines[target_idx]` becomes the first visible view line.
-    ///
-    /// For wrap-continuation targets (`line_start == AfterBreak`) this
-    /// SNAPS `top_byte` back to the containing logical line's source
-    /// byte and stashes the wrap-segment offset into
-    /// `top_view_line_offset`.  Without that snap the render pipeline's
-    /// `calculate_view_anchor` (which runs AFTER slicing by
-    /// `top_view_line_offset`) skips forward over any view lines whose
-    /// source byte is < `top_byte` — effectively undoing subsequent
-    /// decrements of `top_view_line_offset` and producing
-    /// identical-looking renders before and after a Ctrl+Up (issue
-    /// #1574 Ctrl+Up/Ctrl+Down round-trip variant).
-    ///
-    /// For NON-wrap targets (source-line starts, virtual/injected
-    /// lines, or the very first line of the view) we use the original
-    /// behavior: `top_byte` at the target's source byte and
-    /// `top_view_line_offset` as the absolute target index — that's
-    /// required by plugin view transforms that inject virtual lines at
-    /// the top of the view (see
-    /// `test_view_transform_scroll_with_many_virtual_lines`), where the
-    /// offset counts over the injected prefix.
-    fn snap_to_logical_line_start(&mut self, view_lines: &[ViewLine], target_idx: usize) {
-        if view_lines.is_empty() {
-            return;
-        }
-        let clamped_target = target_idx.min(view_lines.len() - 1);
-        let target_is_wrap_continuation =
-            matches!(view_lines[clamped_target].line_start, LineStart::AfterBreak);
-
-        if target_is_wrap_continuation {
-            // Walk backward from target_idx until we find a view line
-            // that is NOT a wrap continuation.  That's the start of the
-            // logical line containing `target_idx`.
-            let mut line_start_idx = clamped_target;
-            while line_start_idx > 0
-                && matches!(view_lines[line_start_idx].line_start, LineStart::AfterBreak)
-            {
-                line_start_idx -= 1;
-            }
-
-            if let Some(new_top_byte) =
-                self.get_source_byte_for_view_line(view_lines, line_start_idx)
-            {
-                self.set_top_byte(new_top_byte);
-            }
-            self.set_top_view_line_offset(target_idx.saturating_sub(line_start_idx));
-        } else {
-            // Classic behavior: absolute offset, source-byte top.
-            self.set_top_view_line_offset(target_idx);
-            if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, target_idx) {
-                self.set_top_byte(new_top_byte);
-            }
-        }
-    }
-
     /// Ensure cursor is visible using view lines (Layout-aware)
     ///
     /// This method uses view lines to check visibility, correctly handling
@@ -1256,36 +1188,14 @@ impl Viewport {
         };
         let max_top = total_rows.saturating_sub(viewport_height);
 
-        // `fine_tune_scroll_up`, in row space. An upward scroll through wrapped
-        // rows is started by a pre-render pass whose placement is coarser than
-        // this one's, and it can leave the cursor one row further from the top
-        // than the margin asks for. That is a legal resting position, so neither
-        // margin test fires — and then the viewport never moves again on any
-        // later press, so scrolling stalls in the middle of the buffer
-        // (fresh#1574's up-arrow invariant). While the flag is set, the cursor
-        // is pinned *at* the margin rather than merely kept out of it.
-        let fine_tune = self.scrolled_up_in_wrap && self.line_wrap_enabled;
-        self.scrolled_up_in_wrap = false;
-
         let in_top_margin = cursor_row < top_row + margin;
         let in_bottom_margin = cursor_row + margin + 1 > top_row + viewport_height;
-        if !fine_tune && !in_top_margin && !in_bottom_margin {
+        if !in_top_margin && !in_bottom_margin {
             return apply_margin;
         }
 
-        // Scrolling *up* stops at the first row of the line the viewport already
-        // starts on. The layout phase this replaces could not go further: it
-        // works in viewport-relative coordinates, so its top-margin target
-        // saturates at zero and all it can do is walk `top_view_line_offset`
-        // back down to the line's first row. Moving `top_byte` to an earlier
-        // line is the byte-oriented pre-render pass's job, and doing it here too
-        // pulls the viewport up a few rows on ordinary downward movement — which
-        // is what `anti_recenter_dropped_leaves_cursor_at_viewport_bottom`
-        // notices. The wrapped-line walk fresh#1574 needs is entirely within
-        // this bound.
-        let line_top_row = index.line_first_row(top_line) as usize;
-        let target_top = if fine_tune || in_top_margin {
-            cursor_row.saturating_sub(margin).max(line_top_row)
+        let target_top = if in_top_margin {
+            cursor_row.saturating_sub(margin)
         } else {
             (cursor_row + margin + 1).saturating_sub(viewport_height)
         };
@@ -1300,26 +1210,19 @@ impl Viewport {
         apply_margin
     }
 
-    /// `rows_settled` says [`Self::ensure_visible_in_rows`] already placed the
-    /// viewport against the margin, in absolute row space, before the build. The
-    /// vertical phases below must not run when it did, for two reasons that
-    /// arrive together:
+    /// Horizontal placement only.
     ///
-    /// * The margin is already satisfied. Applying it again scrolls a second
-    ///   time and leaves the cursor *outside* the margin it was just centred
-    ///   in — after which nothing scrolls on the next key press (fresh#1574).
-    /// * When the build was also anchored, `top_view_line_offset` is no longer
-    ///   an index into `view_lines`, and every phase below reads or writes it
-    ///   as one.
+    /// Vertical placement lives in [`Self::ensure_visible_in_rows`], which runs
+    /// before any row is built and decides in absolute rows. This pass used to
+    /// do it too, from the window it was handed — and the two disagreed
+    /// structurally, because a window that starts at a logical line cannot
+    /// express a viewport parked inside one. That disagreement is fresh#1574.
     ///
-    /// Only the horizontal column scroll still runs, since it works from
-    /// `cursor_view_line` — a plain index into the rows it was handed.
     pub fn ensure_visible_in_layout(
         &mut self,
         view_lines: &[ViewLine],
         cursor: &Cursor,
         gutter_width: usize,
-        rows_settled: bool,
     ) -> bool {
         // Check if we should skip sync due to session restore
         // This prevents the restored scroll position from being overwritten
@@ -1347,7 +1250,6 @@ impl Viewport {
                 cursor.position,
                 self.top_byte(),
             );
-            self.scrolled_up_in_wrap = false;
             return false;
         }
 
@@ -1365,253 +1267,12 @@ impl Viewport {
             self.line_wrap_enabled,
         );
 
-        // Each phase below is tried in order; the first one that actually moves
-        // the viewport returns `true`. They share no mutable state beyond
-        // `self`, so the early returns keep the happy path easy to follow.
-        if !rows_settled {
-            if self.fine_tune_scroll_up(view_lines, cursor_view_line, viewport_height) {
-                return true;
-            }
-            if self.scroll_cursor_within_margin(view_lines, cursor_view_line, viewport_height) {
-                return true;
-            }
-            if self.reveal_virtual_lines_above(view_lines, cursor_view_line, viewport_height) {
-                return true;
-            }
-        } else {
-            // The row-space pass consumed this signal's purpose.
-            self.scrolled_up_in_wrap = false;
-        }
+        // Horizontal only. Vertical placement belongs to
+        // `ensure_visible_in_rows`, which runs before anything is built and
+        // decides in absolute rows; this pass sees only the window it was
+        // handed and cannot reach past it, which is what made the two disagree.
         self.scroll_cursor_column_into_view(view_lines, cursor, cursor_view_line, gutter_width);
         false
-    }
-
-    /// Consume the "just scrolled up in wrap mode" signal left by the byte-
-    /// oriented `ensure_visible`.  When set, pull `top_view_line_offset`
-    /// down so the cursor lands at exactly `scroll_offset` rows from the
-    /// viewport top.  The byte-oriented pass uses `wrap_line` (char-based)
-    /// to count wrap segments, which disagrees by one with the rendering
-    /// pipeline's word-boundary wrapping for some paragraphs — without
-    /// this fine-tune, subsequent Up presses keep the cursor one row
-    /// deeper than the scroll margin and the viewport stalls instead of
-    /// scrolling one row per press (issue #1574, Up-arrow jumpy variant
-    /// step 17 of the width-sweep).
-    ///
-    /// The signal is always cleared, even when no adjustment is made.
-    /// Returns `true` if it moved the viewport.
-    fn fine_tune_scroll_up(
-        &mut self,
-        view_lines: &[ViewLine],
-        cursor_view_line: usize,
-        viewport_height: usize,
-    ) -> bool {
-        let fine_tune = self.scrolled_up_in_wrap && self.line_wrap_enabled;
-        self.scrolled_up_in_wrap = false;
-        if !fine_tune {
-            return false;
-        }
-
-        let desired_offset = self.scroll_offset.min(viewport_height / 2);
-        // Use a clamped shift so we never push the viewport past
-        // buffer boundaries (handled by max_top below via saturating).
-        let max_top_candidate = view_lines.len().saturating_sub(viewport_height);
-        let target_top = cursor_view_line.saturating_sub(desired_offset);
-        let new_offset = target_top.min(max_top_candidate);
-        if new_offset == self.top_view_line_offset() {
-            return false;
-        }
-
-        tracing::trace!(
-            "ensure_visible_in_layout: fine-tune scroll-up offset {} -> {} (cursor_view_line={})",
-            self.top_view_line_offset(),
-            new_offset,
-            cursor_view_line,
-        );
-        self.set_top_view_line_offset(new_offset);
-        true
-    }
-
-    /// Scroll so the cursor stays out of the top/bottom margin zone.
-    ///
-    /// Apply the same scroll margin that the byte-oriented `ensure_visible`
-    /// uses, so that in heavily wrapped buffers (where `ensure_visible`
-    /// bails out because `top_view_line_offset > 0`) the cursor still
-    /// triggers a scroll as soon as it enters the top or bottom margin
-    /// zone rather than only when it falls completely outside the
-    /// viewport. Without this, the cursor can slide all the way to the
-    /// last visible row in wrapped content before a single Down press
-    /// finally scrolls — and then the next press stalls — because
-    /// this view-line-aware routine only treated "completely off-screen"
-    /// as a scroll trigger (issue #1574).
-    ///
-    /// Only apply the margin logic when the wrapping pipeline is actually
-    /// managing the scroll position (either line-wrap is on, or we've
-    /// been asked to skip into a wrapped logical line via
-    /// `top_view_line_offset > 0`).  In plain non-wrapped mode the
-    /// byte-oriented `ensure_visible` already placed the cursor inside
-    /// the safe zone with margin, so re-applying it here — on top of
-    /// `view_lines` that only cover the current viewport window — can
-    /// produce incorrect scroll decisions for large files in
-    /// byte-offset mode.
-    ///
-    /// Returns `true` if it moved the viewport.
-    fn scroll_cursor_within_margin(
-        &mut self,
-        view_lines: &[ViewLine],
-        cursor_view_line: usize,
-        viewport_height: usize,
-    ) -> bool {
-        // The effective top view line is the offset we've scrolled through.
-        let effective_top = self.top_view_line_offset();
-        let effective_bottom = effective_top + viewport_height;
-
-        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset() > 0;
-        let effective_offset = if apply_margin {
-            self.scroll_offset.min(viewport_height / 2)
-        } else {
-            0
-        };
-        let max_top = view_lines.len().saturating_sub(viewport_height);
-
-        // Cursor is in the top margin zone when it sits within
-        // `effective_offset` rows of the top of the viewport.  When
-        // `effective_offset == 0` (non-wrapped fallback) this degrades to
-        // the pre-existing "cursor above the viewport" check.
-        let in_top_margin = cursor_view_line < effective_top + effective_offset;
-        // Cursor is in the bottom margin zone when it sits within
-        // `effective_offset` rows of the bottom. `+1` because margin is
-        // *within* the last `effective_offset` rows (inclusive).  With
-        // `effective_offset == 0` this degrades to "cursor at or below
-        // the last visible row".
-        let in_bottom_margin = cursor_view_line + effective_offset + 1 > effective_bottom;
-
-        tracing::trace!(
-            "ensure_visible_in_layout: margins effective_top={} effective_bottom={} effective_offset={} apply_margin={} in_top_margin={} in_bottom_margin={} max_top={}",
-            effective_top,
-            effective_bottom,
-            effective_offset,
-            apply_margin,
-            in_top_margin,
-            in_bottom_margin,
-            max_top,
-        );
-
-        if !in_top_margin && !in_bottom_margin {
-            return false;
-        }
-
-        // Compute the ideal top_view_line_offset that puts the cursor
-        // just inside the safe zone (margin away from the nearer edge).
-        let target_top = if in_top_margin {
-            // Put cursor at `effective_offset` rows from the top.
-            cursor_view_line.saturating_sub(effective_offset)
-        } else {
-            // Put cursor at `effective_offset` rows from the bottom,
-            // i.e. row `viewport_height - 1 - effective_offset` from the
-            // new top.
-            (cursor_view_line + effective_offset + 1).saturating_sub(viewport_height)
-        };
-
-        // Clamp to valid range. `max_top` is the largest top that still
-        // keeps a full viewport's worth of rows below it.
-        let new_offset = target_top.min(max_top);
-
-        // Only actually scroll if that moves the viewport. If the
-        // cursor is in a margin but we can't scroll any further in
-        // that direction (e.g. at the very top or very bottom of the
-        // document), keep the viewport put and fall through to the
-        // virtual-lines / horizontal-scroll handling below.
-        if new_offset == self.top_view_line_offset() {
-            tracing::trace!(
-                "ensure_visible_in_layout: in margin but clamped — target_top={} max_top={} new_offset={} top_view_line_offset={} cursor_view_line={} in_top_margin={} in_bottom_margin={}",
-                target_top,
-                max_top,
-                new_offset,
-                self.top_view_line_offset(),
-                cursor_view_line,
-                in_top_margin,
-                in_bottom_margin,
-            );
-            return false;
-        }
-
-        tracing::trace!(
-            "ensure_visible_in_layout: scrolling from offset {} to {}, cursor_view_line={}, in_top_margin={}, in_bottom_margin={}",
-            self.top_view_line_offset(),
-            new_offset,
-            cursor_view_line,
-            in_top_margin,
-            in_bottom_margin,
-        );
-
-        // Snap top_byte to the LOGICAL LINE START of the new first
-        // visible view line, and set top_view_line_offset to the
-        // wrap-segment offset within that line.  The render pipeline
-        // invokes `calculate_view_anchor` after slicing, and that
-        // helper scans forward through the sliced view-lines until
-        // it finds the first one whose source byte is >= top_byte.
-        // If we left top_byte at a *mid-line* source byte (the first
-        // source byte of a wrapped continuation), `calculate_view_anchor`
-        // would re-skip past any earlier wrap-continuation view lines
-        // whose source is < top_byte — effectively undoing the slice
-        // whenever we decrement top_view_line_offset within the same
-        // logical line (issue #1574, Ctrl+Up/Ctrl+Down round-trip
-        // symmetry).  Keeping top_byte at the line start keeps the
-        // slice authoritative.
-        self.snap_to_logical_line_start(view_lines, new_offset);
-        true
-    }
-
-    /// Special case: when the cursor sits on the first visible view line and
-    /// virtual lines (rows without source content) precede it, scroll up to
-    /// show them while keeping the cursor visible.
-    ///
-    /// Returns `true` if it moved the viewport.
-    fn reveal_virtual_lines_above(
-        &mut self,
-        view_lines: &[ViewLine],
-        cursor_view_line: usize,
-        viewport_height: usize,
-    ) -> bool {
-        let effective_top = self.top_view_line_offset();
-        let cursor_position_in_viewport = cursor_view_line.saturating_sub(effective_top);
-        if cursor_position_in_viewport != 0 || cursor_view_line == 0 {
-            return false;
-        }
-
-        // Count how many virtual lines (lines without source content) precede the cursor.
-        let mut virtual_lines_above = 0;
-        for i in (0..cursor_view_line).rev() {
-            let has_source = view_lines[i].char_source_bytes.iter().any(|m| m.is_some());
-            if has_source {
-                break; // Hit a source line, stop counting
-            }
-            virtual_lines_above += 1;
-        }
-        if virtual_lines_above == 0 {
-            return false;
-        }
-
-        // Scroll up to show virtual lines, but ensure cursor stays visible:
-        // the cursor should be at the bottom of the visible area at most.
-        let max_scroll_up = virtual_lines_above.min(viewport_height.saturating_sub(1));
-        let new_offset = effective_top.saturating_sub(max_scroll_up);
-        if new_offset == self.top_view_line_offset() {
-            return false;
-        }
-
-        tracing::trace!(
-            "ensure_visible_in_layout: showing {} virtual lines above cursor, scrolling from {} to {}",
-            virtual_lines_above,
-            self.top_view_line_offset(),
-            new_offset
-        );
-        self.set_top_view_line_offset(new_offset);
-        // Also update top_byte to match the new scroll position
-        if let Some(new_top_byte) = self.get_source_byte_for_view_line(view_lines, new_offset) {
-            self.set_top_byte(new_top_byte);
-        }
-        true
     }
 
     /// Adjust horizontal scroll so the cursor's column stays on screen.
@@ -2348,7 +2009,6 @@ impl Viewport {
             self.set_top_view_line_offset(
                 cursor_segment_idx_in_line.saturating_sub(effective_offset),
             );
-            self.scrolled_up_in_wrap = true;
             return;
         }
 
@@ -2395,9 +2055,7 @@ impl Viewport {
         let new_top_byte = iter.current_position();
         self.set_top_byte_with_limit(buffer, &[], &[], new_top_byte);
         self.set_top_view_line_offset(top_offset_in_landing_line);
-        if cursor_near_top {
-            self.scrolled_up_in_wrap = true;
-        }
+        if cursor_near_top {}
     }
 
     /// Scroll `top_byte` so the cursor lands at `target_rows_from_top` logical
