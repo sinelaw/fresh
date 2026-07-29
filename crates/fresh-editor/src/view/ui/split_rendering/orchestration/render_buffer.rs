@@ -222,12 +222,19 @@ pub(crate) fn compute_buffer_layout(
         );
         let cursor_byte = cursors.primary().position;
         let buffer_len = state.buffer.len();
-        let within_bounds = buffer_len
-            <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_BYTES
-            && (buffer_len == 0
-                || state.buffer.get_line_number(buffer_len.saturating_sub(1)) + 1
-                    <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_LINES);
-        if within_bounds || state.wrap_indices.get(&geometry).is_some() {
+        // Large-file mode has no line data at all — the gutter is byte-based
+        // and `line_count` is byte arithmetic, so an index built here would be
+        // one meaningless line and placement against it pins the viewport at
+        // the top. The byte pass owns those buffers outright. `line_count()`
+        // (an Option, no scan) replaces the earlier `get_line_number(len-1)`,
+        // which forced exactly the scan large-file mode exists to avoid.
+        let indexable = !state.buffer.is_large_file();
+        let within_bounds = indexable
+            && buffer_len <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_BYTES
+            && state.buffer.line_count().is_some_and(|lc| {
+                lc <= crate::view::ui::split_rendering::scrollbar::MAX_WRAP_SCROLLBAR_LINES
+            });
+        if within_bounds || (indexable && state.wrap_indices.get(&geometry).is_some()) {
             let line_ending = state.buffer.line_ending();
             // Snapshot virtual-line anchors so the per-line lookup borrows
             // this list rather than `state`, whose buffer the build holds
