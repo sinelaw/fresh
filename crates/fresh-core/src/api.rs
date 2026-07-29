@@ -36,7 +36,7 @@
 //!
 //! ## Limitations & Tradeoffs
 //!
-//! - **Manual parsing for complex types**: Some methods (e.g., `submitViewTransform`)
+//! - **Manual parsing for complex types**: Some methods
 //!   still use manual object parsing due to enum serialization complexity
 //! - **Two-step deserialization**: Complex nested structs may need
 //!   `rquickjs::Value → serde_json::Value → typed struct` due to rquickjs_serde limits
@@ -1362,18 +1362,6 @@ pub struct ViewTokenWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub style: Option<ViewTokenStyle>,
-}
-
-/// Transformed view stream payload (plugin-provided)
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct ViewTransformPayload {
-    /// Byte range this transform applies to (viewport)
-    pub range: Range<usize>,
-    /// Tokens in wire format
-    pub tokens: Vec<ViewTokenWire>,
-    /// Layout hints
-    pub layout_hints: Option<LayoutHints>,
 }
 
 /// A plugin-owned interval marker: a byte range `[start, end)` carrying an
@@ -3168,19 +3156,6 @@ pub enum PluginCommand {
         enabled: bool,
     },
 
-    /// Submit a transformed view stream for a viewport
-    SubmitViewTransform {
-        buffer_id: BufferId,
-        split_id: Option<SplitId>,
-        payload: ViewTransformPayload,
-    },
-
-    /// Clear view transform for a buffer/split (returns to normal rendering)
-    ClearViewTransform {
-        buffer_id: BufferId,
-        split_id: Option<SplitId>,
-    },
-
     /// Set plugin-managed view state for a buffer in the active split.
     /// Stored in BufferViewState.plugin_state and persisted across sessions.
     SetViewState {
@@ -3446,7 +3421,7 @@ pub enum PluginCommand {
 
     /// Add a soft break point for marker-based line wrapping.
     /// The break is stored as a marker that auto-adjusts on buffer edits,
-    /// eliminating the flicker caused by async view_transform round-trips.
+    /// eliminating the flicker of async plugin round-trips.
     AddSoftBreak {
         buffer_id: BufferId,
         /// Namespace for bulk removal (shared with overlay namespace system)

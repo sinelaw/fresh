@@ -30,7 +30,6 @@ use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
-use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
@@ -103,7 +102,6 @@ pub(crate) fn compute_buffer_layout(
     lsp_waiting: bool,
     view_mode: ViewMode,
     compose_width: Option<u16>,
-    view_transform: Option<ViewTransformPayload>,
     estimated_line_length: usize,
     highlight_context_bytes: usize,
     relative_line_numbers: bool,
@@ -184,9 +182,6 @@ pub(crate) fn compute_buffer_layout(
     }
     let render_area = compose_layout.render_area;
 
-    // Clone view_transform so we can reuse it if scrolling triggers a rebuild
-    let view_transform_for_rebuild = view_transform.clone();
-
     // This split's cursor byte positions, for cursor-dependent conceal /
     // soft-break activation (evaluated per render, per split — cursor
     // movement changes what's active without any marker churn).
@@ -200,15 +195,12 @@ pub(crate) fn compute_buffer_layout(
     // built at all, and the layout pass then finds nothing left to do.
     //
     // Only when the index is already built for this geometry: building it here
-    // would trade one O(buffer) pass for another.
-    //
-    // Not when a fold is collapsed. The index maps bytes to rows as if nothing
-    // were hidden — it has no fold model — so with a fold active its row numbers
-    // are not the rows being drawn. Deciding the scroll from them puts the
-    // cursor in the wrong place, and because an anchored build also switches
-    // off the layout pass's vertical phases, nothing downstream can correct it.
+    // would trade one O(buffer) pass for another. (The fold carve-out that used
+    // to sit beside this is gone: folds are in the geometry key now, and a
+    // collapsed line occupies no index row — the index rows *are* the drawn
+    // rows.)
     let mut build_anchor: Option<BuildAnchor> = None;
-    if view_transform.is_none() && !state.wrap_indices.is_empty() && folds.is_empty() {
+    if !state.wrap_indices.is_empty() {
         let fold_ranges = state.fold_ranges(folds);
         let geometry = wrap_index_geometry_for(
             viewport,
@@ -246,7 +238,6 @@ pub(crate) fn compute_buffer_layout(
         build_view_data(
             state,
             viewport,
-            view_transform,
             estimated_line_length,
             visible_count,
             line_wrap,
@@ -271,12 +262,11 @@ pub(crate) fn compute_buffer_layout(
 
     // If the sync adjustment changed top_byte, rebuild view_data before
     // ensure_visible_in_layout runs (so it sees the correct view lines).
-    let (view_data, view_transform_for_rebuild) = if sync_scrolled {
+    let (view_data, may_rebuild) = if sync_scrolled {
         viewport.set_top_view_line_offset(0);
         let rebuilt = build_view_data(
             state,
             viewport,
-            view_transform_for_rebuild,
             estimated_line_length,
             visible_count,
             line_wrap,
@@ -291,9 +281,9 @@ pub(crate) fn compute_buffer_layout(
             None,
         );
         viewport.scroll_to_end_of_view(&rebuilt.lines);
-        (rebuilt, None)
+        (rebuilt, false)
     } else {
-        (view_data, Some(view_transform_for_rebuild))
+        (view_data, true)
     };
 
     // Ensure cursor is visible using Layout-aware check (handles virtual lines)
@@ -317,12 +307,11 @@ pub(crate) fn compute_buffer_layout(
     // (issue #1574, Up-arrow jumpy variant: cy 5→7 at step 13 of the
     // width-sweep).
     let view_data = if scrolled && viewport.top_byte() != top_byte_before_scroll {
-        if let Some(vt) = view_transform_for_rebuild {
+        if may_rebuild {
             viewport.set_top_view_line_offset(0);
             let rebuilt = build_view_data(
                 state,
                 viewport,
-                vt,
                 estimated_line_length,
                 visible_count,
                 line_wrap,
@@ -714,7 +703,6 @@ pub(crate) fn render_buffer_in_split(
     view_mode: ViewMode,
     compose_width: Option<u16>,
     compose_column_guides: Option<Vec<u16>>,
-    view_transform: Option<ViewTransformPayload>,
     _buffer_id: BufferId,
     hide_cursor: bool,
     session_mode: bool,
@@ -760,7 +748,6 @@ pub(crate) fn render_buffer_in_split(
         lsp_waiting,
         view_mode.clone(),
         compose_width,
-        view_transform,
         estimated_line_length,
         highlight_context_bytes,
         relative_line_numbers,

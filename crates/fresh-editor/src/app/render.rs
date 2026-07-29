@@ -263,63 +263,15 @@ impl Editor {
 
                         let visible_count = split_area.height as usize;
 
-                        // `view_transform_request` carries the full
-                        // tokenized viewport in its args. Building those
-                        // tokens (`build_base_tokens_for_hook`) is the
-                        // expensive part — see #2009. Skip the whole
-                        // pipeline when no plugin subscribes.
-                        if pm_guard.has_subscribers("view_transform_request") {
-                            let is_binary = state.buffer.is_binary();
-                            let line_ending = state.buffer.line_ending();
-                            let base_tokens =
-                                crate::view::ui::split_rendering::SplitRenderer::build_base_tokens_for_hook(
-                                    &mut state.buffer,
-                                    viewport_top_byte,
-                                    estimated_line_length,
-                                    visible_count,
-                                    is_binary,
-                                    line_ending,
-                                );
-                            let viewport_start = viewport_top_byte;
-                            let viewport_end = base_tokens
-                                .last()
-                                .and_then(|t| t.source_offset)
-                                .unwrap_or(viewport_start);
-                            let cursor_positions: Vec<usize> = vs_map
-                                .get(&split_id)
-                                .map(|vs| vs.cursors.iter().map(|(_, c)| c.position).collect())
-                                .unwrap_or_default();
-                            pm_guard.run_hook(
-                                "view_transform_request",
-                                crate::services::plugins::hooks::HookArgs::ViewTransformRequest {
-                                    buffer_id,
-                                    split_id: split_id.into(),
-                                    viewport_start,
-                                    viewport_end,
-                                    tokens: base_tokens,
-                                    cursor_positions,
-                                },
-                            );
-
-                            // Plugin saw fresh base tokens; future
-                            // SubmitViewTransform from this request is valid.
-                            if let Some(vs) = vs_map.get_mut(&split_id) {
-                                vs.view_transform_stale = false;
-                            }
-                        }
                         drop(pm_guard);
 
                         let top_byte = viewport_top_byte;
-                        let seen_byte_ranges =
-                            seen_ranges_for_win.entry(buffer_id).or_default();
+                        let seen_byte_ranges = seen_ranges_for_win.entry(buffer_id).or_default();
 
-                        let mut new_lines: Vec<
-                            crate::services::plugins::hooks::LineInfo,
-                        > = Vec::new();
+                        let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> =
+                            Vec::new();
                         let mut line_number = state.buffer.get_line_number(top_byte);
-                        let mut iter = state
-                            .buffer
-                            .line_iterator(top_byte, estimated_line_length);
+                        let mut iter = state.buffer.line_iterator(top_byte, estimated_line_length);
 
                         for _ in 0..visible_count {
                             if let Some((line_start, line_content)) = iter.next_line() {
@@ -327,14 +279,12 @@ impl Editor {
                                 let byte_range = (line_start, byte_end);
 
                                 if !seen_byte_ranges.contains(&byte_range) {
-                                    new_lines.push(
-                                        crate::services::plugins::hooks::LineInfo {
-                                            line_number,
-                                            byte_start: line_start,
-                                            byte_end,
-                                            content: line_content,
-                                        },
-                                    );
+                                    new_lines.push(crate::services::plugins::hooks::LineInfo {
+                                        line_number,
+                                        byte_start: line_start,
+                                        byte_end,
+                                        content: line_content,
+                                    });
                                     seen_byte_ranges.insert(byte_range);
                                 }
                                 line_number += 1;
@@ -3870,7 +3820,6 @@ impl Editor {
                     let view_mode = buf_state.view_mode.clone();
                     let compose_width = buf_state.compose_width;
                     let compose_column_guides = buf_state.compose_column_guides.clone();
-                    let view_transform = buf_state.view_transform.clone();
                     let rulers = buf_state.rulers.clone();
                     let show_line_numbers = buf_state.show_line_numbers;
                     let highlight_current_line = buf_state.highlight_current_line;
@@ -3889,7 +3838,6 @@ impl Editor {
                         view_mode,
                         compose_width,
                         compose_column_guides,
-                        view_transform,
                         buffer_id,
                         session_mode,
                         &rulers,

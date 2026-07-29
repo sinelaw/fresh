@@ -261,20 +261,6 @@ pub enum HookArgs {
         server_name: String,
     },
 
-    /// View transform request
-    ViewTransformRequest {
-        buffer_id: BufferId,
-        split_id: SplitId,
-        /// Byte offset of the viewport start
-        viewport_start: usize,
-        /// Byte offset of the viewport end
-        viewport_end: usize,
-        /// Base tokens (Text, Newline, Space) from the source
-        tokens: Vec<ViewTokenWire>,
-        /// Byte positions of all cursors in this buffer
-        cursor_positions: Vec<usize>,
-    },
-
     /// Mouse click event
     MouseClick {
         /// Column (x coordinate) in screen cells

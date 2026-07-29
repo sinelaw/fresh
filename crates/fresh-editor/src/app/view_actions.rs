@@ -72,7 +72,6 @@ impl Window {
                 ViewMode::Source => {
                     // Clear compose width to remove margins
                     vs.compose_width = None;
-                    vs.view_transform = None;
                     // A per-buffer override wins over the global default.
                     vs.show_line_numbers = vs.line_numbers_override.unwrap_or(default_line_numbers);
                 }

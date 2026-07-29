@@ -3424,22 +3424,8 @@ interface EditorAPI {
 	*/
 	clearSoftBreaksInRange(bufferId: number, start: number, end: number): boolean;
 	/**
-	* Submit a view transform for a buffer/split
-	* 
-	* Accepts tokens in the simple format:
-	* {kind: "text"|"newline"|"space"|"break", text: "...", sourceOffset: N, style?: {...}}
-	* 
-	* Also accepts the TypeScript-defined format for backwards compatibility:
-	* {kind: {Text: "..."} | "Newline" | "Space" | "Break", source_offset: N, style?: {...}}
-	*/
-	submitViewTransform(bufferId: number, splitId: number | null, start: number, end: number, tokens: Record<string, unknown>[], layoutHints?: Record<string, unknown>): boolean;
-	/**
-	* Clear view transform for a buffer/split
-	*/
-	clearViewTransform(bufferId: number, splitId: number | null): boolean;
-	/**
 	* Set layout hints (compose width, column guides) for a buffer/split
-	* without going through the view_transform pipeline.
+	* directly.
 	*/
 	setLayoutHints(bufferId: number, splitId: number | null, hints: LayoutHints): boolean;
 	/**
@@ -4516,14 +4502,6 @@ interface HookEventMap {
 		/** Buffer version these byte ranges were captured at. Pass back to
 		* coordinate-mapping APIs to repair stale offsets from this batch. */
 		epoch: number;
-	};
-	view_transform_request: {
-		buffer_id: number;
-		split_id: number;
-		viewport_start: number;
-		viewport_end: number;
-		tokens: ViewTokenWire[];
-		cursor_positions: number[];
 	};
 	// ── commands ─────────────────────────────────────────────────────────────
 	pre_command: {

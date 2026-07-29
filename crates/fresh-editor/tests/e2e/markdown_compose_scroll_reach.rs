@@ -248,7 +248,7 @@ fn setup_compose_harness(
         .wait_for_prompt_closed()
         .map_err(|e| format!("wait prompt closed: {e}"))?;
 
-    // Wait for the plugin's view_transform to settle: emphasis markers
+    // Wait for the plugin's decorations to settle: emphasis markers
     // (`**`) get concealed everywhere except possibly the cursor's own
     // row, so once the screen has at most one `**` line and is stable
     // we're safe to scroll.

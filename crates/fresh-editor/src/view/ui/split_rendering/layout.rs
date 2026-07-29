@@ -12,7 +12,6 @@ use crate::view::split::{SplitViewState, TabTarget};
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
 use crate::view::viewport::Viewport;
-use fresh_core::api::ViewTransformPayload;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::Paragraph;
@@ -47,7 +46,6 @@ pub(super) struct ViewPreferences {
     pub view_mode: ViewMode,
     pub compose_width: Option<u16>,
     pub compose_column_guides: Option<Vec<u16>>,
-    pub view_transform: Option<ViewTransformPayload>,
     pub rulers: Vec<usize>,
     /// Per-split line number visibility (from BufferViewState).
     pub show_line_numbers: bool,
@@ -183,7 +181,6 @@ pub(super) fn resolve_view_preferences(
                 view_mode: view_state.view_mode.clone(),
                 compose_width: view_state.compose_width,
                 compose_column_guides: view_state.compose_column_guides.clone(),
-                view_transform: view_state.view_transform.clone(),
                 rulers: view_state.rulers.clone(),
                 show_line_numbers: view_state.show_line_numbers,
                 highlight_current_line: view_state.highlight_current_line,
@@ -195,7 +192,6 @@ pub(super) fn resolve_view_preferences(
         view_mode: ViewMode::Source,
         compose_width: None,
         compose_column_guides: None,
-        view_transform: None,
         rulers: Vec::new(),
         show_line_numbers: true,
         highlight_current_line: true,

@@ -722,19 +722,6 @@ impl Editor {
             } => {
                 self.handle_set_line_wrap(buffer_id, split_id, enabled);
             }
-            PluginCommand::SubmitViewTransform {
-                buffer_id,
-                split_id,
-                payload,
-            } => {
-                self.handle_submit_view_transform(buffer_id, split_id, payload);
-            }
-            PluginCommand::ClearViewTransform {
-                buffer_id: _,
-                split_id,
-            } => {
-                self.handle_clear_view_transform(split_id);
-            }
             PluginCommand::SetViewState {
                 buffer_id,
                 key,
