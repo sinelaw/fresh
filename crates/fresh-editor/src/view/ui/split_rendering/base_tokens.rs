@@ -562,15 +562,6 @@ mod tests {
 /// synthetic `Text` token: the count-only helpers that did the latter never
 /// produced `Space` tokens, so the space-overflow back-up (issue #1363) could
 /// not fire in them and their row counts could disagree with what was drawn.
-pub(crate) fn build_line_tokens(
-    buffer: &mut Buffer,
-    line: usize,
-    line_ending: LineEnding,
-    fold_skip: &[std::ops::Range<usize>],
-) -> Vec<ViewTokenWire> {
-    build_line_tokens_from(buffer, line, line_ending, fold_skip, None)
-}
-
 /// [`build_line_tokens`], but starting at `from_byte` instead of the line's
 /// start.
 ///
