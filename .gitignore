@@ -68,3 +68,9 @@ dist
 
 # Generated single-line perf fixture (scripts/gen-single-line-bench.py)
 bench-single-line-*.txt
+
+# Python model virtualenv
+tests/wrap_model/.venv/
+tests/wrap_model/.hypothesis/
+__pycache__/
+*.pyc
