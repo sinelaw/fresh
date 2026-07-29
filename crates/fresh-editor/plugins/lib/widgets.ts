@@ -243,7 +243,14 @@ export function dropdown(
  * `WidgetPanel.setDualIncluded(key, values)`.
  *
  * `excluded` names option values owned by a sibling list, kept out of
- * this list's Available column (cross-exclusion). */
+ * this list's Available column (cross-exclusion).
+ *
+ * The focused column's cursor row is marked `▸`, the other column's
+ * parked cursor `▹`, and the active column's header `▾`, so the state
+ * reads without relying on color. `activeIncluded` / `availableCursor`
+ * / `includedCursor` seed that cursor (host instance state takes over
+ * after the first render); `hint` adds a one-line key legend under the
+ * columns. */
 export function dualList(
   options: { value: string; label: string }[],
   opts?: {
@@ -251,6 +258,10 @@ export function dualList(
     excluded?: string[];
     label?: string;
     focused?: boolean;
+    activeIncluded?: boolean;
+    availableCursor?: number;
+    includedCursor?: number;
+    hint?: string;
     visibleRows?: number;
     key?: string;
   },
@@ -262,6 +273,10 @@ export function dualList(
     excluded: opts?.excluded ?? [],
     label: opts?.label ?? "",
     focused: opts?.focused ?? false,
+    activeIncluded: opts?.activeIncluded ?? false,
+    availableCursor: opts?.availableCursor ?? 0,
+    includedCursor: opts?.includedCursor ?? 0,
+    hint: opts?.hint ?? "",
     visibleRows: opts?.visibleRows ?? 6,
     key: opts?.key,
   };
