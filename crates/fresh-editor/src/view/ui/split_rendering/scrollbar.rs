@@ -43,6 +43,7 @@ pub(super) fn scrollbar_line_counts(
     viewport: &Viewport,
     large_file_threshold_bytes: u64,
     buffer_len: usize,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize, MarkerBasis) {
     if buffer_len > large_file_threshold_bytes as usize {
         // No line coordinate exists here — on a file this size `line_count()`
@@ -67,7 +68,8 @@ pub(super) fn scrollbar_line_counts(
         && total_lines <= MAX_WRAP_SCROLLBAR_LINES
         && buffer_len <= MAX_WRAP_SCROLLBAR_BYTES
     {
-        let (total_rows, top_row) = scrollbar_visual_row_counts(state, viewport, buffer_len);
+        let (total_rows, top_row) =
+            scrollbar_visual_row_counts(state, viewport, buffer_len, fold_ranges);
         return (
             total_rows,
             top_row,
@@ -187,6 +189,7 @@ pub(super) fn scrollbar_visual_row_counts(
     state: &mut EditorState,
     viewport: &Viewport,
     buffer_len: usize,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
     use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode};
@@ -246,6 +249,7 @@ pub(super) fn scrollbar_visual_row_counts(
             }
         },
         view_mode: CacheViewMode::Source,
+        fold_signature: crate::view::wrap_index::fold_signature(&fold_ranges),
     };
 
     // Snapshot virtual-line anchors so the per-line lookup borrows this list
@@ -270,7 +274,7 @@ pub(super) fn scrollbar_visual_row_counts(
 
     let line_ending = state.buffer.line_ending();
     // Resolved before `entry` takes `&mut state`.
-    let decorations = state.index_decorations(geometry.view_mode);
+    let decorations = state.index_decorations(geometry.view_mode, fold_ranges);
     let index = state.wrap_indices.entry(geometry);
     index.ensure_built(
         &mut state.buffer,
@@ -600,6 +604,7 @@ mod tests {
             &vp,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             buffer_len,
+            Vec::new(),
         );
         assert!(
             total > 100,
@@ -634,6 +639,7 @@ mod tests {
             &vp,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             buffer_len,
+            Vec::new(),
         );
         assert_eq!(
             total, n,
@@ -662,6 +668,7 @@ mod tests {
             &vp,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             len,
+            Vec::new(),
         );
         assert_eq!(
             basis,
@@ -679,6 +686,7 @@ mod tests {
             &vp,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             len,
+            Vec::new(),
         );
         assert_eq!(
             basis,
@@ -691,7 +699,7 @@ mod tests {
         // guaranteed to exist. A tiny threshold stands in for a huge file.
         let mut state = state_with_wrapping_lines(100);
         let len = state.buffer.len();
-        let (total, top, basis) = scrollbar_line_counts(&mut state, &vp, 16, len);
+        let (total, top, basis) = scrollbar_line_counts(&mut state, &vp, 16, len, Vec::new());
         assert_eq!((total, top), (0, 0), "large files use the constant thumb");
         assert_eq!(basis, MarkerBasis::Bytes { total: len as u64 });
     }

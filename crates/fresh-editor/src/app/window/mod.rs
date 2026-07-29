@@ -4282,6 +4282,7 @@ fn wrap_scroll_geometry(
         &state.buffer,
         view_state.viewport.line_wrap_enabled,
         &crate::state::ViewMode::Source,
+        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
     );
     state
         .wrap_indices

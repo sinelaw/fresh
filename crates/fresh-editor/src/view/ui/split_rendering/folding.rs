@@ -81,7 +81,7 @@ pub(super) fn fold_adjusted_visible_count(
 /// currently-collapsed folds. Feed into
 /// [`ViewLineIterator::with_fold_skip`] so hidden content is never
 /// materialised as a ViewLine.
-pub(super) fn fold_skip_set(
+pub(crate) fn fold_skip_set(
     buffer: &Buffer,
     marker_list: &MarkerList,
     folds: &FoldManager,

@@ -593,9 +593,20 @@ impl EditorState {
     /// markdown_compose's `md-syntax` conceals are emitted whenever any split
     /// composes the buffer, so a Source-mode split must ignore them — the same
     /// gate `build_view_data` applies.
+    /// Collapsed byte ranges for `folds`, sorted — the form the index and the
+    /// renderer both want. Folds live on the split, so they arrive as an
+    /// argument rather than off `self`.
+    pub fn fold_ranges(
+        &self,
+        folds: &crate::view::folding::FoldManager,
+    ) -> Vec<std::ops::Range<usize>> {
+        crate::view::ui::split_rendering::fold_skip_set(&self.buffer, &self.marker_list, folds)
+    }
+
     pub fn index_decorations(
         &self,
         view_mode: crate::view::line_wrap_cache::CacheViewMode,
+        folds: Vec<std::ops::Range<usize>>,
     ) -> crate::view::wrap_index::IndexDecorations {
         use crate::view::line_wrap_cache::CacheViewMode;
         let end = self.buffer.len().saturating_add(1);
@@ -630,6 +641,7 @@ impl EditorState {
             soft_breaks,
             conceals,
             inline_hints,
+            folds,
         }
     }
 
@@ -675,8 +687,21 @@ impl EditorState {
             let hi = virtual_positions.partition_point(|p| *p < end);
             (hi - lo) as u32
         };
-        self.wrap_indices
-            .damage_bytes(&mut self.buffer, damage, line_ending, &virtual_rows);
+        // Computed after the edit, so the repaired index is marked current and
+        // the next render reuses it instead of rebuilding.
+        let new_version = crate::view::line_wrap_cache::pipeline_inputs_version(
+            self.buffer.version(),
+            self.soft_breaks.version(),
+            self.conceals.version(),
+            self.virtual_texts.version(),
+        );
+        self.wrap_indices.damage_bytes(
+            &mut self.buffer,
+            damage,
+            line_ending,
+            &virtual_rows,
+            new_version,
+        );
     }
 
     fn apply_insert(

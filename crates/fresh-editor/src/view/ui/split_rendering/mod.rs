@@ -15,6 +15,7 @@
 pub(crate) mod base_tokens;
 mod char_style;
 mod folding;
+pub(crate) use folding::fold_skip_set;
 mod gutter;
 mod layout;
 mod orchestration;
