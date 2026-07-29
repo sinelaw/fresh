@@ -136,6 +136,40 @@ impl<'a> LineIterator<'a> {
         }
     }
 
+    /// Start iterating at exactly `byte`, without scanning back to a line start.
+    ///
+    /// The caller certifies that `byte` is a visual-row start — in practice it
+    /// came from `WrapIndex::byte_of_row` — which is what makes skipping the
+    /// scan sound. This is how the renderer begins at the viewport's anchor
+    /// instead of at byte 0 of the logical line: the difference between reading
+    /// a viewport and reading everything above it.
+    pub(crate) fn from_mid_line(
+        buffer: &'a mut TextBuffer,
+        byte: usize,
+        estimated_line_length: usize,
+    ) -> Self {
+        let buffer_len = buffer.len();
+        let byte = byte.min(buffer_len);
+        if byte < buffer_len {
+            // Trigger the lazy load the backward scan would otherwise have done.
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = buffer.get_text_range_mut(byte, 1);
+        }
+        let pending_trailing_empty_line = buffer_len > 0
+            && byte == buffer_len
+            && buffer
+                .get_text_range_mut(buffer_len - 1, 1)
+                .is_ok_and(|b| b.first() == Some(&b'\n'));
+        LineIterator {
+            buffer,
+            current_pos: byte,
+            buffer_len,
+            estimated_line_length,
+            pending_trailing_empty_line,
+            max_line_bytes: MAX_LINE_BYTES,
+        }
+    }
+
     /// Lower the per-line read cap below the default [`MAX_LINE_BYTES`].
     ///
     /// A line longer than the cap is yielded as several consecutive pieces, so
@@ -376,6 +410,38 @@ impl<'a> LineIterator<'a> {
 
 #[cfg(test)]
 mod tests {
+    /// `from_mid_line` starts exactly where told, with no backward scan —
+    /// the property the renderer's anchor depends on.
+    #[test]
+    fn from_mid_line_starts_at_the_given_byte() {
+        let mut buffer = TextBuffer::from_bytes(b"alpha beta gamma delta".to_vec(), test_fs());
+
+        // A plain iterator rewinds to the line start; the mid-line one does not.
+        // "alpha beta gamma delta" — `gamma` starts at byte 11.
+        let rewound = LineIterator::new(&mut buffer, 11, 80).next_line();
+        assert_eq!(rewound.map(|(start, _)| start), Some(0));
+
+        let (start, text) = LineIterator::from_mid_line(&mut buffer, 11, 80)
+            .next_line()
+            .expect("a line");
+        assert_eq!(start, 11);
+        assert_eq!(text, "gamma delta");
+    }
+
+    /// Starting mid-line reads only the tail, which is the whole point: the
+    /// bytes before the anchor are never touched.
+    #[test]
+    fn from_mid_line_reads_only_the_tail() {
+        let body = "x".repeat(5_000);
+        let mut buffer = TextBuffer::from_bytes(body.into_bytes(), test_fs());
+
+        let (start, text) = LineIterator::from_mid_line(&mut buffer, 4_000, 80)
+            .next_line()
+            .expect("a line");
+        assert_eq!(start, 4_000);
+        assert_eq!(text.len(), 1_000);
+    }
+
     use crate::model::filesystem::StdFileSystem;
     use std::sync::Arc;
 

@@ -96,7 +96,9 @@ Repair additionally requires:
 | 2 — `WrapIndex` | `e015328` | done |
 | 2 — state wiring, per-geometry `WrapIndexSet` | `4e733e1` | done |
 | 2b — scrollbar + scroll math onto the index | `a5bd195` | done — `visual_row_index.rs` deleted |
-| 3 — `ViewAnchor`, O(viewport) renderer | — | **next** |
+| 3a — mid-line iteration (`from_mid_line`) | — | done |
+| 3b — renderer starts at the anchor row | — | **next** |
+| 3c — `ViewAnchor` replaces the coordinate pair | — | pending |
 | 4 — delete `line_wrap_cache` + writeback | — | pending |
 
 ### Ownership shape (settled)
@@ -147,6 +149,65 @@ Deletes on completion: `view/visual_row_index.rs`, `count_visual_rows_for_text`,
 `placeholder_layout_for_row_count`.
 
 ## Phase 3 — plan
+
+### 3a (done)
+
+`LineIterator::from_mid_line` / `Buffer::line_iterator_from_mid_line` start at
+exactly the given byte with no backward scan. The caller certifies the byte came
+from `WrapIndex::byte_of_row`, which is what makes skipping the scan sound.
+Tested: it starts where told, and reads only the tail.
+
+### 3b — the renderer starts at the anchor row
+
+The bounded slice, and the one that captures the 59%. Keep the viewport's
+`(top_byte, top_view_line_offset)` pair for now; change only where the *build*
+begins.
+
+In `build_view_data`, when soft wrap is on and `top_view_line_offset > 0`:
+
+```
+anchor_row  = index.line_first_row(line_of(top_byte)) + top_view_line_offset
+(start_row, skip) = index.resumable_row_at_or_before(anchor_row)
+addr        = index.byte_of_row(start_row)
+tokens      = build_base_tokens(from addr.byte, mid_line = true, row budget)
+rows        = WrapMachine::resume(rule, addr.carry) ... 
+```
+
+`ViewData` gains `first_drawn: usize` — the rows built before the window, i.e.
+`skip + (anchor_row - start_row)`. Every consumer that currently indexes `lines`
+by `top_view_line_offset` must read `first_drawn` instead.
+
+**The four call sites in `render_buffer.rs`, and the crux.** Three are simple
+substitutions:
+
+- `:350` `let first_drawn = viewport.top_view_line_offset.min(...)` — the
+  decoration byte window (fresh#2843).
+- `:372` / `:382` `calculated_offset` — the drawn slice handed to the painter.
+- `:291` `calculate_view_anchor(&view_data.lines, viewport.top_byte)` — becomes
+  trivial, since the first built row *is* the anchor.
+
+The crux is the fourth: **`ensure_visible_in_layout`** (`:248`) and
+`scroll_to_end_of_view` (`:216`) both search `view_data.lines` by absolute index
+and *write back* `top_view_line_offset`. If `lines` no longer starts at the
+logical line's first row, their arithmetic silently changes meaning — and
+`top_view_line_offset` write-back is exactly what fresh#1574 was patching
+(`snap_to_logical_line_start`, `scrolled_up_in_wrap`, `fine_tune_scroll_up`).
+
+Do **not** attempt 3b without first converting those two to row space:
+`ensure_visible` should compare `index.row_of_byte(cursor)` against the
+viewport's top row and set the scroll directly, never by searching built rows.
+That conversion is what makes the fresh#1574 patch pair deletable rather than
+merely relocated — and it is why 3c (the full `ViewAnchor`) is the natural
+follow-on rather than an optional extra: once scroll decisions are made in row
+space, the two-coordinate pair has no remaining reader.
+
+Suggested order for 3b: convert `ensure_visible_in_layout` and
+`scroll_to_end_of_view` to row space *first*, with the existing
+line-start-anchored build still in place and all e2e width-sweep tests green.
+Only then move the build's starting point. Two commits, each independently
+verifiable.
+
+## Phase 3 — original notes
 
 Replace `(top_byte, top_view_line_offset)` with `ViewAnchor { byte, row_offset }`
 (`row_offset` signed: negative when the viewport starts on an injected row, which
