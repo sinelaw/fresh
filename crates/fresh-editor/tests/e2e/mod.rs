@@ -275,6 +275,7 @@ pub mod syntax_variable_builtin;
 pub mod tab_config;
 pub mod tab_drag;
 pub mod tab_new_button;
+pub mod tab_path_disambiguation;
 pub mod terminal;
 pub mod terminal_close;
 pub mod terminal_link;

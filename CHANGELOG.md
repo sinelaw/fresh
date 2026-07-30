@@ -10,6 +10,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Restart an exited terminal in place** - the status bar offers `⟳ Restart terminal` (or `⟳ Resume claude`) and the process comes back in the same buffer, below the existing scrollback, with a coding agent rejoining its conversation. The tab reads `claude (exited)` instead of an exit line in the output, and terminal tab names now survive an editor restart.
   * If you have customized your status bar, open Settings → **Status Bar** and move **Terminal Restart** from *Available* to *Included* (`Shift+→`) under Left or Right.
+* **Tabs for same-named files say which file they are** - open two `mod.rs` and the tabs read `model/mod.rs` and `view/mod.rs` instead of `mod.rs 1` and `mod.rs 2`. Each tab grows only as much of its path as it takes to be unique, and tabs whose name is already unique are untouched (#2851, requested by @anddimario).
 * **Line-ending indicators** - `↵` at every line break and `␍` for the CR half of a CRLF, both off by default (#2798, requested by @akarinotomoshibi).
 * **Scrollbar markers for plugins** - `editor.setScrollbarMarkers` paints marks on the scrollbar track; live-diff hunks and Markdown headings now use it (#2713, requested by @RetributionByRevenue).
 * **File Explorer sticky parents** - a nested folder's expanded ancestors stay stacked at the top of the sidebar while you scroll (#2705, by @asukaminato0721).
