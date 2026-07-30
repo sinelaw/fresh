@@ -1,8 +1,8 @@
 # Code Tour — Utility Dock redesign
 
-> _Design note. Status: **PLANNED** — nothing in this document ships yet. The
-> "Today" section describes the code-tour plugin as it behaves at the time of
-> writing; everything from "Target design" onward is proposal._
+> _Design note. Status: **IMPLEMENTED**. The "Today" section records the
+> behaviour this change replaced — it is kept because it is the evidence for
+> every decision that follows, not because it still describes the plugin._
 
 The guided-tour feature (`plugins/code-tour.ts`, driven by a `.fresh-tour.json`
 manifest) currently presents each step in a floating **action popup**. This note
@@ -75,12 +75,18 @@ Definition...` → accept `.fresh-tour.json`.
    as navigation, and `Enter` silently activates whichever row happens to be
    selected.
 
-7. **The highlight does not render.** `renderStepOverlays` resolves the step's
-   line range with `getLineStartPosition` / `getLineEndPosition`, which answer
-   for the *active* buffer, and then applies the overlay to the buffer it looked
-   up by path. In a terminal capture of step 1 (lines 1–88) no line in the range
-   carries the highlight background. Two `await`s land between `openFile` and
-   the overlay call, so which buffer is "active" at that moment is not pinned.
+7. **The highlight does not render.** In a colour capture of step 1
+   (lines 1–88) no line in the range carries the highlight background. Two
+   independent bugs:
+   - `renderStepOverlays` looks the buffer up with
+     `findBufferByPath(step.file_path)`, which compares `PathBuf`s for
+     equality. Buffers store *absolute* paths and a manifest's `file_path` is
+     repo-relative, so the lookup always returns 0 and the function returns
+     before adding any overlay. This is the one that bites today.
+   - Behind it, the byte range comes from `getLineStartPosition` /
+     `getLineEndPosition`, which answer for the *active* buffer rather than the
+     one being highlighted. Latent today (nothing reaches it); fatal the moment
+     the panel holds focus, which is exactly what the dock design does.
 
 8. **Long tours have no map.** There is no way to see where you are in a 20-step
    tour, jump back three steps, or skim what is coming.
@@ -375,11 +381,14 @@ step navigation must also work from the editor split:
 
 | Key | Action |
 |---|---|
-| `Alt+]` | Next step |
-| `Alt+[` | Previous step |
+| `Ctrl+Alt+]` | Next step |
+| `Ctrl+Alt+[` | Previous step |
 
-These bind against the existing `tour-active` context, which the plugin already
-sets and which currently gates only the palette entries.
+Not `Alt+]` / `Alt+[`, which the default keymap already gives to
+`next_split` / `prev_split`. `Ctrl+Alt+brackets` is free and mirrors the
+`Ctrl+Alt+Arrow` precedent for reviewing Search & Replace matches from the
+editor. They bind in the `normal` context and no-op when no tour is open, so
+they cost nothing when the feature is unused.
 
 ### 4.3 Focus policy
 
@@ -389,7 +398,7 @@ sets and which currently gates only the palette entries.
   editor split at the step's line. The panel stays mounted and keeps showing the
   step. `Alt+J` comes back.
 - Advancing a step re-renders the panel but **does not** move focus. If you were
-  reading in the editor, `Alt+]` advances the step and re-centres the source
+  reading in the editor, `Ctrl+Alt+]` advances the step and re-centres the source
   without yanking you into the dock.
 - Closing the dock tab (`×`, `q`, `Esc`) exits the tour: overlays cleared,
   `tour-active` unset. There is no longer an invisible-but-active state.
@@ -466,7 +475,7 @@ mode needing to know how many exist.
 
 ### Which tour do the editor-context keys drive?
 
-`Alt+]` / `Alt+[` (§4.2) fire from the editor split, where there is no tour
+`Ctrl+Alt+]` / `Ctrl+Alt+[` (§4.2) fire from the editor split, where there is no tour
 buffer to read. They target the **most recently active tour**: a `lastTourId`
 updated on any panel interaction and on `buffer_activated` for a tour buffer.
 With one tour open that is simply "the tour". With several, it is the one whose
@@ -683,8 +692,8 @@ panel = new WidgetPanel(bufferId);
 | `TOUR_NAMESPACE` | Constant → `code-tour:<tourId>` per instance, so one tour's teardown cannot clear another's highlight. `clearTourOverlays` narrows to the instance's own namespace. |
 | Persistence | New: `setWindowState("openTours", …)` write-through on every step/rail/open/close change, and an `editor.on("ready", …)` restore pass (§6). |
 | `buffer_closed` | New listener — tears down the one tour whose buffer closed; unsets `tour-active` only when the last tour goes. |
-| `renderStepOverlays` | Fix the buffer mismatch: resolve line positions against the step's buffer id rather than whatever is active after the intervening `await`s, so the highlight actually paints. |
-| Mode + keys | New `code-tour-panel` mode with the table in §4.1; `Alt+]` / `Alt+[` in the `tour-active` editor context. |
+| `renderStepOverlays` | Fix both highlight bugs (§1.7). A `stepBufferId` helper resolves a repo-relative `file_path` — literal, then cwd-joined, then a normalized suffix match over `listBuffers` — instead of relying on `findBufferByPath` alone. The byte range is computed from `getBufferText(bufferId)` + `utf8ByteLength` rather than the active-buffer line-position calls, so it is correct while the panel holds focus. |
+| Mode + keys | New `code-tour-panel` mode with the table in §4.1; `Ctrl+Alt+]` / `Ctrl+Alt+[` in the default keymap. |
 | Markdown | New `renderExplanation(md, width): TextPropertyEntry[]`. |
 | i18n | New `code-tour.i18n.json` — the plugin currently hardcodes every user-visible string, unlike its neighbours. |
 | Detour tracking | `lastKnownTopByte` / `lastKnownBufferId` get their intended use: they drive whether `[ Re-highlight ]` is emphasised. |
@@ -698,14 +707,20 @@ Nothing in the host changes. Every widget the design uses — `button`,
 
 ## 10. Open questions
 
-Three earlier questions are now settled and folded into the design: an
-unfinished tour **does** persist across restarts, **all** open tours restore, and
-closing one forgets it (§6); and each tour **is** its own buffer so several can
-be open at once (§5). What remains:
+Every question this note opened has been answered and folded into the design:
 
-1. **Should `Enter` on the rail also move focus to the editor**, or only change
-   the step? Proposal above keeps focus in the panel; jumping is `Enter` on the
-   prose or the explicit button.
-2. **Authoring.** Nothing in the editor writes `.fresh-tour.json`. A "record
-   step from selection" command would make the dock panel a two-way surface, but
-   that is a separate feature.
+- An unfinished tour **persists across restarts**, **all** open tours restore,
+  and closing one forgets it (§6).
+- Each tour **is its own buffer**, so several can be open at once (§5).
+- `Enter` on the step rail **changes the step and keeps focus in the panel**.
+  Moving to the code is the explicit gesture — `Enter` on the prose, the
+  `[ Jump to code ⏎ ]` button, or `Alt+J`. Reading the rail is navigation
+  *within* the tour, and having it throw you into the editor would make
+  browsing a long tour cost a round trip back to the dock each time.
+- **Authoring is delegated to agents**, not an in-editor recorder. The Fresh
+  CLI system prompt (`FRESH_CLI_SYSTEM_PROMPT` in `orchestrator.ts`, injected
+  when "Teach Fresh CLI" is on) carries a recipe showing an agent how to write
+  a manifest and open it, and the plugin publishes
+  `getPluginApi("code-tour").openTour(path)` so a script can drive it. An agent
+  that has just made a change can hand the human a tour of it. A "record step
+  from selection" command remains possible, but is a separate feature.

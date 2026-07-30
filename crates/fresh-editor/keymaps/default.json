@@ -889,6 +889,21 @@
       "when": "normal"
     },
     {
+      "comment": "Step through an open Code Tour without leaving the editor split, so you can read the code the step is about and still advance. Ctrl+Alt+brackets rather than Alt+brackets, which are split navigation; mirrors the Ctrl+Alt+Arrow precedent for reviewing Search & Replace matches from the editor. No-ops when no tour is open.",
+      "key": "]",
+      "modifiers": ["ctrl", "alt"],
+      "action": "tour_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "[",
+      "modifiers": ["ctrl", "alt"],
+      "action": "tour_prev",
+      "args": {},
+      "when": "normal"
+    },
+    {
       "comment": "Normal context - Split navigation",
       "key": "]",
       "modifiers": ["alt"],

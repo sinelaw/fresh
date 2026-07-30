@@ -2176,6 +2176,23 @@ impl Editor {
         self.split_manager_mut().set_active_split(dock_leaf);
         self.active_window_mut()
             .set_pane_buffer(dock_leaf, buffer_id);
+        // `show_line_numbers` is per (split, buffer), and the dock leaf's view
+        // state already exists — it was built for whichever panel opened the
+        // dock — so it defaults this buffer to "on". Fresh-split creation sets
+        // it explicitly; this path did not, which is why the *second* panel
+        // routed into the dock (a second tour, diagnostics beside
+        // search/replace) rendered with a line-number gutter the first one
+        // lacked. The gutter also stole the columns the panel had already laid
+        // its widgets out for, so the content wrapped.
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&dock_leaf)
+        {
+            view_state.ensure_buffer_state(buffer_id).show_line_numbers = show_line_numbers;
+        }
         // Drop the phantom tab from the source split.
         if dock_leaf != source_split_before_create {
             if let Some(source_view_state) = self
