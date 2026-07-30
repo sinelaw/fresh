@@ -159,6 +159,12 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
             screen.contains(tab_marker) && screen.contains("jump to code")
         })
         .unwrap();
+    // Opening a step is an async chain — open the file, await, paint the
+    // overlay, then hand focus back to the panel. Content on screen does not
+    // mean that chain has finished, and until it has, focus is still on the
+    // editor: a key sent now types into the source file instead of stepping
+    // the tour. Wait for the plugin thread to go quiet.
+    harness.wait_for_async_quiescence(3).unwrap();
 }
 
 /// Screen row (0-based) of the first line containing `needle`.
@@ -245,7 +251,10 @@ fn test_tour_renders_as_dock_panel_with_buttons() {
 #[test]
 fn test_step_prose_renders_markdown() {
     let (_temp, project_root) = setup_tour_project();
-    let mut harness = harness_in(&project_root, 160, 40);
+    // Tall enough that the whole explanation fits: the dock takes ~35% of the
+    // height, and asserting on prose that scrolled below the fold would be
+    // asserting on something the user cannot see.
+    let mut harness = harness_in(&project_root, 160, 60);
 
     let manifest = project_root.join(".fresh-tour.json");
     load_tour(
@@ -356,11 +365,11 @@ fn test_clicking_next_button_advances_step() {
 
     let screen = harness.screen_to_string();
     let row = row_of(&harness, "[ Next ▶ ]");
-    let col = screen
-        .lines()
-        .nth(row)
-        .and_then(|l| l.find("[ Next"))
-        .expect("Next button column");
+    // Count characters, not bytes: the header's ▰▱ progress meter is multibyte,
+    // so `str::find` returns a byte offset well past the real column.
+    let line = screen.lines().nth(row).expect("button row");
+    let byte_idx = line.find("[ Next").expect("Next button column");
+    let col = line[..byte_idx].chars().count();
     // Click the middle of the label rather than the bracket.
     harness.mouse_click(col as u16 + 4, row as u16).unwrap();
 
