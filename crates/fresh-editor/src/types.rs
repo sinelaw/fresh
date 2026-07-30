@@ -24,6 +24,12 @@ pub mod context_keys {
     /// Backward-compatible alias for PAGE_VIEW
     pub const COMPOSE_MODE: &str = "compose_mode";
     pub const FILE_EXPLORER: &str = "file_explorer";
+    /// True while a plugin dock panel (`PanelSlot::Dock` — the left
+    /// companion column, e.g. the Orchestrator's) is mounted, whether it
+    /// holds the keyboard or is merely visible. Lets a plugin's menu row
+    /// carry a checkmark that tracks its own panel without the core
+    /// knowing which plugin owns the dock.
+    pub const DOCK: &str = "dock";
     pub const MENU_BAR: &str = "menu_bar";
     pub const FILE_EXPLORER_FOCUSED: &str = "file_explorer_focused";
     pub const MOUSE_CAPTURE: &str = "mouse_capture";

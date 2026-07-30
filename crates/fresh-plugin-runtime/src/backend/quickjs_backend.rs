@@ -5842,6 +5842,25 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Contribute a row to one of the menu bar's menus (e.g. a "Show Dock"
+    /// toggle under "View"). The target menu and the neighbour named by
+    /// `after` / `before` are matched by stable id (a menu `id`, an item's
+    /// `action`) as well as by display label, so the placement survives a
+    /// locale change. Naming a menu that doesn't exist is a no-op.
+    ///
+    /// Takes a typed AddMenuItemOptions struct - serde validates field
+    /// names at runtime.
+    pub fn add_menu_item(&self, opts: fresh_core::api::AddMenuItemOptions) -> bool {
+        let (menu_label, item, position) = opts.into_parts();
+        self.command_sender
+            .send(PluginCommand::AddMenuItem {
+                menu_label,
+                item,
+                position,
+            })
+            .is_ok()
+    }
+
     /// Contribute (or replace, or clear) menu rows for the LSP-Servers
     /// popup. Pass an empty `items` to clear this plugin's slice for
     /// the given language. See `PluginCommand::SetLspMenuContributions`.

@@ -18,24 +18,25 @@ impl Editor {
         self.expanded_menus_cache.invalidate();
     }
 
-    /// Find a built-in or plugin menu by `label`, mutate it via `f`, and
+    /// Find a built-in or plugin menu by its stable `id` ("View", "File",
+    /// …) or, failing that, its display `label`, mutate it via `f`, and
     /// invalidate the expanded-menu cache. Returns `None` if no matching
     /// menu was found (in which case the cache is left alone).
+    ///
+    /// The id is tried first because labels are translated: a plugin
+    /// contributing a row to the View menu (`add_menu_item`) would
+    /// otherwise silently miss on every non-English locale.
     pub fn with_menu_by_label<F, R>(&mut self, label: &str, f: F) -> Option<R>
     where
         F: FnOnce(&mut Menu) -> R,
     {
-        if let Some(idx) = self.menus.menus.iter().position(|m| m.label == label) {
+        let matches = |m: &Menu| m.id.as_deref() == Some(label) || m.label == label;
+        if let Some(idx) = self.menus.menus.iter().position(matches) {
             let r = f(&mut self.menus.menus[idx]);
             self.expanded_menus_cache.invalidate();
             return Some(r);
         }
-        if let Some(idx) = self
-            .menu_state
-            .plugin_menus
-            .iter()
-            .position(|m| m.label == label)
-        {
+        if let Some(idx) = self.menu_state.plugin_menus.iter().position(matches) {
             let r = f(&mut self.menu_state.plugin_menus[idx]);
             self.expanded_menus_cache.invalidate();
             return Some(r);

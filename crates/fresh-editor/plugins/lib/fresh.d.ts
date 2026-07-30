@@ -818,6 +818,44 @@ type ActionPopupOptions = {
 	*/
 	buffer_id?: number;
 };
+type AddMenuItemOptions = {
+	/**
+	* Target menu, matched against each menu's stable `id` ("View",
+	* "File", …) first and its display label second. A menu that matches
+	* neither is left alone and the call is a no-op.
+	*/
+	menu: string;
+	/**
+	* Row label, already localised by the plugin (`editor.t(…)`).
+	*/
+	label: string;
+	/**
+	* Action dispatched when the row is chosen. A name the editor doesn't
+	* know is routed to the plugin action of the same name — i.e. the
+	* handler registered with `registerHandler`.
+	*/
+	action: string;
+	/**
+	* Menu-context key whose boolean value renders the row's checkmark
+	* (e.g. `"dock"`). Omit for a plain action row.
+	*/
+	checkbox?: string;
+	/**
+	* Menu-context key gating whether the row is enabled. Omit for a row
+	* that is always available.
+	*/
+	when?: string;
+	/**
+	* Insert directly after the existing row whose action or label this
+	* names. Ignored when nothing matches (the row is appended instead).
+	*/
+	after?: string;
+	/**
+	* Insert directly before the existing row whose action or label this
+	* names. Ignored when `after` is set, or when nothing matches.
+	*/
+	before?: string;
+};
 type TsLspMenuItem = {
 	/**
 	* Stable identifier used as the `action_id` in the resulting
@@ -3943,6 +3981,17 @@ interface EditorAPI {
 	* Takes a typed ActionPopupOptions struct - serde validates field names at runtime
 	*/
 	showActionPopup(opts: ActionPopupOptions): boolean;
+	/**
+	* Contribute a row to one of the menu bar's menus (e.g. a "Show Dock"
+	* toggle under "View"). The target menu and the neighbour named by
+	* `after` / `before` are matched by stable id (a menu `id`, an item's
+	* `action`) as well as by display label, so the placement survives a
+	* locale change. Naming a menu that doesn't exist is a no-op.
+	* 
+	* Takes a typed AddMenuItemOptions struct - serde validates field
+	* names at runtime.
+	*/
+	addMenuItem(opts: AddMenuItemOptions): boolean;
 	/**
 	* Contribute (or replace, or clear) menu rows for the LSP-Servers
 	* popup. Pass an empty `items` to clear this plugin's slice for

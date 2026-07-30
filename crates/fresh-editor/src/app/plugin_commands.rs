@@ -26,6 +26,23 @@ const IGNORED_DIRS: &[&str] = &[
     ".DS_Store",
 ];
 
+/// Does `item` answer to `needle` — either as its action id or as its
+/// display label?
+///
+/// Menu labels are translated, so a plugin placing a row relative to an
+/// existing one ("after the file-explorer toggle") can only name it
+/// reliably by action. Labels stay accepted for submenus, which have no
+/// action, and for callers that already know the rendered text.
+fn menu_item_matches(item: &crate::config::MenuItem, needle: &str) -> bool {
+    match item {
+        crate::config::MenuItem::Action { label, action, .. } => {
+            action == needle || label == needle
+        }
+        crate::config::MenuItem::Submenu { label, .. } => label == needle,
+        _ => false,
+    }
+}
+
 /// Build `FileSearchOptions` from the common grep parameters.
 fn make_search_opts(
     fixed_string: bool,
@@ -834,6 +851,12 @@ impl Editor {
     // ==================== Menu Commands ====================
 
     /// Handle AddMenuItem command
+    ///
+    /// `position`'s `Before`/`After` neighbour is resolved by
+    /// [`menu_item_matches`] — action id or display label — so a plugin can
+    /// say "after `toggle_file_explorer`" instead of guessing the
+    /// translated label of the row it wants to sit next to. An unmatched
+    /// neighbour appends rather than dropping the row.
     pub(super) fn handle_add_menu_item(
         &mut self,
         menu_label: String,
@@ -841,28 +864,14 @@ impl Editor {
         position: MenuPosition,
     ) {
         let inserted = self.with_menu_by_label(&menu_label, |menu| {
+            let find = |needle: &str| menu.items.iter().position(|i| menu_item_matches(i, needle));
             let insert_idx = match position {
                 MenuPosition::Top => 0,
                 MenuPosition::Bottom => menu.items.len(),
-                MenuPosition::Before(label) => menu
-                    .items
-                    .iter()
-                    .position(|i| match i {
-                        crate::config::MenuItem::Action { label: l, .. }
-                        | crate::config::MenuItem::Submenu { label: l, .. } => l == &label,
-                        _ => false,
-                    })
-                    .unwrap_or(menu.items.len()),
-                MenuPosition::After(label) => menu
-                    .items
-                    .iter()
-                    .position(|i| match i {
-                        crate::config::MenuItem::Action { label: l, .. }
-                        | crate::config::MenuItem::Submenu { label: l, .. } => l == &label,
-                        _ => false,
-                    })
-                    .map(|i| i + 1)
-                    .unwrap_or(menu.items.len()),
+                MenuPosition::Before(label) => find(&label).unwrap_or(menu.items.len()),
+                MenuPosition::After(label) => {
+                    find(&label).map(|i| i + 1).unwrap_or(menu.items.len())
+                }
             };
             menu.items.insert(insert_idx, item);
             insert_idx

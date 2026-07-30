@@ -795,6 +795,11 @@ const DOCK_MIN_WIDTH_COLS = 24;
 const DOCK_MAX_WIDTH_COLS = 40;
 // Fraction of the terminal width the dock targets by default.
 const DOCK_WIDTH_FRACTION = 0.28;
+// Glyph on the dock's title-bar hide button. `×` (U+00D7), the same
+// multiplication sign the file explorer's close button and the host's
+// native modal `[×]` use — not the ASCII letter x — so all three close
+// affordances read identically.
+const DOCK_CLOSE_GLYPH = "×";
 
 // Responsive default dock width: ~`DOCK_WIDTH_FRACTION` of the terminal,
 // clamped to [`DOCK_MIN`..`DOCK_MAX`]. Re-evaluated on resize so the dock
@@ -4107,18 +4112,32 @@ function dockTitleRow(): WidgetSpec {
   } else {
     segments.push({ text: title, style: { ...base, bold: true } });
   }
-  // Pad to the screen width so the menu-bar background spans the whole
-  // dock; the host clips the over-wide row to the actual dock columns.
-  const barW = Math.max(title.length, editor.getScreenSize().width || 80);
-  return {
-    kind: "raw",
-    entries: [
-      styledRow(segments as Parameters<typeof styledRow>[0], {
-        padToChars: barW,
-        style: base,
-      }),
-    ],
-  };
+  // Title on the left, the `[ × ]` hide button hard against the right
+  // edge, and a flex spacer between them. The spacer is sized by the host
+  // against the dock's *actual* content width (including a user drag), so
+  // the button stays pinned to the edge without the plugin guessing the
+  // width — the previous "pad past the screen width and let the host clip"
+  // trick can't right-align anything, since the clipped tail is exactly
+  // where the button would sit.
+  //
+  // The bar background rides on the first inline piece's whole-entry
+  // `style`: a Row's inline collapse keeps the leading child's entry style
+  // for the merged line (and each child's own overlays on top of it), so
+  // `base` tints the title, the spacer, and the button alike — the menu-bar
+  // strip still spans the dock, and the button's focus/hover styling still
+  // paints over it.
+  return row(
+    raw([
+      styledRow(segments as Parameters<typeof styledRow>[0], { style: base }),
+    ]),
+    flexSpacer(),
+    // Hide the dock, mirroring the file explorer's title-bar `×`. Mouse-only
+    // (`focusable: false`) for the same reason the explorer's is: the dock's
+    // Tab cycle belongs to the session list and its controls, and the
+    // keyboard already has "Orchestrator: Toggle Dock" and the View-menu
+    // entry to hide it.
+    button(DOCK_CLOSE_GLYPH, { key: "dock-close", focusable: false }),
+  );
 }
 
 // Option keys for the dock's project dropdown, in display order. Index 0
@@ -10728,6 +10747,14 @@ editor.on("widget_event", (e) => {
       runDockMenuOption(e.widget_key.slice("menu-pick:".length));
       return;
     }
+    // Title-bar `[ × ]` → hide the dock, the same teardown Esc and
+    // "Orchestrator: Toggle Dock" run. Guarded on `dockMode` because the
+    // modal picker shares this handler and wears the host's own native
+    // close button instead.
+    if (e.event_type === "activate" && e.widget_key === "dock-close") {
+      if (dockMode) closeOpenDialog();
+      return;
+    }
     // Toggle the collapsible Filters section.
     if (e.event_type === "activate" && e.widget_key === "filters-toggle") {
       openDialog.filtersExpanded = !openDialog.filtersExpanded;
@@ -11181,3 +11208,22 @@ editor.registerCommand(
   null,
   { terminalBypass: true },
 );
+
+// View ▸ Orchestrator Dock — the menu route to the same toggle as the
+// command, the `toggle_dock_focus` accelerator, and the dock's own title-bar
+// `[ × ]`. It sits directly under "File Explorer" because the two are the
+// editor's two side panels and users look for them together.
+//
+// Both anchors are stable ids rather than rendered text: `"View"` is the
+// menu's `id` and `"toggle_file_explorer"` is the neighbouring row's action,
+// so the placement holds in every locale. The `dock` checkbox is a
+// host-computed menu-context key ("a dock panel is mounted"), which keeps
+// the checkmark honest even when the dock is closed by a route the plugin
+// didn't initiate.
+editor.addMenuItem({
+  menu: "View",
+  label: editor.t("menu.dock"),
+  action: "orchestrator_dock_toggle",
+  checkbox: "dock",
+  after: "toggle_file_explorer",
+});
