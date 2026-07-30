@@ -246,7 +246,28 @@ impl CommandRegistry {
             }
 
             // Check built-in contexts
-            cmd.contexts.is_empty() || cmd.contexts.contains(&current_context)
+            if cmd.contexts.is_empty() || cmd.contexts.contains(&current_context) {
+                return true;
+            }
+
+            // Focus-independent actions stay available even when the keyboard
+            // is owned by a non-editing surface. A terminal (or the explorer /
+            // dock / a plugin mode) still lets these actions run from their
+            // keybinding — `is_terminal_ui_action` is exactly that allowlist,
+            // and `terminal_bypass` is its plugin-declared counterpart. Greying
+            // the same command out in the palette contradicted the keymap:
+            // Alt+` opened a dock terminal from a focused terminal while the
+            // palette refused "Open Terminal in Utility Dock".
+            if matches!(current_context, KeyContext::Terminal)
+                || current_context.allows_ui_fallthrough()
+            {
+                return cmd.terminal_bypass
+                    || crate::input::keybindings::KeybindingResolver::is_terminal_ui_action(
+                        &cmd.action,
+                    );
+            }
+
+            false
         };
 
         // Helper to create a suggestion from a command
@@ -624,6 +645,138 @@ mod tests {
         let normal_only = results.iter().find(|s| s.text == "Normal Only");
         assert!(normal_only.is_some());
         assert!(normal_only.unwrap().disabled);
+    }
+
+    /// Look up one command by its exact palette name and report whether the
+    /// palette would let the user run it.
+    #[cfg(test)]
+    fn enabled_in(
+        registry: &CommandRegistry,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        context: KeyContext,
+        name: &str,
+    ) -> bool {
+        let empty_contexts = std::collections::HashSet::new();
+        let results = registry.filter("", context, keybindings, false, &empty_contexts, None, true);
+        let suggestion = results
+            .iter()
+            .find(|s| s.text == name)
+            .unwrap_or_else(|| panic!("command '{name}' should be listed in the palette"));
+        !suggestion.disabled
+    }
+
+    /// Commands that do not touch a text cursor stay runnable while a terminal
+    /// owns the keyboard. Editing commands still don't.
+    #[test]
+    fn test_focus_independent_commands_enabled_in_terminal_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        // Editor/app-wide state, navigation history, and the terminal's own
+        // commands — none of them need a focused text buffer.
+        for name in [
+            "Save All",
+            "Navigate Back",
+            "Navigate Forward",
+            "Toggle Line Wrap",
+            "Toggle Current Line Highlight",
+            "Toggle Occurrence Highlight",
+            "Toggle Inlay Hints",
+            "Set Background",
+            "List Bookmarks",
+            "List Macros",
+            "init: Reload init.ts",
+            "init: Edit init.ts",
+            "init: Check init.ts",
+            "Focus Terminal",
+            "Restart Terminal Process",
+        ] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' should be available while a terminal is focused"
+            );
+        }
+
+        // Commands that edit or inspect buffer text are still disabled: with a
+        // terminal focused there is no cursor for them to act on.
+        for name in ["Undo", "Redo", "Delete Line", "Sort Lines", "Go to Line"] {
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' needs a text buffer and should stay disabled in a terminal"
+            );
+        }
+    }
+
+    /// The palette must agree with the keymap: an action the terminal input
+    /// handler lets through (`is_terminal_ui_action`) is runnable from the
+    /// palette too, even though its `CommandDef` only lists `Normal`.
+    #[test]
+    fn test_terminal_ui_actions_enabled_in_terminal_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        for name in [
+            "Toggle Utility Dock",
+            "Open Terminal in Utility Dock",
+            "Resume Live Grep",
+        ] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' bypasses the terminal via its keybinding and must not be greyed out"
+            );
+        }
+    }
+
+    /// A plugin command that opted into `terminalBypass` is runnable from the
+    /// palette while a terminal is focused, even when it declares `Normal`.
+    #[test]
+    fn test_plugin_terminal_bypass_command_enabled_in_terminal_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        registry.register(Command {
+            name: "Plugin Bypass".to_string(),
+            description: "Runs anywhere".to_string(),
+            action: Action::PluginAction("bypass".to_string()),
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("test".to_string()),
+            terminal_bypass: true,
+        });
+        registry.register(Command {
+            name: "Plugin Normal".to_string(),
+            description: "Needs a buffer".to_string(),
+            action: Action::PluginAction("normal".to_string()),
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("test".to_string()),
+            terminal_bypass: false,
+        });
+
+        assert!(enabled_in(
+            &registry,
+            &keybindings,
+            KeyContext::Terminal,
+            "Plugin Bypass"
+        ));
+        assert!(!enabled_in(
+            &registry,
+            &keybindings,
+            KeyContext::Terminal,
+            "Plugin Normal"
+        ));
     }
 
     #[test]
