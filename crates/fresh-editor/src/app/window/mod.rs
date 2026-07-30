@@ -1895,14 +1895,7 @@ impl Window {
     /// positive = down). After scrolling, skips
     /// ensure_visible and snaps the viewport top to a fold boundary
     /// if the new top byte landed inside a collapsed fold.
-    /// `tab_size` is needed for view-line tokenization.
-    pub fn scroll_split_by_lines(
-        &mut self,
-        buffer_id: BufferId,
-        leaf_id: LeafId,
-        delta: i32,
-        tab_size: usize,
-    ) {
+    pub fn scroll_split_by_lines(&mut self, buffer_id: BufferId, leaf_id: LeafId, delta: i32) {
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
                 let soft_breaks = state.collect_soft_break_positions();
@@ -3977,8 +3970,6 @@ impl Window {
     /// EditorState so scroll limits are correct when view transforms
     /// inject extra rows.
     pub(crate) fn handle_scroll_event(&mut self, line_offset: isize) {
-        use crate::view::ui::view_pipeline::ViewLineIterator;
-
         let Some((mgr, _)) = self.buffers.splits() else {
             return;
         };
@@ -4008,9 +3999,8 @@ impl Window {
             vec![active_split]
         };
 
-        let tab_size = self.resources.config.editor.tab_size;
         for split_id in splits_to_scroll {
-            let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
+            let (mgr, _) = self.buffers.splits().expect("splits checked above");
             let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
                 continue;
             };

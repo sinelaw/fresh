@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::action::Action;
-use crate::api::ViewTokenWire;
 use crate::{BufferId, CursorId, SplitId};
 
 /// Arguments passed to hook callbacks
