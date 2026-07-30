@@ -81,7 +81,7 @@ mod split_actions;
 mod stdin_stream;
 mod tab_drag;
 mod terminal;
-pub use terminal::PluginTerminalSpec;
+pub use terminal::{agent_command_env, PluginTerminalSpec};
 mod terminal_input;
 mod terminal_link;
 mod terminal_mouse;

@@ -880,6 +880,12 @@ pub struct Window {
     /// user-opened terminals are absent and persist as before.
     pub ephemeral_terminals: std::collections::HashSet<crate::services::terminal::TerminalId>,
 
+    /// Terminals granted editor control (`FRESH_CMD_TOKEN`) at spawn. The
+    /// token itself is per-process and cannot outlive a restart, so this
+    /// records the *grant* rather than the token: respawn re-mints from it,
+    /// and the workspace serialiser persists it so restore can too.
+    pub script_terminals: std::collections::HashSet<crate::services::terminal::TerminalId>,
+
     /// Argv each terminal was spawned with, when it ran a command other
     /// than the plain shell (e.g. an Orchestrator agent). Captured at spawn
     /// and persisted into the workspace so a restored workspace re-runs the
@@ -2222,6 +2228,7 @@ impl Window {
             pending_file_poll_rx: None,
             pending_dir_poll_rx: None,
             ephemeral_terminals: std::collections::HashSet::new(),
+            script_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
             exited_terminals: HashMap::new(),

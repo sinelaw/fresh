@@ -32,6 +32,43 @@ use std::thread;
 
 pub use fresh_core::TerminalId;
 
+/// The extra environment injected into a spawned terminal's child — `FRESH_BIN`
+/// always, plus `FRESH_CMD_TOKEN` when the terminal is granted editor control.
+///
+/// Deliberately opaque, with no `Default` and no public constructor: the only
+/// way to obtain one is [`crate::app::terminal::agent_command_env`], which
+/// takes an explicit `allow_script` and mints the token. That makes the grant a
+/// question every spawn path is *forced* to answer, rather than one it can skip
+/// by passing an empty map.
+///
+/// This matters because the capability is per-process and unforgeable: a
+/// terminal that comes back from workspace restore or a PTY respawn without a
+/// freshly minted token can never drive the editor again, and the failure is
+/// invisible until the user runs a command that needs it. Restore and respawn
+/// are exactly the paths that used to construct their env inline.
+#[derive(Debug, Clone)]
+pub struct TerminalEnv(HashMap<String, String>);
+
+impl TerminalEnv {
+    /// Wrap an assembled env map. Crate-visible so `agent_command_env` — which
+    /// owns the minting decision — can build one; call *that*, not this.
+    pub(crate) fn from_assembled(vars: HashMap<String, String>) -> Self {
+        Self(vars)
+    }
+
+    /// Whether this env carries the editor-control capability. The spawn path
+    /// uses it to record the grant centrally, so no individual caller has to
+    /// remember to — and a respawn can re-mint for exactly the terminals that
+    /// had it.
+    pub(crate) fn grants_script(&self) -> bool {
+        self.0.contains_key("FRESH_CMD_TOKEN")
+    }
+
+    fn into_map(self) -> HashMap<String, String> {
+        self.0
+    }
+}
+
 /// What a spawning terminal should do with the on-disk transcripts (rendered
 /// scrollback + raw PTY log) it is handed.
 ///
@@ -327,6 +364,8 @@ impl TerminalManager {
     /// * `backing_path` - Optional path for rendered scrollback (incremental streaming)
     /// * `backing_mode` - Whether this terminal *continues* the transcript
     ///   already in those files (restore / respawn) or starts a new one
+    /// * `extra_env` - See [`TerminalEnv`]: every spawn path must state whether
+    ///   this terminal carries the agent capability
     ///
     /// # Returns
     /// The terminal ID if successful
@@ -341,7 +380,7 @@ impl TerminalManager {
         backing_mode: BackingMode,
         terminal_wrapper: crate::services::authority::TerminalWrapper,
         env_delta: crate::services::env_provider::EnvDelta,
-        extra_env: HashMap<String, String>,
+        extra_env: TerminalEnv,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -382,9 +421,10 @@ impl TerminalManager {
         backing_mode: BackingMode,
         terminal_wrapper: TerminalWrapper,
         env_delta: crate::services::env_provider::EnvDelta,
-        extra_env: HashMap<String, String>,
+        extra_env: TerminalEnv,
     ) -> Result<TerminalHandle, String> {
         let pty_pair = open_pty(cols, rows)?;
+        let extra_env = extra_env.into_map();
 
         // The active authority's terminal wrapper drives the shell command
         // unconditionally — local wraps `detect_shell()` with no args;

@@ -5048,6 +5048,7 @@ impl Pool {
             for f in files {
                 h.open_file(&root.join(f)).unwrap();
             }
+            let window_id = h.editor().active_window().id;
             h.editor_mut()
                 .active_window_mut()
                 .create_plugin_terminal(fresh::app::PluginTerminalSpec {
@@ -5066,7 +5067,7 @@ impl Pool {
                         agent.to_string(),
                     ]),
                     title: Some(agent.to_string()),
-                    env: std::collections::HashMap::new(),
+                    env: fresh::app::agent_command_env(window_id, None, false),
                 })
                 .expect("agent terminal should spawn");
             h.tick_and_render().unwrap();

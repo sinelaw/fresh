@@ -97,10 +97,11 @@ pub struct PluginTerminalSpec {
     pub persistent: bool,
     pub command: Option<Vec<String>>,
     pub title: Option<String>,
-    /// Extra environment variables applied to the terminal's child
-    /// process, on top of the inherited + activated env. Applied after
-    /// the control vars (`TERM`, `FRESH_SESSION`). Empty adds nothing.
-    pub env: HashMap<String, String>,
+    /// Extra environment applied to the terminal's child process, on top of
+    /// the inherited + activated env and after the control vars (`TERM`,
+    /// `FRESH_SESSION`). Built by [`agent_command_env`], which decides whether
+    /// this terminal carries the editor-control capability.
+    pub env: crate::services::terminal::TerminalEnv,
 }
 
 /// Assemble the extra env for a terminal that hosts an agent which may drive
@@ -121,15 +122,21 @@ pub struct PluginTerminalSpec {
 /// plugin would", which belongs only in terminals a caller explicitly grants it
 /// to, not in every spawned subprocess.
 ///
-/// Shared by `create_window_with_terminal` (agents born in a new window) and
-/// `handle_create_terminal` (agents spawned into an existing window) so both
-/// paths mint and inject identically. `base_env` seeds the map (plugin-supplied
-/// env, empty when omitted).
-pub(crate) fn agent_command_env(
+/// The single constructor for [`TerminalEnv`], and so the one place any
+/// terminal's env is assembled: first launch, workspace restore, and PTY
+/// respawn all land here. `TerminalEnv` is otherwise unconstructible, which is
+/// what stops a new spawn path from quietly passing an empty map and returning
+/// a terminal that has silently lost the capability — restore and respawn each
+/// used to build their env inline, and both dropped the token that way.
+///
+/// Callers that legitimately grant nothing pass `allow_script: false`; they
+/// still get `FRESH_BIN`, and the grant question stays visible at the call site.
+/// `base_env` seeds the map (plugin-supplied env, empty when omitted).
+pub fn agent_command_env(
     window: fresh_core::WindowId,
     base_env: Option<HashMap<String, String>>,
     allow_script: bool,
-) -> HashMap<String, String> {
+) -> crate::services::terminal::TerminalEnv {
     let mut env = base_env.unwrap_or_default();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe) = exe.to_str() {
@@ -159,7 +166,7 @@ pub(crate) fn agent_command_env(
         ));
         env.insert("FRESH_CMD_TOKEN".to_string(), token);
     }
-    env
+    crate::services::terminal::TerminalEnv::from_assembled(env)
 }
 
 /// Build a [`TerminalWrapper`] that runs `argv` directly as a local PTY child,
@@ -277,7 +284,7 @@ impl Window {
         cwd: Option<PathBuf>,
         persistent: bool,
         command_override: Option<Vec<String>>,
-        extra_env: HashMap<String, String>,
+        extra_env: crate::services::terminal::TerminalEnv,
     ) -> Option<TerminalId> {
         self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, false)
     }
@@ -292,7 +299,7 @@ impl Window {
         cwd: Option<PathBuf>,
         persistent: bool,
         command_override: Option<Vec<String>>,
-        extra_env: HashMap<String, String>,
+        extra_env: crate::services::terminal::TerminalEnv,
     ) -> Option<TerminalId> {
         self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, true)
     }
@@ -344,7 +351,7 @@ impl Window {
         cwd: Option<PathBuf>,
         persistent: bool,
         command_override: Option<Vec<String>>,
-        extra_env: HashMap<String, String>,
+        extra_env: crate::services::terminal::TerminalEnv,
         force_local: bool,
     ) -> Option<TerminalId> {
         let (cols, rows) = self.get_terminal_dimensions();
@@ -404,6 +411,9 @@ impl Window {
             let env_delta = self.terminal_env_delta(&wrapper);
             (wrapper, env_delta)
         };
+        // Read the grant before the env moves into the spawn, so it can be
+        // recorded here rather than by each caller.
+        let grants_script = extra_env.grants_script();
         match self.terminal_manager.spawn(
             cols,
             rows,
@@ -430,6 +440,9 @@ impl Window {
                 }
                 if !persistent {
                     self.ephemeral_terminals.insert(terminal_id);
+                }
+                if grants_script {
+                    self.script_terminals.insert(terminal_id);
                 }
                 Some(terminal_id)
             }
@@ -919,7 +932,9 @@ impl Window {
         // `None` command override — `Open Terminal` always spawns the
         // user's shell, never a one-off command. Plugin-driven
         // terminals route through `create_plugin_terminal` instead.
-        let terminal_id = self.spawn_terminal_session(None, true, None, HashMap::new())?;
+        // A plain user shell: no capability granted, but the decision is stated.
+        let terminal_id =
+            self.spawn_terminal_session(None, true, None, agent_command_env(self.id, None, false))?;
         let split_id = self
             .buffers
             .splits()
@@ -946,8 +961,12 @@ impl Window {
         argv: Vec<String>,
         title: String,
     ) -> Option<(TerminalId, BufferId)> {
-        let terminal_id =
-            self.spawn_local_terminal_session(None, true, Some(argv), HashMap::new())?;
+        let terminal_id = self.spawn_local_terminal_session(
+            None,
+            true,
+            Some(argv),
+            agent_command_env(self.id, None, false),
+        )?;
         let split_id = self
             .buffers
             .splits()
@@ -1097,6 +1116,9 @@ impl Window {
                 .filter(|argv| !argv.is_empty())
                 .cloned();
             let ephemeral = self.ephemeral_terminals.contains(&old_id);
+            // The reborn PTY needs a *new* token: the old one died with the
+            // process that minted it. Carry the grant, not the token.
+            let allow_script = self.script_terminals.contains(&old_id);
 
             let spawn = RespawnSpec {
                 old_id,
@@ -1108,6 +1130,7 @@ impl Window {
                 resume_argv,
                 launch_argv,
                 ephemeral,
+                allow_script,
             };
             match self.respawn_terminal_pty(buffer_id, spawn) {
                 Some(_) => revived += 1,
@@ -1162,7 +1185,9 @@ impl Window {
             crate::services::terminal::BackingMode::Continue,
             wrapper,
             env_delta,
-            HashMap::new(),
+            // Re-mint rather than reuse: the previous token is bound to the
+            // process that issued it, so a reborn PTY needs its own.
+            agent_command_env(self.id, None, spec.allow_script),
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -1189,6 +1214,10 @@ impl Window {
             self.terminal_commands.remove(&spec.old_id);
             self.terminal_resume_commands.remove(&spec.old_id);
             self.ephemeral_terminals.remove(&spec.old_id);
+            self.script_terminals.remove(&spec.old_id);
+        }
+        if spec.allow_script {
+            self.script_terminals.insert(new_id);
         }
         if let Some(p) = spec.backing_path {
             self.terminal_backing_files.insert(new_id, p);
@@ -1294,8 +1323,10 @@ impl Window {
             .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
         let launch_argv = exited.command.clone().filter(|argv| !argv.is_empty());
 
+        let allow_script = self.script_terminals.contains(&exited.terminal_id);
         let spec = RespawnSpec {
             old_id: exited.terminal_id,
+            allow_script,
             cols: exited.cols,
             rows: exited.rows,
             cwd: exited.cwd.clone(),
@@ -1352,6 +1383,9 @@ struct RespawnSpec {
     resume_argv: Option<Vec<String>>,
     launch_argv: Option<Vec<String>>,
     ephemeral: bool,
+    /// Whether the dead terminal held the editor-control grant, and so whether
+    /// the replacement PTY gets a freshly minted token.
+    allow_script: bool,
 }
 
 impl Editor {
@@ -1366,8 +1400,9 @@ impl Editor {
     /// placeholder buffer that would linger as a phantom tab).
     pub(crate) fn spawn_terminal_session(&mut self) -> Option<TerminalId> {
         // No command override — see comment on `Window::open_terminal_in_window`.
+        let env = agent_command_env(self.active_window().id, None, false);
         self.active_window_mut()
-            .spawn_terminal_session(None, true, None, HashMap::new())
+            .spawn_terminal_session(None, true, None, env)
     }
 
     /// Open a new terminal in the active window's current split, fire

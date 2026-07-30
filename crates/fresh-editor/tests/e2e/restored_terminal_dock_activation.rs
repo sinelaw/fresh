@@ -56,6 +56,7 @@ fn session_config() -> Config {
 /// workspace-save persists it.
 fn spawn_session_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) {
     let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let window_id = window.id;
     let (terminal_id, _buffer_id, _leaf) = window
         .create_plugin_terminal(PluginTerminalSpec {
             cwd: None,
@@ -65,7 +66,7 @@ fn spawn_session_terminal(window: &mut fresh::app::window::Window, argv: &[&str]
             persistent: false,
             command: Some(argv.clone()),
             title: None,
-            env: std::collections::HashMap::new(),
+            env: fresh::app::agent_command_env(window_id, None, false),
         })
         .expect("session terminal should spawn");
     window.terminal_commands.insert(terminal_id, argv);

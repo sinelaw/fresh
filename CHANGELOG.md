@@ -22,6 +22,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **A restored agent terminal can drive the editor again** - the capability token behind `fresh --cmd` is per-process, so it cannot be persisted, and workspace restore (and PTY respawn) brought terminals back without minting a replacement. A restored agent saw `FRESH_SESSION` but no `FRESH_CMD_TOKEN`, so every `script run` it attempted failed with "no capability token" until the terminal was recreated from scratch.
 * **Four dead settings** - the bracket-matching toggles, `file_explorer.respect_gitignore` and `languages.<id>.textmate_grammar` now take effect; `editor.highlight_timeout_ms` was removed rather than wired up (#2842).
 * **Files that are one very long line**
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).

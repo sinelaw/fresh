@@ -911,7 +911,10 @@ impl crate::app::window::Window {
             crate::services::terminal::BackingMode::Continue,
             wrapper_for_spawn,
             env_delta,
-            std::collections::HashMap::new(),
+            // A restored agent terminal needs a *new* token — the one it was
+            // spawned with died with the previous editor process. Without this
+            // it comes back able to see `FRESH_SESSION` but unable to use it.
+            crate::app::terminal::agent_command_env(self.id, None, terminal.allow_script),
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -945,6 +948,9 @@ impl crate::app::window::Window {
                 self.terminal_resume_commands
                     .insert(terminal_id, resume.argv.clone());
             }
+        }
+        if terminal.allow_script {
+            self.script_terminals.insert(terminal_id);
         }
 
         // Create buffer for this terminal
@@ -2522,6 +2528,7 @@ impl crate::app::window::Window {
                     agent_resume,
                     exited: None,
                     title,
+                    allow_script: self.script_terminals.contains(&terminal_id),
                 });
             }
         }
@@ -2570,6 +2577,9 @@ impl crate::app::window::Window {
                 // The pre-exit tab title, not the "(exited)" form the tab is
                 // showing now — restore re-applies the marker itself.
                 title: exited.title.clone(),
+                // Nothing is spawned for an exited terminal, but the restart
+                // offer stays armed — so the grant has to survive with it.
+                allow_script: self.script_terminals.contains(&exited.terminal_id),
             });
         }
 
