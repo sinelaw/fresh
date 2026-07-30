@@ -1910,6 +1910,7 @@ impl Window {
                 // Resolved before the mutable buffer borrow below: the
                 // row-space path needs only `&Buffer`.
                 let scroll_geometry = wrap_scroll_geometry(view_state, state);
+                let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
                 let top_byte_before = view_state.viewport.top_byte();
                 if let Some(geometry) = scroll_geometry {
                     // Row arithmetic off the wrap index: no text is read, so a
@@ -1929,6 +1930,7 @@ impl Window {
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                         lines_to_scroll,
                     );
                 } else {
@@ -1937,6 +1939,7 @@ impl Window {
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                         lines_to_scroll,
                     );
                 }
@@ -2000,15 +2003,18 @@ impl Window {
             return false;
         };
         let viewport = &mut ps.view_state.active_state_mut().viewport;
+        // The preview loads plain file buffers and exposes no fold controls,
+        // so there are never collapsed regions to skip here.
         if delta < 0 {
             viewport.scroll_up(
                 buffer,
                 &soft_breaks,
                 &virtual_lines,
+                &[],
                 delta.unsigned_abs() as usize,
             );
         } else {
-            viewport.scroll_down(buffer, &soft_breaks, &virtual_lines, delta as usize);
+            viewport.scroll_down(buffer, &soft_breaks, &virtual_lines, &[], delta as usize);
         }
         viewport.set_skip_ensure_visible();
         true
@@ -4024,12 +4030,14 @@ impl Window {
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
+                    let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
                     let buffer = &mut state.buffer;
                     if line_offset > 0 {
                         view_state.viewport.scroll_down(
                             buffer,
                             &soft_breaks,
                             &virtual_lines,
+                            &hidden_ranges,
                             line_offset as usize,
                         );
                     } else {
@@ -4037,6 +4045,7 @@ impl Window {
                             buffer,
                             &soft_breaks,
                             &virtual_lines,
+                            &hidden_ranges,
                             line_offset.unsigned_abs(),
                         );
                     }
@@ -4234,6 +4243,25 @@ mod exited_terminal_tests {
         assert!(!e.resumes_agent());
         assert_eq!(e.program_name(), Some("bash"));
     }
+}
+
+/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
+/// form the viewport scroll primitives consume. A scroll that counts these
+/// lines spends its budget on rows nobody sees, so the viewport stalls while
+/// the cursor runs ahead into the hidden region.
+fn collapsed_hidden_ranges(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+    buffer_id: BufferId,
+) -> Vec<(usize, usize)> {
+    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
+        return Vec::new();
+    };
+    state
+        .fold_ranges(folds)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect()
 }
 
 /// The wrap-index geometry for a split, when one is already built for it.
