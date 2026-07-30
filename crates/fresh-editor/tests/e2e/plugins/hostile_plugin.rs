@@ -109,9 +109,13 @@ if (dash) {
 "#;
     fs::write(plugins_dir.join("hostile.ts"), hostile).unwrap();
 
-    let mut harness =
-        EditorTestHarness::with_config_and_working_dir(200, 50, config_with_dashboard(), working_dir)
-            .expect("harness");
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        200,
+        50,
+        config_with_dashboard(),
+        working_dir,
+    )
+    .expect("harness");
     harness.editor_mut().fire_ready_hook();
 
     // Dashboard open with the hostile sections registered and painting.
