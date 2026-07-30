@@ -21,15 +21,14 @@ impl Editor {
     /// Return the fully-expanded menu definitions (with `DynamicSubmenu`
     /// items resolved to `Submenu`).  Used by the GUI layer to build
     /// platform-native menus.
+    ///
+    /// Delegates to [`Self::all_menus_expanded`] so the native menus show
+    /// exactly what the TUI menu bar and the web projection show — the
+    /// user's configured menus plus every plugin contribution. Building
+    /// from `MenuConfig::translated_menus()` instead would rebuild the
+    /// *defaults*, silently dropping both.
     pub fn expanded_menu_definitions(&self) -> Vec<fresh_core::menu::Menu> {
-        use crate::config::{MenuConfig, MenuExt};
-
-        let mut menus = MenuConfig::translated_menus();
-        let themes_dir = self.menu_state.themes_dir.clone();
-        for menu in &mut menus {
-            menu.expand_dynamic_items(&themes_dir);
-        }
-        menus
+        self.all_menus_expanded()
     }
 
     /// The exact menu list the TUI `MenuRenderer` renders: the configured menus
@@ -71,6 +70,9 @@ impl Editor {
         let page_view = self.active_window().is_page_view();
         let file_explorer_visible = self.file_explorer_visible();
         let file_explorer_focused = self.active_window().is_file_explorer_focused();
+        // `Some` for a mounted dock whether it's focused or blurred — the
+        // menu checkbox tracks visibility, not who owns the keyboard.
+        let dock_visible = self.dock.is_some();
         let mouse_capture = self
             .mouse_capture
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -137,6 +139,7 @@ impl Editor {
             // Keep backward-compatible key for existing keybindings/menus
             .set(context_keys::COMPOSE_MODE, page_view)
             .set(context_keys::FILE_EXPLORER, file_explorer_visible)
+            .set(context_keys::DOCK, dock_visible)
             .set(context_keys::FILE_EXPLORER_FOCUSED, file_explorer_focused)
             .set(context_keys::MOUSE_CAPTURE, mouse_capture)
             .set(context_keys::MOUSE_HOVER, mouse_hover)

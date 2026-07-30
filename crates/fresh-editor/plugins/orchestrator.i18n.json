@@ -290,7 +290,8 @@
     "err.devcontainer_unsupported": "Devcontainer: open the project and run “Dev Containers: Reopen in Container”. (Orchestrator-managed devcontainer workspaces are coming next.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Launch in"
+    "form.launch_in": "Launch in",
+    "menu.dock": "Orchestrator Dock"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -583,7 +584,8 @@
     "err.devcontainer_unsupported": "Devcontainer: otevřete projekt a spusťte „Dev Containers: Reopen in Container“. (Pracovní prostory devcontaineru spravované Orchestratorem budou následovat.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Spustit v"
+    "form.launch_in": "Spustit v",
+    "menu.dock": "Dok Orchestratoru"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -876,7 +878,8 @@
     "err.devcontainer_unsupported": "Devcontainer: öffne das Projekt und führe „Dev Containers: Reopen in Container“ aus. (Orchestrator-verwaltete Devcontainer-Arbeitsbereiche folgen als Nächstes.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Starten in"
+    "form.launch_in": "Starten in",
+    "menu.dock": "Orchestrator-Dock"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1169,7 +1172,8 @@
     "err.devcontainer_unsupported": "Devcontainer: abre el proyecto y ejecuta “Dev Containers: Reopen in Container”. (Los espacios de trabajo devcontainer gestionados por Orchestrator llegarán próximamente.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Lanzar en"
+    "form.launch_in": "Lanzar en",
+    "menu.dock": "Dock del Orchestrator"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -1462,7 +1466,8 @@
     "err.devcontainer_unsupported": "Devcontainer : ouvrez le projet et exécutez « Dev Containers: Reopen in Container ». (Les espaces de travail devcontainer gérés par Orchestrator arrivent bientôt.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Lancer dans"
+    "form.launch_in": "Lancer dans",
+    "menu.dock": "Dock de l’Orchestrator"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -1755,7 +1760,8 @@
     "err.devcontainer_unsupported": "Devcontainer: apri il progetto ed esegui “Dev Containers: Reopen in Container”. (Gli spazi di lavoro devcontainer gestiti da Orchestrator arriveranno presto.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Avvia in"
+    "form.launch_in": "Avvia in",
+    "menu.dock": "Dock di Orchestrator"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -2048,7 +2054,8 @@
     "err.devcontainer_unsupported": "Devcontainer: プロジェクトを開いて “Dev Containers: Reopen in Container” を実行してください。（Orchestrator 管理の devcontainer ワークスペースは近日対応予定です。）",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "起動先"
+    "form.launch_in": "起動先",
+    "menu.dock": "Orchestrator ドック"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -2341,7 +2348,8 @@
     "err.devcontainer_unsupported": "Devcontainer: 프로젝트를 열고 “Dev Containers: Reopen in Container”를 실행하세요. (Orchestrator가 관리하는 devcontainer 워크스페이스는 곧 추가됩니다.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "실행 위치"
+    "form.launch_in": "실행 위치",
+    "menu.dock": "Orchestrator 독"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -2634,7 +2642,8 @@
     "err.devcontainer_unsupported": "Devcontainer: abra o projeto e execute “Dev Containers: Reopen in Container”. (Espaços de trabalho devcontainer gerenciados pelo Orchestrator chegam em breve.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Iniciar em"
+    "form.launch_in": "Iniciar em",
+    "menu.dock": "Dock do Orchestrator"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -2927,7 +2936,8 @@
     "err.devcontainer_unsupported": "Devcontainer: откройте проект и выполните «Dev Containers: Reopen in Container». (Рабочие области devcontainer под управлением Orchestrator появятся в следующих версиях.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Запустить в"
+    "form.launch_in": "Запустить в",
+    "menu.dock": "Док Orchestrator"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -3220,7 +3230,8 @@
     "err.devcontainer_unsupported": "Devcontainer: เปิดโปรเจกต์แล้วรัน “Dev Containers: Reopen in Container” (พื้นที่ทำงาน devcontainer ที่จัดการโดย Orchestrator กำลังจะมาในเร็ว ๆ นี้)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "เริ่มใน"
+    "form.launch_in": "เริ่มใน",
+    "menu.dock": "Dock ของ Orchestrator"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -3513,7 +3524,8 @@
     "err.devcontainer_unsupported": "Devcontainer: відкрийте проєкт і виконайте “Dev Containers: Reopen in Container”. (Робочі області devcontainer, керовані Orchestrator, з’являться згодом.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Запустити в"
+    "form.launch_in": "Запустити в",
+    "menu.dock": "Док Orchestrator"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -3806,7 +3818,8 @@
     "err.devcontainer_unsupported": "Devcontainer: mở dự án và chạy “Dev Containers: Reopen in Container”. (Không gian làm việc devcontainer do Orchestrator quản lý sẽ có ở bản tiếp theo.)",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "Chạy trong"
+    "form.launch_in": "Chạy trong",
+    "menu.dock": "Dock Orchestrator"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -4099,6 +4112,7 @@
     "err.devcontainer_unsupported": "Devcontainer：请打开项目并运行 “Dev Containers: Reopen in Container”。（由 Orchestrator 管理的 devcontainer 工作区即将推出。）",
     "form.branch_checkout_inplace": "In-place checkout: blank keeps the current branch",
     "form.new_branch_worktree_only": "worktree only",
-    "form.launch_in": "启动于"
+    "form.launch_in": "启动于",
+    "menu.dock": "Orchestrator 停靠栏"
   }
 }

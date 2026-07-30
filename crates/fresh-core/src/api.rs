@@ -5075,6 +5075,72 @@ pub struct LspMenuItem {
     pub label: String,
 }
 
+/// Options for `addMenuItem` — one plugin-contributed row in an existing
+/// menu bar menu. See `PluginCommand::AddMenuItem`.
+///
+/// Every string here is matched or displayed by the host, so the plugin
+/// never reaches into menu internals: it names the *target* menu and,
+/// optionally, the neighbour to sit next to. Both lookups accept a stable
+/// identifier (a menu `id` like `"View"`, an item's `action` like
+/// `"toggle_file_explorer"`) as well as a display label, so a plugin can
+/// place its row without knowing the user's locale.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(deny_unknown_fields)]
+#[ts(export)]
+pub struct AddMenuItemOptions {
+    /// Target menu, matched against each menu's stable `id` ("View",
+    /// "File", …) first and its display label second. A menu that matches
+    /// neither is left alone and the call is a no-op.
+    pub menu: String,
+    /// Row label, already localised by the plugin (`editor.t(…)`).
+    pub label: String,
+    /// Action dispatched when the row is chosen. A name the editor doesn't
+    /// know is routed to the plugin action of the same name — i.e. the
+    /// handler registered with `registerHandler`.
+    pub action: String,
+    /// Menu-context key whose boolean value renders the row's checkmark
+    /// (e.g. `"dock"`). Omit for a plain action row.
+    #[serde(default)]
+    #[ts(optional)]
+    pub checkbox: Option<String>,
+    /// Menu-context key gating whether the row is enabled. Omit for a row
+    /// that is always available.
+    #[serde(default)]
+    #[ts(optional)]
+    pub when: Option<String>,
+    /// Insert directly after the existing row whose action or label this
+    /// names. Ignored when nothing matches (the row is appended instead).
+    #[serde(default)]
+    #[ts(optional)]
+    pub after: Option<String>,
+    /// Insert directly before the existing row whose action or label this
+    /// names. Ignored when `after` is set, or when nothing matches.
+    #[serde(default)]
+    #[ts(optional)]
+    pub before: Option<String>,
+}
+
+impl AddMenuItemOptions {
+    /// Split into the `(menu_label, item, position)` triple
+    /// `PluginCommand::AddMenuItem` carries. `after` wins over `before`
+    /// when a plugin passes both; with neither, the row is appended.
+    pub fn into_parts(self) -> (String, MenuItem, MenuPosition) {
+        let position = match (self.after, self.before) {
+            (Some(a), _) => MenuPosition::After(a),
+            (None, Some(b)) => MenuPosition::Before(b),
+            (None, None) => MenuPosition::Bottom,
+        };
+        let item = MenuItem::Action {
+            label: self.label,
+            action: self.action,
+            args: HashMap::new(),
+            when: self.when,
+            checkbox: self.checkbox,
+        };
+        (self.menu, item, position)
+    }
+}
+
 /// Options for showActionPopup
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(deny_unknown_fields)]
@@ -5811,6 +5877,7 @@ mod fromjs_impls {
         ActionSpec,
         ActionPopupAction,
         ActionPopupOptions,
+        AddMenuItemOptions,
         LspMenuItem,
         ViewTokenWire,
         ViewTokenStyle,
