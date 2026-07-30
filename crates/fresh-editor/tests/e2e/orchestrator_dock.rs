@@ -3673,3 +3673,124 @@ fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
         "the dock must dim while the settings modal is up"
     );
 }
+
+/// The dock's title bar carries a `[ × ]` hide button at its right edge —
+/// the affordance the file explorer beside it has always had — and clicking
+/// it tears the dock down.
+///
+/// Before this, the only way to put the dock away was the "Orchestrator:
+/// Toggle Dock" command or its accelerator, so the panel read as permanent
+/// furniture to anyone who reaches for a close button first.
+///
+/// The button is right-*aligned*, not padded to a guessed width: the title
+/// row is a Row with a flex spacer the host sizes against the dock's real
+/// column count. The assertion below therefore checks the button sits in the
+/// dock's last columns, which is what the previous "pad past the screen width
+/// and let the host clip the tail" title row could never express — the
+/// clipped tail was exactly where the button belongs.
+#[test]
+fn dock_title_bar_close_button_hides_the_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The button shares the dock's title row...
+    let (close_col, close_row) = h
+        .find_text_on_screen("[ × ]")
+        .expect("dock title bar should carry a [ × ] hide button");
+    assert_eq!(
+        close_row,
+        row_of(&h, "Orchestrator") as u16,
+        "the [ × ] belongs on the dock's title row:\n{}",
+        h.screen_to_string()
+    );
+
+    // ...and ends on the dock's last content column. The header rule under
+    // the toolbar is drawn by the host (`divider()`) across the panel's real
+    // inner width, so its final `─` *is* that column — comparing against it
+    // asserts the right-alignment without the test re-deriving the dock's
+    // geometry (width fraction, border, gutter) and without pinning the
+    // dock to any particular width.
+    let rule_row = h
+        .screen_to_string()
+        .lines()
+        .position(|l| l.starts_with("────"))
+        .expect("dock header rule should be on screen") as u16;
+    let cols = h.screen_row_text(rule_row).chars().count() as u16;
+    let content_last_col = (0..cols)
+        .take_while(|&c| h.get_cell(c, rule_row).as_deref() == Some("─"))
+        .last()
+        .expect("dock header rule should span the panel's inner width");
+    assert_eq!(
+        close_col + 4,
+        content_last_col,
+        "the [ × ] must end on the dock's last content column (button at \
+         {close_col}, content ends at {content_last_col}):\n{}",
+        h.screen_to_string()
+    );
+
+    // Clicking it runs the same teardown as Esc / the toggle command: the
+    // whole dock column goes away, not just the title row.
+    h.mouse_click(close_col + 2, close_row).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Task"))
+        .unwrap();
+    h.assert_screen_not_contains("Filters");
+    h.assert_screen_not_contains("Search Tasks");
+}
+
+/// View ▸ Orchestrator Dock toggles the dock, sits directly under the file
+/// explorer's own toggle, and carries a checkbox that tracks whether the dock
+/// is actually up.
+///
+/// The row is contributed by the plugin (`editor.addMenuItem`), anchored by
+/// stable ids — the menu's `id` ("View") and the neighbouring row's action
+/// ("toggle_file_explorer") — rather than by translated labels, and its
+/// checkmark reads the host-computed `dock` menu-context key. Driving it from
+/// the menu bar exercises all three: the row exists, it landed in the right
+/// place, and the mark follows the panel.
+#[test]
+fn view_menu_row_toggles_the_dock_with_a_live_checkbox() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // With the dock down, the row reads unchecked — and sits on the row
+    // immediately below the file explorer's toggle. (Both labels are matched
+    // together with their checkbox glyph so the *menu* rows are found, not
+    // the file explorer panel's own "File Explorer" title bar.)
+    h.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
+    h.render().unwrap();
+    h.assert_screen_contains("☐ Orchestrator Dock");
+    let explorer_row = row_of(&h, "File Explorer");
+    assert_eq!(
+        row_of(&h, "Orchestrator Dock"),
+        explorer_row + 1,
+        "the dock row belongs directly under the file explorer toggle:\n{}",
+        h.screen_to_string()
+    );
+
+    // Down lands on it (it was inserted at index 1, ahead of the separator);
+    // Enter dispatches the plugin action behind it and the dock comes up.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Task"))
+        .unwrap();
+
+    // Re-opening the menu now shows the box ticked, because the checkbox
+    // reads the live "a dock panel is mounted" context key rather than
+    // anything the plugin remembers.
+    h.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
+    h.render().unwrap();
+    h.assert_screen_contains("☑ Orchestrator Dock");
+
+    // ...and the same row puts it away again.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Task"))
+        .unwrap();
+}
