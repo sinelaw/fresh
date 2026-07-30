@@ -362,6 +362,15 @@ pub(crate) struct GotoLinePreviewSnapshot {
 pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
     std::time::Duration::from_millis(4);
 
+/// Minimum dispatches per drain pass, regardless of the deadline. Without a
+/// floor, one dispatch costing more than the whole budget (heavyweight
+/// registrations, slow hardware) collapses the drain to a single item per
+/// frame — a startup batch then takes seconds to trickle through and
+/// sustained load can outgrow the backlog. Eight items bounds the extra
+/// frame cost at eight times the worst handler, which the 50ms watchdog
+/// keeps honest.
+pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
+
 /// A single plugin command handler taking longer than this on the editor
 /// thread is a defect: the work belongs in `plugin_offloop`. Logged at WARN
 /// naming the offending variant, and a hard failure under `debug_assertions`

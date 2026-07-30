@@ -180,6 +180,7 @@ impl Editor {
         // (spawn storm, LSP flood) is spread over frames instead of being
         // fully absorbed before the next one.
         let deadline = std::time::Instant::now() + ASYNC_MESSAGE_FRAME_BUDGET;
+        let mut handled = 0usize;
         let mut messages = messages.into_iter();
         for message in messages.by_ref() {
             match message {
@@ -521,7 +522,10 @@ impl Editor {
                     self.handle_plugin_init_script_loaded(outcome);
                 }
             }
-            if std::time::Instant::now() >= deadline {
+            handled += 1;
+            // Same floor as the plugin-command drain: a message whose handler
+            // overruns the budget must not throttle the queue to 1/frame.
+            if handled >= super::DRAIN_MIN_PER_PASS && std::time::Instant::now() >= deadline {
                 break;
             }
         }

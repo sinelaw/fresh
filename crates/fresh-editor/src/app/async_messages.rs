@@ -1623,8 +1623,9 @@ impl Editor {
         // Frame budget: dispatch against a deadline, then stop and re-arm. A
         // plugin that floods the channel costs one budget per frame instead of
         // an unbounded stall, and the unprocessed tail keeps its arrival order
-        // in `plugin_command_backlog`. Always run at least one command so
-        // forward progress is guaranteed even if a single handler overruns.
+        // in `plugin_command_backlog`. The DRAIN_MIN_PER_PASS floor keeps
+        // throughput from collapsing to one item per frame when a single
+        // dispatch overruns the whole budget.
         let deadline = std::time::Instant::now() + super::PLUGIN_COMMAND_FRAME_BUDGET;
         let mut iter = commands.into_iter();
         let mut dispatched = 0usize;
@@ -1635,7 +1636,7 @@ impl Editor {
             );
             self.dispatch_plugin_command_measured(command);
             dispatched += 1;
-            if std::time::Instant::now() >= deadline {
+            if dispatched >= super::DRAIN_MIN_PER_PASS && std::time::Instant::now() >= deadline {
                 break;
             }
         }
