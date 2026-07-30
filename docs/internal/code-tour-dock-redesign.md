@@ -516,6 +516,10 @@ is no need to batch them; a crash then costs at most the step you were on.
 `getWindowState("openTours")` already reflects the persisted session by the time
 the handler runs. (`plugins_loaded` fires earlier, before restore — too early.)
 
+**All** persisted tours are restored, in stored tab order — no cap, no
+last-one-only shortcut. The list only ever holds tours the user left open (see
+below), so its length is already the user's own choice.
+
 For each entry, in stored order:
 
 1. Re-read and re-validate the manifest. If it is gone, unparseable, or its
@@ -534,6 +538,29 @@ For each entry, in stored order:
    emphasised and applies it on demand.
 
 The last-active tour's tab is the one left selected in the dock.
+
+### Closing a tour forgets it
+
+Closing a tour drops it from `openTours`, so it does not come back on the next
+launch. All four dismissal gestures are the same thing — `×` on the tab, `q`,
+`Esc`, and `[ ✕ Exit ]` all end with the buffer closed — and the single
+`buffer_closed` listener is what removes the entry. Finishing the last step with
+`[ ✓ Finish ]` closes it the same way: a completed tour is not pending work.
+
+This is only safe because **quitting does not close buffers**. The shutdown path
+auto-saves dirty buffers, ends the recovery session, calls
+`save_all_windows_workspaces`, and then drops the editor — no teardown loop over
+buffers, so `buffer_closed` never fires for a tour that was merely open at exit.
+Every call site of `close_buffer` is a real close: a tab's `×`, a split
+collapsing, a plugin asking, a terminal exiting, a buffer being replaced. Without
+that property the listener would erase every tour on the way out and nothing
+would ever restore, so it is worth stating rather than assuming.
+
+One consequence to accept deliberately: closing the **dock split** (the `×` in
+its control cluster) closes the buffers it holds, so the tours in it are
+forgotten too. That reads as dismissal, and there is no competing "hide the dock"
+gesture to confuse it with — `Alt+J` moves keyboard focus and leaves the dock
+mounted.
 
 ### Interaction with restore settings
 
@@ -671,17 +698,14 @@ Nothing in the host changes. Every widget the design uses — `button`,
 
 ## 10. Open questions
 
-Two earlier questions are now settled and folded into the design: an unfinished
-tour **does** persist across restarts (§6), and each tour **is** its own buffer
-so several can be open at once (§5). What remains:
+Three earlier questions are now settled and folded into the design: an
+unfinished tour **does** persist across restarts, **all** open tours restore, and
+closing one forgets it (§6); and each tour **is** its own buffer so several can
+be open at once (§5). What remains:
 
 1. **Should `Enter` on the rail also move focus to the editor**, or only change
    the step? Proposal above keeps focus in the panel; jumping is `Enter` on the
    prose or the explicit button.
-2. **Cap on restored tours.** A workspace could accumulate a dozen persisted
-   tours and restore a dock full of tabs. Restore all of them, cap at the N most
-   recent, or restore only the last-active one and list the rest behind a
-   command?
-3. **Authoring.** Nothing in the editor writes `.fresh-tour.json`. A "record
+2. **Authoring.** Nothing in the editor writes `.fresh-tour.json`. A "record
    step from selection" command would make the dock panel a two-way surface, but
    that is a separate feature.
