@@ -2958,22 +2958,25 @@ impl Window {
         self.restore_buffer_state_in_split(buffer_id, split_id, &file_state);
     }
 
-    /// Save file state when a buffer is closed (for per-file session
-    /// persistence). Walks this window's splits to find one that has
-    /// the buffer; no-op if no split contains it or the buffer isn't
-    /// a real on-disk file.
-    pub fn save_file_state_on_close(&self, buffer_id: BufferId) {
-        use crate::workspace::{
-            PersistedFileWorkspace, SerializedCursor, SerializedFileState, SerializedScroll,
-        };
+    /// Snapshot the per-file session state to persist when a buffer is
+    /// closed. Walks this window's splits to find one that has the buffer;
+    /// `None` if no split contains it or the buffer isn't a real on-disk
+    /// file.
+    ///
+    /// Pure snapshot: the disk write (`PersistedFileWorkspace::save`) is the
+    /// caller's job, off the editor thread — the split is what keeps
+    /// buffer-close from doing filesystem I/O inline.
+    pub fn file_state_on_close_snapshot(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<(std::path::PathBuf, crate::workspace::SerializedFileState)> {
+        use crate::workspace::{SerializedCursor, SerializedFileState, SerializedScroll};
 
-        let abs_path = match self.buffer_metadata.get(&buffer_id) {
-            Some(metadata) => match metadata.file_path() {
-                Some(path) => path.to_path_buf(),
-                None => return,
-            },
-            None => return,
-        };
+        let abs_path = self
+            .buffer_metadata
+            .get(&buffer_id)?
+            .file_path()?
+            .to_path_buf();
 
         let view_state = self
             .buffers
@@ -2983,15 +2986,8 @@ impl Window {
             .values()
             .find(|vs| vs.has_buffer(buffer_id));
 
-        let view_state = match view_state {
-            Some(vs) => vs,
-            None => return,
-        };
-
-        let buf_state = match view_state.keyed_states.get(&buffer_id) {
-            Some(bs) => bs,
-            None => return,
-        };
+        let view_state = view_state?;
+        let buf_state = view_state.keyed_states.get(&buffer_id)?;
 
         let primary_cursor = buf_state.cursors.primary();
         let file_state = SerializedFileState {
@@ -3026,8 +3022,7 @@ impl Window {
             folds: Vec::new(),
         };
 
-        PersistedFileWorkspace::save(&abs_path, file_state);
-        tracing::debug!("Saved file state on close for {:?}", abs_path);
+        Some((abs_path, file_state))
     }
 
     /// Remove a pending semantic-token request from this window's tracking maps.
