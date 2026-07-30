@@ -552,6 +552,15 @@ For each entry, in stored order:
    happens to be among the restored buffers; otherwise `[ Re-highlight ]` is
    emphasised and applies it on demand.
 
+Not taking focus needs saying explicitly, because mounting a dock panel *does*
+take it: the dock becomes the active split and gets the keyboard. Left alone,
+a tour left open weeks ago would swallow the first keystroke of every session.
+So restore records the active split up front and hands focus back once every
+tour is mounted — after a `flush`, so the queued `set_active_split` from the
+last mount cannot land afterwards and undo it. Restoring is not opening: the
+tab comes back, the focus does not move. `Alt+J` reaches the tour when the user
+wants it.
+
 The last-active tour's tab is the one left selected in the dock.
 
 ### Closing a tour forgets it

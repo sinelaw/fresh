@@ -1214,6 +1214,12 @@ editor.on("ready", () => {
 });
 
 async function restoreTours(stored: PersistedTour[]): Promise<void> {
+  // Where the workspace restore left the user. Mounting a dock panel makes the
+  // dock the active split and hands it the keyboard, so a tour left open weeks
+  // ago would take focus from the file the editor just restored — the first
+  // keystroke would go to a tour the user had not asked for. Restoring is not
+  // opening: the tab comes back, the focus does not move.
+  const focusBefore = editor.getActiveSplitId();
   const dropped: string[] = [];
   for (const entry of stored) {
     const parsed = parseManifest(entry.manifestPath);
@@ -1231,6 +1237,13 @@ async function restoreTours(stored: PersistedTour[]): Promise<void> {
     });
   }
   persist();
+  if (tours.size > 0) {
+    // `flush` so the pending dock mounts are applied before we move focus —
+    // otherwise the queued `set_active_split` from the last mount lands after
+    // this and the dock takes the keyboard anyway.
+    await editor.flush();
+    editor.focusSplit(focusBefore);
+  }
   if (dropped.length > 0) {
     editor.setStatus(
       editor.t("status.dropped", { tours: dropped.join(", ") }),
