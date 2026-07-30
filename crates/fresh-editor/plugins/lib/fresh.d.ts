@@ -1598,6 +1598,39 @@ type WidgetSpec = {
 	* are tabbable).
 	*/
 	focusable: boolean;
+	/**
+	* Render the label alone — no `[ ]` frame, no focus-marker
+	* gutter — turning the button into a bare *icon affordance*
+	* (a `×` close glyph, a `▾` chevron) rather than a framed
+	* action. Use it where the glyph itself is the control and a
+	* frame would read as clutter; keep the default `false` for
+	* anything with a word on it.
+	*
+	* Icon buttons are the one button shape that highlights on
+	* **hover** (`ui.tab_close_hover_fg`), because that is how the
+	* editor's other bare glyph controls — the tab `×` and the
+	* file explorer's `×` — tell you they're live. A framed button
+	* advertises itself by its frame and takes its emphasis from
+	* focus instead.
+	*/
+	bare: boolean;
+	/**
+	* Deliver `widget_event { event_type: "hover", payload: {
+	* hovered } }` as the pointer enters and leaves this control,
+	* so the plugin can drive its own affordance — a tooltip, a
+	* reveal-on-hover action, a status line.
+	*
+	* Opt-in per widget because each transition costs a plugin
+	* round-trip: a panel of ordinary buttons should not wake its
+	* plugin every time the pointer crosses one. The *visual*
+	* hover state of a `bare` button is host-side and needs no
+	* opt-in — this flag is only about telling the plugin.
+	*
+	* `Button` is the first kind to carry it; other widget kinds
+	* opt in by growing the same field and passing it to their
+	* `HitArea` (the host's tracking is kind-agnostic).
+	*/
+	hoverable: boolean;
 } | {
 	"kind": "spacer";
 	cols: number;

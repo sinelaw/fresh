@@ -4131,12 +4131,15 @@ function dockTitleRow(): WidgetSpec {
       styledRow(segments as Parameters<typeof styledRow>[0], { style: base }),
     ]),
     flexSpacer(),
-    // Hide the dock, mirroring the file explorer's title-bar `×`. Mouse-only
-    // (`focusable: false`) for the same reason the explorer's is: the dock's
-    // Tab cycle belongs to the session list and its controls, and the
-    // keyboard already has "Orchestrator: Toggle Dock" and the View-menu
+    // Hide the dock, mirroring the file explorer's title-bar `×` — `bare`
+    // so it renders as the glyph alone (no `[ ]` frame) and lights up under
+    // the pointer with the same theme key the tab and explorer `×` use.
+    //
+    // Mouse-only (`focusable: false`) for the same reason the explorer's is:
+    // the dock's Tab cycle belongs to the session list and its controls, and
+    // the keyboard already has "Orchestrator: Toggle Dock" and the View-menu
     // entry to hide it.
-    button(DOCK_CLOSE_GLYPH, { key: "dock-close", focusable: false }),
+    button(DOCK_CLOSE_GLYPH, { key: "dock-close", focusable: false, bare: true }),
   );
 }
 

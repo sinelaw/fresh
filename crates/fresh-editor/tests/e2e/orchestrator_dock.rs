@@ -3684,10 +3684,13 @@ fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
 ///
 /// The button is right-*aligned*, not padded to a guessed width: the title
 /// row is a Row with a flex spacer the host sizes against the dock's real
-/// column count. The assertion below therefore checks the button sits in the
-/// dock's last columns, which is what the previous "pad past the screen width
-/// and let the host clip the tail" title row could never express — the
-/// clipped tail was exactly where the button belongs.
+/// column count. The assertion below therefore checks the glyph sits on the
+/// dock's last content column, which is what the previous "pad past the
+/// screen width and let the host clip the tail" title row could never
+/// express — the clipped tail was exactly where the button belongs.
+///
+/// It renders as the bare glyph (`bare: true`), not a framed `[ × ]`, and
+/// lights up under the pointer the way the tab and file explorer `×` do.
 #[test]
 fn dock_title_bar_close_button_hides_the_dock() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -3697,23 +3700,30 @@ fn dock_title_bar_close_button_hides_the_dock() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // The button shares the dock's title row...
-    let (close_col, close_row) = h
-        .find_text_on_screen("[ × ]")
-        .expect("dock title bar should carry a [ × ] hide button");
-    assert_eq!(
-        close_row,
-        row_of(&h, "Orchestrator") as u16,
-        "the [ × ] belongs on the dock's title row:\n{}",
+    // The glyph shares the dock's title row, and wears no `[ ]` frame.
+    let title_row = row_of(&h, "Orchestrator") as u16;
+    let title_text = h.screen_row_text(title_row);
+    assert!(
+        title_text.contains('×'),
+        "dock title bar should carry a × hide button:\n{}",
         h.screen_to_string()
     );
+    assert!(
+        !title_text.contains("[ × ]") && !title_text.contains("[×]"),
+        "the × is a bare icon affordance, not a framed button:\n{}",
+        h.screen_to_string()
+    );
+    let close_col = title_text
+        .chars()
+        .position(|c| c == '×')
+        .expect("× just asserted present") as u16;
 
-    // ...and ends on the dock's last content column. The header rule under
-    // the toolbar is drawn by the host (`divider()`) across the panel's real
+    // It sits on the dock's last content column. The header rule under the
+    // toolbar is drawn by the host (`divider()`) across the panel's real
     // inner width, so its final `─` *is* that column — comparing against it
     // asserts the right-alignment without the test re-deriving the dock's
-    // geometry (width fraction, border, gutter) and without pinning the
-    // dock to any particular width.
+    // geometry (width fraction, border, gutter) and without pinning the dock
+    // to any particular width.
     let rule_row = h
         .screen_to_string()
         .lines()
@@ -3725,16 +3735,29 @@ fn dock_title_bar_close_button_hides_the_dock() {
         .last()
         .expect("dock header rule should span the panel's inner width");
     assert_eq!(
-        close_col + 4,
+        close_col,
         content_last_col,
-        "the [ × ] must end on the dock's last content column (button at \
+        "the × must sit on the dock's last content column (glyph at \
          {close_col}, content ends at {content_last_col}):\n{}",
         h.screen_to_string()
     );
 
+    // Pointing at it recolours it, so it reads as live before you commit to
+    // the click — the affordance the tab and explorer `×` already have.
+    let idle_fg = h.get_cell_style(close_col, title_row).unwrap().fg;
+    h.mouse_move(close_col, title_row).unwrap();
+    h.wait_until(|h| h.get_cell_style(close_col, title_row).unwrap().fg != idle_fg)
+        .unwrap();
+
+    // ...and moving off it puts the idle colour back, so the highlight
+    // tracks the pointer rather than latching on first contact.
+    h.mouse_move(0, title_row).unwrap();
+    h.wait_until(|h| h.get_cell_style(close_col, title_row).unwrap().fg == idle_fg)
+        .unwrap();
+
     // Clicking it runs the same teardown as Esc / the toggle command: the
     // whole dock column goes away, not just the title row.
-    h.mouse_click(close_col + 2, close_row).unwrap();
+    h.mouse_click(close_col, title_row).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Task"))
         .unwrap();
     h.assert_screen_not_contains("Filters");

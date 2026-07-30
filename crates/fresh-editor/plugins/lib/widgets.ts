@@ -303,6 +303,23 @@ export function button(
      * advances one stop per group (the active option) and ←/→ moves
      * the selection within the group. Defaults to true. */
     focusable?: boolean;
+    /** Render the label alone — no `[ ]` frame, no focus-marker
+     * gutter — turning the button into an *icon affordance* (a `×`
+     * close glyph, a `▾` chevron) rather than a framed action. Use
+     * where the glyph itself is the control; keep the default for
+     * anything with a word on it.
+     *
+     * Icon buttons are the one shape that highlights on hover
+     * (`ui.tab_close_hover_fg`), matching the tab and file explorer
+     * `×`. That highlight is host-side and needs no `hoverable`. */
+    bare?: boolean;
+    /** Deliver `widget_event { event_type: "hover", payload: {
+     * hovered } }` as the pointer enters and leaves this button, for
+     * driving your own affordance (a tooltip, a reveal-on-hover
+     * action). Opt-in because each transition is a plugin round-trip;
+     * a button that only needs the built-in `bare` highlight should
+     * leave this off. Defaults to false. */
+    hoverable?: boolean;
   },
 ): WidgetSpec {
   return {
@@ -313,6 +330,8 @@ export function button(
     key: options?.key,
     disabled: options?.disabled ?? false,
     focusable: options?.focusable ?? true,
+    bare: options?.bare ?? false,
+    hoverable: options?.hoverable ?? false,
   };
 }
 
