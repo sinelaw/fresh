@@ -27,6 +27,12 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).
   * **Highlighting survives past the first wrapped rows**, and the wheel no longer snaps to a 100 KB boundary (#2843).
   * **Typing and cursor movement no longer slow down** as the cursor moves right.
+* **Scrolling**
+  * **PageUp/PageDown no longer stall crossing a collapsed fold** - a page of scroll budget was spent stepping through the fold's hidden lines; a fold now costs one row, like its header.
+  * **A residual cursor stall moving through revealed Markdown syntax** is fixed (#1574).
+* **A busy plugin (e.g. Grep in Project) can no longer freeze the editor** - plugin-triggered work now runs off the UI thread under a per-frame budget instead of blocking rendering for seconds.
+* **Dashboard**
+  * **A misbehaving section can no longer break the panel or hang the dock** - overflow, errors and slow sections are now contained and refresh independently, showing "stale" instead of freezing or blanking.
 * **Terminal**
   * **A new terminal no longer inherits another's scrollback**, and a restored one comes back live rather than frozen (#2828).
   * **Scroll-back re-wraps when the pane resizes** - splitting, maximizing or dropping a tab left every line clipped (#2844).
@@ -52,7 +58,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Internals
 
-* Flaky-e2e-test stabilization across the review-diff line-staging and orchestrator-dock suites.
+* Continued the viewport/wrap-index rebuild (a single coordinate system that now also models folds and decorations) and moved plugin-triggered work off the editor thread under a frame budget, plus further flaky-e2e-test stabilization across the review-diff line-staging, scrolling, vi-mode and orchestrator-dock suites.
 
 ## 0.4.5
 
