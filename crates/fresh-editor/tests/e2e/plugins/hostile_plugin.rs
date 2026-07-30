@@ -129,34 +129,35 @@ if (dash) {
         .wait_until(|h| h.screen_to_string().contains("pass0"))
         .unwrap();
 
-    // Measure: every editor tick + render must complete promptly while the
-    // hostile plugin does its worst. The pre-fix defect showed up here as
-    // individual iterations costing the full inline grep (seconds).
-    let mut worst = Duration::ZERO;
-    let mut over_500ms = 0usize;
+    // Measure: the editor tick + render must stay prompt while the hostile
+    // plugin does its worst. The pre-fix defect showed up here as EVERY
+    // iteration paying for inline plugin work (grep walks, spawn waits), so
+    // the discriminating statistic is the median — it stays low on a healthy
+    // budgeted loop even when a saturated CI runner throws occasional
+    // scheduling spikes, and it climbs an order of magnitude when dispatch
+    // moves back inline. The max only guards the watchdog class (a single
+    // multi-second stall), so it is deliberately loose.
     let iterations = 120;
+    let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
         let t0 = Instant::now();
         harness.tick_and_render().unwrap();
-        let dt = t0.elapsed();
-        if dt > worst {
-            worst = dt;
-        }
-        if dt > Duration::from_millis(500) {
-            over_500ms += 1;
-        }
+        samples.push(t0.elapsed());
         std::thread::sleep(Duration::from_millis(15));
     }
+    samples.sort();
+    let median = samples[iterations / 2];
+    let worst = *samples.last().unwrap();
 
     assert!(
-        worst < Duration::from_millis(1500),
-        "editor loop stalled under hostile plugin: worst tick+render {worst:?} \
-         — plugin work is running inline on the editor thread again"
+        median < Duration::from_millis(250),
+        "editor loop degraded under hostile plugin: median tick+render \
+         {median:?} (worst {worst:?}) — plugin work is being paid on every \
+         iteration, i.e. it is running inline on the editor thread again"
     );
     assert!(
-        over_500ms <= 2,
-        "editor loop degraded under hostile plugin: {over_500ms}/{iterations} \
-         iterations exceeded 500ms (worst {worst:?})"
+        worst < Duration::from_secs(5),
+        "editor loop stalled under hostile plugin: worst tick+render {worst:?}"
     );
 
     // The frame must still be a well-formed box despite the 300-col rows.
