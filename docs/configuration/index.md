@@ -68,7 +68,7 @@ Below the config layers sits one more scope: an individual buffer. Command-palet
 
 An unsuffixed toggle changes the default for every buffer that hasn't been pinned, and is written to your config immediately — the same as changing it in the Settings UI. A `(Current Buffer)` toggle pins just that file, leaves the default and every other buffer alone, and comes back the next time you open the file. Buffers you never pin keep following the default, so later config edits still reach them.
 
-Commands with the `(Current Buffer)` suffix: Line Numbers, Line Wrap, Virtual Space, Indentation Guides, Folding Indicators, Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Read-Only Mode, Auto-Revert, and LSP. Auto-Revert and LSP apply for the current session only — they control file watching and language-server lifecycle rather than display.
+Commands with the `(Current Buffer)` suffix: Line Numbers, Line Wrap, Virtual Space, Indentation Guides, Folding Indicators, Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Read-Only Mode, and Auto-Revert. **Toggle LSP for Current Buffer** says it in prose instead, so that it stays easy to find in the palette for languages with no server configured. Auto-Revert and LSP apply for the current session only — they control file watching and language-server lifecycle rather than display.
 
 Some settings also have a per-language layer in the config file (`languages.<id>.<setting>`), which sits between the editor-wide default and a per-buffer pin.
 
