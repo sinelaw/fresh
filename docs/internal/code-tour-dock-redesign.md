@@ -302,6 +302,7 @@ Five bands, top to bottom:
   - `1.` ordered items → preserved numbering, hanging indent;
   - `` `code` `` → the inline-code theme key, backticks stripped;
   - `**bold**` → bold, markers stripped;
+  - `*emphasis*` → italic, markers stripped (checked after `**` so bold wins);
   - fenced blocks → indented two columns, code background, fence lines dropped.
   Each output row is one `styledRow` with segments; wrapping happens in the
   plugin because it must be re-run when the dock is resized (`viewport_changed`).
@@ -397,9 +398,14 @@ they cost nothing when the feature is unused.
 - `Enter` on the prose (or the `[ Jump to code ⏎ ]` button) moves focus to the
   editor split at the step's line. The panel stays mounted and keeps showing the
   step. `Alt+J` comes back.
-- Advancing a step re-renders the panel but **does not** move focus. If you were
-  reading in the editor, `Ctrl+Alt+]` advances the step and re-centres the source
-  without yanking you into the dock.
+- Advancing a step re-renders the panel and parks focus **on the prose list**,
+  because reading the step is what you do next. A `List` scrolls by moving its
+  selection, so the prose also carries one — with the default `-1` the hint
+  bar's `↑↓ scroll` would do nothing at all. Tab still reaches the rail and the
+  buttons, and a user who tabs away keeps that focus until the step changes.
+- Focus stays in the dock, never jumping to the editor split: if you were
+  reading in the editor, `Ctrl+Alt+]` advances the step and re-centres the
+  source without yanking you into the dock.
 - Closing the dock tab (`×`, `q`, `Esc`) exits the tour: overlays cleared,
   `tour-active` unset. There is no longer an invisible-but-active state.
 
@@ -556,7 +562,19 @@ launch. All four dismissal gestures are the same thing — `×` on the tab, `q`,
 `buffer_closed` listener is what removes the entry. Finishing the last step with
 `[ ✓ Finish ]` closes it the same way: a completed tour is not pending work.
 
-This is only safe because **quitting does not close buffers**. The shutdown path
+Closing goes through a small teardown rather than a bare `closeBuffer`:
+`close_buffer` substitutes a replacement buffer — resolved from the active
+split's focus history, so typically an ordinary source file — into every split
+still showing the closed one. For a dock pane that replaces the panel with a
+*file*, turning the Utility Dock into the tab strip for ordinary files it must
+never be. So teardown shows a sibling tour first when there is one, and
+otherwise closes the buffer, `flush`es, and asks what the dock now holds —
+`describeWorkspace` reads the plugin-state snapshot, which still describes the
+pre-close layout until the host drains the queued mutation — collapsing the dock
+when what is left is a file and leaving it standing when it is another plugin's
+panel.
+
+Forgetting on close is only safe because **quitting does not close buffers**. The shutdown path
 auto-saves dirty buffers, ends the recovery session, calls
 `save_all_windows_workspaces`, and then drops the editor — no teardown loop over
 buffers, so `buffer_closed` never fires for a tour that was merely open at exit.
@@ -698,10 +716,18 @@ panel = new WidgetPanel(bufferId);
 | i18n | New `code-tour.i18n.json` — the plugin currently hardcodes every user-visible string, unlike its neighbours. |
 | Detour tracking | `lastKnownTopByte` / `lastKnownBufferId` get their intended use: they drive whether `[ Re-highlight ]` is emphasised. |
 
-Nothing in the host changes. Every widget the design uses — `button`,
-`list`, `labeledSection`, `divider`, `hintBar`, `spacer`, `flexSpacer`,
-`styledRow` — already ships, and the dock already accepts a widget panel via
-`role: "utility_dock"`.
+Every widget the design uses — `button`, `list`, `labeledSection`, `divider`,
+`hintBar`, `spacer`, `flexSpacer`, `styledRow` — already shipped, and the dock
+already accepted a widget panel via `role: "utility_dock"`. The design was
+drafted expecting **no host changes at all**. Driving the result found three
+host bugs it was wrong about; all three are pre-existing and affect any widget
+panel, and the tour is simply the first panel whose shape exposes them.
+
+| Host area | Change |
+|---|---|
+| `click_handlers.rs` | A click landing on a widget panel but missing every hit area — a `labeledSection` border, the padding under a short list — fell through to ordinary cursor placement. The buffer's cursor is hidden but the viewport still follows it, so the click scrolled the panel's own header and buttons out of view with no way back. Non-scrollable buffers were already swallowed for exactly this reason; widget panels were excluded so their clicks could route focus to the split. They now take the focus and stop, which was the stated intent. |
+| `widgets/registry.rs` | `row_select_hit` — the fallback that lets a click past a compact row's text still select the row — returned the *first* list/tree hit on the buffer row, ignoring the column. Two lists side by side in a `Row` put two hits on one row, so every click in the right-hand column selected a row in the left-hand list. It now picks the rightmost row hit starting at or before the click; unchanged for a single-column panel. |
+| `plugin_dispatch.rs` | `show_line_numbers` is per (split, buffer) and the dock fast path never set it, so the *second* panel routed into the dock rendered with a line-number gutter the first one lacked — and the columns that gutter stole made the panel's widgets wrap. Visible today with Diagnostics beside Search/Replace; multi-tour makes it routine. |
 
 ---
 
