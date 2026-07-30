@@ -26,9 +26,17 @@
 //!
 //! Two per-buffer toggles are deliberately session-scoped because they drive
 //! process lifecycle rather than display — `Toggle Auto-Revert (Current
-//! Buffer)` (file watching) and `Toggle LSP (Current Buffer)` (server
-//! lifecycle). They keep the scope suffix, which is what the name promises;
+//! Buffer)` (file watching) and `Toggle LSP for Current Buffer` (server
+//! lifecycle). They still name their scope, which is what matters;
 //! resurrecting "LSP off for this file" across restarts is a separate decision.
+//!
+//! `Toggle LSP for Current Buffer` is also the one command that states its
+//! scope in prose rather than with the parenthetical suffix, and must stay that
+//! way. It is *disabled* for any language with no server configured, and the
+//! palette sorts disabled commands last — so in the suffixed form every enabled
+//! `(Current Buffer)` sibling that fuzzy-matches "toggle…lsp" outranks it
+//! ("Toggle **V**irtua**l** **S**pace" matches, among others) and the user
+//! cannot type their way to it. The prose form keeps it reachable.
 
 use crate::input::keybindings::{Action, KeyContext};
 use crate::types::context_keys;
