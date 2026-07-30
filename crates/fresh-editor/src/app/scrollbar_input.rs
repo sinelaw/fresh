@@ -100,8 +100,7 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        let tab_size = self.config().editor.tab_size;
-        self.scroll_split_by_lines(buffer_id, target_split, delta, tab_size);
+        self.scroll_split_by_lines(buffer_id, target_split, delta);
 
         Ok(())
     }

@@ -687,6 +687,8 @@ impl EditorServer {
     /// Returns whether the size actually moved (the caller then pushes it into
     /// the capture backend and the editor via `update_terminal_size`).
     fn recompute_term_size(&mut self) -> bool {
+        // `mut` is exercised only by the `web` branch below.
+        #[cfg_attr(not(feature = "web"), allow(unused_mut))]
         let mut fit: Option<TermSize> = self.clients.first().map(|c| c.term_size);
         #[cfg(feature = "web")]
         if let Some((wc, wr)) = self.web.as_ref().and_then(|b| b.wanted_size()) {

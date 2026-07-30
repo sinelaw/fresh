@@ -3350,21 +3350,6 @@ fn extract_session_flag<'a>(tokens: &[&'a str]) -> (Option<String>, Vec<&'a str>
     (session, rest)
 }
 
-/// Parse `k=v` tokens into an argument map. Tokens without an `=` are ignored;
-/// the value keeps any further `=` (split on the first only), so `a=b=c` maps
-/// `a -> b=c`. An empty key is skipped.
-fn parse_kv_args(tokens: &[&str]) -> std::collections::HashMap<String, String> {
-    let mut map = std::collections::HashMap::new();
-    for tok in tokens {
-        if let Some((k, v)) = tok.split_once('=') {
-            if !k.is_empty() {
-                map.insert(k.to_string(), v.to_string());
-            }
-        }
-    }
-    map
-}
-
 /// Resolve the control socket for a command-channel verb.
 ///
 /// The default target is the current workspace, named by `$FRESH_SESSION`;
@@ -5495,26 +5480,6 @@ fn coalesce_mouse_moves(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_kv_args_basic() {
-        let args = parse_kv_args(&["direction=vertical", "count=2"]);
-        assert_eq!(args.get("direction").map(String::as_str), Some("vertical"));
-        assert_eq!(args.get("count").map(String::as_str), Some("2"));
-        assert_eq!(args.len(), 2);
-    }
-
-    #[test]
-    fn test_parse_kv_args_ignores_non_kv_and_splits_on_first_eq() {
-        // Tokens without '=' are dropped; only the first '=' splits.
-        let args = parse_kv_args(&["bareword", "expr=a=b=c", "=noval", "k="]);
-        assert_eq!(args.get("expr").map(String::as_str), Some("a=b=c"));
-        assert_eq!(args.get("k").map(String::as_str), Some(""));
-        assert!(!args.contains_key("bareword"));
-        // Empty key is skipped.
-        assert!(!args.contains_key(""));
-        assert_eq!(args.len(), 2);
-    }
 
     #[test]
     fn test_extract_session_flag_removes_pair_anywhere() {
