@@ -1806,6 +1806,7 @@ impl Editor {
                 focus_marker,
                 title,
                 closable,
+                start_blurred,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
                 self.handle_mount_floating_widget(
@@ -1817,6 +1818,7 @@ impl Editor {
                     focus_marker,
                     title,
                     closable,
+                    start_blurred,
                 );
             }
 
@@ -5112,6 +5114,11 @@ impl Editor {
         // dock / anchored). See `FloatingWidgetState::{title,closable}`.
         title: Option<String>,
         closable: bool,
+        // Mount without taking keyboard focus. The alternative — mount
+        // focused, then a follow-up `blur` command — has a window where
+        // the panel owns the keyboard, because command dispatch is
+        // budgeted across frames and the pair may split across ticks.
+        start_blurred: bool,
     ) {
         let width_pct = width_pct.clamp(1, 100);
         let height_pct = height_pct.clamp(1, 100);
@@ -5151,7 +5158,7 @@ impl Editor {
             width_pct,
             height_pct,
             placement,
-            focused: true,
+            focused: !start_blurred,
             entries: Vec::new(),
             focus_cursor: None,
             embeds: Vec::new(),

@@ -53,6 +53,7 @@ fn mount_titled_closable(harness: &mut EditorTestHarness) {
             focus_marker: false,
             title: Some(FRAME_TITLE.to_string()),
             closable: true,
+            start_blurred: false,
         })
         .unwrap();
 }

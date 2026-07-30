@@ -1007,6 +1007,12 @@ export class FloatingWidgetPanel {
        * the panel exactly like Esc / Cancel (fires the panel's `cancel`
        * `widget_event`). Ignored for `asDock`. Default false. */
       closable?: boolean;
+      /** Mount without taking keyboard focus — the editor keeps the
+       * keys. Use this instead of mount-then-`blur` for a panel that
+       * must never own the keyboard (command dispatch is budgeted
+       * across frames, so a follow-up blur can land a tick late).
+       * Default false: mounting focuses the panel. */
+      startBlurred?: boolean;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -1023,6 +1029,7 @@ export class FloatingWidgetPanel {
       options.focusMarker ?? false,
       options.title ?? "",
       options.closable ?? false,
+      options.startBlurred ?? false,
     );
   }
 

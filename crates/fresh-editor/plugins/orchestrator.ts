@@ -3849,8 +3849,11 @@ function scheduleProbeRefresh(): void {
   });
 }
 
-function openControlRoom(opts: { dock?: boolean } = {}): void {
+function openControlRoom(
+  opts: { dock?: boolean; blurred?: boolean } = {},
+): void {
   const asDock = opts?.dock === true;
+  const startBlurred = asDock && opts?.blurred === true;
   if (openPanel) {
     // If the dock is showing and the user asked for the modal picker
     // (Orchestrator: Open, or the dock's "Manage" button), float the
@@ -3943,6 +3946,10 @@ function openControlRoom(opts: { dock?: boolean } = {}): void {
       widthPct: 100,
       heightPct: 100,
       asDock: true,
+      // "Stay put" callers (autoOpenDock, placeholder rows) must never
+      // put the keyboard in the dock, not even for the tick between a
+      // focused mount and a follow-up blur command.
+      startBlurred,
     });
     editor.floatingPanelControl(openPanel.id(), "dock", dockDefaultWidth());
     openPanel.update(buildDockSpec());
@@ -8566,11 +8573,17 @@ function showDockUnfocused(): void {
   // `openPanel`'s narrowing survives the `openControlRoom` reassignment —
   // mirrors `openMoveToFolderForCurrent`.)
   if (!openPanel) {
-    openControlRoom({ dock: true });
+    // Mounted blurred from the first frame — a focused mount plus a
+    // follow-up blur would leave a tick-sized window where the dock
+    // owns the keyboard (command dispatch is budgeted across frames).
+    openControlRoom({ dock: true, blurred: true });
+    if (openPanel && dockMode) dockBlurred = true;
   }
   if (!openPanel) return;
   // Keep keyboard focus in the editor ("stay put") — only the dock is shown.
-  // A centered modal picker (dockMode false) is left focused as-is.
+  // A centered modal picker (dockMode false) is left focused as-is. The
+  // explicit blur stays for the already-open case (and is a no-op right
+  // after a blurred mount).
   if (dockMode) {
     dockBlurred = true;
     editor.floatingPanelControl(openPanel.id(), "blur", 0);
