@@ -19,42 +19,52 @@ use std::path::{Path, PathBuf};
 /// A two-step tour over `src/main.rs`, with markdown in both explanations:
 /// a heading, a bold run, inline code, a bullet list and a fenced block —
 /// i.e. every construct the old popup mangled.
-const TOUR_JSON: &str = r###"{
+fn tour_json(root: &Path) -> String {
+    let root = root.display().to_string();
+    format!(
+        r###"{{
   "title": "Pipeline Tour",
   "description": "How a request reaches the handler",
   "schema_version": "1.0",
   "steps": [
-    {
+    {{
       "step_id": 1,
       "title": "Entry point",
-      "file_path": "src/main.rs",
+      "file_path": "{root}/src/main.rs",
       "lines": [1, 3],
       "explanation": "## Where it starts\n\nThe listener is **built** here using `TcpListener`.\n\n- binds the socket\n- spawns the accept loop\n\n```rust\nlet l = TcpListener::bind(addr)?;\n```"
-    },
-    {
+    }},
+    {{
       "step_id": 2,
       "title": "The handler",
-      "file_path": "src/main.rs",
+      "file_path": "{root}/src/main.rs",
       "lines": [5, 7],
       "explanation": "## Handling\n\nEach connection is dispatched to `handle` on its own task."
-    }
+    }}
   ]
-}"###;
+}}"###
+    )
+}
 
-const SECOND_TOUR_JSON: &str = r###"{
+fn second_tour_json(root: &Path) -> String {
+    let root = root.display().to_string();
+    format!(
+        r###"{{
   "title": "Storage Tour",
   "description": "The storage layer",
   "schema_version": "1.0",
   "steps": [
-    {
+    {{
       "step_id": 1,
       "title": "The store",
-      "file_path": "src/store.rs",
+      "file_path": "{root}/src/store.rs",
       "lines": [1, 2],
       "explanation": "## The store\n\nKeys live in a `BTreeMap`."
-    }
+    }}
   ]
-}"###;
+}}"###
+    )
+}
 
 const MAIN_RS: &str = "fn main() {\n    let l = listen();\n}\n\nfn handle() {\n    todo!()\n}\n";
 
@@ -76,8 +86,16 @@ fn setup_tour_project() -> (tempfile::TempDir, PathBuf) {
         "struct Store;\nimpl Store {}\n",
     )
     .unwrap();
-    fs::write(project_root.join(".fresh-tour.json"), TOUR_JSON).unwrap();
-    fs::write(project_root.join("storage-tour.json"), SECOND_TOUR_JSON).unwrap();
+    fs::write(
+        project_root.join(".fresh-tour.json"),
+        tour_json(&project_root),
+    )
+    .unwrap();
+    fs::write(
+        project_root.join("storage-tour.json"),
+        second_tour_json(&project_root),
+    )
+    .unwrap();
 
     (temp_dir, project_root)
 }
@@ -123,7 +141,7 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
         .unwrap();
     // The prompt is prefilled with `.fresh-tour.json`; clear it before typing
     // a different manifest so the two tests can load different files.
-    for _ in 0..40 {
+    for _ in 0..64 {
         harness
             .send_key(KeyCode::Backspace, KeyModifiers::NONE)
             .unwrap();
@@ -132,8 +150,14 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
+    // The dock tab appears as soon as the buffer is created — a frame before
+    // the widget spec paints. Wait for panel *content* (the hint bar is in
+    // every layout, compact or not), or every assertion races the first render.
     harness
-        .wait_until(|h| h.screen_to_string().contains(tab_marker))
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains(tab_marker) && screen.contains("jump to code")
+        })
         .unwrap();
 }
 
@@ -158,7 +182,12 @@ fn test_tour_renders_as_dock_panel_with_buttons() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
 
     let screen = harness.screen_to_string();
 
@@ -218,7 +247,12 @@ fn test_step_prose_renders_markdown() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
     let screen = harness.screen_to_string();
 
     // Heading: rendered as text, `##` stripped.
@@ -267,7 +301,12 @@ fn test_next_key_advances_step() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
     assert!(harness.screen_to_string().contains("Step 1 of 2"));
 
     harness
@@ -283,8 +322,8 @@ fn test_next_key_advances_step() {
         "expected step 2's prose\nScreen:\n{screen}"
     );
     assert!(
-        screen.contains("lines 5–7"),
-        "expected step 2's source range\nScreen:\n{screen}"
+        screen.contains("2/4 ·") || screen.contains("2/2 ·"),
+        "expected the section label to track the step\nScreen:\n{screen}"
     );
     // Last step: Exit turns into Finish.
     assert!(
@@ -308,7 +347,12 @@ fn test_clicking_next_button_advances_step() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
 
     let screen = harness.screen_to_string();
     let row = row_of(&harness, "[ Next ▶ ]");
@@ -336,8 +380,18 @@ fn test_two_tours_coexist_as_dock_tabs() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
-    load_tour(&mut harness, "storage-tour.json", "*Tour: Storage Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    let second = project_root.join("storage-tour.json");
+    load_tour(
+        &mut harness,
+        &second.display().to_string(),
+        "*Tour: Storage Tour*",
+    );
 
     let screen = harness.screen_to_string();
     assert!(
@@ -369,7 +423,12 @@ fn test_steps_rail_lists_all_steps() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
     let screen = harness.screen_to_string();
 
     assert!(
@@ -393,7 +452,12 @@ fn test_narrow_dock_folds_the_steps_rail() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 96, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
     let screen = harness.screen_to_string();
 
     assert!(
@@ -417,7 +481,12 @@ fn test_q_closes_the_tour() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
-    load_tour(&mut harness, ".fresh-tour.json", "*Tour: Pipeline Tour*");
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
 
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
