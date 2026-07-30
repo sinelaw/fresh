@@ -6410,6 +6410,9 @@ impl JsEditorApi {
         // back-compat with existing mount calls.
         title: rquickjs::function::Opt<String>,
         closable: rquickjs::function::Opt<bool>,
+        // Mount without taking keyboard focus (the auto-opened dock).
+        // Optional trailing arg, default false, for call-site back-compat.
+        start_blurred: rquickjs::function::Opt<bool>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -6433,6 +6436,7 @@ impl JsEditorApi {
                 focus_marker: focus_marker.0.unwrap_or(false),
                 title: title.0.filter(|s| !s.is_empty()),
                 closable: closable.0.unwrap_or(false),
+                start_blurred: start_blurred.0.unwrap_or(false),
             })
             .is_ok())
     }

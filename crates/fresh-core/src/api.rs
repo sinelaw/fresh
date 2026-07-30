@@ -4881,6 +4881,15 @@ pub enum PluginCommand {
         /// (no button) so existing panels render unchanged.
         #[serde(default)]
         closable: bool,
+        /// Mount the panel without taking keyboard focus — the editor
+        /// keeps the keys. A mount + follow-up `blur` command pair has a
+        /// window where the panel owns the keyboard (command dispatch is
+        /// budgeted across frames, so the pair may land on different
+        /// ticks); a panel that must never grab focus (the auto-opened
+        /// dock) states it here so the mount itself is the whole story.
+        /// Default `false`: mounting focuses the panel, as always.
+        #[serde(default)]
+        start_blurred: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget
