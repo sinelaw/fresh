@@ -3968,6 +3968,11 @@ mod tests {
             // — handled by the live_grep plugin (Finder panel), dispatched
             // as a plugin action from the prompt context.
             "live_grep_export_quickfix",
+            // Code Tour step navigation — handled by the code-tour plugin;
+            // bound in the default keymap so a tour can be stepped from the
+            // editor split while the tour panel stays docked below.
+            "tour_next",
+            "tour_prev",
         ];
 
         let config = Config::default();
