@@ -140,7 +140,15 @@ impl Editor {
             MouseEventKind::ScrollDown => {
                 self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, 3);
             }
-            // Right-click, horizontal scroll, motion, other-button releases:
+            // The modal owns the whole mouse channel, so it has to drive
+            // hover for its own panel — the normal pipeline's tracker is
+            // unreachable from here. Scoped to `Floating`: the dock may
+            // still be mounted underneath, and a pointer over the modal is
+            // not over the dock widget it happens to cover.
+            MouseEventKind::Moved => {
+                self.update_widget_hover(col, row, Some(super::PanelSlot::Floating));
+            }
+            // Right-click, horizontal scroll, other-button releases:
             // swallowed — the modal eats them all.
             _ => {}
         }
@@ -430,7 +438,7 @@ impl Editor {
                 // do. Tracked off the same motion events as the scrollbar
                 // reveal above, and likewise re-rendering only on the
                 // enter/leave transition.
-                needs_render = self.update_widget_hover(col, row) || needs_render;
+                needs_render = self.update_widget_hover(col, row, None) || needs_render;
             }
             MouseEventKind::ScrollUp => {
                 self.handle_vertical_scroll(col, row, mouse_event.modifiers, -3)?;
@@ -4328,17 +4336,34 @@ impl Editor {
     /// re-render a panel whose hovered widget changed, and notify the
     /// owning plugin about widgets that asked to hear about it.
     ///
-    /// Called from the motion handler. Cheap in the common case — the key
+    /// Called from the motion handlers. Cheap in the common case — the key
     /// is compared before anything is rebuilt, so sliding the pointer
     /// around inside one widget costs a hit-test and nothing more — and
     /// the plugin round-trip is gated on the widget's own `hoverable`, so
     /// a panel that doesn't want hover events never wakes its plugin.
-    fn update_widget_hover(&mut self, col: u16, row: u16) -> bool {
+    ///
+    /// `pointer_owner` names the slot the pointer is actually addressing,
+    /// for callers that already know: a centered modal captures the mouse
+    /// channel outright, and the dock it covers must not keep (or gain) a
+    /// highlight from a pointer that is really over the modal. `None` —
+    /// the normal, non-modal pipeline — leaves every mounted panel
+    /// reachable.
+    fn update_widget_hover(
+        &mut self,
+        col: u16,
+        row: u16,
+        pointer_owner: Option<super::PanelSlot>,
+    ) -> bool {
         let mut changed = false;
         for slot in [super::PanelSlot::Dock, super::PanelSlot::Floating] {
-            let entered = self
-                .probe_floating_widget(slot, col, row)
-                .and_then(|p| p.hit);
+            // A slot the pointer isn't addressing resolves to "nothing
+            // hovered", which also *clears* whatever it had highlighted.
+            let entered = if pointer_owner.is_none_or(|owner| owner == slot) {
+                self.probe_floating_widget(slot, col, row)
+                    .and_then(|p| p.hit)
+            } else {
+                None
+            };
             let now = entered
                 .as_ref()
                 .map(|h| h.widget_key.clone())
