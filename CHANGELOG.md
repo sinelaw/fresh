@@ -86,7 +86,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Scroll-back re-wraps when the pane resizes** - splitting, maximizing or dropping a tab left every line clipped (#2844).
   * **Modified keys reach the program inside** - `Ctrl+Shift+Right`, `Shift+Home`, `Shift+F3` and `Alt+Backspace` arrived stripped.
   * **Scrollback keeps streaming** after the grid history saturates.
-  * **The command palette stays useful inside a terminal** - Save All, Navigate Back/Forward, the editor-wide view toggles, `init:` commands, Restart Terminal Process, Toggle Utility Dock and friends were greyed out whenever a terminal had focus, some of them while their own keybinding still worked. Commands that genuinely need a text cursor (Undo, Delete Line, …) stay disabled.
+  * **The command palette stays useful inside a terminal, and in the file explorer** - Save All, Navigate Back/Forward, the editor-wide view toggles, `init:` commands, tab and split management, Restart Terminal Process, Toggle Utility Dock and friends were greyed out whenever a terminal or the explorer had focus, some of them while their own keybinding still worked. Commands that act on the focused buffer's cursor (Undo, Delete Line, Save File, …) stay disabled there, as before.
 * **Input**
   * **One keypress no longer acts twice** with `keyboard_report_event_types` on (#2796, reported by @akarinotomoshibi).
   * **Horizontal wheel events no longer scroll vertically** (#2831, reported by @mruff-aeq, by @ttenneb).
