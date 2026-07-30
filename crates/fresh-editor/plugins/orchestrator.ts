@@ -3951,7 +3951,12 @@ function openControlRoom(
       // focused mount and a follow-up blur command.
       startBlurred,
     });
-    editor.floatingPanelControl(openPanel.id(), "dock", dockDefaultWidth());
+    // "dock_width", not "dock": the panel is already in the dock slot from
+    // the mount above, and the "dock" op re-focuses the panel — which would
+    // undo a blurred mount for one tick until the follow-up blur lands
+    // (command dispatch is budgeted, so the pair can split across frames).
+    // The mount alone decides focus; this only sets the default width.
+    editor.floatingPanelControl(openPanel.id(), "dock_width", dockDefaultWidth());
     openPanel.update(buildDockSpec());
   } else {
     // 90% × 90% of the terminal — the open dialog wants room for
