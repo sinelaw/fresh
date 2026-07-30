@@ -746,6 +746,14 @@ pub enum Action {
     ToggleLineWrapCurrentBuffer,
     /// Toggle virtual space (off ↔ on) for the current buffer only
     ToggleVirtualSpaceCurrentBuffer,
+    /// Toggle indentation guides for the current buffer only (per-buffer
+    /// override that persists across restart, without touching the global
+    /// `editor.indentation_guide` mode or other buffers).
+    ToggleIndentationGuideCurrentBuffer,
+    /// Toggle the gutter folding indicators for the current buffer only
+    /// (per-buffer override that persists across restart). Existing folds are
+    /// left alone; only the ▾/▸ arrows are hidden.
+    ToggleFoldIndicatorsCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -1231,6 +1239,8 @@ impl Action {
             "toggle_line_numbers_current_buffer" => ToggleLineNumbersCurrentBuffer,
             "toggle_line_wrap_current_buffer" => ToggleLineWrapCurrentBuffer,
             "toggle_virtual_space_current_buffer" => ToggleVirtualSpaceCurrentBuffer,
+            "toggle_indentation_guide_current_buffer" => ToggleIndentationGuideCurrentBuffer,
+            "toggle_fold_indicators_current_buffer" => ToggleFoldIndicatorsCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -2782,6 +2792,12 @@ impl KeybindingResolver {
             Action::ToggleLineWrapCurrentBuffer => t!("action.toggle_line_wrap_current_buffer"),
             Action::ToggleVirtualSpaceCurrentBuffer => {
                 t!("action.toggle_virtual_space_current_buffer")
+            }
+            Action::ToggleIndentationGuideCurrentBuffer => {
+                t!("action.toggle_indentation_guide_current_buffer")
+            }
+            Action::ToggleFoldIndicatorsCurrentBuffer => {
+                t!("action.toggle_fold_indicators_current_buffer")
             }
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),

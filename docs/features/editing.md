@@ -26,6 +26,8 @@ Guides are visual-only: they replace rendered leading whitespace cells without c
 
 Turn on `editor.rainbow_indentation` to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
 
+**Per-buffer override** — **Toggle Indentation Guides (Current Buffer)** in the command palette flips guides for the active buffer only, leaving the global setting and other buffers untouched. Turning them on in a buffer where the global mode is `none` draws every level; where it is `active`, that mode is kept. The choice persists across restarts.
+
 Guides are a source-code aid, so plain-text buffers (language `text` — undetected files, `.txt`, and buffers manually set to Plain Text) never draw them, even when guides are enabled globally. Any language can opt out (or plain text back in) with the per-language `indentation_guide` setting:
 
 ```jsonc
@@ -59,6 +61,8 @@ Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the comm
 
 - **LSP folding** — uses `foldingRange` from the language server when available.
 - **Indent-based folding** — fallback for files without LSP support and large file mode. Fold from any line within an indented block.
+
+**Per-buffer override** — **Toggle Folding Indicators (Current Buffer)** in the command palette hides the ▾/▸ gutter arrows for the active buffer only. Existing folds are untouched — collapsed regions stay collapsed and keep their placeholder, and "Toggle Fold" still works — but a gutter click no longer creates a fold, since there is no arrow to aim at. The choice persists across restarts.
 
 ## Read-Only Mode
 

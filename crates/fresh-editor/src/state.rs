@@ -131,6 +131,24 @@ pub struct BufferSettings {
     /// `languages.<id>.indentation_guide`). Set based on global + language
     /// config.
     pub indentation_guide: bool,
+
+    /// Explicit per-buffer indentation-guide override, set by "Toggle
+    /// Indentation Guides (Current Buffer)". `None` = follow the global
+    /// `editor.indentation_guide` mode (and the language gate above).
+    /// Persisted in the per-file workspace state.
+    ///
+    /// Distinct from [`EditorState::indentation_guide_override`], which is the
+    /// plugin-facing (`setIndentationGuide`) knob: that one describes a tool
+    /// view and must NOT outlive the session, while this one is the user's
+    /// choice for a file and must.
+    pub indentation_guide_user_override: Option<bool>,
+
+    /// Explicit per-buffer fold-indicator override, set by "Toggle Folding
+    /// Indicators (Current Buffer)". `None` = show them (the default; there is
+    /// no global setting). `Some(false)` hides the gutter fold arrows for this
+    /// buffer without touching existing folds. Persisted in the per-file
+    /// workspace state.
+    pub fold_indicators_override: Option<bool>,
 }
 
 impl Default for BufferSettings {
@@ -145,6 +163,8 @@ impl Default for BufferSettings {
             virtual_space_override: None,
             word_characters: String::new(),
             indentation_guide: true,
+            indentation_guide_user_override: None,
+            fold_indicators_override: None,
         }
     }
 }
@@ -159,7 +179,10 @@ impl BufferSettings {
     /// config reload) picks it up automatically.
     ///
     /// Explicit per-buffer user overrides are preserved: `virtual_space`
-    /// keeps following `virtual_space_override` when one is set.
+    /// keeps following `virtual_space_override` when one is set, and the
+    /// `indentation_guide_user_override` / `fold_indicators_override` choices
+    /// are left untouched (they are consulted at render time, so re-stamping
+    /// the language gate below can't clear them).
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
         self.tab_size = resolved.tab_size;
         self.use_tabs = resolved.use_tabs;
@@ -171,6 +194,12 @@ impl BufferSettings {
         self.whitespace = resolved.whitespace;
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
+    }
+
+    /// Whether the gutter should draw fold arrows for this buffer. Defaults to
+    /// on; only the per-buffer toggle turns them off.
+    pub fn fold_indicators_visible(&self) -> bool {
+        self.fold_indicators_override.unwrap_or(true)
     }
 }
 

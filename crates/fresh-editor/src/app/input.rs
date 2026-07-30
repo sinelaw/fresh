@@ -1967,6 +1967,12 @@ impl Editor {
             Action::ToggleLineNumbersCurrentBuffer => self.toggle_line_numbers_current_buffer(),
             Action::ToggleLineWrapCurrentBuffer => self.toggle_line_wrap_current_buffer(),
             Action::ToggleVirtualSpaceCurrentBuffer => self.toggle_virtual_space_current_buffer(),
+            Action::ToggleIndentationGuideCurrentBuffer => {
+                self.toggle_indentation_guide_current_buffer()
+            }
+            Action::ToggleFoldIndicatorsCurrentBuffer => {
+                self.toggle_fold_indicators_current_buffer()
+            }
             Action::TriggerWaveAnimation => self.trigger_wave_animation(),
             Action::ToggleScrollSync => self.active_window_mut().toggle_scroll_sync(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),

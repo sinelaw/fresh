@@ -247,6 +247,51 @@ impl IndentationGuideMode {
     pub const OPTIONS: &'static [&'static str] = &["none", "all", "active"];
 }
 
+/// Inputs to [`resolve_indentation_guide_mode`], gathered from the global
+/// config and the buffer being rendered.
+#[derive(Debug, Clone, Copy)]
+pub struct IndentationGuideInputs {
+    /// The global `editor.indentation_guide` mode.
+    pub global: IndentationGuideMode,
+    /// Explicit per-buffer user override from "Toggle Indentation Guides
+    /// (Current Buffer)". Wins over everything below; persisted per file.
+    pub user_override: Option<bool>,
+    /// Explicit plugin override (`setIndentationGuide`). Never persisted.
+    pub plugin_override: Option<bool>,
+    /// The buffer's resolved language gate (`BufferSettings::indentation_guide`).
+    pub language_gate: bool,
+    /// Whether this is a virtual (non-file) buffer.
+    pub is_virtual_buffer: bool,
+}
+
+/// Resolve the indentation-guide mode that actually renders for a buffer.
+///
+/// THE single place the precedence chain lives, so the renderer and the
+/// per-buffer toggle command can never disagree about what is on screen:
+///
+/// 1. the per-buffer user override ("Toggle Indentation Guides (Current
+///    Buffer)") — an explicit `true` turns guides on even where the global
+///    setting is `none`, falling back to [`IndentationGuideMode::All`];
+/// 2. the plugin override (`setIndentationGuide`);
+/// 3. virtual buffers and language opt-outs (plain text) force guides off;
+/// 4. otherwise the global mode.
+pub fn resolve_indentation_guide_mode(inputs: IndentationGuideInputs) -> IndentationGuideMode {
+    match inputs.user_override {
+        Some(true) => match inputs.global {
+            IndentationGuideMode::None => IndentationGuideMode::All,
+            mode => mode,
+        },
+        Some(false) => IndentationGuideMode::None,
+        None => match inputs.plugin_override {
+            Some(true) => inputs.global,
+            Some(false) => IndentationGuideMode::None,
+            None if inputs.is_virtual_buffer => IndentationGuideMode::None,
+            None if !inputs.language_gate => IndentationGuideMode::None,
+            None => inputs.global,
+        },
+    }
+}
+
 impl JsonSchema for IndentationGuideMode {
     fn schema_name() -> Cow<'static, str> {
         Cow::Borrowed("IndentationGuideMode")

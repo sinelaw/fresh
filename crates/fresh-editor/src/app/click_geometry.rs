@@ -243,9 +243,17 @@ pub(crate) fn fold_toggle_byte_from_position(
     use crate::view::folding::indent_folding;
     let line_start = indent_folding::find_line_start_byte(&state.buffer, target_position);
 
-    // Already collapsed → allow toggling (unfold)
+    // Already collapsed → allow toggling (unfold). This stays available even
+    // with the indicators hidden: the collapsed line still renders its "..."
+    // placeholder, so the user can see there is something to expand.
     if collapsed_header_bytes.contains_key(&line_start) {
         return Some(target_position);
+    }
+
+    // With fold indicators hidden for this buffer there is no arrow to aim at,
+    // so a gutter click must not silently create a fold.
+    if !state.buffer_settings.fold_indicators_visible() {
+        return None;
     }
 
     // Check LSP folding ranges first (line-based comparison unavoidable).
