@@ -7,12 +7,11 @@
 //! to hold or the palette lies about what a command does.
 //!
 //! The per-buffer tests below cover line numbers, line wrap, indentation
-//! guides, folding indicators, whitespace indicators, indentation style,
-//! the current-line highlight and occurrence highlighting:
-//! each must affect only the current buffer and survive a session restart, and
-//! all of them assert on rendered screen output. The final test covers the
-//! global half, where the durable artifact is a config file rather than
-//! anything on screen.
+//! guides, folding indicators, whitespace indicators, indentation style, the
+//! current-line highlight and occurrence highlighting: each must affect only
+//! the current buffer and survive a session restart, and all of them assert on
+//! rendered screen output. The final test covers the global half, where the
+//! durable artifact is a config file rather than anything on screen.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -664,101 +663,60 @@ fn test_current_line_highlight_current_buffer_scopes_and_persists() {
     }
 }
 
-/// The per-buffer occurrence-highlight pin must round-trip through the
-/// workspace file.
+/// The per-buffer occurrence-highlight pin must survive a session restart.
 ///
-/// Unlike the other toggles here this one asserts on the saved artifact rather
-/// than the screen: occurrence highlighting paints on a debounce after cursor
-/// movement, so a rendered assertion would be a timing race, and CONTRIBUTING
-/// rules out time-sensitive tests. Re-saving in session 2 is what makes this a
-/// real round-trip — the field is only written back if restore actually applied
-/// it, and every file-open path stamps `reference_highlight_overlay.enabled`
-/// from config, so a pin the restore path dropped would vanish here.
+/// Occurrence highlighting paints on a debounce after cursor movement, so
+/// asserting on the highlighted words would be a timing race. The toggle's own
+/// status message is set synchronously, and it reports the state it moved *to*
+/// — so a second toggle after restore says "enabled" only if the restored state
+/// was off. If restore had dropped the pin the buffer would be on the global
+/// default (on) and this would read "disabled" instead.
+///
+/// The terminal is deliberately wide: the status bar truncates its message slot
+/// on a narrower screen and the informative word is what gets cut.
 #[test]
-fn test_occurrence_highlight_current_buffer_round_trips_through_the_workspace() {
+fn test_occurrence_highlight_current_buffer_persists_across_restart() {
     let temp_dir = TempDir::new().unwrap();
     let project_dir = temp_dir.path().join("project");
     std::fs::create_dir(&project_dir).unwrap();
     let file = project_dir.join("a.rs");
     std::fs::write(&file, "let alpha = 1;\nlet beta = alpha;\n").unwrap();
-    let dir_context = DirectoryContext::for_testing(temp_dir.path());
 
-    let saved_override = |label: &str| -> serde_json::Value {
-        let dir = dir_context.data_dir.join("workspaces");
-        let mut found = serde_json::Value::Null;
-        for entry in std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("{label}: no workspaces dir at {}: {e}", dir.display()))
-        {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            let json: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-            // The file states are nested under the split tree; walk for the key
-            // rather than hard-coding the layout.
-            let mut stack = vec![json];
-            while let Some(node) = stack.pop() {
-                match node {
-                    serde_json::Value::Object(map) => {
-                        for (key, value) in map {
-                            if key == "highlight_occurrences" {
-                                found = value.clone();
-                            }
-                            stack.push(value);
-                        }
-                    }
-                    serde_json::Value::Array(items) => stack.extend(items),
-                    _ => {}
-                }
-            }
-        }
-        found
-    };
-
-    let open_session = |dir_context: DirectoryContext| {
-        EditorTestHarness::create(
-            120,
-            24,
-            HarnessOptions::new()
-                .with_config(Config::default())
-                .with_working_dir(project_dir.clone())
-                .with_shared_dir_context(dir_context)
-                .without_empty_plugins_dir(),
-        )
-        .unwrap()
-    };
-
-    // Session 1: pin occurrence highlighting off for this buffer and save.
+    // Session 1: pin occurrence highlighting off for this buffer.
     {
-        let mut harness = open_session(dir_context.clone());
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            200,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
         harness.open_file(&file).unwrap();
         harness.render().unwrap();
 
         run_command(&mut harness, "Toggle Occurrence Highlight (Current Buffer)");
+        harness.assert_screen_contains("Occurrence highlight disabled");
+
         harness.editor_mut().save_workspace().unwrap();
     }
-    assert_eq!(
-        saved_override("after session 1"),
-        serde_json::Value::Bool(false),
-        "the toggle should record `highlight_occurrences: false` for this file"
-    );
 
-    // Session 2: restore, re-open, and save again. The pin has to come back,
-    // or this second save drops the field.
+    // Session 2: restore, re-open the file (every open path re-stamps
+    // `reference_highlight_overlay.enabled` from config, so this is where a
+    // dropped override would show up), and toggle again.
     {
-        let mut harness = open_session(dir_context.clone());
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            200,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
         let restored = harness.editor_mut().try_restore_workspace().unwrap();
         assert!(restored, "workspace should have been restored");
         harness.open_file(&file).unwrap();
         harness.render().unwrap();
-        harness.editor_mut().save_workspace().unwrap();
+
+        run_command(&mut harness, "Toggle Occurrence Highlight (Current Buffer)");
+        harness.assert_screen_contains("Occurrence highlight enabled");
     }
-    assert_eq!(
-        saved_override("after session 2"),
-        serde_json::Value::Bool(false),
-        "the pin must survive restore — re-opening the file re-stamps \
-         `reference_highlight_overlay.enabled` from config, so this is where a \
-         dropped override shows up"
-    );
 }
