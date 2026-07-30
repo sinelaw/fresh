@@ -42,8 +42,8 @@ fresh-languages = { version = "0.4.6", path = "crates/fresh-languages" }
 fresh-plugin-runtime = { version = "0.4.6", path = "crates/fresh-plugin-runtime" }
 fresh-plugin-api-macros = { version = "0.4.6", path = "crates/fresh-plugin-api-macros" }
 fresh-winterm = { version = "0.4.6", path = "crates/fresh-winterm" }
-fresh-input-parser = { version = "0.4.4", path = "crates/fresh-input-parser" }
-fresh-update = { version = "0.4.4", path = "crates/fresh-update" }
+fresh-input-parser = { version = "0.4.6", path = "crates/fresh-input-parser" }
+fresh-update = { version = "0.4.6", path = "crates/fresh-update" }
 
 # External crates
 serde = { version = "1.0", features = ["derive"] }
