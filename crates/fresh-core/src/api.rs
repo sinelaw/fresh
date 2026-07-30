@@ -354,6 +354,15 @@ pub enum PluginAsyncMessage {
     },
     /// Generic plugin response (e.g., GetBufferText result)
     PluginResponse(crate::api::PluginResponse),
+    /// Settle a JS callback from off-loop work. `result` carries the
+    /// already-serialised resolve payload, or the rejection reason.
+    /// This is the return path for plugin commands that run on the
+    /// tokio runtime instead of the editor thread.
+    OffLoopSettled {
+        callback_id: u64,
+        #[ts(type = "any")]
+        result: Result<String, String>,
+    },
 }
 
 /// Information about a cursor in the editor

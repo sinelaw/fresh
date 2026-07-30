@@ -375,6 +375,43 @@ impl Editor {
         }
     }
 
+    /// Dispatch one plugin command, timing the handler and reporting any that
+    /// blocks the editor thread.
+    ///
+    /// This is the guard that keeps the "no plugin work on the editor thread
+    /// except bounded state mutation" invariant honest: a handler that does
+    /// unbounded I/O or computation shows up here by name instead of as an
+    /// unattributable stall. `FRESH_STRICT_PLUGIN_BUDGET` promotes the warning
+    /// to a panic so the e2e hostile-plugin test fails on a regression rather
+    /// than merely logging one.
+    pub(crate) fn dispatch_plugin_command_measured(&mut self, command: PluginCommand) {
+        let label = VariantNameSink::of(&command);
+        let label = label.as_str();
+        let started = std::time::Instant::now();
+        if let Err(e) = self.handle_plugin_command(command) {
+            tracing::error!("Error handling plugin command {}: {}", label, e);
+        }
+        let elapsed = started.elapsed();
+        if elapsed > super::PLUGIN_COMMAND_HANDLER_LIMIT {
+            tracing::warn!(
+                target: "plugin_budget",
+                handler = label,
+                elapsed_ms = elapsed.as_millis() as u64,
+                limit_ms = super::PLUGIN_COMMAND_HANDLER_LIMIT.as_millis() as u64,
+                "plugin command handler blocked the editor thread — move this work to plugin_offloop"
+            );
+            #[cfg(debug_assertions)]
+            if std::env::var_os("FRESH_STRICT_PLUGIN_BUDGET").is_some() {
+                panic!(
+                    "plugin command handler {} blocked the editor thread for {}ms (limit {}ms)",
+                    label,
+                    elapsed.as_millis(),
+                    super::PLUGIN_COMMAND_HANDLER_LIMIT.as_millis()
+                );
+            }
+        }
+    }
+
     /// Handle a plugin command - dispatches to specialized handlers in plugin_commands module
     pub fn handle_plugin_command(&mut self, command: PluginCommand) -> AnyhowResult<()> {
         match command {
@@ -6259,3 +6296,47 @@ impl Window {
 
 // `editor.httpFetch` downloads stream through `services::http::download_to_file`,
 // which keeps all ureq/TLS usage in one place (gated by the `http` feature).
+
+/// Fixed-capacity sink that captures only the leading identifier of a
+/// `Debug` rendering and aborts formatting once the variant name ends.
+/// `write!` bails on the first `Err`, so the command's payload — which can be
+/// a whole buffer's worth of text — is never formatted just to name it.
+struct VariantNameSink {
+    buf: [u8; 48],
+    len: usize,
+}
+
+impl std::fmt::Write for VariantNameSink {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        for b in s.bytes() {
+            if !(b.is_ascii_alphanumeric() || b == b'_') || self.len == self.buf.len() {
+                return Err(std::fmt::Error);
+            }
+            self.buf[self.len] = b;
+            self.len += 1;
+        }
+        Ok(())
+    }
+}
+
+impl VariantNameSink {
+    /// Name the `PluginCommand` variant without formatting its payload.
+    fn of(command: &PluginCommand) -> Self {
+        use std::fmt::Write as _;
+        let mut sink = Self {
+            buf: [0; 48],
+            len: 0,
+        };
+        // Errors are the expected exit: the sink aborts formatting as soon as
+        // the variant name ends.
+        if write!(sink, "{:?}", command).is_err() {}
+        sink
+    }
+
+    fn as_str(&self) -> &str {
+        if self.len == 0 {
+            return "PluginCommand";
+        }
+        std::str::from_utf8(&self.buf[..self.len]).unwrap_or("PluginCommand")
+    }
+}
