@@ -1550,7 +1550,10 @@ impl Editor {
     /// No-op sentinels like `HookCompleted` do not count.
     #[cfg(feature = "plugins")]
     pub(super) fn process_plugin_commands(&mut self) -> bool {
-        let commands = self.plugin_manager.write().unwrap().process_commands();
+        // Backlog first so a burst spread over several frames keeps arrival
+        // order, then whatever the plugin thread has produced since.
+        let mut commands: Vec<_> = self.plugin_command_backlog.drain(..).collect();
+        commands.extend(self.plugin_manager.write().unwrap().process_commands());
         if commands.is_empty() {
             return false;
         }
@@ -1617,14 +1620,37 @@ impl Editor {
             }
         }
 
-        for command in commands {
+        // Frame budget: dispatch against a deadline, then stop and re-arm. A
+        // plugin that floods the channel costs one budget per frame instead of
+        // an unbounded stall, and the unprocessed tail keeps its arrival order
+        // in `plugin_command_backlog`. Always run at least one command so
+        // forward progress is guaranteed even if a single handler overruns.
+        let deadline = std::time::Instant::now() + super::PLUGIN_COMMAND_FRAME_BUDGET;
+        let mut iter = commands.into_iter();
+        let mut dispatched = 0usize;
+        for command in iter.by_ref() {
             tracing::trace!(
                 "process_plugin_commands: handling command {:?}",
                 std::mem::discriminant(&command)
             );
-            if let Err(e) = self.handle_plugin_command(command) {
-                tracing::error!("Error handling TypeScript plugin command: {}", e);
+            self.dispatch_plugin_command_measured(command);
+            dispatched += 1;
+            if std::time::Instant::now() >= deadline {
+                break;
             }
+        }
+        let deferred: std::collections::VecDeque<_> = iter.collect();
+        if !deferred.is_empty() {
+            tracing::debug!(
+                dispatched,
+                deferred = deferred.len(),
+                "plugin command frame budget exhausted — deferring tail"
+            );
+            // Prepend: these arrived before anything a later tick will read.
+            for command in deferred.into_iter().rev() {
+                self.plugin_command_backlog.push_front(command);
+            }
+            self.plugin_render_requested = true;
         }
 
         // Flush any deferred grammar rebuilds as a single batch

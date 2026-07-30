@@ -652,6 +652,11 @@ impl Editor {
             last_rendered_frame: None,
             #[cfg(feature = "plugins")]
             deferred_plugin_commands: Vec::new(),
+            #[cfg(feature = "plugins")]
+            plugin_command_backlog: std::collections::VecDeque::new(),
+            #[cfg(feature = "plugins")]
+            grep_project_cancel: None,
+            async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
             suspend_requested: false,

@@ -13,6 +13,11 @@ use crate::view::prompt::PromptType;
 
 use super::Editor;
 
+/// How long the editor thread may spend dispatching async messages in one
+/// tick. Sized so the drain plus the plugin command budget still leave most
+/// of a 16ms frame for painting.
+const ASYNC_MESSAGE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(6);
+
 impl Editor {
     /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
     /// session (authority + window) is fully constructed. Resolves with `null`;
@@ -113,10 +118,12 @@ impl Editor {
         // Order matters only for cosmetic message ordering on a
         // very-busy frame; semantically the dispatcher is the same
         // for every source.
-        let mut messages = {
+        let mut messages: Vec<AsyncMessage> =
+            std::mem::take(&mut self.async_message_backlog).into();
+        {
             let _s = tracing::info_span!("try_recv_all").entered();
-            bridge.try_recv_all()
-        };
+            messages.extend(bridge.try_recv_all());
+        }
         for window in self.windows.values() {
             messages.extend(window.bridge.try_recv_all());
         }
@@ -140,7 +147,13 @@ impl Editor {
             "received async messages"
         );
 
-        for message in messages {
+        // Frame budget, same contract as the plugin command drain: dispatch
+        // against a deadline, then defer the tail in arrival order. A burst
+        // (spawn storm, LSP flood) is spread over frames instead of being
+        // fully absorbed before the next one.
+        let deadline = std::time::Instant::now() + ASYNC_MESSAGE_FRAME_BUDGET;
+        let mut messages = messages.into_iter();
+        for message in messages.by_ref() {
             match message {
                 AsyncMessage::LspDiagnostics {
                     uri,
@@ -480,6 +493,16 @@ impl Editor {
                     self.handle_plugin_init_script_loaded(outcome);
                 }
             }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+        self.async_message_backlog = messages.collect();
+        if !self.async_message_backlog.is_empty() {
+            tracing::debug!(
+                deferred = self.async_message_backlog.len(),
+                "async message frame budget exhausted — deferring tail"
+            );
         }
 
         // Update plugin state snapshot BEFORE processing commands
@@ -548,7 +571,29 @@ impl Editor {
         };
 
         // Trigger render if any async messages, plugin commands were processed, or plugin requested render
-        needs_render || processed_any_commands || plugin_render || file_changes || tree_changes
+        //
+        // A non-empty backlog also counts: the frame budget deferred work, and
+        // returning `true` keeps the main loop on its frame cadence so the tail
+        // drains at ~60Hz instead of at the 50ms idle poll.
+        let backlogged = !self.async_message_backlog.is_empty() || self.plugin_backlog_pending();
+        needs_render
+            || processed_any_commands
+            || plugin_render
+            || file_changes
+            || tree_changes
+            || backlogged
+    }
+
+    /// Whether the plugin command frame budget left work for the next tick.
+    fn plugin_backlog_pending(&self) -> bool {
+        #[cfg(feature = "plugins")]
+        {
+            !self.plugin_command_backlog.is_empty()
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            false
+        }
     }
 
     /// Handle a server's `initialize` response: record capabilities and kick off
@@ -742,6 +787,16 @@ impl Editor {
             }
             PluginAsyncMessage::PluginResponse(response) => {
                 self.handle_plugin_response(response);
+            }
+            PluginAsyncMessage::OffLoopSettled {
+                callback_id,
+                result,
+            } => {
+                let pm = self.plugin_manager.read().unwrap();
+                match result {
+                    Ok(json) => pm.resolve_callback(JsCallbackId::from(callback_id), json),
+                    Err(e) => pm.reject_callback(JsCallbackId::from(callback_id), e),
+                }
             }
         }
     }

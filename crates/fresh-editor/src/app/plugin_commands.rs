@@ -2602,7 +2602,13 @@ impl Editor {
         self.pending_grammar_callbacks.push(callback_id);
     }
 
-    /// Handle GrepProject command: walk files, search buffers/disk, collect matches
+    /// Handle GrepProject: snapshot what only the editor thread can see, then
+    /// hand the walk-and-search to [`plugin_offloop::grep_project`].
+    ///
+    /// The editor-thread half is bounded by the number of open buffers. The
+    /// project walk, the per-file greps and the callback resolution all happen
+    /// on the tokio runtime; a second grep supersedes and cancels the first so
+    /// a plugin looping on `grepProject` collapses instead of queueing.
     pub(super) fn handle_grep_project(
         &mut self,
         pattern: String,
@@ -2622,10 +2628,7 @@ impl Editor {
             return;
         }
 
-        // Build search options for FileSystem::search_file
         let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
-
-        // Build regex for open buffer searches (piece tree path still needs it)
         let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
             Ok(re) => re,
             Err(e) => {
@@ -2637,118 +2640,71 @@ impl Editor {
             }
         };
 
-        let query_len = pattern.len();
-        let mut results: Vec<GrepMatch> = Vec::new();
-
-        // Build a map of open buffer paths -> BufferId
-        let mut open_buffer_paths: std::collections::HashMap<std::path::PathBuf, BufferId> =
-            std::collections::HashMap::new();
+        // Snapshot open buffers. Dirty ones become `HybridSearchPlan`s (the
+        // piece tree is not `Send`); clean ones only contribute their id so
+        // matches stay attributable to a buffer.
+        let mut dirty_plans = std::collections::HashMap::new();
+        let mut clean_buffers = std::collections::HashMap::new();
         for (bid, state) in self
             .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
             .expect("active window present")
         {
-            if let Some(path) = state.buffer.file_path() {
-                open_buffer_paths.insert(path.to_path_buf(), *bid);
-            }
-        }
-
-        // Collect all project files via FileSystem trait (works for both local and remote)
-        let cwd = self.working_dir().to_path_buf();
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
-        if let Err(e) = self.authority().filesystem.walk_files(
-            &cwd,
-            IGNORED_DIRS,
-            &cancel,
-            &mut |path, _rel| {
-                file_paths.push(path.to_path_buf());
-                true
-            },
-        ) {
-            tracing::warn!("walk_files failed: {}", e);
-        }
-
-        // Search each file: open buffers via piece tree, others via fs.search_file
-        for file_path in &file_paths {
-            if results.len() >= max_results {
-                break;
-            }
-            let remaining = max_results - results.len();
-
-            if let Some(&bid) = open_buffer_paths.get(file_path) {
-                // Search the open buffer — hybrid search uses fs.search_file
-                // for unloaded regions (avoids transferring large files)
-                if let Some(state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window present")
-                    .buffer_state_mut(bid)
-                {
-                    let matches = match state.buffer.search_hybrid(
-                        &pattern,
-                        &fs_opts,
-                        regex.clone(),
-                        remaining,
-                        query_len,
-                    ) {
-                        Ok(m) => m,
-                        Err(_) => continue,
-                    };
-                    let file_str = file_path.to_string_lossy().to_string();
-                    for m in &matches {
-                        results.push(GrepMatch {
-                            file: file_str.clone(),
-                            buffer_id: bid.0,
-                            byte_offset: m.byte_offset,
-                            length: m.length,
-                            line: m.line,
-                            column: m.column,
-                            context: m.context.clone(),
-                        });
-                    }
-                }
-            } else {
-                // Not open — search via FileSystem trait
-                let fs_opts_file =
-                    make_search_opts(fixed_string, case_sensitive, whole_words, remaining);
-                let mut cursor = crate::model::filesystem::FileSearchCursor::new();
-                let mut file_matches = Vec::new();
-                while !cursor.done && file_matches.len() < remaining {
-                    match self.authority().filesystem.search_file(
-                        file_path,
-                        &pattern,
-                        &fs_opts_file,
-                        &mut cursor,
-                    ) {
-                        Ok(batch) => file_matches.extend(batch),
-                        Err(_) => break,
-                    }
-                }
-                if file_matches.is_empty() {
+            let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) else {
+                continue;
+            };
+            if state.buffer.is_modified() {
+                if let Some(plan) = state.buffer.search_hybrid_plan() {
+                    dirty_plans.insert(path, (*bid, plan));
                     continue;
                 }
-                let file_str = file_path.to_string_lossy().to_string();
-                for m in file_matches {
-                    results.push(GrepMatch {
-                        file: file_str.clone(),
-                        buffer_id: 0,
-                        byte_offset: m.byte_offset,
-                        length: m.length,
-                        line: m.line,
-                        column: m.column,
-                        context: m.context,
-                    });
-                }
             }
+            clean_buffers.insert(path, *bid);
         }
 
-        let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
-        self.plugin_manager
-            .read()
-            .unwrap()
-            .resolve_callback(callback_id, json);
+        let Some(runtime) = self.tokio_runtime.clone() else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return;
+        };
+        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return;
+        };
+
+        // Coalesce: one live project grep at a time. The superseded request
+        // still settles, with whatever it had found, so no `await` dangles.
+        if let Some(prev) = self.grep_project_cancel.take() {
+            prev.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.grep_project_cancel = Some(Arc::clone(&cancel));
+
+        super::plugin_offloop::grep_project(
+            super::plugin_offloop::OffLoop {
+                filesystem: self.authority().filesystem.clone(),
+                runtime,
+                sender,
+            },
+            super::plugin_offloop::GrepProjectRequest {
+                pattern,
+                opts: fs_opts,
+                regex,
+                max_results,
+                root: self.working_dir().to_path_buf(),
+                ignored_dirs: IGNORED_DIRS,
+                callback_id,
+                dirty_plans,
+                clean_buffers,
+                cancel,
+            },
+        );
     }
 
     // ==================== Pull-Based Streaming Search ====================

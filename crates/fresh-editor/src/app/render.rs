@@ -55,12 +55,25 @@ impl Editor {
         ));
     }
 
+    /// Ask for another frame because plugin work was deferred out of this one.
+    /// The draw never waits on the plugin lock, so anything it skipped has to
+    /// be guaranteed a retry.
+    fn request_plugin_render(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_render_requested = true;
+        }
+    }
+
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
         let _span = tracing::info_span!("render").entered();
         let size = frame.area();
 
-        self.drain_pre_layout_plugin_commands();
+        {
+            let _s = tracing::info_span!("pre_layout_drain").entered();
+            self.drain_pre_layout_plugin_commands();
+        }
 
         for window in self.windows.values_mut() {
             window.sync_terminal_titles();
@@ -97,9 +110,15 @@ impl Editor {
         // NOTE: Viewport sync with cursor is handled by split_rendering.rs which knows the
         // correct content area dimensions. Don't sync here with incorrect EditorState viewport size.
 
-        self.request_semantic_ranges_for_visible_splits();
+        {
+            let _s = tracing::info_span!("request_semantic_ranges").entered();
+            self.request_semantic_ranges_for_visible_splits();
+        }
 
-        self.prepare_visible_buffers_for_render();
+        {
+            let _s = tracing::info_span!("prepare_visible_buffers").entered();
+            self.prepare_visible_buffers_for_render();
+        }
 
         // Refresh search highlights only during incremental search (when prompt is active)
         // After search is confirmed, overlays exist for ALL matches and shouldn't be overwritten
@@ -212,8 +231,18 @@ impl Editor {
         // Trigger lines_changed hooks for newly visible lines in all visible buffers
         // This allows plugins to add overlays before rendering
         // Only lines that haven't been seen before are sent (batched for efficiency)
-        // Use non-blocking hooks to avoid deadlock when actions are awaiting
-        if self.plugin_manager.read().unwrap().is_active() {
+        // Use non-blocking hooks to avoid deadlock when actions are awaiting.
+        //
+        // `try_read` rather than `read`: a busy plugin thread must never be
+        // able to stall the draw on a lock. Losing the race skips this frame's
+        // hooks and requests another, so decorations arrive one frame later
+        // instead of the whole frame arriving late.
+        let plugins_active = self.plugin_manager.try_read().map(|pm| pm.is_active()).ok();
+        if plugins_active.is_none() {
+            self.request_plugin_render();
+        }
+        if plugins_active.unwrap_or(false) {
+            let _s = tracing::info_span!("render_plugin_hooks").entered();
             let hooks_start = std::time::Instant::now();
             // Get visible buffers and their areas
             let visible_buffers = self
@@ -249,13 +278,22 @@ impl Editor {
                 let seen_ranges_for_win = &mut __win.seen_byte_ranges;
                 let plugin_manager = &self.plugin_manager;
                 let estimated_line_length = self.config.editor.estimated_line_length;
+                let mut hooks_deferred = false;
                 let added = __win
                     .buffers
                     .with_buffer_and_view_states(buffer_id, |state, vs_map| {
+                        // Both hooks go through `try_read`: the draw computes
+                        // the payload and hands it off, but never waits on the
+                        // plugin lock. On contention nothing is marked seen, so
+                        // the same lines are offered again next frame — the
+                        // payload is deferred, not lost.
+                        let Ok(pm_guard) = plugin_manager.try_read() else {
+                            hooks_deferred = true;
+                            return 0;
+                        };
                         // `render_start` has a tiny payload (just the
                         // buffer id) — fire unconditionally so third-party
                         // plugins listening for it still work.
-                        let pm_guard = plugin_manager.read().unwrap();
                         pm_guard.run_hook(
                             "render_start",
                             crate::services::plugins::hooks::HookArgs::RenderStart { buffer_id },
@@ -263,13 +301,12 @@ impl Editor {
 
                         let visible_count = split_area.height as usize;
 
-                        drop(pm_guard);
-
                         let top_byte = viewport_top_byte;
                         let seen_byte_ranges = seen_ranges_for_win.entry(buffer_id).or_default();
 
                         let mut new_lines: Vec<crate::services::plugins::hooks::LineInfo> =
                             Vec::new();
+                        let mut fresh_ranges: Vec<(usize, usize)> = Vec::new();
                         let mut line_number = state.buffer.get_line_number(top_byte);
                         let mut iter = state.buffer.line_iterator(top_byte, estimated_line_length);
 
@@ -285,7 +322,7 @@ impl Editor {
                                         byte_end,
                                         content: line_content,
                                     });
-                                    seen_byte_ranges.insert(byte_range);
+                                    fresh_ranges.push(byte_range);
                                 }
                                 line_number += 1;
                             } else {
@@ -295,7 +332,7 @@ impl Editor {
 
                         let count = new_lines.len();
                         if !new_lines.is_empty() {
-                            plugin_manager.read().unwrap().run_hook(
+                            pm_guard.run_hook(
                                 "lines_changed",
                                 crate::services::plugins::hooks::HookArgs::LinesChanged {
                                     buffer_id,
@@ -303,10 +340,16 @@ impl Editor {
                                     epoch: state.buffer.version(),
                                 },
                             );
+                            for range in fresh_ranges {
+                                seen_byte_ranges.insert(range);
+                            }
                         }
                         count
                     })
                     .unwrap_or(0);
+                if hooks_deferred {
+                    self.request_plugin_render();
+                }
                 total_new_lines += added;
             }
             let hooks_elapsed = hooks_start.elapsed();
@@ -332,9 +375,35 @@ impl Editor {
             let dispatched_any = false;
             #[cfg(feature = "plugins")]
             let dispatched_any = {
-                let commands = self.plugin_manager.write().unwrap().process_commands();
+                let _s = tracing::info_span!("render_plugin_drain").entered();
+                // Snapshot-only render: the mid-render drain is bounded by a
+                // deadline and never blocks on the plugin lock. Whatever
+                // doesn't fit is handed to `deferred_plugin_commands`, drained
+                // once the paint is finished, so worst-case frame time depends
+                // on buffer content plus this fixed budget rather than on how
+                // much a plugin decided to emit.
+                let commands = self
+                    .plugin_manager
+                    .try_write()
+                    .map(|mut pm| pm.process_commands())
+                    .ok();
+                if commands.is_none() {
+                    // The plugin thread holds the lock. Skipping is correct:
+                    // decorations arrive next frame, and
+                    // `plugin_render_requested` guarantees there is one.
+                    self.request_plugin_render();
+                }
+                let commands = commands.unwrap_or_default();
                 let dispatched_any = !commands.is_empty();
+                let render_deadline =
+                    std::time::Instant::now() + super::PLUGIN_COMMAND_RENDER_BUDGET;
+                let mut over_budget = false;
                 for command in commands {
+                    if over_budget {
+                        self.deferred_plugin_commands.push(command);
+                        self.plugin_render_requested = true;
+                        continue;
+                    }
                     // A command that changes *which window this frame is
                     // being painted for* cannot run here: the menu bar,
                     // the file-explorer sidebar, the tab bar and the
@@ -351,8 +420,9 @@ impl Editor {
                         self.plugin_render_requested = true;
                         continue;
                     }
-                    if let Err(e) = self.handle_plugin_command(command) {
-                        tracing::error!("Error handling plugin command: {}", e);
+                    self.dispatch_plugin_command_measured(command);
+                    if std::time::Instant::now() >= render_deadline {
+                        over_budget = true;
                     }
                 }
                 dispatched_any
@@ -608,6 +678,7 @@ impl Editor {
             .expect("active window must have a populated split layout");
 
         drop(_content_span);
+        let _post_content_span = tracing::info_span!("render_post_content").entered();
 
         // Cursor-jump animation: compare the cursor's screen position to
         // the prior frame and animate either when the cursor crossed split
@@ -636,7 +707,20 @@ impl Editor {
         // Detect viewport changes and fire hooks
         // Compare against previous frame's viewport state (stored in self.active_window().previous_viewports)
         // This correctly detects changes from scroll events that happen before render()
-        if self.plugin_manager.read().unwrap().is_active() {
+        //
+        // `try_read` again: never wait on the plugin lock inside the draw.
+        // When the lock is busy the `previous_viewports` update below is
+        // skipped too, so the same change is re-detected next frame rather
+        // than being silently swallowed.
+        let mut viewport_hooks_deferred = false;
+        let viewport_plugins_active = match self.plugin_manager.try_read() {
+            Ok(pm) => pm.is_active(),
+            Err(_) => {
+                viewport_hooks_deferred = true;
+                false
+            }
+        };
+        if viewport_plugins_active {
             for (split_id, view_state) in self
                 .windows
                 .get(&self.active_window)
@@ -699,7 +783,11 @@ impl Editor {
                             view_state.viewport.top_byte(),
                             top_line
                         );
-                        self.plugin_manager.read().unwrap().run_hook(
+                        let Ok(pm) = self.plugin_manager.try_read() else {
+                            viewport_hooks_deferred = true;
+                            continue;
+                        };
+                        pm.run_hook(
                             "viewport_changed",
                             crate::services::plugins::hooks::HookArgs::ViewportChanged {
                                 split_id: (*split_id).into(),
@@ -715,15 +803,25 @@ impl Editor {
             }
         }
 
+        // A hook we couldn't deliver this frame must stay pending: leaving
+        // `previous_viewports` untouched is what makes the change re-detected
+        // next frame instead of vanishing.
+        if viewport_hooks_deferred {
+            self.request_plugin_render();
+        }
+
         // Update previous_viewports for next frame's comparison.
         // Take both `previous_viewports` and the split view-states from
         // the same `__win` borrow so the iterator and the inserts share
         // a single mutable borrow on `self.windows`.
+        let skip_viewport_snapshot = viewport_hooks_deferred;
         let __vp_win = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present");
-        __vp_win.previous_viewports.clear();
+        if !skip_viewport_snapshot {
+            __vp_win.previous_viewports.clear();
+        }
         let (_, __vp_vs_map) = __vp_win
             .buffers
             .splits()
@@ -741,8 +839,10 @@ impl Editor {
                 )
             })
             .collect();
-        for (split_id, vp) in snapshot {
-            __vp_win.previous_viewports.insert(split_id, vp);
+        if !skip_viewport_snapshot {
+            for (split_id, vp) in snapshot {
+                __vp_win.previous_viewports.insert(split_id, vp);
+            }
         }
 
         // Render terminal content on top of split content for terminal buffers.
@@ -2149,15 +2249,34 @@ impl Editor {
     fn drain_pre_layout_plugin_commands(&mut self) {
         #[cfg(feature = "plugins")]
         {
-            let early_commands = self.plugin_manager.write().unwrap().process_commands();
+            // Same contract as the mid-render drain: never wait on the plugin
+            // lock, and spend at most one render budget here. The tail waits
+            // for `process_plugin_commands` on the next tick.
+            let early_commands = self
+                .plugin_manager
+                .try_write()
+                .map(|mut pm| pm.process_commands())
+                .ok();
+            if early_commands.is_none() {
+                self.request_plugin_render();
+            }
+            let early_commands = early_commands.unwrap_or_default();
             if !early_commands.is_empty() {
                 tracing::trace!(
                     count = early_commands.len(),
                     "process_commands at top of render (pre-layout drain)"
                 );
+                let deadline = std::time::Instant::now() + super::PLUGIN_COMMAND_RENDER_BUDGET;
+                let mut over_budget = false;
                 for command in early_commands {
-                    if let Err(e) = self.handle_plugin_command(command) {
-                        tracing::error!("Error handling plugin command (pre-layout drain): {}", e);
+                    if over_budget {
+                        self.plugin_command_backlog.push_back(command);
+                        self.request_plugin_render();
+                        continue;
+                    }
+                    self.dispatch_plugin_command_measured(command);
+                    if std::time::Instant::now() >= deadline {
+                        over_budget = true;
                     }
                 }
             }

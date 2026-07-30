@@ -57,6 +57,8 @@ mod path_utils;
 mod plugin_commands;
 #[cfg(feature = "plugins")]
 mod plugin_dispatch;
+#[cfg(feature = "plugins")]
+mod plugin_offloop;
 mod popup_actions;
 mod popup_dialogs;
 mod popup_overlay_actions;
@@ -351,6 +353,28 @@ pub(crate) struct GotoLinePreviewSnapshot {
     pub viewport_left_column: usize,
     pub last_jump_position: usize,
 }
+
+/// How long the editor thread may spend dispatching plugin commands in one
+/// tick. Roughly a quarter of a 16ms frame, leaving the rest for painting.
+/// The tail is deferred to the next tick, so a plugin flooding the channel
+/// costs one budget per frame instead of an unbounded stall.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
+    std::time::Duration::from_millis(4);
+
+/// Same budget, applied to the mid-render drain. Smaller because it is spent
+/// inside `terminal.draw`, where every millisecond is a visible frame cost.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_RENDER_BUDGET: std::time::Duration =
+    std::time::Duration::from_millis(2);
+
+/// A single plugin command handler taking longer than this on the editor
+/// thread is a defect: the work belongs in `plugin_offloop`. Logged at WARN
+/// naming the offending variant, and a hard failure under `debug_assertions`
+/// when `FRESH_STRICT_PLUGIN_BUDGET` is set (the e2e hostile-plugin test).
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_HANDLER_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(50);
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
@@ -915,6 +939,21 @@ pub struct Editor {
     /// very bottom of the same render, once the paint is finished.
     #[cfg(feature = "plugins")]
     deferred_plugin_commands: Vec<fresh_core::api::PluginCommand>,
+
+    /// Plugin commands the frame budget deferred, in arrival order. Drained
+    /// ahead of the plugin channel on the next tick so a burst is spread
+    /// across frames without reordering.
+    #[cfg(feature = "plugins")]
+    plugin_command_backlog: std::collections::VecDeque<fresh_core::api::PluginCommand>,
+
+    /// Cancellation flag for the in-flight `grepProject`, if any. A new
+    /// request supersedes the old one rather than queueing behind it.
+    #[cfg(feature = "plugins")]
+    grep_project_cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+
+    /// Async messages the frame budget deferred, in arrival order. Drained
+    /// ahead of the bridges on the next tick.
+    async_message_backlog: std::collections::VecDeque<crate::services::async_bridge::AsyncMessage>,
 
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
     /// Stores the keys pressed so far in a chord sequence
