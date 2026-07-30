@@ -81,6 +81,9 @@ interface TourInstance {
    * highlight and two tours may highlight the same buffer at once. */
   namespace: string;
   railOpen: boolean;
+  /** Set when the step changed, so the next render parks focus back on the
+   * prose. Reading is the common case; Tab still reaches everything else. */
+  focusProse: boolean;
   dockWidth: number;
   dockHeight: number;
   /** Buffers this tour has painted overlays into, so teardown is targeted
@@ -171,7 +174,7 @@ function truncate(s: string, max: number): string {
 // parsed once per (step, width) into styled rows the List widget scrolls.
 // ============================================================================
 
-type SpanKind = "bold" | "code";
+type SpanKind = "bold" | "italic" | "code";
 interface Span {
   start: number;
   end: number;
@@ -187,6 +190,7 @@ function parseInline(src: string): { text: string; spans: Span[] } {
   let len = 0;
   const spans: Span[] = [];
   let boldStart: number | null = null;
+  let italicStart: number | null = null;
   let codeStart: number | null = null;
 
   for (let i = 0; i < cs.length; i++) {
@@ -199,6 +203,16 @@ function parseInline(src: string): { text: string; spans: Span[] } {
         boldStart = null;
       }
       i++;
+      continue;
+    }
+    // Single `*` is emphasis — checked after `**` so bold still wins.
+    if (c === "*" && codeStart === null) {
+      if (italicStart === null) {
+        italicStart = len;
+      } else {
+        if (len > italicStart) spans.push({ start: italicStart, end: len, kind: "italic" });
+        italicStart = null;
+      }
       continue;
     }
     if (c === "`") {
@@ -277,6 +291,7 @@ function spannedRow(
     const covering = spans.find((s) => s.start <= a && s.end >= b);
     let style: Partial<OverlayOptions> | undefined = base;
     if (covering?.kind === "bold") style = { ...(base ?? {}), bold: true };
+    else if (covering?.kind === "italic") style = { ...(base ?? {}), italic: true };
     else if (covering?.kind === "code") style = { ...(base ?? {}), fg: C.code };
     segments.push(style ? { text: piece, style } : { text: piece });
   }
@@ -477,7 +492,10 @@ function buildBody(t: TourInstance): WidgetSpec {
       label: truncate(label, Math.max(8, t.dockWidth - 6)),
       key: "proseBox",
       child: list({
+        // A List scrolls by moving its selection, so it needs one: with the
+        // default -1 the hint bar's "↑↓ scroll" does nothing.
         items: buildProseRows(t, inner),
+        selectedIndex: 0,
         visibleRows: rows,
         key: "proseList",
       }),
@@ -513,6 +531,7 @@ function buildBody(t: TourInstance): WidgetSpec {
       key: "proseBox",
       child: list({
         items: buildProseRows(t, proseWidth),
+        selectedIndex: 0,
         visibleRows: rows,
         key: "proseList",
       }),
@@ -611,6 +630,11 @@ function renderPanel(t: TourInstance): void {
   // `selectedIndex` on the spec is a seed the host ignores after first render,
   // so push the rail's selection explicitly on every step change.
   if (showRail(t)) t.panel.setSelectedIndex("stepList", t.step);
+  if (t.focusProse) {
+    t.focusProse = false;
+    t.panel.setSelectedIndex("proseList", 0);
+    t.panel.setFocusKey("proseList");
+  }
 }
 
 // ============================================================================
@@ -857,6 +881,7 @@ async function openTour(
     panel: new WidgetPanel(bufferId),
     namespace: `code-tour:${manifestPath}`,
     railOpen: options.railOpen !== false,
+    focusProse: true,
     dockWidth: DEFAULT_DOCK_WIDTH,
     dockHeight: DEFAULT_DOCK_HEIGHT,
     paintedBuffers: new Set<number>(),
@@ -999,6 +1024,7 @@ async function goToStep(t: TourInstance, index: number): Promise<void> {
   }
   t.step = index;
   t.visited.add(index);
+  t.focusProse = true;
   lastTourId = t.id;
   persist();
   await revealStep(t);
