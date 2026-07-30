@@ -355,20 +355,22 @@ pub(crate) struct GotoLinePreviewSnapshot {
 }
 
 /// How long the editor thread may spend dispatching plugin commands in one
-/// tick. Roughly a quarter of a 16ms frame, leaving the rest for painting.
-/// The tail is deferred to the next tick, so a plugin flooding the channel
-/// costs one budget per frame instead of an unbounded stall.
+/// tick. This is a pathology guard, not a frame pacer: a normal burst — a
+/// plugin load, a large file firing hooks, a hundred queued commands —
+/// should clear in one or two passes rather than being spread over many
+/// frames, so the limit sits at the same order as the per-handler watchdog
+/// (50ms). Only a genuinely pathological flood gets deferred, in arrival
+/// order, at one budget per frame.
 #[cfg(feature = "plugins")]
 pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
-    std::time::Duration::from_millis(4);
+    std::time::Duration::from_millis(50);
 
 /// Minimum dispatches per drain pass, regardless of the deadline. Without a
-/// floor, one dispatch costing more than the whole budget (heavyweight
-/// registrations, slow hardware) collapses the drain to a single item per
-/// frame — a startup batch then takes seconds to trickle through and
-/// sustained load can outgrow the backlog. Eight items bounds the extra
-/// frame cost at eight times the worst handler, which the 50ms watchdog
-/// keeps honest.
+/// floor, one dispatch costing more than the whole budget collapses the
+/// drain to a single item per frame — a startup batch then trickles for
+/// seconds and sustained load can outgrow the backlog. Eight items bounds
+/// the extra frame cost at eight times the worst handler, which the 50ms
+/// watchdog keeps honest.
 pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
 
 /// A single plugin command handler taking longer than this on the editor

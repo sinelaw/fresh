@@ -235,24 +235,33 @@ impl Editor {
         // Rename rather than leave in place: backing files are named
         // by terminal id, which restarts per session, so a future
         // same-id terminal would otherwise clobber this log.
+        //
+        // The rename, the raw-log delete, and above all the retained-file
+        // GC (a directory scan plus up to hundreds of deletes) are disk
+        // I/O — run on the runtime, not inside a close that may run
+        // mid-frame. Only the map removals need this thread.
         let backing_file = self
             .active_window_mut()
             .terminal_backing_files
             .remove(&terminal_id);
-        if let Some(ref path) = backing_file {
-            self.retain_closed_terminal_backing(path);
-        }
-        // Clean up raw log file
-        if let Some(log_file) = self
+        let log_file = self
             .active_window_mut()
             .terminal_log_files
-            .remove(&terminal_id)
-        {
-            if backing_file.as_ref() != Some(&log_file) {
-                // Best-effort cleanup of temporary terminal files.
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
-            }
+            .remove(&terminal_id);
+        if backing_file.is_some() || log_file.is_some() {
+            let backing = backing_file.clone();
+            self.spawn_off_loop_effect("terminal_backing_cleanup", move || {
+                if let Some(ref path) = backing {
+                    Self::retain_closed_terminal_backing(path);
+                }
+                if let Some(log_file) = log_file {
+                    if backing.as_ref() != Some(&log_file) {
+                        // Best-effort cleanup of temporary terminal files.
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
+                    }
+                }
+            });
         }
 
         // The buffer's remembered mode was dropped when its `terminal_buffers`
@@ -1328,7 +1337,7 @@ impl Editor {
     /// a unique `<stem>-closed-<epoch_ms>.txt` so a future terminal that
     /// reuses the same id can't clobber it, then bounds the retained set.
     /// Best-effort throughout — a failure just means that log isn't kept.
-    fn retain_closed_terminal_backing(&self, path: &std::path::Path) {
+    fn retain_closed_terminal_backing(path: &std::path::Path) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             return;
@@ -1343,14 +1352,14 @@ impl Editor {
         let retained = parent.join(format!("{stem}-closed-{epoch_ms}.txt"));
         #[allow(clippy::let_underscore_must_use)]
         let _ = crate::app::terminal::terminal_backing_fs().rename(path, &retained);
-        self.gc_retained_terminal_backings(parent);
+        Self::gc_retained_terminal_backings(parent);
     }
 
     /// Prune the oldest retained (`-closed-`) terminal backing files in a
     /// directory so they don't grow without bound. Ordering uses the epoch
     /// embedded in the filename, so it needs no filesystem metadata. Live
     /// backing files (no `-closed-` marker) are never touched.
-    fn gc_retained_terminal_backings(&self, dir: &std::path::Path) {
+    fn gc_retained_terminal_backings(dir: &std::path::Path) {
         const MAX_RETAINED: usize = 200;
         let Ok(entries) = crate::app::terminal::terminal_backing_fs().read_dir(dir) else {
             return;

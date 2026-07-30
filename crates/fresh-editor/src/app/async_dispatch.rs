@@ -14,9 +14,10 @@ use crate::view::prompt::PromptType;
 use super::Editor;
 
 /// How long the editor thread may spend dispatching async messages in one
-/// tick. Sized so the drain plus the plugin command budget still leave most
-/// of a 16ms frame for painting.
-const ASYNC_MESSAGE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(6);
+/// tick. A pathology guard rather than a frame pacer (see
+/// `PLUGIN_COMMAND_FRAME_BUDGET`): normal bursts drain in a pass or two;
+/// only a flood is deferred.
+const ASYNC_MESSAGE_FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(50);
 
 impl Editor {
     /// Resolve the `attachRemoteAgent` promise behind `request_id` — the
