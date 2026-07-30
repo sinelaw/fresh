@@ -205,6 +205,70 @@ impl Viewport {
             .copied()
     }
 
+    /// First byte at or after `pos` that the renderer actually draws.
+    /// A collapsed body occupies no rows, so a scroll walk must step over
+    /// it wholesale instead of paying a row per hidden line. Loops because
+    /// folds can be adjacent or nested; each jump strictly advances.
+    fn skip_hidden_forward(hidden_ranges: &[(usize, usize)], pos: usize) -> usize {
+        let mut p = pos;
+        while let Some((_, end)) = Self::containing_hidden_range(hidden_ranges, p) {
+            p = end;
+        }
+        p
+    }
+
+    /// Line start of the row the reader sees for `pos`: a position inside a
+    /// collapsed body maps back to that fold's header line, the one row the
+    /// whole region draws. Each jump strictly retreats, so this terminates.
+    fn visible_row_start(buffer: &Buffer, hidden_ranges: &[(usize, usize)], pos: usize) -> usize {
+        let mut p = pos;
+        while let Some((start, _)) = Self::containing_hidden_range(hidden_ranges, p) {
+            if start == 0 {
+                return 0;
+            }
+            p = crate::view::folding::indent_folding::find_line_start_byte(buffer, start - 1);
+        }
+        p
+    }
+
+    /// Walk `lines` rendered rows down from `start`, skipping collapsed bodies.
+    fn walk_down_visible_lines(
+        buffer: &mut Buffer,
+        hidden_ranges: &[(usize, usize)],
+        start: usize,
+        lines: usize,
+    ) -> usize {
+        let mut position = Self::skip_hidden_forward(hidden_ranges, start);
+        for _ in 0..lines {
+            let mut iter = buffer.line_iterator(position, 80);
+            if iter.next_line().is_none() {
+                break;
+            }
+            position = Self::skip_hidden_forward(hidden_ranges, iter.current_position());
+        }
+        position
+    }
+
+    /// Walk `lines` rendered rows up from `start`, collapsing each hidden
+    /// body to the single header row it draws.
+    fn walk_up_visible_lines(
+        buffer: &mut Buffer,
+        hidden_ranges: &[(usize, usize)],
+        start: usize,
+        lines: usize,
+    ) -> usize {
+        let mut position = Self::visible_row_start(buffer, hidden_ranges, start);
+        for _ in 0..lines {
+            let mut iter = buffer.line_iterator(position, 80);
+            if iter.prev().is_none() {
+                return 0;
+            }
+            let pos = iter.current_position();
+            position = Self::visible_row_start(buffer, hidden_ranges, pos);
+        }
+        position
+    }
+
     /// Mark viewport to skip sync on next resize (used after session restore)
     pub fn set_skip_resize_sync(&mut self) {
         self.skip_resize_sync = true;
@@ -579,23 +643,32 @@ impl Viewport {
     ///
     /// `soft_breaks` is a sorted slice of plugin-injected break byte positions.
     /// Pass an empty slice when there are no plugin breaks (raw mode, etc.).
+    ///
+    /// `hidden_ranges` holds `(start_byte, end_byte)` for collapsed folds so the
+    /// walk counts rendered rows, not logical lines. Without it a page of scroll
+    /// budget is spent on lines nobody can see and the viewport barely moves.
     pub fn scroll_up(
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
+        hidden_ranges: &[(usize, usize)],
         lines: usize,
     ) {
         if self.line_wrap_enabled {
-            self.scroll_up_visual(buffer, soft_breaks, virtual_lines, lines);
+            self.scroll_up_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
-            let mut iter = buffer.line_iterator(self.top_byte(), 80);
-            for _ in 0..lines {
-                if iter.prev().is_none() {
-                    break;
+            let new_position = if hidden_ranges.is_empty() {
+                let mut iter = buffer.line_iterator(self.top_byte(), 80);
+                for _ in 0..lines {
+                    if iter.prev().is_none() {
+                        break;
+                    }
                 }
-            }
-            let new_position = iter.current_position();
+                iter.current_position()
+            } else {
+                Self::walk_up_visible_lines(buffer, hidden_ranges, self.top_byte(), lines)
+            };
             self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, new_position);
         }
     }
@@ -660,7 +733,7 @@ impl Viewport {
 
         self.set_top_byte(line_start);
         self.set_top_view_line_offset(match_row_in_line);
-        self.scroll_up(buffer, &[], &[], half);
+        self.scroll_up(buffer, &[], &[], &[], half);
     }
 
     /// Scroll down by N lines (byte-based)
@@ -668,23 +741,32 @@ impl Viewport {
     ///
     /// `soft_breaks` is a sorted slice of plugin-injected break byte positions.
     /// Pass an empty slice when there are no plugin breaks (raw mode, etc.).
+    ///
+    /// `hidden_ranges` holds `(start_byte, end_byte)` for collapsed folds so the
+    /// walk counts rendered rows, not logical lines. Without it a page of scroll
+    /// budget is spent on lines nobody can see and the viewport barely moves.
     pub fn scroll_down(
         &mut self,
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
+        hidden_ranges: &[(usize, usize)],
         lines: usize,
     ) {
         if self.line_wrap_enabled {
-            self.scroll_down_visual(buffer, soft_breaks, virtual_lines, lines);
+            self.scroll_down_visual(buffer, soft_breaks, virtual_lines, hidden_ranges, lines);
         } else {
-            let mut iter = buffer.line_iterator(self.top_byte(), 80);
-            for _ in 0..lines {
-                if iter.next_line().is_none() {
-                    break;
+            let new_position = if hidden_ranges.is_empty() {
+                let mut iter = buffer.line_iterator(self.top_byte(), 80);
+                for _ in 0..lines {
+                    if iter.next_line().is_none() {
+                        break;
+                    }
                 }
-            }
-            let new_position = iter.current_position();
+                iter.current_position()
+            } else {
+                Self::walk_down_visible_lines(buffer, hidden_ranges, self.top_byte(), lines)
+            };
             self.set_top_byte_with_limit(buffer, soft_breaks, virtual_lines, new_position);
         }
     }
@@ -696,6 +778,7 @@ impl Viewport {
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
+        hidden_ranges: &[(usize, usize)],
         visual_rows: usize,
     ) {
         if visual_rows == 0 {
@@ -733,8 +816,13 @@ impl Viewport {
                 return;
             }
 
+            // A collapsed body draws as its header row, so land on the header
+            // and charge the whole region one row rather than one per line.
+            let raw_start = iter.current_position();
+            let line_start = Self::visible_row_start(buffer, hidden_ranges, raw_start);
+            iter = buffer.line_iterator(line_start, 80);
+
             // Get the line content to calculate how many visual rows it has
-            let line_start = iter.current_position();
             let (line_end, line_content) = if let Some((_, content)) = iter.next_logical_line() {
                 let end = iter.current_position();
                 (end, content.trim_end_matches(['\n', '\r']).to_string())
@@ -778,6 +866,7 @@ impl Viewport {
         buffer: &mut Buffer,
         soft_breaks: &[(usize, u16)],
         virtual_lines: &[usize],
+        hidden_ranges: &[(usize, usize)],
         visual_rows: usize,
     ) {
         if visual_rows == 0 {
@@ -839,7 +928,12 @@ impl Viewport {
 
         // Continue scrolling through subsequent lines
         loop {
-            let line_start = iter.current_position();
+            let raw_start = iter.current_position();
+            let line_start = Self::skip_hidden_forward(hidden_ranges, raw_start);
+            if line_start != raw_start {
+                // Collapsed body: no rows drawn, so step past it for free.
+                iter = buffer.line_iterator(line_start, 80);
+            }
 
             // Check for end of buffer
             if line_start >= buffer_len {
@@ -2441,17 +2535,59 @@ mod tests {
         let mut buffer = Buffer::from_str_test(&content);
         let mut vp = Viewport::new(80, 24);
 
-        vp.scroll_down(&mut buffer, &[], &[], 10);
+        vp.scroll_down(&mut buffer, &[], &[], &[], 10);
         // Check that we scrolled down (top_byte should be > 0)
         assert!(vp.top_byte() > 0);
 
         let prev_top = vp.top_byte();
-        vp.scroll_up(&mut buffer, &[], &[], 5);
+        vp.scroll_up(&mut buffer, &[], &[], &[], 5);
         // Check that we scrolled up (top_byte should be less than before)
         assert!(vp.top_byte() < prev_top);
 
-        vp.scroll_up(&mut buffer, &[], &[], 100);
+        vp.scroll_up(&mut buffer, &[], &[], &[], 100);
         assert_eq!(vp.top_byte(), 0); // Can't scroll past 0
+    }
+
+    /// A collapsed fold draws one header row, so a scroll of N rows must
+    /// cross it for free. Counting its hidden lines instead spends the whole
+    /// page budget on rows nobody sees and the viewport barely moves.
+    #[test]
+    fn scroll_skips_collapsed_fold_bodies() {
+        // 200 lines; lines 10..=99 (0-based) are hidden behind a header at 9.
+        let mut content = String::new();
+        for i in 0..200 {
+            content.push_str(&format!("line{i}\n"));
+        }
+        let mut buffer = Buffer::from_str_test(&content);
+        let line_start = |n: usize| -> usize {
+            content
+                .split_inclusive('\n')
+                .take(n)
+                .map(|l| l.len())
+                .sum::<usize>()
+        };
+        let hidden = [(line_start(10), line_start(100))];
+
+        // 24 rendered rows down from line 0: lines 0..=9 are ten rows, the
+        // fold body is none, so the remaining 14 land on line 114.
+        let mut vp = Viewport::new(80, 30);
+        vp.scroll_down(&mut buffer, &[], &[], &hidden, 24);
+        assert_eq!(vp.top_byte(), line_start(114));
+
+        // Scrolling back the same distance returns to the start.
+        vp.scroll_up(&mut buffer, &[], &[], &hidden, 24);
+        assert_eq!(vp.top_byte(), 0);
+
+        // A step that ends inside the fold lands past it, never on a hidden
+        // line — the cursor follows the viewport top, so it must be visible.
+        let mut vp = Viewport::new(80, 30);
+        vp.scroll_down(&mut buffer, &[], &[], &hidden, 10);
+        assert_eq!(vp.top_byte(), line_start(100));
+
+        // Without the fold the same walk is pure logical lines.
+        let mut vp = Viewport::new(80, 30);
+        vp.scroll_down(&mut buffer, &[], &[], &[], 24);
+        assert_eq!(vp.top_byte(), line_start(24));
     }
 
     #[test]
