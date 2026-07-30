@@ -84,14 +84,42 @@ impl Editor {
         self.remote_attach_cancelled.remove(&request_id)
     }
 
-    /// Process pending async messages from the async bridge
+    /// Drain pending async messages and plugin commands to completion.
     ///
-    /// This should be called each frame in the main loop to handle:
+    /// This is the historical contract of this method and what direct
+    /// callers (tests, the test API, one-shot tools) rely on: after it
+    /// returns, everything that was pending at call time — including work
+    /// the per-pass frame budget deferred — has been dispatched. The
+    /// interactive loops must NOT use this; they call
+    /// [`Self::process_async_messages_budgeted`] so one burst is spread
+    /// across frames instead of stalling one.
+    pub fn process_async_messages(&mut self) -> bool {
+        let mut needs_render = false;
+        // The cap is a backstop against a plugin that emits continuously —
+        // each pass drains everything that had arrived when it started, so
+        // legitimate cascades settle in a handful of passes.
+        for _ in 0..64 {
+            needs_render |= self.process_async_messages_budgeted();
+            if self.async_message_backlog.is_empty() && !self.plugin_backlog_pending() {
+                break;
+            }
+        }
+        needs_render
+    }
+
+    /// Process pending async messages from the async bridge, against a
+    /// frame budget.
+    ///
+    /// This is what the interactive loops call each frame:
     /// - LSP diagnostics
     /// - LSP initialization/errors
     /// - File system changes (future)
     /// - Git status updates
-    pub fn process_async_messages(&mut self) -> bool {
+    ///
+    /// A burst larger than the budget is deferred in arrival order and the
+    /// return value stays `true` until the backlog drains, keeping the loop
+    /// on its frame cadence.
+    pub fn process_async_messages_budgeted(&mut self) -> bool {
         // Check plugin thread health - will panic if thread died due to error
         // This ensures plugin errors surface quickly instead of causing silent hangs
         self.plugin_manager.write().unwrap().check_thread_health();

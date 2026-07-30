@@ -122,7 +122,7 @@ pub fn editor_tick(
 
     let async_messages = {
         let _s = tracing::info_span!("process_async_messages").entered();
-        editor.process_async_messages()
+        editor.process_async_messages_budgeted()
     };
     if async_messages {
         needs_render = true;

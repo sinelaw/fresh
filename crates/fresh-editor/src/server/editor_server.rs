@@ -541,7 +541,7 @@ impl EditorServer {
 
             // Process async messages from editor
             if let Some(ref mut editor) = self.editor {
-                if editor.process_async_messages() {
+                if editor.process_async_messages_budgeted() {
                     needs_render = true;
                 }
                 if editor.process_pending_file_opens() {
