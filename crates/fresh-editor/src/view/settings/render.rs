@@ -1575,6 +1575,9 @@ fn render_control(
                     label_width.unwrap_or(0) as u32,
                     true,
                     state.scroll_offset as u32,
+                    // The settings dialog draws its own selection chrome
+                    // and never reserved the `▸ ` focus-marker gutter.
+                    false,
                 );
                 scroll_offset = rendered.scroll_offset;
                 for (row_i, (_idx, entry)) in rendered.option_rows.iter().enumerate() {

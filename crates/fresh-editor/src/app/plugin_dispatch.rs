@@ -5179,6 +5179,8 @@ impl Editor {
             title: if as_dock { None } else { title },
             closable: !as_dock && closable,
             close_button_rect: None,
+            hovered_widget_key: String::new(),
+            hovered_widget_hoverable: false,
             dropdown_popup: None,
             dropdown_popup_hits: Vec::new(),
             dropdown_popup_rect: None,
@@ -5186,12 +5188,16 @@ impl Editor {
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
+        // A fresh mount has nothing hovered: the pointer hasn't been
+        // resolved against this panel's hit areas yet, and the next
+        // `Moved` event will do so.
         let out = super::widget_runtime::render_floating_spec(
             focus_marker,
             &spec,
             &prev,
             &prev_focus,
             panel_width,
+            "",
         );
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
@@ -5256,12 +5262,19 @@ impl Editor {
             .unwrap_or_default();
         let panel_width = self.floating_panel_inner_width(slot);
         let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
+        // Carry the live hover through a plugin-driven update, so a spec
+        // refresh under a stationary pointer doesn't drop the highlight.
+        let hover_key = self
+            .panel(slot)
+            .map(|f| f.hovered_widget_key.clone())
+            .unwrap_or_default();
         let out = super::widget_runtime::render_floating_spec(
             focus_marker,
             &spec,
             &prev,
             &prev_focus,
             panel_width,
+            &hover_key,
         );
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;

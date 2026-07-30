@@ -305,6 +305,8 @@ pub mod virtual_space;
 pub mod visual_regression;
 pub mod warning_indicators;
 #[cfg(feature = "plugins")]
+pub mod widget_hover_events;
+#[cfg(feature = "plugins")]
 pub mod widget_panel_ownership;
 pub mod window_switch_explorer_first_frame;
 #[cfg(feature = "plugins")]

@@ -20,18 +20,30 @@ use super::Editor;
 /// which renderer a given panel uses. Lives here (not in the
 /// `plugins`-gated `plugin_dispatch`) so the non-plugin rerender path
 /// can call it in plugin-less builds.
+///
+/// `hover_key` is the widget the pointer is over (`""` for none). It's
+/// host state that changes with every mouse move, so it is applied
+/// around the render rather than carried in the spec; only bare icon
+/// buttons read it.
 pub(super) fn render_floating_spec(
     focus_marker: bool,
     spec: &fresh_core::api::WidgetSpec,
     prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
     prev_focus_key: &str,
     panel_width: u32,
+    hover_key: &str,
 ) -> crate::widgets::RenderOutput {
-    if focus_marker {
-        crate::widgets::render_spec_with_marker(spec, prev, prev_focus_key, panel_width)
-    } else {
-        crate::widgets::render_spec(spec, prev, prev_focus_key, panel_width)
-    }
+    crate::widgets::render_spec_with_options(
+        spec,
+        prev,
+        panel_width,
+        crate::widgets::RenderOptions {
+            prev_focus_key,
+            hover_key,
+            marker_gutter: focus_marker,
+            auto_focus_first: true,
+        },
+    )
 }
 
 /// Walk a `Tree`'s flat `nodes` and return the absolute indices of
@@ -514,6 +526,7 @@ impl Editor {
             byte_end: 0,
             payload: row_payload,
             event_type,
+            hoverable: false,
         })
     }
 
@@ -596,6 +609,10 @@ impl Editor {
             byte_end: 0,
             payload,
             event_type,
+            // Synthesized for a clipped / off-viewport widget so the
+            // native frontends can act on it; hover is a live-pointer
+            // concern the TUI tracker owns, so it never applies here.
+            hoverable: false,
         })
     }
 
@@ -672,6 +689,10 @@ impl Editor {
             byte_end: 0,
             payload,
             event_type,
+            // Synthesized for a clipped / off-viewport widget so the
+            // native frontends can act on it; hover is a live-pointer
+            // concern the TUI tracker owns, so it never applies here.
+            hoverable: false,
         })
     }
 
@@ -859,7 +880,21 @@ impl Editor {
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.focus_marker)
                 .unwrap_or(false);
-            let out = render_floating_spec(focus_marker, spec, &prev, &prev_focus, panel_width);
+            // This is also the path a hover change re-renders through, so
+            // the panel's tracked hover key has to reach the renderer here
+            // — otherwise entering a `×` would repaint it unhighlighted.
+            let hover_key = panel_slot
+                .and_then(|slot| self.panel(slot))
+                .map(|f| f.hovered_widget_key.clone())
+                .unwrap_or_default();
+            let out = render_floating_spec(
+                focus_marker,
+                spec,
+                &prev,
+                &prev_focus,
+                panel_width,
+                &hover_key,
+            );
             (buffer_id, is_floating, panel_width, out)
         };
         let _ = panel_width;

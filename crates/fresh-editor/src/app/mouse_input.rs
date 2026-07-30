@@ -23,6 +23,18 @@ fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
     col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
 }
 
+/// Where a screen cell lands inside a floating widget panel. See
+/// [`Editor::probe_floating_widget`].
+struct FloatingWidgetProbe {
+    /// 0-indexed row within the panel's rendered entries.
+    brow: u32,
+    /// UTF-8 byte offset within that row's text (the overlay's text when
+    /// an overlay covers the row).
+    bcol: usize,
+    /// The widget under the cell, or `None` for a cell on no widget.
+    hit: Option<crate::widgets::HitArea>,
+}
+
 impl Editor {
     /// If any overlay layer captures mouse events, dispatch to its
     /// dedicated handler and return its result; otherwise return `None`
@@ -412,6 +424,13 @@ impl Editor {
                         needs_render = true;
                     }
                 }
+
+                // Bare icon buttons inside a panel (the dock's `×`) light up
+                // under the pointer, the way the tab and file explorer `×`
+                // do. Tracked off the same motion events as the scrollbar
+                // reveal above, and likewise re-rendering only on the
+                // enter/leave transition.
+                needs_render = self.update_widget_hover(col, row) || needs_render;
             }
             MouseEventKind::ScrollUp => {
                 self.handle_vertical_scroll(col, row, mouse_event.modifiers, -3)?;
@@ -4224,6 +4243,7 @@ impl Editor {
                 byte_end: 0,
                 payload: serde_json::json!({ "index": hit.index }),
                 event_type: "dropdown_select",
+                hoverable: false,
             };
             self.deliver_widget_hit(&panel_key, &ha, None);
             return true;
@@ -4231,6 +4251,138 @@ impl Editor {
         // Inside the box but not on a row (its border): consume so the
         // modal isn't dismissed and the list stays open.
         in_rect(col, row, popup_rect)
+    }
+
+    /// Resolve a screen cell against a mounted floating panel: the
+    /// panel-local row and byte column it maps to, plus the widget hit
+    /// there (`None` when the cell is over no widget).
+    ///
+    /// Returns `None` when the panel isn't mounted, hasn't been drawn yet,
+    /// or the cell is outside its inner rect — i.e. "not this panel's cell"
+    /// as distinct from "this panel's cell, no widget on it".
+    ///
+    /// Shared by the click path and the hover tracker so the two can never
+    /// disagree about what the pointer is on. They did once for left- vs
+    /// right-click (byte-exact vs row-wide resolution), and compact dock
+    /// rows silently swallowed clicks past their label for it.
+    fn probe_floating_widget(
+        &self,
+        slot: super::PanelSlot,
+        col: u16,
+        row: u16,
+    ) -> Option<FloatingWidgetProbe> {
+        let inner = self.panel(slot)?.last_inner_rect?;
+        if col < inner.x || col >= inner.x + inner.width {
+            return None;
+        }
+        if row < inner.y || row >= inner.y + inner.height {
+            return None;
+        }
+        let brow = (row - inner.y) as u32;
+        let local_screen_col = (col - inner.x) as usize;
+        // A row an `Overlay` covers (the dock's "New Task… ▾" / "Move to
+        // Folder…" dropdowns float over the tree without reflowing it) is
+        // DRAWN from the overlay's text, so the column has to be mapped
+        // through that text — it is what the user is pointing at, and what
+        // the overlay's hit areas were measured against. Mapping through
+        // the row underneath yields a byte offset in a different string,
+        // which is why the dropdown options were unclickable: the offset
+        // never landed inside an option's range.
+        let panel = self.panel(slot)?;
+        let overlay_text = panel
+            .overlays
+            .iter()
+            .find(|o| o.buffer_row == brow)
+            .map(|o| o.entry.text.as_str());
+        let on_overlay = overlay_text.is_some();
+        let row_text =
+            overlay_text.or_else(|| panel.entries.get(brow as usize).map(|e| e.text.as_str()))?;
+        let bcol = crate::primitives::display_width::grapheme_byte_at_visual_column(
+            row_text,
+            local_screen_col,
+        );
+        // Row-aware resolution: an exact byte hit wins, but a click past a
+        // compact list/tree row's text still lands on the row (its body
+        // `select`) instead of being dropped — the same rule the
+        // right-click context path uses.
+        //
+        // Over an overlay that rule is off: the popup is opaque, so only its
+        // own hits are reachable and a click that misses every option (its
+        // border, its padding) is swallowed rather than falling through to
+        // the row it hides.
+        let hit = if on_overlay {
+            self.widget_registry
+                .overlay_hit_test(slot.buffer_id(), brow, bcol as u32)
+        } else {
+            self.widget_registry
+                .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
+        };
+        Some(FloatingWidgetProbe {
+            brow,
+            bcol,
+            hit: hit.map(|(_, h)| h.clone()),
+        })
+    }
+
+    /// Track which widget the pointer is over across every mounted panel:
+    /// re-render a panel whose hovered widget changed, and notify the
+    /// owning plugin about widgets that asked to hear about it.
+    ///
+    /// Called from the motion handler. Cheap in the common case — the key
+    /// is compared before anything is rebuilt, so sliding the pointer
+    /// around inside one widget costs a hit-test and nothing more — and
+    /// the plugin round-trip is gated on the widget's own `hoverable`, so
+    /// a panel that doesn't want hover events never wakes its plugin.
+    fn update_widget_hover(&mut self, col: u16, row: u16) -> bool {
+        let mut changed = false;
+        for slot in [super::PanelSlot::Dock, super::PanelSlot::Floating] {
+            let entered = self
+                .probe_floating_widget(slot, col, row)
+                .and_then(|p| p.hit);
+            let now = entered
+                .as_ref()
+                .map(|h| h.widget_key.clone())
+                .unwrap_or_default();
+            let (panel_key, left, left_hoverable) = match self.panel(slot) {
+                Some(fwp) if fwp.hovered_widget_key != now => (
+                    fwp.panel_key.clone(),
+                    fwp.hovered_widget_key.clone(),
+                    fwp.hovered_widget_hoverable,
+                ),
+                _ => continue,
+            };
+            if let Some(fwp) = self.panel_mut(slot) {
+                fwp.hovered_widget_key = now;
+                fwp.hovered_widget_hoverable =
+                    entered.as_ref().map(|h| h.hoverable).unwrap_or(false);
+            }
+            // Leave before enter, so a plugin moving between two hoverable
+            // widgets sees the pair in the order the pointer made them.
+            // The leave flag is remembered rather than re-derived: the
+            // widget may have been dropped from the spec since, and a
+            // plugin that got an enter must always get its enter's leave.
+            if !left.is_empty() && left_hoverable {
+                self.fire_widget_event(
+                    &panel_key,
+                    left,
+                    "hover".to_string(),
+                    serde_json::json!({ "hovered": false }),
+                );
+            }
+            if let Some(hit) = entered.filter(|h| h.hoverable && !h.widget_key.is_empty()) {
+                let mut payload = hit.payload;
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("hovered".to_string(), serde_json::json!(true));
+                }
+                self.fire_widget_event(&panel_key, hit.widget_key, "hover".to_string(), payload);
+            }
+            // The hover only shows up in the *rendered* entries, so the spec
+            // has to be re-run — the draw pass paints the cached entries and
+            // would otherwise keep the old highlight.
+            self.rerender_widget_panel(&panel_key);
+            changed = true;
+        }
+        changed
     }
 
     fn handle_floating_widget_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) {
@@ -4247,72 +4399,20 @@ impl Editor {
         if self.try_widget_scrollbar_press(slot, col, row) {
             return;
         }
-        let (panel_key, inner) = match self.panel(slot) {
-            Some(fwp) => match fwp.last_inner_rect {
-                Some(rect) => (fwp.panel_key.clone(), rect),
-                None => return,
-            },
+        let panel_key = match self.panel(slot) {
+            Some(fwp) => fwp.panel_key.clone(),
             None => return,
         };
-        if col < inner.x || col >= inner.x + inner.width {
-            return;
-        }
-        if row < inner.y || row >= inner.y + inner.height {
-            return;
-        }
-        let brow = (row - inner.y) as u32;
-        let entries = self
-            .panel(slot)
-            .map(|f| f.entries.clone())
-            .unwrap_or_default();
-        let local_screen_col = (col - inner.x) as usize;
-        // A row an `Overlay` covers (the dock's "New Task… ▾" / "Move to
-        // Folder…" dropdowns float over the tree without reflowing it) is
-        // DRAWN from the overlay's text, so the click column has to be
-        // mapped through that text — it is what the user is pointing at,
-        // and what the overlay's hit areas were measured against. Mapping
-        // through the row underneath yields a byte offset in a different
-        // string, which is why the dropdown options were unclickable: the
-        // offset never landed inside an option's range.
-        let overlay_text = self.panel(slot).and_then(|f| {
-            f.overlays
-                .iter()
-                .find(|o| o.buffer_row == brow)
-                .map(|o| o.entry.text.clone())
-        });
-        let on_overlay = overlay_text.is_some();
-        let row_text =
-            match overlay_text.or_else(|| entries.get(brow as usize).map(|e| e.text.clone())) {
-                Some(text) => text,
-                None => return,
-            };
-        let bcol = crate::primitives::display_width::grapheme_byte_at_visual_column(
-            &row_text,
-            local_screen_col,
-        );
-        // Row-aware resolution: an exact byte hit wins, but a click past a
-        // compact list/tree row's text still lands on the row (its body
-        // `select`) instead of being dropped — the same rule the
-        // right-click context path uses, kept in one place so the two can't
-        // drift (they did once: right-click was row-wide, left-click was
-        // byte-exact, so compact dock rows ignored left-clicks past the label).
-        //
-        // Over an overlay that rule is off: the popup is opaque, so only its
-        // own hits are reachable and a click that misses every option (its
-        // border, its padding) is swallowed rather than falling through to
-        // the row it hides.
-        let resolved = if on_overlay {
-            self.widget_registry
-                .overlay_hit_test(slot.buffer_id(), brow, bcol as u32)
-        } else {
-            self.widget_registry
-                .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
+        let probe = match self.probe_floating_widget(slot, col, row) {
+            Some(p) => p,
+            None => return,
         };
-        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match resolved {
-            Some((_, hit)) => (
-                hit.payload.clone(),
+        let (brow, bcol) = (probe.brow, probe.bcol);
+        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match probe.hit {
+            Some(hit) => (
+                hit.payload,
                 hit.event_type.to_string(),
-                hit.widget_key.clone(),
+                hit.widget_key,
                 hit.widget_kind,
                 hit.byte_start,
             ),
