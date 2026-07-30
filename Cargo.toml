@@ -25,7 +25,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.4.5"
+version = "0.4.6"
 authors = ["Noam Lewis"]
 edition = "2021"
 license = "GPL-2.0"
@@ -35,13 +35,13 @@ documentation = "https://docs.rs/fresh-editor"
 
 [workspace.dependencies]
 # Local crates
-fresh-core = { version = "0.4.5", path = "crates/fresh-core" }
-fresh-gui = { version = "0.4.5", path = "crates/fresh-gui" }
-fresh-parser-js = { version = "0.4.5", path = "crates/fresh-parser-js" }
-fresh-languages = { version = "0.4.5", path = "crates/fresh-languages" }
-fresh-plugin-runtime = { version = "0.4.5", path = "crates/fresh-plugin-runtime" }
-fresh-plugin-api-macros = { version = "0.4.5", path = "crates/fresh-plugin-api-macros" }
-fresh-winterm = { version = "0.4.5", path = "crates/fresh-winterm" }
+fresh-core = { version = "0.4.6", path = "crates/fresh-core" }
+fresh-gui = { version = "0.4.6", path = "crates/fresh-gui" }
+fresh-parser-js = { version = "0.4.6", path = "crates/fresh-parser-js" }
+fresh-languages = { version = "0.4.6", path = "crates/fresh-languages" }
+fresh-plugin-runtime = { version = "0.4.6", path = "crates/fresh-plugin-runtime" }
+fresh-plugin-api-macros = { version = "0.4.6", path = "crates/fresh-plugin-api-macros" }
+fresh-winterm = { version = "0.4.6", path = "crates/fresh-winterm" }
 fresh-input-parser = { version = "0.4.4", path = "crates/fresh-input-parser" }
 fresh-update = { version = "0.4.4", path = "crates/fresh-update" }
 
