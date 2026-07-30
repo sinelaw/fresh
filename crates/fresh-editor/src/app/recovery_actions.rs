@@ -573,10 +573,21 @@ impl Editor {
             }
         };
 
-        self.recovery_service
-            .lock()
-            .unwrap()
-            .delete_buffer_recovery(&recovery_id)?;
+        // The deletes (exists + remove_file + a chunk-directory scan) are
+        // disk I/O — off-loop. The recovery-service mutex is taken inside the
+        // spawned effect so a slow disk stalls the runtime worker, not the
+        // editor thread. Failure is logged, not returned: the stale recovery
+        // file costs one spurious recovery prompt, never a hung close.
+        let recovery_service = std::sync::Arc::clone(&self.recovery_service);
+        self.spawn_off_loop_effect("delete_buffer_recovery", move || {
+            let result = recovery_service
+                .lock()
+                .unwrap()
+                .delete_buffer_recovery(&recovery_id);
+            if let Err(e) = result {
+                tracing::warn!("off-loop recovery delete failed: {}", e);
+            }
+        });
 
         // Clear recovery_pending since buffer is now saved
         if let Some(state) = self

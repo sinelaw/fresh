@@ -136,15 +136,10 @@ impl Editor {
         }
 
         // Determine if we need to show search options bar.
-        // (Held in mutable bindings because the in-render
-        // `process_commands` block below can dispatch commands —
-        // e.g. `StartPromptAsync`, `SetPromptSuggestions` — that
-        // mutate `self.active_window_mut().prompt`. When that happens we recompute these
-        // flags and re-split `main_chunks` so the bottom-row
-        // rendering uses an up-to-date layout. See the
-        // "Recompute layout if mid-render commands changed state"
-        // block below.)
-        let mut show_search_options = self.active_prompt_has_search_options();
+        // These are stable for the whole frame: every plugin command was
+        // dispatched before this point (pre-layout drain), and nothing after
+        // it mutates prompt state mid-paint.
+        let show_search_options = self.active_prompt_has_search_options();
 
         // Hide status bar when suggestions popup or file browser
         // popup is shown — those popups float just above the prompt
@@ -152,18 +147,18 @@ impl Editor {
         // wrong. Floating-overlay prompts (Live Grep, issue #1796)
         // are exempt because their suggestions live inside the
         // centred frame, not above the bottom row.
-        let mut prompt_is_overlay = self
+        let prompt_is_overlay = self
             .active_window()
             .prompt
             .as_ref()
             .is_some_and(|p| p.overlay);
-        let mut has_suggestions = self
+        let has_suggestions = self
             .active_window()
             .prompt
             .as_ref()
             .is_some_and(|p| !p.suggestions.is_empty())
             && !prompt_is_overlay;
-        let mut has_file_browser = self.active_window().prompt.as_ref().is_some_and(|p| {
+        let has_file_browser = self.active_window().prompt.as_ref().is_some_and(|p| {
             matches!(
                 p.prompt_type,
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
@@ -173,7 +168,7 @@ impl Editor {
         // Build main vertical layout: [menu_bar, main_content, status_bar, search_options, prompt_line]
         // Status bar is hidden when suggestions popup is shown
         // Search options bar is shown when in search prompt
-        let mut main_chunks = Layout::default()
+        let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(vec![
                 Constraint::Length(if self.active_window_mut().menu_bar_visible {
@@ -281,7 +276,7 @@ impl Editor {
                 let mut hooks_deferred = false;
                 let added = __win
                     .buffers
-                    .with_buffer_and_view_states(buffer_id, |state, vs_map| {
+                    .with_buffer_and_view_states(buffer_id, |state, _vs_map| {
                         // Both hooks go through `try_read`: the draw computes
                         // the payload and hands it off, but never waits on the
                         // plugin lock. On contention nothing is marked seen, so
@@ -360,156 +355,14 @@ impl Editor {
                 "lines_changed hooks total"
             );
 
-            // Process any plugin commands (like AddOverlay) that resulted from the hooks.
-            //
-            // This is non-blocking: we collect whatever the plugin has sent so far.
-            // The plugin thread runs in parallel; by the time we reach this point
-            // it has typically already processed the hooks and sent back
-            // conceal/overlay commands. On rare occasions (high CPU load), the
-            // response arrives one frame late, which is imperceptible at 60fps —
-            // each arriving decoration command sets `plugin_render_requested`, so
-            // a follow-up render cycle picks up anything missed here. (Cursor
-            // movement no longer participates: cursor-dependent decorations carry
-            // activation scopes evaluated at render time, see view/activation.rs.)
-            #[cfg(not(feature = "plugins"))]
-            let dispatched_any = false;
-            #[cfg(feature = "plugins")]
-            let dispatched_any = {
-                let _s = tracing::info_span!("render_plugin_drain").entered();
-                // Snapshot-only render: the mid-render drain is bounded by a
-                // deadline and never blocks on the plugin lock. Whatever
-                // doesn't fit is handed to `deferred_plugin_commands`, drained
-                // once the paint is finished, so worst-case frame time depends
-                // on buffer content plus this fixed budget rather than on how
-                // much a plugin decided to emit.
-                let commands = self
-                    .plugin_manager
-                    .try_write()
-                    .map(|mut pm| pm.process_commands())
-                    .ok();
-                if commands.is_none() {
-                    // The plugin thread holds the lock. Skipping is correct:
-                    // decorations arrive next frame, and
-                    // `plugin_render_requested` guarantees there is one.
-                    self.request_plugin_render();
-                }
-                let commands = commands.unwrap_or_default();
-                let dispatched_any = !commands.is_empty();
-                let render_deadline =
-                    std::time::Instant::now() + super::PLUGIN_COMMAND_RENDER_BUDGET;
-                let mut over_budget = false;
-                for command in commands {
-                    if over_budget {
-                        self.deferred_plugin_commands.push(command);
-                        self.plugin_render_requested = true;
-                        continue;
-                    }
-                    // A command that changes *which window this frame is
-                    // being painted for* cannot run here: the menu bar,
-                    // the file-explorer sidebar, the tab bar and the
-                    // splits above have already been drawn for the
-                    // outgoing window, and only the buffer content and
-                    // bottom row are still to come. Running it anyway
-                    // stitches one frame out of two workspaces — the
-                    // reported "the sidebar hangs over the wrong
-                    // workspace for a moment" when clicking between dock
-                    // cards. Hold it until the paint is finished, at the
-                    // very bottom of this function.
-                    if Self::plugin_command_must_run_between_frames(&command) {
-                        self.deferred_plugin_commands.push(command);
-                        self.plugin_render_requested = true;
-                        continue;
-                    }
-                    self.dispatch_plugin_command_measured(command);
-                    if std::time::Instant::now() >= render_deadline {
-                        over_budget = true;
-                    }
-                }
-                dispatched_any
-            };
-
-            // Flush any deferred grammar rebuilds as a single batch
-            self.flush_pending_grammars();
-
-            // Recompute the bottom-row layout if the in-render command
-            // dispatch above mutated state that affects it. Without
-            // this, a `StartPromptAsync` (or similar) processed
-            // mid-render leaves `main_chunks` reflecting the prior
-            // `self.active_window_mut().prompt = None` shape — the prompt slot ends up at
-            // (y = size.height, h = 0) and the status bar paints the
-            // bottom row in place of the prompt input. Conservative:
-            // we recompute on *any* dispatched commands rather than
-            // enumerating layout-affecting variants — Layout::split is
-            // cheap, and this avoids a maintenance-burden whitelist
-            // that would silently regress as new `PluginCommand`
-            // variants are added.
-            //
-            // Bounded — single drain + single recompute. We do not
-            // call `process_commands` again, so commands queued by
-            // hooks fired inside the dispatch above wait for the next
-            // render or `editor_tick` (the existing one-frame-late
-            // behaviour the comment above already accepts).
-            //
-            // `main_content_area` (and the file-explorer / split
-            // rendering derived from it earlier in this render) is
-            // intentionally NOT re-derived: those areas were already
-            // painted, and the bottom-row recompute may overwrite a
-            // single row of main content where the new status bar /
-            // prompt now sits. That brief overlap self-corrects on
-            // the next frame, where the layout is built consistently
-            // from the start.
-            if dispatched_any {
-                show_search_options = self.active_prompt_has_search_options();
-                prompt_is_overlay = self
-                    .active_window()
-                    .prompt
-                    .as_ref()
-                    .is_some_and(|p| p.overlay);
-                has_suggestions = self
-                    .active_window()
-                    .prompt
-                    .as_ref()
-                    .is_some_and(|p| !p.suggestions.is_empty())
-                    && !prompt_is_overlay;
-                has_file_browser = self.active_window().prompt.as_ref().is_some_and(|p| {
-                    matches!(
-                        p.prompt_type,
-                        PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
-                    )
-                }) && self.active_window_mut().file_open_state.is_some();
-                main_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints(vec![
-                        Constraint::Length(if self.active_window_mut().menu_bar_visible {
-                            1
-                        } else {
-                            0
-                        }),
-                        Constraint::Min(0),
-                        Constraint::Length(
-                            if !self.active_window_mut().status_bar_visible
-                                || has_suggestions
-                                || has_file_browser
-                            {
-                                0
-                            } else {
-                                1
-                            },
-                        ),
-                        Constraint::Length(if show_search_options { 1 } else { 0 }),
-                        Constraint::Length(
-                            if (self.active_window_mut().prompt_line_visible
-                                || self.active_window().prompt.is_some())
-                                && !prompt_is_overlay
-                            {
-                                1
-                            } else {
-                                0
-                            },
-                        ),
-                    ])
-                    .split(chrome_area);
-            }
+            // Hook replies (AddOverlay, conceals) are NOT collected here.
+            // The draw dispatches no plugin commands after this point: the
+            // plugin thread answers the hooks above on its own time, the
+            // arriving commands set `plugin_render_requested` via the tick
+            // drain, and the decorations land on the next frame. One frame
+            // of decoration latency is the fixed, universal price for a
+            // frame that cannot tear and whose cost does not depend on how
+            // much a plugin decided to emit mid-paint.
         }
 
         // Render editor content (same for both layouts)
@@ -1065,22 +918,6 @@ impl Editor {
             frame.buffer_mut(),
             self.color_capability,
         );
-
-        // Commands the mid-render drain held back because they change which
-        // window the frame belongs to. The paint is finished, so they can no
-        // longer split it across two workspaces — and running them here
-        // rather than at the top of the next render keeps them from lagging a
-        // frame behind everything else the same drain dispatched.
-        //
-        // Deliberately after `last_rendered_frame` was captured above: the
-        // wipe a switch starts takes that frame as its "before", and it has
-        // to be the one still showing the window being left.
-        #[cfg(feature = "plugins")]
-        for command in std::mem::take(&mut self.deferred_plugin_commands) {
-            if let Err(e) = self.handle_plugin_command(command) {
-                tracing::error!("Error handling deferred plugin command: {}", e);
-            }
-        }
     }
 
     /// Render the search-options bar into `area` when `show_search_options`
@@ -2231,55 +2068,18 @@ impl Editor {
     /// The mid-render drain (after `compute_dock_split`) runs too late for
     /// those: the dock area would be computed from stale state and the freed
     /// columns would render blank until the next input event.
-    /// True for plugin commands that may only be handled between frames,
-    /// never in the mid-render drain. Today that is exactly the
-    /// active-window switches: everything the editor paints — chrome,
-    /// sidebar, splits, status bar — is derived from the active window, so
-    /// moving that pointer part-way through a paint yields a frame
-    /// assembled from two different workspaces.
-    #[cfg(feature = "plugins")]
-    fn plugin_command_must_run_between_frames(command: &fresh_core::api::PluginCommand) -> bool {
-        use fresh_core::api::PluginCommand;
-        matches!(
-            command,
-            PluginCommand::SetActiveWindow { .. } | PluginCommand::SetActiveWindowAnimated { .. }
-        )
-    }
 
     fn drain_pre_layout_plugin_commands(&mut self) {
         #[cfg(feature = "plugins")]
         {
-            // Same contract as the mid-render drain: never wait on the plugin
-            // lock, and spend at most one render budget here. The tail waits
-            // for `process_plugin_commands` on the next tick.
-            let early_commands = self
-                .plugin_manager
-                .try_write()
-                .map(|mut pm| pm.process_commands())
-                .ok();
-            if early_commands.is_none() {
-                self.request_plugin_render();
-            }
-            let early_commands = early_commands.unwrap_or_default();
-            if !early_commands.is_empty() {
-                tracing::trace!(
-                    count = early_commands.len(),
-                    "process_commands at top of render (pre-layout drain)"
-                );
-                let deadline = std::time::Instant::now() + super::PLUGIN_COMMAND_RENDER_BUDGET;
-                let mut over_budget = false;
-                for command in early_commands {
-                    if over_budget {
-                        self.plugin_command_backlog.push_back(command);
-                        self.request_plugin_render();
-                        continue;
-                    }
-                    self.dispatch_plugin_command_measured(command);
-                    if std::time::Instant::now() >= deadline {
-                        over_budget = true;
-                    }
-                }
-            }
+            // The one and only dispatch point on the render path, and it runs
+            // before anything is laid out or painted — semantically between
+            // frames, so no command can tear this frame or invalidate its
+            // layout (the old mid-render drain needed a layout recompute and
+            // a hold-back list for window switches; this needs neither).
+            // Routed through the same budgeted, backlogged, measured drain as
+            // the tick so global FIFO order is preserved.
+            let _ = self.process_plugin_commands();
         }
     }
 

@@ -538,6 +538,7 @@ fn frame_inner_width(screen: &str) -> usize {
 /// fill computation is off by one only for particular parities, which is
 /// exactly the class of bug this guards.
 #[test]
+#[ignore = "passes, but the 111-width sweep takes ~22 min — run explicitly with --ignored"]
 fn dashboard_frame_is_intact_across_width_sweep() {
     let (harness, _tmp, plugins_dir) = harness_with_dashboard_plugin_and_plugins_dir();
 

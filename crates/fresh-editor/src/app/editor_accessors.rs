@@ -741,6 +741,34 @@ impl Editor {
     /// project root. Derived, not stored: there is no separate
     /// `working_dir` field that could drift out of sync with the active
     /// window (issue #2056). Individual buffers may live elsewhere.
+    /// Run a blocking effect (filesystem writes/deletes, teardown I/O) off
+    /// the editor thread. This is the escape hatch for the "mutation now,
+    /// effect off-loop" decomposition: the caller snapshots whatever the
+    /// effect needs while still on the editor thread, then hands the I/O
+    /// here. Fire-and-forget — effects that need a result should go through
+    /// `plugin_offloop` and settle a callback instead.
+    ///
+    /// Falls back to running inline when the editor was constructed without
+    /// a tokio runtime (some unit-test harnesses), preserving the old
+    /// synchronous behaviour there.
+    pub(crate) fn spawn_off_loop_effect(
+        &self,
+        label: &'static str,
+        f: impl FnOnce() + Send + 'static,
+    ) {
+        match &self.tokio_runtime {
+            Some(runtime) => {
+                runtime.spawn_blocking(move || {
+                    f();
+                });
+            }
+            None => {
+                tracing::debug!("spawn_off_loop_effect({label}): no runtime, running inline");
+                f();
+            }
+        }
+    }
+
     pub fn working_dir(&self) -> &std::path::Path {
         &self.active_window().root
     }

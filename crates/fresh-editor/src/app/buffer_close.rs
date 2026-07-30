@@ -93,8 +93,16 @@ impl Editor {
             self.active_window_mut().completed_waits.push(wait_id);
         }
 
-        // Save file state before closing (for per-file session persistence)
-        self.active_window().save_file_state_on_close(id);
+        // Save file state before closing (for per-file session persistence).
+        // Snapshot on this thread, write on the runtime: the state file write
+        // (canonicalize + create_dir_all + temp file + rename) is disk I/O
+        // that has no business inside a close that may run mid-frame.
+        if let Some((path, file_state)) = self.active_window().file_state_on_close_snapshot(id) {
+            self.spawn_off_loop_effect("file_state_on_close", move || {
+                crate::workspace::PersistedFileWorkspace::save(&path, file_state);
+                tracing::debug!("Saved file state on close for {:?}", path);
+            });
+        }
 
         // Delete recovery data for explicitly closed buffers (including unnamed)
         if let Err(e) = self.delete_buffer_recovery(id) {

@@ -10,6 +10,7 @@ pub mod command_keybinding_editor;
 pub mod config_changed_adoption;
 pub mod csharp_restore_trust;
 pub mod dashboard;
+pub mod hostile_plugin;
 // The three modules below drive the in-tree fake-devcontainer
 // CLI (a bash script under `scripts/fake-devcontainer/bin/`).
 // Native Windows can't execute `#!/usr/bin/env bash` shebangs

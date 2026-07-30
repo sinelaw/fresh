@@ -651,8 +651,6 @@ impl Editor {
             plugin_render_requested: false,
             last_rendered_frame: None,
             #[cfg(feature = "plugins")]
-            deferred_plugin_commands: Vec::new(),
-            #[cfg(feature = "plugins")]
             plugin_command_backlog: std::collections::VecDeque::new(),
             #[cfg(feature = "plugins")]
             grep_project_cancel: None,
