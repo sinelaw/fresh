@@ -3347,6 +3347,8 @@ pub fn action_to_events(
         | Action::ToggleVirtualSpaceCurrentBuffer
         | Action::ToggleIndentationGuideCurrentBuffer
         | Action::ToggleFoldIndicatorsCurrentBuffer
+        | Action::ToggleCurrentLineHighlightCurrentBuffer
+        | Action::ToggleOccurrenceHighlightCurrentBuffer
         | Action::TriggerWaveAnimation
         | Action::ToggleScrollSync
         | Action::ToggleMouseCapture

@@ -754,6 +754,12 @@ pub enum Action {
     /// (per-buffer override that persists across restart). Existing folds are
     /// left alone; only the ▾/▸ arrows are hidden.
     ToggleFoldIndicatorsCurrentBuffer,
+    /// Toggle the current-line highlight for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleCurrentLineHighlightCurrentBuffer,
+    /// Toggle occurrence highlighting for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleOccurrenceHighlightCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -1241,6 +1247,8 @@ impl Action {
             "toggle_virtual_space_current_buffer" => ToggleVirtualSpaceCurrentBuffer,
             "toggle_indentation_guide_current_buffer" => ToggleIndentationGuideCurrentBuffer,
             "toggle_fold_indicators_current_buffer" => ToggleFoldIndicatorsCurrentBuffer,
+            "toggle_current_line_highlight_current_buffer" => ToggleCurrentLineHighlightCurrentBuffer,
+            "toggle_occurrence_highlight_current_buffer" => ToggleOccurrenceHighlightCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -2798,6 +2806,12 @@ impl KeybindingResolver {
             }
             Action::ToggleFoldIndicatorsCurrentBuffer => {
                 t!("action.toggle_fold_indicators_current_buffer")
+            }
+            Action::ToggleCurrentLineHighlightCurrentBuffer => {
+                t!("action.toggle_current_line_highlight_current_buffer")
+            }
+            Action::ToggleOccurrenceHighlightCurrentBuffer => {
+                t!("action.toggle_occurrence_highlight_current_buffer")
             }
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),

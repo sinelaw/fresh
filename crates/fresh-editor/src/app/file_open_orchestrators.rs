@@ -369,7 +369,7 @@ impl Editor {
         state
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
-        state.reference_highlight_overlay.enabled = self.config.editor.highlight_occurrences;
+        state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
 
         self.windows
             .get_mut(&self.active_window)
@@ -559,7 +559,7 @@ impl Editor {
         state
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
-        state.reference_highlight_overlay.enabled = self.config.editor.highlight_occurrences;
+        state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
 
         self.windows
             .get_mut(&self.active_window)
@@ -803,7 +803,7 @@ impl Editor {
         state
             .margins
             .configure_for_line_numbers(self.config.editor.line_numbers);
-        state.reference_highlight_overlay.enabled = self.config.editor.highlight_occurrences;
+        state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
 
         let buffer_id = self.alloc_buffer_id();
         self.windows
@@ -982,8 +982,7 @@ impl crate::app::window::Window {
         state
             .margins
             .configure_for_line_numbers(self.resources.config.editor.line_numbers);
-        state.reference_highlight_overlay.enabled =
-            self.resources.config.editor.highlight_occurrences;
+        state.apply_occurrence_highlight(self.resources.config.editor.highlight_occurrences);
 
         self.buffers.insert(buffer_id, state);
         self.event_logs

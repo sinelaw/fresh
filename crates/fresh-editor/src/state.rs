@@ -159,6 +159,12 @@ pub struct BufferSettings {
     /// choice for a file and must.
     pub indentation_guide_user_override: Option<bool>,
 
+    /// Explicit per-buffer occurrence-highlight override, set by "Toggle
+    /// Occurrence Highlight (Current Buffer)". `None` = follow the global
+    /// `editor.highlight_occurrences` setting. Persisted in the per-file
+    /// workspace state.
+    pub highlight_occurrences_override: Option<bool>,
+
     /// Explicit per-buffer fold-indicator override, set by "Toggle Folding
     /// Indicators (Current Buffer)". `None` = show them (the default; there is
     /// no global setting). `Some(false)` hides the gutter fold arrows for this
@@ -183,6 +189,7 @@ impl Default for BufferSettings {
             indentation_guide: true,
             indentation_guide_user_override: None,
             fold_indicators_override: None,
+            highlight_occurrences_override: None,
         }
     }
 }
@@ -230,6 +237,7 @@ impl BufferSettings {
         self.whitespace_override = None;
         self.indentation_guide_user_override = None;
         self.fold_indicators_override = None;
+        self.highlight_occurrences_override = None;
     }
 
     /// Resolve `whitespace` from the buffer's configured visibility and the
@@ -457,6 +465,20 @@ impl EditorState {
     pub fn apply_buffer_config(&mut self, config: &crate::config::Config) {
         let resolved = crate::config::BufferConfig::resolve(config, Some(&self.language));
         self.buffer_settings.apply_config(&resolved);
+    }
+
+    /// Point this buffer's occurrence highlighting at the editor-wide default,
+    /// unless the user pinned it with "Toggle Occurrence Highlight (Current
+    /// Buffer)".
+    ///
+    /// THE single place `reference_highlight_overlay.enabled` is derived from
+    /// config. Every file-open path stamps it, so a pin that only the toggle
+    /// knew about would be erased the next time the buffer was (re)opened.
+    pub fn apply_occurrence_highlight(&mut self, global_default: bool) {
+        self.reference_highlight_overlay.enabled = self
+            .buffer_settings
+            .highlight_occurrences_override
+            .unwrap_or(global_default);
     }
 
     /// Create a new state with a buffer and default (plain text) language.
