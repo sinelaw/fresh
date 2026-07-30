@@ -14,6 +14,7 @@ use ratatui::widgets::Widget;
 use ratatui::widgets::{Block, Paragraph};
 use rust_i18n::t;
 use std::collections::HashMap;
+use std::path::{Component, Path, MAIN_SEPARATOR, MAIN_SEPARATOR_STR};
 
 /// Returns true iff `t` is the editor's single preview tab. `preview_buffer`
 /// is `window.preview`'s buffer id (the source of truth); groups are never
@@ -311,11 +312,49 @@ const TAB_NAME_ELLIPSIS: &str = "…";
 /// strip and hides every other tab (issue #2650).
 const TAB_NAME_MAX_COLS: usize = 25;
 
+/// Shorten a path-shaped label (`src/model/main.rs`) from the *front*, keeping
+/// the file name and as many trailing directories as fit behind a leading
+/// `…{sep}` marker — e.g. `…/model/main.rs`.
+///
+/// A tab whose name was disambiguated by path (see [`resolve_tab_names`])
+/// carries its identity in the last component, so the generic
+/// keep-the-leading-characters truncation would throw away exactly the part the
+/// user is looking for. Returns `None` when `name` has no separator, or when
+/// not even `…{sep}` plus the last component fits in `max_cols` — the caller
+/// then falls back to plain truncation.
+fn elide_path_label(name: &str, max_cols: usize) -> Option<String> {
+    let parts: Vec<&str> = name.split(MAIN_SEPARATOR).collect();
+    let (file, dirs) = parts.split_last()?;
+    if dirs.is_empty() {
+        return None;
+    }
+    let marker = format!("{TAB_NAME_ELLIPSIS}{MAIN_SEPARATOR}");
+    let mut width = str_width(&marker) + str_width(file);
+    if width > max_cols {
+        return None;
+    }
+    // Grow rightwards-first: prepend whole directories while they fit.
+    let mut kept: Vec<&str> = vec![file];
+    for dir in dirs.iter().rev() {
+        let extra = str_width(dir) + str_width(MAIN_SEPARATOR_STR);
+        if width + extra > max_cols {
+            break;
+        }
+        width += extra;
+        kept.push(dir);
+    }
+    kept.reverse();
+    Some(format!("{marker}{}", kept.join(MAIN_SEPARATOR_STR)))
+}
+
 /// Elide `name` to at most `max_cols` display columns, keeping the leading
 /// characters and appending a single `…` when it is truncated. Width is
 /// measured with `char_width`/`str_width` (not bytes), so multibyte / CJK /
 /// emoji names are truncated on whole characters and never split mid-codepoint.
 /// Returns `name` unchanged when it already fits.
+///
+/// Path-shaped labels are shortened from the front instead (see
+/// [`elide_path_label`]) so the file name survives.
 ///
 /// Both label builders — [`build_tab_spans`] and [`calculate_tab_widths`] — run
 /// the resolved name through this so their computed widths stay in lockstep; a
@@ -323,6 +362,9 @@ const TAB_NAME_MAX_COLS: usize = 25;
 fn elided_tab_name(name: &str, max_cols: usize) -> String {
     if str_width(name) <= max_cols {
         return name.to_string();
+    }
+    if let Some(elided) = elide_path_label(name, max_cols) {
+        return elided;
     }
     let budget = max_cols.saturating_sub(str_width(TAB_NAME_ELLIPSIS));
     let mut width = 0;
@@ -418,9 +460,59 @@ fn tab_name_cap(
     }
 }
 
-/// Resolve display names for tab targets, disambiguating duplicates by appending a number.
-/// For example, if there are three unnamed buffers, they become "[No Name]", "[No Name] 2", "[No Name] 3".
-/// Similarly, duplicate filenames get numbered: "main.rs", "main.rs 2".
+/// Display components of `path`, outermost first.
+///
+/// Only `Normal` components are kept: a root (`/`) or Windows drive prefix
+/// never helps tell two same-named files apart, and re-joining it would double
+/// the separator. Non-UTF-8 components are shown lossily rather than dropped,
+/// so a tab for such a file is still distinguishable.
+fn label_components(path: &Path) -> Vec<String> {
+    path.components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The last `depth` components of `parts`, joined with the platform separator.
+/// A `depth` past the start of `parts` yields the whole path.
+fn path_tail(parts: &[String], depth: usize) -> String {
+    let start = parts.len().saturating_sub(depth);
+    parts[start..].join(MAIN_SEPARATOR_STR)
+}
+
+/// The shortest trailing path fragment of `parts` that none of `others` shares
+/// — `src/main.rs` when the collision is with `tests/main.rs`, `a/b/main.rs`
+/// when it takes two directories to separate them.
+///
+/// Depth 1 is the file name, which every member of a same-name group shares by
+/// construction, so the search starts at 2. Returns `None` when the paths stay
+/// identical all the way up (or the file has no parent directory at all), which
+/// leaves the caller to fall back to numbering.
+fn shortest_unique_tail(parts: &[String], others: &[&[String]]) -> Option<String> {
+    (2..=parts.len()).find_map(|depth| {
+        let tail = path_tail(parts, depth);
+        others
+            .iter()
+            .all(|other| path_tail(other, depth) != tail)
+            .then_some(tail)
+    })
+}
+
+/// Resolve display names for tab targets, disambiguating duplicates.
+///
+/// A tab is normally just the file's name. When several open tabs share that
+/// name — the common case in a workspace full of `mod.rs` / `index.ts` — each
+/// one is instead labelled with the shortest trailing path fragment that tells
+/// it apart from the others (`model/mod.rs` vs `view/mod.rs`), so the tab bar
+/// says which file it is without the user hovering or switching (issue #2851).
+///
+/// Tabs with no file path behind them (unnamed buffers, terminals, composite
+/// buffers, groups) can't be separated that way, so those — and any file whose
+/// path is identical to another's all the way up — keep the older numeric
+/// suffix: three unnamed buffers become "[No Name] 1", "[No Name] 2",
+/// "[No Name] 3".
 ///
 /// `group_names` provides the display name for each group tab (`TabTarget::Group`).
 fn resolve_tab_names(
@@ -430,7 +522,8 @@ fn resolve_tab_names(
     composite_buffers: &HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
     group_names: &HashMap<LeafId, String>,
 ) -> HashMap<TabTarget, String> {
-    let mut names: Vec<(TabTarget, String)> = Vec::new();
+    // (target, base name, path components when the tab is backed by a file).
+    let mut names: Vec<(TabTarget, String, Option<Vec<String>>)> = Vec::new();
 
     for t in tab_targets.iter() {
         match t {
@@ -452,25 +545,34 @@ fn resolve_tab_names(
                     .map(|mode| mode == "terminal")
                     .unwrap_or(false);
 
-                let name = if is_composite_buffer {
-                    meta.map(|m| m.display_name.as_str())
-                } else if is_terminal {
+                // Only real file buffers carry a path we can disambiguate by;
+                // terminals and composite buffers are named by their metadata.
+                let file_path = (!is_composite_buffer && !is_terminal)
+                    .then(|| buffers.get(id).and_then(|state| state.buffer.file_path()))
+                    .flatten();
+
+                let name = if is_composite_buffer || is_terminal {
                     meta.map(|m| m.display_name.as_str())
                 } else {
-                    buffers
-                        .get(id)
-                        .and_then(|state| state.buffer.file_path())
+                    file_path
                         .and_then(|p| p.file_name())
                         .and_then(|n| n.to_str())
                         .or_else(|| meta.map(|m| m.display_name.as_str()))
                 }
                 .unwrap_or("[No Name]");
 
-                names.push((*t, name.to_string()));
+                // Keep the path only when the label really is the file's name;
+                // a buffer falling back to its display name isn't described by
+                // its path, so a path fragment there would mislead.
+                let parts = file_path
+                    .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some(name))
+                    .map(label_components);
+
+                names.push((*t, name.to_string(), parts));
             }
             TabTarget::Group(leaf_id) => {
                 if let Some(name) = group_names.get(leaf_id) {
-                    names.push((*t, name.clone()));
+                    names.push((*t, name.clone(), None));
                 }
             }
         }
@@ -478,20 +580,51 @@ fn resolve_tab_names(
 
     // Count occurrences of each name
     let mut name_counts: HashMap<&str, usize> = HashMap::new();
-    for (_, name) in &names {
+    for (_, name, _) in &names {
         *name_counts.entry(name.as_str()).or_insert(0) += 1;
     }
 
-    // Assign disambiguated names — all duplicates get a number, including the first
+    // Duplicates first try a path fragment; whatever that can't separate
+    // (pathless buffers, or paths identical all the way up) is numbered below,
+    // per base name, exactly as before.
     let mut result = HashMap::new();
-    let mut name_indices: HashMap<String, usize> = HashMap::new();
-    for (t, name) in &names {
-        if name_counts.get(name.as_str()).copied().unwrap_or(0) > 1 {
-            let idx = name_indices.entry(name.clone()).or_insert(0);
-            *idx += 1;
-            result.insert(*t, format!("{} {}", name, idx));
-        } else {
+    let mut numbered: Vec<(TabTarget, &str)> = Vec::new();
+    for (t, name, parts) in &names {
+        if name_counts.get(name.as_str()).copied().unwrap_or(0) <= 1 {
             result.insert(*t, name.clone());
+            continue;
+        }
+        // The other tabs sharing this base name that we could compare against.
+        let others: Vec<&[String]> = names
+            .iter()
+            .filter(|(other_t, other_name, _)| other_t != t && other_name == name)
+            .filter_map(|(_, _, other_parts)| other_parts.as_deref())
+            .collect();
+        match parts
+            .as_deref()
+            .and_then(|p| shortest_unique_tail(p, &others))
+        {
+            Some(tail) => {
+                result.insert(*t, tail);
+            }
+            None => numbered.push((*t, name.as_str())),
+        }
+    }
+
+    // A tab left over on its own is already unambiguous — only number a base
+    // name that still has several claimants.
+    let mut leftover_counts: HashMap<&str, usize> = HashMap::new();
+    for (_, name) in &numbered {
+        *leftover_counts.entry(*name).or_insert(0) += 1;
+    }
+    let mut name_indices: HashMap<&str, usize> = HashMap::new();
+    for (t, name) in numbered {
+        if leftover_counts.get(name).copied().unwrap_or(0) > 1 {
+            let idx = name_indices.entry(name).or_insert(0);
+            *idx += 1;
+            result.insert(t, format!("{} {}", name, idx));
+        } else {
+            result.insert(t, name.to_string());
         }
     }
 
@@ -1747,6 +1880,239 @@ mod tests {
         let area = Rect::new(0, 0, 40, 1);
         let (_row, layout) = render_row0_ext(area, &targets, &group_names, targets[0], 0, true);
         assert!(!layout.right_overflow, "no overflow expected when tabs fit");
+    }
+
+    // --- Path disambiguation of same-named tabs (issue #2851) -----------
+
+    /// Build buffer inputs for `resolve_tab_names`: one file buffer per path,
+    /// keyed by ascending `BufferId`.
+    fn build_file_inputs(paths: &[&str]) -> (Vec<TabTarget>, HashMap<BufferId, EditorState>) {
+        use crate::config::LARGE_FILE_THRESHOLD_BYTES;
+        use crate::model::filesystem::StdFileSystem;
+
+        let mut buffers = HashMap::new();
+        let mut targets = Vec::new();
+        for (i, p) in paths.iter().enumerate() {
+            let id = BufferId(i);
+            let mut state = EditorState::new(
+                80,
+                24,
+                LARGE_FILE_THRESHOLD_BYTES as usize,
+                std::sync::Arc::new(StdFileSystem),
+            );
+            state.buffer.set_file_path(std::path::PathBuf::from(p));
+            buffers.insert(id, state);
+            targets.push(TabTarget::Buffer(id));
+        }
+        (targets, buffers)
+    }
+
+    /// Resolve names for a set of file paths, returned in the input order.
+    fn resolved_for(paths: &[&str]) -> Vec<String> {
+        let (targets, buffers) = build_file_inputs(paths);
+        let resolved = resolve_tab_names(
+            &targets,
+            &buffers,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        targets
+            .iter()
+            .map(|t| resolved.get(t).cloned().unwrap_or_default())
+            .collect()
+    }
+
+    /// Join components with the platform separator, so the expectations below
+    /// read the same on Windows as on Unix.
+    fn p(parts: &[&str]) -> String {
+        parts.join(MAIN_SEPARATOR_STR)
+    }
+
+    #[test]
+    fn unique_file_names_stay_bare() {
+        assert_eq!(
+            resolved_for(&["/w/src/main.rs", "/w/src/lib.rs"]),
+            vec!["main.rs".to_string(), "lib.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn duplicate_file_names_get_their_distinguishing_directory() {
+        // The old behaviour numbered these ("mod.rs 1" / "mod.rs 2"), which
+        // says nothing about which file is which.
+        assert_eq!(
+            resolved_for(&["/w/src/model/mod.rs", "/w/src/view/mod.rs"]),
+            vec![p(&["model", "mod.rs"]), p(&["view", "mod.rs"])]
+        );
+    }
+
+    #[test]
+    fn disambiguation_walks_up_until_the_paths_differ() {
+        // The parent directory is shared, so one level isn't enough: each label
+        // grows only until it is unique, and no further.
+        assert_eq!(
+            resolved_for(&[
+                "/w/crates/a/src/lib.rs",
+                "/w/crates/b/src/lib.rs",
+                "/w/vendor/lib.rs",
+            ]),
+            vec![
+                p(&["a", "src", "lib.rs"]),
+                p(&["b", "src", "lib.rs"]),
+                p(&["vendor", "lib.rs"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_colliding_names_grow_a_path() {
+        // `unique.rs` shares its name with nobody, so it stays bare while the
+        // `mod.rs` pair is disambiguated.
+        assert_eq!(
+            resolved_for(&["/w/a/mod.rs", "/w/b/mod.rs", "/w/a/unique.rs"]),
+            vec![
+                p(&["a", "mod.rs"]),
+                p(&["b", "mod.rs"]),
+                "unique.rs".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn pathless_duplicates_still_fall_back_to_numbering() {
+        // Unnamed buffers have no path to disambiguate by, so they keep the
+        // numeric suffix.
+        use crate::config::LARGE_FILE_THRESHOLD_BYTES;
+        use crate::model::filesystem::StdFileSystem;
+
+        let mut buffers = HashMap::new();
+        let mut targets = Vec::new();
+        for i in 0..3 {
+            let id = BufferId(i);
+            buffers.insert(
+                id,
+                EditorState::new(
+                    80,
+                    24,
+                    LARGE_FILE_THRESHOLD_BYTES as usize,
+                    std::sync::Arc::new(StdFileSystem),
+                ),
+            );
+            targets.push(TabTarget::Buffer(id));
+        }
+        let resolved = resolve_tab_names(
+            &targets,
+            &buffers,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        );
+        let mut labels: Vec<String> = targets
+            .iter()
+            .map(|t| resolved[t].clone())
+            .collect::<Vec<_>>();
+        labels.sort();
+        assert_eq!(labels, vec!["[No Name] 1", "[No Name] 2", "[No Name] 3"]);
+    }
+
+    #[test]
+    fn a_file_at_the_filesystem_root_falls_back_to_numbering() {
+        // `/main.rs` has no directory above it to name, so the pair can't be
+        // told apart by path and keeps the numeric suffix.
+        let labels = resolved_for(&["/main.rs", "/main.rs"]);
+        assert_eq!(labels, vec!["main.rs 1", "main.rs 2"]);
+    }
+
+    #[test]
+    fn duplicate_group_names_still_number() {
+        // Groups carry no path at all.
+        let (targets, group_names) = build_group_inputs(&["scratch", "scratch"]);
+        let resolved = resolve_tab_names(
+            &targets,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+            &group_names,
+        );
+        let mut labels: Vec<String> = targets.iter().map(|t| resolved[t].clone()).collect();
+        labels.sort();
+        assert_eq!(labels, vec!["scratch 1", "scratch 2"]);
+    }
+
+    // --- Path-aware elision ---------------------------------------------
+
+    #[test]
+    fn elision_of_a_path_label_keeps_the_file_name() {
+        let label = p(&["crates", "fresh-editor", "src", "view", "ui", "tabs.rs"]);
+        let out = elided_tab_name(&label, TAB_NAME_MAX_COLS);
+        assert!(
+            str_width(&out) <= TAB_NAME_MAX_COLS,
+            "elided width {} exceeds cap {TAB_NAME_MAX_COLS}: {out:?}",
+            str_width(&out)
+        );
+        assert!(
+            out.ends_with("tabs.rs"),
+            "the file name must survive elision, got {out:?}"
+        );
+        assert!(
+            out.starts_with('…'),
+            "the dropped leading directories must be marked, got {out:?}"
+        );
+    }
+
+    #[test]
+    fn elision_keeps_as_many_directories_as_fit() {
+        let label = p(&["aaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "view", "ui", "tabs.rs"]);
+        let out = elided_tab_name(&label, TAB_NAME_MAX_COLS);
+        assert_eq!(out, format!("…{}", p(&["", "view", "ui", "tabs.rs"])));
+    }
+
+    #[test]
+    fn a_file_name_too_long_for_the_cap_is_truncated_from_the_end() {
+        // Not even "…/" plus the file name fits, so the whole label falls back
+        // to leading-character truncation rather than rendering a bare marker.
+        let long_file = format!("{}.rs", "n".repeat(60));
+        let label = p(&["src", &long_file]);
+        let out = elided_tab_name(&label, TAB_NAME_MAX_COLS);
+        assert!(str_width(&out) <= TAB_NAME_MAX_COLS);
+        assert!(out.ends_with('…'), "got {out:?}");
+        assert!(out.starts_with("src"), "got {out:?}");
+    }
+
+    #[test]
+    fn path_labels_keep_the_two_width_builders_in_sync() {
+        // Disambiguated labels are elided in both builders; a divergence here
+        // would drift hit-testing and the scroll math.
+        let paths = [
+            "/w/crates/fresh-editor/src/view/ui/mod.rs",
+            "/w/crates/fresh-editor/src/model/buffer/mod.rs",
+        ];
+        let (targets, buffers) = build_file_inputs(&paths);
+        let meta = HashMap::new();
+        let comp = HashMap::new();
+        let group_names = HashMap::new();
+        let bar = 30; // narrow enough to force the cap
+
+        let (widths, rendered) =
+            calculate_tab_widths(&targets, &buffers, &meta, &comp, &group_names, None, bar);
+        assert_eq!(rendered.len(), 2);
+
+        let resolved = resolve_tab_names(&targets, &buffers, &meta, &comp, &group_names);
+        let cap = tab_name_cap(&targets, &resolved, &buffers, &meta, &comp, None, bar);
+        let theme =
+            crate::view::theme::Theme::load_builtin(crate::view::theme::THEME_DARK).unwrap();
+        let (_spans, ranges, _rendered2) = build_tab_spans(
+            &targets, &resolved, &buffers, &meta, &comp, targets[0], None, None, true, &theme, cap,
+        );
+        for (i, (start, end, _close)) in ranges.iter().enumerate() {
+            // widths interleaves separators: tab i sits at index i*2.
+            assert_eq!(
+                end - start,
+                widths[i * 2],
+                "tab {i}: build_tab_spans width must match calculate_tab_widths"
+            );
+        }
     }
 
     #[test]
