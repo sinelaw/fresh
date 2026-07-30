@@ -59,7 +59,7 @@ fn test_toggle_indentation_command() {
     harness.render().unwrap();
 
     // Run "Toggle Indentation" command to switch to spaces
-    run_command(&mut harness, "Toggle Indentation");
+    run_command(&mut harness, "Toggle Indentation: Spaces");
 
     // Now Tab should insert spaces
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -81,7 +81,7 @@ fn test_toggle_indentation_command() {
         .unwrap();
     harness.render().unwrap();
 
-    run_command(&mut harness, "Toggle Indentation");
+    run_command(&mut harness, "Toggle Indentation: Spaces");
 
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     let content = harness.get_buffer_content().unwrap();
@@ -380,7 +380,7 @@ fn test_reset_buffer_settings_command() {
 
     // Modify settings: toggle tab indicators and toggle indentation to spaces
     run_command(&mut harness, "Toggle Tab Indicators");
-    run_command(&mut harness, "Toggle Indentation"); // Go uses tabs by default, so toggle switches to spaces
+    run_command(&mut harness, "Toggle Indentation: Spaces"); // Go uses tabs by default, so toggle switches to spaces
 
     // Verify modifications took effect
     let screen_modified = harness.screen_to_string();

@@ -390,10 +390,42 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
-    // `toggle_tab_bar` / `toggle_status_bar` / `toggle_prompt_line` and
-    // their `*_visible` getters live on `impl Window` — call them via
-    // `self.active_window_mut().toggle_tab_bar()` etc. (or read
-    // `active_window().tab_bar_visible` for the flag directly).
+    /// Toggle the tab bar, saving the new editor-wide default.
+    ///
+    /// The `Window::toggle_*` methods below flip only that window's runtime
+    /// flag; these wrappers add the half that makes an unsuffixed toggle mean
+    /// "editor-wide default, saved" — mirroring
+    /// [`toggle_menu_bar`](Self::toggle_menu_bar). Without them the bars came
+    /// back on the next launch, since the window flag is seeded from
+    /// `editor.show_tab_bar` and nothing ever wrote it.
+    pub fn toggle_tab_bar(&mut self) {
+        self.active_window_mut().toggle_tab_bar();
+        let new_value = self.active_window().tab_bar_visible;
+        self.config_mut().editor.show_tab_bar = new_value;
+        self.persist_config_change("/editor/show_tab_bar", serde_json::Value::Bool(new_value));
+    }
+
+    /// Toggle the status bar, saving the new editor-wide default.
+    pub fn toggle_status_bar(&mut self) {
+        self.active_window_mut().toggle_status_bar();
+        let new_value = self.active_window().status_bar_visible;
+        self.config_mut().editor.show_status_bar = new_value;
+        self.persist_config_change(
+            "/editor/show_status_bar",
+            serde_json::Value::Bool(new_value),
+        );
+    }
+
+    /// Toggle the prompt line, saving the new editor-wide default.
+    pub fn toggle_prompt_line(&mut self) {
+        self.active_window_mut().toggle_prompt_line();
+        let new_value = self.active_window().prompt_line_visible;
+        self.config_mut().editor.show_prompt_line = new_value;
+        self.persist_config_change(
+            "/editor/show_prompt_line",
+            serde_json::Value::Bool(new_value),
+        );
+    }
 
     /// Toggle the file explorer side between left and right.
     ///
@@ -494,6 +526,14 @@ impl Editor {
             .expect("active window present")
             .get_mut(&buffer_id)
         {
+            // Clear the explicit per-buffer pins first: `apply_config`
+            // deliberately preserves them (that is what makes a "(Current
+            // Buffer)" toggle survive a config reload), so resetting without
+            // this would re-apply the very overrides it is meant to drop.
+            // `EditorState::indentation_guide_override` is deliberately left
+            // alone: that one is the plugin-facing knob describing a tool view
+            // (the Git Log commit diff), not a user setting to reset.
+            state.buffer_settings.clear_user_overrides();
             state.apply_buffer_config(&self.config);
         }
 
@@ -549,6 +589,10 @@ impl Editor {
     pub fn toggle_mouse_hover(&mut self) {
         let new_value = !self.config.editor.mouse_hover_enabled;
         self.config_mut().editor.mouse_hover_enabled = new_value;
+        self.persist_config_change(
+            "/editor/mouse_hover_enabled",
+            serde_json::Value::Bool(new_value),
+        );
 
         if self.config.editor.mouse_hover_enabled {
             self.set_status_message(t!("toggle.mouse_hover_enabled").to_string());
@@ -591,6 +635,10 @@ impl Editor {
     pub fn toggle_inlay_hints(&mut self) {
         let new_value = !self.config.editor.enable_inlay_hints;
         self.config_mut().editor.enable_inlay_hints = new_value;
+        self.persist_config_change(
+            "/editor/enable_inlay_hints",
+            serde_json::Value::Bool(new_value),
+        );
         // `Window::send_lsp_changes_for_buffer` reads
         // `resources.config.editor.enable_inlay_hints`; sync so the per-edit
         // LSP refresh sees the new value without waiting for a reload.

@@ -57,6 +57,21 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 - On Windows, User config is at `%APPDATA%\fresh\config.json`
 - Project config is found by searching up from the current directory for `.fresh/config.json`
 
+### Per-Buffer Overrides
+
+Below the config layers sits one more scope: an individual buffer. Command-palette toggles say which scope they act on, so you never have to guess:
+
+| Command form | Scope | Where it is saved |
+|---|---|---|
+| **Toggle X** | Editor-wide default | User config layer (`config.json`) |
+| **Toggle X (Current Buffer)** | The active buffer only | Per-file workspace state |
+
+An unsuffixed toggle changes the default for every buffer that hasn't been pinned, and is written to your config immediately — the same as changing it in the Settings UI. A `(Current Buffer)` toggle pins just that file, leaves the default and every other buffer alone, and comes back the next time you open the file. Buffers you never pin keep following the default, so later config edits still reach them.
+
+Commands with the `(Current Buffer)` suffix: Line Numbers, Line Wrap, Virtual Space, Indentation Guides, Folding Indicators, Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Read-Only Mode, Auto-Revert, and LSP. Auto-Revert and LSP apply for the current session only — they control file watching and language-server lifecycle rather than display.
+
+Some settings also have a per-language layer in the config file (`languages.<id>.<setting>`), which sits between the editor-wide default and a per-buffer pin.
+
 ## How Layers Are Merged
 
 Fresh merges all layers. Merge behavior depends on the setting type:

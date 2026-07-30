@@ -1554,6 +1554,21 @@ impl crate::app::window::Window {
                         if let Some(fold_indicators) = file_state.fold_indicators {
                             state.buffer_settings.fold_indicators_override = Some(fold_indicators);
                         }
+                        if let Some(use_tabs) = file_state.use_tabs {
+                            state.buffer_settings.use_tabs = use_tabs;
+                            state.buffer_settings.use_tabs_override = Some(use_tabs);
+                        }
+                        // The master whitespace toggle stores a bool, not the
+                        // resolved struct, so the visibility is re-derived from
+                        // config here — that way a config edit between sessions
+                        // still lands. `buffer_settings.whitespace` is still the
+                        // configured value at this point (nothing has toggled
+                        // it yet), so it is the right baseline to pass in.
+                        if let Some(whitespace_visible) = file_state.whitespace_indicators {
+                            let configured = state.buffer_settings.whitespace;
+                            state.buffer_settings.whitespace_override = Some(whitespace_visible);
+                            state.buffer_settings.apply_whitespace_override(configured);
+                        }
                         buf_state.folds.clear(&mut state.marker_list);
                         for fold in &file_state.folds {
                             // Resolve the stored line numbers against the current
@@ -2004,6 +2019,8 @@ impl crate::app::window::Window {
             virtual_space: None,
             indentation_guide: None,
             fold_indicators: None,
+            use_tabs: None,
+            whitespace_indicators: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
@@ -3135,6 +3152,12 @@ fn serialize_split_view_state(
                 fold_indicators: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.fold_indicators_override),
+                use_tabs: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.use_tabs_override),
+                whitespace_indicators: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.whitespace_override),
                 plugin_state: buf_state.plugin_state.clone(),
                 folds,
             },
