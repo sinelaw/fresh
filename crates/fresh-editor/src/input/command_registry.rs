@@ -711,6 +711,70 @@ mod tests {
         }
     }
 
+    /// Same split with the file explorer focused: the editor-wide commands and
+    /// the window/tab management ones stay runnable, while everything that
+    /// needs the focused buffer's cursor does not — the keyboard belongs to the
+    /// tree, so the palette must not offer to edit or save through it.
+    #[test]
+    fn test_focus_independent_commands_enabled_in_file_explorer_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        for name in [
+            // Editor/app-wide state and navigation history.
+            "Save All",
+            "Navigate Back",
+            "Navigate Forward",
+            "Toggle Line Wrap",
+            "Toggle Current Line Highlight",
+            "Toggle Inlay Hints",
+            "Set Background",
+            "List Bookmarks",
+            "List Macros",
+            "init: Reload init.ts",
+            "Restart Terminal Process",
+            // Window, split and tab management.
+            "Switch to Previous Tab",
+            "Switch to Tab by Name",
+            "Extract Tab to New Workspace",
+            "Increase Split Size",
+            "Decrease Split Size",
+            "Toggle Mouse Support",
+            // The explorer's own commands, unchanged.
+            "File Explorer: Refresh",
+            "Toggle Hidden Files",
+        ] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' should be available while the file explorer is focused"
+            );
+        }
+
+        // The buffer is not what has focus: commands that act on its cursor or
+        // its file stay disabled, exactly as they are in a terminal.
+        for name in [
+            "Save File",
+            "Save File As",
+            "Undo",
+            "Redo",
+            "Delete Line",
+            "Sort Lines",
+            "Go to Line",
+            "Toggle Comment",
+            "Go to Definition",
+            "Set Language",
+        ] {
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' acts on the focused buffer and should stay disabled in the explorer"
+            );
+        }
+    }
+
     /// The palette must agree with the keymap: an action the terminal input
     /// handler lets through (`is_terminal_ui_action`) is runnable from the
     /// palette too, even though its `CommandDef` only lists `Normal`.

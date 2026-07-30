@@ -330,6 +330,85 @@ fn test_file_explorer_focus_switching() {
     assert!(harness.editor().file_explorer_visible());
 }
 
+/// Open the palette, run the entry matching `query`, and return the screen.
+fn run_from_palette(harness: &mut EditorTestHarness, query: &str, command: &str) -> String {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(query).unwrap();
+    let command = command.to_string();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&command))
+        .expect("the palette should offer the command");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.screen_to_string()
+}
+
+/// Commands that don't need a focused buffer still run from the palette while
+/// the file explorer holds the keyboard. Before this, the explorer disabled
+/// every `Normal`-context command, so Enter produced "not available in current
+/// context" for editor-wide ones too.
+#[test]
+fn test_palette_runs_focus_independent_command_while_explorer_focused() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+    assert!(harness.editor().file_explorer_visible());
+
+    // Editor-wide: saving every modified buffer doesn't care what has focus.
+    // Nothing was edited, so it reports it had nothing to write — proof it ran.
+    let screen = run_from_palette(&mut harness, "save all", "Save All");
+    assert!(
+        !screen.contains("not available in current context"),
+        "the palette refused Save All in the explorer\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("No modified files to save"),
+        "Save All should have run and reported nothing to save\nScreen:\n{screen}"
+    );
+
+    // And a command whose keybinding already falls through to the explorer
+    // (`is_terminal_ui_action`) is no longer greyed out in the palette either.
+    let screen = run_from_palette(&mut harness, "toggle utility dock", "Toggle Utility Dock");
+    assert!(
+        screen.contains("No Utility Dock open"),
+        "Toggle Utility Dock should have run and reported no dock\nScreen:\n{screen}"
+    );
+}
+
+/// The other half of the rule: the explorer owns the keyboard, so commands that
+/// act on the focused buffer's cursor are *not* offered through it.
+#[test]
+fn test_palette_refuses_buffer_command_while_explorer_focused() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+
+    // Typed before focusing the tree — the explorer swallows typing.
+    harness.type_text("UNIQUELINE").unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().focus_file_explorer();
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = run_from_palette(&mut harness, "duplicate line", "Duplicate Line");
+
+    assert!(
+        screen.contains("not available in current context"),
+        "Duplicate Line needs the buffer's cursor and should be refused from the explorer\nScreen:\n{screen}"
+    );
+    assert_eq!(
+        screen.matches("UNIQUELINE").count(),
+        1,
+        "the line must not have been duplicated\nScreen:\n{screen}"
+    );
+}
+
 /// Test that file explorer keybindings only work when explorer has focus
 #[test]
 fn test_file_explorer_context_aware_keybindings() {
