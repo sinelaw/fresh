@@ -167,7 +167,16 @@ fn markers_follow_their_content_through_edits() {
         vec![marker(200, OverlayColorSpec::Rgb(255, 0, 0))],
     );
     harness.render().unwrap();
-    let before = marker_rows(&harness);
+    // Filtered by colour: the edit below also puts the editor's own
+    // unsaved-change marks on the track, and this test is about the plugin's.
+    let plugin_rows = |h: &EditorTestHarness| -> Vec<u16> {
+        marker_rows(h)
+            .into_iter()
+            .filter(|(_, fg)| *fg == Some(Color::Rgb(255, 0, 0)))
+            .map(|(row, _)| row)
+            .collect()
+    };
+    let before = plugin_rows(&harness);
     assert_eq!(before.len(), 1, "one marker expected, saw {before:?}");
 
     // Type a large block of new text at the very top of the buffer. The
@@ -180,17 +189,17 @@ fn markers_follow_their_content_through_edits() {
     harness.type_text(&format!("{inserted}\n")).unwrap();
     harness.render().unwrap();
 
-    let after = marker_rows(&harness);
+    let after = plugin_rows(&harness);
     assert_eq!(
         after.len(),
         1,
         "marker should survive the edit, saw {after:?}"
     );
     assert!(
-        after[0].0 > before[0].0,
+        after[0] > before[0],
         "marker should move down the track after inserting above it: {} -> {}",
-        before[0].0,
-        after[0].0
+        before[0],
+        after[0]
     );
 }
 
@@ -293,5 +302,153 @@ fn range_scoped_publish_preserves_markers_outside_the_range() {
         rows.len(),
         3,
         "the two out-of-range marks must survive alongside the new one, saw {rows:?}"
+    );
+}
+
+// =============================================================================
+// Unsaved changes
+// =============================================================================
+
+/// The colour the editor paints its own unsaved-change marks in — the same
+/// cornflower blue as the gutter bar for the same change.
+const UNSAVED_BLUE: Color = Color::Rgb(100, 149, 237);
+
+/// The gutter can only speak for the lines on screen. Typing near the top of a
+/// long file and scrolling away leaves no trace in the gutter — the scrollbar
+/// mark is the only thing that still says "there is an unsaved edit up there".
+#[test]
+fn unsaved_edits_are_marked_on_the_scrollbar_even_when_scrolled_away() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.load_buffer_from_text(&long_content(400)).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        marker_rows(&harness).is_empty(),
+        "an unmodified buffer must leave the track clean"
+    );
+
+    harness.type_text("edited near the top\n").unwrap();
+    harness.render().unwrap();
+
+    let rows = marker_rows(&harness);
+    assert_eq!(
+        rows.iter().map(|(_, fg)| *fg).collect::<Vec<_>>(),
+        vec![Some(UNSAVED_BLUE)],
+        "the edit should put one blue mark on the track, saw {rows:?}"
+    );
+    let (first, last) = harness.content_area_rows();
+    let position = (rows[0].0 as f64 - first as f64) / (last - first + 1) as f64;
+    assert!(
+        position < 0.15,
+        "the edit is near the top of the file, so its mark is near the top of \
+         the track: {position}"
+    );
+
+    // Scroll until the edit is off screen. The mark must survive: that is the
+    // whole point — the gutter bar for it is gone from view.
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    assert!(
+        !harness.screen_to_string().contains("edited near the top"),
+        "the test needs the edited line scrolled out of view"
+    );
+    let rows = marker_rows(&harness);
+    assert_eq!(
+        rows.iter().map(|(_, fg)| *fg).collect::<Vec<_>>(),
+        vec![Some(UNSAVED_BLUE)],
+        "the mark must survive scrolling the edit off screen, saw {rows:?}"
+    );
+}
+
+/// Saving clears the marks: they track the diff against what is on disk, so
+/// once the file matches, nothing is left over.
+#[test]
+fn saving_clears_the_unsaved_change_marks() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = harness.load_buffer_from_text(&long_content(400)).unwrap();
+
+    harness.type_text("an unsaved edit\n").unwrap();
+    harness.render().unwrap();
+    assert!(
+        !marker_rows(&harness).is_empty(),
+        "the edit should be marked before saving"
+    );
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| marker_rows(h).is_empty())
+        .expect("saving should clear the unsaved-change marks");
+
+    drop(fixture);
+}
+
+/// Plugin markers and the editor's own marks share one track: a git hunk
+/// (priority 10) keeps its colour on a cell the unsaved-change mark (5) also
+/// wants, and the unsaved mark still shows everywhere else.
+#[test]
+fn plugin_markers_and_unsaved_marks_coexist() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let text = long_content(400);
+    harness.load_buffer_from_text(&text).unwrap();
+
+    // Edit at the top, so the unsaved mark lands on the track's first row.
+    harness.type_text("edited\n").unwrap();
+    harness.render().unwrap();
+
+    // A plugin marks the same top-of-file position, plus a spot near the end.
+    let len = text.len() as u32;
+    set_markers(
+        &mut harness,
+        vec![
+            ScrollbarMarker {
+                position: Some(0),
+                line: None,
+                end: None,
+                color: OverlayColorSpec::Rgb(255, 0, 0),
+                priority: Some(10),
+            },
+            marker(len - 1, OverlayColorSpec::Rgb(255, 0, 0)),
+        ],
+    );
+    harness.render().unwrap();
+
+    let rows = marker_rows(&harness);
+    assert_eq!(
+        rows.first().map(|(_, fg)| *fg),
+        Some(Some(Color::Rgb(255, 0, 0))),
+        "the higher-priority plugin marker wins the cell they share: {rows:?}"
+    );
+    assert_eq!(
+        rows.last().map(|(_, fg)| *fg),
+        Some(Some(Color::Rgb(255, 0, 0))),
+        "the plugin's other marker is unaffected: {rows:?}"
+    );
+}
+
+/// Past 5 000 lines the scrollbar switches from the wrapped-row basis to
+/// logical lines, and that path pre-resolves every byte the projection will
+/// ask about into a map. A regression here is not a wrong mark but a panic in
+/// the render loop, so the regime gets its own coverage.
+#[test]
+fn unsaved_marks_work_on_the_logical_line_basis() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.load_buffer_from_text(&long_content(6_000)).unwrap();
+    harness.render().unwrap();
+
+    harness.type_text("edited\n").unwrap();
+    harness.render().unwrap();
+
+    let rows = marker_rows(&harness);
+    assert_eq!(
+        rows.iter().map(|(_, fg)| *fg).collect::<Vec<_>>(),
+        vec![Some(UNSAVED_BLUE)],
+        "the edit should be marked on a logical-line-basis scrollbar too, saw {rows:?}"
     );
 }
