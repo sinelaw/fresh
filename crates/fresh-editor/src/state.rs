@@ -98,6 +98,22 @@ pub struct BufferSettings {
     /// Set based on language config; can be toggled per-buffer by user
     pub use_tabs: bool,
 
+    /// Explicit per-buffer indentation-style override, set by "Toggle
+    /// Indentation: Spaces ↔ Tabs (Current Buffer)". `None` = follow the
+    /// resolved language config. Persisted in the per-file workspace state.
+    pub use_tabs_override: Option<bool>,
+
+    /// Explicit per-buffer whitespace-indicator master override, set by
+    /// "Toggle Whitespace Indicators (Current Buffer)" / "Toggle Tab
+    /// Indicators (Current Buffer)". `Some(false)` hides every indicator
+    /// regardless of config; `Some(true)` shows the configured set; `None`
+    /// follows config. Persisted in the per-file workspace state.
+    ///
+    /// A single bool rather than a full [`WhitespaceVisibility`](crate::config::WhitespaceVisibility):
+    /// the command is a master on/off, and storing the resolved struct would
+    /// freeze the buffer against later config edits.
+    pub whitespace_override: Option<bool>,
+
     /// Tab size (number of spaces per tab character) for rendering.
     /// Used for visual display of tab characters and indent calculations.
     /// Set based on language config; can be changed per-buffer by user
@@ -156,6 +172,8 @@ impl Default for BufferSettings {
         Self {
             whitespace: crate::config::WhitespaceVisibility::default(),
             use_tabs: false,
+            use_tabs_override: None,
+            whitespace_override: None,
             tab_size: 4,
             auto_close: true,
             auto_surround: true,
@@ -179,21 +197,57 @@ impl BufferSettings {
     /// config reload) picks it up automatically.
     ///
     /// Explicit per-buffer user overrides are preserved: `virtual_space`
-    /// keeps following `virtual_space_override` when one is set, and the
+    /// keeps following `virtual_space_override`, `use_tabs` follows
+    /// `use_tabs_override` and `whitespace` follows `whitespace_override`
+    /// when one is set, and the
     /// `indentation_guide_user_override` / `fold_indicators_override` choices
     /// are left untouched (they are consulted at render time, so re-stamping
     /// the language gate below can't clear them).
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
         self.tab_size = resolved.tab_size;
-        self.use_tabs = resolved.use_tabs;
+        self.use_tabs = self.use_tabs_override.unwrap_or(resolved.use_tabs);
         self.auto_close = resolved.auto_close;
         self.auto_surround = resolved.auto_surround;
         self.virtual_space = self
             .virtual_space_override
             .unwrap_or(resolved.virtual_space);
-        self.whitespace = resolved.whitespace;
+        self.apply_whitespace_override(resolved.whitespace);
         self.word_characters = resolved.word_characters.clone();
         self.indentation_guide = resolved.indentation_guide;
+    }
+
+    /// Drop every explicit per-buffer override, so the buffer goes back to
+    /// following the global + per-language configuration.
+    ///
+    /// The counterpart to [`apply_config`](Self::apply_config), which
+    /// deliberately *preserves* these: "Reset Buffer Settings" is the one place
+    /// that must clear them, and it re-applies the config afterwards. Every
+    /// `*_override` field belongs here — one left out is a setting the user can
+    /// pin but never un-pin.
+    pub fn clear_user_overrides(&mut self) {
+        self.virtual_space_override = None;
+        self.use_tabs_override = None;
+        self.whitespace_override = None;
+        self.indentation_guide_user_override = None;
+        self.fold_indicators_override = None;
+    }
+
+    /// Resolve `whitespace` from the buffer's configured visibility and the
+    /// per-buffer master override.
+    ///
+    /// THE single place the override semantics live, so a restored session and
+    /// a later `apply_config` can't disagree. `Some(true)` has to mirror what
+    /// `WhitespaceVisibility::toggle_all` does when nothing is configured
+    /// visible — fall back to the default set — otherwise turning indicators on
+    /// in a language that hides them (Go hides tabs) would silently restore to
+    /// "hidden" and lose the user's choice.
+    pub fn apply_whitespace_override(&mut self, configured: crate::config::WhitespaceVisibility) {
+        use crate::config::WhitespaceVisibility;
+        self.whitespace = match self.whitespace_override {
+            Some(false) => WhitespaceVisibility::hidden(),
+            Some(true) if !configured.any_visible() => WhitespaceVisibility::default(),
+            _ => configured,
+        };
     }
 
     /// Whether the gutter should draw fold arrows for this buffer. Defaults to

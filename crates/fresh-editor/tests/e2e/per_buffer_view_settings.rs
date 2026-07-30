@@ -1,14 +1,22 @@
-//! E2E tests for per-buffer view-setting command-palette variants.
+//! E2E tests for the command-palette settings-toggle scope convention.
 //!
-//! Covers "Toggle Line Numbers (Current Buffer)", "Toggle Line Wrap (Current
-//! Buffer)", "Toggle Indentation Guides (Current Buffer)" and "Toggle Folding
-//! Indicators (Current Buffer)": they must affect only the current buffer (not
-//! others) and persist across a session restart. All assertions observe
-//! rendered screen output.
+//! The convention (documented on `input::commands`) is that a toggle's scope is
+//! readable from its name: `Toggle X (Current Buffer)` changes only the active
+//! buffer and is persisted per file, while an unsuffixed `Toggle X` changes the
+//! editor-wide default and is saved to the user config layer. Both halves have
+//! to hold or the palette lies about what a command does.
+//!
+//! The per-buffer tests below cover line numbers, line wrap, indentation
+//! guides, folding indicators, whitespace indicators and indentation style:
+//! each must affect only the current buffer and survive a session restart, and
+//! all of them assert on rendered screen output. The final test covers the
+//! global half, where the durable artifact is a config file rather than
+//! anything on screen.
 
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
+use fresh::config_io::DirectoryContext;
 use tempfile::TempDir;
 
 /// A guide-bearing first indent level, using the default guide glyph.
@@ -388,6 +396,178 @@ fn test_fold_indicators_current_buffer_persists_across_restart() {
             expanded_fold_rows(&harness).is_empty(),
             "the per-buffer folding-indicator choice should survive a restart\n{}",
             harness.screen_to_string()
+        );
+    }
+}
+
+/// A per-buffer whitespace-indicator override must survive a session restart.
+///
+/// Go hides tab indicators by default, so the toggle turns them *on* here —
+/// which is the direction that actually exercises the restore path: "shown" has
+/// to be re-derived rather than read back from config, or a language that hides
+/// them would quietly swallow the choice.
+#[test]
+fn test_whitespace_indicators_current_buffer_persists_across_restart() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.go");
+    std::fs::write(&file, "func main() {\n\tprintln(\"x\")\n}\n").unwrap();
+
+    // Session 1: Go hides tab indicators; turn them on for this buffer.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_not_contains("→");
+
+        run_command(&mut harness, "Toggle Tab Indicators (Current Buffer)");
+        harness.assert_screen_contains("→");
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Session 2: restore; the indicators are still shown for this buffer.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should have been restored");
+        harness.render().unwrap();
+
+        harness.assert_screen_contains("→");
+    }
+}
+
+/// A per-buffer indentation-style override must survive a session restart.
+///
+/// Go defaults to tabs, so after switching this buffer to spaces a fresh Tab
+/// keypress must not produce the tab indicator — with indicators explicitly
+/// turned on, so the assertion can't pass vacuously.
+#[test]
+fn test_indentation_style_current_buffer_persists_across_restart() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.go");
+    std::fs::write(&file, "\n").unwrap();
+
+    // Session 1: show tab indicators, then switch this buffer to spaces.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+
+        run_command(&mut harness, "Toggle Tab Indicators (Current Buffer)");
+        run_command(&mut harness, "Toggle Indentation: Spaces");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Session 2: restore, then press Tab — spaces, so no indicator appears.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should have been restored");
+        harness.render().unwrap();
+
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+
+        assert!(
+            !harness.screen_to_string().contains('→'),
+            "Tab must still insert spaces after a restart — a restored \
+             `use_tabs` override that `apply_config` re-stamped would put a real \
+             tab here, and indicators are on so it would show. Screen:\n{}",
+            harness.screen_to_string()
+        );
+    }
+}
+
+/// The other half of the naming convention: an *unsuffixed* toggle changes the
+/// editor-wide default and saves it, so the choice is still there next launch.
+///
+/// Persistence lands in the user config layer on disk, which is by definition
+/// not on screen, so this asserts on the written file — the durable artifact
+/// the convention promises. The on-screen half of each toggle is covered by the
+/// scoping tests above and by each feature's own suite.
+///
+/// Before this convention was enforced, several of these mutated only the
+/// in-memory `Arc<Config>` (or a `Window` flag) and were silently forgotten.
+#[test]
+fn test_global_view_toggles_save_to_the_user_config_layer() {
+    let cases: &[(&str, &str)] = &[
+        ("Toggle Line Wrap", "line_wrap"),
+        ("Toggle Current Line Highlight", "highlight_current_line"),
+        ("Toggle Occurrence Highlight", "highlight_occurrences"),
+        ("Toggle Inlay Hints", "enable_inlay_hints"),
+        ("Toggle Mouse Hover", "mouse_hover_enabled"),
+        ("Toggle Tab Bar", "show_tab_bar"),
+        ("Toggle Status Bar", "show_status_bar"),
+        ("Toggle Prompt Line", "show_prompt_line"),
+        ("Toggle Line Numbers", "line_numbers"),
+        ("Toggle Menu Bar", "show_menu_bar"),
+    ];
+
+    for (command, setting) in cases {
+        let temp_dir = TempDir::new().unwrap();
+        let project_dir = temp_dir.path().join("project");
+        std::fs::create_dir(&project_dir).unwrap();
+        let file = project_dir.join("a.txt");
+        std::fs::write(&file, "alpha\n").unwrap();
+
+        let dir_context = DirectoryContext::for_testing(temp_dir.path());
+        let mut harness = EditorTestHarness::create(
+            120,
+            24,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+
+        run_command(&mut harness, command);
+
+        let config_path = dir_context.config_path();
+        let written = std::fs::read_to_string(&config_path).unwrap_or_else(|e| {
+            panic!(
+                "{command:?} should have written {}: {e}",
+                config_path.display()
+            )
+        });
+        let json: serde_json::Value = serde_json::from_str(&written)
+            .unwrap_or_else(|e| panic!("{command:?} wrote invalid JSON: {e}\n{written}"));
+        assert!(
+            json.pointer(&format!("/editor/{setting}")).is_some(),
+            "{command:?} must save `editor.{setting}` to the user config layer — an \
+             unsuffixed toggle changes the editor-wide default and has to survive a \
+             restart. Written config:\n{written}"
         );
     }
 }

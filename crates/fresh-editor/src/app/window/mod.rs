@@ -3043,6 +3043,8 @@ impl Window {
             virtual_space: None,
             indentation_guide: None,
             fold_indicators: None,
+            use_tabs: None,
+            whitespace_indicators: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };

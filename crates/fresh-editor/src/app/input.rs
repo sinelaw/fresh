@@ -1623,6 +1623,12 @@ impl Editor {
                     }
                 }
 
+                // `editor.line_wrap` is an editor-wide default, so an
+                // unsuffixed toggle saves it to the user config layer — see the
+                // scope convention on `COMMANDS` in `input/commands.rs`. The
+                // per-buffer variant is "Toggle Line Wrap (Current Buffer)".
+                self.persist_config_change("/editor/line_wrap", serde_json::Value::Bool(new_value));
+
                 let state = if self.config.editor.line_wrap {
                     t!("view.state_enabled").to_string()
                 } else {
@@ -1657,6 +1663,11 @@ impl Editor {
                     }
                 }
 
+                self.persist_config_change(
+                    "/editor/highlight_current_line",
+                    serde_json::Value::Bool(new_value),
+                );
+
                 let state = if self.config.editor.highlight_current_line {
                     t!("view.state_enabled").to_string()
                 } else {
@@ -1681,6 +1692,11 @@ impl Editor {
                         }
                     }
                 }
+
+                self.persist_config_change(
+                    "/editor/highlight_occurrences",
+                    serde_json::Value::Bool(new_value),
+                );
 
                 let state = if new_value {
                     t!("view.state_enabled").to_string()
@@ -1958,9 +1974,9 @@ impl Editor {
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleFileExplorerSide => self.toggle_file_explorer_side(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
-            Action::ToggleTabBar => self.active_window_mut().toggle_tab_bar(),
-            Action::ToggleStatusBar => self.active_window_mut().toggle_status_bar(),
-            Action::TogglePromptLine => self.active_window_mut().toggle_prompt_line(),
+            Action::ToggleTabBar => self.toggle_tab_bar(),
+            Action::ToggleStatusBar => self.toggle_status_bar(),
+            Action::TogglePromptLine => self.toggle_prompt_line(),
             Action::ToggleVerticalScrollbar => self.toggle_vertical_scrollbar(),
             Action::ToggleHorizontalScrollbar => self.toggle_horizontal_scrollbar(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
@@ -2019,7 +2035,13 @@ impl Editor {
                     .expect("active window present")
                     .get_mut(&__buffer_id)
                 {
-                    state.buffer_settings.use_tabs = !state.buffer_settings.use_tabs;
+                    let new_value = !state.buffer_settings.use_tabs;
+                    state.buffer_settings.use_tabs = new_value;
+                    // Record the explicit override so a later `apply_config`
+                    // (config reload, Set Language, save-time detection) can't
+                    // re-stamp the language default over the user's choice —
+                    // and so it can be persisted per file.
+                    state.buffer_settings.use_tabs_override = Some(new_value);
                     let status = if state.buffer_settings.use_tabs {
                         "Indentation: Tabs"
                     } else {
@@ -2043,7 +2065,9 @@ impl Editor {
                     .get_mut(&__buffer_id)
                 {
                     state.buffer_settings.whitespace.toggle_all(restore);
-                    let status = if state.buffer_settings.whitespace.any_visible() {
+                    let visible = state.buffer_settings.whitespace.any_visible();
+                    state.buffer_settings.whitespace_override = Some(visible);
+                    let status = if visible {
                         t!("toggle.whitespace_indicators_shown")
                     } else {
                         t!("toggle.whitespace_indicators_hidden")

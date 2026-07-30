@@ -301,6 +301,19 @@ pub struct SerializedFileState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fold_indicators: Option<bool>,
 
+    /// Explicit per-buffer indentation-style override (`None` = follow the
+    /// language default). Persists the "Toggle Indentation: Spaces ↔ Tabs
+    /// (Current Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_tabs: Option<bool>,
+
+    /// Explicit per-buffer whitespace-indicator master override (`None` =
+    /// follow config). Persists the "Toggle Whitespace Indicators (Current
+    /// Buffer)" / "Toggle Tab Indicators (Current Buffer)" choice across
+    /// restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whitespace_indicators: Option<bool>,
+
     /// Plugin-managed state (arbitrary key-value pairs, persisted across sessions)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub plugin_state: HashMap<String, serde_json::Value>,
@@ -1476,6 +1489,8 @@ mod tests {
             virtual_space: None,
             indentation_guide: None,
             fold_indicators: None,
+            use_tabs: None,
+            whitespace_indicators: None,
             plugin_state: HashMap::new(),
             folds: Vec::new(),
         };

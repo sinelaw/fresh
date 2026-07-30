@@ -1,4 +1,34 @@
 //! Command palette system for executing editor actions by name
+//!
+//! # Naming convention for settings toggles
+//!
+//! A toggle's *scope* must be readable from its name alone — the palette is a
+//! flat list, and "Toggle Line Wrap" sitting next to "Toggle Line Wrap (Current
+//! Buffer)" is only unambiguous if the suffix is used consistently. Two forms,
+//! no third:
+//!
+//! * **`Toggle X`** — changes the editor-wide default and **saves it to the
+//!   user config layer** via `Editor::persist_config_change`, so it survives a
+//!   restart. Every unsuffixed toggle must persist; one that only mutates the
+//!   in-memory `Arc<Config>` (or a `Window` flag) silently forgets the user's
+//!   choice on the next launch. `Config::config_mut` does *not* persist on its
+//!   own — it is only `Arc::make_mut`.
+//! * **`Toggle X (Current Buffer)`** — changes only the active buffer and
+//!   leaves the global default and every other buffer alone. The override is
+//!   recorded on `BufferSettings` (or `BufferViewState`) as an explicit
+//!   `*_override: Option<_>` field, and persisted in the per-file workspace
+//!   state (`SerializedFileState`) so it too survives a restart.
+//!
+//! An `Option<_>` override rather than a bare bool matters: `None` keeps the
+//! buffer following the global default, so a later config edit still reaches
+//! buffers the user never pinned, and `BufferSettings::apply_config` knows
+//! which fields it must not re-stamp.
+//!
+//! Two per-buffer toggles are deliberately session-scoped because they drive
+//! process lifecycle rather than display — `Toggle Auto-Revert (Current
+//! Buffer)` (file watching) and `Toggle LSP (Current Buffer)` (server
+//! lifecycle). They keep the scope suffix, which is what the name promises;
+//! resurrecting "LSP off for this file" across restarts is a separate decision.
 
 use crate::input::keybindings::{Action, KeyContext};
 use crate::types::context_keys;
