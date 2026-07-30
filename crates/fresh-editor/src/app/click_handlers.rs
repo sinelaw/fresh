@@ -279,11 +279,20 @@ impl Editor {
         // A widget-panel buffer can also be non-scrollable (it owns its own
         // scroll window, e.g. Search & Replace), but it IS an interactive
         // target — its click must still route focus to the split so
-        // keyboard nav works afterward. So only swallow non-scrollable
-        // buffers that don't host a widget panel.
-        if self.active_window().is_non_scrollable_buffer(buffer_id)
-            && self.widget_registry.panels_for_buffer(buffer_id).is_empty()
-        {
+        // keyboard nav works afterward.
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+            if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
+                return Ok(());
+            }
+            // Widget panel: take the focus, then stop. The panel owns every
+            // row it draws, and the hit dispatch above already delivered any
+            // click that landed on a control. A click that missed one — a
+            // `labeledSection` border, the padding under a short list — must
+            // not fall through to cursor placement: the buffer's cursor is
+            // hidden, but the viewport still follows it, so the click scrolls
+            // the panel's own header and buttons out of view with no way to
+            // scroll them back.
+            self.focus_split(split_id, buffer_id);
             return Ok(());
         }
 

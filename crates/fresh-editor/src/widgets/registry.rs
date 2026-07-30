@@ -529,7 +529,7 @@ impl WidgetRegistry {
         col_byte: u32,
     ) -> Option<(PanelKey, HitArea)> {
         self.hit_test(buffer_id, row, col_byte)
-            .or_else(|| self.row_select_hit(buffer_id, row))
+            .or_else(|| self.row_select_hit(buffer_id, row, col_byte))
     }
 
     /// Resolve a click on a row that an `Overlay` paints over.
@@ -570,21 +570,45 @@ impl WidgetRegistry {
     /// byte-ranged hit to land on even though it is visually "on the
     /// row". Prefer [`hit_test_row_aware`](Self::hit_test_row_aware),
     /// which tries an exact hit first and only falls back to this.
-    pub fn row_select_hit(&self, buffer_id: BufferId, row: u32) -> Option<(PanelKey, HitArea)> {
+    pub fn row_select_hit(
+        &self,
+        buffer_id: BufferId,
+        row: u32,
+        col_byte: u32,
+    ) -> Option<(PanelKey, HitArea)> {
+        // Two side-by-side lists (a Row of `labeledSection`s — a step rail
+        // beside a prose pane) put two row hits on the SAME buffer row, so
+        // "first hit on this row" would hand every click in the right-hand
+        // column to the left-hand list. Choose the rightmost row hit that
+        // starts at or before the click instead: for a single-column panel
+        // that is still the only candidate, and for a multi-column row it is
+        // the column the user actually clicked.
+        let mut best: Option<(&PanelKey, &HitArea)> = None;
+        let mut leftmost: Option<(&PanelKey, &HitArea)> = None;
         for (key, state) in &self.panels {
             if state.buffer_id != buffer_id {
                 continue;
             }
             for hit in &state.hits {
-                if hit.buffer_row == row
-                    && hit.event_type == "select"
-                    && (hit.widget_kind == "list" || hit.widget_kind == "tree")
+                if hit.buffer_row != row
+                    || hit.event_type != "select"
+                    || (hit.widget_kind != "list" && hit.widget_kind != "tree")
                 {
-                    return Some((key.clone(), hit.clone()));
+                    continue;
+                }
+                if leftmost.is_none_or(|(_, l)| hit.byte_start < l.byte_start) {
+                    leftmost = Some((key, hit));
+                }
+                if hit.byte_start <= col_byte as usize
+                    && best.is_none_or(|(_, b)| hit.byte_start >= b.byte_start)
+                {
+                    best = Some((key, hit));
                 }
             }
         }
-        None
+        // A click left of every row hit (the panel's leading margin) still
+        // belongs to the first column.
+        best.or(leftmost).map(|(k, h)| (k.clone(), h.clone()))
     }
 }
 

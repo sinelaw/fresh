@@ -378,9 +378,15 @@ function showRail(t: TourInstance): boolean {
   return t.railOpen && t.dockWidth >= RAIL_MIN_WIDTH;
 }
 
+/** Rows the body section's list may occupy.
+ *
+ * The panel must render *exactly* as many lines as the pane can show. One line
+ * too many and the buffer becomes scrollable, at which point a click anywhere
+ * that isn't a widget hit area — a section border, the padding under a short
+ * step — moves the buffer cursor and scrolls the panel's own header out of
+ * view. Pane height less the tab bar, then less
+ * `header + rule + 2 border rows + location + hints`. */
 function bodyRows(t: TourInstance): number {
-  // dock height minus: tab bar, header, rule, location, hints, and the
-  // section's own two border rows.
   return Math.max(3, t.dockHeight - 7);
 }
 
@@ -514,6 +520,20 @@ function buildBody(t: TourInstance): WidgetSpec {
   );
 }
 
+/** Rendered width of the location row's trailing buttons, including the
+ * spacer between them. `[ Label ]` is the button chrome, so a label of n
+ * characters occupies n + 4 columns. */
+function actionsWidth(t: TourInstance): number {
+  const chrome = 4;
+  if (t.fileMissing) return charLen(editor.t("btn.skip")) + chrome;
+  if (t.dockWidth < COMPACT_WIDTH) return charLen(editor.t("btn.jump_short")) + chrome;
+  return (
+    charLen(editor.t("btn.jump")) + chrome +
+    2 +
+    charLen(editor.t("btn.rehighlight")) + chrome
+  );
+}
+
 function buildLocation(t: TourInstance): WidgetSpec {
   const step = currentStep(t);
   const compact = t.dockWidth < COMPACT_WIDTH;
@@ -541,7 +561,12 @@ function buildLocation(t: TourInstance): WidgetSpec {
       styledRow([
         { text: t.fileMissing ? "⚠ " : "▸ ", style: { fg: t.fileMissing ? C.warn : C.dim } },
         { text: location, style: { fg: t.fileMissing ? C.warn : C.path } },
-      ], { truncateToChars: Math.max(8, t.dockWidth - 40) }),
+      ], {
+        // Hard cap so this row can never wrap: whatever the buttons need,
+        // plus the leading marker and the row's own margins. A wrapped
+        // location row costs a line the pane does not have.
+        truncateToChars: Math.max(8, t.dockWidth - actionsWidth(t) - 6),
+      }),
     ], "location"),
     flexSpacer(),
     ...actions,
@@ -569,6 +594,11 @@ function buildHints(t: TourInstance): HintEntry[] {
 }
 
 function renderPanel(t: TourInstance): void {
+  // Re-measure on every render. The dock's geometry is not final when the
+  // buffer is created, and `viewport_changed` does not necessarily fire for
+  // the initial layout — without this the panel keeps the default 100x16, so
+  // both the rail breakpoint and the prose wrap width are wrong.
+  syncDockSize(t);
   t.panel.set(
     col(
       buildHeader(t),
@@ -592,6 +622,10 @@ function renderPanel(t: TourInstance): void {
 function syncDockSize(t: TourInstance): boolean {
   const snap = editor.listSplits().find((s) => s.splitId === t.splitId);
   if (!snap) return false;
+  // Width comes from the *text* viewport (gutter excluded); height from the
+  // pane rect. `viewport.height` overreports for a dock pane — it does not
+  // account for the tab bar — and one row too many makes the panel scrollable
+  // (see `bodyRows`).
   const width = snap.viewport.width > 0 ? snap.viewport.width : snap.width;
   const height = snap.height > 0 ? snap.height : t.dockHeight;
   if (width === t.dockWidth && height === t.dockHeight) return false;
@@ -835,7 +869,6 @@ async function openTour(
   tourByPanel.set(t.panel.id(), t.id);
   lastTourId = t.id;
 
-  syncDockSize(t);
   t.fileMissing = !editor.fileExists(editor.authorityPath(currentStep(t).file_path));
   renderPanel(t);
   editor.setContext("tour-active", true);
@@ -843,6 +876,11 @@ async function openTour(
 
   if (options.focus !== false) {
     await revealStep(t);
+  } else {
+    // A restored tour skips `revealStep`, so nothing else would re-measure
+    // the dock once its geometry settles.
+    await editor.delay(60);
+    if (syncDockSize(t)) renderPanel(t);
   }
   return true;
 }
@@ -912,7 +950,7 @@ function closeTour(t: TourInstance, closeBuffer: boolean): void {
   if (tours.size === 0) editor.setContext("tour-active", false);
   // Closing a tour forgets it — it must not come back on the next launch.
   persist();
-  if (closeBuffer) closeTourBuffer(t);
+  if (closeBuffer) closeTourBuffer(t).catch((e) => editor.error(`code-tour: ${e}`));
   editor.setStatus(editor.t("status.ended", { title: t.manifest.title }));
 }
 
@@ -923,7 +961,7 @@ function closeTour(t: TourInstance, closeBuffer: boolean): void {
  * split still showing the closing one. For a dock pane that means the panel is
  * replaced by a source file, turning the Utility Dock into a tab strip for
  * ordinary files, which is the one thing it must never be. */
-function closeTourBuffer(t: TourInstance): void {
+async function closeTourBuffer(t: TourInstance): Promise<void> {
   const sibling = [...tours.values()].find((other) => other.splitId === t.splitId);
   if (sibling) {
     // Show the sibling tour first, so no split is displaying the closing
@@ -939,6 +977,12 @@ function closeTourBuffer(t: TourInstance): void {
   // substitution described above and the dock has outlived its purpose — close
   // it. A *virtual* buffer there is another plugin's panel (diagnostics,
   // search/replace), so leave the dock standing.
+  //
+  // `flush` first: `describeWorkspace` reads the plugin-state snapshot, which
+  // still describes the pre-close layout until the host has drained the queued
+  // mutation. Without it the dock always looks like it still holds the tour
+  // panel and the stale file is left sitting in the dock.
+  await editor.flush();
   const pane = editor
     .describeWorkspace()
     .panes.find((p) => p.splitId === t.splitId);
