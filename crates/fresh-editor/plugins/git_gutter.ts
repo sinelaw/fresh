@@ -13,6 +13,10 @@ const editor = getEditor();
  * - │ (green): Added line
  * - │ (yellow): Modified line
  * - ▾ (red): Deleted line(s) below
+ *
+ * The same hunks are marked on the vertical scrollbar in the same colours, so
+ * uncommitted changes elsewhere in the file are visible without scrolling to
+ * find them.
  */
 
 // =============================================================================
@@ -20,6 +24,9 @@ const editor = getEditor();
 // =============================================================================
 
 const NAMESPACE = "git-gutter";
+/** Scrollbar markers live in their own namespace — a separate decoration
+ *  surface with its own store, so clearing one never disturbs the other. */
+const SCROLL_NAMESPACE = "git-gutter-scroll";
 const PRIORITY = 10; // Lower than diagnostics
 
 // Colors (RGB)
@@ -252,6 +259,7 @@ async function updateGitGutter(bufferId: number): Promise<void> {
       // Clear indicators for non-tracked files
       editor.debug("Git Gutter: file not tracked by git");
       editor.clearLineIndicators(bufferId, NAMESPACE);
+      editor.clearScrollbarMarkers(bufferId, SCROLL_NAMESPACE);
       state.hunks = [];
       // Signal to other plugins that git is not available for this buffer
       editor.setViewState(bufferId, "git_gutter_hunks", null);
@@ -272,6 +280,17 @@ async function updateGitGutter(bufferId: number): Promise<void> {
     // Clear existing indicators
     editor.clearLineIndicators(bufferId, NAMESPACE);
 
+    // Scrollbar marks, collected alongside the gutter glyphs and published in
+    // one batched command below. They reuse the gutter palette deliberately, so
+    // a hunk's glyph and its mark on the track are the same colour.
+    //
+    // Positions are 0-based logical lines: this plugin never reads the buffer
+    // text — it parses `git diff` output — so line numbers are the only
+    // coordinate it can supply honestly, and the editor converts each to a byte
+    // anchor at set time against the buffer being decorated. One mark per
+    // changed line paints the same proportional streak a byte range would.
+    const scrollMarkers: ScrollbarMarker[] = [];
+
     // Apply new indicators
     for (const hunk of hunks) {
       const color = COLORS[hunk.type];
@@ -291,11 +310,14 @@ async function updateGitGutter(bufferId: number): Promise<void> {
           color[2],
           PRIORITY
         );
+        // The deleted lines are gone from the new side, so the mark sits on the
+        // seam where they were — the same line the ▾ glyph points from.
+        scrollMarkers.push({ line, color, priority: PRIORITY });
       } else {
         // Added/modified indicators show on each affected line
         for (let i = 0; i < hunk.lineCount; i++) {
           // Line numbers are 1-indexed in diff, but 0-indexed in editor
-          const line = hunk.startLine - 1 + i;
+          const line = Math.max(0, hunk.startLine - 1 + i);
           editor.setLineIndicator(
             bufferId,
             line,
@@ -306,9 +328,16 @@ async function updateGitGutter(bufferId: number): Promise<void> {
             color[2],
             PRIORITY
           );
+          scrollMarkers.push({ line, color, priority: PRIORITY });
         }
       }
     }
+
+    // Replace the whole namespace in a single command: the diff above covers
+    // the entire file, so this set is complete and authoritative, and swapping
+    // it atomically means a refresh never shows a half-rebuilt track. An empty
+    // set clears the marks, which is what a file with no changes wants.
+    editor.setScrollbarMarkers(bufferId, SCROLL_NAMESPACE, scrollMarkers);
 
     state.hunks = hunks;
 
