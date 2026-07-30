@@ -98,8 +98,10 @@ role-tagged split leaf that Diagnostics, Search/Replace, Quickfix and dock
 terminals all *swap into* rather than each spawning their own split. It already
 provides, for free, everything the tour popup lacks:
 
-- **Persistence with a visible handle.** The dock has a tab bar; a `*Tour*` tab
-  is durable proof the tour is still running, and clicking it returns to it.
+- **Persistence with a visible handle.** The dock has a tab bar; a
+  `*Tour: <title>*` tab is durable proof the tour is still running, and clicking
+  it returns to it. The tab bar holds several, so several tours can be open at
+  once (§5).
 - **Full width, user-resizable.** Drag the separator; the panel reflows.
 - **Focus you can leave and come back to.** `Alt+J` (`Toggle Utility Dock`)
   moves keyboard focus between the dock and the editor. Read the code with the
@@ -138,7 +140,7 @@ Five bands, top to bottom:
 
 | Band | Content | Widgets |
 |---|---|---|
-| **Tab bar** | `*Tour*` tab (host chrome) | — |
+| **Tab bar** | one `*Tour: <title>*` tab per open tour (host chrome) | — |
 | **Header** | tour title · step counter · progress meter · Prev / Next / Exit | `row`, `raw`, `button` |
 | **Rule** | full-width separator | `divider` |
 | **Body** | Steps rail + step prose | `row` of two `labeledSection`s, each wrapping a `list` |
@@ -171,7 +173,7 @@ Five bands, top to bottom:
 ~
 ~
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- *Tour* ×   *Search/Replace* ×   +                                                                                                                            □×
+ *Tour: Plugin System* ×   *Tour: Rendering* ×   *Search/Replace* ×   +                                                                                       □×
  Fresh Plugin System Tour                                                                                Step 2 of 4  ▰▰▱▱   [ ◀ Prev ]  [ Next ▶ ]  [ ✕ Exit ] 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ Steps ────────────────────────────────╮╭─ 2/4 · Plugin Command Types ───────────────────────────────────────────────────────────────────────────────────────╮
@@ -196,7 +198,7 @@ Five bands, top to bottom:
 
 ```text
 ────────────────────────────────────────────────────────────────────────────────────────────────────
- *Tour* ×   +                                                                                     □×
+ *Tour: Plugin System* ×   *Tour: Rendering* ×   +                                                □×
  Fresh Plugin System Tour                                             2/4 ▰▰▱▱  [ ◀ ]  [ ▶ ]  [ ✕ ] 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ 2/4 · Plugin Command Types ─────────────────────────────────────────────────────────────────────╮
@@ -218,7 +220,7 @@ Five bands, top to bottom:
 
 ```text
 ────────────────────────────────────────────────────────────────────────
- *Tour* ×   +                                                         □×
+ *Tour: Plugin Sys…* ×   *Tour: Render…* ×   +                        □×
  Fresh Plugin System Tour                                      2/4 ▰▰▱▱ 
  [ ◀ Prev ]  [ Next ▶ ]  [ ✕ Exit ]
 ╭─ 2/4 · Plugin Command Types ─────────────────────────────────────────╮
@@ -238,7 +240,7 @@ Five bands, top to bottom:
 
 ```text
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
- *Tour* ×   +                                                                                               □×
+ *Tour: Plugin System* ×   *Tour: Rendering* ×   +                                                          □×
  Fresh Plugin System Tour                            Step 4 of 4  ▰▰▰▰   [ ◀ Prev ]  [ Next ▶ ]  [ ✓ Finish ] 
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ 4/4 · Example Plugin: Git Find File ──────────────────────────────────────────────────────────────────────╮
@@ -259,7 +261,7 @@ Five bands, top to bottom:
 
 ```text
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
- *Tour* ×   +                                                                                               □×
+ *Tour: Plugin System* ×   *Tour: Rendering* ×   +                                                          □×
  Fresh Plugin System Tour                              Step 3 of 4  ▰▰▰▱   [ ◀ Prev ]  [ Next ▶ ]  [ ✕ Exit ] 
 ──────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ╭─ 3/4 · TypeScript API Definition ──────────────────────────────────────────────────────────────────────────╮
@@ -407,7 +409,147 @@ the same shape Search/Replace uses:
 
 ---
 
-## 5. States
+---
+
+## 5. Multiple tours — one buffer per tour
+
+A tour is a **virtual buffer**, not a singleton panel. Loading a second manifest
+opens a second buffer, and because both carry `role: "utility_dock"` the dock
+leaf shows them as sibling tabs:
+
+```text
+ *Tour: Plugin System* ×   *Tour: Rendering* ×   *Search/Replace* ×   +                                                                                       □×
+```
+
+This is not a new capability — it is how the dock already behaves. Verified by
+opening Search/Replace and Diagnostics in one session:
+
+```text
+ *Search/Replace* ×   *Diagnostics* ×   +                                                                                                                    □×
+```
+
+The dock dispatcher's fast path creates a fresh buffer and calls
+`set_pane_buffer` on the existing dock leaf, which adds it as a tab and makes it
+active. Nothing swaps a previous tour out.
+
+### What this forces in the plugin
+
+The current plugin holds exactly one tour in a module-level `tourManager`
+singleton. That becomes a map, and four things that are implicitly global today
+become per-tour:
+
+| Concern | Today | Multi-tour |
+|---|---|---|
+| Tour state | one `tourManager` object | `Map<tourId, TourInstance>`, plus `bufferId → tourId` and `panelId → tourId` indexes |
+| Overlay namespace | one constant `"code-tour"` | `"code-tour:<tourId>"` — so closing one tour cannot clear another's highlight, and two tours may highlight the same buffer at once |
+| `clearTourOverlays` | clears the shared namespace on **every** open buffer | clears only that tour's namespace |
+| `tour-active` context | set on load, unset on exit | set while **any** tour is open, unset when the last one closes |
+
+The panel mode (`code-tour-panel`) stays a single shared mode — modes are keyed
+by name, not by buffer. Every handler resolves its instance from
+`editor.getActiveBufferId()`, and the `widget_event` listener resolves its
+instance from `args.panel_id`, so both paths land on the right tour without the
+mode needing to know how many exist.
+
+### Tab naming and de-duplication
+
+- The tab is named from the manifest: `*Tour: <manifest.title>*`, truncated to
+  the dock's per-tab cap. Two manifests with the same title get a disambiguating
+  suffix (`*Tour: Rendering (2)*`).
+- The tour id is the **resolved absolute manifest path**. Loading a manifest
+  that is already open focuses its existing tab instead of opening a duplicate —
+  the plugin must do this itself, because the dock fast path runs before the
+  `panelId` de-duplication path and will happily mint a second buffer.
+- `buffer_closed` on a tour buffer tears down that tour only: clear its overlay
+  namespace, unmount its `WidgetPanel`, drop it from the map, drop it from
+  persisted state.
+
+### Which tour do the editor-context keys drive?
+
+`Alt+]` / `Alt+[` (§4.2) fire from the editor split, where there is no tour
+buffer to read. They target the **most recently active tour**: a `lastTourId`
+updated on any panel interaction and on `buffer_activated` for a tour buffer.
+With one tour open that is simply "the tour". With several, it is the one whose
+tab you last touched — which is also the one whose highlight is on screen.
+
+### Side effect worth having
+
+Because each tour is a real buffer, the existing tab-drag machinery applies: a
+tour tab can be dragged out of the dock into an ordinary split. Two tours side
+by side, or one tour docked and another pinned to a right-hand pane, come for
+free — no additional design.
+
+---
+
+## 6. Persistence across restarts
+
+An unfinished tour survives a restart, including its step position.
+
+### Mechanism
+
+Plugin state written with `editor.setWindowState(key, value)` lands on the
+session's `plugin_state`, which is serialized into the per-directory workspace
+file as `session_plugin_state` and reloaded on restore. It is workspace-scoped,
+which is the right granularity: a tour is about *this* checkout.
+
+The plugin keeps one key:
+
+```ts
+type PersistedTour = {
+  manifestPath: string;   // relative to the workspace root
+  step: number;           // current step index
+  visited: number[];      // step indices already seen — drives the ✓ column
+  railOpen: boolean;      // user's Steps-rail preference for this tour
+};
+
+editor.setWindowState("openTours", tours);   // ordered: dock tab order
+```
+
+Write-through on every state change — step navigation, rail toggle, open, close.
+The writes are small and the API is already a snapshot write-through, so there
+is no need to batch them; a crash then costs at most the step you were on.
+
+### Restore
+
+`editor.on("ready", …)` is the restore point. The `ready` lifecycle hook fires
+**after** the workspace restore and after initial buffers are opened, so
+`getWindowState("openTours")` already reflects the persisted session by the time
+the handler runs. (`plugins_loaded` fires earlier, before restore — too early.)
+
+For each entry, in stored order:
+
+1. Re-read and re-validate the manifest. If it is gone, unparseable, or its
+   `schema_version` no longer matches, skip it, drop it from the persisted list,
+   and say so once on the status bar — one line naming the tours dropped, not
+   one popup per tour.
+2. Re-check `commit_hash` against `HEAD`. Drift is normal after a restart, so it
+   is surfaced the same way as at load time: the dim `recorded at … · you are on
+   …` line in the header, not a blocking warning.
+3. Mount the dock tab and render the stored step, restoring `visited` so the
+   rail's `✓` column is right.
+4. **Do not** open the step's source file, move the editor viewport, or take
+   focus. Restoring a tour must not fight the workspace restore for what the
+   editor is showing. The step highlight is applied only if the step's file
+   happens to be among the restored buffers; otherwise `[ Re-highlight ]` is
+   emphasised and applies it on demand.
+
+The last-active tour's tab is the one left selected in the dock.
+
+### Interaction with restore settings
+
+No special handling is needed for `editor.restore_previous_session = false`,
+`--no-restore`, or a first run in a directory: in each of those cases the
+workspace is not applied, so `session_plugin_state` is never loaded and
+`getWindowState` returns `undefined`. Tours simply do not come back, which
+matches what the flag promises for tabs and splits. `--restore` brings them back
+for the same reason.
+
+Daemon mode needs nothing extra either — detach/reattach never tears the session
+down, so the tour buffers are still mounted when the client reconnects.
+
+---
+
+## 7. States
 
 Beyond the steady state, five cases the panel must render (D and E are
 wireframed above):
@@ -428,7 +570,7 @@ wireframed above):
 
 ---
 
-## 6. Spec sketch
+## 8. Spec sketch
 
 ```ts
 panel.set(col(
@@ -504,13 +646,16 @@ panel = new WidgetPanel(bufferId);
 
 ---
 
-## 7. What changes in `code-tour.ts`
+## 9. What changes in `code-tour.ts`
 
 | Area | Change |
 |---|---|
 | `showStepPopup` | Deleted. Replaced by `renderPanel()` building the spec above. |
 | `action_popup_result` listener | Deleted. Replaced by a `widget_event` listener. |
-| `TourManager` | `dockBufferId` / `dockSplitId` / `contentBufferId` / `contentSplitId` are declared today and never assigned — they become real, plus `widgetPanel`, `visited: Set<number>`, `railOpen`, `dockWidth`. |
+| `TourManager` | Singleton → `Map<tourId, TourInstance>` keyed by resolved manifest path, with `bufferId → tourId` and `panelId → tourId` indexes (§5). `dockBufferId` / `dockSplitId` / `contentBufferId` / `contentSplitId` are declared today and never assigned — per instance they become real, alongside `widgetPanel`, `visited: Set<number>`, `railOpen`, `dockWidth`. |
+| `TOUR_NAMESPACE` | Constant → `code-tour:<tourId>` per instance, so one tour's teardown cannot clear another's highlight. `clearTourOverlays` narrows to the instance's own namespace. |
+| Persistence | New: `setWindowState("openTours", …)` write-through on every step/rail/open/close change, and an `editor.on("ready", …)` restore pass (§6). |
+| `buffer_closed` | New listener — tears down the one tour whose buffer closed; unsets `tour-active` only when the last tour goes. |
 | `renderStepOverlays` | Fix the buffer mismatch: resolve line positions against the step's buffer id rather than whatever is active after the intervening `await`s, so the highlight actually paints. |
 | Mode + keys | New `code-tour-panel` mode with the table in §4.1; `Alt+]` / `Alt+[` in the `tour-active` editor context. |
 | Markdown | New `renderExplanation(md, width): TextPropertyEntry[]`. |
@@ -524,15 +669,19 @@ Nothing in the host changes. Every widget the design uses — `button`,
 
 ---
 
-## 8. Open questions
+## 10. Open questions
 
-1. **Tour tab persistence across sessions.** Diagnostics and Search/Replace do
-   not restore into the dock on restart. Should a half-finished tour?
-2. **Should `Enter` on the rail also move focus to the editor**, or only change
+Two earlier questions are now settled and folded into the design: an unfinished
+tour **does** persist across restarts (§6), and each tour **is** its own buffer
+so several can be open at once (§5). What remains:
+
+1. **Should `Enter` on the rail also move focus to the editor**, or only change
    the step? Proposal above keeps focus in the panel; jumping is `Enter` on the
    prose or the explicit button.
-3. **Multiple concurrent tours** — the dock holds one `*Tour*` tab. Loading a
-   second manifest replaces it; an alternative is one dock tab per tour.
-4. **Authoring.** Nothing in the editor writes `.fresh-tour.json`. A "record
+2. **Cap on restored tours.** A workspace could accumulate a dozen persisted
+   tours and restore a dock full of tabs. Restore all of them, cap at the N most
+   recent, or restore only the last-active one and list the rest behind a
+   command?
+3. **Authoring.** Nothing in the editor writes `.fresh-tour.json`. A "record
    step from selection" command would make the dock panel a two-way surface, but
    that is a separate feature.
