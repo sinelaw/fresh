@@ -94,6 +94,12 @@ if (dash) {
         }
     }, { ttlMs: 1000 });
     dash.registerSection("hthrow", async () => {
+        // Reject on a later microtask, not synchronously: the dashboard's
+        // catch handles both, but QuickJS's rejection tracker flags a
+        // sync-throw async fn as unhandled before the handler attaches,
+        // and the test harness promotes that to plugin-thread death
+        // (set_panic_on_js_errors). Production only logs it.
+        await editor.delay(1);
         throw new Error("always throws " + wide);
     }, { ttlMs: 1000 });
     dash.registerSection("hhang", async () => {
