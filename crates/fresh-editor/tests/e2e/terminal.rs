@@ -338,6 +338,76 @@ fn test_open_terminal_below_via_palette() {
     );
 }
 
+/// Run the palette entry matching `query` and return the resulting screen.
+///
+/// Ctrl+P reaches the palette even while a terminal owns the keyboard, so this
+/// is the flow a user actually has from inside a shell.
+fn run_from_palette(harness: &mut EditorTestHarness, query: &str, command: &str) -> String {
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text(query).unwrap();
+    let command = command.to_string();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(&command))
+        .expect("the palette should offer the command");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.screen_to_string()
+}
+
+/// A command that doesn't need a text cursor still runs from the palette while
+/// a terminal is focused. "Toggle Utility Dock" already bypasses the terminal
+/// through its `Alt+\`` sibling keybinding, so the palette refusing it was pure
+/// inconsistency: the entry was greyed out and Enter only produced "not
+/// available in current context".
+#[test]
+fn test_palette_runs_ui_command_while_terminal_focused() {
+    let mut harness = harness_or_return!(120, 24);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    let screen = run_from_palette(&mut harness, "toggle utility dock", "Toggle Utility Dock");
+
+    assert!(
+        !screen.contains("not available in current context"),
+        "the palette refused a focus-independent command in a terminal\nScreen:\n{screen}"
+    );
+    // No dock exists yet, so the command reports that — proof it ran.
+    assert!(
+        screen.contains("No Utility Dock open"),
+        "Toggle Utility Dock should have run and reported no dock\nScreen:\n{screen}"
+    );
+}
+
+/// Same for an editor-wide command declared in the `Normal` context: saving
+/// every modified buffer has nothing to do with which buffer has focus.
+#[test]
+fn test_palette_runs_save_all_while_terminal_focused() {
+    let mut harness = harness_or_return!(120, 24);
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    let screen = run_from_palette(&mut harness, "save all", "Save All");
+
+    assert!(
+        !screen.contains("not available in current context"),
+        "the palette refused Save All in a terminal\nScreen:\n{screen}"
+    );
+    // Nothing was edited, so Save All reports it had nothing to write.
+    assert!(
+        screen.contains("No modified files to save"),
+        "Save All should have run and reported nothing to save\nScreen:\n{screen}"
+    );
+}
+
 /// Test closing a terminal
 #[test]
 fn test_close_terminal() {
