@@ -241,6 +241,80 @@ impl Editor {
         self.set_status_message(t!("view.indentation_guide_state", state = status).to_string());
     }
 
+    /// Toggle the current-line highlight for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.highlight_current_line`
+    /// setting. `BufferViewState` already stores the flag per (split, buffer),
+    /// so this pins it there and records the intent for persistence.
+    pub fn toggle_current_line_highlight_current_buffer(&mut self) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                // Deref reaches the active buffer's BufferViewState, so this
+                // scopes the override to the current buffer in this split only.
+                let new_value = !vs.highlight_current_line;
+                vs.highlight_current_line = new_value;
+                vs.highlight_current_line_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
+
+        let state = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.current_line_highlight_state", state = state).to_string());
+    }
+
+    /// Toggle occurrence highlighting for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.highlight_occurrences`
+    /// setting. Turning it off also clears the highlights already on screen —
+    /// the overlay is only recomputed on cursor movement, so without this the
+    /// old highlights would linger until the user moved.
+    pub fn toggle_occurrence_highlight_current_buffer(&mut self) {
+        let buffer_id = self.active_buffer();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+
+        let new_value = !state.reference_highlight_overlay.enabled;
+        state.reference_highlight_overlay.enabled = new_value;
+        state.buffer_settings.highlight_occurrences_override = Some(new_value);
+        if !new_value {
+            state
+                .reference_highlight_overlay
+                .clear(&mut state.overlays, &mut state.marker_list);
+        }
+
+        let status = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.occurrence_highlight_state", state = status).to_string());
+    }
+
     /// Toggle the gutter folding indicators for the current buffer only.
     ///
     /// Hides (or restores) the ▾/▸ arrows in the left margin without touching

@@ -7,7 +7,8 @@
 //! to hold or the palette lies about what a command does.
 //!
 //! The per-buffer tests below cover line numbers, line wrap, indentation
-//! guides, folding indicators, whitespace indicators and indentation style:
+//! guides, folding indicators, whitespace indicators, indentation style,
+//! the current-line highlight and occurrence highlighting:
 //! each must affect only the current buffer and survive a session restart, and
 //! all of them assert on rendered screen output. The final test covers the
 //! global half, where the durable artifact is a config file rather than
@@ -25,6 +26,22 @@ const GUIDED_LINE: &str = "▏   let child = 1;";
 const EXPANDED_FOLD: &str = "▾";
 
 const FOLDABLE_SOURCE: &str = "fn main() {\n    let child = 1;\n}\n";
+
+/// Whether the row holding `needle` is painted with the current-line
+/// highlight, judged by comparing its background to another content row's.
+/// Reading the styled cell is the only way this is visible on screen.
+fn cursor_line_is_highlighted(harness: &EditorTestHarness, needle: &str) -> bool {
+    let (_, cursor_row) = harness
+        .find_text_on_screen(needle)
+        .unwrap_or_else(|| panic!("expected {needle:?} on screen"));
+    let (start, end) = harness.content_area_rows();
+    let other_row = (start..=end)
+        .map(|r| r as u16)
+        .find(|r| *r != cursor_row && !harness.get_row_text(*r).trim().is_empty())
+        .expect("expected a second content row to compare against");
+    harness.get_cell_style(0, cursor_row).map(|s| s.bg)
+        != harness.get_cell_style(0, other_row).map(|s| s.bg)
+}
 
 /// Content rows whose gutter shows the "expanded, foldable" arrow.
 fn expanded_fold_rows(harness: &EditorTestHarness) -> Vec<usize> {
@@ -570,4 +587,178 @@ fn test_global_view_toggles_save_to_the_user_config_layer() {
              restart. Written config:\n{written}"
         );
     }
+}
+
+/// The current-line highlight is a per-(split, buffer) flag, so its per-buffer
+/// toggle must pin one buffer without disturbing the rest — and must survive a
+/// restart. Observed as the cursor row's background differing from a
+/// non-cursor row's.
+#[test]
+fn test_current_line_highlight_current_buffer_scopes_and_persists() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let a = project_dir.join("a.txt");
+    let b = project_dir.join("b.txt");
+    std::fs::write(&a, "alpha\nbeta\n").unwrap();
+    std::fs::write(&b, "delta\nepsilon\n").unwrap();
+
+    // Session 1: pin the highlight off for a.txt only.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        harness.open_file(&a).unwrap();
+        harness.render().unwrap();
+        assert!(
+            cursor_line_is_highlighted(&harness, "alpha"),
+            "precondition: the highlight is on by default\n{}",
+            harness.screen_to_string()
+        );
+
+        run_command(
+            &mut harness,
+            "Toggle Current Line Highlight (Current Buffer)",
+        );
+        assert!(
+            !cursor_line_is_highlighted(&harness, "alpha"),
+            "the pin should drop the highlight in a.txt\n{}",
+            harness.screen_to_string()
+        );
+
+        // b.txt is untouched and still follows the global default.
+        harness.open_file(&b).unwrap();
+        harness.render().unwrap();
+        assert!(
+            cursor_line_is_highlighted(&harness, "delta"),
+            "the pin must not leak into other buffers\n{}",
+            harness.screen_to_string()
+        );
+
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Session 2: restore; a.txt is still unhighlighted, b.txt still is.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            120,
+            24,
+            Config::default(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should have been restored");
+        harness.open_file(&a).unwrap();
+        harness.render().unwrap();
+
+        assert!(
+            !cursor_line_is_highlighted(&harness, "alpha"),
+            "the per-buffer current-line-highlight pin should survive a restart\n{}",
+            harness.screen_to_string()
+        );
+    }
+}
+
+/// The per-buffer occurrence-highlight pin must round-trip through the
+/// workspace file.
+///
+/// Unlike the other toggles here this one asserts on the saved artifact rather
+/// than the screen: occurrence highlighting paints on a debounce after cursor
+/// movement, so a rendered assertion would be a timing race, and CONTRIBUTING
+/// rules out time-sensitive tests. Re-saving in session 2 is what makes this a
+/// real round-trip — the field is only written back if restore actually applied
+/// it, and every file-open path stamps `reference_highlight_overlay.enabled`
+/// from config, so a pin the restore path dropped would vanish here.
+#[test]
+fn test_occurrence_highlight_current_buffer_round_trips_through_the_workspace() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.rs");
+    std::fs::write(&file, "let alpha = 1;\nlet beta = alpha;\n").unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let saved_override = |label: &str| -> serde_json::Value {
+        let dir = dir_context.data_dir.join("workspaces");
+        let mut found = serde_json::Value::Null;
+        for entry in std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("{label}: no workspaces dir at {}: {e}", dir.display()))
+        {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            let json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            // The file states are nested under the split tree; walk for the key
+            // rather than hard-coding the layout.
+            let mut stack = vec![json];
+            while let Some(node) = stack.pop() {
+                match node {
+                    serde_json::Value::Object(map) => {
+                        for (key, value) in map {
+                            if key == "highlight_occurrences" {
+                                found = value.clone();
+                            }
+                            stack.push(value);
+                        }
+                    }
+                    serde_json::Value::Array(items) => stack.extend(items),
+                    _ => {}
+                }
+            }
+        }
+        found
+    };
+
+    let open_session = |dir_context: DirectoryContext| {
+        EditorTestHarness::create(
+            120,
+            24,
+            HarnessOptions::new()
+                .with_config(Config::default())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context)
+                .without_empty_plugins_dir(),
+        )
+        .unwrap()
+    };
+
+    // Session 1: pin occurrence highlighting off for this buffer and save.
+    {
+        let mut harness = open_session(dir_context.clone());
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+
+        run_command(&mut harness, "Toggle Occurrence Highlight (Current Buffer)");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+    assert_eq!(
+        saved_override("after session 1"),
+        serde_json::Value::Bool(false),
+        "the toggle should record `highlight_occurrences: false` for this file"
+    );
+
+    // Session 2: restore, re-open, and save again. The pin has to come back,
+    // or this second save drops the field.
+    {
+        let mut harness = open_session(dir_context.clone());
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should have been restored");
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.editor_mut().save_workspace().unwrap();
+    }
+    assert_eq!(
+        saved_override("after session 2"),
+        serde_json::Value::Bool(false),
+        "the pin must survive restore — re-opening the file re-stamps \
+         `reference_highlight_overlay.enabled` from config, so this is where a \
+         dropped override shows up"
+    );
 }

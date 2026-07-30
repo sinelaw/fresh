@@ -278,24 +278,34 @@ impl CommandRegistry {
         // Match by name or description
         // Commands with unmet custom contexts are completely hidden
         // match_kind: 0 = name match, 1 = description match
-        let mut suggestions: Vec<(Suggestion, Option<usize>, i32, u8)> = commands
+        // An exact (case-insensitive) name match must win its class outright.
+        // Fuzzy score alone does not guarantee it: for the `X` / `X (Current
+        // Buffer)` pairs the longer sibling can outscore the very name the user
+        // typed in full, so typing a command's exact name would run a different
+        // command. `exact_kind`: 0 = exact name, 1 = anything else.
+        let query_trimmed = query.trim();
+        let is_exact_name =
+            |name: &str| !query_trimmed.is_empty() && name.eq_ignore_ascii_case(query_trimmed);
+
+        let mut suggestions: Vec<(Suggestion, Option<usize>, i32, u8, u8)> = commands
             .iter()
             .filter(|cmd| is_visible(cmd))
             .filter_map(|cmd| {
                 let localized_name = cmd.get_localized_name();
                 let name_result = fuzzy_match(query, &localized_name);
                 if name_result.matched {
+                    let exact = u8::from(!is_exact_name(&localized_name));
                     let localized_desc = cmd.get_localized_description();
                     let (suggestion, hist, score) =
                         make_suggestion(cmd, name_result.score, localized_name, localized_desc);
-                    Some((suggestion, hist, score, 0))
+                    Some((suggestion, hist, score, 0, exact))
                 } else if !query.is_empty() {
                     let localized_desc = cmd.get_localized_description();
                     let desc_result = fuzzy_match(query, &localized_desc);
                     if desc_result.matched {
                         let (suggestion, hist, score) =
                             make_suggestion(cmd, desc_result.score, localized_name, localized_desc);
-                        Some((suggestion, hist, score, 1))
+                        Some((suggestion, hist, score, 1, 1))
                     } else {
                         None
                     }
@@ -308,11 +318,12 @@ impl CommandRegistry {
         // Sort by:
         // 1. Disabled status (enabled first)
         // 2. Match kind (name matches before description matches) - only when query is not empty
-        // 3. Fuzzy match score (higher is better) - only when query is not empty
-        // 4. History position (recent first, then never-used alphabetically)
+        // 3. Exact name match - only when query is not empty
+        // 4. Fuzzy match score (higher is better) - only when query is not empty
+        // 5. History position (recent first, then never-used alphabetically)
         let has_query = !query.is_empty();
         suggestions.sort_by(
-            |(a, a_hist, a_score, a_kind), (b, b_hist, b_score, b_kind)| {
+            |(a, a_hist, a_score, a_kind, a_exact), (b, b_hist, b_score, b_kind, b_exact)| {
                 // First sort by disabled status
                 match a.disabled.cmp(&b.disabled) {
                     std::cmp::Ordering::Equal => {}
@@ -322,6 +333,12 @@ impl CommandRegistry {
                 if has_query {
                     // Name matches before description matches
                     match a_kind.cmp(b_kind) {
+                        std::cmp::Ordering::Equal => {}
+                        other => return other,
+                    }
+
+                    // Typing a command's full name selects that command.
+                    match a_exact.cmp(b_exact) {
                         std::cmp::Ordering::Equal => {}
                         other => return other,
                     }
@@ -344,7 +361,7 @@ impl CommandRegistry {
         );
 
         // Extract just the suggestions
-        suggestions.into_iter().map(|(s, _, _, _)| s).collect()
+        suggestions.into_iter().map(|(s, _, _, _, _)| s).collect()
     }
 
     /// Get count of registered plugin commands

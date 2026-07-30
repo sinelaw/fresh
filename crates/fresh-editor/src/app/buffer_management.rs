@@ -589,7 +589,7 @@ impl Editor {
         state
             .buffer
             .set_default_line_ending(self.config.editor.default_line_ending.to_line_ending());
-        state.reference_highlight_overlay.enabled = self.config.editor.highlight_occurrences;
+        state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
         // Buffer settings (whitespace visibility, tabs, guides, …): resolve
         // from the user's config so a brand-new buffer behaves the same as an
         // opened file. Without this the buffer kept `BufferSettings::default()`

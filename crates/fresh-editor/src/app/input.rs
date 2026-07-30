@@ -1639,6 +1639,13 @@ impl Editor {
             Action::ToggleCurrentLineHighlight => {
                 let new_value = !self.config.editor.highlight_current_line;
                 self.config_mut().editor.highlight_current_line = new_value;
+                let active_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
 
                 // Update all splits
                 let leaf_ids: Vec<_> = self
@@ -1658,8 +1665,18 @@ impl Editor {
                         .expect("active window must have a populated split layout")
                         .get_mut(&leaf_id)
                     {
-                        view_state.highlight_current_line =
-                            self.config.editor.highlight_current_line;
+                        // The active split's own pin is dropped just below —
+                        // the user is expressing a global intent on the view in
+                        // front of them. Every other pinned buffer keeps its
+                        // choice; a global default must not silently un-pin
+                        // work the user did elsewhere.
+                        if leaf_id == active_split {
+                            view_state.highlight_current_line_override = None;
+                        }
+                        if view_state.highlight_current_line_override.is_none() {
+                            view_state.highlight_current_line =
+                                self.config.editor.highlight_current_line;
+                        }
                     }
                 }
 
@@ -1680,10 +1697,29 @@ impl Editor {
             Action::ToggleOccurrenceHighlight => {
                 let new_value = !self.config.editor.highlight_occurrences;
                 self.config_mut().editor.highlight_occurrences = new_value;
+                let active_buffer = self.active_buffer();
 
-                // Update all open buffers
+                // Update all open buffers. A buffer the user pinned with the
+                // "(Current Buffer)" variant keeps its choice — except the
+                // active one, whose pin is cleared first as a global intent.
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&active_buffer)
+                {
+                    state.buffer_settings.highlight_occurrences_override = None;
+                }
                 for window in self.windows.values_mut() {
                     for (_, state) in &mut window.buffers {
+                        if state
+                            .buffer_settings
+                            .highlight_occurrences_override
+                            .is_some()
+                        {
+                            continue;
+                        }
                         state.reference_highlight_overlay.enabled = new_value;
                         if !new_value {
                             state
@@ -1988,6 +2024,12 @@ impl Editor {
             }
             Action::ToggleFoldIndicatorsCurrentBuffer => {
                 self.toggle_fold_indicators_current_buffer()
+            }
+            Action::ToggleCurrentLineHighlightCurrentBuffer => {
+                self.toggle_current_line_highlight_current_buffer()
+            }
+            Action::ToggleOccurrenceHighlightCurrentBuffer => {
+                self.toggle_occurrence_highlight_current_buffer()
             }
             Action::TriggerWaveAnimation => self.trigger_wave_animation(),
             Action::ToggleScrollSync => self.active_window_mut().toggle_scroll_sync(),

@@ -179,6 +179,12 @@ pub struct BufferViewState {
     /// source of truth.
     pub line_wrap_override: Option<bool>,
 
+    /// Explicit per-buffer override for the current-line highlight (analogue of
+    /// `line_numbers_override`). `highlight_current_line` stays the rendered
+    /// source of truth; this records the intent so the editor-wide toggle can
+    /// tell a pinned buffer from one that is merely following the default.
+    pub highlight_current_line_override: Option<bool>,
+
     /// Plugin-managed state (arbitrary key-value pairs).
     /// Plugins can store per-buffer-per-split state here via the `setViewState`/`getViewState` API.
     /// Persisted across sessions via workspace serialization.
@@ -232,6 +238,7 @@ impl BufferViewState {
             highlight_current_line: true,
             line_numbers_override: None,
             line_wrap_override: None,
+            highlight_current_line_override: None,
             plugin_state: std::collections::HashMap::new(),
             folds: FoldManager::new(),
         }
@@ -243,6 +250,13 @@ impl BufferViewState {
     /// `wrap_column`, and `rulers` from the given config values. Call this after
     /// creating a new `BufferViewState` (via `new()` or `ensure_buffer_state()`)
     /// to ensure the view respects the user's settings.
+    ///
+    /// Explicit per-buffer pins win over the defaults. `ensure_buffer_state`
+    /// returns an *existing* view state when there is one, so several call
+    /// sites reach a buffer the user has already pinned — re-stamping the
+    /// global value there would silently undo "Toggle X (Current Buffer)" the
+    /// next time that buffer was activated. Fields with no override
+    /// (`None`, the case for every freshly created view state) are unaffected.
     pub fn apply_config_defaults(&mut self, defaults: ViewConfigDefaults) {
         let ViewConfigDefaults {
             line_numbers,
@@ -253,9 +267,11 @@ impl BufferViewState {
             rulers,
             scroll_offset,
         } = defaults;
-        self.show_line_numbers = line_numbers;
-        self.highlight_current_line = highlight_current_line;
-        self.viewport.line_wrap_enabled = line_wrap;
+        self.show_line_numbers = self.line_numbers_override.unwrap_or(line_numbers);
+        self.highlight_current_line = self
+            .highlight_current_line_override
+            .unwrap_or(highlight_current_line);
+        self.viewport.line_wrap_enabled = self.line_wrap_override.unwrap_or(line_wrap);
         self.viewport.wrap_indent = wrap_indent;
         self.viewport.wrap_column = wrap_column;
         self.rulers = rulers;
@@ -290,6 +306,7 @@ impl Clone for BufferViewState {
             highlight_current_line: self.highlight_current_line,
             line_numbers_override: self.line_numbers_override,
             line_wrap_override: self.line_wrap_override,
+            highlight_current_line_override: self.highlight_current_line_override,
             plugin_state: self.plugin_state.clone(),
             // Fold markers are per-view; clones start with no folded ranges.
             folds: FoldManager::new(),
