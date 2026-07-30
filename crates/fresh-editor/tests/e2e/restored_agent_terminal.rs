@@ -46,6 +46,7 @@ fn session_config() -> Config {
 /// `terminal_commands` entry marking it as a restorable *session* terminal.
 fn spawn_agent_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) {
     let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let window_id = window.id;
     let (terminal_id, _buffer_id, _leaf) = window
         .create_plugin_terminal(fresh::app::PluginTerminalSpec {
             cwd: None,
@@ -55,7 +56,7 @@ fn spawn_agent_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) 
             persistent: false, // ephemeral — exactly the Orchestrator agent case
             command: Some(argv.clone()),
             title: None,
-            env: std::collections::HashMap::new(),
+            env: fresh::app::agent_command_env(window_id, None, false),
         })
         .expect("agent terminal should spawn");
     // create_window_with_terminal records this marker; mirror it here so the
@@ -73,6 +74,7 @@ fn spawn_resumable_agent_terminal(
 ) {
     let launch: Vec<String> = launch.iter().map(|s| s.to_string()).collect();
     let resume: Vec<String> = resume.iter().map(|s| s.to_string()).collect();
+    let window_id = window.id;
     let (terminal_id, _buffer_id, _leaf) = window
         .create_plugin_terminal(fresh::app::PluginTerminalSpec {
             cwd: None,
@@ -82,11 +84,131 @@ fn spawn_resumable_agent_terminal(
             persistent: false,
             command: Some(launch.clone()),
             title: None,
-            env: std::collections::HashMap::new(),
+            env: fresh::app::agent_command_env(window_id, None, false),
         })
         .expect("agent terminal should spawn");
     window.terminal_commands.insert(terminal_id, launch);
     window.terminal_resume_commands.insert(terminal_id, resume);
+}
+
+/// Like `spawn_agent_terminal`, but grants the terminal editor control — the
+/// `allow_script` case, where `agent_command_env` mints a `FRESH_CMD_TOKEN`
+/// into the child's environment.
+fn spawn_granted_agent_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) {
+    let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+    let window_id = window.id;
+    let (terminal_id, _buffer_id, _leaf) = window
+        .create_plugin_terminal(fresh::app::PluginTerminalSpec {
+            cwd: None,
+            direction: None,
+            ratio: None,
+            focus: true,
+            persistent: false,
+            command: Some(argv.clone()),
+            title: None,
+            env: fresh::app::agent_command_env(window_id, None, true),
+        })
+        .expect("agent terminal should spawn");
+    window.terminal_commands.insert(terminal_id, argv);
+}
+
+/// A restored agent terminal comes back able to drive the editor.
+///
+/// The capability token is per-process and unforgeable, so it cannot be
+/// persisted — restore has to mint a *new* one. Before the fix, restore (and
+/// PTY respawn) built the child env inline as an empty map, so a restored agent
+/// came back with `FRESH_SESSION` but no `FRESH_CMD_TOKEN`: every
+/// `fresh --cmd script …` it ran failed with "no capability token", silently,
+/// until the terminal was recreated from scratch.
+///
+/// Observed through the child process itself: the agent's argv writes its own
+/// `$FRESH_CMD_TOKEN` to a sentinel file. The sentinel is removed between the
+/// two sessions, so what lands there after restore came from the restored
+/// child. Asserting the token is *live* in this process — not merely non-empty
+/// — is what proves it was re-minted rather than carried over as a stale
+/// string.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // Uses a Unix shell command
+fn test_restored_agent_terminal_gets_a_fresh_command_token() {
+    if !pty_available() {
+        eprintln!("Skipping restored-agent-token test: PTY not available");
+        return;
+    }
+
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+
+    let sentinels = temp_dir.path().join("sentinels");
+    std::fs::create_dir(&sentinels).unwrap();
+    let token_file = sentinels.join("TOKEN");
+    // Write the token the child actually received, then stay alive so the
+    // terminal is live (not exited) at save time.
+    let cmd = format!(
+        "printf '%s' \"${{FRESH_CMD_TOKEN:-}}\" > '{}'; exec sleep 30",
+        token_file.display()
+    );
+    let argv = ["sh", "-c", cmd.as_str()];
+
+    // ---- Session 1: a granted agent terminal, then save. ----
+    {
+        let mut harness = EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_config(session_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+        harness.editor_mut().set_session_mode(true);
+
+        spawn_granted_agent_terminal(harness.editor_mut().active_window_mut(), &argv);
+        harness.render().unwrap();
+        harness
+            .wait_until(|_| std::fs::read(&token_file).is_ok_and(|b| !b.is_empty()))
+            .expect("a granted terminal should receive a token when first spawned");
+
+        harness.shutdown(true).unwrap();
+    }
+
+    // Drop the first session's token so the file can only be repopulated by
+    // the restored child.
+    std::fs::remove_file(&token_file).unwrap();
+
+    // ---- Session 2: restart; the restored agent must get a new token. ----
+    {
+        let mut harness = EditorTestHarness::create(
+            120,
+            30,
+            HarnessOptions::new()
+                .with_config(session_config())
+                .with_working_dir(project_dir.clone())
+                .with_shared_dir_context(dir_context.clone())
+                .without_empty_plugins_dir(),
+        )
+        .unwrap();
+
+        let restored = harness.startup(true, &[]).unwrap();
+        assert!(restored, "session should have been restored");
+        harness.render().unwrap();
+
+        // Without the fix this never arrives: the restored child is spawned
+        // with an empty extra env, so `$FRESH_CMD_TOKEN` expands to "" and the
+        // sentinel stays empty.
+        harness
+            .wait_until(|_| std::fs::read(&token_file).is_ok_and(|b| !b.is_empty()))
+            .expect("a restored agent terminal should be given a command token");
+
+        let token = std::fs::read_to_string(&token_file).unwrap();
+        assert!(
+            fresh::server::command_access::may_script(token.trim()),
+            "the restored terminal's token should be live in this process, \
+             i.e. freshly minted rather than a stale value from the last run"
+        );
+    }
 }
 
 #[test]

@@ -493,6 +493,13 @@ pub struct SerializedTerminalWorkspace {
     /// `command`. Absent in older workspaces and for plain terminals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_resume: Option<AgentResume>,
+    /// Whether this terminal was granted editor control at spawn, i.e. it ran
+    /// an agent that may drive this editor. The capability token itself is
+    /// per-process and unforgeable, so it cannot be persisted — only the grant
+    /// can, and restore mints a fresh token from it. Absent (false) in
+    /// workspaces written before this field existed, and for plain terminals.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_script: bool,
     /// Set when this terminal's process had already quit at save time.
     ///
     /// Restore then brings the buffer back as read-only scrollback with the

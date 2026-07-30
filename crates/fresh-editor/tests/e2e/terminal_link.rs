@@ -94,6 +94,7 @@ fn open_terminal_with_output(
     output: &[u8],
     visible_marker: &str,
 ) -> (TerminalId, BufferId) {
+    let window_id = harness.editor().active_window().id;
     let (terminal_id, buffer_id, _leaf) = harness
         .editor_mut()
         .active_window_mut()
@@ -105,7 +106,7 @@ fn open_terminal_with_output(
             persistent: false,
             command: Some(vec!["sleep".into(), "30".into()]),
             title: None,
-            env: std::collections::HashMap::new(),
+            env: fresh::app::agent_command_env(window_id, None, false),
         })
         .expect("spawn sleep terminal");
     harness.editor_mut().enter_terminal_mode();
