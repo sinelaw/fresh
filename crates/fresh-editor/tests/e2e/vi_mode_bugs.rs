@@ -1443,6 +1443,14 @@ fn test_vi_bug_2441_dfr_deletes_through_target() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'r': without it, a slow-CI race
+    // delivers 'r' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'r');
 
     harness.wait_for_buffer_content("ld foo bar baz\n").unwrap();
@@ -1464,6 +1472,14 @@ fn test_vi_bug_2441_dfw_target_is_motion_key() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'w': without it, a slow-CI race
+    // delivers 'w' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'w');
 
     harness
@@ -1486,6 +1502,14 @@ fn test_vi_bug_2441_dtr_deletes_until_target() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 't');
+    // `t` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'r': without it, a slow-CI race
+    // delivers 'r' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'r');
 
     harness
@@ -1508,6 +1532,14 @@ fn test_vi_bug_2441_cfr_changes_through_target() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'r': without it, a slow-CI race
+    // delivers 'r' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'r');
     wait_insert(&mut harness);
     harness.type_text("X").unwrap();
