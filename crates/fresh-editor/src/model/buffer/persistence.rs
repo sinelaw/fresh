@@ -43,6 +43,15 @@ pub struct Persistence {
     /// reconstruction. Updated when loading from file or after
     /// saving.
     saved_file_size: Option<usize>,
+
+    /// Bumped by every write to `saved_root` or `modified`.
+    ///
+    /// [`Self::diff_since_saved`]'s answer depends on both, and a save
+    /// changes them without touching the buffer's content version — so a
+    /// render-side cache keyed only on content would keep showing the
+    /// pre-save diff. Consumers fold this in; see
+    /// [`TextBuffer::save_state_version`](super::TextBuffer::save_state_version).
+    save_state_version: u64,
 }
 
 impl Persistence {
@@ -59,7 +68,14 @@ impl Persistence {
             recovery_pending: false,
             saved_root,
             saved_file_size,
+            save_state_version: 0,
         }
+    }
+
+    /// Version of the save state — the pair (`saved_root`, `modified`) that
+    /// [`Self::diff_since_saved`] compares against.
+    pub fn save_state_version(&self) -> u64 {
+        self.save_state_version
     }
 
     pub fn fs(&self) -> &Arc<dyn FileSystem + Send + Sync> {
@@ -92,10 +108,12 @@ impl Persistence {
 
     pub fn set_modified(&mut self, modified: bool) {
         self.modified = modified;
+        self.save_state_version = self.save_state_version.wrapping_add(1);
     }
 
     pub fn clear_modified(&mut self) {
         self.modified = false;
+        self.save_state_version = self.save_state_version.wrapping_add(1);
     }
 
     pub fn is_recovery_pending(&self) -> bool {
@@ -115,6 +133,7 @@ impl Persistence {
     pub(super) fn mark_dirty(&mut self) {
         self.modified = true;
         self.recovery_pending = true;
+        self.save_state_version = self.save_state_version.wrapping_add(1);
     }
 
     pub fn saved_root(&self) -> &Arc<PieceTreeNode> {
@@ -123,6 +142,7 @@ impl Persistence {
 
     pub fn set_saved_root(&mut self, root: Arc<PieceTreeNode>) {
         self.saved_root = root;
+        self.save_state_version = self.save_state_version.wrapping_add(1);
     }
 
     pub fn saved_file_size(&self) -> Option<usize> {
@@ -140,6 +160,7 @@ impl Persistence {
     pub fn mark_saved_snapshot(&mut self, piece_tree: &PieceTree) {
         self.saved_root = piece_tree.root();
         self.modified = false;
+        self.save_state_version = self.save_state_version.wrapping_add(1);
     }
 
     /// Refresh the saved root to match the current tree structure
@@ -150,6 +171,7 @@ impl Persistence {
     pub fn refresh_saved_root_if_unmodified(&mut self, piece_tree: &PieceTree) {
         if !self.modified {
             self.saved_root = piece_tree.root();
+            self.save_state_version = self.save_state_version.wrapping_add(1);
         }
     }
 
@@ -227,6 +249,7 @@ impl Persistence {
 
         if modified {
             self.saved_root = PieceTree::from_leaves(&new_leaves).root();
+            self.save_state_version = self.save_state_version.wrapping_add(1);
         }
     }
 

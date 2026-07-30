@@ -96,12 +96,19 @@ fn test_compose_mode_typing_no_flicker() {
     // ── Helpers ─────────────────────────────────────────────────────────
     let (content_start, content_end) = harness.content_area_rows();
     let content_rows = content_end - content_start + 1;
+    // The scrollbar column is dropped: this test is about the text area
+    // settling after an edit, and the track legitimately gains a mark for the
+    // unsaved change the keystroke just made.
     let extract_content = |screen: &str| -> Vec<String> {
         screen
             .lines()
             .skip(content_start)
             .take(content_rows)
-            .map(|l| l.to_string())
+            .map(|l| {
+                let mut chars: Vec<char> = l.chars().collect();
+                chars.pop();
+                chars.into_iter().collect()
+            })
             .collect()
     };
 

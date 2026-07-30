@@ -970,6 +970,15 @@ impl TextBuffer {
     /// Diff the current piece tree against the last saved snapshot.
     ///
     /// See `Persistence::diff_since_saved` for the algorithm.
+    /// Version of the state [`Self::diff_since_saved`] compares against.
+    ///
+    /// Changes on save, reload, and the first edit after either. A cache that
+    /// keys only on [`Self::version`] would miss a save, which replaces the
+    /// saved snapshot while leaving the content untouched.
+    pub fn save_state_version(&self) -> u64 {
+        self.persistence.save_state_version()
+    }
+
     pub fn diff_since_saved(&self) -> PieceTreeDiff {
         let _span = tracing::info_span!(
             "diff_since_saved",

@@ -94,8 +94,79 @@ pub(super) fn scrollbar_line_counts(
     )
 }
 
-/// Project this buffer's plugin scrollbar markers onto a `track_height`-tall
-/// column, reusing the cached projection when nothing relevant changed.
+/// The editor's own contribution to the track: one mark per unsaved-change
+/// range, in the gutter bar's colour and priority.
+///
+/// `diff_since_saved` already returns whole-buffer byte ranges — the gutter
+/// only clips them to the viewport afterwards — so the scrollbar can show
+/// changes that are scrolled off screen without any extra diffing beyond the
+/// call itself. Returns `None` when the buffer matches what was saved, which
+/// is the `!modified` fast path inside the diff.
+fn unsaved_change_marks(
+    state: &EditorState,
+    track_height: usize,
+) -> Option<scrollbar_marker::CoreMarks> {
+    use crate::view::ui::split_rendering::folding::{UNSAVED_CHANGE_FG, UNSAVED_CHANGE_PRIORITY};
+
+    let diff = state.buffer.diff_since_saved();
+    if diff.equal || diff.byte_ranges.is_empty() {
+        return None;
+    }
+    let ranges = coalesce_within_a_cell(diff.byte_ranges, state.buffer.len(), track_height);
+
+    let Color::Rgb(r, g, b) = UNSAVED_CHANGE_FG else {
+        // The constant is an RGB literal; a non-RGB variant would have no
+        // `OverlayColorSpec` spelling and is not reachable.
+        return None;
+    };
+
+    Some(scrollbar_marker::CoreMarks {
+        ranges,
+        color: fresh_core::api::OverlayColorSpec::Rgb(r, g, b),
+        priority: UNSAVED_CHANGE_PRIORITY,
+    })
+}
+
+/// Merge ranges separated by less than one track cell's worth of bytes.
+///
+/// `diff_since_saved` can return thousands of ranges — a replace-all across a
+/// large file, before saving, produces one per hit. Projecting each costs two
+/// coordinate lookups, and `get_line_number` is a O(log n) tree descent
+/// (~0.5 µs measured), so 2 000 raw ranges would put milliseconds on the
+/// *typing* path to draw marks that a ≤200-cell track cannot tell apart.
+///
+/// Merging first bounds the projection at roughly two lookups per track row,
+/// whatever the edit count, and cannot lose a mark: a merged group spans every
+/// range inside it, so the streak painted is a superset of the true one, never
+/// a subset. That makes it a resolution choice rather than a silent cap.
+///
+/// Input from the diff is ascending and disjoint; out-of-order input would
+/// merely merge less, never mis-paint.
+fn coalesce_within_a_cell(
+    ranges: Vec<std::ops::Range<usize>>,
+    buffer_len: usize,
+    track_height: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let cell_bytes = (buffer_len / track_height.max(1)).max(1);
+    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+    for r in ranges {
+        match out.last_mut() {
+            Some(last) if r.start <= last.end.saturating_add(cell_bytes) => {
+                last.end = last.end.max(r.end);
+            }
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// Project this buffer's scrollbar markers onto a `track_height`-tall column,
+/// reusing the cached projection when nothing relevant changed.
+///
+/// Two sources feed the column: the plugin-owned marker set, and the editor's
+/// own unsaved-change ranges — the same diff that draws the blue gutter bar,
+/// so an edit is visible on the track whether or not it has been saved and
+/// whether or not any plugin is loaded.
 ///
 /// Cost per frame is one key comparison in the steady state; a rebuild is
 /// O(M) in the marker count with an O(1)–O(log n) coordinate lookup each, and
@@ -107,11 +178,31 @@ pub(super) fn project_scrollbar_markers(
     basis: MarkerBasis,
     track_height: usize,
 ) -> Vec<Option<MarkerCell>> {
-    if state.scrollbar_markers.is_empty() || track_height == 0 {
+    // `is_modified()` is the same flag `diff_since_saved` short-circuits on,
+    // so an unmodified buffer with no plugin markers does no work at all.
+    if track_height == 0 || (state.scrollbar_markers.is_empty() && !state.buffer.is_modified()) {
         return Vec::new();
     }
 
     let content_version = state.buffer.version();
+    let key = scrollbar_marker::ProjectionKey::new(
+        &state.scrollbar_markers,
+        content_version,
+        state.buffer.save_state_version(),
+        basis,
+        track_height,
+    );
+
+    // Probe the cache before computing the unsaved-change ranges: that is a
+    // whole-buffer structure diff (O(leaves) once the buffer is modified), and
+    // a steady-state frame must not pay for it. The version pair in the key
+    // moves on every edit and on every save, which is exactly when the ranges
+    // can change.
+    if let Some(cells) = state.scrollbar_marker_buckets.cached(&key) {
+        return cells.to_vec();
+    }
+
+    let core = unsaved_change_marks(state, track_height);
 
     // Split the borrows: the projection reads the manager and the coordinate
     // source while writing the bucket cache.
@@ -120,33 +211,39 @@ pub(super) fn project_scrollbar_markers(
         MarkerBasis::Bytes { .. } => scrollbar_marker::project(
             &state.scrollbar_markers,
             &mut buckets,
+            key,
+            core.as_ref(),
             basis,
             track_height,
-            content_version,
             |byte| byte as u64,
         )
         .to_vec(),
         MarkerBasis::LogicalLines { .. } => {
-            // `get_line_number` needs `&mut Buffer`; markers are read from a
-            // snapshot first so the two borrows don't overlap.
+            // `get_line_number` needs `&mut Buffer`; both mark sources are read
+            // from a snapshot first so the two borrows don't overlap. Every
+            // byte the projection will ask about must be in the map — a miss
+            // would silently answer line 0 and pile marks at the top.
             let resolved = state.scrollbar_markers.resolved();
+            let core_bytes = core
+                .iter()
+                .flat_map(|c| c.endpoints())
+                .flat_map(|(s, e)| [s, e]);
+            let marker_bytes = resolved
+                .iter()
+                .flat_map(|m| std::iter::once(m.start).chain(m.end));
             let mut lines = std::collections::HashMap::with_capacity(resolved.len() * 2);
-            for m in &resolved {
+            for byte in core_bytes.chain(marker_bytes).collect::<Vec<_>>() {
                 lines
-                    .entry(m.start)
-                    .or_insert_with(|| state.buffer.get_line_number(m.start) as u64);
-                if let Some(e) = m.end {
-                    lines
-                        .entry(e)
-                        .or_insert_with(|| state.buffer.get_line_number(e) as u64);
-                }
+                    .entry(byte)
+                    .or_insert_with(|| state.buffer.get_line_number(byte) as u64);
             }
             scrollbar_marker::project(
                 &state.scrollbar_markers,
                 &mut buckets,
+                key,
+                core.as_ref(),
                 basis,
                 track_height,
-                content_version,
                 |byte| lines.get(&byte).copied().unwrap_or(0),
             )
             .to_vec()
@@ -164,9 +261,10 @@ pub(super) fn project_scrollbar_markers(
             scrollbar_marker::project(
                 &state.scrollbar_markers,
                 &mut buckets,
+                key,
+                core.as_ref(),
                 basis,
                 track_height,
-                content_version,
                 |byte| index.line_first_row(buffer.get_line_number(byte)) as u64,
             )
             .to_vec()
@@ -583,6 +681,11 @@ mod tests {
             text.push_str(line);
         }
         state.buffer.insert(0, &text);
+        // Stand in for a file just opened from disk: content present, nothing
+        // unsaved. Without this the buffer would carry an unsaved-change diff
+        // covering all of it, and every projection here would start with the
+        // editor's own marks already on the track.
+        state.buffer.mark_saved_snapshot();
         state
     }
 
@@ -734,11 +837,66 @@ mod tests {
         );
     }
 
-    /// A buffer with no markers must not allocate or project anything.
+    /// A saved buffer with no markers must not allocate or project anything.
     #[test]
     fn no_markers_means_no_projection_work() {
         let mut state = state_with_wrapping_lines(10);
         let cells = project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total: 100 }, 20);
         assert!(cells.is_empty());
+    }
+
+    /// ...but an unsaved edit is a mark source of its own, so the same buffer
+    /// with no plugin markers at all still paints. This is what makes the
+    /// gutter's blue bar visible for changes scrolled off screen.
+    #[test]
+    fn an_unsaved_edit_projects_without_any_plugin_markers() {
+        let mut state = state_with_wrapping_lines(10);
+        let len = state.buffer.len();
+        state.buffer.insert(len / 2, "an unsaved edit");
+
+        let total = state.buffer.len() as u64;
+        let cells = project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total }, 20);
+        let marked: Vec<usize> = cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        // The structure diff reports leaf-granular ranges, so an insertion can
+        // cover a little more than the typed bytes — the mark is a streak
+        // around the edit, not necessarily a single row.
+        assert!(
+            !marked.is_empty() && marked.iter().all(|r| (8..=11).contains(r)),
+            "the edit is halfway through the buffer, so it marks the middle of \
+             a 20-row track; got {marked:?}"
+        );
+
+        // Saving it away clears the marks without any plugin involvement.
+        state.buffer.mark_saved_snapshot();
+        let cells = project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total }, 20);
+        assert!(cells.is_empty(), "a saved buffer leaves the track clean");
+    }
+
+    /// Thousands of scattered unsaved edits must not put thousands of
+    /// coordinate lookups on the typing path: ranges within one track cell of
+    /// each other merge first, so the projection stays bounded by the track.
+    #[test]
+    fn dense_unsaved_edits_coalesce_to_the_track_resolution() {
+        let ranges: Vec<std::ops::Range<usize>> =
+            (0..2_000).map(|k| (k * 50)..(k * 50 + 1)).collect();
+        // 100 000 bytes over a 20-row track: one cell is 5 000 bytes, so the
+        // 2 000 single-byte ranges collapse to one group per cell.
+        let merged = coalesce_within_a_cell(ranges, 100_000, 20);
+        assert!(
+            merged.len() <= 21,
+            "expected at most one group per track row, got {}",
+            merged.len()
+        );
+        assert_eq!(merged.first().unwrap().start, 0);
+        assert_eq!(
+            merged.last().unwrap().end,
+            1_999 * 50 + 1,
+            "merging must still cover the last edit"
+        );
     }
 }
