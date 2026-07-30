@@ -449,25 +449,28 @@ pub(crate) fn render_content(
             };
 
             // Indentation guides are a source-code editing aid, like the column
-            // rulers above. Resolve the effective mode per buffer: an explicit
-            // plugin override (`setIndentationGuide`) wins; otherwise virtual
-            // buffers (grep results, *Diagnostics*, the Git Log commit list, …)
-            // default off because they aren't code, while ordinary file buffers
-            // follow the buffer's resolved `indentation_guide` gate (plain text
-            // defaults off; any language can opt out — see
-            // `BufferSettings::apply_config`) and then the global setting.
-            // A file-backed tool view the virtual default can't catch — the Git
-            // Log commit-detail diff — opts out via the override. This is
-            // independent of the line-number gutter, so an ordinary buffer
-            // keeps its guides with line numbers turned off.
+            // rulers above. Resolve the effective mode per buffer: the user's
+            // per-buffer toggle wins, then an explicit plugin override
+            // (`setIndentationGuide`); otherwise virtual buffers (grep results,
+            // *Diagnostics*, the Git Log commit list, …) default off because
+            // they aren't code, while ordinary file buffers follow the buffer's
+            // resolved `indentation_guide` gate (plain text defaults off; any
+            // language can opt out — see `BufferSettings::apply_config`) and
+            // then the global setting. A file-backed tool view the virtual
+            // default can't catch — the Git Log commit-detail diff — opts out
+            // via the plugin override. This is independent of the line-number
+            // gutter, so an ordinary buffer keeps its guides with line numbers
+            // turned off.
             let mut style = style;
-            style.cfg.indentation_guide = match state.indentation_guide_override {
-                Some(true) => style.cfg.indentation_guide,
-                Some(false) => IndentationGuideMode::None,
-                None if is_virtual_buffer => IndentationGuideMode::None,
-                None if !state.buffer_settings.indentation_guide => IndentationGuideMode::None,
-                None => style.cfg.indentation_guide,
-            };
+            style.cfg.indentation_guide = crate::config::resolve_indentation_guide_mode(
+                crate::config::IndentationGuideInputs {
+                    global: style.cfg.indentation_guide,
+                    user_override: state.buffer_settings.indentation_guide_user_override,
+                    plugin_override: state.indentation_guide_override,
+                    language_gate: state.buffer_settings.indentation_guide,
+                    is_virtual_buffer,
+                },
+            );
 
             let mut empty_folds = FoldManager::new();
             let folds = split_view_states

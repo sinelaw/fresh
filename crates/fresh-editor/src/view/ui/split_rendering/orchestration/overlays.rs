@@ -13,7 +13,7 @@ use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
 use ratatui::style::Style;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 /// Build the [`SelectionContext`] for the current set of cursors.
@@ -316,7 +316,14 @@ pub(crate) fn decoration_context(
         line_indicators.entry(key).or_insert(diff_ind);
     }
 
-    let fold_indicators = fold_indicators_for_viewport(state, folds, view_lines);
+    // "Toggle Folding Indicators (Current Buffer)" only hides the gutter
+    // arrows: existing folds stay folded and keep rendering their placeholder,
+    // so skipping the scan here costs nothing but the indicators themselves.
+    let fold_indicators = if state.buffer_settings.fold_indicators_visible() {
+        fold_indicators_for_viewport(state, folds, view_lines)
+    } else {
+        BTreeMap::new()
+    };
 
     DecorationContext {
         highlight_spans,

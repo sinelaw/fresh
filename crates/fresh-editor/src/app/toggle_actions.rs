@@ -189,6 +189,87 @@ impl Editor {
         self.set_status_message(t!("view.virtual_space_state", state = mode).to_string());
     }
 
+    /// Toggle indentation guides for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.indentation_guide` setting:
+    /// it records an explicit override on the buffer's settings (persisted in
+    /// the per-file workspace state) and does not affect other buffers or the
+    /// global config. Turning guides on in a buffer where the global mode is
+    /// `none` draws every level (`all`); turning them on where the global mode
+    /// is `active` keeps that mode — see
+    /// [`crate::config::resolve_indentation_guide_mode`], which the renderer
+    /// uses for the same decision.
+    pub fn toggle_indentation_guide_current_buffer(&mut self) {
+        use crate::config::{
+            resolve_indentation_guide_mode, IndentationGuideInputs, IndentationGuideMode,
+        };
+
+        let buffer_id = self.active_buffer();
+        let global = self.config.editor.indentation_guide;
+        let is_virtual_buffer = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|m| m.is_virtual());
+
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+
+        let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
+            global,
+            user_override: state.buffer_settings.indentation_guide_user_override,
+            plugin_override: state.indentation_guide_override,
+            language_gate: state.buffer_settings.indentation_guide,
+            is_virtual_buffer,
+        }) != IndentationGuideMode::None;
+
+        let new_value = !currently_on;
+        state.buffer_settings.indentation_guide_user_override = Some(new_value);
+
+        let status = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.indentation_guide_state", state = status).to_string());
+    }
+
+    /// Toggle the gutter folding indicators for the current buffer only.
+    ///
+    /// Hides (or restores) the ▾/▸ arrows in the left margin without touching
+    /// any existing folds — collapsed regions stay collapsed and keep their
+    /// placeholder. There is no global setting for the arrows, so the default
+    /// is "shown"; the override is persisted in the per-file workspace state.
+    pub fn toggle_fold_indicators_current_buffer(&mut self) {
+        let buffer_id = self.active_buffer();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+
+        let new_value = !state.buffer_settings.fold_indicators_visible();
+        state.buffer_settings.fold_indicators_override = Some(new_value);
+
+        let status = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.fold_indicators_state", state = status).to_string());
+    }
+
     /// Kick off the full-screen wave animation: a crest of wave glyphs
     /// rises from the bottom edge and bounces every painted cell — text,
     /// gutter, menu bar, status bar — up, down, and sideways before they

@@ -667,6 +667,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_indentation_guide_current_buffer",
+        desc_key: "cmd.toggle_indentation_guide_current_buffer_desc",
+        action: || Action::ToggleIndentationGuideCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_fold_indicators_current_buffer",
+        desc_key: "cmd.toggle_fold_indicators_current_buffer_desc",
+        action: || Action::ToggleFoldIndicatorsCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.wave_animation",
         desc_key: "cmd.wave_animation_desc",
         action: || Action::TriggerWaveAnimation,

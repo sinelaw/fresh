@@ -1542,6 +1542,18 @@ impl crate::app::window::Window {
                             state.buffer_settings.virtual_space = virtual_space;
                             state.buffer_settings.virtual_space_override = Some(virtual_space);
                         }
+                        // Same for the per-buffer indentation-guide and
+                        // folding-indicator toggles: both are consulted at
+                        // render time, so restoring the override is all it
+                        // takes for the buffer to come back looking the way
+                        // the user left it.
+                        if let Some(indentation_guide) = file_state.indentation_guide {
+                            state.buffer_settings.indentation_guide_user_override =
+                                Some(indentation_guide);
+                        }
+                        if let Some(fold_indicators) = file_state.fold_indicators {
+                            state.buffer_settings.fold_indicators_override = Some(fold_indicators);
+                        }
                         buf_state.folds.clear(&mut state.marker_list);
                         for fold in &file_state.folds {
                             // Resolve the stored line numbers against the current
@@ -1990,6 +2002,8 @@ impl crate::app::window::Window {
             line_numbers: None,
             line_wrap: None,
             virtual_space: None,
+            indentation_guide: None,
+            fold_indicators: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
@@ -3115,6 +3129,12 @@ fn serialize_split_view_state(
                 virtual_space: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.virtual_space_override),
+                indentation_guide: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.indentation_guide_user_override),
+                fold_indicators: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.fold_indicators_override),
                 plugin_state: buf_state.plugin_state.clone(),
                 folds,
             },
