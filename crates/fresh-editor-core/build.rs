@@ -205,6 +205,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
             "src/grammars/gitattributes.sublime-syntax",
             "Git Attributes",
         ),
+        ("src/grammars/diff.sublime-syntax", "Fresh Diff"),
         ("src/grammars/typst.sublime-syntax", "Typst"),
         ("src/grammars/dockerfile.sublime-syntax", "Dockerfile"),
         ("src/grammars/ini.sublime-syntax", "INI"),
