@@ -1606,31 +1606,33 @@ type WidgetSpec = {
 	* frame would read as clutter; keep the default `false` for
 	* anything with a word on it.
 	*
-	* Icon buttons are the one button shape that highlights on
-	* **hover** (`ui.tab_close_hover_fg`), because that is how the
-	* editor's other bare glyph controls — the tab `×` and the
-	* file explorer's `×` — tell you they're live. A framed button
-	* advertises itself by its frame and takes its emphasis from
-	* focus instead.
+	* This controls layout only; `hover_style` controls how the
+	* button looks under the pointer.
 	*/
 	bare: boolean;
 	/**
-	* Deliver `widget_event { event_type: "hover", payload: {
-	* hovered } }` as the pointer enters and leaves this control,
-	* so the plugin can drive its own affordance — a tooltip, a
-	* reveal-on-hover action, a status line.
+	* Style applied while the pointer is over this button. `None`
+	* (the default) leaves it looking the same hovered as not.
 	*
-	* Opt-in per widget because each transition costs a plugin
-	* round-trip: a panel of ordinary buttons should not wake its
-	* plugin every time the pointer crosses one. The *visual*
-	* hover state of a `bare` button is host-side and needs no
-	* opt-in — this flag is only about telling the plugin.
+	* Hover is host state — it changes with mouse motion and no
+	* plugin round-trip — so the plugin declares the *appearance*
+	* once in the spec and the host applies it as the pointer
+	* moves. Nothing crosses the plugin bridge on a hover.
 	*
-	* `Button` is the first kind to carry it; other widget kinds
-	* opt in by growing the same field and passing it to their
-	* `HitArea` (the host's tracking is kind-agnostic).
+	* It outranks focus styling while both apply: the pointer is
+	* the more immediate signal, and the one the user is actively
+	* driving.
+	*
+	* For a close glyph, `ui.tab_close_hover_fg` is the editor's
+	* shared "close affordance under the pointer" key — the tab
+	* `×` and the file explorer's `×` both read it, so a plugin
+	* naming it gets the same highlight users already know.
+	*
+	* `Button` is the first kind to carry this; other widget kinds
+	* adopt it with the same field plus a `ctx.is_hovered(key)`
+	* check in their renderer.
 	*/
-	hoverable: boolean;
+	hoverStyle?: Partial<OverlayOptions>;
 } | {
 	"kind": "spacer";
 	cols: number;

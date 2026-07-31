@@ -83,11 +83,6 @@ pub struct HitArea {
     /// not the text of the row it covers, so click resolution has to
     /// keep the two apart. See [`WidgetRegistry::overlay_hit_test`].
     pub overlay: bool,
-    /// The widget asked to be told when the pointer enters and leaves it
-    /// (`WidgetSpec::Button::hoverable`). The host's hover tracker fires
-    /// `widget_event { event_type: "hover" }` only for these, so a panel
-    /// that doesn't want the round-trip never pays for one.
-    pub hoverable: bool,
 }
 
 /// Widget instance state retained across spec updates, keyed by
@@ -619,7 +614,6 @@ mod tests {
             byte_end,
             payload: json!({}),
             event_type: "activate",
-            hoverable: false,
         }
     }
 
@@ -671,7 +665,6 @@ mod tests {
             byte_end,
             payload: json!({ "index": row as i64 }),
             event_type: "select",
-            hoverable: false,
         }
     }
 

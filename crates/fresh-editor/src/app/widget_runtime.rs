@@ -526,7 +526,6 @@ impl Editor {
             byte_end: 0,
             payload: row_payload,
             event_type,
-            hoverable: false,
         })
     }
 
@@ -609,10 +608,6 @@ impl Editor {
             byte_end: 0,
             payload,
             event_type,
-            // Synthesized for a clipped / off-viewport widget so the
-            // native frontends can act on it; hover is a live-pointer
-            // concern the TUI tracker owns, so it never applies here.
-            hoverable: false,
         })
     }
 
@@ -689,10 +684,6 @@ impl Editor {
             byte_end: 0,
             payload,
             event_type,
-            // Synthesized for a clipped / off-viewport widget so the
-            // native frontends can act on it; hover is a live-pointer
-            // concern the TUI tracker owns, so it never applies here.
-            hoverable: false,
         })
     }
 

@@ -1401,16 +1401,11 @@ pub(crate) struct FloatingWidgetState {
     /// Widget key the pointer is currently over, tracked from mouse-move
     /// events against this panel's hit areas. Empty for "nothing hovered".
     ///
-    /// Only bare icon buttons (a `×` close glyph) render differently for
-    /// it, so a change re-renders the panel spec only when the pointer
-    /// actually crosses a widget boundary — motion within one widget
+    /// Feeds `RenderContext::hover_key` on the next render, where widgets
+    /// carrying a `hover_style` compare it against their own key. Only a
+    /// crossing between widgets changes it, so motion inside one control
     /// costs nothing.
     pub hovered_widget_key: String,
-    /// Whether `hovered_widget_key`'s widget asked for hover events
-    /// (`HitArea::hoverable`), remembered so the *leave* event can still
-    /// be delivered after the widget has left the spec. A plugin that
-    /// received an enter must always receive its matching leave.
-    pub hovered_widget_hoverable: bool,
     /// The open `Dropdown`'s option list, surfaced by the widget renderer
     /// for a screen-level floating pop-over (drawn by
     /// `render_floating_widget_panel` at the trigger's screen row, clipped
@@ -1981,7 +1976,6 @@ mod tests {
             closable: false,
             close_button_rect: None,
             hovered_widget_key: String::new(),
-            hovered_widget_hoverable: false,
             dropdown_popup: None,
             dropdown_popup_hits: Vec::new(),
             dropdown_popup_rect: None,
