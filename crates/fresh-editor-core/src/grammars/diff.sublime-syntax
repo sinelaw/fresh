@@ -1,0 +1,58 @@
+%YAML 1.2
+---
+# Unified diff grammar with file regions for embedded source highlighting.
+#
+# `meta.embedded.block.diff` stays active from a `diff --git` header to the
+# next file header. The target path is scoped as a language token; Fresh's
+# embedded-language highlighter resolves its basename/extension and parses
+# hunk content with that file's source grammar.
+name: Fresh Diff
+file_extensions:
+  - diff
+  - patch
+scope: source.diff
+
+contexts:
+  main:
+    # Git quotes paths containing spaces or unusual bytes.
+    - match: '^diff --git\s+"a/.*"\s+"b/(.*)"\s*$'
+      scope: meta.diff.header.git
+      captures:
+        1: constant.other.language-name.diff
+      push: diff-file
+    - match: '^diff --git\s+a/\S+\s+b/(\S+)\s*$'
+      scope: meta.diff.header.git
+      captures:
+        1: constant.other.language-name.diff
+      push: diff-file
+    # Keep a region even when a non-standard header does not expose a path.
+    - match: '^diff --git\b.*$'
+      scope: meta.diff.header.git
+      push: diff-file
+    - include: diff-body
+
+  diff-file:
+    - meta_scope: meta.embedded.block.diff
+    # A zero-width pop lets the same line be reconsidered by `main`, where it
+    # opens the next file region and selects that file's language.
+    - match: '(?=^diff --git\b)'
+      pop: true
+    - include: diff-body
+
+  diff-body:
+    - match: '^@@@?.*?@@@?'
+      scope: meta.diff.range.unified
+    - match: '^\+\+\+.*$'
+      scope: meta.diff.header.to-file
+    - match: '^---.*$'
+      scope: meta.diff.header.from-file
+    - match: '^\+.*$'
+      scope: markup.inserted.diff
+    - match: '^-.*$'
+      scope: markup.deleted.diff
+    - match: '^Binary files .* differ$'
+      scope: meta.diff.header.binary
+    - match: '^GIT binary patch$'
+      scope: meta.diff.header.binary
+    - match: '^(?:index|new file mode|deleted file mode|old mode|new mode|similarity index|dissimilarity index|rename from|rename to|copy from|copy to)\b.*$'
+      scope: meta.diff.header.git
