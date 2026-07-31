@@ -91,12 +91,6 @@ fn focus_gutter_prefix(focused: bool, marker_gutter: bool) -> &'static str {
 // renders invisible against the panel bg. The diagnostic.error_fg
 // key is the canonical "red text" theme slot.
 const KEY_DANGER_FG: &str = "diagnostic.error_fg";
-// Hover tint for a bare icon button. Named for tabs because that's
-// where it first appeared, but it is already the editor's shared
-// "close affordance under the pointer" key — the file explorer's `×`
-// reads it too — so a third bare `×` using it keeps all of them
-// highlighting identically.
-const KEY_ICON_HOVER_FG: &str = "ui.tab_close_hover_fg";
 const KEY_INPUT_BG: &str = "ui.prompt_bg";
 // Background tint for the selection span inside a widget Text
 // input. Distinct from the buffer's `ui.selection_bg` because
@@ -752,7 +746,7 @@ fn render_collected(
             key,
             disabled,
             bare,
-            hoverable,
+            hover_style,
             ..
         } => collect_button(
             label,
@@ -761,7 +755,7 @@ fn render_collected(
             key.as_deref(),
             *disabled,
             *bare,
-            *hoverable,
+            hover_style.as_ref(),
             ctx,
         ),
         WidgetSpec::Spacer { cols, .. } => collect_spacer(*cols),
@@ -1359,7 +1353,6 @@ fn collect_toggle(
         byte_end: chip_range.1,
         payload: json!({ "checked": !checked }),
         event_type: "toggle",
-        hoverable: false,
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
@@ -1432,7 +1425,6 @@ fn collect_number(
         byte_end: value_range.1,
         payload: json!({}),
         event_type: "number_value",
-        hoverable: false,
     });
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
@@ -1535,7 +1527,6 @@ fn collect_dropdown(
         byte_end: button_range.1,
         payload: json!({}),
         event_type: "dropdown_toggle",
-        hoverable: false,
     });
     // Open: surface the option list as a floating pop-over anchored to
     // the trigger's row (row 0 within this sub-render; Col/Row/Section
@@ -1578,7 +1569,7 @@ fn collect_button(
     key: Option<&str>,
     disabled: bool,
     bare: bool,
-    hoverable: bool,
+    hover_style: Option<&OverlayOptions>,
     ctx: RenderContext<'_>,
 ) -> CollectedOutput {
     let mut out = CollectedOutput::default();
@@ -1588,10 +1579,21 @@ fn collect_button(
         } else {
             focused
         };
+    // A `hover_style` applies only while the pointer is actually on this
+    // widget, and never to a disabled one — an inert control advertising
+    // itself as live would lie.
+    let hover = hover_style.filter(|_| !disabled && ctx.is_hovered(key));
     let mut entry = if bare {
-        render_bare_button(label, is_focused, intent, disabled, ctx.is_hovered(key))
+        render_bare_button(label, is_focused, intent, disabled, hover)
     } else {
-        render_button(label, is_focused, intent, disabled, ctx.marker_gutter)
+        render_button(
+            label,
+            is_focused,
+            intent,
+            disabled,
+            ctx.marker_gutter,
+            hover,
+        )
     };
     // Disabled buttons skip the hit area entirely — clicks on
     // them are no-ops, matching the non-tabbable behavior in
@@ -1610,7 +1612,6 @@ fn collect_button(
             byte_end,
             payload: json!({}),
             event_type: "activate",
-            hoverable,
         });
     }
     ensure_trailing_newline(&mut entry);
@@ -2004,7 +2005,6 @@ fn collect_list(
                         "list_key": list_key,
                     }),
                     event_type: "select",
-                    hoverable: false,
                 });
                 emitted += 1;
             }
@@ -2041,7 +2041,6 @@ fn collect_list(
                     "list_key": list_key,
                 }),
                 event_type: "select",
-                hoverable: false,
             });
         }
         (end - start) as u32
@@ -2615,7 +2614,6 @@ fn render_widget_text(
                     byte_end: e.text.len(),
                     payload: json!({}),
                     event_type: "focus",
-                    hoverable: false,
                 });
             }
             // Modal surfaces paint the caret as a REVERSED cell in the
@@ -2705,7 +2703,6 @@ fn render_widget_text(
                     "valueLen": rendered.value_len,
                 }),
                 event_type: "focus",
-                hoverable: false,
             });
         }
         ensure_trailing_newline(&mut entry);
@@ -3020,7 +3017,6 @@ fn render_widget_tree(
                         "key": item_key.clone(),
                     }),
                     event_type: "select",
-                    hoverable: false,
                 });
             }
         }
@@ -3043,7 +3039,6 @@ fn render_widget_tree(
                     "expanded": !is_expanded,
                 }),
                 event_type: "expand",
-                hoverable: false,
             });
         }
         // Checkbox hit (when the parent Tree is checkable
@@ -3067,7 +3062,6 @@ fn render_widget_tree(
                     "checked": new_checked,
                 }),
                 event_type: "toggle",
-                hoverable: false,
             });
         }
         // Row body hit — fires `select`. Spans whatever's
@@ -3091,7 +3085,6 @@ fn render_widget_tree(
                     "key": item_key.clone(),
                 }),
                 event_type: "select",
-                hoverable: false,
             });
         }
 
@@ -4733,7 +4726,6 @@ fn collect_dual_list(
                 byte_end: left_end,
                 payload: json!({ "column": "available", "index": i }),
                 event_type: "dual_focus",
-                hoverable: false,
             });
         }
         if right_val.is_some() {
@@ -4746,7 +4738,6 @@ fn collect_dual_list(
                 byte_end: right_end,
                 payload: json!({ "column": "included", "index": i }),
                 event_type: "dual_focus",
-                hoverable: false,
             });
         }
         out.entries.push(entry);
@@ -4803,6 +4794,7 @@ pub fn render_button(
     kind: ButtonKind,
     disabled: bool,
     marker_gutter: bool,
+    hover: Option<&OverlayOptions>,
 ) -> TextPropertyEntry {
     // In a marker-gutter panel, focused buttons lead with `▸ ` and
     // every other button with two spaces. This is the cue that
@@ -4851,7 +4843,12 @@ pub fn render_button(
         }
     };
 
-    let style = if focused && !disabled {
+    // Hover outranks focus: the pointer is the more immediate signal.
+    // A framed button only takes it when its spec declares one, so
+    // buttons without a `hover_style` render exactly as they always have.
+    let style = if let Some(hover) = hover.filter(|_| !disabled) {
+        hover.clone()
+    } else if focused && !disabled {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
             bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
@@ -4896,31 +4893,23 @@ pub fn render_button(
 /// focus-marker gutter, because both exist to give a *word* the shape
 /// of a control and a glyph already has one.
 ///
-/// `hovered` paints `ui.tab_close_hover_fg`, the key the tab and file
-/// explorer `×` buttons already use, so every bare close glyph in the
-/// editor lights up the same way under the pointer. Hover outranks
-/// `focused` when both apply: the pointer is the more immediate signal,
-/// and it is the one the user is actively driving.
+/// `hover` is the spec's `hover_style`, passed in only while the pointer
+/// is on this button. It outranks focus styling: the pointer is the more
+/// immediate signal, and the one the user is actively driving.
 fn render_bare_button(
     label: &str,
     focused: bool,
     kind: ButtonKind,
     disabled: bool,
-    hovered: bool,
+    hover: Option<&OverlayOptions>,
 ) -> TextPropertyEntry {
     let style = if disabled {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key("ui.menu_disabled_fg")),
             ..Default::default()
         }
-    } else if hovered {
-        // Foreground only, no bold — the same treatment `render_tab`
-        // gives a hovered tab `×`, so the two don't read as different
-        // controls when both are on screen.
-        OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key(KEY_ICON_HOVER_FG)),
-            ..Default::default()
-        }
+    } else if let Some(hover) = hover {
+        hover.clone()
     } else if focused {
         OverlayOptions {
             fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -4945,7 +4934,7 @@ fn render_bare_button(
     };
 
     let mut overlays = Vec::new();
-    if style.fg.is_some() || style.bg.is_some() || style.bold {
+    if style_paints_anything(&style) {
         overlays.push(InlineOverlay {
             start: 0,
             end: label.len(),
@@ -4964,6 +4953,17 @@ fn render_bare_button(
         pad_to_chars: None,
         truncate_to_chars: None,
     }
+}
+
+/// Whether an `OverlayOptions` would change any cell it covers. Used to
+/// keep a serialized entry tight by skipping a no-op overlay.
+fn style_paints_anything(style: &OverlayOptions) -> bool {
+    style.fg.is_some()
+        || style.bg.is_some()
+        || style.bold
+        || style.italic
+        || style.underline
+        || style.strikethrough
 }
 
 /// Output of `render_tree_row` — the rendered entry plus the byte
@@ -6550,7 +6550,7 @@ mod tests {
 
     #[test]
     fn button_normal_unfocused_has_no_overlay() {
-        let entry = render_button("Replace All", false, ButtonKind::Normal, false, false);
+        let entry = render_button("Replace All", false, ButtonKind::Normal, false, false, None);
         assert_eq!(entry.text, "[ Replace All ]");
         assert!(entry.inline_overlays.is_empty());
     }
@@ -6561,7 +6561,7 @@ mod tests {
         // on the surrounding surface. Only the focused state
         // paints a backing colour — verified in
         // `button_focused_overrides_with_menu_active_keys`.
-        let entry = render_button("Submit", false, ButtonKind::Primary, false, false);
+        let entry = render_button("Submit", false, ButtonKind::Primary, false, false, None);
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
         assert!(style.bold);
@@ -6574,7 +6574,7 @@ mod tests {
 
     #[test]
     fn button_danger_uses_error_theme_key() {
-        let entry = render_button("Delete", false, ButtonKind::Danger, false, false);
+        let entry = render_button("Delete", false, ButtonKind::Danger, false, false, None);
         assert_eq!(entry.inline_overlays.len(), 1);
         let fg = entry.inline_overlays[0].style.fg.as_ref().unwrap();
         assert_eq!(fg.as_theme_key(), Some("diagnostic.error_fg"));
@@ -6589,7 +6589,7 @@ mod tests {
         // former has ~6× the perceptual contrast against the popup
         // bg and is the same key the prompt already uses. See the
         // `KEY_FOCUSED_FG/BG` const comment.
-        let entry = render_button("OK", true, ButtonKind::Normal, false, false);
+        let entry = render_button("OK", true, ButtonKind::Normal, false, false, None);
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
             style.fg.as_ref().and_then(|c| c.as_theme_key()),
@@ -6629,7 +6629,7 @@ mod tests {
                     disabled: false,
                     focusable: true,
                     bare: false,
-                    hoverable: false,
+                    hover_style: None,
                 },
             ],
             key: None,
@@ -6711,7 +6711,7 @@ mod tests {
                     disabled: false,
                     focusable: true,
                     bare: false,
-                    hoverable: false,
+                    hover_style: None,
                 },
             ],
             key: None,
@@ -6789,7 +6789,7 @@ mod tests {
             disabled: false,
             focusable: true,
             bare: false,
-            hoverable: false,
+            hover_style: None,
         };
         let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(hits.len(), 1);
@@ -6814,7 +6814,7 @@ mod tests {
                     disabled: true,
                     focusable: true,
                     bare: false,
-                    hoverable: false,
+                    hover_style: None,
                 },
                 WidgetSpec::Button {
                     label: "Cancel".into(),
@@ -6824,7 +6824,7 @@ mod tests {
                     disabled: false,
                     focusable: true,
                     bare: false,
-                    hoverable: false,
+                    hover_style: None,
                 },
             ],
             key: None,
@@ -6847,7 +6847,7 @@ mod tests {
 
     #[test]
     fn disabled_button_uses_menu_disabled_fg_overlay() {
-        let entry = render_button("Archive", false, ButtonKind::Danger, true, false);
+        let entry = render_button("Archive", false, ButtonKind::Danger, true, false, None);
         assert_eq!(entry.inline_overlays.len(), 1);
         let style = &entry.inline_overlays[0].style;
         assert_eq!(
@@ -6978,7 +6978,7 @@ mod tests {
                             disabled: false,
                             focusable: true,
                             bare: false,
-                            hoverable: false,
+                            hover_style: None,
                         },
                     ],
                     key: None,

@@ -5180,7 +5180,6 @@ impl Editor {
             closable: !as_dock && closable,
             close_button_rect: None,
             hovered_widget_key: String::new(),
-            hovered_widget_hoverable: false,
             dropdown_popup: None,
             dropdown_popup_hits: Vec::new(),
             dropdown_popup_rect: None,

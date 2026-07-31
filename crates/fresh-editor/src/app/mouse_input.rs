@@ -4251,7 +4251,6 @@ impl Editor {
                 byte_end: 0,
                 payload: serde_json::json!({ "index": hit.index }),
                 event_type: "dropdown_select",
-                hoverable: false,
             };
             self.deliver_widget_hit(&panel_key, &ha, None);
             return true;
@@ -4332,15 +4331,18 @@ impl Editor {
         })
     }
 
-    /// Track which widget the pointer is over across every mounted panel:
-    /// re-render a panel whose hovered widget changed, and notify the
-    /// owning plugin about widgets that asked to hear about it.
+    /// Track which widget the pointer is over, per mounted panel, and
+    /// re-render a panel whose hovered widget changed.
     ///
-    /// Called from the motion handlers. Cheap in the common case — the key
-    /// is compared before anything is rebuilt, so sliding the pointer
-    /// around inside one widget costs a hit-test and nothing more — and
-    /// the plugin round-trip is gated on the widget's own `hoverable`, so
-    /// a panel that doesn't want hover events never wakes its plugin.
+    /// Purely host state: the tracked key feeds `RenderContext::hover_key`,
+    /// which the renderer compares against each widget's own key. A hover
+    /// therefore costs a hit-test and — only when the pointer crosses a
+    /// widget boundary — one spec re-render. Nothing crosses the plugin
+    /// bridge, so panels pay nothing for pointer movement over them.
+    ///
+    /// The re-render is needed because the draw pass paints the panel's
+    /// cached entries; a highlight change has to go back through the
+    /// renderer to appear.
     ///
     /// `pointer_owner` names the slot the pointer is actually addressing,
     /// for callers that already know: a centered modal captures the mouse
@@ -4358,52 +4360,21 @@ impl Editor {
         for slot in [super::PanelSlot::Dock, super::PanelSlot::Floating] {
             // A slot the pointer isn't addressing resolves to "nothing
             // hovered", which also *clears* whatever it had highlighted.
-            let entered = if pointer_owner.is_none_or(|owner| owner == slot) {
+            let now = if pointer_owner.is_none_or(|owner| owner == slot) {
                 self.probe_floating_widget(slot, col, row)
                     .and_then(|p| p.hit)
+                    .map(|h| h.widget_key)
+                    .unwrap_or_default()
             } else {
-                None
+                String::new()
             };
-            let now = entered
-                .as_ref()
-                .map(|h| h.widget_key.clone())
-                .unwrap_or_default();
-            let (panel_key, left, left_hoverable) = match self.panel(slot) {
-                Some(fwp) if fwp.hovered_widget_key != now => (
-                    fwp.panel_key.clone(),
-                    fwp.hovered_widget_key.clone(),
-                    fwp.hovered_widget_hoverable,
-                ),
+            let panel_key = match self.panel(slot) {
+                Some(fwp) if fwp.hovered_widget_key != now => fwp.panel_key.clone(),
                 _ => continue,
             };
             if let Some(fwp) = self.panel_mut(slot) {
                 fwp.hovered_widget_key = now;
-                fwp.hovered_widget_hoverable =
-                    entered.as_ref().map(|h| h.hoverable).unwrap_or(false);
             }
-            // Leave before enter, so a plugin moving between two hoverable
-            // widgets sees the pair in the order the pointer made them.
-            // The leave flag is remembered rather than re-derived: the
-            // widget may have been dropped from the spec since, and a
-            // plugin that got an enter must always get its enter's leave.
-            if !left.is_empty() && left_hoverable {
-                self.fire_widget_event(
-                    &panel_key,
-                    left,
-                    "hover".to_string(),
-                    serde_json::json!({ "hovered": false }),
-                );
-            }
-            if let Some(hit) = entered.filter(|h| h.hoverable && !h.widget_key.is_empty()) {
-                let mut payload = hit.payload;
-                if let Some(obj) = payload.as_object_mut() {
-                    obj.insert("hovered".to_string(), serde_json::json!(true));
-                }
-                self.fire_widget_event(&panel_key, hit.widget_key, "hover".to_string(), payload);
-            }
-            // The hover only shows up in the *rendered* entries, so the spec
-            // has to be re-run — the draw pass paints the cached entries and
-            // would otherwise keep the old highlight.
             self.rerender_widget_panel(&panel_key);
             changed = true;
         }

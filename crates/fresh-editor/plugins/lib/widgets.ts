@@ -307,22 +307,23 @@ export function button(
      * gutter — turning the button into an *icon affordance* (a `×`
      * close glyph, a `▾` chevron) rather than a framed action. Use
      * where the glyph itself is the control; keep the default for
-     * anything with a word on it.
-     *
-     * Icon buttons are the one shape that highlights on hover
-     * (`ui.tab_close_hover_fg`), matching the tab and file explorer
-     * `×`. That highlight is host-side and needs no `hoverable`. */
+     * anything with a word on it. Layout only — `hoverStyle` decides
+     * how it looks under the pointer. */
     bare?: boolean;
-    /** Deliver `widget_event { event_type: "hover", payload: {
-     * hovered } }` as the pointer enters and leaves this button, for
-     * driving your own affordance (a tooltip, a reveal-on-hover
-     * action). Opt-in because each transition is a plugin round-trip;
-     * a button that only needs the built-in `bare` highlight should
-     * leave this off. Defaults to false. */
-    hoverable?: boolean;
+    /** How the button looks while the pointer is over it. Omit to
+     * leave it looking the same hovered as not.
+     *
+     * The host applies this as the mouse moves, with no round-trip to
+     * the plugin, so hover costs a panel re-render and nothing more.
+     * It outranks focus styling while both apply.
+     *
+     * For a close glyph, `{ fg: "ui.tab_close_hover_fg" }` is the
+     * editor's shared "close affordance under the pointer" look — the
+     * tab `×` and the file explorer's `×` both use it. */
+    hoverStyle?: Partial<OverlayOptions>;
   },
 ): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "button",
     label,
     focused: options?.focused ?? false,
@@ -331,8 +332,12 @@ export function button(
     disabled: options?.disabled ?? false,
     focusable: options?.focusable ?? true,
     bare: options?.bare ?? false,
-    hoverable: options?.hoverable ?? false,
   };
+  // Omit rather than pass `undefined`: the plugin bridge turns a
+  // present `undefined` into JSON `null`, which fails to deserialize
+  // as the host's `Option<OverlayOptions>`.
+  if (options?.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  return spec;
 }
 
 /** Horizontal spacer of fixed column count. In a `Row` it produces
