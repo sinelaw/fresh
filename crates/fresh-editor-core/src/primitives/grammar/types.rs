@@ -169,6 +169,9 @@ pub const GITCONFIG_GRAMMAR: &str = include_str!("../../grammars/gitconfig.subli
 /// Embedded Git Attributes grammar for .gitattributes
 pub const GITATTRIBUTES_GRAMMAR: &str = include_str!("../../grammars/gitattributes.sublime-syntax");
 
+/// Unified diff grammar with dynamically highlighted source-file regions.
+pub const DIFF_GRAMMAR: &str = include_str!("../../grammars/diff.sublime-syntax");
+
 /// Embedded Typst grammar (syntect doesn't include one)
 pub const TYPST_GRAMMAR: &str = include_str!("../../grammars/typst.sublime-syntax");
 
@@ -740,6 +743,17 @@ impl GrammarRegistry {
             }
         }
 
+        // Unified diff grammar
+        match SyntaxDefinition::load_from_str(DIFF_GRAMMAR, true, Some("Fresh Diff")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Fresh Diff grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Fresh Diff grammar: {}", e);
+            }
+        }
+
         // Typst grammar
         match SyntaxDefinition::load_from_str(TYPST_GRAMMAR, true, Some("Typst")) {
             Ok(syntax) => {
@@ -1101,7 +1115,8 @@ impl GrammarRegistry {
         let mut catalog: Vec<GrammarEntry> = Vec::new();
         let mut scope_to_index: HashMap<String, usize> = HashMap::new();
 
-        // Syntect-backed entries (skip Plain Text and JavaScript).
+        // Syntect-backed entries (skip Plain Text, JavaScript, and the stock
+        // Diff grammar).
         //
         // Syntect's `file_extensions` is a hybrid list: real extensions like
         // "rb" sit alongside bare filenames like "Gemfile", "Rakefile",
@@ -1126,10 +1141,15 @@ impl GrammarRegistry {
         // grammar exists only for embedded contexts (Vue `lang="ts"`,
         // Markdown ```ts fences, resolved via `find_syntax_by_token`), and
         // `.ts` buffers must keep the richer tree-sitter highlighting.
+        //
+        // Syntect's stock Diff grammar is superseded by Fresh Diff, which
+        // exposes per-file embedded regions so patch bodies can use their
+        // source language's token colors.
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
             if syntax.name == "Plain Text"
                 || syntax.name == "JavaScript"
                 || syntax.name == "TypeScript"
+                || syntax.name == "Diff"
             {
                 continue;
             }
