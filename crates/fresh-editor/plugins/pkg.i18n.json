@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "cmd.install_plugin": "Package: Install Plugin",
     "cmd.install_plugin_desc": "Browse and install plugins from the registry",
     "cmd.install_theme": "Package: Install Theme",
@@ -70,6 +70,30 @@
     "cmd.lock_desc": "Lockfile mit aktuellen Paketversionen generieren",
     "cmd.install_lock": "Paket: Aus Lockfile Installieren",
     "cmd.install_lock_desc": "Pakete in Lockfile-Versionen installieren"
+  },
+  "en": {
+    "cmd.install_plugin": "Package: Install Plugin",
+    "cmd.install_plugin_desc": "Browse and install plugins from the registry",
+    "cmd.install_theme": "Package: Install Theme",
+    "cmd.install_theme_desc": "Browse and install themes from the registry",
+    "cmd.install_url": "Package: Install from URL",
+    "cmd.install_url_desc": "Install a plugin or theme from a git repository URL",
+    "cmd.list": "Package: Packages",
+    "cmd.list_desc": "Browse and manage installed and available packages",
+    "cmd.update_all": "Package: Update All",
+    "cmd.update_all_desc": "Update all installed packages to latest versions",
+    "cmd.update": "Package: Update",
+    "cmd.update_desc": "Update a specific installed package",
+    "cmd.remove": "Package: Remove",
+    "cmd.remove_desc": "Remove an installed package",
+    "cmd.sync": "Package: Sync Registry",
+    "cmd.sync_desc": "Fetch the latest package lists from registries",
+    "cmd.outdated": "Package: Show Outdated",
+    "cmd.outdated_desc": "Show packages with available updates",
+    "cmd.lock": "Package: Lock Versions",
+    "cmd.lock_desc": "Generate a lockfile with current package versions",
+    "cmd.install_lock": "Package: Install from Lockfile",
+    "cmd.install_lock_desc": "Install packages at versions specified in lockfile"
   },
   "es": {
     "cmd.install_plugin": "Paquete: Instalar Plugin",

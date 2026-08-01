@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "cmd.goto_lsp_symbol": "Go to LSP Symbol",
     "cmd.goto_lsp_symbol_desc": "List document symbols from LSP and navigate to selected"
   },
@@ -10,6 +10,10 @@
   "de": {
     "cmd.goto_lsp_symbol": "Zu LSP-Symbol gehen",
     "cmd.goto_lsp_symbol_desc": "Dokumentsymbole vom LSP auflisten und zum ausgewählten navigieren"
+  },
+  "en": {
+    "cmd.goto_lsp_symbol": "Go to LSP Symbol",
+    "cmd.goto_lsp_symbol_desc": "List document symbols from LSP and navigate to selected"
   },
   "es": {
     "cmd.goto_lsp_symbol": "Ir a símbolo LSP",

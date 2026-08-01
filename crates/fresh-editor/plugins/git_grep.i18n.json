@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "cmd.grep": "Git Grep",
     "cmd.grep_desc": "Search for text in git-tracked files",
     "prompt.grep": "Git grep: ",
@@ -40,6 +40,20 @@
     "status.opened": "Geoeffnet: %{location}",
     "status.no_selection": "Keine Datei ausgewaehlt",
     "status.cancelled": "Git grep abgebrochen"
+  },
+  "en": {
+    "cmd.grep": "Git Grep",
+    "cmd.grep_desc": "Search for text in git-tracked files",
+    "prompt.grep": "Git grep: ",
+    "status.ready": "Git Grep plugin ready",
+    "status.type_to_search": "Type to search...",
+    "status.found": "Found %{count} matches",
+    "status.no_matches": "No matches found",
+    "status.not_in_git": "Not in git",
+    "status.error": "Git grep error: %{error}",
+    "status.opened": "Opened %{location}",
+    "status.no_selection": "No file selected",
+    "status.cancelled": "Git grep cancelled"
   },
   "es": {
     "cmd.grep": "Git Grep",

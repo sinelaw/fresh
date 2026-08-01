@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "cmd.find": "Git Find File",
     "cmd.find_desc": "Find and open a git-tracked file",
     "cmd.reload": "Git Find File: Reload",
@@ -70,6 +70,30 @@
     "status.no_selection": "Keine Datei ausgewaehlt",
     "status.cancelled": "Dateisuche abgebrochen",
     "status.no_files_loaded": "Keine Git-Dateien geladen. 'Git Datei Finden: Neu laden' zum Indexieren."
+  },
+  "en": {
+    "cmd.find": "Git Find File",
+    "cmd.find_desc": "Find and open a git-tracked file",
+    "cmd.reload": "Git Find File: Reload",
+    "cmd.reload_desc": "Reload the git file index",
+    "cmd.count": "Git Find File: Count",
+    "cmd.count_desc": "Show number of indexed git files",
+    "prompt.find_file": "Find file: ",
+    "status.ready": "Git Find File plugin ready",
+    "status.loading": "Loading git files...",
+    "status.indexed": "Git Find File: %{count} files indexed",
+    "status.error_loading": "Error loading git files: %{error}",
+    "status.failed_load": "Failed to load git files",
+    "status.no_files": "No git-tracked files found",
+    "status.files_available": "%{count} files available - type to filter",
+    "status.showing_first": "Showing first %{shown} of %{total} files",
+    "status.found_matching": "Found %{count} files matching \"%{query}\"",
+    "status.no_matching": "No files matching \"%{query}\"",
+    "status.opened": "Opened %{file}",
+    "status.file_not_found": "File not found: %{file}",
+    "status.no_selection": "No file selected",
+    "status.cancelled": "File finder cancelled",
+    "status.no_files_loaded": "No git files loaded. Use 'Git Find File: Reload' to index files."
   },
   "es": {
     "cmd.find": "Git Buscar Archivo",

@@ -208,7 +208,7 @@ mod tests {
     fn test_backend_available_locales() {
         let backend = RuntimeBackend::new();
         let locales = backend.available_locales();
-        assert_eq!(locales.len(), 14);
+        assert_eq!(locales.len(), 15);
         assert!(locales.iter().any(|l| *l == "en"));
         assert!(locales.iter().any(|l| *l == "es"));
     }

@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "cmd.toggle_global": "Live Diff: Toggle (Global)",
     "cmd.toggle_global_desc": "Enable or disable live diff globally for all buffers",
     "cmd.toggle_buffer": "Live Diff: Toggle (Buffer)",
@@ -94,6 +94,38 @@
     "status.simplified": "Live-Diff: große Änderung — vereinfachte Ansicht",
     "status.bad_default": "Live-Diff: ungültiger Modus (head, disk oder branch:<ref> verwenden)",
     "status.default_set": "Live-Diff: Standardmodus aktualisiert"
+  },
+  "en": {
+    "cmd.toggle_global": "Live Diff: Toggle (Global)",
+    "cmd.toggle_global_desc": "Enable or disable live diff globally for all buffers",
+    "cmd.toggle_buffer": "Live Diff: Toggle (Buffer)",
+    "cmd.toggle_buffer_desc": "Enable or disable live diff for the current buffer (overrides the global setting)",
+    "cmd.vs_head": "Live Diff: vs HEAD",
+    "cmd.vs_head_desc": "Diff this buffer against its file at git HEAD",
+    "cmd.vs_disk": "Live Diff: vs Disk (unsaved changes)",
+    "cmd.vs_disk_desc": "Diff this buffer against the file content currently on disk",
+    "cmd.vs_branch": "Live Diff: vs Branch...",
+    "cmd.vs_branch_desc": "Diff this buffer against the file at a chosen git branch or ref",
+    "cmd.vs_default_branch": "Live Diff: vs Default Branch",
+    "cmd.vs_default_branch_desc": "Diff this buffer against origin/HEAD (falls back to main, then master)",
+    "cmd.refresh": "Live Diff: Refresh",
+    "cmd.refresh_desc": "Re-fetch the reference and recompute the diff for the current buffer",
+    "cmd.set_default": "Live Diff: Set Default Mode...",
+    "cmd.set_default_desc": "Set the default diff mode for new buffers (head, disk, or branch:<ref>)",
+    "prompt.branch": "Branch or ref",
+    "prompt.default_mode": "Default mode (head, disk, or branch:<ref>)",
+    "status.no_file": "Live Diff: No file open",
+    "status.global_enabled": "Live Diff: enabled globally",
+    "status.global_disabled": "Live Diff: disabled globally",
+    "status.buffer_enabled": "Live Diff: enabled for this buffer",
+    "status.buffer_disabled": "Live Diff: disabled for this buffer",
+    "status.mode_head": "Live Diff: comparing against HEAD",
+    "status.mode_disk": "Live Diff: comparing against file on disk",
+    "status.mode_branch": "Live Diff: comparing against %{ref}",
+    "status.refreshed": "Live Diff: reference refreshed",
+    "status.too_large": "Live Diff: file too large for live diff",
+    "status.bad_default": "Live Diff: invalid mode (use head, disk, or branch:<ref>)",
+    "status.default_set": "Live Diff: default mode updated"
   },
   "es": {
     "cmd.toggle_global": "Diff en vivo: Alternar (global)",

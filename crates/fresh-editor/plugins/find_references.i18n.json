@@ -1,4 +1,25 @@
 {
+  "bg": {
+    "cmd.show_references": "Show References Panel",
+    "cmd.show_references_desc": "Display current references",
+    "cmd.hide_references": "Hide References Panel",
+    "cmd.hide_references_desc": "Close the references panel",
+    "status.ready": "Find References plugin loaded",
+    "status.no_references": "No references found for '%{symbol}'",
+    "status.found_references": "Found %{count} reference(s)%{limit} - Up/Down navigate, RET jump, q close",
+    "status.showing_first": " (showing first %{max})",
+    "status.reference_index": "Reference %{current}/%{total}",
+    "status.jumped_to": "Jumped to %{file}:%{line}",
+    "status.no_references_to_jump": "No references to jump to",
+    "status.source_split_unavailable": "Source split not available",
+    "status.move_cursor": "Move cursor to a reference line",
+    "status.closed": "References panel closed",
+    "status.failed_open_panel": "Failed to open references panel",
+    "panel.header": "References to %{symbol} (%{count}%{limit})",
+    "panel.limited": ", limited to %{max}",
+    "panel.no_references": "No references found",
+    "panel.help": "[Up/Down] navigate  [RET] jump  [q/Esc] close"
+  },
   "cs": {
     "cmd.show_references": "Zobrazit panel odkazu",
     "cmd.show_references_desc": "Zobrazit aktualni odkazy",

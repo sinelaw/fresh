@@ -1,4 +1,22 @@
 {
+  "bg": {
+    "cmd.show_diagnostics_panel": "Show Diagnostics Panel",
+    "cmd.show_diagnostics_panel_desc": "Open the diagnostics panel",
+    "cmd.toggle_diagnostics_panel": "Toggle Diagnostics Panel",
+    "cmd.toggle_diagnostics_panel_desc": "Toggle the diagnostics panel",
+    "status.loaded": "Diagnostics Panel plugin loaded",
+    "status.failed_to_open": "Failed to open diagnostics panel",
+    "status.closed": "Diagnostics panel closed",
+    "status.jumped_to": "Jumped to %{file}:%{line}",
+    "status.move_to_diagnostic": "Move cursor to a diagnostic line",
+    "status.showing": "Showing: %{label}",
+    "status.refreshed": "Diagnostics refreshed",
+    "status.diagnostics_count": "Diagnostics: %{count} items | a: toggle filter | RET: goto | q: close",
+    "panel.header": "Diagnostics (%{filter}):",
+    "panel.no_diagnostics": "No diagnostics",
+    "panel.all_files": "All Files",
+    "panel.current_file": "Current File"
+  },
   "cs": {
     "cmd.show_diagnostics_panel": "Zobrazit panel diagnostiky",
     "cmd.show_diagnostics_panel_desc": "Otevrit panel diagnostiky",
