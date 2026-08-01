@@ -1,0 +1,3 @@
+# Force LF line endings for the help manual — it's embedded at compile time
+# and CRLF causes literal <0D> display artifacts in the terminal.
+crates/fresh-editor/docs/fresh.txt text eol=lf
