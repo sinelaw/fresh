@@ -197,6 +197,7 @@ pub fn available_locales() -> Vec<&'static str> {
 /// Returns None if the locale is not recognized.
 pub fn locale_display_name(locale: &str) -> Option<(&'static str, &'static str)> {
     match locale {
+        "bg" => Some(("Bulgarian", "Български")),
         "cs" => Some(("Czech", "Čeština")),
         "de" => Some(("German", "Deutsch")),
         "en" => Some(("English", "English")),

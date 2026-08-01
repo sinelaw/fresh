@@ -82,7 +82,7 @@ impl Window {
         );
 
         if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            state.buffer.insert(0, help::HELP_MANUAL_CONTENT);
+            state.buffer.insert(0, &help::HELP_MANUAL_CONTENT);
             state.buffer.clear_modified();
             state.editing_disabled = true;
             state.margins.configure_for_line_numbers(false);
