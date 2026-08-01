@@ -359,6 +359,7 @@
       "description": "UI locale (language). Use null for auto-detection from environment.",
       "enum": [
         null,
+        "bg",
         "cs",
         "de",
         "en",
