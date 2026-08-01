@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "mode.normal": "NORMAL",
     "mode.insert": "INSERT",
     "mode.operator": "OPERATOR",
@@ -7,7 +7,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Vi mode enabled - NORMAL",
     "status.disabled": "Vi mode disabled",
     "status.loaded": "Vi mode plugin loaded. Use 'Toggle Vi mode' command to enable.",
@@ -23,7 +22,6 @@
     "status.line_wrap_toggled": "Line wrap toggled",
     "status.syntax_always_on": "Syntax highlighting is always on",
     "status.line_beyond_end": "Line %{line} beyond end of file, moved to end",
-
     "error.no_write_since_change": "No write since last change (use %{cmd} to override)",
     "error.other_buffers_modified": "Other buffers have unsaved changes (use %{cmd} to save all and quit)",
     "error.no_file_name": "No file name (use :w filename)",
@@ -52,7 +50,6 @@
     "error.no_buffer": "No buffer",
     "error.unknown_option": "Unknown option: %{option}",
     "error.no_selection_for_motion": "No selection equivalent for motion: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} line %{line}, %{bytes} bytes",
     "info.modified": " [Modified]",
@@ -64,10 +61,8 @@
     "info.close_diagnostics": "Use :bd to close diagnostics panel",
     "info.use_search_dialog": "Use the search dialog to search for: %{pattern}",
     "info.status_bar_char": "Use the status bar for character info",
-
     "cmd.toggle_vi_mode": "Toggle Vi mode",
     "cmd.toggle_vi_mode_desc": "Enable or disable vi-style modal editing",
-
     "cmd.move_left": "Move left",
     "cmd.move_down": "Move down",
     "cmd.move_up": "Move up",
@@ -94,7 +89,6 @@
     "cmd.find_char_T": "Find till char backward",
     "cmd.find_char_repeat": "Repeat last find char",
     "cmd.find_char_repeat_reverse": "Repeat last find char (reverse)",
-
     "cmd.insert_before": "Insert before cursor",
     "cmd.insert_after": "Insert after cursor",
     "cmd.insert_line_start": "Insert at line start",
@@ -102,7 +96,6 @@
     "cmd.open_below": "Open line below",
     "cmd.open_above": "Open line above",
     "cmd.return_to_normal": "Return to normal mode",
-
     "cmd.delete_operator": "Delete operator",
     "cmd.change_operator": "Change operator",
     "cmd.yank_operator": "Yank operator",
@@ -128,7 +121,6 @@
     "mode.visual": "VIZUALNI",
     "mode.visual_line": "VIZUALNI RADEK",
     "mode.visual_block": "VIZUALNI BLOK",
-
     "status.enabled": "Vi rezim povolen - NORMALNI",
     "status.disabled": "Vi rezim zakzan",
     "status.loaded": "Plugin Vi rezimu nacten. Pouzijte 'Prepnout Vi rezim' pro aktivaci.",
@@ -144,7 +136,6 @@
     "status.line_wrap_toggled": "Zalamovani radku prepnuto",
     "status.syntax_always_on": "Zvyraznovani syntaxe je vzdy zapnuto",
     "status.line_beyond_end": "Radek %{line} za koncem souboru, presunuto na konec",
-
     "error.no_write_since_change": "Neulozeno od posledni zmeny (pouzijte %{cmd} pro vynuceni)",
     "error.other_buffers_modified": "Jiné buffery mají neuložené změny (použijte %{cmd} pro uložení všech a ukončení)",
     "error.no_file_name": "Žádný název souboru (použijte :w název_souboru)",
@@ -173,7 +164,6 @@
     "error.no_buffer": "Zadny buffer",
     "error.unknown_option": "Neznama volba: %{option}",
     "error.no_selection_for_motion": "Zadny ekvivalent vyberu pro pohyb: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} radek %{line}, %{bytes} bajtu",
     "info.modified": " [Upraveno]",
@@ -185,10 +175,8 @@
     "info.close_diagnostics": "Pouzijte :bd pro zavreni panelu diagnostiky",
     "info.use_search_dialog": "Pouzijte dialog hledani pro hledani: %{pattern}",
     "info.status_bar_char": "Pouzijte stavovy radek pro info o znaku",
-
     "cmd.toggle_vi_mode": "Prepnout Vi rezim",
     "cmd.toggle_vi_mode_desc": "Povolit nebo zakazat modalni editaci ve stylu vi",
-
     "cmd.move_left": "Posun vlevo",
     "cmd.move_down": "Posun dolu",
     "cmd.move_up": "Posun nahoru",
@@ -215,7 +203,6 @@
     "cmd.find_char_T": "Najit pred znak dozadu",
     "cmd.find_char_repeat": "Opakovat posledni hledani znaku",
     "cmd.find_char_repeat_reverse": "Opakovat posledni hledani znaku (obracene)",
-
     "cmd.insert_before": "Vkladat pred kurzor",
     "cmd.insert_after": "Vkladat za kurzor",
     "cmd.insert_line_start": "Vkladat na zacatek radku",
@@ -223,7 +210,6 @@
     "cmd.open_below": "Otevrit radek dole",
     "cmd.open_above": "Otevrit radek nahore",
     "cmd.return_to_normal": "Navrat do normalniho rezimu",
-
     "cmd.delete_operator": "Operator mazani",
     "cmd.change_operator": "Operator zmeny",
     "cmd.yank_operator": "Operator kopirovani",
@@ -249,7 +235,6 @@
     "mode.visual": "VISUELL",
     "mode.visual_line": "VISUELL ZEILE",
     "mode.visual_block": "VISUELL BLOCK",
-
     "status.enabled": "Vi-Modus aktiviert - NORMAL",
     "status.disabled": "Vi-Modus deaktiviert",
     "status.loaded": "Vi-Modus-Plugin geladen. Verwende 'Vi-Modus umschalten' zum Aktivieren.",
@@ -265,7 +250,6 @@
     "status.line_wrap_toggled": "Zeilenumbruch umgeschaltet",
     "status.syntax_always_on": "Syntaxhervorhebung ist immer aktiv",
     "status.line_beyond_end": "Zeile %{line} ueber Dateiende hinaus, zum Ende bewegt",
-
     "error.no_write_since_change": "Nicht gespeichert seit letzter Aenderung (verwende %{cmd} zum Ueberschreiben)",
     "error.other_buffers_modified": "Andere Puffer haben ungespeicherte Änderungen (verwenden Sie %{cmd} um alle zu speichern und zu beenden)",
     "error.no_file_name": "Kein Dateiname (verwenden Sie :w Dateiname)",
@@ -294,7 +278,6 @@
     "error.no_buffer": "Kein Buffer",
     "error.unknown_option": "Unbekannte Option: %{option}",
     "error.no_selection_for_motion": "Kein Selektionsaequivalent fuer Bewegung: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} Zeile %{line}, %{bytes} Bytes",
     "info.modified": " [Geaendert]",
@@ -306,10 +289,8 @@
     "info.close_diagnostics": "Verwende :bd zum Schliessen des Diagnose-Panels",
     "info.use_search_dialog": "Verwende den Suchdialog zum Suchen nach: %{pattern}",
     "info.status_bar_char": "Verwende Statusleiste fuer Zeicheninfo",
-
     "cmd.toggle_vi_mode": "Vi-Modus umschalten",
     "cmd.toggle_vi_mode_desc": "Vi-Stil modale Bearbeitung aktivieren oder deaktivieren",
-
     "cmd.move_left": "Nach links bewegen",
     "cmd.move_down": "Nach unten bewegen",
     "cmd.move_up": "Nach oben bewegen",
@@ -336,7 +317,6 @@
     "cmd.find_char_T": "Bis Zeichen rueckwaerts finden",
     "cmd.find_char_repeat": "Letzte Zeichensuche wiederholen",
     "cmd.find_char_repeat_reverse": "Letzte Zeichensuche wiederholen (umgekehrt)",
-
     "cmd.insert_before": "Vor Cursor einfuegen",
     "cmd.insert_after": "Nach Cursor einfuegen",
     "cmd.insert_line_start": "Am Zeilenanfang einfuegen",
@@ -344,7 +324,6 @@
     "cmd.open_below": "Zeile unten oeffnen",
     "cmd.open_above": "Zeile oben oeffnen",
     "cmd.return_to_normal": "Zurueck zum Normalmodus",
-
     "cmd.delete_operator": "Loeschen-Operator",
     "cmd.change_operator": "Aendern-Operator",
     "cmd.yank_operator": "Kopieren-Operator",
@@ -362,6 +341,120 @@
     "cmd.redo": "Wiederherstellen",
     "cmd.join_lines": "Zeilen verbinden"
   },
+  "en": {
+    "mode.normal": "NORMAL",
+    "mode.insert": "INSERT",
+    "mode.operator": "OPERATOR",
+    "mode.find": "FIND",
+    "mode.visual": "VISUAL",
+    "mode.visual_line": "VISUAL LINE",
+    "mode.visual_block": "VISUAL BLOCK",
+    "status.enabled": "Vi mode enabled - NORMAL",
+    "status.disabled": "Vi mode disabled",
+    "status.loaded": "Vi mode plugin loaded. Use 'Toggle Vi mode' command to enable.",
+    "status.yanked_lines": "Yanked %{count} line(s)",
+    "status.no_change_to_repeat": "No change to repeat",
+    "status.replace_not_implemented": "Replace char not yet implemented",
+    "status.file_saved": "File saved",
+    "status.file_reverted": "File reverted",
+    "status.file_reverted_discarded": "File reverted (changes discarded)",
+    "status.all_files_saved": "All files saved",
+    "status.line_numbers_on": "Line numbers on",
+    "status.line_numbers_off": "Line numbers off",
+    "status.line_wrap_toggled": "Line wrap toggled",
+    "status.syntax_always_on": "Syntax highlighting is always on",
+    "status.line_beyond_end": "Line %{line} beyond end of file, moved to end",
+    "error.no_write_since_change": "No write since last change (use %{cmd} to override)",
+    "error.other_buffers_modified": "Other buffers have unsaved changes (use %{cmd} to save all and quit)",
+    "error.no_file_name": "No file name (use :w filename)",
+    "error.not_valid_command": "Not a valid command: %{cmd}",
+    "error.unknown_command": "Unknown command: %{cmd}",
+    "error.command_no_bang": "Command does not accept !: %{cmd}",
+    "error.save_as_not_implemented": "Save as not implemented. Use Ctrl+Shift+S or File menu.",
+    "error.shell_not_supported": "Shell commands not supported (use terminal)",
+    "error.buffer_not_found": "Buffer %{id} not found",
+    "error.multiple_buffers_match": "Multiple buffers match \"%{pattern}\". Be more specific.",
+    "error.no_buffer_matching": "No buffer matching \"%{pattern}\"",
+    "error.rename_not_implemented": "Renaming buffer not implemented",
+    "error.substitute_not_implemented": "Substitute not implemented. Use Ctrl+H for search/replace.",
+    "error.global_not_implemented": "Global command not implemented",
+    "error.set_usage": "Usage: :set option or :set option=value",
+    "error.cannot_change_directory": "Cannot change directory (editor cwd is fixed)",
+    "error.marks_not_implemented": "Marks not implemented",
+    "error.registers_not_implemented": "Registers not implemented (Fresh uses system clipboard)",
+    "error.jump_list_not_implemented": "Jump list not implemented",
+    "error.syntax_cannot_disable": "Syntax highlighting cannot be disabled",
+    "error.read_not_implemented": "Read file into buffer not implemented. Use :e to open files.",
+    "error.saveas_not_implemented": "Save as not implemented. Use Ctrl+Shift+S or menu.",
+    "error.use_terminal": "Use terminal for build commands",
+    "error.line_must_be_positive": "Line number must be positive",
+    "error.cannot_read_buffer": "Cannot read buffer",
+    "error.no_buffer": "No buffer",
+    "error.unknown_option": "Unknown option: %{option}",
+    "error.no_selection_for_motion": "No selection equivalent for motion: %{motion}",
+    "info.buffer": "Buffer %{id}: %{name}",
+    "info.file": "\"%{path}\"%{modified} line %{line}, %{bytes} bytes",
+    "info.modified": " [Modified]",
+    "info.no_name": "[No Name]",
+    "info.no_buffers": "No buffers",
+    "info.help_not_available": "Help for \"%{topic}\" not available. Try :help for command list.",
+    "info.help_commands": "Commands: :w :q :wq :q! :e :sp :vs :bn :bp :bd :b :ls :set :noh :123 :help",
+    "info.version": "Fresh Editor with Vi mode plugin",
+    "info.close_diagnostics": "Use :bd to close diagnostics panel",
+    "info.use_search_dialog": "Use the search dialog to search for: %{pattern}",
+    "info.status_bar_char": "Use the status bar for character info",
+    "cmd.toggle_vi_mode": "Toggle Vi mode",
+    "cmd.toggle_vi_mode_desc": "Enable or disable vi-style modal editing",
+    "cmd.move_left": "Move left",
+    "cmd.move_down": "Move down",
+    "cmd.move_up": "Move up",
+    "cmd.move_right": "Move right",
+    "cmd.move_word": "Move to next word",
+    "cmd.move_word_back": "Move to previous word",
+    "cmd.move_word_end": "Move to end of word",
+    "cmd.move_line_start": "Move to line start",
+    "cmd.move_line_end": "Move to line end",
+    "cmd.move_doc_start": "Move to document start",
+    "cmd.move_doc_end": "Move to document end",
+    "cmd.page_down": "Page down",
+    "cmd.page_up": "Page up",
+    "cmd.half_page_down": "Half page down",
+    "cmd.half_page_up": "Half page up",
+    "cmd.center_cursor": "Center cursor on screen",
+    "cmd.search_forward": "Search forward",
+    "cmd.search_backward": "Search backward",
+    "cmd.find_next": "Find next match",
+    "cmd.find_prev": "Find previous match",
+    "cmd.find_char_f": "Find char forward",
+    "cmd.find_char_t": "Find till char forward",
+    "cmd.find_char_F": "Find char backward",
+    "cmd.find_char_T": "Find till char backward",
+    "cmd.find_char_repeat": "Repeat last find char",
+    "cmd.find_char_repeat_reverse": "Repeat last find char (reverse)",
+    "cmd.insert_before": "Insert before cursor",
+    "cmd.insert_after": "Insert after cursor",
+    "cmd.insert_line_start": "Insert at line start",
+    "cmd.insert_line_end": "Insert at line end",
+    "cmd.open_below": "Open line below",
+    "cmd.open_above": "Open line above",
+    "cmd.return_to_normal": "Return to normal mode",
+    "cmd.delete_operator": "Delete operator",
+    "cmd.change_operator": "Change operator",
+    "cmd.yank_operator": "Yank operator",
+    "cmd.delete_line": "Delete line",
+    "cmd.change_line": "Change line",
+    "cmd.yank_line": "Yank line",
+    "cmd.delete_char": "Delete character",
+    "cmd.delete_char_before": "Delete char before cursor",
+    "cmd.substitute": "Substitute character",
+    "cmd.delete_to_end": "Delete to end of line",
+    "cmd.change_to_end": "Change to end of line",
+    "cmd.paste_after": "Paste after",
+    "cmd.paste_before": "Paste before",
+    "cmd.undo": "Undo",
+    "cmd.redo": "Redo",
+    "cmd.join_lines": "Join lines"
+  },
   "es": {
     "mode.normal": "NORMAL",
     "mode.insert": "INSERTAR",
@@ -370,7 +463,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINEA",
     "mode.visual_block": "VISUAL BLOQUE",
-
     "status.enabled": "Modo Vi activado - NORMAL",
     "status.disabled": "Modo Vi desactivado",
     "status.loaded": "Plugin de modo Vi cargado. Usa 'Alternar modo Vi' para activar.",
@@ -386,7 +478,6 @@
     "status.line_wrap_toggled": "Ajuste de linea alternado",
     "status.syntax_always_on": "El resaltado de sintaxis siempre esta activo",
     "status.line_beyond_end": "Linea %{line} mas alla del final, movido al final",
-
     "error.no_write_since_change": "Sin guardar desde el ultimo cambio (usa %{cmd} para forzar)",
     "error.other_buffers_modified": "Otros búferes tienen cambios sin guardar (use %{cmd} para guardar todos y salir)",
     "error.no_file_name": "Sin nombre de archivo (use :w nombre_archivo)",
@@ -415,7 +506,6 @@
     "error.no_buffer": "Sin buffer",
     "error.unknown_option": "Opcion desconocida: %{option}",
     "error.no_selection_for_motion": "Sin equivalente de seleccion para movimiento: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} linea %{line}, %{bytes} bytes",
     "info.modified": " [Modificado]",
@@ -427,10 +517,8 @@
     "info.close_diagnostics": "Usa :bd para cerrar panel de diagnosticos",
     "info.use_search_dialog": "Usa el dialogo de busqueda para buscar: %{pattern}",
     "info.status_bar_char": "Usa la barra de estado para info de caracter",
-
     "cmd.toggle_vi_mode": "Alternar modo Vi",
     "cmd.toggle_vi_mode_desc": "Activar o desactivar edicion modal estilo vi",
-
     "cmd.move_left": "Mover izquierda",
     "cmd.move_down": "Mover abajo",
     "cmd.move_up": "Mover arriba",
@@ -457,7 +545,6 @@
     "cmd.find_char_T": "Encontrar hasta caracter atras",
     "cmd.find_char_repeat": "Repetir ultima busqueda de caracter",
     "cmd.find_char_repeat_reverse": "Repetir ultima busqueda de caracter (inverso)",
-
     "cmd.insert_before": "Insertar antes del cursor",
     "cmd.insert_after": "Insertar despues del cursor",
     "cmd.insert_line_start": "Insertar al inicio de linea",
@@ -465,7 +552,6 @@
     "cmd.open_below": "Abrir linea abajo",
     "cmd.open_above": "Abrir linea arriba",
     "cmd.return_to_normal": "Volver a modo normal",
-
     "cmd.delete_operator": "Operador eliminar",
     "cmd.change_operator": "Operador cambiar",
     "cmd.yank_operator": "Operador copiar",
@@ -491,7 +577,6 @@
     "mode.visual": "VISUEL",
     "mode.visual_line": "VISUEL LIGNE",
     "mode.visual_block": "VISUEL BLOC",
-
     "status.enabled": "Mode Vi active - NORMAL",
     "status.disabled": "Mode Vi desactive",
     "status.loaded": "Plugin mode Vi charge. Utilisez 'Basculer mode Vi' pour activer.",
@@ -507,7 +592,6 @@
     "status.line_wrap_toggled": "Retour a la ligne bascule",
     "status.syntax_always_on": "La coloration syntaxique est toujours active",
     "status.line_beyond_end": "Ligne %{line} au-dela de la fin, deplace a la fin",
-
     "error.no_write_since_change": "Non enregistre depuis la derniere modification (utilisez %{cmd} pour forcer)",
     "error.other_buffers_modified": "D'autres tampons ont des modifications non enregistrées (utilisez %{cmd} pour tout enregistrer et quitter)",
     "error.no_file_name": "Pas de nom de fichier (utilisez :w nom_fichier)",
@@ -536,7 +620,6 @@
     "error.no_buffer": "Pas de buffer",
     "error.unknown_option": "Option inconnue: %{option}",
     "error.no_selection_for_motion": "Pas d'equivalent de selection pour le mouvement: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} ligne %{line}, %{bytes} octets",
     "info.modified": " [Modifie]",
@@ -548,10 +631,8 @@
     "info.close_diagnostics": "Utilisez :bd pour fermer le panneau de diagnostics",
     "info.use_search_dialog": "Utilisez le dialogue de recherche pour chercher: %{pattern}",
     "info.status_bar_char": "Utilisez la barre d'etat pour les infos caractere",
-
     "cmd.toggle_vi_mode": "Basculer mode Vi",
     "cmd.toggle_vi_mode_desc": "Activer ou desactiver l'edition modale style vi",
-
     "cmd.move_left": "Deplacer a gauche",
     "cmd.move_down": "Deplacer vers le bas",
     "cmd.move_up": "Deplacer vers le haut",
@@ -578,7 +659,6 @@
     "cmd.find_char_T": "Trouver jusqu'au caractere en arriere",
     "cmd.find_char_repeat": "Repeter derniere recherche de caractere",
     "cmd.find_char_repeat_reverse": "Repeter derniere recherche de caractere (inverse)",
-
     "cmd.insert_before": "Inserer avant le curseur",
     "cmd.insert_after": "Inserer apres le curseur",
     "cmd.insert_line_start": "Inserer au debut de ligne",
@@ -586,7 +666,6 @@
     "cmd.open_below": "Ouvrir ligne en dessous",
     "cmd.open_above": "Ouvrir ligne au dessus",
     "cmd.return_to_normal": "Retour au mode normal",
-
     "cmd.delete_operator": "Operateur supprimer",
     "cmd.change_operator": "Operateur modifier",
     "cmd.yank_operator": "Operateur copier",
@@ -612,7 +691,6 @@
     "mode.visual": "VISUALE",
     "mode.visual_line": "VISUALE RIGA",
     "mode.visual_block": "VISUALE BLOCCO",
-
     "status.enabled": "Modalità Vi abilitata - NORMALE",
     "status.disabled": "Modalità Vi disabilitata",
     "status.loaded": "Plugin modalità Vi caricato. Usa il comando 'Alterna modalità Vi' per abilitarlo.",
@@ -628,7 +706,6 @@
     "status.line_wrap_toggled": "Andata a capo automatica alternata",
     "status.syntax_always_on": "L'evidenziazione della sintassi è sempre attiva",
     "status.line_beyond_end": "Riga %{line} oltre la fine del file, spostato alla fine",
-
     "error.no_write_since_change": "Non salvato dall'ultima modifica (usa %{cmd} per forzare)",
     "error.other_buffers_modified": "Altri buffer hanno modifiche non salvate (usa %{cmd} per salvare tutto ed uscire)",
     "error.no_file_name": "Nessun nome file (usa :w nome_file)",
@@ -657,7 +734,6 @@
     "error.no_buffer": "Nessun buffer",
     "error.unknown_option": "Opzione sconosciuta: %{option}",
     "error.no_selection_for_motion": "Nessun equivalente di selezione per il movimento: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} riga %{line}, %{bytes} byte",
     "info.modified": " [Modificato]",
@@ -669,10 +745,8 @@
     "info.close_diagnostics": "Usa :bd per chiudere il pannello diagnostica",
     "info.use_search_dialog": "Usa la finestra di ricerca per cercare: %{pattern}",
     "info.status_bar_char": "Usa la barra di stato per informazioni sui caratteri",
-
     "cmd.toggle_vi_mode": "Alterna modalità Vi",
     "cmd.toggle_vi_mode_desc": "Abilita o disabilita l'editing modale in stile vi",
-
     "cmd.move_left": "Sposta a sinistra",
     "cmd.move_down": "Sposta in basso",
     "cmd.move_up": "Sposta in alto",
@@ -699,7 +773,6 @@
     "cmd.find_char_T": "Trova fino al carattere all'indietro",
     "cmd.find_char_repeat": "Ripeti ultima ricerca carattere",
     "cmd.find_char_repeat_reverse": "Ripeti ultima ricerca carattere (inverso)",
-
     "cmd.insert_before": "Inserisci prima del cursore",
     "cmd.insert_after": "Inserisci dopo il cursore",
     "cmd.insert_line_start": "Inserisci all'inizio della riga",
@@ -707,7 +780,6 @@
     "cmd.open_below": "Apri riga sotto",
     "cmd.open_above": "Apri riga sopra",
     "cmd.return_to_normal": "Torna alla modalità normale",
-
     "cmd.delete_operator": "Operatore cancella",
     "cmd.change_operator": "Operatore cambia",
     "cmd.yank_operator": "Operatore copia (yank)",
@@ -733,7 +805,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Viモード有効 - NORMAL",
     "status.disabled": "Viモード無効",
     "status.loaded": "Viモードプラグインがロードされました。'Viモード切替'コマンドで有効化できます。",
@@ -749,7 +820,6 @@
     "status.line_wrap_toggled": "行折り返しを切替",
     "status.syntax_always_on": "シンタックスハイライトは常に有効です",
     "status.line_beyond_end": "%{line}行目はファイル末尾を超えています。末尾に移動しました",
-
     "error.no_write_since_change": "最後の変更以降保存されていません（%{cmd}で強制実行）",
     "error.other_buffers_modified": "他のバッファに未保存の変更があります（%{cmd} で全て保存して終了）",
     "error.no_file_name": "ファイル名がありません（:w ファイル名 を使用）",
@@ -778,7 +848,6 @@
     "error.no_buffer": "バッファがありません",
     "error.unknown_option": "不明なオプション: %{option}",
     "error.no_selection_for_motion": "モーションに対応する選択がありません: %{motion}",
-
     "info.buffer": "バッファ %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} %{line}行目, %{bytes}バイト",
     "info.modified": " [変更済み]",
@@ -790,10 +859,8 @@
     "info.close_diagnostics": ":bdで診断パネルを閉じます",
     "info.use_search_dialog": "検索ダイアログで検索: %{pattern}",
     "info.status_bar_char": "文字情報はステータスバーを参照",
-
     "cmd.toggle_vi_mode": "Viモード切替",
     "cmd.toggle_vi_mode_desc": "Viスタイルのモーダル編集を有効/無効にする",
-
     "cmd.move_left": "左に移動",
     "cmd.move_down": "下に移動",
     "cmd.move_up": "上に移動",
@@ -820,7 +887,6 @@
     "cmd.find_char_T": "後方で文字の手前まで検索",
     "cmd.find_char_repeat": "最後の文字検索を繰り返す",
     "cmd.find_char_repeat_reverse": "最後の文字検索を逆方向に繰り返す",
-
     "cmd.insert_before": "カーソル前に挿入",
     "cmd.insert_after": "カーソル後に挿入",
     "cmd.insert_line_start": "行頭に挿入",
@@ -828,7 +894,6 @@
     "cmd.open_below": "下に行を開く",
     "cmd.open_above": "上に行を開く",
     "cmd.return_to_normal": "ノーマルモードに戻る",
-
     "cmd.delete_operator": "削除オペレータ",
     "cmd.change_operator": "変更オペレータ",
     "cmd.yank_operator": "ヤンクオペレータ",
@@ -854,7 +919,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Vi 모드 활성화됨 - NORMAL",
     "status.disabled": "Vi 모드 비활성화됨",
     "status.loaded": "Vi 모드 플러그인 로드됨. 'Vi 모드 전환' 명령으로 활성화하세요.",
@@ -870,7 +934,6 @@
     "status.line_wrap_toggled": "줄 바꿈 전환됨",
     "status.syntax_always_on": "구문 강조는 항상 켜져 있습니다",
     "status.line_beyond_end": "%{line}줄이 파일 끝을 넘어감, 끝으로 이동함",
-
     "error.no_write_since_change": "마지막 변경 후 저장 안 됨 (%{cmd}로 강제 실행)",
     "error.other_buffers_modified": "다른 버퍼에 저장되지 않은 변경사항이 있습니다 (%{cmd}로 모두 저장하고 종료)",
     "error.no_file_name": "파일 이름 없음 (:w 파일이름 사용)",
@@ -899,7 +962,6 @@
     "error.no_buffer": "버퍼 없음",
     "error.unknown_option": "알 수 없는 옵션: %{option}",
     "error.no_selection_for_motion": "모션에 대한 선택 없음: %{motion}",
-
     "info.buffer": "버퍼 %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} %{line}줄, %{bytes}바이트",
     "info.modified": " [수정됨]",
@@ -911,10 +973,8 @@
     "info.close_diagnostics": ":bd로 진단 패널 닫기",
     "info.use_search_dialog": "검색 대화상자로 검색: %{pattern}",
     "info.status_bar_char": "문자 정보는 상태 표시줄 참조",
-
     "cmd.toggle_vi_mode": "Vi 모드 전환",
     "cmd.toggle_vi_mode_desc": "Vi 스타일 모달 편집 활성화/비활성화",
-
     "cmd.move_left": "왼쪽으로 이동",
     "cmd.move_down": "아래로 이동",
     "cmd.move_up": "위로 이동",
@@ -941,7 +1001,6 @@
     "cmd.find_char_T": "뒤로 문자 앞까지 찾기",
     "cmd.find_char_repeat": "마지막 문자 찾기 반복",
     "cmd.find_char_repeat_reverse": "마지막 문자 찾기 반복 (역방향)",
-
     "cmd.insert_before": "커서 앞에 삽입",
     "cmd.insert_after": "커서 뒤에 삽입",
     "cmd.insert_line_start": "줄 시작에 삽입",
@@ -949,7 +1008,6 @@
     "cmd.open_below": "아래에 줄 열기",
     "cmd.open_above": "위에 줄 열기",
     "cmd.return_to_normal": "일반 모드로 돌아가기",
-
     "cmd.delete_operator": "삭제 연산자",
     "cmd.change_operator": "변경 연산자",
     "cmd.yank_operator": "복사 연산자",
@@ -975,7 +1033,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Modo Vi ativado - NORMAL",
     "status.disabled": "Modo Vi desativado",
     "status.loaded": "Plugin modo Vi carregado. Use 'Alternar modo Vi' para ativar.",
@@ -991,7 +1048,6 @@
     "status.line_wrap_toggled": "Quebra de linha alternada",
     "status.syntax_always_on": "Realce de sintaxe esta sempre ativo",
     "status.line_beyond_end": "Linha %{line} alem do fim do arquivo, movido para o fim",
-
     "error.no_write_since_change": "Nao salvo desde a ultima alteracao (use %{cmd} para forcar)",
     "error.other_buffers_modified": "Outros buffers têm alterações não salvas (use %{cmd} para salvar tudo e sair)",
     "error.no_file_name": "Sem nome de arquivo (use :w nome_arquivo)",
@@ -1020,7 +1076,6 @@
     "error.no_buffer": "Sem buffer",
     "error.unknown_option": "Opcao desconhecida: %{option}",
     "error.no_selection_for_motion": "Sem equivalente de selecao para movimento: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} linha %{line}, %{bytes} bytes",
     "info.modified": " [Modificado]",
@@ -1032,10 +1087,8 @@
     "info.close_diagnostics": "Use :bd para fechar painel de diagnosticos",
     "info.use_search_dialog": "Use o dialogo de pesquisa para pesquisar: %{pattern}",
     "info.status_bar_char": "Use a barra de status para info de caractere",
-
     "cmd.toggle_vi_mode": "Alternar modo Vi",
     "cmd.toggle_vi_mode_desc": "Ativar ou desativar edicao modal estilo vi",
-
     "cmd.move_left": "Mover para esquerda",
     "cmd.move_down": "Mover para baixo",
     "cmd.move_up": "Mover para cima",
@@ -1062,7 +1115,6 @@
     "cmd.find_char_T": "Encontrar ate caractere para tras",
     "cmd.find_char_repeat": "Repetir ultima busca de caractere",
     "cmd.find_char_repeat_reverse": "Repetir ultima busca de caractere (reverso)",
-
     "cmd.insert_before": "Inserir antes do cursor",
     "cmd.insert_after": "Inserir apos o cursor",
     "cmd.insert_line_start": "Inserir no inicio da linha",
@@ -1070,7 +1122,6 @@
     "cmd.open_below": "Abrir linha abaixo",
     "cmd.open_above": "Abrir linha acima",
     "cmd.return_to_normal": "Voltar ao modo normal",
-
     "cmd.delete_operator": "Operador deletar",
     "cmd.change_operator": "Operador alterar",
     "cmd.yank_operator": "Operador copiar",
@@ -1096,7 +1147,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Vi режим включен - NORMAL",
     "status.disabled": "Vi режим выключен",
     "status.loaded": "Плагин Vi режима загружен. Используйте 'Переключить Vi режим' для включения.",
@@ -1112,7 +1162,6 @@
     "status.line_wrap_toggled": "Перенос строк переключен",
     "status.syntax_always_on": "Подсветка синтаксиса всегда включена",
     "status.line_beyond_end": "Строка %{line} за концом файла, перемещено в конец",
-
     "error.no_write_since_change": "Не сохранено с последнего изменения (используйте %{cmd} для принудительного выполнения)",
     "error.other_buffers_modified": "Другие буферы имеют несохранённые изменения (используйте %{cmd} чтобы сохранить всё и выйти)",
     "error.no_file_name": "Нет имени файла (используйте :w имя_файла)",
@@ -1141,7 +1190,6 @@
     "error.no_buffer": "Нет буфера",
     "error.unknown_option": "Неизвестная опция: %{option}",
     "error.no_selection_for_motion": "Нет эквивалента выделения для движения: %{motion}",
-
     "info.buffer": "Буфер %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} строка %{line}, %{bytes} байт",
     "info.modified": " [Изменен]",
@@ -1153,10 +1201,8 @@
     "info.close_diagnostics": "Используйте :bd для закрытия панели диагностики",
     "info.use_search_dialog": "Используйте диалог поиска для поиска: %{pattern}",
     "info.status_bar_char": "Используйте строку состояния для информации о символе",
-
     "cmd.toggle_vi_mode": "Переключить Vi режим",
     "cmd.toggle_vi_mode_desc": "Включить или выключить модальное редактирование в стиле vi",
-
     "cmd.move_left": "Переместить влево",
     "cmd.move_down": "Переместить вниз",
     "cmd.move_up": "Переместить вверх",
@@ -1183,7 +1229,6 @@
     "cmd.find_char_T": "Найти до символа назад",
     "cmd.find_char_repeat": "Повторить последний поиск символа",
     "cmd.find_char_repeat_reverse": "Повторить последний поиск символа (обратно)",
-
     "cmd.insert_before": "Вставить перед курсором",
     "cmd.insert_after": "Вставить после курсора",
     "cmd.insert_line_start": "Вставить в начале строки",
@@ -1191,7 +1236,6 @@
     "cmd.open_below": "Открыть строку ниже",
     "cmd.open_above": "Открыть строку выше",
     "cmd.return_to_normal": "Вернуться в нормальный режим",
-
     "cmd.delete_operator": "Оператор удаления",
     "cmd.change_operator": "Оператор изменения",
     "cmd.yank_operator": "Оператор копирования",
@@ -1217,7 +1261,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "โหมด Vi เปิดใช้งาน - NORMAL",
     "status.disabled": "โหมด Vi ปิดใช้งาน",
     "status.loaded": "โหลดปลั๊กอินโหมด Vi แล้ว ใช้คำสั่ง 'สลับโหมด Vi' เพื่อเปิดใช้งาน",
@@ -1233,7 +1276,6 @@
     "status.line_wrap_toggled": "สลับการตัดบรรทัด",
     "status.syntax_always_on": "การเน้นไวยากรณ์เปิดใช้งานตลอดเวลา",
     "status.line_beyond_end": "บรรทัด %{line} เกินจุดสิ้นสุดไฟล์ ย้ายไปยังจุดสิ้นสุด",
-
     "error.no_write_since_change": "ไม่ได้บันทึกตั้งแต่การเปลี่ยนแปลงล่าสุด (ใช้ %{cmd} เพื่อบังคับ)",
     "error.other_buffers_modified": "บัฟเฟอร์อื่นมีการเปลี่ยนแปลงที่ไม่ได้บันทึก (ใช้ %{cmd} เพื่อบันทึกทั้งหมดและออก)",
     "error.no_file_name": "ไม่มีชื่อไฟล์ (ใช้ :w ชื่อไฟล์)",
@@ -1262,7 +1304,6 @@
     "error.no_buffer": "ไม่มีบัฟเฟอร์",
     "error.unknown_option": "ตัวเลือกไม่รู้จัก: %{option}",
     "error.no_selection_for_motion": "ไม่มีการเลือกที่เทียบเท่าสำหรับการเคลื่อนไหว: %{motion}",
-
     "info.buffer": "บัฟเฟอร์ %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} บรรทัด %{line}, %{bytes} ไบต์",
     "info.modified": " [แก้ไขแล้ว]",
@@ -1274,10 +1315,8 @@
     "info.close_diagnostics": "ใช้ :bd เพื่อปิดแผงการวินิจฉัย",
     "info.use_search_dialog": "ใช้กล่องโต้ตอบค้นหาเพื่อค้นหา: %{pattern}",
     "info.status_bar_char": "ใช้แถบสถานะสำหรับข้อมูลอักขระ",
-
     "cmd.toggle_vi_mode": "สลับโหมด Vi",
     "cmd.toggle_vi_mode_desc": "เปิดหรือปิดการแก้ไขแบบโมดอลสไตล์ vi",
-
     "cmd.move_left": "เลื่อนไปซ้าย",
     "cmd.move_down": "เลื่อนลง",
     "cmd.move_up": "เลื่อนขึ้น",
@@ -1304,7 +1343,6 @@
     "cmd.find_char_T": "ค้นหาจนถึงอักขระย้อนกลับ",
     "cmd.find_char_repeat": "ทำซ้ำการค้นหาอักขระล่าสุด",
     "cmd.find_char_repeat_reverse": "ทำซ้ำการค้นหาอักขระล่าสุด (ย้อนกลับ)",
-
     "cmd.insert_before": "แทรกก่อนเคอร์เซอร์",
     "cmd.insert_after": "แทรกหลังเคอร์เซอร์",
     "cmd.insert_line_start": "แทรกที่ต้นบรรทัด",
@@ -1312,7 +1350,6 @@
     "cmd.open_below": "เปิดบรรทัดด้านล่าง",
     "cmd.open_above": "เปิดบรรทัดด้านบน",
     "cmd.return_to_normal": "กลับสู่โหมดปกติ",
-
     "cmd.delete_operator": "ตัวดำเนินการลบ",
     "cmd.change_operator": "ตัวดำเนินการเปลี่ยน",
     "cmd.yank_operator": "ตัวดำเนินการคัดลอก",
@@ -1338,7 +1375,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Vi режим увімкнено - NORMAL",
     "status.disabled": "Vi режим вимкнено",
     "status.loaded": "Плагін Vi режиму завантажено. Використовуйте 'Перемкнути Vi режим' для увімкнення.",
@@ -1354,7 +1390,6 @@
     "status.line_wrap_toggled": "Перенос рядків перемкнуто",
     "status.syntax_always_on": "Підсвічування синтаксису завжди увімкнено",
     "status.line_beyond_end": "Рядок %{line} за кінцем файлу, переміщено в кінець",
-
     "error.no_write_since_change": "Не збережено з останньої зміни (використовуйте %{cmd} для примусового виконання)",
     "error.other_buffers_modified": "Інші буфери мають незбережені зміни (використайте %{cmd} щоб зберегти все і вийти)",
     "error.no_file_name": "Немає назви файлу (використайте :w назва_файлу)",
@@ -1383,7 +1418,6 @@
     "error.no_buffer": "Немає буфера",
     "error.unknown_option": "Невідома опція: %{option}",
     "error.no_selection_for_motion": "Немає еквіваленту виділення для руху: %{motion}",
-
     "info.buffer": "Буфер %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} рядок %{line}, %{bytes} байт",
     "info.modified": " [Змінено]",
@@ -1395,10 +1429,8 @@
     "info.close_diagnostics": "Використовуйте :bd для закриття панелі діагностики",
     "info.use_search_dialog": "Використовуйте діалог пошуку для пошуку: %{pattern}",
     "info.status_bar_char": "Використовуйте рядок стану для інформації про символ",
-
     "cmd.toggle_vi_mode": "Перемкнути Vi режим",
     "cmd.toggle_vi_mode_desc": "Увімкнути або вимкнути модальне редагування в стилі vi",
-
     "cmd.move_left": "Перемістити вліво",
     "cmd.move_down": "Перемістити вниз",
     "cmd.move_up": "Перемістити вгору",
@@ -1425,7 +1457,6 @@
     "cmd.find_char_T": "Знайти до символу назад",
     "cmd.find_char_repeat": "Повторити останній пошук символу",
     "cmd.find_char_repeat_reverse": "Повторити останній пошук символу (зворотньо)",
-
     "cmd.insert_before": "Вставити перед курсором",
     "cmd.insert_after": "Вставити після курсора",
     "cmd.insert_line_start": "Вставити на початку рядка",
@@ -1433,7 +1464,6 @@
     "cmd.open_below": "Відкрити рядок нижче",
     "cmd.open_above": "Відкрити рядок вище",
     "cmd.return_to_normal": "Повернутися до нормального режиму",
-
     "cmd.delete_operator": "Оператор видалення",
     "cmd.change_operator": "Оператор зміни",
     "cmd.yank_operator": "Оператор копіювання",
@@ -1459,7 +1489,6 @@
     "mode.visual": "CHỌN",
     "mode.visual_line": "CHỌN DÒNG",
     "mode.visual_block": "CHỌN KHỐI",
-
     "status.enabled": "Chế độ Vi đã bật - BÌNH THƯỜNG",
     "status.disabled": "Chế độ Vi đã tắt",
     "status.loaded": "Plugin chế độ Vi đã tải. Dùng 'Bật/tắt chế độ Vi' để kích hoạt.",
@@ -1475,7 +1504,6 @@
     "status.line_wrap_toggled": "Đã bật/tắt ngắt dòng",
     "status.syntax_always_on": "Tô sáng cú pháp luôn bật",
     "status.line_beyond_end": "Dòng %{line} vượt quá cuối tệp, di chuyển đến cuối",
-
     "error.no_write_since_change": "Chưa lưu từ lần thay đổi gần nhất (dùng %{cmd} để ép buộc)",
     "error.other_buffers_modified": "Các buffer khác có thay đổi chưa lưu (dùng %{cmd} để lưu tất cả và thoát)",
     "error.no_file_name": "Không có tên tệp (dùng :w tên_tệp)",
@@ -1504,7 +1532,6 @@
     "error.no_buffer": "Không có buffer",
     "error.unknown_option": "Tùy chọn không xác định: %{option}",
     "error.no_selection_for_motion": "Không có tương đương lựa chọn cho di chuyển: %{motion}",
-
     "info.buffer": "Buffer %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} dòng %{line}, %{bytes} byte",
     "info.modified": " [Đã sửa đổi]",
@@ -1516,10 +1543,8 @@
     "info.close_diagnostics": "Dùng :bd để đóng bảng chẩn đoán",
     "info.use_search_dialog": "Dùng hộp thoại tìm kiếm để tìm: %{pattern}",
     "info.status_bar_char": "Dùng thanh trạng thái để xem thông tin ký tự",
-
     "cmd.toggle_vi_mode": "Bật/tắt chế độ Vi",
     "cmd.toggle_vi_mode_desc": "Bật hoặc tắt chỉnh sửa theo phong cách vi",
-
     "cmd.move_left": "Di chuyển sang trái",
     "cmd.move_down": "Di chuyển xuống",
     "cmd.move_up": "Di chuyển lên",
@@ -1546,7 +1571,6 @@
     "cmd.find_char_T": "Tìm đến ký tự lùi",
     "cmd.find_char_repeat": "Lặp lại tìm ký tự cuối",
     "cmd.find_char_repeat_reverse": "Lặp lại tìm ký tự cuối (ngược)",
-
     "cmd.insert_before": "Chèn trước con trỏ",
     "cmd.insert_after": "Chèn sau con trỏ",
     "cmd.insert_line_start": "Chèn ở đầu dòng",
@@ -1554,7 +1578,6 @@
     "cmd.open_below": "Mở dòng bên dưới",
     "cmd.open_above": "Mở dòng bên trên",
     "cmd.return_to_normal": "Trở về chế độ bình thường",
-
     "cmd.delete_operator": "Toán tử xóa",
     "cmd.change_operator": "Toán tử thay đổi",
     "cmd.yank_operator": "Toán tử sao chép",
@@ -1580,7 +1603,6 @@
     "mode.visual": "VISUAL",
     "mode.visual_line": "VISUAL LINE",
     "mode.visual_block": "VISUAL BLOCK",
-
     "status.enabled": "Vi模式已启用 - NORMAL",
     "status.disabled": "Vi模式已禁用",
     "status.loaded": "Vi模式插件已加载。使用'切换Vi模式'命令启用。",
@@ -1596,7 +1618,6 @@
     "status.line_wrap_toggled": "自动换行已切换",
     "status.syntax_always_on": "语法高亮始终开启",
     "status.line_beyond_end": "第%{line}行超出文件末尾，已移动到末尾",
-
     "error.no_write_since_change": "上次更改后未保存（使用%{cmd}强制执行）",
     "error.other_buffers_modified": "其他缓冲区有未保存的更改（使用 %{cmd} 保存全部并退出）",
     "error.no_file_name": "没有文件名（使用 :w 文件名）",
@@ -1625,7 +1646,6 @@
     "error.no_buffer": "没有缓冲区",
     "error.unknown_option": "未知选项: %{option}",
     "error.no_selection_for_motion": "没有对应的选择操作: %{motion}",
-
     "info.buffer": "缓冲区 %{id}: %{name}",
     "info.file": "\"%{path}\"%{modified} 第%{line}行, %{bytes}字节",
     "info.modified": " [已修改]",
@@ -1637,10 +1657,8 @@
     "info.close_diagnostics": "使用:bd关闭诊断面板",
     "info.use_search_dialog": "使用搜索对话框搜索: %{pattern}",
     "info.status_bar_char": "使用状态栏查看字符信息",
-
     "cmd.toggle_vi_mode": "切换Vi模式",
     "cmd.toggle_vi_mode_desc": "启用或禁用Vi风格的模态编辑",
-
     "cmd.move_left": "向左移动",
     "cmd.move_down": "向下移动",
     "cmd.move_up": "向上移动",
@@ -1667,7 +1685,6 @@
     "cmd.find_char_T": "向后查找到字符前",
     "cmd.find_char_repeat": "重复上次字符查找",
     "cmd.find_char_repeat_reverse": "反向重复上次字符查找",
-
     "cmd.insert_before": "在光标前插入",
     "cmd.insert_after": "在光标后插入",
     "cmd.insert_line_start": "在行首插入",
@@ -1675,7 +1692,6 @@
     "cmd.open_below": "在下方新建行",
     "cmd.open_above": "在上方新建行",
     "cmd.return_to_normal": "返回普通模式",
-
     "cmd.delete_operator": "删除操作符",
     "cmd.change_operator": "修改操作符",
     "cmd.yank_operator": "复制操作符",

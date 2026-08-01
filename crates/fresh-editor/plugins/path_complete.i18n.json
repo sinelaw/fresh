@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "status.loaded": "Path completion plugin loaded successfully",
     "suggestion.directory": "directory",
     "suggestion.new_file": "%{filename} (new file)",
@@ -16,6 +16,12 @@
     "suggestion.directory": "Verzeichnis",
     "suggestion.new_file": "%{filename} (neue Datei)",
     "suggestion.new_file_desc": "Datei existiert noch nicht"
+  },
+  "en": {
+    "status.loaded": "Path completion plugin loaded successfully",
+    "suggestion.directory": "directory",
+    "suggestion.new_file": "%{filename} (new file)",
+    "suggestion.new_file_desc": "File does not exist yet"
   },
   "es": {
     "status.loaded": "Plugin de autocompletado de rutas cargado correctamente",

@@ -1,4 +1,9 @@
 {
+  "bg": {
+    "status.detecting_branch": "Detecting branch ...",
+    "status.not_in_git": "Not in git",
+    "status.git_branch": "Git: branch"
+  },
   "cs": {
     "status.detecting_branch": "Detekuji větev ...",
     "status.not_in_git": "Není v git",

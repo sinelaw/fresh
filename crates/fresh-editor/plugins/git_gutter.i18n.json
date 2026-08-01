@@ -1,5 +1,5 @@
 {
-  "en": {
+  "bg": {
     "cmd.refresh": "Git Gutter: Refresh",
     "cmd.refresh_desc": "Refresh git gutter indicators for the current buffer",
     "status.ready": "Git Gutter plugin ready",
@@ -19,6 +19,13 @@
     "status.ready": "Git Gutter Plugin bereit",
     "status.no_file": "Git Gutter: Keine Datei geoeffnet",
     "status.changes": "Git Gutter: %{count} Aenderung(en) erkannt"
+  },
+  "en": {
+    "cmd.refresh": "Git Gutter: Refresh",
+    "cmd.refresh_desc": "Refresh git gutter indicators for the current buffer",
+    "status.ready": "Git Gutter plugin ready",
+    "status.no_file": "Git Gutter: No file open",
+    "status.changes": "Git Gutter: %{count} change(s) detected"
   },
   "es": {
     "cmd.refresh": "Git Gutter: Actualizar",
