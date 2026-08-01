@@ -11,6 +11,10 @@ use std::sync::RwLock;
 /// Embedded locale JSON files (same binary size as macro approach)
 const EMBEDDED_LOCALES: &[(&str, &str)] = &[
     (
+        "bg",
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/bg.json")),
+    ),
+    (
         "cs",
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/locales/cs.json")),
     ),
