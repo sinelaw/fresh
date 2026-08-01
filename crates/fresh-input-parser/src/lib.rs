@@ -696,19 +696,24 @@ impl InputParser {
     fn dispatch_csi_u(&mut self, params: &[u8], out: &mut Vec<Event>) {
         let params_str = std::str::from_utf8(params).unwrap_or("");
         let parts: Vec<&str> = params_str.split(';').collect();
-        let codepoint: u32 = parts
-            .first()
-            .and_then(|s| first_subparam(s).parse().ok())
-            .unwrap_or(0);
+        let key_field = parts.first().copied().unwrap_or("");
+        let codepoint: u32 = first_subparam(key_field).parse().unwrap_or(0);
         let mods_field = parts.get(1).copied().unwrap_or("");
         let mods_param: u16 = first_subparam(mods_field).parse().unwrap_or(1);
-        let modifiers = modifiers_from_param(mods_param);
+        let mut modifiers = modifiers_from_param(mods_param);
         // The modifier field may carry an event-type sub-parameter
         // (`mods:event-type`): 1=press, 2=repeat, 3=release. Preserve it as the
         // key event's kind so a release is not reported as a fresh press (which
         // would fire every keystroke twice once event-type reporting is on).
         let kind = event_kind_of(mods_field);
-        if let Some(code) = functional_or_char(codepoint) {
+        if let Some(mut code) = functional_or_char(codepoint) {
+            // A shifted key must arrive as the character it types, exactly as
+            // it does over the legacy encoding — the case (or symbol) carries
+            // the shift, so the modifier bit goes with it.
+            if let Some(shifted) = shifted_char(key_field, code, modifiers) {
+                code = KeyCode::Char(shifted);
+                modifiers.remove(KeyModifiers::SHIFT);
+            }
             out.push(Event::Key(KeyEvent::new_with_kind(code, modifiers, kind)));
         }
     }
@@ -752,6 +757,69 @@ fn csi_key(code: KeyCode, params: &[u8]) -> Event {
 /// we key off the primary (base) value of each.
 fn first_subparam(field: &str) -> &str {
     field.split(':').next().unwrap_or(field)
+}
+
+/// The character a shifted CSI-u key should be reported as, or `None` to keep
+/// the key as its base codepoint plus the SHIFT modifier.
+///
+/// Over the legacy encoding a shifted key arrives as the character it types —
+/// Shift+A is the byte `0x41`, Shift+2 is `0x40` — and nothing downstream ever
+/// sees a SHIFT bit. Under `REPORT_ALL_KEYS_AS_ESCAPE_CODES` every printable
+/// key moves to the CSI-u form instead, where the field is the *base* key
+/// (`CSI 97:65;2u` for Shift+A: base 97, shifted 65). Reporting only the base
+/// made every shifted key type its unshifted character — `A` inserted `a`, `@`
+/// inserted `2` — which is what made the shift key look dead once the flag was
+/// on (sinelaw/fresh#2880). Resolving the shifted character here keeps the two
+/// encodings interchangeable, so keybindings, text insertion and the embedded
+/// terminal's pty encoding all stay oblivious to which one the terminal speaks.
+///
+/// Two cases are deliberately left alone:
+/// - **CONTROL held.** `Ctrl+Shift+A` must stay `Ctrl+Shift+a` so it resolves
+///   to a `Ctrl+Shift+A` binding rather than collapsing onto `Ctrl+A` (which is
+///   what uppercasing plus a dropped SHIFT would normalize to).
+/// - **A shifted codepoint the terminal did not send** for anything but a
+///   letter. Without `REPORT_ALTERNATE_KEYS` the shifted codepoint is absent,
+///   and only the keyboard layout knows that Shift+2 is `@` — but Shift+letter
+///   is the letter's uppercase on every Latin layout, so that much is safe to
+///   derive. Non-letters keep their base plus SHIFT rather than guess.
+fn shifted_char(key_field: &str, code: KeyCode, modifiers: KeyModifiers) -> Option<char> {
+    if !modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL) {
+        return None;
+    }
+    let KeyCode::Char(base) = code else {
+        return None;
+    };
+    match shifted_subparam(key_field) {
+        // The terminal told us what the key types: take it, unless it is a
+        // functional key's Private Use Area codepoint (never printable text).
+        Some(codepoint) => match functional_or_char(codepoint)? {
+            KeyCode::Char(shifted) => Some(shifted),
+            _ => None,
+        },
+        None if modifiers == KeyModifiers::SHIFT => uppercase_letter(base),
+        None => None,
+    }
+}
+
+/// The shifted codepoint of a kitty `unicode:shifted:base` key field, if the
+/// terminal reported one. An empty sub-parameter (`97::29`, the way a key field
+/// carries a base-layout code with no shifted code) is "not reported".
+fn shifted_subparam(key_field: &str) -> Option<u32> {
+    key_field.split(':').nth(1)?.parse().ok()
+}
+
+/// The single-character uppercase of a letter, or `None` if the key is not a
+/// letter (`4`), is already uppercase, or uppercases to several characters
+/// (`ß` → `SS`, which is not a keystroke).
+fn uppercase_letter(base: char) -> Option<char> {
+    if !base.is_alphabetic() {
+        return None;
+    }
+    let mut upper = base.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(c), None) if c != base => Some(c),
+        _ => None,
+    }
 }
 
 /// Map a Unicode codepoint from CSI-u / modifyOtherKeys to a key code.

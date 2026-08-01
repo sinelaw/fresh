@@ -23,6 +23,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`, `Shift+2` inserted `2`), because the terminal reports the *base* key and the shift separately (#2880, reported by @akarinotomoshibi).
 * **Four dead settings** - the bracket-matching toggles, `file_explorer.respect_gitignore` and `languages.<id>.textmate_grammar` now take effect; `editor.highlight_timeout_ms` was removed rather than wired up (#2842).
 * **Files that are one very long line**
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).

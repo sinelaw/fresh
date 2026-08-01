@@ -286,12 +286,130 @@ fn csi_u_alternate_keys_subparameters() {
     // Shift+'a' reported as base 97, shifted 65: CSI 97:65 ; 2 u
     assert_eq!(
         keys(&p.parse(b"\x1b[97:65;2u")),
-        vec![(KeyCode::Char('a'), KeyModifiers::SHIFT)]
+        vec![(KeyCode::Char('A'), KeyModifiers::empty())]
     );
     // A modifier field may carry an event-type sub-param: CSI 13 ; 5:1 u
     assert_eq!(
         keys(&p.parse(b"\x1b[13;5:1u")),
         vec![(KeyCode::Enter, KeyModifiers::CONTROL)]
+    );
+    // A base-layout code with no shifted code (`97::29`) is not a shifted key.
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97::29u")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+/// With `REPORT_ALL_KEYS_AS_ESCAPE_CODES` every printable key arrives in the
+/// CSI-u form, where the key field is the *base* key and the shift lives in the
+/// modifier field. Reporting the base made every shifted key type its unshifted
+/// character, which read as the shift key being dead (sinelaw/fresh#2880).
+#[test]
+fn csi_u_shifted_keys_report_the_character_they_type() {
+    let mut p = InputParser::new();
+    for (bytes, expected) in [
+        (&b"\x1b[97:65;2u"[..], 'A'),   // Shift+a
+        (&b"\x1b[50:64;2u"[..], '@'),   // Shift+2 on a US layout
+        (&b"\x1b[47:63;2u"[..], '?'),   // Shift+/
+        (&b"\x1b[232:200;2u"[..], 'È'), // Shift+è, non-ASCII
+    ] {
+        assert_eq!(
+            keys(&p.parse(bytes)),
+            vec![(KeyCode::Char(expected), KeyModifiers::empty())],
+            "{:?} should type {expected}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+}
+
+/// Without `REPORT_ALTERNATE_KEYS` the terminal sends no shifted codepoint.
+/// Shift+letter is the letter's uppercase on every Latin layout, so it is
+/// resolved anyway; anything else would be a guess at the layout and keeps its
+/// base key plus the SHIFT modifier.
+#[test]
+fn csi_u_shifted_keys_without_alternate_key_reporting() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b[99;2u")),
+        vec![(KeyCode::Char('C'), KeyModifiers::empty())]
+    );
+    assert_eq!(
+        keys(&p.parse(b"\x1b[50;2u")),
+        vec![(KeyCode::Char('2'), KeyModifiers::SHIFT)]
+    );
+}
+
+/// The shifted character replaces the base key for the modifier combinations
+/// that type text, but never for Ctrl: `Ctrl+Shift+A` has to stay distinct from
+/// `Ctrl+A`, which is what `Char('A')` with the SHIFT bit dropped would
+/// normalize to.
+#[test]
+fn csi_u_shifted_keys_alongside_other_modifiers() {
+    let mut p = InputParser::new();
+    // Alt+Shift+f
+    assert_eq!(
+        keys(&p.parse(b"\x1b[102:70;4u")),
+        vec![(KeyCode::Char('F'), KeyModifiers::ALT)]
+    );
+    // Ctrl+Shift+a
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97:65;6u")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )]
+    );
+    // Ctrl+Shift+a with alternate keys off
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97;6u")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )]
+    );
+}
+
+/// A shifted key still carries its event type: substituting the character must
+/// not turn a release into a press.
+#[test]
+fn csi_u_shifted_key_keeps_its_event_type() {
+    let mut p = InputParser::new();
+    match &p.parse(b"\x1b[97:65;2:3u")[0] {
+        Event::Key(ke) => {
+            assert_eq!(ke.code, KeyCode::Char('A'));
+            assert_eq!(ke.modifiers, KeyModifiers::empty());
+            assert_eq!(ke.kind, KeyEventKind::Release);
+        }
+        other => panic!("expected key, got {:?}", other),
+    }
+}
+
+/// The full kitty key event is
+/// `CSI unicode-key-code:alternate-key-codes ; modifiers:event-type ; text-as-codepoints u`.
+/// fresh does not request the associated text (that needs `REPORT_ASSOCIATED_TEXT`),
+/// but a terminal that sends the field anyway must not derail the key.
+#[test]
+fn csi_u_ignores_a_trailing_text_parameter() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b[97:65;2;65u")),
+        vec![(KeyCode::Char('A'), KeyModifiers::empty())]
+    );
+}
+
+/// Functional keys have no shifted character. Shift+Tab keeps its own key code
+/// rather than being replaced by whatever the sub-parameter holds.
+#[test]
+fn csi_u_shifted_functional_keys_are_untouched() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(b"\x1b[9;2u")),
+        vec![(KeyCode::Tab, KeyModifiers::SHIFT)]
+    );
+    // Shift+F13, whose PUA codepoint must never become a printable character.
+    assert_eq!(
+        keys(&p.parse(b"\x1b[57376;2u")),
+        vec![(KeyCode::F(13), KeyModifiers::SHIFT)]
     );
 }
 
