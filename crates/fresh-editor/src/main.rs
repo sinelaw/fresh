@@ -178,6 +178,7 @@ struct Args {
     update_check: bool,
     update_yes: bool,
     update_allow_downgrade: bool,
+    update_print_command: bool,
     locale: Option<String>,
     check_plugin: Option<PathBuf>,
     init: Option<Option<String>>,
@@ -219,6 +220,7 @@ impl From<Cli> for Args {
         let update_check = update && cli.cmd.iter().any(|a| a == "--check");
         let update_yes = update && cli.cmd.iter().any(|a| a == "--yes" || a == "-y");
         let update_allow_downgrade = update && cli.cmd.iter().any(|a| a == "--allow-downgrade");
+        let update_print_command = update && cli.cmd.iter().any(|a| a == "--print-command");
 
         // Parse --cmd arguments to determine command
         let (
@@ -483,6 +485,7 @@ impl From<Cli> for Args {
             update_check,
             update_yes,
             update_allow_downgrade,
+            update_print_command,
             locale: cli.locale,
             check_plugin: cli.check_plugin,
             init,
@@ -4340,6 +4343,7 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             check_only: args.update_check,
             yes: args.update_yes,
             allow_downgrade: args.update_allow_downgrade,
+            print_command: args.update_print_command,
             ..Default::default()
         };
         // Map the outcome to a process exit code without an anyhow backtrace

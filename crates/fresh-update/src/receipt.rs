@@ -48,6 +48,12 @@ pub struct Hints {
     /// Target triple this artifact was built for (self-update asset selection).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// The architecture as the *packaging tool* spells it (`amd64` for a
+    /// `.deb`, `x86_64` for a `.rpm`). Recorded by the packaging pipeline so
+    /// the update path never has to re-derive it from the target triple — the
+    /// installer knows this for certain, the running binary can only infer it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pkg_arch: Option<String>,
     /// Release asset filename to fetch for self-update.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,

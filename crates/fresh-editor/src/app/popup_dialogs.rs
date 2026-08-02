@@ -1138,7 +1138,7 @@ impl Editor {
     ///
     /// [`UpdatePlan`]: fresh_update::UpdatePlan
     pub fn show_update_popup(&mut self, version: &str) {
-        use crate::app::update_prompt::{offer_for, UpdateOffer};
+        use crate::app::update_prompt::{offer_for, UpdateChoice, UpdateOffer};
         use crate::view::popup::PopupListItem;
 
         let prov = self
@@ -1149,63 +1149,58 @@ impl Editor {
         let channel = prov.channel.label();
         let offer = offer_for(&plan);
 
-        let (body, label) = match offer {
-            UpdateOffer::SelfContained => (
-                t!(
-                    "update.body_self_contained",
-                    channel = channel,
-                    version = version
-                )
-                .to_string(),
-                t!("update.choice_install_now", version = version).to_string(),
-            ),
-            UpdateOffer::DownloadPackage => (
-                t!(
-                    "update.body_download_package",
-                    channel = channel,
-                    version = version
-                )
-                .to_string(),
-                t!("update.choice_install_now", version = version).to_string(),
-            ),
-            UpdateOffer::DownloadPackagePrivileged => (
-                t!(
-                    "update.body_download_package_privileged",
-                    channel = channel,
-                    version = version
-                )
-                .to_string(),
-                t!("update.choice_download_now", version = version).to_string(),
-            ),
-            UpdateOffer::RunCommand => (
-                t!(
-                    "update.body_delegated",
-                    channel = channel,
-                    command = plan.human
-                )
-                .to_string(),
-                t!("update.choice_run_command").to_string(),
-            ),
-            UpdateOffer::ShowCommand => (
-                t!(
-                    "update.body_delegated_privileged",
-                    channel = channel,
-                    command = plan.human
-                )
-                .to_string(),
-                t!("update.choice_show_command").to_string(),
-            ),
-            // Deliberately channel-free: this covers both an unknown install
-            // and a source build, and naming either adds nothing the update
-            // output doesn't already spell out.
-            UpdateOffer::Manual => (
-                t!("update.body_manual", version = version).to_string(),
-                t!("update.choice_show_details").to_string(),
-            ),
+        // The body says what "Update now" will do, end to end. `needs_privilege`
+        // no longer means "we will refuse" — the update runs in an interactive
+        // terminal, so it only changes whether a password prompt appears.
+        let body = match offer {
+            UpdateOffer::SelfContained => t!(
+                "update.body_self_contained",
+                channel = channel,
+                version = version
+            )
+            .to_string(),
+            UpdateOffer::DownloadPackage if plan.needs_privilege => t!(
+                "update.body_download_package_privileged",
+                channel = channel,
+                version = version
+            )
+            .to_string(),
+            UpdateOffer::DownloadPackage => t!(
+                "update.body_download_package",
+                channel = channel,
+                version = version
+            )
+            .to_string(),
+            UpdateOffer::RunCommand if plan.needs_privilege => t!(
+                "update.body_delegated_privileged",
+                channel = channel,
+                command = plan.human
+            )
+            .to_string(),
+            UpdateOffer::RunCommand => t!(
+                "update.body_delegated",
+                channel = channel,
+                command = plan.human
+            )
+            .to_string(),
+            UpdateOffer::Manual => t!("update.body_manual", version = version).to_string(),
         };
 
-        let items =
-            vec![PopupListItem::new(format!("    {label}")).with_data("update".to_string())];
+        let items = offer
+            .choices()
+            .iter()
+            .map(|choice| {
+                let label = match choice {
+                    UpdateChoice::UpdateNow => {
+                        t!("update.choice_update_now", version = version).to_string()
+                    }
+                    UpdateChoice::ShowCommand => t!("update.choice_show_command").to_string(),
+                };
+                PopupListItem::new(format!("    {label}"))
+                    .with_data(choice.action_key().to_string())
+            })
+            .collect();
+
         self.push_update_menu(t!("update.available_title").to_string(), Some(body), items);
     }
 
@@ -1355,6 +1350,7 @@ impl Editor {
     pub fn handle_update_menu_action(&mut self, action_key: &str) {
         match action_key {
             "update" => self.start_self_update(),
+            "show_command" => self.start_self_update_print_command(),
             "show_log" => self.show_self_update_output(),
             _ => {}
         }
