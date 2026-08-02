@@ -317,19 +317,39 @@ pub fn package_asset_with(
 /// required for `dpkg`/`rpm` (see [`UpdatePlan::needs_privilege`]); the flatpak
 /// bundle installs into the per-user installation, so it needs none.
 pub fn install_command(channel: Channel, file: &Path) -> Option<Vec<String>> {
+    install_command_with(channel, file, false)
+}
+
+/// [`install_command`], optionally permitting reinstallation of a version that
+/// is already installed.
+///
+/// `rpm -U` treats "already installed" as an error where `dpkg -i` simply
+/// unpacks over the top, so `--force` (which reinstalls the current version)
+/// needs `--replacepkgs` to mean the same thing on both. Off by default: a
+/// normal upgrade must not silently reinstall.
+pub fn install_command_with(channel: Channel, file: &Path, reinstall: bool) -> Option<Vec<String>> {
     let path = file.to_string_lossy().into_owned();
     let mut argv: Vec<String> = match channel {
         Channel::Apt => vec!["dpkg".into(), "-i".into()],
+        Channel::Dnf if reinstall => {
+            vec!["rpm".into(), "-U".into(), "--replacepkgs".into()]
+        }
         Channel::Dnf => vec!["rpm".into(), "-U".into()],
         // The release .rpm is unsigned as far as zypper is concerned, and it
         // refuses a local file without this.
-        Channel::Zypper => vec![
-            "zypper".into(),
-            "--non-interactive".into(),
-            "--no-gpg-checks".into(),
-            "install".into(),
-            "--allow-unsigned-rpm".into(),
-        ],
+        Channel::Zypper => {
+            let mut z: Vec<String> = vec![
+                "zypper".into(),
+                "--non-interactive".into(),
+                "--no-gpg-checks".into(),
+                "install".into(),
+                "--allow-unsigned-rpm".into(),
+            ];
+            if reinstall {
+                z.push("--force".into());
+            }
+            z
+        }
         Channel::Flatpak => vec![
             "flatpak".into(),
             "install".into(),
@@ -612,6 +632,41 @@ mod tests {
             assert_eq!((a.extension, a.arch.as_str()), (ext, arch), "{channel}");
         }
         assert!(package_asset(Channel::Homebrew, "x86_64-unknown-linux-gnu").is_none());
+    }
+
+    /// `--force` reinstalls the version already present. `dpkg -i` unpacks
+    /// over the top happily; `rpm -U` calls that an error unless told
+    /// otherwise, so the flag has to mean the same thing on both.
+    #[test]
+    fn reinstall_is_permitted_only_when_asked_for() {
+        let rpm = Path::new("/tmp/x.rpm");
+        assert_eq!(
+            install_command_with(Channel::Dnf, rpm, true).unwrap(),
+            vec!["rpm", "-U", "--replacepkgs", "/tmp/x.rpm"]
+        );
+        // A normal upgrade must not silently reinstall.
+        assert_eq!(
+            install_command_with(Channel::Dnf, rpm, false).unwrap(),
+            vec!["rpm", "-U", "/tmp/x.rpm"]
+        );
+        assert_eq!(
+            install_command(Channel::Dnf, rpm).unwrap(),
+            install_command_with(Channel::Dnf, rpm, false).unwrap()
+        );
+
+        assert!(install_command_with(Channel::Zypper, rpm, true)
+            .unwrap()
+            .contains(&"--force".to_string()));
+        assert!(!install_command_with(Channel::Zypper, rpm, false)
+            .unwrap()
+            .contains(&"--force".to_string()));
+
+        // dpkg needs no extra flag either way.
+        let deb = Path::new("/tmp/x.deb");
+        assert_eq!(
+            install_command_with(Channel::Apt, deb, true).unwrap(),
+            install_command_with(Channel::Apt, deb, false).unwrap()
+        );
     }
 
     #[test]

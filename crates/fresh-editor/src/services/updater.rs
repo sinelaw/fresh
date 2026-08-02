@@ -241,7 +241,9 @@ fn package_update(
     std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     println!("Downloaded to {}", path.display());
 
-    let cmd = fresh_update::registry::install_command(channel, &path)
+    // `--force` reinstalls the version already present, which rpm rejects
+    // unless told otherwise.
+    let cmd = fresh_update::registry::install_command_with(channel, &path, opts.force)
         .ok_or_else(|| format!("no install command for {}", channel.label()))?;
     let needs_privilege = fresh_update::plan(prov).needs_privilege;
 
