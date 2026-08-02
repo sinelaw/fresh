@@ -510,3 +510,82 @@ fn test_q_closes_the_tour() {
         "expected the editor split to survive closing the tour\nScreen:\n{screen}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Clicks that are not on a control
+// ---------------------------------------------------------------------------
+
+/// A click inside the panel that lands on no control — a `labeledSection`
+/// border — must change nothing.
+///
+/// Before the fix such a click fell through to ordinary cursor placement.
+/// The panel's cursor is hidden but the viewport still follows it, so the
+/// click scrolled the panel's own header, buttons and hint bar out of view
+/// with no way to scroll them back.
+#[test]
+fn test_click_on_panel_border_changes_nothing() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    let before = harness.screen_to_string();
+    // The sections' bottom border — inside the panel, on no widget.
+    let border_row = row_of(&harness, "╰─");
+    harness.mouse_click(80, border_row as u16).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+
+    let after = harness.screen_to_string();
+    assert_eq!(
+        before, after,
+        "a click on panel chrome must leave the screen untouched"
+    );
+    // Spelled out, because an equal-screens assertion is easy to satisfy
+    // vacuously if the panel never rendered in the first place.
+    assert!(
+        after.contains("Step 1 of 2") && after.contains("[ Next ▶ ]"),
+        "expected the panel header to survive the click\nScreen:\n{after}"
+    );
+}
+
+/// A click in the prose column must not select a step in the rail beside it.
+///
+/// Two side-by-side lists put two row hits on the same buffer row. The
+/// row-aware fallback used to return the first one regardless of column, so
+/// every click in the right-hand column selected a row in the left-hand list.
+#[test]
+fn test_click_in_prose_column_does_not_select_a_rail_step() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    assert!(harness.screen_to_string().contains("Step 1 of 2"));
+
+    // The screen row carrying the rail's second step — and, to its right, the
+    // prose column. Clicking the prose side must not act on the rail.
+    let row = row_of(&harness, "2  The handler") as u16;
+    harness.mouse_click(120, row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Step 1 of 2"),
+        "clicking the prose column must not select the rail row beside it\nScreen:\n{screen}"
+    );
+
+    // The rail itself still works — otherwise the assertion above would pass
+    // for a panel whose rail had simply stopped routing clicks at all.
+    harness.mouse_click(20, row).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
+        .unwrap();
+}
