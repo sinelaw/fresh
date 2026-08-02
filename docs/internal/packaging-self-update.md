@@ -129,7 +129,7 @@ per-target prebuilt archives and then feeds every downstream channel:
 | 6 | AUR `fresh-editor` (source) | `aur` | source build | AUR helper |
 | 7 | Debian/Ubuntu `.deb` | `apt` | dpkg | apt/dpkg |
 | 8 | Fedora/RHEL `.rpm` | `dnf` | rpm | dnf/rpm |
-| 9 | openSUSE (zypper) | `zypper` | rpm | zypper |
+| 9 | openSUSE | `zypper` | the `.rpm`, installed by hand | *(no repo — see §6)* |
 | 10 | Flatpak `io.github.sinelaw.fresh` | `flatpak` | flatpak bundle | flatpak |
 | 11 | AppImage (`install.sh` / direct) | `appimage` | extracted to `~/.local` | **fresh (self)** |
 | 12 | winget `sinelaw.fresh-editor` | `winget` | `.zip` | winget |
@@ -302,31 +302,47 @@ artifact from the release, verify it against its `.sha256` sidecar, and install
 it with `dpkg`/`rpm`/`flatpak`. An in-place binary swap is never an option for
 them: it would leave the package database describing a file we replaced behind
 its back. When the install needs root we print the command instead of running
-it, and report `ManualRequired` so the editor's indicator doesn't claim an
-update that hasn't landed yet.
+it, and report `ActionRequired` so the editor's indicator doesn't claim an
+update that hasn't landed yet (see the three-phase table in §15).
 
 Before adding a `Delegated` row, check that the command's repository actually
-exists — that is the mistake this section is documenting.
+exists — that is the mistake this section is documenting. Five rows failed that
+check and are now `Manual`: `snap`, `scoop` and `chocolatey` had no packaging
+anywhere in the repository, `zypper` named an openSUSE OBS project that does not
+exist, and `pacman` named an official Arch repo package that does not exist
+either (fresh is on the AUR only). Their `Channel` variants stay — the ids are
+receipt wire format — but they name no command. `registry.rs`'s
+`only_channels_with_a_real_distribution_name_a_command` test holds this
+invariant: both the distributed and undistributed lists are exhaustive, so a new
+channel forces a deliberate choice between them.
+
+Two more rows named the wrong thing rather than nothing. `mise` installs via
+`mise use github:sinelaw/fresh`, and that ref *is* the tool's name in mise, so
+`mise upgrade fresh` matched nothing. `nix` is the one entry here that was live
+in the field — `flake.nix` both sets `FRESH_BUILD_CHANNEL = "nix"` and writes a
+receipt — and `nix profile upgrade fresh` is correct because the derivation's
+`pname` is `fresh`; note that is *not* the `package_name` (`fresh-editor`) the
+receipt carries, so templating it from the package name would break it.
 
 | channel | strategy | update invocation (templated with `hints`) |
 |---|---|---|
 | `homebrew` | Delegated | `brew upgrade {formula}` |
 | `apt` | DownloadPackage (sudo) | fetch `.deb` from the release, verify, `dpkg -i` |
 | `dnf` | DownloadPackage (sudo) | fetch `.rpm` from the release, verify, `rpm -U` |
-| `zypper` | Delegated (sudo) | `zypper update {package_name}` |
+| `zypper` | **Manual** | no openSUSE repository exists — releases page |
 | `aur-bin` / `aur` | Delegated | `{aur_helper} -S {aur_pkg}` (detect yay/paru) |
-| `pacman` | Delegated (sudo) | `pacman -Syu {package_name}` |
+| `pacman` | **Manual** | no official Arch repo package (AUR only) — releases page |
 | `winget` | Delegated | `winget upgrade --id {winget_id}` |
-| `scoop` | Delegated | `scoop update fresh` |
-| `chocolatey` | Delegated (admin) | `choco upgrade fresh` |
+| `scoop` | **Manual** | no scoop manifest — releases page |
+| `chocolatey` | **Manual** | no chocolatey package — releases page |
 | `flatpak` | DownloadPackage | fetch `.flatpak` bundle, verify, `flatpak install --user` |
-| `snap` | Delegated | `snap refresh fresh` |
-| `nix` | Delegated | `nix profile upgrade` (or flake rebuild note) |
+| `snap` | **Manual** | no snap package exists — releases page |
+| `nix` | Delegated | `nix profile upgrade fresh` (matches `flake.nix`'s `pname`) |
 | `freebsd-pkg` | Delegated (sudo) | `pkg upgrade fresh` |
 | `cargo` | Toolchain | `cargo install --locked fresh-editor` |
 | `cargo-binstall` | Toolchain | `cargo binstall fresh-editor` |
 | `npm` | Toolchain | `npm update -g {npm_pkg}` |
-| `mise` | Toolchain | `mise upgrade fresh` |
+| `mise` | Toolchain | `mise upgrade github:sinelaw/fresh` (the tool ref, not `fresh`) |
 | `appimage` | SelfContained | fetch `.AppImage`, verify, replace file |
 | `tarball` | SelfContained | fetch archive, verify, atomic binary swap |
 | `source` | Manual | `git pull && cargo install --path …` (note) |
@@ -713,11 +729,18 @@ SHA-256, and an optional no-prompt `auto_update` mode.
    cargo — Toolchain would be nicer).
 3. **Attestation verification offline / air-gapped:** provide a
    `--skip-attestation` (checksum-only) escape hatch, clearly warned.
-4. **mise/asdf** manage their own shims; confirm `mise upgrade fresh` is the
-   right invocation and that a receipt even makes sense there (mise may prefer
-   we stay `Unknown` → Manual).
-5. **Snap/Chocolatey** are listed as planned; receipts are specified but the
-   channels ship only once those pipelines exist.
+4. **mise/asdf** manage their own shims. The invocation is now
+   `mise upgrade github:sinelaw/fresh` (the tool ref, matching the README's
+   `mise use`); a bare `fresh` matched nothing. Nothing writes a `mise` receipt
+   yet, so the channel is unreachable in practice — resolved as latent, not
+   fixed by observation.
+5. **Snap/Scoop/Chocolatey/zypper/pacman** have no pipeline, so nothing writes
+   their receipts and no heuristic resolves to them — they are unreachable, and
+   §6 now routes them to `Manual` rather than naming an invented command. Their
+   `Channel` variants are kept because the ids are receipt wire format, so a
+   receipt written by a future pipeline still parses. **Open:** whether to drop
+   the variants outright once it is clear those pipelines will not ship. That is
+   a wire-format change and needs a deliberate call, not a cleanup.
 6. **Two binaries, one machine** (e.g. a brew `fresh` and a cargo `fresh`): the
    receipt is resolved relative to `current_exe()`, so each updates itself
    correctly — this is a feature of anchoring on the executable path, not the
