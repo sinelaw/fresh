@@ -145,6 +145,10 @@ jobs:
           find .. -maxdepth 1 -name "fresh-editor_*_${{ matrix.arch }}.deb" -exec cp {} packages/ \;
           # RPM lands in workspace target via the symlink set up above.
           find target/${{ matrix.target }}/generate-rpm -name "*.rpm" -exec cp {} packages/ \;
+          # Checksum sidecars: `fresh --cmd update` downloads these packages and
+          # verifies them against `<asset>.sha256` before installing, and fails
+          # closed if the sidecar is missing.
+          (cd packages && for f in *.deb *.rpm; do sha256sum "$f" > "$f.sha256"; done)
           ls -la packages/
 
       - name: Upload Linux packages

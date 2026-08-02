@@ -41,6 +41,32 @@ pub fn parse_tag_name(json: &str) -> Option<String> {
     Some(tag.strip_prefix('v').unwrap_or(tag).to_string())
 }
 
+/// Find the download URL of the release asset whose filename ends with
+/// `extension` and contains `arch` — e.g. (`.deb`, `amd64`) picks
+/// `fresh-editor_0.4.7-1_amd64.deb` out of the release feed.
+///
+/// Reading the name off the feed rather than templating it keeps the updater
+/// working when a packaging tool changes how it spells a version or release
+/// number. Dependency-free scan, matching [`parse_tag_name`].
+pub fn find_asset_url(json: &str, extension: &str, arch: &str) -> Option<String> {
+    const KEY: &str = "\"browser_download_url\"";
+    let mut rest = json;
+    while let Some(start) = rest.find(KEY) {
+        let after = &rest[start + KEY.len()..];
+        // Step past the `:` and the opening quote of the value.
+        let q1 = after.find('"')?;
+        let tail = &after[q1 + 1..];
+        let q2 = tail.find('"')?;
+        let url = &tail[..q2];
+        let name = url.rsplit('/').next().unwrap_or(url);
+        if name.ends_with(extension) && name.contains(arch) {
+            return Some(url.to_string());
+        }
+        rest = &tail[q2..];
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,5 +105,39 @@ mod tests {
             Some("1.2.3")
         );
         assert_eq!(parse_tag_name(r#"{"no_tag": "here"}"#), None);
+    }
+
+    /// A trimmed release feed with the assets that actually ship, in the order
+    /// GitHub returns them.
+    const FEED: &str = r#"{"tag_name":"v0.4.7","assets":[
+        {"browser_download_url":"https://gh/v0.4.7/fresh-editor-x86_64-unknown-linux-gnu.tar.xz"},
+        {"browser_download_url":"https://gh/v0.4.7/fresh-editor_0.4.7-1_arm64.deb"},
+        {"browser_download_url":"https://gh/v0.4.7/fresh-editor_0.4.7-1_amd64.deb"},
+        {"browser_download_url":"https://gh/v0.4.7/fresh-editor-0.4.7-1.x86_64.rpm"},
+        {"browser_download_url":"https://gh/v0.4.7/fresh-editor-0.4.7-x86_64.flatpak"},
+        {"browser_download_url":"https://gh/v0.4.7/fresh-editor-0.4.7-x86_64.flatpak.sha256"}
+    ]}"#;
+
+    #[test]
+    fn asset_lookup_picks_the_matching_artifact() {
+        let cases = [
+            (".deb", "amd64", "fresh-editor_0.4.7-1_amd64.deb"),
+            (".deb", "arm64", "fresh-editor_0.4.7-1_arm64.deb"),
+            (".rpm", "x86_64", "fresh-editor-0.4.7-1.x86_64.rpm"),
+            (".flatpak", "x86_64", "fresh-editor-0.4.7-x86_64.flatpak"),
+        ];
+        for (ext, arch, want) in cases {
+            let url = find_asset_url(FEED, ext, arch).expect("{ext} {arch}");
+            assert_eq!(url.rsplit('/').next().unwrap(), want, "{ext} {arch}");
+        }
+    }
+
+    #[test]
+    fn asset_lookup_declines_when_absent() {
+        // No aarch64 rpm in this feed, and the checksum sidecar must not be
+        // mistaken for the bundle it describes.
+        assert_eq!(find_asset_url(FEED, ".rpm", "aarch64"), None);
+        assert_eq!(find_asset_url(FEED, ".AppImage", "x86_64"), None);
+        assert_eq!(find_asset_url(r#"{"assets":[]}"#, ".deb", "amd64"), None);
     }
 }
