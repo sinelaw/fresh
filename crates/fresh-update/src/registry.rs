@@ -59,16 +59,75 @@ pub struct UpdatePlan {
     pub human: String,
 }
 
+/// AUR helpers to look for, in preference order — the same list and order
+/// `scripts/install.sh` uses when installing.
+///
+/// A helper is a *convenience*, not a guarantee: plenty of Arch users install
+/// AUR packages with plain `makepkg` and have none of these. Naming one
+/// unconditionally produced a command that simply does not exist on those
+/// machines, so the helper is detected at runtime and recorded in
+/// `hints.aur_helper`; [`aur_command`] falls back to the universal route when
+/// there is none.
+pub const AUR_HELPERS: &[&str] = &["yay", "paru", "pikaur", "trizen"];
+
+/// Whether `pkg` is a plausible AUR package name. Guards the shell fallback in
+/// [`aur_command`] against a receipt carrying shell metacharacters.
+fn is_safe_pkg_name(pkg: &str) -> bool {
+    !pkg.is_empty()
+        && pkg.len() <= 64
+        && pkg
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+'))
+}
+
+/// The argv that updates an AUR package.
+///
+/// With a detected `helper`, use it — that is the tool the user actually drives.
+/// Without one, fall back to the route that works on *every* Arch system:
+/// clone the AUR repo and `makepkg -si`. `makepkg` ships in `base-devel`, which
+/// is a prerequisite for having installed an AUR package at all, so this is the
+/// safe universal answer rather than another guess.
+pub fn aur_command(pkg: &str, helper: Option<&str>) -> Vec<String> {
+    if let Some(helper) = helper {
+        return vec![helper.to_string(), "-S".to_string(), pkg.to_string()];
+    }
+    if !is_safe_pkg_name(pkg) {
+        // Refuse to interpolate something unexpected into a shell command.
+        return vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "echo 'refusing to build: implausible AUR package name in install receipt' >&2; exit 1"
+                .to_string(),
+        ];
+    }
+    let script = format!(
+        "set -eu; \
+dir=$(mktemp -d); \
+trap 'rm -rf \"$dir\"' EXIT; \
+git clone --depth 1 https://aur.archlinux.org/{pkg}.git \"$dir/{pkg}\"; \
+cd \"$dir/{pkg}\"; \
+makepkg --syncdeps --install"
+    );
+    vec!["sh".to_string(), "-c".to_string(), script]
+}
+
 /// The update kind for a channel.
 pub const fn kind_for(channel: Channel) -> UpdateKind {
     match channel {
         // We publish the .deb/.rpm/.flatpak as release artifacts only — no apt
         // repo, no dnf repo, no Flathub remote — so their package managers have
         // nothing to upgrade *from*. Fetch the artifact and install it locally.
-        Channel::Apt | Channel::Dnf | Channel::Flatpak => UpdateKind::DownloadPackage,
+        // openSUSE has no OBS project either: a zypper user installed the
+        // release .rpm by hand, so the next version arrives the same way.
+        Channel::Apt | Channel::Dnf | Channel::Zypper | Channel::Flatpak => {
+            UpdateKind::DownloadPackage
+        }
+        // Arch ships through the AUR only, so `pacman` continues via the AUR
+        // helper — that is how an Arch user got this build in the first place.
         Channel::Homebrew
         | Channel::Aur
         | Channel::AurBin
+        | Channel::Pacman
         | Channel::Winget
         | Channel::Nix
         | Channel::FreebsdPkg => UpdateKind::Delegated,
@@ -76,18 +135,14 @@ pub const fn kind_for(channel: Channel) -> UpdateKind {
             UpdateKind::Toolchain
         }
         Channel::Appimage | Channel::Tarball | Channel::Prebuilt => UpdateKind::SelfContained,
-        // No pipeline in this repository ships through snap, scoop, chocolatey,
-        // an openSUSE OBS project or an official Arch repo, so there is no
-        // package for their commands to upgrade. Naming one anyway produces a
-        // command that fails or, worse, silently matches nothing. They stay in
-        // `Channel` because the ids are receipt wire format; if a pipeline ever
-        // ships, its receipt sets `managed`/`self_update` explicitly and those
-        // flags win over these defaults (see `provenance::resolve_from`).
+        // Nothing in this repository ships through snap, scoop or chocolatey,
+        // and we publish no artifact those tools could install, so there is no
+        // same-channel continuation to offer. Nothing writes these receipts
+        // either, so they are unreachable in practice; they stay in `Channel`
+        // because the ids are receipt wire format.
         Channel::Snap
         | Channel::Scoop
         | Channel::Chocolatey
-        | Channel::Zypper
-        | Channel::Pacman
         | Channel::Source
         | Channel::Unknown => UpdateKind::Manual,
     }
@@ -95,7 +150,12 @@ pub const fn kind_for(channel: Channel) -> UpdateKind {
 
 /// Whether the delegated command for a channel needs root/admin.
 const fn needs_privilege(channel: Channel) -> bool {
-    matches!(channel, Channel::Apt | Channel::Dnf | Channel::FreebsdPkg)
+    // AUR helpers and `makepkg -si` invoke sudo themselves for the pacman step,
+    // so we must not wrap them in another elevation.
+    matches!(
+        channel,
+        Channel::Apt | Channel::Dnf | Channel::Zypper | Channel::FreebsdPkg
+    )
 }
 
 /// Build the concrete [`UpdatePlan`] for a resolved provenance, templating the
@@ -118,15 +178,17 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
         .npm_pkg
         .clone()
         .unwrap_or_else(|| "@fresh-editor/fresh-editor".to_string());
-    let aur_helper = h.aur_helper.clone().unwrap_or_else(|| "yay".to_string());
+    // No default helper: an unrecorded helper means "none detected", which
+    // `aur_command` answers with the universal makepkg route rather than
+    // guessing at a tool that may not be installed.
     let aur_pkg = h.aur_pkg.clone().unwrap_or_else(|| match channel {
         Channel::AurBin => "fresh-editor-bin".to_string(),
         _ => "fresh-editor".to_string(),
     });
+    let aur_argv = aur_command(&aur_pkg, h.aur_helper.as_deref());
 
     let argv: Option<Vec<&str>> = match channel {
         Channel::Homebrew => Some(vec!["brew", "upgrade", &formula]),
-        Channel::Aur | Channel::AurBin => Some(vec![&aur_helper, "-S", &aur_pkg]),
         Channel::Winget => Some(vec!["winget", "upgrade", "--id", &winget_id]),
         // `flake.nix` builds with `pname = "fresh"`, which is the name a
         // profile element gets, so this is what `nix profile upgrade` matches.
@@ -139,23 +201,28 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
         // `mise use github:sinelaw/fresh`), and that flake-style ref *is* the
         // tool's name in mise. A bare `fresh` matches nothing.
         Channel::Mise => Some(vec!["mise", "upgrade", MISE_TOOL]),
+        // Built separately (owned, helper-dependent) — see `aur_argv`.
+        Channel::Aur | Channel::AurBin | Channel::Pacman => None,
         // Resolved only once the release artifact is downloaded; see
         // `package_asset` / `install_command`.
-        Channel::Apt | Channel::Dnf | Channel::Flatpak => None,
+        Channel::Apt | Channel::Dnf | Channel::Zypper | Channel::Flatpak => None,
         Channel::Appimage | Channel::Tarball | Channel::Prebuilt => None,
         // Manual: nothing to name (see `kind_for`).
         Channel::Snap
         | Channel::Scoop
         | Channel::Chocolatey
-        | Channel::Zypper
-        | Channel::Pacman
         | Channel::Source
         | Channel::Unknown => None,
     };
 
-    let command = argv
-        .as_ref()
-        .map(|v| v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+    let command = match channel {
+        // Arch ships through the AUR only, so a `pacman` receipt continues the
+        // same way. Built separately because it is owned, not borrowed.
+        Channel::Aur | Channel::AurBin | Channel::Pacman => Some(aur_argv),
+        _ => argv
+            .as_ref()
+            .map(|v| v.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+    };
 
     let human = match kind {
         UpdateKind::SelfContained => {
@@ -197,7 +264,8 @@ pub struct PackageAsset {
 const fn package_extension(channel: Channel) -> Option<&'static str> {
     match channel {
         Channel::Apt => Some(".deb"),
-        Channel::Dnf => Some(".rpm"),
+        // openSUSE installs the same .rpm we build for Fedora/RHEL.
+        Channel::Dnf | Channel::Zypper => Some(".rpm"),
         Channel::Flatpak => Some(".flatpak"),
         _ => None,
     }
@@ -209,15 +277,38 @@ const fn package_extension(channel: Channel) -> Option<&'static str> {
 /// Each packaging tool spells the architecture its own way: dpkg uses Debian
 /// arch names, rpm and flatpak use the CPU part of the target triple.
 pub fn package_asset(channel: Channel, target_triple: &str) -> Option<PackageAsset> {
+    package_asset_with(channel, target_triple, None)
+}
+
+/// [`package_asset`], preferring the architecture the installer *recorded* over
+/// one derived from the target triple.
+///
+/// Deriving is a guess: it assumes this build's triple is the one the package
+/// was built for and that we spell the arch the way the packaging tool does.
+/// The pipeline that built the package knows both for certain, so when the
+/// receipt carries `hints.pkg_arch` it wins outright — that is the whole point
+/// of recording provenance instead of inferring it.
+pub fn package_asset_with(
+    channel: Channel,
+    target_triple: &str,
+    recorded_arch: Option<&str>,
+) -> Option<PackageAsset> {
+    let extension = package_extension(channel)?;
+    if let Some(arch) = recorded_arch.filter(|a| !a.is_empty()) {
+        return Some(PackageAsset {
+            extension,
+            arch: arch.to_string(),
+        });
+    }
     let cpu = target_triple.split('-').next().unwrap_or("x86_64");
     let arch = match channel {
         Channel::Apt if cpu == "aarch64" => "arm64",
         Channel::Apt => "amd64",
-        Channel::Dnf | Channel::Flatpak => cpu,
+        Channel::Dnf | Channel::Zypper | Channel::Flatpak => cpu,
         _ => return None,
     };
     Some(PackageAsset {
-        extension: package_extension(channel)?,
+        extension,
         arch: arch.to_string(),
     })
 }
@@ -230,6 +321,15 @@ pub fn install_command(channel: Channel, file: &Path) -> Option<Vec<String>> {
     let mut argv: Vec<String> = match channel {
         Channel::Apt => vec!["dpkg".into(), "-i".into()],
         Channel::Dnf => vec!["rpm".into(), "-U".into()],
+        // The release .rpm is unsigned as far as zypper is concerned, and it
+        // refuses a local file without this.
+        Channel::Zypper => vec![
+            "zypper".into(),
+            "--non-interactive".into(),
+            "--no-gpg-checks".into(),
+            "install".into(),
+            "--allow-unsigned-rpm".into(),
+        ],
         Channel::Flatpak => vec![
             "flatpak".into(),
             "install".into(),
@@ -263,11 +363,8 @@ mod tests {
             plan(&prov(Channel::Winget)).human,
             "winget upgrade --id sinelaw.fresh-editor"
         );
-        assert_eq!(
-            plan(&prov(Channel::AurBin)).human,
-            "yay -S fresh-editor-bin"
-        );
-        assert_eq!(plan(&prov(Channel::Aur)).human, "yay -S fresh-editor");
+        // No helper recorded => the universal makepkg route, not a guess.
+        assert!(plan(&prov(Channel::AurBin)).human.contains("makepkg"));
     }
 
     /// §6's invariant: a channel only names an external command when a
@@ -292,20 +389,19 @@ mod tests {
             (Channel::Winget, "winget-pkgs sinelaw.fresh-editor"),
             (Channel::Nix, "flake.nix"),
             (Channel::FreebsdPkg, "FreeBSD ports"),
+            // Arch is AUR-only, so a pacman receipt continues through the AUR.
+            (Channel::Pacman, "AUR (Arch has no official repo package)"),
             (Channel::Cargo, "crates.io"),
             (Channel::CargoBinstall, "crates.io + release archives"),
             (Channel::Npm, "@fresh-editor/fresh-editor"),
             (Channel::Mise, "github:sinelaw/fresh"),
         ];
-        // No snapcraft.yaml, scoop manifest, .nuspec, OBS project or official
-        // Arch repo package exists, so none of these may name a command.
-        let undistributed = [
-            Channel::Snap,
-            Channel::Scoop,
-            Channel::Chocolatey,
-            Channel::Zypper,
-            Channel::Pacman,
-        ];
+        // We ship no artifact snap, scoop or chocolatey could install, and no
+        // pipeline writes their receipts, so there is no same-channel
+        // continuation to name. (zypper and pacman are *not* here: openSUSE
+        // continues via the release .rpm and Arch via the AUR — see
+        // `every_reachable_channel_has_a_same_channel_continuation`.)
+        let undistributed = [Channel::Snap, Channel::Scoop, Channel::Chocolatey];
 
         for (channel, source) in distributed {
             let p = plan(&prov(channel));
@@ -331,11 +427,50 @@ mod tests {
                 "{channel} has no distribution but names a command: {:?}",
                 p.command
             );
-            assert!(
-                p.human.contains("github.com/sinelaw/fresh/releases"),
-                "{channel} should point at the releases page, got {:?}",
-                p.human
+        }
+    }
+
+    /// A user who installed through one of our channels must be able to keep
+    /// updating through that same channel. Sending them to a web page to
+    /// download a file by hand is the failure this whole mechanism exists to
+    /// avoid, so no channel that anything can actually resolve to may do it.
+    #[test]
+    fn every_reachable_channel_has_a_same_channel_continuation() {
+        // Everything a receipt, an embedded channel or the path heuristic can
+        // produce. `Unknown` is excluded: it is the one honest "we have no idea"
+        // and has nothing to continue.
+        let reachable = [
+            Channel::Homebrew,
+            Channel::Npm,
+            Channel::Cargo,
+            Channel::CargoBinstall,
+            Channel::Aur,
+            Channel::AurBin,
+            Channel::Apt,
+            Channel::Dnf,
+            Channel::Zypper,
+            Channel::Pacman,
+            Channel::Flatpak,
+            Channel::Appimage,
+            Channel::Winget,
+            Channel::Nix,
+            Channel::FreebsdPkg,
+            Channel::Mise,
+            Channel::Tarball,
+            Channel::Prebuilt,
+        ];
+        for channel in reachable {
+            let p = plan(&prov(channel));
+            assert_ne!(
+                p.kind,
+                UpdateKind::Manual,
+                "{channel} dead-ends at the releases page instead of updating through {channel}"
             );
+            let has_route = matches!(
+                p.kind,
+                UpdateKind::SelfContained | UpdateKind::DownloadPackage
+            ) || p.command.as_ref().is_some_and(|c| !c.is_empty());
+            assert!(has_route, "{channel} names no way to get the next version");
         }
     }
 
@@ -371,6 +506,65 @@ mod tests {
             ..Hints::default()
         };
         assert_eq!(plan(&p).human, "paru -S fresh-editor-bin");
+    }
+
+    /// An AUR helper is a convenience, not a guarantee — plenty of Arch users
+    /// have none and build with `makepkg`. Defaulting to `yay` named a binary
+    /// that simply is not there on those machines, and the failure came only
+    /// after the user had confirmed the update.
+    #[test]
+    fn aur_without_a_detected_helper_uses_the_universal_route() {
+        let cmd = aur_command("fresh-editor-bin", None);
+        assert_eq!(cmd[0], "sh", "expected a shell fallback, got {cmd:?}");
+        let script = &cmd[2];
+        assert!(script.contains("git clone"), "{script}");
+        assert!(script.contains("makepkg --syncdeps --install"), "{script}");
+        assert!(
+            script.contains("aur.archlinux.org/fresh-editor-bin.git"),
+            "{script}"
+        );
+        // No helper is named anywhere in the fallback.
+        for helper in AUR_HELPERS {
+            assert!(
+                !script.contains(helper),
+                "fallback names {helper}: {script}"
+            );
+        }
+    }
+
+    #[test]
+    fn aur_uses_the_helper_that_was_actually_detected() {
+        for helper in ["yay", "paru", "pikaur", "trizen"] {
+            assert_eq!(
+                aur_command("fresh-editor-bin", Some(helper)),
+                vec![helper, "-S", "fresh-editor-bin"]
+            );
+        }
+    }
+
+    /// The fallback interpolates the package name into a shell command, so a
+    /// receipt carrying metacharacters must not reach it.
+    #[test]
+    fn aur_fallback_refuses_an_implausible_package_name() {
+        for bad in ["fresh; rm -rf /", "$(whoami)", "a b", "", "pkg`id`"] {
+            let cmd = aur_command(bad, None);
+            assert!(
+                !cmd[2].contains("git clone"),
+                "built a clone command for {bad:?}: {cmd:?}"
+            );
+        }
+    }
+
+    /// AUR helpers and `makepkg -si` call sudo themselves for the pacman step;
+    /// wrapping them in another elevation would nest password prompts.
+    #[test]
+    fn aur_is_not_separately_elevated() {
+        for channel in [Channel::Aur, Channel::AurBin, Channel::Pacman] {
+            assert!(
+                !plan(&prov(channel)).needs_privilege,
+                "{channel} should not be externally elevated"
+            );
+        }
     }
 
     #[test]

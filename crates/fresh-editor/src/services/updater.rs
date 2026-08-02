@@ -35,6 +35,10 @@ pub struct UpdateOptions {
     pub yes: bool,
     /// Permit "updating" to the same or an older version.
     pub allow_downgrade: bool,
+    /// Print the command that would install the update and stop, instead of
+    /// running it. The escape hatch behind the popup's "Show the command"
+    /// choice, for users who would rather run it themselves.
+    pub print_command: bool,
     /// The releases API URL (overridable for testing).
     pub releases_url: String,
     /// Base URL for release asset downloads (overridable for testing).
@@ -47,6 +51,7 @@ impl Default for UpdateOptions {
             check_only: false,
             yes: false,
             allow_downgrade: false,
+            print_command: false,
             releases_url: super::release_checker::DEFAULT_RELEASES_URL.to_string(),
             download_base: format!("https://github.com/{REPO}/releases/download"),
         }
@@ -77,7 +82,9 @@ pub enum UpdateStatus {
 /// on genuine failure, or an [`UpdateStatus`] otherwise. Never escalates
 /// privilege itself.
 pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
-    let prov = fresh_update::resolve();
+    // Same entry point the popup used, so the command we run is the one the
+    // user was shown (notably: the same detected AUR helper).
+    let prov = super::release_checker::detect_provenance();
     println!(
         "Installed via: {} (confidence: {:?})",
         prov.channel.label(),
@@ -121,22 +128,18 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
                 println!("An update is available. Update with: {}", plan.human);
                 return Ok(UpdateStatus::Done);
             }
-            if opts.yes && !plan.needs_privilege && !cmd.is_empty() {
-                run_delegated(&cmd).map(|()| UpdateStatus::Done)
-            } else {
-                if plan.needs_privilege {
-                    println!("An update is available. Run (with the required privileges):");
-                } else {
-                    println!("An update is available. Run:");
-                }
-                println!("    {}", plan.human);
-                // Printing a command is not performing it. Returning `Done`
-                // here had the editor's indicator report "Updated — restart
-                // fresh" the moment this exited, for an update that had not
-                // been installed and never would be until the user ran the
-                // command themselves.
-                Ok(UpdateStatus::ActionRequired)
+            if cmd.is_empty() {
+                println!("An update is available: {}", plan.human);
+                return Ok(UpdateStatus::ActionRequired);
             }
+            if opts.print_command || !opts.yes {
+                // The user asked to see it rather than run it (or this is an
+                // unattended CLI invocation without --yes). Printing a command
+                // is not performing it, so this is ActionRequired, not Done.
+                show_command(&elevated(&cmd, plan.needs_privilege));
+                return Ok(UpdateStatus::ActionRequired);
+            }
+            run_install(&cmd, plan.needs_privilege).map(|()| UpdateStatus::Done)
         }
         UpdateKind::Manual => {
             let url = format!("https://github.com/{REPO}/releases/tag/v{latest}");
@@ -186,9 +189,12 @@ fn run_delegated(cmd: &[String]) -> Result<(), String> {
 /// The binary is owned by dpkg/rpm/flatpak, so an in-place swap is off the
 /// table — it would leave the package database describing a file that no longer
 /// exists. Instead we download and checksum-verify the new package and hand it
-/// to the local package tool. When that needs root we print the exact command
-/// rather than escalating, and report [`UpdateStatus::ActionRequired`] so the
-/// editor's indicator doesn't claim an update that hasn't happened yet.
+/// to the local package tool, elevating with `sudo`/`doas` when the tool needs
+/// root — we run in an interactive PTY, so the password prompt works and the
+/// update finishes in one step. `--print-command` (the popup's "Show the
+/// command" choice) stops after the download and prints instead, reporting
+/// [`UpdateStatus::ActionRequired`] so the indicator doesn't claim an update
+/// that hasn't happened.
 fn package_update(
     prov: &Provenance,
     latest: &str,
@@ -196,8 +202,14 @@ fn package_update(
     opts: &UpdateOptions,
 ) -> Result<UpdateStatus, String> {
     let channel = prov.channel;
-    let asset = fresh_update::registry::package_asset(channel, fresh_update::TARGET_TRIPLE)
-        .ok_or_else(|| format!("no release package is published for {}", channel.label()))?;
+    // Prefer the arch the installer recorded over one re-derived from this
+    // build's target triple.
+    let asset = fresh_update::registry::package_asset_with(
+        channel,
+        fresh_update::TARGET_TRIPLE,
+        prov.hints.pkg_arch.as_deref(),
+    )
+    .ok_or_else(|| format!("no release package is published for {}", channel.label()))?;
 
     // Package filenames carry a packaging release number (`0.4.7-1`) that the
     // version alone doesn't give us, so read the name off the release feed.
@@ -221,24 +233,62 @@ fn package_update(
 
     let cmd = fresh_update::registry::install_command(channel, &path)
         .ok_or_else(|| format!("no install command for {}", channel.label()))?;
+    let needs_privilege = fresh_update::plan(prov).needs_privilege;
 
-    // `needs_privilege` channels are never run for the user (see `run`).
-    if opts.yes && !fresh_update::plan(prov).needs_privilege {
-        return run_delegated(&cmd).map(|()| UpdateStatus::Done);
+    if opts.print_command || !opts.yes {
+        println!();
+        show_command(&elevated(&cmd, needs_privilege));
+        return Ok(UpdateStatus::ActionRequired);
     }
+
     println!();
-    println!("Install it with{}:", privilege_note(prov));
-    println!("    {}", cmd.join(" "));
-    Ok(UpdateStatus::ActionRequired)
+    run_install(&cmd, needs_privilege).map(|()| UpdateStatus::Done)
 }
 
-/// " (requires root)" when the channel's install command needs elevation.
-fn privilege_note(prov: &Provenance) -> &'static str {
-    if fresh_update::plan(prov).needs_privilege {
-        " (requires root)"
-    } else {
-        ""
+/// Print a command for the user to run, rather than running it.
+fn show_command(cmd: &[String]) {
+    println!("Install it with:");
+    println!();
+    println!("    {}", cmd.join(" "));
+}
+
+/// The argv to actually execute, elevated when the install needs root.
+///
+/// We do **not** try to detect whether we are already root: `sudo` run as root
+/// simply executes the command without prompting, so prefixing unconditionally
+/// is both simpler and correct. When no elevation helper exists the command is
+/// returned unchanged — that is right on a system where the user *is* root, and
+/// fails with a clear permission error otherwise.
+fn elevated(cmd: &[String], needs_privilege: bool) -> Vec<String> {
+    if !needs_privilege {
+        return cmd.to_vec();
     }
+    match ["sudo", "doas"]
+        .into_iter()
+        .find(|h| super::release_checker::on_path(h))
+    {
+        Some(helper) => {
+            let mut argv = vec![helper.to_string()];
+            argv.extend_from_slice(cmd);
+            argv
+        }
+        None => cmd.to_vec(),
+    }
+}
+
+/// Run the install command, elevating it when it needs root.
+///
+/// `fresh --cmd update` runs in an interactive PTY (the editor launches it in a
+/// local terminal buffer), so `sudo` can prompt for a password right there.
+/// That is what lets a `.deb`/`.rpm` update finish in one step instead of
+/// handing the user a command to go and run somewhere else.
+fn run_install(cmd: &[String], needs_privilege: bool) -> Result<(), String> {
+    let argv = elevated(cmd, needs_privilege);
+    if needs_privilege && argv.len() == cmd.len() {
+        // No sudo/doas found — this only works if we are already root.
+        println!("No sudo or doas found; running directly (requires root).");
+    }
+    run_delegated(&argv)
 }
 
 /// Download `url` and check it against its `.sha256` sidecar.

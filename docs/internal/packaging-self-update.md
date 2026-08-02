@@ -267,8 +267,22 @@ install_root = "/home/u/.local/share/fresh-editor"  # appimage/tarball: where to
 ```
 
 `managed` and `self_update` are the two decision bits. Everything else is
-either provenance (`channel`, `version`, `installed_at`) or an optimisation so
-the update path doesn't have to re-derive it.
+either provenance (`channel`, `version`, `installed_at`) or a fact the update
+path would otherwise have to re-derive.
+
+That last category is not an optimisation — it is the point. Anything the
+*installer* knows for certain and the *running binary* could only infer belongs
+in `[hints]`. `pkg_arch` is the clearest case: the `.deb` build knows it
+produced `amd64`, while the running binary would have to map its own target
+triple through a per-tool arch-spelling table and hope the two agree. The deb
+and rpm pipelines record `target` and `pkg_arch` for exactly this reason, and
+`registry::package_asset_with` prefers the recorded value outright.
+
+The exception is anything that is a property of the *machine* rather than the
+install, and can change after it: which AUR helper is on `PATH`, whether `sudo`
+exists. Those are detected at runtime (`release_checker::fill_runtime_hints`)
+and must not be baked into a receipt, or the receipt goes stale the first time
+the user switches helper.
 
 ---
 
@@ -305,40 +319,49 @@ its back. When the install needs root we print the command instead of running
 it, and report `ActionRequired` so the editor's indicator doesn't claim an
 update that hasn't landed yet (see the three-phase table in §15).
 
-Before adding a `Delegated` row, check that the command's repository actually
-exists — that is the mistake this section is documenting. Five rows failed that
-check and are now `Manual`: `snap`, `scoop` and `chocolatey` had no packaging
-anywhere in the repository, `zypper` named an openSUSE OBS project that does not
-exist, and `pacman` named an official Arch repo package that does not exist
-either (fresh is on the AUR only). Their `Channel` variants stay — the ids are
-receipt wire format — but they name no command. `registry.rs`'s
-`only_channels_with_a_real_distribution_name_a_command` test holds this
-invariant: both the distributed and undistributed lists are exhaustive, so a new
-channel forces a deliberate choice between them.
+Two invariants govern this table.
 
-Two more rows named the wrong thing rather than nothing. `mise` installs via
-`mise use github:sinelaw/fresh`, and that ref *is* the tool's name in mise, so
-`mise upgrade fresh` matched nothing. `nix` is the one entry here that was live
-in the field — `flake.nix` both sets `FRESH_BUILD_CHANNEL = "nix"` and writes a
-receipt — and `nix profile upgrade fresh` is correct because the derivation's
-`pname` is `fresh`; note that is *not* the `package_name` (`fresh-editor`) the
-receipt carries, so templating it from the package name would break it.
+**Never dead-end at the releases page.** A user who installed through one of our
+channels must be able to keep updating through it. Telling them to go and
+download a file by hand is the exact failure this mechanism exists to remove, so
+every channel anything can resolve to names a route to the next version.
+`registry.rs`'s `every_reachable_channel_has_a_same_channel_continuation` holds
+this: only `unknown` — the honest "we have no idea" — is exempt. That is why
+`zypper` and `pacman` are not `Manual` despite having no repository: an openSUSE
+user installed the release `.rpm`, so the next one arrives the same way, and an
+Arch user came via the AUR, so that is where they go back to. Only snap, scoop
+and chocolatey remain `Manual`, and only because we publish nothing they could
+install *and* nothing writes their receipts — they are unreachable, not
+dead-ended.
+
+**Never name a tool the channel doesn't guarantee.** For most channels the tool
+*is* the channel: a `homebrew` receipt means `brew` exists, an `npm` receipt
+means `npm` does. The AUR is the exception — it implies `pacman` and `makepkg`,
+not any particular helper — and the registry used to default to `yay`, naming a
+binary that is simply absent on the many Arch systems that build with plain
+`makepkg`, with the failure arriving only after the user had confirmed. The
+helper is now **detected** at runtime (`release_checker::fill_runtime_hints`,
+mirroring `install.sh`'s list and order) and recorded in `hints.aur_helper`;
+with none found, `registry::aur_command` falls back to the route that works
+everywhere: clone the AUR repo and `makepkg --syncdeps --install`. Detection
+happens before the plan is built, so the command shown in the popup is the one
+that runs.
 
 | channel | strategy | update invocation (templated with `hints`) |
 |---|---|---|
 | `homebrew` | Delegated | `brew upgrade {formula}` |
-| `apt` | DownloadPackage (sudo) | fetch `.deb` from the release, verify, `dpkg -i` |
-| `dnf` | DownloadPackage (sudo) | fetch `.rpm` from the release, verify, `rpm -U` |
-| `zypper` | **Manual** | no openSUSE repository exists — releases page |
-| `aur-bin` / `aur` | Delegated | `{aur_helper} -S {aur_pkg}` (detect yay/paru) |
-| `pacman` | **Manual** | no official Arch repo package (AUR only) — releases page |
+| `apt` | DownloadPackage (root) | fetch `.deb` from the release, verify, `dpkg -i` |
+| `dnf` | DownloadPackage (root) | fetch `.rpm` from the release, verify, `rpm -U` |
+| `zypper` | DownloadPackage (root) | fetch `.rpm` from the release, verify, `zypper install` |
+| `aur-bin` / `aur` | Delegated | detected helper `-S {aur_pkg}`, else `git clone` + `makepkg -si` |
+| `pacman` | Delegated | AUR: detected helper, else `git clone` + `makepkg -si` |
 | `winget` | Delegated | `winget upgrade --id {winget_id}` |
-| `scoop` | **Manual** | no scoop manifest — releases page |
-| `chocolatey` | **Manual** | no chocolatey package — releases page |
+| `scoop` | **Manual** | unreachable: no scoop manifest, nothing writes this receipt |
+| `chocolatey` | **Manual** | unreachable: no package, nothing writes this receipt |
 | `flatpak` | DownloadPackage | fetch `.flatpak` bundle, verify, `flatpak install --user` |
-| `snap` | **Manual** | no snap package exists — releases page |
+| `snap` | **Manual** | unreachable: no snap published, nothing writes this receipt |
 | `nix` | Delegated | `nix profile upgrade fresh` (matches `flake.nix`'s `pname`) |
-| `freebsd-pkg` | Delegated (sudo) | `pkg upgrade fresh` |
+| `freebsd-pkg` | Delegated (root) | `pkg upgrade fresh` |
 | `cargo` | Toolchain | `cargo install --locked fresh-editor` |
 | `cargo-binstall` | Toolchain | `cargo binstall fresh-editor` |
 | `npm` | Toolchain | `npm update -g {npm_pkg}` |
@@ -465,15 +488,20 @@ For every non-SelfContained channel, `fresh update`:
 
 1. Confirms an update exists.
 2. Builds the exact command from the registry + `hints`.
-3. Either **runs it** (default when the tool is on `PATH` and no elevation is
-   needed, e.g. `brew upgrade`, `flatpak update`, `winget upgrade`) after a
-   confirmation prompt, or **prints it** for the user to run (when it needs
-   `sudo`/admin, or the tool isn't found). We never invoke `sudo` ourselves.
+3. **Runs it**, after the user picks "Update now" — including when it needs
+   root, in which case it is prefixed with `sudo`/`doas` and the password prompt
+   appears in the update terminal. "Show the command" prints it instead.
+   `--print-command` is the CLI spelling of that choice.
 4. Never touches the binary directly — the manager does, keeping its package DB
    and signatures intact.
 
-AUR is special-cased: detect the installed helper (`yay`, `paru`, else
-`makepkg`) exactly as `install.sh` already does, and template the command.
+AUR is special-cased, and is the one channel whose identity does *not* imply a
+tool: it means `pacman` + `makepkg`, not any particular helper. The helper is
+detected at runtime exactly as `install.sh` does (`registry::AUR_HELPERS`, same
+order), recorded into `hints.aur_helper`, and templated in. With none present
+the command is the universal `git clone` + `makepkg --syncdeps --install`.
+Neither path is separately elevated — helpers and `makepkg -si` invoke `sudo`
+themselves for the `pacman` step, and wrapping them would nest prompts.
 
 ---
 
@@ -508,9 +536,18 @@ non-goal on silent installs.
   `services::http`.
 - **Integrity:** SHA-256 comparison against the published `.sha256` **and**
   GitHub artifact-attestation verification before any swap. Fail-closed.
-- **No privilege escalation by the editor.** Delegated commands that need root
-  are printed, not run. Self-swap only ever writes files the current user
-  already owns (that's precisely what `self_update=true` asserts).
+- **Privilege escalation is consented and visible, never silent.** Commands that
+  need root run as `sudo`/`doas` **in the interactive update terminal**, so the
+  password prompt is the user's own shell prompt and they can see exactly what is
+  being run. We never cache credentials, never pass a password, and never
+  elevate without the user having picked "Update now" for that specific update.
+  Every popup with a privileged step says so before it is taken, and "Show the
+  command" prints it instead for anyone who would rather run it themselves.
+  This supersedes the earlier "print, never run" rule: that rule did not remove
+  the root command, it just moved it somewhere the user got no help with, and
+  the editor's own indicator then had to lie about whether an update happened.
+  Self-swap is unchanged — it only ever writes files the current user already
+  owns (precisely what `self_update=true` asserts) and is never elevated.
 - **Downgrade protection:** refuse to "update" to a version `<= current` unless
   `--allow-downgrade` is passed.
 - **Receipt trust:** packaged receipts are read-only, manager-owned. A

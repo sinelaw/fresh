@@ -35,8 +35,12 @@ override_dh_auto_install:
 		debian/fresh-editor/usr/bin/fresh
 	# Provenance receipt so the editor knows it was installed via apt/dpkg
 	# and defers updates to the system package manager.
+	# `pkg_arch` is dpkg's spelling (amd64/arm64), recorded here because the
+	# build knows it for certain — the running binary would have to re-derive
+	# it from its target triple to find the right .deb on the next update.
 	sh scripts/write-install-receipt.sh apt \
-		debian/fresh-editor/usr/share/fresh-editor/install-receipt.toml
+		debian/fresh-editor/usr/share/fresh-editor/install-receipt.toml \
+		target=$(CARGO_TARGET) pkg_arch=$(DEB_HOST_ARCH)
 
 # Ship the upstream CHANGELOG.md as /usr/share/doc/fresh-editor/changelog.gz
 override_dh_installchangelogs:

@@ -1,11 +1,16 @@
 //! What the update confirmation should say and offer, derived from the
 //! resolved [`UpdatePlan`].
 //!
-//! "Update to vX" means something different in each channel: an in-place swap
-//! we perform, a download plus a root command we deliberately leave to the
-//! user, a per-user install we can run, a command we will only print, or
-//! nothing we can do at all. A single row with one label described all five and
-//! was accurate for none of them.
+//! "Update to vX" means something different in each channel: an in-place swap,
+//! a release package fetched and handed to dpkg/rpm/zypper/flatpak, or the
+//! owning manager's own upgrade command. A single row with one label described
+//! all of them and was accurate for none.
+//!
+//! Two rules hold across every variant. The update **completes** — whatever it
+//! needs downloaded gets downloaded, and whatever needs root prompts for a
+//! password in the update terminal rather than being handed back as a chore.
+//! And the user **chooses**: every offer with a nameable command also offers to
+//! show it instead of running it.
 //!
 //! This is the pure mapping from plan to offer; the popup in
 //! `app::popup_dialogs` turns an [`UpdateOffer`] into rows and body text so the
@@ -13,40 +18,57 @@
 
 use fresh_update::{UpdateKind, UpdatePlan};
 
-/// What confirming the update will actually do. One variant per distinct
-/// promise we can honestly make to the user.
+/// What "Update now" will actually do. One variant per distinct promise we can
+/// honestly make to the user — but in every case except [`UpdateOffer::Manual`]
+/// the promise is that the update *completes*, with no follow-up chore.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateOffer {
     /// We own the bits: download, verify, and replace the binary in place.
     SelfContained,
-    /// Download the release package and install it — no privilege needed
-    /// (the Flatpak bundle installs into the per-user installation).
+    /// Download and verify the release package, then install it with the local
+    /// package tool (elevating if that tool needs root).
     DownloadPackage,
-    /// Download and verify the release package, then stop: installing it is a
-    /// root `dpkg -i` / `rpm -U` we will not run for the user.
-    DownloadPackagePrivileged,
-    /// A package manager owns this install and its command needs no privilege,
-    /// so we can run it.
+    /// Run the owning package manager's own upgrade command.
     RunCommand,
-    /// A package manager owns this install and its command needs root, so we
-    /// show the command rather than running it.
-    ShowCommand,
     /// No update mechanism at all (unknown provenance, or a source build).
     Manual,
 }
 
+/// A row offered in the update popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateChoice {
+    /// Do it — download and install, prompting for a password if the install
+    /// needs root. Runs `fresh --cmd update --yes`.
+    UpdateNow,
+    /// Print the command that would be run and stop, so the user can inspect
+    /// it or run it themselves. Runs `fresh --cmd update --yes --print-command`.
+    ShowCommand,
+}
+
+impl UpdateChoice {
+    /// The popup action key this choice dispatches on.
+    pub fn action_key(self) -> &'static str {
+        match self {
+            UpdateChoice::UpdateNow => "update",
+            UpdateChoice::ShowCommand => "show_command",
+        }
+    }
+}
+
 impl UpdateOffer {
-    /// Whether taking this offer leaves the user a command to run themselves.
-    /// These are the offers that end in [`SelfUpdatePhase::ActionRequired`]
-    /// rather than an installed update, and the confirmation says so up front.
-    ///
-    /// [`SelfUpdatePhase::ActionRequired`]:
-    ///     crate::services::release_checker::SelfUpdatePhase::ActionRequired
-    pub fn leaves_command_for_user(self) -> bool {
-        matches!(
-            self,
-            UpdateOffer::DownloadPackagePrivileged | UpdateOffer::ShowCommand | UpdateOffer::Manual
-        )
+    /// The rows to offer, in order. "Update now" comes first everywhere it is
+    /// possible, because completing the update is the point; "Show the command"
+    /// rides along wherever there is a concrete command to show, so a user who
+    /// would rather drive it themselves keeps that control.
+    pub fn choices(self) -> &'static [UpdateChoice] {
+        match self {
+            UpdateOffer::SelfContained => &[UpdateChoice::UpdateNow],
+            UpdateOffer::DownloadPackage | UpdateOffer::RunCommand => {
+                &[UpdateChoice::UpdateNow, UpdateChoice::ShowCommand]
+            }
+            // Nothing to run and nothing to name.
+            UpdateOffer::Manual => &[UpdateChoice::ShowCommand],
+        }
     }
 }
 
@@ -54,13 +76,7 @@ impl UpdateOffer {
 pub fn offer_for(plan: &UpdatePlan) -> UpdateOffer {
     match plan.kind {
         UpdateKind::SelfContained => UpdateOffer::SelfContained,
-        UpdateKind::DownloadPackage if plan.needs_privilege => {
-            UpdateOffer::DownloadPackagePrivileged
-        }
         UpdateKind::DownloadPackage => UpdateOffer::DownloadPackage,
-        UpdateKind::Delegated | UpdateKind::Toolchain if plan.needs_privilege => {
-            UpdateOffer::ShowCommand
-        }
         // A delegated command we cannot actually name is no better than manual
         // guidance, so don't promise to run one.
         UpdateKind::Delegated | UpdateKind::Toolchain => match &plan.command {
@@ -76,9 +92,12 @@ mod tests {
     use super::*;
     use fresh_update::{Channel, Confidence, Provenance};
 
+    fn plan_for(channel: Channel) -> UpdatePlan {
+        fresh_update::plan(&Provenance::for_channel(channel, Confidence::Authoritative))
+    }
+
     fn offer(channel: Channel) -> UpdateOffer {
-        let prov = Provenance::for_channel(channel, Confidence::Authoritative);
-        offer_for(&fresh_update::plan(&prov))
+        offer_for(&plan_for(channel))
     }
 
     #[test]
@@ -87,43 +106,66 @@ mod tests {
             // We own the bits.
             (Channel::Tarball, UpdateOffer::SelfContained),
             (Channel::Appimage, UpdateOffer::SelfContained),
-            // Package manager owns the files, nothing hosts them.
-            (Channel::Apt, UpdateOffer::DownloadPackagePrivileged),
-            (Channel::Dnf, UpdateOffer::DownloadPackagePrivileged),
+            // Package manager owns the files, nothing hosts them: fetch the
+            // artifact and install it (elevating only where the tool needs it).
+            (Channel::Apt, UpdateOffer::DownloadPackage),
+            (Channel::Dnf, UpdateOffer::DownloadPackage),
+            (Channel::Zypper, UpdateOffer::DownloadPackage),
             (Channel::Flatpak, UpdateOffer::DownloadPackage),
-            // Delegated, runnable without root.
+            // The owning manager's own command.
             (Channel::Homebrew, UpdateOffer::RunCommand),
             (Channel::Winget, UpdateOffer::RunCommand),
             (Channel::Npm, UpdateOffer::RunCommand),
             (Channel::Cargo, UpdateOffer::RunCommand),
-            // Delegated, needs root — we only ever print these.
-            (Channel::FreebsdPkg, UpdateOffer::ShowCommand),
+            (Channel::FreebsdPkg, UpdateOffer::RunCommand),
+            (Channel::Aur, UpdateOffer::RunCommand),
+            (Channel::Pacman, UpdateOffer::RunCommand),
             // Nothing we can do.
             (Channel::Unknown, UpdateOffer::Manual),
             (Channel::Source, UpdateOffer::Manual),
-            // Channels with no distribution at all: the registry routes them to
-            // Manual rather than naming an invented command, so the popup must
-            // not offer to run one.
-            (Channel::Pacman, UpdateOffer::Manual),
-            (Channel::Zypper, UpdateOffer::Manual),
-            (Channel::Snap, UpdateOffer::Manual),
         ];
         for (channel, expected) in cases {
             assert_eq!(offer(channel), expected, "offer for {}", channel.id());
         }
     }
 
-    /// The distinction the confirmation has to make up front: which offers end
-    /// with the user still holding a command to run.
+    /// Every channel a user can actually be on offers to complete the update,
+    /// and every one with a nameable command also offers to show it instead —
+    /// the user picks, we don't decide for them.
     #[test]
-    fn privileged_and_manual_offers_leave_work_for_the_user() {
-        assert!(UpdateOffer::DownloadPackagePrivileged.leaves_command_for_user());
-        assert!(UpdateOffer::ShowCommand.leaves_command_for_user());
-        assert!(UpdateOffer::Manual.leaves_command_for_user());
-
-        assert!(!UpdateOffer::SelfContained.leaves_command_for_user());
-        assert!(!UpdateOffer::DownloadPackage.leaves_command_for_user());
-        assert!(!UpdateOffer::RunCommand.leaves_command_for_user());
+    fn reachable_channels_offer_to_finish_it_and_to_show_the_command() {
+        let reachable = [
+            Channel::Tarball,
+            Channel::Appimage,
+            Channel::Apt,
+            Channel::Dnf,
+            Channel::Zypper,
+            Channel::Flatpak,
+            Channel::Homebrew,
+            Channel::Winget,
+            Channel::Npm,
+            Channel::Cargo,
+            Channel::CargoBinstall,
+            Channel::Mise,
+            Channel::Nix,
+            Channel::FreebsdPkg,
+            Channel::Aur,
+            Channel::AurBin,
+            Channel::Pacman,
+        ];
+        for channel in reachable {
+            let choices = offer(channel).choices();
+            assert!(
+                choices.contains(&UpdateChoice::UpdateNow),
+                "{channel} does not offer to complete the update"
+            );
+            if offer(channel) != UpdateOffer::SelfContained {
+                assert!(
+                    choices.contains(&UpdateChoice::ShowCommand),
+                    "{channel} gives the user no way to inspect the command first"
+                );
+            }
+        }
     }
 
     /// A delegated plan whose command we cannot build must not offer to run it.
@@ -136,5 +178,11 @@ mod tests {
             human: "see the releases page".to_string(),
         };
         assert_eq!(offer_for(&plan), UpdateOffer::Manual);
+    }
+
+    #[test]
+    fn action_keys_are_stable() {
+        assert_eq!(UpdateChoice::UpdateNow.action_key(), "update");
+        assert_eq!(UpdateChoice::ShowCommand.action_key(), "show_command");
     }
 }
