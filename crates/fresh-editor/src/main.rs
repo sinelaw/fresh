@@ -179,6 +179,9 @@ struct Args {
     update_yes: bool,
     update_allow_downgrade: bool,
     update_print_command: bool,
+    update_force: bool,
+    update_releases_url: Option<String>,
+    update_download_base: Option<String>,
     locale: Option<String>,
     check_plugin: Option<PathBuf>,
     init: Option<Option<String>>,
@@ -215,12 +218,34 @@ impl From<Cli> for Args {
             false
         };
 
-        // `fresh --cmd update [--check] [--yes] [--allow-downgrade]`
+        // `fresh --cmd update [--check] [--yes] [--allow-downgrade] [--force]
+        //                     [--print-command] [--releases-url U] [--download-base U]`
         let update = cli.cmd.first().map(String::as_str) == Some("update");
         let update_check = update && cli.cmd.iter().any(|a| a == "--check");
         let update_yes = update && cli.cmd.iter().any(|a| a == "--yes" || a == "-y");
         let update_allow_downgrade = update && cli.cmd.iter().any(|a| a == "--allow-downgrade");
         let update_print_command = update && cli.cmd.iter().any(|a| a == "--print-command");
+        let update_force = update && cli.cmd.iter().any(|a| a == "--force");
+        // Value flags: `--flag VALUE`. Point the update at a mirror of the
+        // release feed — an air-gapped/enterprise mirror in production, and the
+        // way the packaging containers exercise the real install flow in tests.
+        let flag_value = |name: &str| -> Option<String> {
+            cli.cmd
+                .iter()
+                .position(|a| a == name)
+                .and_then(|i| cli.cmd.get(i + 1))
+                .cloned()
+        };
+        let update_releases_url = if update {
+            flag_value("--releases-url")
+        } else {
+            None
+        };
+        let update_download_base = if update {
+            flag_value("--download-base")
+        } else {
+            None
+        };
 
         // Parse --cmd arguments to determine command
         let (
@@ -486,6 +511,9 @@ impl From<Cli> for Args {
             update_yes,
             update_allow_downgrade,
             update_print_command,
+            update_force,
+            update_releases_url,
+            update_download_base,
             locale: cli.locale,
             check_plugin: cli.check_plugin,
             init,
@@ -4335,7 +4363,8 @@ fn show_paths_command() -> AnyhowResult<()> {
     Ok(())
 }
 
-/// Handle `fresh update [--check] [--yes] [--allow-downgrade]`.
+/// Handle `fresh update [--check] [--yes] [--allow-downgrade] [--force]
+///                       [--print-command] [--releases-url U] [--download-base U]`.
 fn update_command(args: &Args) -> AnyhowResult<()> {
     #[cfg(feature = "self-update")]
     {
@@ -4344,7 +4373,19 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             yes: args.update_yes,
             allow_downgrade: args.update_allow_downgrade,
             print_command: args.update_print_command,
+            force: args.update_force,
             ..Default::default()
+        };
+        let opts = fresh::services::updater::UpdateOptions {
+            releases_url: args
+                .update_releases_url
+                .clone()
+                .unwrap_or(opts.releases_url),
+            download_base: args
+                .update_download_base
+                .clone()
+                .unwrap_or(opts.download_base),
+            ..opts
         };
         // Map the outcome to a process exit code without an anyhow backtrace
         // (the editor's update terminal keys the indicator off this exit

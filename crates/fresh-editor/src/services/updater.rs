@@ -35,6 +35,12 @@ pub struct UpdateOptions {
     pub yes: bool,
     /// Permit "updating" to the same or an older version.
     pub allow_downgrade: bool,
+    /// Run the update even when the current version is already the latest.
+    /// Distinct from `allow_downgrade`, which is about *which* versions are
+    /// acceptable; this is about running the install path at all. Reinstalls
+    /// the current version, which is how the packaging containers exercise the
+    /// real download → verify → install flow without waiting for a new release.
+    pub force: bool,
     /// Print the command that would install the update and stop, instead of
     /// running it. The escape hatch behind the popup's "Show the command"
     /// choice, for users who would rather run it themselves.
@@ -52,6 +58,7 @@ impl Default for UpdateOptions {
             yes: false,
             allow_downgrade: false,
             print_command: false,
+            force: false,
             releases_url: super::release_checker::DEFAULT_RELEASES_URL.to_string(),
             download_base: format!("https://github.com/{REPO}/releases/download"),
         }
@@ -98,9 +105,12 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
     println!("Current version: {CURRENT_VERSION}");
     println!("Latest version:  {latest}");
 
-    if !check.update_available && !opts.allow_downgrade {
+    if !check.update_available && !opts.allow_downgrade && !opts.force {
         println!("You are already on the latest version.");
         return Ok(UpdateStatus::Done);
+    }
+    if !check.update_available && opts.force {
+        println!("Already on {latest}; --force given, reinstalling it anyway.");
     }
 
     let plan = fresh_update::plan(&prov);
