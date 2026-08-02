@@ -209,9 +209,22 @@ jobs:
           test ! -L /usr/bin/fresh || { echo "/usr/bin/fresh should not be a symlink"; exit 1; }
 
           echo ""
-          echo "=== Verifying install receipt shipped (and nothing else under /usr/share/fresh-editor) ==="
-          test -f /usr/share/fresh-editor/install-receipt.toml || { echo "install receipt missing"; ls -la /usr/share/fresh-editor || true; exit 1; }
-          grep -q 'channel = "apt"' /usr/share/fresh-editor/install-receipt.toml || { echo "receipt has wrong channel"; cat /usr/share/fresh-editor/install-receipt.toml; exit 1; }
+          echo ""
+          echo "=== Verifying the installed binary resolves its provenance ==="
+          # Assert what the editor actually concludes, not merely that a file is
+          # on disk. A `test -f` + `grep` of the receipt's contents passed for
+          # every release in which the receipt was shipped to a directory the
+          # resolver never searched, so apt installs silently resolved to
+          # channel `unknown` and were offered no update path at all.
+          paths=$(/usr/bin/fresh --cmd config paths) || { echo "config paths failed"; exit 1; }
+          echo "$paths"
+          echo "$paths" | grep -qE '^install channel: +.*\(apt\)$' \
+            || { echo "installed binary did not resolve channel apt"; exit 1; }
+          echo "$paths" | grep -qE '^provenance: +Authoritative$' \
+            || { echo "provenance is not Authoritative — the receipt was not found"; exit 1; }
+
+          echo ""
+          echo "=== Verifying nothing else shipped under /usr/share/fresh-editor ==="
           # Only the receipt belongs here — plugins/themes are embedded in the binary.
           leaked=$(find /usr/share/fresh-editor -type f ! -name install-receipt.toml || true)
           test -z "$leaked" || { echo "unexpected files under /usr/share/fresh-editor: $leaked"; exit 1; }
@@ -292,9 +305,20 @@ jobs:
           file /usr/bin/fresh | grep -q ELF || { echo "/usr/bin/fresh is not an ELF binary"; exit 1; }
 
           echo ""
-          echo "=== Verifying install receipt shipped (and nothing else under /usr/share/fresh-editor) ==="
-          test -f /usr/share/fresh-editor/install-receipt.toml || { echo "install receipt missing"; ls -la /usr/share/fresh-editor || true; exit 1; }
-          grep -q 'channel = "dnf"' /usr/share/fresh-editor/install-receipt.toml || { echo "receipt has wrong channel"; cat /usr/share/fresh-editor/install-receipt.toml; exit 1; }
+          echo ""
+          echo "=== Verifying the installed binary resolves its provenance ==="
+          # See the .deb job: assert the resolved channel, not just that the
+          # receipt file exists — the latter stays green when the resolver
+          # cannot find it.
+          paths=$(/usr/bin/fresh --cmd config paths) || { echo "config paths failed"; exit 1; }
+          echo "$paths"
+          echo "$paths" | grep -qE '^install channel: +.*\(dnf\)$' \
+            || { echo "installed binary did not resolve channel dnf"; exit 1; }
+          echo "$paths" | grep -qE '^provenance: +Authoritative$' \
+            || { echo "provenance is not Authoritative — the receipt was not found"; exit 1; }
+
+          echo ""
+          echo "=== Verifying nothing else shipped under /usr/share/fresh-editor ==="
           leaked=$(find /usr/share/fresh-editor -type f ! -name install-receipt.toml || true)
           test -z "$leaked" || { echo "unexpected files under /usr/share/fresh-editor: $leaked"; exit 1; }
 
