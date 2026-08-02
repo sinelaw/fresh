@@ -184,6 +184,14 @@ GitHub release automatically and rebuilds the package — no action needed on ou
 for every architecture, and the mirrors sync. Very closely spaced releases may be coalesced, since
 the bot bumps to whatever the latest release is when it runs.
 
+If `pkg` insists you already have the newest version but it is well behind the latest release, your
+mirror is stale — check `$PREFIX/etc/apt/sources.list` and point it at the official seed:
+
+```bash
+echo "deb https://packages.termux.dev/apt/termux-main stable main" > $PREFIX/etc/apt/sources.list
+pkg update && pkg upgrade
+```
+
 If you want a release the same day it is tagged, install from [crates.io](#from-cratesio) instead
 (`pkg install rust` first) — the Termux package builds the same source tarball.
 
