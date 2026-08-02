@@ -134,7 +134,11 @@ jobs:
           # Provenance receipt shipped inside the .rpm (see Cargo.toml
           # [package.metadata.generate-rpm] assets). target/ is symlinked to
           # the workspace target above.
-          sh ../../scripts/write-install-receipt.sh dnf target/install-receipt.toml
+          # `pkg_arch` is rpm's spelling (x86_64/aarch64), recorded here so the
+          # next update looks up the right .rpm on the release feed instead of
+          # re-deriving the arch from the running binary's target triple.
+          sh ../../scripts/write-install-receipt.sh dnf target/install-receipt.toml \
+            target=${{ matrix.target }} pkg_arch=${{ matrix.rpm_arch }}
           cargo generate-rpm --target ${{ matrix.target }}
 
       - name: Collect packages
