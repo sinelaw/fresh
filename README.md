@@ -73,7 +73,7 @@ Or, pick your preferred method:
 | Arch Linux | [AUR](#arch-linux-aur) |
 | Debian/Ubuntu | [.deb](#debianubuntu-deb) |
 | Fedora/RHEL | [.rpm](#fedorarhel-rpm), [Terra](https://terra.fyralabs.com/) |
-| OpenSUSE | [zypper](#opensuse-zypper), [.rpm](#fedorarhel-rpm) |
+| OpenSUSE | [.rpm](#opensuse-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
 | Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
@@ -150,11 +150,16 @@ curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | 
 
 Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
 
-### OpenSUSE (zypper)
+### OpenSUSE (.rpm)
+
+There is no openSUSE repository for `fresh` yet, so install the `.rpm` from the
+release directly:
 
 ```bash
-zypper install fresh-editor
+curl -sL $(curl -s https://api.github.com/repos/sinelaw/fresh/releases/latest | grep "browser_download_url.*\.$(uname -m)\.rpm" | cut -d '"' -f 4) -o fresh-editor.rpm && sudo zypper --no-gpg-checks install ./fresh-editor.rpm
 ```
+
+Or download the `.rpm` file manually from the [releases page](https://github.com/sinelaw/fresh/releases).
 
 ### Gentoo ([GURU](https://wiki.gentoo.org/wiki/Project:GURU))
 
