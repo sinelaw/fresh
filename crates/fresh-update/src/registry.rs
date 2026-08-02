@@ -59,19 +59,8 @@ pub struct UpdatePlan {
     pub human: String,
 }
 
-/// AUR helpers to look for, in preference order — the same list and order
-/// `scripts/install.sh` uses when installing.
-///
-/// A helper is a *convenience*, not a guarantee: plenty of Arch users install
-/// AUR packages with plain `makepkg` and have none of these. Naming one
-/// unconditionally produced a command that simply does not exist on those
-/// machines, so the helper is detected at runtime and recorded in
-/// `hints.aur_helper`; [`aur_command`] falls back to the universal route when
-/// there is none.
-pub const AUR_HELPERS: &[&str] = &["yay", "paru", "pikaur", "trizen"];
-
-/// Whether `pkg` is a plausible AUR package name. Guards the shell fallback in
-/// [`aur_command`] against a receipt carrying shell metacharacters.
+/// Whether `pkg` is a plausible AUR package name. The name is interpolated into
+/// a shell command, so a receipt carrying metacharacters is refused outright.
 fn is_safe_pkg_name(pkg: &str) -> bool {
     !pkg.is_empty()
         && pkg.len() <= 64
@@ -80,19 +69,20 @@ fn is_safe_pkg_name(pkg: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+'))
 }
 
-/// The argv that updates an AUR package.
+/// The argv that updates an AUR package: clone the AUR repo and build it.
 ///
-/// With a detected `helper`, use it — that is the tool the user actually drives.
-/// Without one, fall back to the route that works on *every* Arch system:
-/// clone the AUR repo and `makepkg -si`. `makepkg` ships in `base-devel`, which
-/// is a prerequisite for having installed an AUR package at all, so this is the
-/// safe universal answer rather than another guess.
-pub fn aur_command(pkg: &str, helper: Option<&str>) -> Vec<String> {
-    if let Some(helper) = helper {
-        return vec![helper.to_string(), "-S".to_string(), pkg.to_string()];
-    }
+/// One command, for every Arch user. `makepkg` ships in `base-devel`, which is
+/// a prerequisite for having installed an AUR package at all, so this works
+/// everywhere without depending on anything the channel does not guarantee.
+///
+/// Deliberately *not* helper-aware. Preferring `yay`/`paru` when present would
+/// mean this provenance class had two different upgrade mechanisms depending on
+/// what happened to be installed — the update would differ machine to machine
+/// and could not be reasoned about from the receipt alone. An AUR receipt means
+/// `pacman` + `makepkg`; that is what we use.
+pub fn aur_command(pkg: &str) -> Vec<String> {
     if !is_safe_pkg_name(pkg) {
-        // Refuse to interpolate something unexpected into a shell command.
+        // A corrupt receipt is an error, not a reason to try something else.
         return vec![
             "sh".to_string(),
             "-c".to_string(),
@@ -178,14 +168,11 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
         .npm_pkg
         .clone()
         .unwrap_or_else(|| "@fresh-editor/fresh-editor".to_string());
-    // No default helper: an unrecorded helper means "none detected", which
-    // `aur_command` answers with the universal makepkg route rather than
-    // guessing at a tool that may not be installed.
     let aur_pkg = h.aur_pkg.clone().unwrap_or_else(|| match channel {
         Channel::AurBin => "fresh-editor-bin".to_string(),
         _ => "fresh-editor".to_string(),
     });
-    let aur_argv = aur_command(&aur_pkg, h.aur_helper.as_deref());
+    let aur_argv = aur_command(&aur_pkg);
 
     let argv: Option<Vec<&str>> = match channel {
         Channel::Homebrew => Some(vec!["brew", "upgrade", &formula]),
@@ -383,7 +370,6 @@ mod tests {
             plan(&prov(Channel::Winget)).human,
             "winget upgrade --id sinelaw.fresh-editor"
         );
-        // No helper recorded => the universal makepkg route, not a guess.
         assert!(plan(&prov(Channel::AurBin)).human.contains("makepkg"));
     }
 
@@ -415,6 +401,7 @@ mod tests {
             (Channel::CargoBinstall, "crates.io + release archives"),
             (Channel::Npm, "@fresh-editor/fresh-editor"),
             (Channel::Mise, "github:sinelaw/fresh"),
+            (Channel::AurBin, "AUR fresh-editor-bin"),
         ];
         // We ship no artifact snap, scoop or chocolatey could install, and no
         // pipeline writes their receipts, so there is no same-channel
@@ -521,21 +508,21 @@ mod tests {
     fn hints_override_defaults() {
         let mut p = prov(Channel::AurBin);
         p.hints = Hints {
-            aur_helper: Some("paru".to_string()),
-            aur_pkg: Some("fresh-editor-bin".to_string()),
+            aur_pkg: Some("fresh-editor-custom".to_string()),
             ..Hints::default()
         };
-        assert_eq!(plan(&p).human, "paru -S fresh-editor-bin");
+        assert!(plan(&p).human.contains("fresh-editor-custom.git"));
     }
 
-    /// An AUR helper is a convenience, not a guarantee — plenty of Arch users
-    /// have none and build with `makepkg`. Defaulting to `yay` named a binary
-    /// that simply is not there on those machines, and the failure came only
-    /// after the user had confirmed the update.
+    /// One AUR command, the same on every machine. Preferring a helper when
+    /// one happened to be installed made the upgrade mechanism a property of
+    /// the machine rather than of the proved provenance — two users with
+    /// identical receipts would update by different routes, and neither route
+    /// could be predicted from the receipt.
     #[test]
-    fn aur_without_a_detected_helper_uses_the_universal_route() {
-        let cmd = aur_command("fresh-editor-bin", None);
-        assert_eq!(cmd[0], "sh", "expected a shell fallback, got {cmd:?}");
+    fn aur_uses_one_command_everywhere() {
+        let cmd = aur_command("fresh-editor-bin");
+        assert_eq!(cmd[0], "sh", "expected the makepkg route, got {cmd:?}");
         let script = &cmd[2];
         assert!(script.contains("git clone"), "{script}");
         assert!(script.contains("makepkg --syncdeps --install"), "{script}");
@@ -543,31 +530,18 @@ mod tests {
             script.contains("aur.archlinux.org/fresh-editor-bin.git"),
             "{script}"
         );
-        // No helper is named anywhere in the fallback.
-        for helper in AUR_HELPERS {
-            assert!(
-                !script.contains(helper),
-                "fallback names {helper}: {script}"
-            );
-        }
-    }
-
-    #[test]
-    fn aur_uses_the_helper_that_was_actually_detected() {
+        // No helper is named, whatever is installed on the machine.
         for helper in ["yay", "paru", "pikaur", "trizen"] {
-            assert_eq!(
-                aur_command("fresh-editor-bin", Some(helper)),
-                vec![helper, "-S", "fresh-editor-bin"]
-            );
+            assert!(!script.contains(helper), "names {helper}: {script}");
         }
     }
 
-    /// The fallback interpolates the package name into a shell command, so a
-    /// receipt carrying metacharacters must not reach it.
+    /// The package name is interpolated into a shell command, so a receipt
+    /// carrying metacharacters is refused rather than run.
     #[test]
-    fn aur_fallback_refuses_an_implausible_package_name() {
+    fn aur_refuses_an_implausible_package_name() {
         for bad in ["fresh; rm -rf /", "$(whoami)", "a b", "", "pkg`id`"] {
-            let cmd = aur_command(bad, None);
+            let cmd = aur_command(bad);
             assert!(
                 !cmd[2].contains("git clone"),
                 "built a clone command for {bad:?}: {cmd:?}"
@@ -575,8 +549,8 @@ mod tests {
         }
     }
 
-    /// AUR helpers and `makepkg -si` call sudo themselves for the pacman step;
-    /// wrapping them in another elevation would nest password prompts.
+    /// `makepkg -si` calls sudo itself for the pacman step; wrapping it in
+    /// another elevation would nest password prompts.
     #[test]
     fn aur_is_not_separately_elevated() {
         for channel in [Channel::Aur, Channel::AurBin, Channel::Pacman] {

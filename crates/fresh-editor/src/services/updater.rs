@@ -90,7 +90,7 @@ pub enum UpdateStatus {
 /// privilege itself.
 pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
     // Same entry point the popup used, so the command we run is the one the
-    // user was shown (notably: the same detected AUR helper).
+    // user was shown.
     let prov = super::release_checker::detect_provenance();
     println!(
         "Installed via: {} (confidence: {:?})",
@@ -137,10 +137,6 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
             if opts.check_only {
                 println!("An update is available. Update with: {}", plan.human);
                 return Ok(UpdateStatus::Done);
-            }
-            if cmd.is_empty() {
-                println!("An update is available: {}", plan.human);
-                return Ok(UpdateStatus::ActionRequired);
             }
             if opts.print_command || !opts.yes {
                 // The user asked to see it rather than run it (or this is an
@@ -221,18 +217,19 @@ fn package_update(
     )
     .ok_or_else(|| format!("no release package is published for {}", channel.label()))?;
 
-    // Package filenames carry a packaging release number (`0.4.7-1`) that the
-    // version alone doesn't give us, so read the name off the release feed.
-    let url = match prov.hints.asset.as_deref() {
-        Some(name) => format!("{}/v{latest}/{name}", opts.download_base),
-        None => fresh_update::version::find_asset_url(release_json, asset.extension, &asset.arch)
-            .ok_or_else(|| {
+    // Always resolved from the release feed. Package filenames carry a packaging
+    // release number (`0.4.7-1`) that the version alone doesn't give us, and a
+    // name recorded at install time describes the version we already have — so
+    // the feed is the only source that can be right, and it is the only one
+    // consulted.
+    let _ = latest;
+    let url = fresh_update::version::find_asset_url(release_json, asset.extension, &asset.arch)
+        .ok_or_else(|| {
             format!(
                 "the latest release has no {} package for {}",
                 asset.extension, asset.arch
             )
-        })?,
-    };
+        })?;
 
     let bytes = fetch_and_verify(&url)?;
 
@@ -266,26 +263,20 @@ fn show_command(cmd: &[String]) {
 
 /// The argv to actually execute, elevated when the install needs root.
 ///
-/// We do **not** try to detect whether we are already root: `sudo` run as root
-/// simply executes the command without prompting, so prefixing unconditionally
-/// is both simpler and correct. When no elevation helper exists the command is
-/// returned unchanged — that is right on a system where the user *is* root, and
-/// fails with a clear permission error otherwise.
+/// One mechanism: `sudo`. Probing for `doas`, or falling back to running the
+/// command unprivileged when neither is present, would mean the same provenance
+/// class installed itself differently depending on the machine — and the
+/// unprivileged fallback in particular fails in a way that looks like a
+/// packaging bug rather than a missing `sudo`. `sudo` run as root is a no-op,
+/// so this is correct for a root shell too; a system without it gets a plain
+/// "command not found" naming exactly what is missing.
 fn elevated(cmd: &[String], needs_privilege: bool) -> Vec<String> {
     if !needs_privilege {
         return cmd.to_vec();
     }
-    match ["sudo", "doas"]
-        .into_iter()
-        .find(|h| super::release_checker::on_path(h))
-    {
-        Some(helper) => {
-            let mut argv = vec![helper.to_string()];
-            argv.extend_from_slice(cmd);
-            argv
-        }
-        None => cmd.to_vec(),
-    }
+    let mut argv = vec!["sudo".to_string()];
+    argv.extend_from_slice(cmd);
+    argv
 }
 
 /// Run the install command, elevating it when it needs root.
@@ -295,12 +286,7 @@ fn elevated(cmd: &[String], needs_privilege: bool) -> Vec<String> {
 /// That is what lets a `.deb`/`.rpm` update finish in one step instead of
 /// handing the user a command to go and run somewhere else.
 fn run_install(cmd: &[String], needs_privilege: bool) -> Result<(), String> {
-    let argv = elevated(cmd, needs_privilege);
-    if needs_privilege && argv.len() == cmd.len() {
-        // No sudo/doas found — this only works if we are already root.
-        println!("No sudo or doas found; running directly (requires root).");
-    }
-    run_delegated(&argv)
+    run_delegated(&elevated(cmd, needs_privilege))
 }
 
 /// Download `url` and check it against its `.sha256` sidecar.
@@ -325,12 +311,12 @@ fn self_contained_update(
 
     // Tarball / prebuilt: download the archive, verify, extract the inner
     // binary, and atomically swap the running executable.
+    // Computed from the target triple this binary was compiled for — a
+    // compile-time fact, not a guess, and the same answer every time. A name
+    // recorded in the receipt describes the version already installed, so it
+    // is not consulted.
     let ext = if cfg!(windows) { "zip" } else { "tar.xz" };
-    let asset = prov
-        .hints
-        .asset
-        .clone()
-        .unwrap_or_else(|| format!("fresh-editor-{target}.{ext}"));
+    let asset = format!("fresh-editor-{target}.{ext}");
     let url = format!("{}/v{latest}/{asset}", opts.download_base);
 
     let bin_name = if cfg!(windows) { "fresh.exe" } else { "fresh" };
@@ -354,11 +340,7 @@ fn appimage_update(
     target: &str,
 ) -> Result<(), String> {
     let arch = target.split('-').next().unwrap_or("x86_64");
-    let asset = prov
-        .hints
-        .asset
-        .clone()
-        .unwrap_or_else(|| format!("fresh-editor-{latest}-{arch}.AppImage"));
+    let asset = format!("fresh-editor-{latest}-{arch}.AppImage");
     let url = format!("{}/v{latest}/{asset}", opts.download_base);
 
     let install_root = prov.hints.install_root.as_deref().ok_or_else(|| {

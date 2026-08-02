@@ -334,6 +334,22 @@ and chocolatey remain `Manual`, and only because we publish nothing they could
 install *and* nothing writes their receipts — they are unreachable, not
 dead-ended.
 
+**One mechanism per provenance class.** A proved provenance must imply exactly
+one way to update — no alternates chosen at runtime from what happens to be on
+the machine. Every such fallback was removed: the AUR helper chain (above),
+`sudo`/`doas`/run-unprivileged for privileged installs (now `sudo`, full stop),
+and the recorded-asset-name-else-look-it-up branches in the download paths (now
+the release feed for packages, the compiled-in target triple for archives). The
+`aur_helper` and `asset` hints survive in the receipt for wire compatibility but
+are no longer read.
+
+The cost is deliberate: a system with no `sudo` at all — a minimal container
+running as root — now fails with `failed to run sudo` instead of quietly
+installing by a different route. That is the intended trade. A fallback that
+succeeds by doing something other than what the provenance says is precisely the
+guessing this design exists to remove, and when it does fail it fails in a way
+that looks like a packaging bug rather than a missing `sudo`.
+
 **Never name a tool the channel doesn't guarantee.** For most channels the tool
 *is* the channel: a `homebrew` receipt means `brew` exists, an `npm` receipt
 means `npm` does. The AUR is the exception — it implies `pacman` and `makepkg`,
@@ -353,8 +369,8 @@ that runs.
 | `apt` | DownloadPackage (root) | fetch `.deb` from the release, verify, `dpkg -i` |
 | `dnf` | DownloadPackage (root) | fetch `.rpm` from the release, verify, `rpm -U` |
 | `zypper` | DownloadPackage (root) | fetch `.rpm` from the release, verify, `zypper install` |
-| `aur-bin` / `aur` | Delegated | detected helper `-S {aur_pkg}`, else `git clone` + `makepkg -si` |
-| `pacman` | Delegated | AUR: detected helper, else `git clone` + `makepkg -si` |
+| `aur-bin` / `aur` | Delegated | `git clone` + `makepkg --syncdeps --install` |
+| `pacman` | Delegated | AUR: `git clone` + `makepkg --syncdeps --install` |
 | `winget` | Delegated | `winget upgrade --id {winget_id}` |
 | `scoop` | **Manual** | unreachable: no scoop manifest, nothing writes this receipt |
 | `chocolatey` | **Manual** | unreachable: no package, nothing writes this receipt |
@@ -489,19 +505,20 @@ For every non-SelfContained channel, `fresh update`:
 1. Confirms an update exists.
 2. Builds the exact command from the registry + `hints`.
 3. **Runs it**, after the user picks "Update now" — including when it needs
-   root, in which case it is prefixed with `sudo`/`doas` and the password prompt
+   root, in which case it is prefixed with `sudo` and the password prompt
    appears in the update terminal. "Show the command" prints it instead.
    `--print-command` is the CLI spelling of that choice.
 4. Never touches the binary directly — the manager does, keeping its package DB
    and signatures intact.
 
-AUR is special-cased, and is the one channel whose identity does *not* imply a
-tool: it means `pacman` + `makepkg`, not any particular helper. The helper is
-detected at runtime exactly as `install.sh` does (`registry::AUR_HELPERS`, same
-order), recorded into `hints.aur_helper`, and templated in. With none present
-the command is the universal `git clone` + `makepkg --syncdeps --install`.
-Neither path is separately elevated — helpers and `makepkg -si` invoke `sudo`
-themselves for the `pacman` step, and wrapping them would nest prompts.
+AUR is the one channel whose identity does *not* imply a tool: it means
+`pacman` + `makepkg`, not any particular helper. It uses exactly one command —
+`git clone` + `makepkg --syncdeps --install` — on every machine. Preferring
+`yay`/`paru` when present was tried and removed: it made the upgrade mechanism a
+property of the machine rather than of the proved provenance, so two users with
+identical receipts would update by different routes and neither route could be
+predicted from the receipt. It is not separately elevated: `makepkg -si` invokes
+`sudo` itself for the `pacman` step, and wrapping it would nest prompts.
 
 ---
 
@@ -537,7 +554,7 @@ non-goal on silent installs.
 - **Integrity:** SHA-256 comparison against the published `.sha256` **and**
   GitHub artifact-attestation verification before any swap. Fail-closed.
 - **Privilege escalation is consented and visible, never silent.** Commands that
-  need root run as `sudo`/`doas` **in the interactive update terminal**, so the
+  need root run as `sudo` **in the interactive update terminal**, so the
   password prompt is the user's own shell prompt and they can see exactly what is
   being run. We never cache credentials, never pass a password, and never
   elevate without the user having picked "Update now" for that specific update.
