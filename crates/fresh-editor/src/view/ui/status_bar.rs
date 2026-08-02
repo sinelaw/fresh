@@ -1249,6 +1249,9 @@ impl StatusBarRenderer {
                 let text = match ctx.update_phase {
                     SelfUpdatePhase::Running => t!("status.update_running").to_string(),
                     SelfUpdatePhase::Succeeded => t!("status.update_done").to_string(),
+                    SelfUpdatePhase::ActionRequired => {
+                        t!("status.update_action_required").to_string()
+                    }
                     SelfUpdatePhase::Failed => t!("status.update_failed").to_string(),
                     SelfUpdatePhase::Idle => {
                         let version = ctx.update_available?;

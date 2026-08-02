@@ -56,17 +56,21 @@ impl Default for UpdateOptions {
 /// The outcome of a successful [`run`], for callers that map it to a process
 /// exit code.
 pub enum UpdateStatus {
-    /// The update was performed / delegated, or `--check` reported status.
-    /// Nothing more to do — exit success.
+    /// The new version is installed (in-place swap, or a package-manager
+    /// command we ran to completion), or `--check` reported status. Nothing
+    /// more to do — exit success.
     Done,
-    /// The update was not applied and needs a step we won't take for the user:
-    /// there is no in-place mechanism at all (unknown / source), or the new
-    /// package was downloaded and verified but installing it needs root. `run`
-    /// already printed friendly guidance; the caller should exit **non-zero** so
-    /// status-driven callers (the editor's update indicator) don't treat it as a
-    /// successful update — but *without* printing an error, because this isn't
-    /// one.
-    ManualRequired,
+    /// The update was **not** applied, and finishing it needs a step we won't
+    /// take for the user: the package was downloaded and verified but
+    /// installing it needs root, the owning package manager's command was
+    /// printed rather than run, or there is no in-place mechanism at all
+    /// (unknown / source).
+    ///
+    /// `run` already printed what to do, so the caller exits
+    /// [`fresh_update::EXIT_ACTION_REQUIRED`] and prints nothing further — this
+    /// is not an error. Reporting it as success would have the editor's
+    /// indicator claim an update that never landed.
+    ActionRequired,
 }
 
 /// Run `fresh update`. Prints human-readable progress; returns an error string
@@ -126,7 +130,12 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
                     println!("An update is available. Run:");
                 }
                 println!("    {}", plan.human);
-                Ok(UpdateStatus::Done)
+                // Printing a command is not performing it. Returning `Done`
+                // here had the editor's indicator report "Updated — restart
+                // fresh" the moment this exited, for an update that had not
+                // been installed and never would be until the user ran the
+                // command themselves.
+                Ok(UpdateStatus::ActionRequired)
             }
         }
         UpdateKind::Manual => {
@@ -150,7 +159,7 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
                 println!("    {url}");
                 println!();
                 println!("and replace your current fresh binary with the new one.");
-                Ok(UpdateStatus::ManualRequired)
+                Ok(UpdateStatus::ActionRequired)
             }
         }
     }
@@ -178,7 +187,7 @@ fn run_delegated(cmd: &[String]) -> Result<(), String> {
 /// table — it would leave the package database describing a file that no longer
 /// exists. Instead we download and checksum-verify the new package and hand it
 /// to the local package tool. When that needs root we print the exact command
-/// rather than escalating, and report [`UpdateStatus::ManualRequired`] so the
+/// rather than escalating, and report [`UpdateStatus::ActionRequired`] so the
 /// editor's indicator doesn't claim an update that hasn't happened yet.
 fn package_update(
     prov: &Provenance,
@@ -220,7 +229,7 @@ fn package_update(
     println!();
     println!("Install it with{}:", privilege_note(prov));
     println!("    {}", cmd.join(" "));
-    Ok(UpdateStatus::ManualRequired)
+    Ok(UpdateStatus::ActionRequired)
 }
 
 /// " (requires root)" when the channel's install command needs elevation.

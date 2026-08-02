@@ -432,9 +432,10 @@ impl Editor {
                     exit_code,
                 } => {
                     // If this is the interactive self-update terminal, move the
-                    // status-bar indicator to its terminal state (success = exit 0).
+                    // status-bar indicator to its terminal state. The exit code
+                    // distinguishes all three: installed, action-required, failed.
                     if self.self_update_terminal == Some(terminal.terminal) {
-                        self.finish_self_update(exit_code == Some(0));
+                        self.finish_self_update(exit_code);
                         self.self_update_terminal = None;
                     }
                     self.handle_terminal_exited(terminal, exit_code);
