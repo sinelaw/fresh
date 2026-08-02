@@ -20,10 +20,15 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Run Agent… and New Workspace are one dialog** - a "Launch in" switch picks the current workspace or a new one. Fixes `custom…` having nowhere to type a command.
 * **Plugins are told when settings change** - vi-mode's options now apply without an editor restart.
 * **Agents drive the editor with TypeScript** - `fresh --cmd script run` evaluates a script against the full plugin API, with `script api` / `script check` for discovery.
+* **Guided code tours are a dock panel, not a popup** - a tour now opens in the shared bottom dock with a step rail, clickable Prev/Next, and a source line you can jump from, instead of a fixed 60x15 box floating over the code it was explaining. Step text is rendered as the markdown it is authored in - headings, bullets, emphasis and fenced code all survive, where the popup dropped the start of every wrapped line. Several tours can be open at once, one dock tab each, and an unfinished tour comes back on the next launch at the step you left it (closing one forgets it). `Ctrl+Alt+]` / `Ctrl+Alt+[` step the tour from the editor, so you can read the code with the panel still up.
+  * An agent that has just made a change can hand you a tour of it: with **Teach Fresh CLI** on, launched agents are shown how to write a `.fresh-tour.json` and open it.
 
 ### Bug Fixes
 
 * **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`, `Shift+2` inserted `2`), because the terminal reports the *base* key and the shift separately (#2880, reported by @akarinotomoshibi).
+* **Clicking a plugin panel where there is no control no longer scrolls it away** - a click on a panel's border or on empty padding used to move the panel's hidden cursor, and the viewport followed it, scrolling the panel's own header and buttons off screen with no way to bring them back. Affected every widget panel (Search & Replace, Settings, the Orchestrator dock).
+* **Side-by-side lists in a plugin panel route clicks to the column you clicked** - with two lists next to each other, every click in the right-hand one selected a row in the left-hand one.
+* **A second panel opened in the Utility Dock renders like the first** - it used to arrive with a line-number gutter the first panel did not have, and the columns that gutter took made its contents wrap. Visible with Diagnostics open beside Search & Replace.
 * **Four dead settings** - the bracket-matching toggles, `file_explorer.respect_gitignore` and `languages.<id>.textmate_grammar` now take effect; `editor.highlight_timeout_ms` was removed rather than wired up (#2842).
 * **Files that are one very long line**
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).

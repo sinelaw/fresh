@@ -913,14 +913,15 @@ async function openTour(
 /** Tab label. Two manifests with the same title get a disambiguating suffix so
  * the dock's tab bar stays readable. */
 function tabName(title: string): string {
-  const base = `*${editor.t("panel.tab", { title: truncate(title, 24) })}*`;
-  let candidate = base;
+  // Build the suffixed form from the label rather than slicing the finished
+  // name: `slice(0, -1)` drops a UTF-16 code unit, which splits a surrogate
+  // pair on a title ending in an emoji (CONTRIBUTING.md §17).
+  const label = editor.t("panel.tab", { title: truncate(title, 24) });
+  const taken = new Set([...tours.values()].map((t) => t.tabName));
+  let candidate = `*${label}*`;
   let n = 2;
-  const taken = new Set(
-    [...tours.values()].map((t) => t.tabName),
-  );
   while (taken.has(candidate)) {
-    candidate = `${base.slice(0, -1)} (${n})*`;
+    candidate = `*${label} (${n})*`;
     n++;
   }
   return candidate;
