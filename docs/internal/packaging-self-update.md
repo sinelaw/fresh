@@ -270,23 +270,41 @@ pub enum UpdateStrategy {
     SelfContained,
     /// User-scoped toolchain manager (cargo/npm/mise): delegate, no sudo.
     Toolchain { command: &'static [&'static str] },
+    /// A package manager owns the files but no repository serves them: fetch
+    /// the release artifact and hand it to the local package tool.
+    DownloadPackage,
     /// Unknown provenance: link to the releases page only.
     Manual,
 }
 ```
 
+`DownloadPackage` exists because a channel being *packaged* does not mean it is
+*hosted*. We publish the `.deb`, `.rpm` and `.flatpak` as GitHub release
+artifacts; there is no apt repo, no dnf repo and no Flathub remote, so
+`apt-get install --only-upgrade` / `flatpak update` have nothing to upgrade
+from and report "already up to date" forever. These channels download the new
+artifact from the release, verify it against its `.sha256` sidecar, and install
+it with `dpkg`/`rpm`/`flatpak`. An in-place binary swap is never an option for
+them: it would leave the package database describing a file we replaced behind
+its back. When the install needs root we print the command instead of running
+it, and report `ManualRequired` so the editor's indicator doesn't claim an
+update that hasn't landed yet.
+
+Before adding a `Delegated` row, check that the command's repository actually
+exists — that is the mistake this section is documenting.
+
 | channel | strategy | update invocation (templated with `hints`) |
 |---|---|---|
 | `homebrew` | Delegated | `brew upgrade {formula}` |
-| `apt` | Delegated (sudo) | `apt-get install --only-upgrade {package_name}` |
-| `dnf` | Delegated (sudo) | `dnf upgrade {package_name}` |
+| `apt` | DownloadPackage (sudo) | fetch `.deb` from the release, verify, `dpkg -i` |
+| `dnf` | DownloadPackage (sudo) | fetch `.rpm` from the release, verify, `rpm -U` |
 | `zypper` | Delegated (sudo) | `zypper update {package_name}` |
 | `aur-bin` / `aur` | Delegated | `{aur_helper} -S {aur_pkg}` (detect yay/paru) |
 | `pacman` | Delegated (sudo) | `pacman -Syu {package_name}` |
 | `winget` | Delegated | `winget upgrade --id {winget_id}` |
 | `scoop` | Delegated | `scoop update fresh` |
 | `chocolatey` | Delegated (admin) | `choco upgrade fresh` |
-| `flatpak` | Delegated | `flatpak update {flatpak_ref}` |
+| `flatpak` | DownloadPackage | fetch `.flatpak` bundle, verify, `flatpak install --user` |
 | `snap` | Delegated | `snap refresh fresh` |
 | `nix` | Delegated | `nix profile upgrade` (or flake rebuild note) |
 | `freebsd-pkg` | Delegated (sudo) | `pkg upgrade fresh` |

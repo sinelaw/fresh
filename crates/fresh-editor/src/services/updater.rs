@@ -1,9 +1,11 @@
 //! The `fresh update` engine (behind the `self-update` feature).
 //!
 //! Ties together the pieces: resolve provenance (`fresh_update`), fetch the
-//! release feed (`services::http`), then either **delegate** to the owning
-//! package manager or perform a verified **in-place swap** for self-contained
-//! installs (raw tarball / AppImage).
+//! release feed (`services::http`), then take one of three routes — **delegate**
+//! to the owning package manager, **download the release package** and hand it
+//! to the local package tool (`.deb`/`.rpm`/`.flatpak`, which ship as release
+//! artifacts rather than through a repository), or perform a verified **in-place
+//! swap** for self-contained installs (raw tarball / AppImage).
 //!
 //! Extraction (`tar`/`xz`/`zip`) and networking live here so the `fresh-update`
 //! crate stays dependency-light; the crate owns the parts that must be correct
@@ -57,11 +59,13 @@ pub enum UpdateStatus {
     /// The update was performed / delegated, or `--check` reported status.
     /// Nothing more to do — exit success.
     Done,
-    /// An update exists but this install has no in-place update mechanism
-    /// (unknown / source). `run` already printed friendly guidance; the caller
-    /// should exit **non-zero** so status-driven callers (the editor's update
-    /// indicator) don't treat it as a successful update — but *without* printing
-    /// an error, because this isn't one.
+    /// The update was not applied and needs a step we won't take for the user:
+    /// there is no in-place mechanism at all (unknown / source), or the new
+    /// package was downloaded and verified but installing it needs root. `run`
+    /// already printed friendly guidance; the caller should exit **non-zero** so
+    /// status-driven callers (the editor's update indicator) don't treat it as a
+    /// successful update — but *without* printing an error, because this isn't
+    /// one.
     ManualRequired,
 }
 
@@ -99,6 +103,13 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
                 return Ok(UpdateStatus::Done);
             }
             self_contained_update(&prov, &latest, opts).map(|()| UpdateStatus::Done)
+        }
+        UpdateKind::DownloadPackage => {
+            if opts.check_only {
+                println!("An update is available. Run `fresh --cmd update` to fetch it.");
+                return Ok(UpdateStatus::Done);
+            }
+            package_update(&prov, &latest, &body, opts)
         }
         UpdateKind::Delegated | UpdateKind::Toolchain => {
             let cmd = plan.command.clone().unwrap_or_default();
@@ -160,6 +171,75 @@ fn run_delegated(cmd: &[String]) -> Result<(), String> {
     }
 }
 
+/// Fetch and install the release artifact for a channel whose package manager
+/// has no repository to upgrade from (`.deb`, `.rpm`, `.flatpak`).
+///
+/// The binary is owned by dpkg/rpm/flatpak, so an in-place swap is off the
+/// table — it would leave the package database describing a file that no longer
+/// exists. Instead we download and checksum-verify the new package and hand it
+/// to the local package tool. When that needs root we print the exact command
+/// rather than escalating, and report [`UpdateStatus::ManualRequired`] so the
+/// editor's indicator doesn't claim an update that hasn't happened yet.
+fn package_update(
+    prov: &Provenance,
+    latest: &str,
+    release_json: &str,
+    opts: &UpdateOptions,
+) -> Result<UpdateStatus, String> {
+    let channel = prov.channel;
+    let asset = fresh_update::registry::package_asset(channel, fresh_update::TARGET_TRIPLE)
+        .ok_or_else(|| format!("no release package is published for {}", channel.label()))?;
+
+    // Package filenames carry a packaging release number (`0.4.7-1`) that the
+    // version alone doesn't give us, so read the name off the release feed.
+    let url = match prov.hints.asset.as_deref() {
+        Some(name) => format!("{}/v{latest}/{name}", opts.download_base),
+        None => fresh_update::version::find_asset_url(release_json, asset.extension, &asset.arch)
+            .ok_or_else(|| {
+            format!(
+                "the latest release has no {} package for {}",
+                asset.extension, asset.arch
+            )
+        })?,
+    };
+
+    let bytes = fetch_and_verify(&url)?;
+
+    let file_name = url.rsplit('/').next().unwrap_or("fresh-update-package");
+    let path = std::env::temp_dir().join(file_name);
+    std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+    println!("Downloaded to {}", path.display());
+
+    let cmd = fresh_update::registry::install_command(channel, &path)
+        .ok_or_else(|| format!("no install command for {}", channel.label()))?;
+
+    // `needs_privilege` channels are never run for the user (see `run`).
+    if opts.yes && !fresh_update::plan(prov).needs_privilege {
+        return run_delegated(&cmd).map(|()| UpdateStatus::Done);
+    }
+    println!();
+    println!("Install it with{}:", privilege_note(prov));
+    println!("    {}", cmd.join(" "));
+    Ok(UpdateStatus::ManualRequired)
+}
+
+/// " (requires root)" when the channel's install command needs elevation.
+fn privilege_note(prov: &Provenance) -> &'static str {
+    if fresh_update::plan(prov).needs_privilege {
+        " (requires root)"
+    } else {
+        ""
+    }
+}
+
+/// Download `url` and check it against its `.sha256` sidecar.
+fn fetch_and_verify(url: &str) -> Result<Vec<u8>, String> {
+    println!("Downloading {url} ...");
+    let bytes = download(url)?;
+    verify(&bytes, &format!("{url}.sha256"))?;
+    Ok(bytes)
+}
+
 /// Perform a verified in-place update for a self-contained install.
 fn self_contained_update(
     prov: &Provenance,
@@ -214,9 +294,7 @@ fn appimage_update(
         "AppImage install has no recorded install_root; reinstall via install.sh".to_string()
     })?;
 
-    println!("Downloading {url} ...");
-    let bytes = download(&url)?;
-    verify(&bytes, &format!("{url}.sha256"))?;
+    let bytes = fetch_and_verify(&url)?;
 
     // Stage the AppImage next to the install root and extract it.
     let root = PathBuf::from(install_root);
@@ -277,9 +355,7 @@ fn file_name(p: &Path) -> String {
 /// extract the named inner binary. Shared by the real update path and tests;
 /// deliberately does *not* touch the running executable.
 fn fetch_and_extract_binary(url: &str, bin_name: &str) -> Result<Vec<u8>, String> {
-    println!("Downloading {url} ...");
-    let bytes = download(url)?;
-    verify(&bytes, &format!("{url}.sha256"))?;
+    let bytes = fetch_and_verify(url)?;
     if url.ends_with(".zip") {
         extract_from_zip(&bytes, bin_name)
     } else {

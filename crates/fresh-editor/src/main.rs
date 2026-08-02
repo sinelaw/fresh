@@ -4911,6 +4911,7 @@ fn real_main() -> AnyhowResult<()> {
             } else if matches!(
                 plan.kind,
                 fresh::services::release_checker::UpdateKind::SelfContained
+                    | fresh::services::release_checker::UpdateKind::DownloadPackage
             ) {
                 eprintln!("Update with: fresh --cmd update");
             } else {
