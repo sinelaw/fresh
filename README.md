@@ -192,11 +192,11 @@ termux-info | head -n 20
 ```
 
 The package above is built by the Termux project and served from `packages.termux.dev` and its
-[mirrors](https://github.com/termux/termux-packages/wiki/Mirrors). Other Android terminal apps that
-call themselves Termux — the deprecated Google Play build, older Android 5/6 builds — subscribe to
-different repositories, built and signed independently, which can lag by weeks. Those repositories
-are not mirrors of the official one and cannot be swapped for it: they use different signing keys,
-so pointing `apt` at `packages.termux.dev` only produces `NO_PUBKEY` errors. Install Termux from
+[mirrors](https://github.com/termux/termux-packages/wiki/Mirrors). Other Termux builds — notably the
+[Google Play release](https://github.com/termux-play-store), which is maintained separately — ship
+their own independently built and signed repositories, which can lag the official one by weeks. Those
+repositories are not mirrors of the official one and cannot be swapped for it: they use different
+signing keys, so pointing `apt` at `packages.termux.dev` only produces `NO_PUBKEY` errors. Install Termux from
 [F-Droid](https://f-droid.org/packages/com.termux/) or
 [GitHub](https://github.com/termux/termux-app/releases) to track the official repository.
 
