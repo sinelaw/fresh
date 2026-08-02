@@ -289,53 +289,7 @@ pub fn is_newer_version(current: &str, latest: &str) -> bool {
 /// Delegates entirely to `fresh_update::resolve()` (receipt → embedded channel
 /// → path heuristic). See `docs/internal/packaging-self-update.md`.
 pub fn detect_provenance() -> Provenance {
-    let mut prov = fresh_update::resolve();
-    fill_runtime_hints(&mut prov);
-    prov
-}
-
-/// Fill in hints that only *this machine* can answer, so the plan the popup
-/// shows and the command that actually runs are built from the same facts.
-///
-/// Today that means the AUR helper. The receipt records which AUR package was
-/// installed, but not which helper the user drives — that is a property of the
-/// machine, not of the install, and it changes independently. Probing here
-/// keeps `registry::plan` pure while making sure we never name a tool that
-/// isn't there; with no helper found the hint stays `None` and
-/// `registry::aur_command` uses the universal `makepkg` route.
-fn fill_runtime_hints(prov: &mut Provenance) {
-    use fresh_update::Channel;
-    let aur_ish = matches!(
-        prov.channel,
-        Channel::Aur | Channel::AurBin | Channel::Pacman
-    );
-    if aur_ish && prov.hints.aur_helper.is_none() {
-        prov.hints.aur_helper = fresh_update::registry::AUR_HELPERS
-            .iter()
-            .find(|helper| on_path(helper))
-            .map(|helper| (*helper).to_string());
-    }
-}
-
-/// Whether `name` is an executable somewhere on `PATH`.
-pub fn on_path(name: &str) -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| {
-        let candidate = dir.join(name);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::metadata(&candidate)
-                .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-                .unwrap_or(false)
-        }
-        #[cfg(not(unix))]
-        {
-            candidate.is_file()
-        }
-    })
+    fresh_update::resolve()
 }
 
 /// The update plan for a given provenance (thin re-export of the registry).

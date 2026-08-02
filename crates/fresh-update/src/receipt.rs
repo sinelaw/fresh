@@ -33,7 +33,10 @@ pub struct Hints {
     /// AUR package name (`fresh-editor` or `fresh-editor-bin`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aur_pkg: Option<String>,
-    /// Preferred AUR helper (`yay`, `paru`, …).
+    /// Preferred AUR helper (`yay`, `paru`, …). **Retained for wire
+    /// compatibility only — no longer consulted.** An AUR receipt means
+    /// `pacman` + `makepkg`, and the update uses that one route on every
+    /// machine rather than varying with what happens to be installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aur_helper: Option<String>,
     /// winget package id.
@@ -54,7 +57,11 @@ pub struct Hints {
     /// installer knows this for certain, the running binary can only infer it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pkg_arch: Option<String>,
-    /// Release asset filename to fetch for self-update.
+    /// Release asset filename recorded at install time. **Retained for wire
+    /// compatibility only — no longer consulted.** It names the artifact of the
+    /// version already installed, so it cannot identify the one to fetch next;
+    /// the asset is resolved from the release feed (packages) or computed from
+    /// the compiled-in target triple (archives).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset: Option<String>,
     /// Install root to swap for AppImage/tarball self-update.

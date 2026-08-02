@@ -6,11 +6,13 @@
 //! owning manager's own upgrade command. A single row with one label described
 //! all of them and was accurate for none.
 //!
-//! Two rules hold across every variant. The update **completes** — whatever it
-//! needs downloaded gets downloaded, and whatever needs root prompts for a
+//! Three rules hold across every variant. The update **completes** — whatever
+//! it needs downloaded gets downloaded, and whatever needs root prompts for a
 //! password in the update terminal rather than being handed back as a chore.
-//! And the user **chooses**: every offer with a nameable command also offers to
-//! show it instead of running it.
+//! The user **chooses**: every offer with a nameable command also offers to
+//! show it instead of running it. And the offer follows from the resolved
+//! **kind alone** — one mechanism per provenance class, never a different route
+//! because of what happens to be installed on this particular machine.
 //!
 //! This is the pure mapping from plan to offer; the popup in
 //! `app::popup_dialogs` turns an [`UpdateOffer`] into rows and body text so the
@@ -77,12 +79,7 @@ pub fn offer_for(plan: &UpdatePlan) -> UpdateOffer {
     match plan.kind {
         UpdateKind::SelfContained => UpdateOffer::SelfContained,
         UpdateKind::DownloadPackage => UpdateOffer::DownloadPackage,
-        // A delegated command we cannot actually name is no better than manual
-        // guidance, so don't promise to run one.
-        UpdateKind::Delegated | UpdateKind::Toolchain => match &plan.command {
-            Some(cmd) if !cmd.is_empty() => UpdateOffer::RunCommand,
-            _ => UpdateOffer::Manual,
-        },
+        UpdateKind::Delegated | UpdateKind::Toolchain => UpdateOffer::RunCommand,
         UpdateKind::Manual => UpdateOffer::Manual,
     }
 }
@@ -168,16 +165,27 @@ mod tests {
         }
     }
 
-    /// A delegated plan whose command we cannot build must not offer to run it.
+    /// The offer follows the plan's kind and nothing else — one mechanism per
+    /// provenance class, with no machine-dependent alternates.
     #[test]
-    fn delegated_without_a_command_falls_back_to_manual() {
-        let plan = UpdatePlan {
-            kind: UpdateKind::Delegated,
-            command: None,
-            needs_privilege: false,
-            human: "see the releases page".to_string(),
-        };
-        assert_eq!(offer_for(&plan), UpdateOffer::Manual);
+    fn the_offer_is_determined_by_the_kind_alone() {
+        for (kind, expected) in [
+            (UpdateKind::SelfContained, UpdateOffer::SelfContained),
+            (UpdateKind::DownloadPackage, UpdateOffer::DownloadPackage),
+            (UpdateKind::Delegated, UpdateOffer::RunCommand),
+            (UpdateKind::Toolchain, UpdateOffer::RunCommand),
+            (UpdateKind::Manual, UpdateOffer::Manual),
+        ] {
+            for needs_privilege in [false, true] {
+                let plan = UpdatePlan {
+                    kind,
+                    command: Some(vec!["x".to_string()]),
+                    needs_privilege,
+                    human: "x".to_string(),
+                };
+                assert_eq!(offer_for(&plan), expected, "{kind:?}");
+            }
+        }
     }
 
     #[test]
