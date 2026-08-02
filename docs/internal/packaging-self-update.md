@@ -641,10 +641,40 @@ installs point at the releases page instead of prompting.
 
 The result is surfaced on the **indicator**, not a transient status message
 (which would scroll away and can't relay a "restart now" cue). App state
-carries a `SelfUpdatePhase` (`Idle`/`Running`/`Succeeded`/`Failed`); on launch
-it flips to `Running` (indicator: `Updating…`), and a watcher thread reaps the
-child and posts `AsyncMessage::SelfUpdateFinished { success }`, moving the
-indicator to `Updated — restart fresh` or `Update failed — click for log`.
+carries a `SelfUpdatePhase` with **three** terminal states, because
+`fresh --cmd update` has three outcomes, not two:
+
+| Child exit | Phase | Indicator |
+|---|---|---|
+| `0` | `Succeeded` | `Updated — restart fresh` |
+| `EXIT_ACTION_REQUIRED` (2) | `ActionRequired` | `Update needs a command — click for details` |
+| anything else | `Failed` | `Update failed — click for details` |
+
+The third state exists because two channel groups legitimately end with the
+update *not* applied and nothing having gone wrong: `DownloadPackage` channels
+that need root (`dpkg -i`, `rpm -U`) download and verify the package and then
+stop, and `Delegated`/`Toolchain` channels whose command we only print. Folding
+those into the pair produced a wrong indicator in both directions — the
+privileged path exited 1 and read as "Update failed" when nothing had failed,
+and the print-only path exited 0 and read as "Updated — restart fresh" when
+nothing had been installed. `UpdateStatus::ActionRequired` and the distinct
+exit code are what keep them apart.
+
+On launch the phase flips to `Running` (indicator: `Updating…`), and the
+terminal's exit code is mapped by `SelfUpdatePhase::from_exit_code`.
+
+Clicking the indicator is state-dependent: `Failed` offers retry / show-log,
+`ActionRequired` surfaces the pending command (it does **not** re-offer an
+update that has already been downloaded and verified), and `Running` /
+`Succeeded` jump to the update output.
+
+The confirmation prompt itself is built from the resolved `UpdatePlan` rather
+than being one fixed row, since "Update to vX" means five different things
+across the channels. `app::update_prompt::offer_for` maps the plan to an
+`UpdateOffer` — in-place swap, download-and-install, download-then-hand-over,
+run-the-command, show-the-command, or nothing-we-can-do — and the popup states
+which one applies **before** the user confirms. For the offers that leave a
+root command behind, the body says so up front.
 Once a run has started, clicking the indicator — or the **"Open update log"**
 command (`Action::OpenUpdateLog`) — opens the log via `open_local_file`, i.e.
 from the machine `fresh` runs on, never the window's (possibly remote)

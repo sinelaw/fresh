@@ -1302,14 +1302,14 @@ impl Editor {
     }
 
     /// Move the update indicator to its terminal state when the update terminal
-    /// exits.
-    pub fn finish_self_update(&mut self, success: bool) {
+    /// exits. The child's exit code carries which of the three outcomes it was
+    /// — see [`SelfUpdatePhase::from_exit_code`].
+    ///
+    /// [`SelfUpdatePhase::from_exit_code`]:
+    ///     crate::services::release_checker::SelfUpdatePhase::from_exit_code
+    pub fn finish_self_update(&mut self, exit_code: Option<i32>) {
         use crate::services::release_checker::SelfUpdatePhase;
-        self.self_update_phase = if success {
-            SelfUpdatePhase::Succeeded
-        } else {
-            SelfUpdatePhase::Failed
-        };
+        self.self_update_phase = SelfUpdatePhase::from_exit_code(exit_code);
     }
 
     /// Switch to the update terminal buffer so the user can watch progress or

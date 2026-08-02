@@ -35,8 +35,32 @@ pub enum SelfUpdatePhase {
     Running,
     /// The background update finished successfully; a restart applies it.
     Succeeded,
+    /// The update ran cleanly but did **not** install anything: it needs a step
+    /// the editor won't take for the user (a root `dpkg -i`/`rpm -U`, or a
+    /// package-manager command we only print). Neither a success nor a failure
+    /// — the pending command is waiting in the update output.
+    ActionRequired,
     /// The background update failed; the log has details.
     Failed,
+}
+
+impl SelfUpdatePhase {
+    /// The terminal phase for an update child that exited with `code`.
+    ///
+    /// Three outcomes, not two: `fresh --cmd update` reports "you must finish
+    /// this yourself" with [`fresh_update::EXIT_ACTION_REQUIRED`], which is
+    /// neither success nor failure. Collapsing it into either one produces a
+    /// visibly wrong indicator — "Update failed" when nothing failed, or
+    /// "Updated — restart fresh" when nothing was installed.
+    ///
+    /// `None` (killed by a signal) is a failure.
+    pub fn from_exit_code(code: Option<i32>) -> Self {
+        match code {
+            Some(0) => SelfUpdatePhase::Succeeded,
+            Some(c) if c == fresh_update::EXIT_ACTION_REQUIRED => SelfUpdatePhase::ActionRequired,
+            _ => SelfUpdatePhase::Failed,
+        }
+    }
 }
 
 /// Result of checking for a new release
@@ -469,5 +493,56 @@ mod tests {
         assert!(checker.get_cached_result().is_none());
 
         stop_tx.send(()).ok();
+    }
+
+    /// The update child reports three distinct outcomes, and the indicator has
+    /// to keep them apart. Collapsing them into a success/failure pair produced
+    /// both possible lies: `ManualRequired` exited 1 and rendered as "Update
+    /// failed" when nothing had failed, and a delegated run that only *printed*
+    /// a command exited 0 and rendered as "Updated — restart fresh" when
+    /// nothing had been installed.
+    #[test]
+    fn exit_code_maps_to_three_distinct_terminal_phases() {
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(0)),
+            SelfUpdatePhase::Succeeded
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(fresh_update::EXIT_ACTION_REQUIRED)),
+            SelfUpdatePhase::ActionRequired
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(1)),
+            SelfUpdatePhase::Failed
+        );
+
+        // All three are distinct — the whole point of the third state.
+        let phases = [
+            SelfUpdatePhase::from_exit_code(Some(0)),
+            SelfUpdatePhase::from_exit_code(Some(fresh_update::EXIT_ACTION_REQUIRED)),
+            SelfUpdatePhase::from_exit_code(Some(1)),
+        ];
+        for (i, a) in phases.iter().enumerate() {
+            for b in &phases[i + 1..] {
+                assert_ne!(a, b, "terminal phases collapsed into one another");
+            }
+        }
+    }
+
+    /// Signals and unrecognised codes are failures, not silent successes.
+    #[test]
+    fn unknown_exit_codes_are_failures() {
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(None),
+            SelfUpdatePhase::Failed
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(101)),
+            SelfUpdatePhase::Failed
+        );
+        assert_eq!(
+            SelfUpdatePhase::from_exit_code(Some(-1)),
+            SelfUpdatePhase::Failed
+        );
     }
 }

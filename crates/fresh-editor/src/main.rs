@@ -4135,13 +4135,17 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
         // (the editor's update terminal keys the indicator off this exit
         // status, and a backtrace there is pure noise):
         //   - Done            -> exit 0
-        //   - ManualRequired  -> exit non-zero, but run() already printed
-        //                        friendly guidance, so add nothing here
-        //   - Err             -> clean one-line "Error: <msg>", exit non-zero
+        //   - ActionRequired  -> exit EXIT_ACTION_REQUIRED, a code distinct
+        //                        from both success and failure; run() already
+        //                        printed what the user has to do, so add
+        //                        nothing here
+        //   - Err             -> clean one-line "Error: <msg>", exit 1
         use fresh::services::updater::UpdateStatus;
         match fresh::services::updater::run(&opts) {
             Ok(UpdateStatus::Done) => Ok(()),
-            Ok(UpdateStatus::ManualRequired) => std::process::exit(1),
+            Ok(UpdateStatus::ActionRequired) => {
+                std::process::exit(fresh_update::EXIT_ACTION_REQUIRED)
+            }
             Err(e) => {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
