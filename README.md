@@ -76,6 +76,7 @@ Or, pick your preferred method:
 | OpenSUSE | [zypper](#opensuse-zypper), [.rpm](#fedorarhel-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
+| Android (Termux) | [pkg](#android-termux) |
 | Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
@@ -164,6 +165,27 @@ Enable the repository as read in [Project:GURU/Information for End Users](https:
 ```bash
 emerge --ask app-editors/fresh
 ```
+
+### Android ([Termux](https://github.com/termux/termux-packages/tree/master/packages/fresh-editor))
+
+```bash
+pkg install fresh-editor
+```
+
+To upgrade to the newest packaged release:
+
+```bash
+pkg upgrade fresh-editor
+```
+
+Termux's `fresh-editor` recipe sets `TERMUX_PKG_AUTO_UPDATE=true`, so their bot picks up each
+GitHub release automatically and rebuilds the package — no action needed on our side. Expect the
+`pkg` version to trail a tag by roughly a day or two while the bot bumps the recipe, CI rebuilds
+for every architecture, and the mirrors sync. Very closely spaced releases may be coalesced, since
+the bot bumps to whatever the latest release is when it runs.
+
+If you want a release the same day it is tagged, install from [crates.io](#from-cratesio) instead
+(`pkg install rust` first) — the Termux package builds the same source tarball.
 
 ### AppImage
 
