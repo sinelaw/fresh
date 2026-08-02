@@ -1241,28 +1241,33 @@ impl Editor {
             Action::UpdateFresh => {
                 // Once an update is running or finished, the indicator's job is
                 // to surface the update terminal, not to re-offer the update —
-                // except after a failure, where it offers retry / show-log /
-                // cancel.
-                if self.self_update_phase()
-                    == crate::services::release_checker::SelfUpdatePhase::Failed
-                {
-                    self.show_update_failed_popup();
-                } else if self.self_update_phase()
-                    != crate::services::release_checker::SelfUpdatePhase::Idle
-                {
-                    self.show_self_update_output();
-                } else if !self.config().self_update {
-                    self.set_status_message(t!("update.disabled").to_string());
-                } else if !self.is_update_available() {
-                    self.set_status_message(t!("update.up_to_date").to_string());
-                } else {
-                    // An update is available — offer it via the popup regardless
-                    // of install method. Choosing "Update" opens the local update
-                    // terminal (`fresh --cmd update --yes`); for unknown/source
-                    // installs that terminal just prints the releases page and
-                    // exits, but the UX stays consistent with every other state.
-                    let version = self.latest_version().unwrap_or("").to_string();
-                    self.show_update_popup(&version);
+                // except at the two terminal states that leave something for
+                // the user to act on.
+                use crate::services::release_checker::SelfUpdatePhase;
+                match self.self_update_phase() {
+                    // Failed: retry / show-log / cancel.
+                    SelfUpdatePhase::Failed => self.show_update_failed_popup(),
+                    // Action required: the update ran cleanly but left a command
+                    // to run. Surface *that*, rather than re-offering an update
+                    // that has already been downloaded and verified.
+                    SelfUpdatePhase::ActionRequired => self.show_update_action_required_popup(),
+                    SelfUpdatePhase::Running | SelfUpdatePhase::Succeeded => {
+                        self.show_self_update_output()
+                    }
+                    SelfUpdatePhase::Idle => {
+                        if !self.config().self_update {
+                            self.set_status_message(t!("update.disabled").to_string());
+                        } else if !self.is_update_available() {
+                            self.set_status_message(t!("update.up_to_date").to_string());
+                        } else {
+                            // An update is available — offer it through a popup
+                            // built from the resolved update plan, so the
+                            // confirmation says how this copy was installed and
+                            // what confirming will actually do.
+                            let version = self.latest_version().unwrap_or("").to_string();
+                            self.show_update_popup(&version);
+                        }
+                    }
                 }
             }
             Action::FormatBuffer => {

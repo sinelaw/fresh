@@ -55,6 +55,17 @@ pub use registry::{kind_for, plan, UpdateKind, UpdatePlan};
 /// matching release asset during self-update.
 pub const TARGET_TRIPLE: &str = env!("FRESH_UPDATE_TARGET");
 
+/// Exit code from `fresh --cmd update` meaning: the update was **not** applied,
+/// and finishing it needs a step we will not take on the user's behalf — a
+/// privileged `dpkg -i`/`rpm -U`, a package-manager command we only print, or a
+/// manual download.
+///
+/// This is a third outcome, distinct from success (`0`) and failure (`1`).
+/// Nothing went wrong, so reporting it as a failure is a lie; nothing was
+/// installed either, so reporting success is the opposite lie. The editor's
+/// update indicator keys its `ActionRequired` state off this code.
+pub const EXIT_ACTION_REQUIRED: i32 = 2;
+
 /// The build-time install channel embedded via `FRESH_BUILD_CHANNEL`, if any.
 /// `None` for the shared prebuilt archive and ordinary developer builds.
 pub fn embedded_channel() -> Option<&'static str> {

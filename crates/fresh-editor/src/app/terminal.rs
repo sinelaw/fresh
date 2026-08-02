@@ -1389,7 +1389,7 @@ impl Editor {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!("cannot find current exe for self-update: {e}");
-                self.finish_self_update(false);
+                self.finish_self_update(None);
                 return;
             }
         };
@@ -1405,7 +1405,7 @@ impl Editor {
             .active_window_mut()
             .open_local_command_terminal(argv, title)
         else {
-            self.finish_self_update(false);
+            self.finish_self_update(None);
             return;
         };
         self.begin_self_update(terminal_id, window, buffer_id);
