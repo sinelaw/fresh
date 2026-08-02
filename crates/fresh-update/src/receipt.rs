@@ -11,6 +11,11 @@ use std::path::{Path, PathBuf};
 /// The receipt filename, searched for in [`candidate_paths`].
 pub const RECEIPT_FILE_NAME: &str = "install-receipt.toml";
 
+/// The package-name directory OS packages ship their data under. The binary is
+/// `fresh` but the package is `fresh-editor`, so `.deb`/`.rpm` receipts land in
+/// `/usr/share/fresh-editor/` rather than `/usr/share/fresh/`.
+pub const PACKAGE_DIR_NAME: &str = "fresh-editor";
+
 /// The current receipt schema version this build understands.
 pub const CURRENT_SCHEMA: u32 = 1;
 
@@ -112,14 +117,25 @@ pub fn candidate_paths(exe: &Path, data_dir: &Path) -> Vec<PathBuf> {
     if let Some(dir) = exe.parent() {
         // 1. sidecar in the same directory as the binary
         out.push(dir.join(RECEIPT_FILE_NAME));
-        // 2. FHS-style: <prefix>/share/fresh/ (bin/ -> ../share/fresh)
         if let Some(prefix) = dir.parent() {
+            // 2. FHS-style, binary name: <prefix>/share/fresh/
+            //    (Homebrew formula, Flatpak manifest, Nix derivation)
             out.push(prefix.join("share").join("fresh").join(RECEIPT_FILE_NAME));
-            // 3. node/npm layout: <prefix>/lib/fresh/
+            // 3. FHS-style, *package* name: <prefix>/share/fresh-editor/
+            //    (.deb and .rpm — OS packages put their data under
+            //    /usr/share/<package>, and the package is `fresh-editor`
+            //    even though the binary is `fresh`)
+            out.push(
+                prefix
+                    .join("share")
+                    .join(PACKAGE_DIR_NAME)
+                    .join(RECEIPT_FILE_NAME),
+            );
+            // 4. node/npm layout: <prefix>/lib/fresh/
             out.push(prefix.join("lib").join("fresh").join(RECEIPT_FILE_NAME));
         }
     }
-    // 4. per-user data dir fallback
+    // 5. per-user data dir fallback
     out.push(data_dir.join("fresh").join(RECEIPT_FILE_NAME));
     out
 }
@@ -209,12 +225,59 @@ formula = "fresh-editor"
         );
         assert_eq!(
             paths[2],
+            Path::new("/opt/homebrew/share/fresh-editor/install-receipt.toml")
+        );
+        assert_eq!(
+            paths[3],
             Path::new("/opt/homebrew/lib/fresh/install-receipt.toml")
         );
         assert_eq!(
             *paths.last().unwrap(),
             Path::new("/home/u/.local/share/fresh/install-receipt.toml")
         );
+    }
+
+    /// The layout an installed `.deb`/`.rpm` actually produces: binary at
+    /// `/usr/bin/fresh`, receipt at `/usr/share/fresh-editor/`. Searching only
+    /// `share/fresh/` missed it, so every apt/dnf install fell through to
+    /// `Channel::Unknown` and was offered no update path at all.
+    #[test]
+    fn candidate_paths_cover_the_packaged_deb_rpm_location() {
+        let paths = candidate_paths(
+            Path::new("/usr/bin/fresh"),
+            Path::new("/home/u/.local/share"),
+        );
+        assert!(
+            paths.contains(&PathBuf::from(
+                "/usr/share/fresh-editor/install-receipt.toml"
+            )),
+            "packaged .deb/.rpm receipt path not searched; got {paths:#?}"
+        );
+    }
+
+    /// End-to-end over the real packaged layout: a receipt written where
+    /// `debian/rules` and the `generate-rpm` asset list put it must be found.
+    #[test]
+    fn find_reads_packaged_receipt_from_share_package_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let usr = dir.path().join("usr");
+        std::fs::create_dir_all(usr.join("bin")).unwrap();
+        let exe = usr.join("bin").join("fresh");
+        std::fs::write(&exe, b"not really a binary").unwrap();
+
+        // Exactly where debian/rules and [package.metadata.generate-rpm] ship it.
+        let share = usr.join("share").join(PACKAGE_DIR_NAME);
+        std::fs::create_dir_all(&share).unwrap();
+        std::fs::write(
+            share.join(RECEIPT_FILE_NAME),
+            "schema = 1\nchannel = \"apt\"\nmanaged = true\nself_update = false\n",
+        )
+        .unwrap();
+
+        let (found_path, receipt) = find(&exe, Path::new("/nonexistent"))
+            .expect("packaged receipt at share/fresh-editor/ must resolve");
+        assert_eq!(found_path, share.join(RECEIPT_FILE_NAME));
+        assert_eq!(receipt.channel, "apt");
     }
 
     #[test]

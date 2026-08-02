@@ -179,13 +179,28 @@ performed the install. Two flavours, both authoritative:
 Search order for the receipt (first hit wins):
 
 ```
-1. <dir(exe)>/install-receipt.toml                       # sidecar, same dir
-2. <dir(exe)>/../share/fresh/install-receipt.toml        # FHS-style sidecar
-3. <dir(exe)>/../lib/fresh/install-receipt.toml          # npm/node layout
-4. $XDG_DATA_HOME/fresh/install-receipt.toml   (Linux)   # per-user fallback
-   ~/Library/Application Support/fresh/…       (macOS)
-   %LOCALAPPDATA%\fresh\…                       (Windows)
+1. <dir(exe)>/install-receipt.toml                        # sidecar, same dir
+2. <dir(exe)>/../share/fresh/install-receipt.toml         # FHS, binary name
+3. <dir(exe)>/../share/fresh-editor/install-receipt.toml  # FHS, package name
+4. <dir(exe)>/../lib/fresh/install-receipt.toml           # npm/node layout
+5. $XDG_DATA_HOME/fresh/install-receipt.toml    (Linux)   # per-user fallback
+   ~/Library/Application Support/fresh/…        (macOS)
+   %LOCALAPPDATA%\fresh\…                        (Windows)
 ```
+
+Candidates 2 and 3 differ only in directory name, and both are required
+because the binary and the package are not named the same thing. The binary is
+`fresh`; the package is `fresh-editor`. OS packages put their data under
+`/usr/share/<package>`, so `.deb` (`debian/rules`) and `.rpm`
+(`[package.metadata.generate-rpm]`) ship `/usr/share/fresh-editor/`, while the
+wrapper channels that install under a prefix they control — the Homebrew
+formula, the Flatpak manifest, the Nix derivation — use `share/fresh/`.
+
+Both spellings are already installed on real machines, so the resolver searches
+both rather than picking a winner: renaming either side would strand every copy
+installed before the change. Note this is a *search* path, not a write path —
+installers must keep writing the one location their packaging convention
+dictates, and never both.
 
 Confidence = `Authoritative`.
 

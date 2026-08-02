@@ -188,6 +188,7 @@ pub fn default_data_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn override_wins_over_everything() {
@@ -271,6 +272,46 @@ mod tests {
         let p = resolve_from(ResolveInputs::default());
         assert_eq!(p.channel, Channel::Unknown);
         assert_eq!(p.confidence, Confidence::Unknown);
+    }
+
+    /// The whole point of the receipt, over the layout a real `.deb`/`.rpm`
+    /// install produces: `/usr/bin/fresh` plus
+    /// `/usr/share/fresh-editor/install-receipt.toml`. This resolved to
+    /// `Unknown`/`Manual` while the search order only covered `share/fresh/` —
+    /// layer B missed the file, layer C is unset for these packages, and layer
+    /// D declines to guess for `/usr/bin` off Arch.
+    #[test]
+    fn packaged_deb_layout_resolves_authoritatively() {
+        let dir = tempfile::tempdir().unwrap();
+        let usr = dir.path().join("usr");
+        std::fs::create_dir_all(usr.join("bin")).unwrap();
+        let exe = usr.join("bin").join("fresh");
+        std::fs::write(&exe, b"not really a binary").unwrap();
+
+        let share = usr.join("share").join(receipt::PACKAGE_DIR_NAME);
+        std::fs::create_dir_all(&share).unwrap();
+        std::fs::write(
+            share.join(receipt::RECEIPT_FILE_NAME),
+            "schema = 1\nchannel = \"apt\"\nmanaged = true\nself_update = false\n",
+        )
+        .unwrap();
+
+        let found = receipt::find(&exe, Path::new("/nonexistent")).map(|(_, r)| r);
+        assert!(found.is_some(), "packaged receipt not located");
+
+        let p = resolve_from(ResolveInputs {
+            receipt: found,
+            exe_path: Some(exe),
+            // Deliberately not Arch: layer D must not rescue this.
+            is_arch_linux: false,
+            ..Default::default()
+        });
+        assert_eq!(p.channel, Channel::Apt);
+        assert_eq!(p.confidence, Confidence::Authoritative);
+        assert!(p.managed);
+        assert!(!p.self_update);
+        // …and it gets a real update route, not the releases-page fallback.
+        assert_eq!(p.update_plan().kind, registry::UpdateKind::DownloadPackage);
     }
 
     #[test]
