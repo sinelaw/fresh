@@ -184,16 +184,24 @@ GitHub release automatically and rebuilds the package — no action needed on ou
 for every architecture, and the mirrors sync. Very closely spaced releases may be coalesced, since
 the bot bumps to whatever the latest release is when it runs.
 
-If `pkg` insists you already have the newest version but it is well behind the latest release, your
-mirror is stale — check `$PREFIX/etc/apt/sources.list` and point it at the official seed:
+If `pkg` reports you already have the newest version but it is well behind the latest release, check
+which repository you are subscribed to:
 
 ```bash
-echo "deb https://packages.termux.dev/apt/termux-main stable main" > $PREFIX/etc/apt/sources.list
-pkg update && pkg upgrade
+termux-info | head -n 20
 ```
 
-If you want a release the same day it is tagged, install from [crates.io](#from-cratesio) instead
-(`pkg install rust` first) — the Termux package builds the same source tarball.
+The package above is built by the Termux project and served from `packages.termux.dev` and its
+[mirrors](https://github.com/termux/termux-packages/wiki/Mirrors). Other Android terminal apps that
+call themselves Termux — the deprecated Google Play build, older Android 5/6 builds — subscribe to
+different repositories, built and signed independently, which can lag by weeks. Those repositories
+are not mirrors of the official one and cannot be swapped for it: they use different signing keys,
+so pointing `apt` at `packages.termux.dev` only produces `NO_PUBKEY` errors. Install Termux from
+[F-Droid](https://f-droid.org/packages/com.termux/) or
+[GitHub](https://github.com/termux/termux-app/releases) to track the official repository.
+
+Note that `cargo install fresh-editor` is not a working substitute on Android: the Termux package
+applies Android-specific patches to several dependencies, so an unpatched on-device build fails.
 
 ### AppImage
 
