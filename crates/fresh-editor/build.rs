@@ -367,6 +367,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/nix.sublime-syntax", "Nix"),
         ("src/grammars/hcl.sublime-syntax", "HCL"),
         ("src/grammars/protobuf.sublime-syntax", "Protocol Buffers"),
+        ("src/grammars/thrift.sublime-syntax", "Thrift"),
         ("src/grammars/graphql.sublime-syntax", "GraphQL"),
         ("src/grammars/julia.sublime-syntax", "Julia"),
         ("src/grammars/nim.sublime-syntax", "Nim"),
