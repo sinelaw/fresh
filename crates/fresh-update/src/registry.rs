@@ -6,6 +6,10 @@ use crate::channel::Channel;
 use crate::provenance::Provenance;
 use std::path::Path;
 
+/// The tool ref mise installs `fresh` under, matching the README's
+/// `mise use github:sinelaw/fresh`.
+const MISE_TOOL: &str = "github:sinelaw/fresh";
+
 /// The broad category of update mechanism for a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UpdateKind {
@@ -63,35 +67,35 @@ pub const fn kind_for(channel: Channel) -> UpdateKind {
         // nothing to upgrade *from*. Fetch the artifact and install it locally.
         Channel::Apt | Channel::Dnf | Channel::Flatpak => UpdateKind::DownloadPackage,
         Channel::Homebrew
-        | Channel::Zypper
-        | Channel::Pacman
         | Channel::Aur
         | Channel::AurBin
-        | Channel::Snap
         | Channel::Winget
-        | Channel::Scoop
-        | Channel::Chocolatey
         | Channel::Nix
         | Channel::FreebsdPkg => UpdateKind::Delegated,
         Channel::Cargo | Channel::CargoBinstall | Channel::Npm | Channel::Mise => {
             UpdateKind::Toolchain
         }
         Channel::Appimage | Channel::Tarball | Channel::Prebuilt => UpdateKind::SelfContained,
-        Channel::Source | Channel::Unknown => UpdateKind::Manual,
+        // No pipeline in this repository ships through snap, scoop, chocolatey,
+        // an openSUSE OBS project or an official Arch repo, so there is no
+        // package for their commands to upgrade. Naming one anyway produces a
+        // command that fails or, worse, silently matches nothing. They stay in
+        // `Channel` because the ids are receipt wire format; if a pipeline ever
+        // ships, its receipt sets `managed`/`self_update` explicitly and those
+        // flags win over these defaults (see `provenance::resolve_from`).
+        Channel::Snap
+        | Channel::Scoop
+        | Channel::Chocolatey
+        | Channel::Zypper
+        | Channel::Pacman
+        | Channel::Source
+        | Channel::Unknown => UpdateKind::Manual,
     }
 }
 
 /// Whether the delegated command for a channel needs root/admin.
 const fn needs_privilege(channel: Channel) -> bool {
-    matches!(
-        channel,
-        Channel::Apt
-            | Channel::Dnf
-            | Channel::Zypper
-            | Channel::Pacman
-            | Channel::FreebsdPkg
-            | Channel::Chocolatey
-    )
+    matches!(channel, Channel::Apt | Channel::Dnf | Channel::FreebsdPkg)
 }
 
 /// Build the concrete [`UpdatePlan`] for a resolved provenance, templating the
@@ -122,25 +126,31 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
 
     let argv: Option<Vec<&str>> = match channel {
         Channel::Homebrew => Some(vec!["brew", "upgrade", &formula]),
-        Channel::Zypper => Some(vec!["zypper", "update", &pkg]),
-        Channel::Pacman => Some(vec!["pacman", "-Syu", &pkg]),
         Channel::Aur | Channel::AurBin => Some(vec![&aur_helper, "-S", &aur_pkg]),
         Channel::Winget => Some(vec!["winget", "upgrade", "--id", &winget_id]),
-        Channel::Scoop => Some(vec!["scoop", "update", "fresh"]),
-        Channel::Chocolatey => Some(vec!["choco", "upgrade", "fresh"]),
-        Channel::Snap => Some(vec!["snap", "refresh", "fresh"]),
+        // `flake.nix` builds with `pname = "fresh"`, which is the name a
+        // profile element gets, so this is what `nix profile upgrade` matches.
         Channel::Nix => Some(vec!["nix", "profile", "upgrade", "fresh"]),
         Channel::FreebsdPkg => Some(vec!["pkg", "upgrade", "fresh"]),
         Channel::Cargo => Some(vec!["cargo", "install", "--locked", &pkg]),
         Channel::CargoBinstall => Some(vec!["cargo", "binstall", &pkg]),
         Channel::Npm => Some(vec!["npm", "update", "-g", &npm_pkg]),
-        Channel::Mise => Some(vec!["mise", "upgrade", "fresh"]),
+        // mise installs this as a github backend tool (README:
+        // `mise use github:sinelaw/fresh`), and that flake-style ref *is* the
+        // tool's name in mise. A bare `fresh` matches nothing.
+        Channel::Mise => Some(vec!["mise", "upgrade", MISE_TOOL]),
         // Resolved only once the release artifact is downloaded; see
         // `package_asset` / `install_command`.
         Channel::Apt | Channel::Dnf | Channel::Flatpak => None,
         Channel::Appimage | Channel::Tarball | Channel::Prebuilt => None,
-        Channel::Source => None,
-        Channel::Unknown => None,
+        // Manual: nothing to name (see `kind_for`).
+        Channel::Snap
+        | Channel::Scoop
+        | Channel::Chocolatey
+        | Channel::Zypper
+        | Channel::Pacman
+        | Channel::Source
+        | Channel::Unknown => None,
     };
 
     let command = argv
@@ -258,6 +268,90 @@ mod tests {
             "yay -S fresh-editor-bin"
         );
         assert_eq!(plan(&prov(Channel::Aur)).human, "yay -S fresh-editor");
+    }
+
+    /// §6's invariant: a channel only names an external command when a
+    /// distribution actually exists for that command to act on. Inventing one
+    /// produces a row that looks helpful and does nothing — `snap refresh
+    /// fresh` for a snap that was never published, `zypper update fresh-editor`
+    /// against an OBS project that does not exist.
+    ///
+    /// Both lists are exhaustive over the channels that name a package manager,
+    /// so adding a channel forces a deliberate choice between them.
+    #[test]
+    fn only_channels_with_a_real_distribution_name_a_command() {
+        // Each of these ships from something in this repository or a
+        // repository we publish to.
+        let distributed = [
+            (
+                Channel::Homebrew,
+                "tap sinelaw/homebrew-fresh (release.yml)",
+            ),
+            (Channel::Aur, "AUR fresh-editor"),
+            (Channel::AurBin, "AUR fresh-editor-bin"),
+            (Channel::Winget, "winget-pkgs sinelaw.fresh-editor"),
+            (Channel::Nix, "flake.nix"),
+            (Channel::FreebsdPkg, "FreeBSD ports"),
+            (Channel::Cargo, "crates.io"),
+            (Channel::CargoBinstall, "crates.io + release archives"),
+            (Channel::Npm, "@fresh-editor/fresh-editor"),
+            (Channel::Mise, "github:sinelaw/fresh"),
+        ];
+        // No snapcraft.yaml, scoop manifest, .nuspec, OBS project or official
+        // Arch repo package exists, so none of these may name a command.
+        let undistributed = [
+            Channel::Snap,
+            Channel::Scoop,
+            Channel::Chocolatey,
+            Channel::Zypper,
+            Channel::Pacman,
+        ];
+
+        for (channel, source) in distributed {
+            let p = plan(&prov(channel));
+            assert!(
+                matches!(p.kind, UpdateKind::Delegated | UpdateKind::Toolchain),
+                "{channel} ships from {source} but is not delegated"
+            );
+            assert!(
+                p.command.as_ref().is_some_and(|c| !c.is_empty()),
+                "{channel} ships from {source} but names no command"
+            );
+        }
+
+        for channel in undistributed {
+            let p = plan(&prov(channel));
+            assert_eq!(
+                p.kind,
+                UpdateKind::Manual,
+                "{channel} has no distribution, so it must not delegate"
+            );
+            assert!(
+                p.command.is_none(),
+                "{channel} has no distribution but names a command: {:?}",
+                p.command
+            );
+            assert!(
+                p.human.contains("github.com/sinelaw/fresh/releases"),
+                "{channel} should point at the releases page, got {:?}",
+                p.human
+            );
+        }
+    }
+
+    /// The two package names that are not `fresh-editor` and not the binary
+    /// name either, so a plausible-looking guess is wrong in both cases.
+    #[test]
+    fn tool_refs_match_how_each_tool_actually_installed_it() {
+        // README: `mise use github:sinelaw/fresh` — the flake-style ref is the
+        // tool's name in mise, so a bare `fresh` matches nothing.
+        assert_eq!(
+            plan(&prov(Channel::Mise)).human,
+            "mise upgrade github:sinelaw/fresh"
+        );
+        // flake.nix sets `pname = "fresh"`, not the `fresh-editor` package name
+        // the receipt carries.
+        assert_eq!(plan(&prov(Channel::Nix)).human, "nix profile upgrade fresh");
     }
 
     #[test]

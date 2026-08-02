@@ -97,11 +97,16 @@ mod tests {
             (Channel::Npm, UpdateOffer::RunCommand),
             (Channel::Cargo, UpdateOffer::RunCommand),
             // Delegated, needs root — we only ever print these.
-            (Channel::Pacman, UpdateOffer::ShowCommand),
             (Channel::FreebsdPkg, UpdateOffer::ShowCommand),
             // Nothing we can do.
             (Channel::Unknown, UpdateOffer::Manual),
             (Channel::Source, UpdateOffer::Manual),
+            // Channels with no distribution at all: the registry routes them to
+            // Manual rather than naming an invented command, so the popup must
+            // not offer to run one.
+            (Channel::Pacman, UpdateOffer::Manual),
+            (Channel::Zypper, UpdateOffer::Manual),
+            (Channel::Snap, UpdateOffer::Manual),
         ];
         for (channel, expected) in cases {
             assert_eq!(offer(channel), expected, "offer for {}", channel.id());
