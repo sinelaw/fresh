@@ -192,12 +192,44 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
     // the obvious gate and is the wrong one — it is a heuristic that reports
     // quiet while the handoff is still in flight, which is exactly how this
     // timed out on CI but never locally.
+    wait_for_panel_focus(harness);
+}
+
+/// Block until keyboard focus is on the tour panel, read off the status bar:
+/// the tour buffer is read-only plain text (`[RO]` … `Text`), while the editor
+/// split shows a cursor position and the file's language.
+fn wait_for_panel_focus(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             screen.contains("[RO]") && screen.contains("Text")
         })
         .unwrap();
+}
+
+/// Press a tour navigation key and wait until the step change has fully landed.
+///
+/// Changing step re-runs the same async chain as loading one: open the step's
+/// file — which moves focus to the editor split — paint the overlay, then hand
+/// focus back to the panel. The panel header updates at the *start* of that
+/// chain, so waiting only for "Step N of M" returns while focus is still on the
+/// editor, and the next key typed goes into the source file instead of stepping
+/// the tour.
+///
+/// That is what hung this module on CI three runs running: the `n` was fine,
+/// and the `p` after it landed in wide.rs, so "Step 1 of 2" never came back and
+/// the wait blocked until nextest killed it at 180s. Only one test sends a
+/// second navigation key, and only that test timed out.
+fn press_step_key(harness: &mut EditorTestHarness, key: char, expect: &str) {
+    harness
+        .send_key(KeyCode::Char(key), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains(expect))
+        .unwrap();
+    // The header moved; let the rest of the chain finish before trusting focus.
+    harness.wait_for_async_quiescence(3).unwrap();
+    wait_for_panel_focus(harness);
 }
 
 /// Screen row (0-based) of the first line containing `needle`.
@@ -351,12 +383,7 @@ fn test_next_key_advances_step() {
     );
     assert!(harness.screen_to_string().contains("Step 1 of 2"));
 
-    harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
-        .unwrap();
+    press_step_key(&mut harness, 'n', "Step 2 of 2");
 
     let screen = harness.screen_to_string();
     assert!(
@@ -374,12 +401,7 @@ fn test_next_key_advances_step() {
     );
 
     // And back.
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Step 1 of 2"))
-        .unwrap();
+    press_step_key(&mut harness, 'p', "Step 1 of 2");
 }
 
 /// Clicking the `[ Next ▶ ]` button advances the step. The old popup's
@@ -662,12 +684,7 @@ fn test_step_range_is_highlighted_in_the_editor() {
     );
 
     // Step 2 — 40 lines over a 60-line file, more than the editor pane shows.
-    harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
-        .unwrap();
+    press_step_key(&mut harness, 'n', "Step 2 of 2");
 
     // The highlight is a background colour, so read rendered cell styles
     // rather than the plain text. Painting it is the tail of an async chain,
