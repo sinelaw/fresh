@@ -5,11 +5,11 @@
 > every decision that follows, not because it still describes the plugin._
 
 The guided-tour feature (`plugins/code-tour.ts`, driven by a `.fresh-tour.json`
-manifest) currently presents each step in a floating **action popup**. This note
-records what that actually looks and feels like when you drive it, and proposes
-replacing the popup with a **Utility Dock panel** rendered through the plugin
-**widget library** — clickable Prev/Next controls, a step rail, and properly
-wrapped step prose.
+manifest) used to present each step in a floating **action popup**. This note
+records what that actually looked and felt like when driven by hand, and why it
+was replaced with a **Utility Dock panel** rendered through the plugin **widget
+library** — clickable Prev/Next controls, a step rail, and properly wrapped step
+prose.
 
 ---
 
