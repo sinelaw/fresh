@@ -87,6 +87,10 @@ Definition...` → accept `.fresh-tour.json`.
      `getLineEndPosition`, which answer for the *active* buffer rather than the
      one being highlighted. Latent today (nothing reaches it); fatal the moment
      the panel holds focus, which is exactly what the dock design does.
+   - Behind *that*, a host bug: `OverlayManager::query_viewport` dropped any
+     overlay whose two markers both fell outside the queried range — i.e. one
+     that spans the viewport. Only found once the first two were fixed and the
+     highlight started working for short step ranges but not tall ones. See §9.
 
 8. **Long tours have no map.** There is no way to see where you are in a 20-step
    tour, jump back three steps, or skim what is coming.
@@ -742,6 +746,7 @@ panel, and the tour is simply the first panel whose shape exposes them.
 |---|---|
 | `click_handlers.rs` | A click landing on a widget panel but missing every hit area — a `labeledSection` border, the padding under a short list — fell through to ordinary cursor placement. The buffer's cursor is hidden but the viewport still follows it, so the click scrolled the panel's own header and buttons out of view with no way back. Non-scrollable buffers were already swallowed for exactly this reason; widget panels were excluded so their clicks could route focus to the split. They now take the focus and stop, which was the stated intent. |
 | `widgets/registry.rs` | `row_select_hit` — the fallback that lets a click past a compact row's text still select the row — returned the *first* list/tree hit on the buffer row, ignoring the column. Two lists side by side in a `Row` put two hits on one row, so every click in the right-hand column selected a row in the left-hand list. It now picks the rightmost row hit starting at or before the click; unchanged for a single-column panel. |
+| `view/overlay.rs` | `query_viewport` required at least one of an overlay's two markers to fall inside the queried range. An overlay that *spans* the viewport has neither — start above the top, end below the bottom — so it was dropped even though it covered every visible line. A step range taller than the dock leaves visible is exactly that shape, which is why the highlight worked for some steps and silently did nothing for others. The marker query is an index; the overlap test below it is what decides visibility. |
 | `plugin_dispatch.rs` | `show_line_numbers` is per (split, buffer) and the dock fast path never set it, so the *second* panel routed into the dock rendered with a line-number gutter the first one lacked — and the columns that gutter stole made the panel's widgets wrap. Visible today with Diagnostics beside Search/Replace; multi-tour makes it routine. |
 
 ---
