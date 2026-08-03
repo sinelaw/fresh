@@ -99,6 +99,20 @@ Points 1, 3, 4, 6 and 8 are all consequences of the same choice: a transient
 notification widget is the wrong container for a persistent, navigable reading
 surface.
 
+
+### The states, as built
+
+![Code tour states](/images/code-tour-states.png)
+
+Regenerate with:
+
+```sh
+cargo nextest run -p fresh-editor --test e2e_tests \
+    code_tour_state_screenshots -- --ignored --nocapture
+rsvg-convert -w 2796 target/code-tour-screenshots/code-tour-states.svg \
+    -o docs/public/images/code-tour-states.png
+```
+
 ---
 
 ## 2. Why the Utility Dock
