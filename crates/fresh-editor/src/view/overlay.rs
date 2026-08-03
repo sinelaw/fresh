@@ -629,24 +629,24 @@ impl OverlayManager {
             .map(|(id, start, _end)| (id, start))
             .collect();
 
-        // Find overlays whose markers overlap with the viewport.
-        // At least one marker must be in the viewport, but the other may be
-        // outside (e.g. a multi-line overlay partially scrolled out of view).
-        // For the out-of-viewport marker, fall back to resolving its position
-        // directly from the marker list.
+        // Find overlays whose resolved range overlaps the viewport. Markers
+        // may be inside it, partially outside (a multi-line overlay scrolled
+        // half out of view), or entirely outside on both sides (an overlay
+        // taller than the window). The marker query is an index that makes the
+        // common case cheap, not the visibility test.
         self.overlays
             .iter()
             .filter_map(|overlay| {
                 let start_in_vp = marker_positions.get(&overlay.start_marker).copied();
                 let end_in_vp = marker_positions.get(&overlay.end_marker).copied();
 
-                // At least one marker must be in the viewport for the overlay
-                // to be visible at all
-                if start_in_vp.is_none() && end_in_vp.is_none() {
-                    return None;
-                }
-
-                // For the marker outside the viewport, resolve its position directly
+                // Resolve both endpoints, whether or not their markers landed
+                // in the viewport query. Requiring at least one marker inside
+                // dropped an overlay that *spans* the viewport — start above
+                // the top, end below the bottom — even though it covers every
+                // visible line. That is the common shape for anything taller
+                // than the window: a code-tour step range, a long diagnostic,
+                // a large diff hunk. The overlap test below decides visibility.
                 let start_pos =
                     start_in_vp.or_else(|| marker_list.get_position(overlay.start_marker))?;
                 let end_pos = end_in_vp.or_else(|| marker_list.get_position(overlay.end_marker))?;
@@ -858,6 +858,59 @@ impl Overlay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An overlay taller than the viewport still renders.
+    ///
+    /// `query_viewport` used to require at least one of an overlay's markers
+    /// to land inside the queried range. An overlay that spans the viewport
+    /// has neither — its start is above the top and its end below the bottom —
+    /// so it was dropped even though it covers every visible line. Anything
+    /// taller than the window hit this: a code-tour step range, a long
+    /// diagnostic, a large diff hunk.
+    #[test]
+    fn test_query_viewport_keeps_overlay_spanning_the_viewport() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(1000);
+        let mut manager = OverlayManager::new();
+
+        // Overlay 100..900; the viewport 400..500 sits entirely inside it.
+        manager.add(Overlay::new(
+            &mut marker_list,
+            100..900,
+            OverlayFace::Background { color: Color::Red },
+        ));
+
+        let found = manager.query_viewport(400, 500, &marker_list);
+        assert_eq!(
+            found.len(),
+            1,
+            "an overlay spanning the whole viewport must still be returned"
+        );
+        assert_eq!(found[0].1, 100..900, "with its full resolved range");
+    }
+
+    /// The neighbouring cases the span fix must not break — in particular the
+    /// disjoint ones, which would leak through if the overlap test below the
+    /// marker lookup were not doing the real work.
+    #[test]
+    fn test_query_viewport_boundaries() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(1000);
+        let mut manager = OverlayManager::new();
+        manager.add(Overlay::new(
+            &mut marker_list,
+            100..200,
+            OverlayFace::Background { color: Color::Red },
+        ));
+
+        // Containing the overlay, and overlapping each edge — all visible.
+        assert_eq!(manager.query_viewport(50, 250, &marker_list).len(), 1);
+        assert_eq!(manager.query_viewport(150, 250, &marker_list).len(), 1);
+        assert_eq!(manager.query_viewport(50, 150, &marker_list).len(), 1);
+        // Disjoint on either side — not visible.
+        assert!(manager.query_viewport(300, 400, &marker_list).is_empty());
+        assert!(manager.query_viewport(10, 90, &marker_list).is_empty());
+    }
 
     #[test]
     fn test_overlay_creation_with_markers() {
