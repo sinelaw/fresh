@@ -582,7 +582,22 @@ fn test_click_in_prose_column_does_not_select_a_rail_step() {
         "clicking the prose column must not select the rail row beside it\nScreen:\n{screen}"
     );
 
-    // The rail itself still works — otherwise the assertion above would pass
+    // The seam between the two sections — the prose side's border cell — is
+    // the boundary case: it is visibly not the rail, so it must not act on it.
+    let seam = {
+        let line = screen.lines().nth(row as usize).expect("rail row");
+        let byte_idx = line.find("││").expect("column seam");
+        line[..byte_idx].chars().count() + 1
+    };
+    harness.mouse_click(seam as u16, row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Step 1 of 2"),
+        "clicking the seam between the columns must not select a rail row\nScreen:\n{screen}"
+    );
+
+    // The rail itself still works — otherwise the assertions above would pass
     // for a panel whose rail had simply stopped routing clicks at all.
     harness.mouse_click(20, row).unwrap();
     harness

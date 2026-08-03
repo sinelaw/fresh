@@ -382,14 +382,20 @@ step navigation must also work from the editor split:
 
 | Key | Action |
 |---|---|
-| `Ctrl+Alt+]` | Next step |
-| `Ctrl+Alt+[` | Previous step |
+| `Ctrl+Alt+N` | Next step |
+| `Ctrl+Alt+P` | Previous step |
 
-Not `Alt+]` / `Alt+[`, which the default keymap already gives to
-`next_split` / `prev_split`. `Ctrl+Alt+brackets` is free and mirrors the
-`Ctrl+Alt+Arrow` precedent for reviewing Search & Replace matches from the
-editor. They bind in the `normal` context and no-op when no tour is open, so
-they cost nothing when the feature is unused.
+Mnemonic, matching the `n` / `p` the panel itself uses.
+
+Not `Alt+]` / `Alt+[` — the default keymap gives those to `next_split` /
+`prev_split`. And **not** `Ctrl+Alt+[` either, which is the trap this design
+originally fell into: terminals send `Ctrl+[` as ESC, so the chord arrived as
+Escape and *closed the tour* instead of stepping back. The keymap already
+warns about it on the Search & Replace binding; driving the feature by hand is
+what surfaced it. `Alt+n` / `Alt+p` are find-selection, hence the Ctrl.
+
+They bind in the `normal` context and no-op when no tour is open, so they cost
+nothing when the feature is unused.
 
 ### 4.3 Focus policy
 
@@ -404,7 +410,7 @@ they cost nothing when the feature is unused.
   bar's `↑↓ scroll` would do nothing at all. Tab still reaches the rail and the
   buttons, and a user who tabs away keeps that focus until the step changes.
 - Focus stays in the dock, never jumping to the editor split: if you were
-  reading in the editor, `Ctrl+Alt+]` advances the step and re-centres the
+  reading in the editor, `Ctrl+Alt+N` advances the step and re-centres the
   source without yanking you into the dock.
 - Closing the dock tab (`×`, `q`, `Esc`) exits the tour: overlays cleared,
   `tour-active` unset. There is no longer an invisible-but-active state.
@@ -481,7 +487,7 @@ mode needing to know how many exist.
 
 ### Which tour do the editor-context keys drive?
 
-`Ctrl+Alt+]` / `Ctrl+Alt+[` (§4.2) fire from the editor split, where there is no tour
+`Ctrl+Alt+N` / `Ctrl+Alt+P` (§4.2) fire from the editor split, where there is no tour
 buffer to read. They target the **most recently active tour**: a `lastTourId`
 updated on any panel interaction and on `buffer_activated` for a tour buffer.
 With one tour open that is simply "the tour". With several, it is the one whose
@@ -720,7 +726,7 @@ panel = new WidgetPanel(bufferId);
 | Persistence | New: `setWindowState("openTours", …)` write-through on every step/rail/open/close change, and an `editor.on("ready", …)` restore pass (§6). |
 | `buffer_closed` | New listener — tears down the one tour whose buffer closed; unsets `tour-active` only when the last tour goes. |
 | `renderStepOverlays` | Fix both highlight bugs (§1.7). A `stepBufferId` helper resolves a repo-relative `file_path` — literal, then cwd-joined, then a normalized suffix match over `listBuffers` — instead of relying on `findBufferByPath` alone. The byte range is computed from `getBufferText(bufferId)` + `utf8ByteLength` rather than the active-buffer line-position calls, so it is correct while the panel holds focus. |
-| Mode + keys | New `code-tour-panel` mode with the table in §4.1; `Ctrl+Alt+]` / `Ctrl+Alt+[` in the default keymap. |
+| Mode + keys | New `code-tour-panel` mode with the table in §4.1; `Ctrl+Alt+N` / `Ctrl+Alt+P` in the default keymap. |
 | Markdown | New `renderExplanation(md, width): TextPropertyEntry[]`. |
 | i18n | New `code-tour.i18n.json` — the plugin currently hardcodes every user-visible string, unlike its neighbours. |
 | Detour tracking | `lastKnownTopByte` / `lastKnownBufferId` get their intended use: they drive whether `[ Re-highlight ]` is emphasised. |

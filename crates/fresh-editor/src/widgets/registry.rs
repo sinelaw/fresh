@@ -579,12 +579,25 @@ impl WidgetRegistry {
         // Two side-by-side lists (a Row of `labeledSection`s — a step rail
         // beside a prose pane) put two row hits on the SAME buffer row, so
         // "first hit on this row" would hand every click in the right-hand
-        // column to the left-hand list. Choose the rightmost row hit that
-        // starts at or before the click instead: for a single-column panel
-        // that is still the only candidate, and for a multi-column row it is
-        // the column the user actually clicked.
-        let mut best: Option<(&PanelKey, &HitArea)> = None;
-        let mut leftmost: Option<(&PanelKey, &HitArea)> = None;
+        // column to the left-hand list.
+        //
+        // Pick the row hit *nearest* the click instead. Distance is zero when
+        // the click is inside a hit's own span, so a single-column panel is
+        // unaffected. Choosing by "last hit starting at or before the click"
+        // was almost right, but resolved the seam between two columns — the
+        // right-hand section's border cell — to the left-hand list, which is
+        // the column the user visibly did not click.
+        fn distance(hit: &HitArea, col: usize) -> usize {
+            if col < hit.byte_start {
+                hit.byte_start - col
+            } else if col >= hit.byte_end {
+                col - hit.byte_end + 1
+            } else {
+                0
+            }
+        }
+        let col = col_byte as usize;
+        let mut best: Option<(&PanelKey, &HitArea, usize)> = None;
         for (key, state) in &self.panels {
             if state.buffer_id != buffer_id {
                 continue;
@@ -596,19 +609,17 @@ impl WidgetRegistry {
                 {
                     continue;
                 }
-                if leftmost.is_none_or(|(_, l)| hit.byte_start < l.byte_start) {
-                    leftmost = Some((key, hit));
-                }
-                if hit.byte_start <= col_byte as usize
-                    && best.is_none_or(|(_, b)| hit.byte_start >= b.byte_start)
+                let d = distance(hit, col);
+                // Ties go to the leftmost hit, so the panel's leading margin
+                // keeps belonging to the first column.
+                if best
+                    .is_none_or(|(_, b, bd)| d < bd || (d == bd && hit.byte_start < b.byte_start))
                 {
-                    best = Some((key, hit));
+                    best = Some((key, hit, d));
                 }
             }
         }
-        // A click left of every row hit (the panel's leading margin) still
-        // belongs to the first column.
-        best.or(leftmost).map(|(k, h)| (k.clone(), h.clone()))
+        best.map(|(k, h, _)| (k.clone(), h.clone()))
     }
 }
 
