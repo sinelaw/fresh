@@ -19,6 +19,16 @@ Beyond text editing — the tools that make Fresh a complete development environ
   <img src="./command-palette/showcase.gif" alt="Command palette demo" />
 </div>
 
+## Code Tours
+
+Walk a codebase step by step. A tour manifest names a file, a line range and
+some markdown per step; the tour opens in the Utility Dock beside the code, with
+each step's range highlighted in the editor above it.
+
+<div class="showcase-demo">
+  <img src="./code-tour/showcase.gif" alt="Code tours demo" />
+</div>
+
 ## Split View
 
 Split the editor horizontally or vertically. Each pane has its own tab bar, cursor, and scroll position. Navigate between panes with **Ctrl+K**.
