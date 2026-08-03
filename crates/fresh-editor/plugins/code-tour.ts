@@ -662,19 +662,27 @@ function syncDockSize(t: TourInstance): boolean {
 // Overlays
 // ============================================================================
 
-/** Byte offsets of the first and last line of `[from, to]` (1-indexed,
- * inclusive) within `bufferId`.
+/** Byte span of each line in `[from, to]` (1-indexed, inclusive) within
+ * `bufferId`, as `[start, end]` pairs.
  *
  * Deliberately does NOT use `getLineStartPosition` / `getLineEndPosition`:
  * those answer for the *active* buffer, and the active buffer while a tour
- * renders is the dock panel, not the source file — which is why the highlight
- * never painted before.
+ * renders is the dock panel, not the source file — which is why the step
+ * highlight never painted at all before.
+ *
+ * Per line rather than one span for the whole range: a single overlay across
+ * a tall range renders unreliably. Lines 55-92 of a file painted nothing while
+ * 55-75 and 60-92 over the same buffer both painted, with `addOverlay`
+ * reporting success every time — so the overlay was stored and then not drawn.
+ * One overlay per line is visually identical under `extendToLineEnd` and does
+ * not depend on that behaviour. Tour steps span tens of lines, so the extra
+ * overlays are cheap.
  */
-async function lineRangeBytes(
+async function lineSpans(
   bufferId: number,
   from: number,
   to: number,
-): Promise<[number, number] | null> {
+): Promise<Array<[number, number]> | null> {
   const text = await editor.getBufferText(bufferId);
   if (typeof text !== "string") return null;
   const lines = text.split("\n");
@@ -685,11 +693,13 @@ async function lineRangeBytes(
   for (let i = 0; i < from - 1; i++) {
     offset += editor.utf8ByteLength(lines[i]) + 1;
   }
-  const start = offset;
+  const spans: Array<[number, number]> = [];
   for (let i = from - 1; i < last; i++) {
-    offset += editor.utf8ByteLength(lines[i]) + (i < last - 1 ? 1 : 0);
+    const len = editor.utf8ByteLength(lines[i]);
+    spans.push([offset, offset + len]);
+    offset += len + 1;
   }
-  return [start, offset];
+  return spans;
 }
 
 /** Resolve the buffer showing `filePath`.
@@ -731,17 +741,19 @@ async function paintStepOverlay(t: TourInstance): Promise<void> {
   if (!bufferId) return;
 
   clearTourOverlays(t);
-  const range = await lineRangeBytes(bufferId, step.lines[0], step.lines[1]);
-  if (!range) {
+  const spans = await lineSpans(bufferId, step.lines[0], step.lines[1]);
+  if (!spans || spans.length === 0) {
     editor.warn(
       `Tour: could not resolve lines ${step.lines[0]}-${step.lines[1]} in ${step.file_path}`,
     );
     return;
   }
-  editor.addOverlay(bufferId, t.namespace, range[0], range[1], {
-    bg: [42, 74, 106],
-    extendToLineEnd: true,
-  });
+  for (const [start, end] of spans) {
+    editor.addOverlay(bufferId, t.namespace, start, end, {
+      bg: [42, 74, 106],
+      extendToLineEnd: true,
+    });
+  }
   t.paintedBuffers.add(bufferId);
 }
 
@@ -938,6 +950,10 @@ async function revealStep(t: TourInstance): Promise<void> {
   const step = currentStep(t);
   t.fileMissing = !editor.fileExists(editor.authorityPath(step.file_path));
   if (t.fileMissing) {
+    // Drop the previous step's highlight. Leaving it up would point at code
+    // belonging to a step the user has already moved past, while the panel
+    // says the current step's file is missing.
+    clearTourOverlays(t);
     renderPanel(t);
     return;
   }

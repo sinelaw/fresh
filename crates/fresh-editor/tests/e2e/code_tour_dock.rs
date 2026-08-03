@@ -37,8 +37,8 @@ fn tour_json(root: &Path) -> String {
     {{
       "step_id": 2,
       "title": "The handler",
-      "file_path": "{root}/src/main.rs",
-      "lines": [5, 7],
+      "file_path": "{root}/src/wide.rs",
+      "lines": [5, 44],
       "explanation": "## Handling\n\nEach connection is dispatched to `handle` on its own task."
     }}
   ]
@@ -81,6 +81,11 @@ fn setup_tour_project() -> (tempfile::TempDir, PathBuf) {
 
     fs::create_dir(project_root.join("src")).unwrap();
     fs::write(project_root.join("src/main.rs"), MAIN_RS).unwrap();
+    // A file long enough for a step range taller than the visible window.
+    let wide: String = (1..=60)
+        .map(|n| format!("fn f{n}() {{ let _ = {n}; }}\n"))
+        .collect();
+    fs::write(project_root.join("src/wide.rs"), wide).unwrap();
     fs::write(
         project_root.join("src/store.rs"),
         "struct Store;\nimpl Store {}\n",
@@ -603,4 +608,54 @@ fn test_click_in_prose_column_does_not_select_a_rail_step() {
     harness
         .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
         .unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// The step highlight
+// ---------------------------------------------------------------------------
+
+/// The step's line range is painted in the editor.
+///
+/// This never worked before the dock rewrite: the overlay looked its buffer up
+/// with a repo-relative path that `findBufferByPath` cannot match, so nothing
+/// was ever added. Step 2's range is deliberately taller than the window the
+/// dock leaves visible — a single overlay spanning a tall range renders
+/// unreliably, so the plugin paints one overlay per line.
+#[test]
+fn test_step_range_is_highlighted_in_the_editor() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    // Step 2 — 40 lines over a 60-line file, more than the editor pane shows.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+
+    // The highlight is a background colour, so read rendered cell styles
+    // rather than the plain text. The step's lines are the ones carrying a
+    // background the surrounding code does not.
+    let mut highlighted = 0usize;
+    for row in 2..30u16 {
+        if let Some(style) = harness.get_cell_style(20, row) {
+            if style.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)) {
+                highlighted += 1;
+            }
+        }
+    }
+    assert!(
+        highlighted > 0,
+        "expected the step's line range to carry the highlight background\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
