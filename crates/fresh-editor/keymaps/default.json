@@ -889,15 +889,15 @@
       "when": "normal"
     },
     {
-      "comment": "Step through an open Code Tour without leaving the editor split, so you can read the code the step is about and still advance. Ctrl+Alt+brackets rather than Alt+brackets, which are split navigation; mirrors the Ctrl+Alt+Arrow precedent for reviewing Search & Replace matches from the editor. No-ops when no tour is open.",
-      "key": "]",
+      "comment": "Step through an open Code Tour without leaving the editor split, so you can read the code the step is about and still advance. Mnemonic n/p, matching the keys the tour panel itself uses. NOT Ctrl+Alt+brackets: terminals send Ctrl+[ as ESC, so Ctrl+Alt+[ arrived as Escape and closed the tour instead of stepping back — the same pitfall the Search & Replace binding below avoids. Alt+n/p are find-selection, plain Alt+brackets are split navigation. No-ops when no tour is open.",
+      "key": "n",
       "modifiers": ["ctrl", "alt"],
       "action": "tour_next",
       "args": {},
       "when": "normal"
     },
     {
-      "key": "[",
+      "key": "p",
       "modifiers": ["ctrl", "alt"],
       "action": "tour_prev",
       "args": {},
