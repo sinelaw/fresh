@@ -73,6 +73,11 @@ fn setup_tour_project() -> (tempfile::TempDir, PathBuf) {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let project_root = temp_dir.path().join("project_root");
     fs::create_dir(&project_root).unwrap();
+    // Canonicalize before it reaches the manifest. On macOS a tempdir is
+    // `/var/folders/...`, a symlink to `/private/var/...`; the editor stores
+    // the resolved path on the buffer, so a manifest holding the unresolved
+    // one never matches and no step ever finds its file.
+    let project_root = fs::canonicalize(&project_root).unwrap();
 
     let plugins_dir = project_root.join("plugins");
     fs::create_dir(&plugins_dir).unwrap();
@@ -166,10 +171,22 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
         .unwrap();
     // Opening a step is an async chain — open the file, await, paint the
     // overlay, then hand focus back to the panel. Content on screen does not
-    // mean that chain has finished, and until it has, focus is still on the
-    // editor: a key sent now types into the source file instead of stepping
-    // the tour. Wait for the plugin thread to go quiet.
-    harness.wait_for_async_quiescence(3).unwrap();
+    // mean that chain has finished, and until it has focus is still on the
+    // editor, where a key types into the source file instead of stepping the
+    // tour.
+    //
+    // Wait for where focus actually landed, read off the status bar: the tour
+    // buffer is read-only plain text (`[RO]` … `Text`), while the editor shows
+    // a cursor position and the file's language. Plugin-thread quiescence was
+    // the obvious gate and is the wrong one — it is a heuristic that reports
+    // quiet while the handoff is still in flight, which is exactly how this
+    // timed out on CI but never locally.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("[RO]") && screen.contains("Text")
+        })
+        .unwrap();
 }
 
 /// Screen row (0-based) of the first line containing `needle`.
@@ -640,22 +657,35 @@ fn test_step_range_is_highlighted_in_the_editor() {
     harness
         .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
         .unwrap();
-    harness.wait_for_async_quiescence(3).unwrap();
 
     // The highlight is a background colour, so read rendered cell styles
-    // rather than the plain text. The step's lines are the ones carrying a
-    // background the surrounding code does not.
-    let mut highlighted = 0usize;
-    for row in 2..30u16 {
-        if let Some(style) = harness.get_cell_style(20, row) {
-            if style.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)) {
-                highlighted += 1;
-            }
-        }
-    }
+    // rather than the plain text. Painting it is the tail of an async chain,
+    // so wait for it to land — waiting for *a* highlighted row and then
+    // asserting *which* rows carry it keeps the check from passing vacuously.
+    let highlighted = |h: &EditorTestHarness| -> Vec<u16> {
+        (2..30u16)
+            .filter(|row| {
+                h.get_cell_style(20, *row)
+                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)))
+            })
+            .collect()
+    };
+    harness.wait_until(|h| !highlighted(h).is_empty()).unwrap();
+
+    // The step's range is taller than the pane, so every code row on screen
+    // carries it — contiguously, with no unhighlighted gap in the middle.
+    let rows = highlighted(&harness);
+    let (first, last) = (rows[0], rows[rows.len() - 1]);
+    assert_eq!(
+        rows,
+        (first..=last).collect::<Vec<_>>(),
+        "the highlight must be one unbroken run, not scattered rows\nScreen:\n{}",
+        harness.screen_to_string()
+    );
     assert!(
-        highlighted > 0,
-        "expected the step's line range to carry the highlight background\nScreen:\n{}",
+        rows.len() > 10,
+        "a step range taller than the pane should fill it, got {} rows\nScreen:\n{}",
+        rows.len(),
         harness.screen_to_string()
     );
 }
