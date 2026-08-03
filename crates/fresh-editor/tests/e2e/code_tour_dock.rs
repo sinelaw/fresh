@@ -20,8 +20,21 @@ use std::path::{Path, PathBuf};
 /// A two-step tour over `src/main.rs`, with markdown in both explanations:
 /// a heading, a bold run, inline code, a bullet list and a fenced block —
 /// i.e. every construct the old popup mangled.
+/// A path as a JSON string literal — quotes and escapes included.
+///
+/// These manifests are built by interpolation, and a Windows path interpolated
+/// raw is not valid JSON: `C:\Users\...` carries `\U`, `\A`, `\T`, none of
+/// which are escape sequences, so the plugin's parse throws, no panel is ever
+/// mounted, and every wait in this module blocks forever. That took the whole
+/// module out on windows-latest while ubuntu and macOS were green — the tests
+/// are not Windows-specific, only the fixture was.
+fn json_path(path: &Path) -> String {
+    serde_json::to_string(&path.display().to_string()).expect("path is UTF-8")
+}
+
 fn tour_json(root: &Path) -> String {
-    let root = root.display().to_string();
+    let main_rs = json_path(&root.join("src/main.rs"));
+    let wide_rs = json_path(&root.join("src/wide.rs"));
     format!(
         r###"{{
   "title": "Pipeline Tour",
@@ -31,14 +44,14 @@ fn tour_json(root: &Path) -> String {
     {{
       "step_id": 1,
       "title": "Entry point",
-      "file_path": "{root}/src/main.rs",
+      "file_path": {main_rs},
       "lines": [1, 3],
       "explanation": "## Where it starts\n\nThe listener is **built** here using `TcpListener`.\n\n- binds the socket\n- spawns the accept loop\n\n```rust\nlet l = TcpListener::bind(addr)?;\n```"
     }},
     {{
       "step_id": 2,
       "title": "The handler",
-      "file_path": "{root}/src/wide.rs",
+      "file_path": {wide_rs},
       "lines": [5, 44],
       "explanation": "## Handling\n\nEach connection is dispatched to `handle` on its own task."
     }}
@@ -48,7 +61,7 @@ fn tour_json(root: &Path) -> String {
 }
 
 fn second_tour_json(root: &Path) -> String {
-    let root = root.display().to_string();
+    let store_rs = json_path(&root.join("src/store.rs"));
     format!(
         r###"{{
   "title": "Storage Tour",
@@ -58,7 +71,7 @@ fn second_tour_json(root: &Path) -> String {
     {{
       "step_id": 1,
       "title": "The store",
-      "file_path": "{root}/src/store.rs",
+      "file_path": {store_rs},
       "lines": [1, 2],
       "explanation": "## The store\n\nKeys live in a `BTreeMap`."
     }}
@@ -248,6 +261,19 @@ fn row_of(harness: &EditorTestHarness, needle: &str) -> usize {
 /// Loading a tour paints a dock panel — not a floating popup — carrying the
 /// tour title, a step counter, real Prev/Next/Exit buttons and a hint bar,
 /// all *below* the editor split rather than on top of it.
+/// A manifest path must survive being written into JSON.
+///
+/// Interpolating a path straight into the manifest is fine until the path has
+/// backslashes in it, at which point the manifest stops being JSON at all.
+#[test]
+fn json_path_escapes_a_windows_path() {
+    let raw = r"C:\Users\runneradmin\AppData\Local\Temp\.tmpAb12\project_root\src\main.rs";
+    let literal = json_path(Path::new(raw));
+    let parsed: String =
+        serde_json::from_str(&literal).expect("an interpolated path must still be valid JSON");
+    assert_eq!(parsed, raw);
+}
+
 #[test]
 fn test_tour_renders_as_dock_panel_with_buttons() {
     let (_temp, project_root) = setup_tour_project();
@@ -734,7 +760,10 @@ fn test_step_range_is_highlighted_in_the_editor() {
 /// A tour with enough shape to show every state: prose with headings, bullets
 /// and a fence; a range taller than the pane; and a step whose file is gone.
 fn showcase_tour_json(root: &Path) -> String {
-    let root = root.display().to_string();
+    let main_rs = json_path(&root.join("src/main.rs"));
+    let wide_rs = json_path(&root.join("src/wide.rs"));
+    let store_rs = json_path(&root.join("src/store.rs"));
+    let deleted_rs = json_path(&root.join("src/deleted.rs"));
     format!(
         r###"{{
   "title": "Request Pipeline",
@@ -744,28 +773,28 @@ fn showcase_tour_json(root: &Path) -> String {
     {{
       "step_id": 1,
       "title": "Entry point",
-      "file_path": "{root}/src/main.rs",
+      "file_path": {main_rs},
       "lines": [1, 3],
       "explanation": "## Where it starts\n\nThe listener is **built** here using `TcpListener`.\n\n- binds the socket\n- spawns the accept loop\n\n```rust\nlet l = TcpListener::bind(addr)?;\n```"
     }},
     {{
       "step_id": 2,
       "title": "Dispatch",
-      "file_path": "{root}/src/wide.rs",
+      "file_path": {wide_rs},
       "lines": [5, 44],
       "explanation": "## Handling\n\nEach connection is dispatched to `handle` on its own task.\n\nThe highlighted range is *taller than the pane* — it stays painted as you scroll."
     }},
     {{
       "step_id": 3,
       "title": "Storage",
-      "file_path": "{root}/src/store.rs",
+      "file_path": {store_rs},
       "lines": [1, 2],
       "explanation": "## Persisting\n\nHandlers write through `Store`."
     }},
     {{
       "step_id": 4,
       "title": "A step whose file moved",
-      "file_path": "{root}/src/deleted.rs",
+      "file_path": {deleted_rs},
       "lines": [1, 4],
       "explanation": "## Missing file\n\nA tour outlives the code it describes. The step still reads; only the jump is unavailable."
     }}
