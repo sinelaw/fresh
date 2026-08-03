@@ -689,3 +689,254 @@ fn test_step_range_is_highlighted_in_the_editor() {
         harness.screen_to_string()
     );
 }
+
+// =========================================================================
+// Screenshot showcase
+// =========================================================================
+//
+// Renders the tour's distinct states to SVG for the docs. `#[ignore]`d — it
+// writes into the repo, so it runs on request, not as part of the suite:
+//
+//   cargo nextest run -p fresh-editor --test e2e_tests \
+//       code_tour_state_screenshots -- --ignored --nocapture
+
+/// A tour with enough shape to show every state: prose with headings, bullets
+/// and a fence; a range taller than the pane; and a step whose file is gone.
+fn showcase_tour_json(root: &Path) -> String {
+    let root = root.display().to_string();
+    format!(
+        r###"{{
+  "title": "Request Pipeline",
+  "description": "How a request reaches a handler",
+  "schema_version": "1.0",
+  "steps": [
+    {{
+      "step_id": 1,
+      "title": "Entry point",
+      "file_path": "{root}/src/main.rs",
+      "lines": [1, 3],
+      "explanation": "## Where it starts\n\nThe listener is **built** here using `TcpListener`.\n\n- binds the socket\n- spawns the accept loop\n\n```rust\nlet l = TcpListener::bind(addr)?;\n```"
+    }},
+    {{
+      "step_id": 2,
+      "title": "Dispatch",
+      "file_path": "{root}/src/wide.rs",
+      "lines": [5, 44],
+      "explanation": "## Handling\n\nEach connection is dispatched to `handle` on its own task.\n\nThe highlighted range is *taller than the pane* — it stays painted as you scroll."
+    }},
+    {{
+      "step_id": 3,
+      "title": "Storage",
+      "file_path": "{root}/src/store.rs",
+      "lines": [1, 2],
+      "explanation": "## Persisting\n\nHandlers write through `Store`."
+    }},
+    {{
+      "step_id": 4,
+      "title": "A step whose file moved",
+      "file_path": "{root}/src/deleted.rs",
+      "lines": [1, 4],
+      "explanation": "## Missing file\n\nA tour outlives the code it describes. The step still reads; only the jump is unavailable."
+    }}
+  ]
+}}"###
+    )
+}
+
+/// Frames land in `target/`, not the repo: the per-state SVGs and the sheet
+/// come to ~5 MB, against a ~200 KB norm for images under `docs/`. The
+/// committed asset is the rasterized sheet:
+///
+///   rsvg-convert -w 1600 target/code-tour-screenshots/code-tour-states.svg \
+///       -o docs/public/images/code-tour-states.png
+fn screenshot_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .join("target/code-tour-screenshots")
+}
+
+fn shot(harness: &mut EditorTestHarness, name: &str, key: Option<&str>) {
+    let dir = screenshot_dir();
+    fs::create_dir_all(&dir).unwrap();
+    harness.render().unwrap();
+    let cursor = harness.screen_cursor_position();
+    crate::common::blog_showcase::render_showcase_frame(
+        harness.buffer(),
+        cursor,
+        key,
+        None,
+        &dir.join(format!("{name}.svg")),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "writes screenshots into target/; run on request"]
+fn code_tour_state_screenshots() {
+    let (_temp, project_root) = setup_tour_project();
+    fs::write(
+        project_root.join(".fresh-tour.json"),
+        showcase_tour_json(&project_root),
+    )
+    .unwrap();
+    let manifest = project_root.join(".fresh-tour.json");
+    let manifest = manifest.display().to_string();
+
+    let mut harness = harness_in(&project_root, 150, 40);
+
+    // 1. Finding the tour — the palette entry that starts it.
+    run_command(&mut harness, "Tour: Load Definition");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("tour file path"))
+        .unwrap();
+    shot(&mut harness, "01-load", Some("Ctrl+P"));
+
+    // 2. A step: prose on the right, rail on the left, code highlighted above.
+    for _ in 0..64 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text(&manifest).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*Tour: Request Pipeline*") && s.contains("jump to code")
+        })
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("[RO]") && s.contains("Text")
+        })
+        .unwrap();
+    shot(&mut harness, "02-step", Some("Enter"));
+
+    // 3. A range taller than the pane, still fully painted.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 2 of 4"))
+        .unwrap();
+    shot(&mut harness, "03-tall-range", Some("n"));
+
+    // 4. A second tour alongside the first — the dock's tab bar holds both.
+    load_tour(
+        &mut harness,
+        &project_root.join("storage-tour.json").display().to_string(),
+        "*Tour: Storage Tour*",
+    );
+    shot(&mut harness, "04-two-tours", None);
+
+    // 5. The last step, on a fresh editor: its file is gone, so the jump is
+    //    unavailable and the previous step's highlight is torn down. Exit has
+    //    become Finish.
+    let mut last = harness_in(&project_root, 150, 40);
+    load_tour(&mut last, &manifest, "*Tour: Request Pipeline*");
+    for expect in ["Step 2 of 4", "Step 3 of 4", "Step 4 of 4"] {
+        last.send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+        last.wait_until(|h| h.screen_to_string().contains(expect))
+            .unwrap();
+    }
+    shot(&mut last, "05-missing-file", Some("n"));
+
+    // 6. Narrow dock: the rail folds away, the prose survives.
+    let mut narrow = harness_in(&project_root, 96, 40);
+    load_tour(&mut narrow, &manifest, "*Tour: Request Pipeline*");
+    shot(&mut narrow, "06-narrow", None);
+
+    contact_sheet(&[
+        (
+            "01-load",
+            "Loading a tour definition, started from the palette",
+        ),
+        (
+            "02-step",
+            "A step: rail, prose, and the range highlighted above",
+        ),
+        (
+            "03-tall-range",
+            "A range taller than the pane stays painted",
+        ),
+        ("04-two-tours", "Two tours coexist as dock tabs"),
+        (
+            "05-missing-file",
+            "Last step, file gone: no jump, no stale highlight",
+        ),
+        (
+            "06-narrow",
+            "Narrow dock: the rail folds, the prose survives",
+        ),
+    ]);
+}
+
+/// Stitch the per-state frames into one sheet, so the whole flow can be taken
+/// in at a glance rather than by opening six files. Nested `<svg>` keeps every
+/// panel vector — no rasterizer, no external tool.
+fn contact_sheet(panels: &[(&str, &str)]) {
+    const CELL_W: usize = 1350; // 150 cols x 9px
+    const CELL_H: usize = 720; //  40 rows x 18px
+    const CAPTION_H: usize = 52;
+    const PAD: usize = 32;
+    const COLS: usize = 2;
+
+    let dir = screenshot_dir();
+
+    let rows = panels.len().div_ceil(COLS);
+    let width = COLS * CELL_W + (COLS + 1) * PAD;
+    let height = rows * (CELL_H + CAPTION_H) + (rows + 1) * PAD;
+
+    let mut out = format!(
+        r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+<style>
+  .caption {{ font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif; font-size: 26px; fill: #c8d3e0; }}
+  .num {{ font-family: 'DejaVu Sans', 'Liberation Sans', Arial, sans-serif; font-size: 26px; font-weight: 700; fill: #6ea8fe; }}
+</style>
+<rect width="100%" height="100%" fill="#11151c"/>
+"##
+    );
+
+    for (i, (name, caption)) in panels.iter().enumerate() {
+        let (col, row) = (i % COLS, i / COLS);
+        let x = PAD + col * (CELL_W + PAD);
+        let y = PAD + row * (CELL_H + CAPTION_H + PAD);
+
+        out.push_str(&format!(
+            r#"<text class="num" x="{x}" y="{ty}">{n}.</text><text class="caption" x="{tx}" y="{ty}">{caption}</text>
+"#,
+            n = i + 1,
+            tx = x + 34,
+            ty = y + 32,
+        ));
+
+        let frame = fs::read_to_string(dir.join(format!("{name}.svg"))).unwrap();
+        let frame = frame
+            .split_once("?>")
+            .map(|(_, rest)| rest)
+            .unwrap_or(&frame)
+            .trim_start();
+        // Centre a narrower frame (the 96-column dock) inside its cell.
+        let frame_w: usize = frame
+            .split_once("width=\"")
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .and_then(|(w, _)| w.parse().ok())
+            .unwrap_or(CELL_W);
+        let fx = x + CELL_W.saturating_sub(frame_w) / 2;
+        let fy = y + CAPTION_H;
+        out.push_str(&frame.replacen("<svg ", &format!("<svg x=\"{fx}\" y=\"{fy}\" "), 1));
+        out.push('\n');
+    }
+
+    out.push_str("</svg>\n");
+    let path = dir.join("code-tour-states.svg");
+    fs::write(&path, out).unwrap();
+    println!("contact sheet: {}", path.display());
+}
