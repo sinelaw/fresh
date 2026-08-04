@@ -128,6 +128,12 @@ impl ScrollbarMarkerManager {
         self.markers.adjust_for_delete(position, length);
     }
 
+    /// Shift all anchors for a whole bulk edit at once.
+    /// See [`MarkerList::adjust_for_bulk_edits`].
+    pub fn adjust_for_bulk_edits(&mut self, edits: &[(usize, usize, usize)]) {
+        self.markers.adjust_for_bulk_edits(edits);
+    }
+
     /// Replace a namespace's entire marker set.
     ///
     /// Returns the number of markers actually stored — less than

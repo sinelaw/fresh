@@ -51,6 +51,10 @@ pub struct MarkerList {
 }
 
 impl MarkerList {
+    /// Below this many insert-only edits, adjusting one at a time (O(log n)
+    /// each) is cheaper than the batched rebuild (O(markers)).
+    const BULK_ADJUST_MIN_EDITS: usize = 16;
+
     /// Create a new empty marker list
     pub fn new() -> Self {
         Self {
@@ -191,6 +195,34 @@ impl MarkerList {
         }
 
         self.tree.adjust_for_edit(position as u64, -(length as i64));
+    }
+
+    /// Adjust all markers for a batch of non-overlapping edits at once.
+    ///
+    /// `edits` are `(position, deleted_len, inserted_len)` triples describing a
+    /// single bulk edit. Applying them one at a time costs O(markers) per
+    /// deletion, so a replace-all with one edit per match was quadratic; the
+    /// batched path (see [`IntervalTree::adjust_for_bulk_edits`]) is
+    /// O(markers + edits·log edits) and produces the same positions.
+    ///
+    /// Small batches keep the per-edit path: it is O(log n) for an insertion,
+    /// which beats rebuilding the whole tree.
+    pub fn adjust_for_bulk_edits(&mut self, edits: &[(usize, usize, usize)]) {
+        let net: Vec<(u64, i64)> = edits
+            .iter()
+            .map(|(pos, del_len, ins_len)| (*pos as u64, *ins_len as i64 - *del_len as i64))
+            .filter(|(_, delta)| *delta != 0)
+            .collect();
+
+        let deletions = net.iter().filter(|(_, delta)| *delta < 0).count();
+        if net.len() > 1 && (deletions > 0 || net.len() >= Self::BULK_ADJUST_MIN_EDITS) {
+            self.tree.adjust_for_bulk_edits(&net);
+            return;
+        }
+
+        for (pos, delta) in net {
+            self.tree.adjust_for_edit(pos, delta);
+        }
     }
 
     /// Get the total size of the buffer (not directly tracked by IntervalTree)
