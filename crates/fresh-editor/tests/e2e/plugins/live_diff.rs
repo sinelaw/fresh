@@ -1233,11 +1233,13 @@ fn test_live_diff_near_total_rewrite_degrades_but_renders() {
     // Gutter glyphs render (the whole visible region changed vs HEAD) and
     // the degraded-detail status is announced. The status assertion reads
     // the full screen (not content_lines) because the status bar is one of
-    // the rows content_lines strips.
+    // the rows content_lines strips. Assert only the message's prefix: at
+    // this harness width the status bar truncates the tail ("…simplifi..."),
+    // so the full "simplified view" phrase never fits on screen.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            has_glyph(&screen, '~') && screen.contains("simplified view")
+            has_glyph(&screen, '~') && screen.contains("Live Diff: large change")
         })
         .unwrap();
 }
