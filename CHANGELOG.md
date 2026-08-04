@@ -26,6 +26,9 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **The tour panel's mouse wheel scrolls the list you point at** - the wheel used to scroll the Steps rail no matter where the pointer was, so the description column could not be scrolled by mouse at all. Applies to every widget panel with more than one list.
+* **Overflowing lists in dock panels show a scrollbar** - the tour's Steps rail and description column scrolled with no visual indication there was more; panels mounted into a split never painted list scrollbars.
+* **A tour's selection highlight stays inside the panel** - the selected step and description rows used to paint a stray block of highlight at the right edge of the screen, past the panel border.
 * **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`, `Shift+2` inserted `2`), because the terminal reports the *base* key and the shift separately (#2880, reported by @akarinotomoshibi).
 * **Highlights taller than the window are drawn again** - any overlay that started above the top of the view and ended below the bottom vanished entirely, because the viewport query needed one of its two endpoints to be on screen. A highlight covering everything you could see was the one case that failed. Affects diagnostics spanning a long block, large diff hunks, and guided-tour step ranges.
 * **Clicking a plugin panel where there is no control no longer scrolls it away** - a click on a panel's border or on empty padding used to move the panel's hidden cursor, and the viewport followed it, scrolling the panel's own header and buttons off screen with no way to bring them back. Affected every widget panel (Search & Replace, Settings, the Orchestrator dock).

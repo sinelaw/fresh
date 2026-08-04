@@ -563,12 +563,7 @@ impl Editor {
         {
             // The dock swallows the wheel whenever the pointer is over
             // its column (never leaks to the window beneath).
-        } else if self
-            .active_window()
-            .split_at_position(col, row)
-            .map(|(_, buffer_id)| self.handle_widget_panel_wheel(buffer_id, delta))
-            .unwrap_or(false)
-        {
+        } else if self.handle_split_widget_panel_wheel(col, row, delta) {
             // a mounted widget panel consumed the scroll
         } else {
             if self.active_window().focused_terminal_live() {
@@ -3988,7 +3983,12 @@ impl Editor {
         if row < inner.y || row >= inner.y + inner.height {
             return false;
         }
-        let scrolled = self.handle_widget_panel_wheel(slot.buffer_id(), delta);
+        // Panel-relative pointer position, so the wheel scrolls the
+        // List/Tree under it rather than the first one in the spec.
+        // Floating panels paint their entries from row 0 at `inner`,
+        // so the translation is a plain offset.
+        let pos = (u32::from(row - inner.y), u32::from(col - inner.x));
+        let scrolled = self.handle_widget_panel_wheel_at(slot.buffer_id(), Some(pos), delta);
         // The non-modal dock must swallow the wheel whenever the pointer
         // is over it, even when the list is too short to scroll — the
         // scroll must never leak through to the active window beneath.
@@ -3997,6 +3997,60 @@ impl Editor {
             Some(super::PanelPlacement::LeftDock { .. })
         );
         scrolled || is_dock
+    }
+
+    /// Route a vertical wheel to a widget panel mounted into an editor
+    /// split (Settings, Search & Replace, the code-tour dock). Resolves
+    /// the split under the pointer, translates the screen position into
+    /// the panel's (buffer row, display column), and hands it to
+    /// [`handle_widget_panel_wheel_at`](Self::handle_widget_panel_wheel_at)
+    /// so the wheel scrolls the list the pointer is actually over —
+    /// not the first list in the spec. Returns `true` when a panel
+    /// consumed the scroll.
+    fn handle_split_widget_panel_wheel(&mut self, col: u16, row: u16, delta: i32) -> bool {
+        let Some((split_id, buffer_id)) = self.active_window().split_at_position(col, row) else {
+            return false;
+        };
+        if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
+            return false;
+        }
+        let content_rect = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(sid, ..)| *sid == split_id)
+            .map(|(_, _, rect, ..)| *rect);
+        let pos = content_rect.and_then(|rect| {
+            if !in_rect(col, row, rect) {
+                return None;
+            }
+            // Buffer row = viewport top line + rows below the content
+            // origin. Panels render one entry per line (no soft wrap)
+            // and are normally pinned to the top, but honour a scrolled
+            // viewport all the same.
+            let top_byte = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .and_then(|vs| vs.get(&split_id))
+                .map(|vs| vs.viewport.top_byte())
+                .unwrap_or(0);
+            let top_line = self
+                .buffers()
+                .get(&buffer_id)
+                .map(|s| s.buffer.get_line_number(top_byte))
+                .unwrap_or(0);
+            let gutter = self
+                .buffers()
+                .get(&buffer_id)
+                .map(|s| s.margins.left_total_width() as u16)
+                .unwrap_or(0);
+            let panel_row = u32::from(row - rect.y).saturating_add(top_line as u32);
+            let panel_col = u32::from(col.saturating_sub(rect.x).saturating_sub(gutter));
+            Some((panel_row, panel_col))
+        });
+        self.handle_widget_panel_wheel_at(buffer_id, pos, delta)
     }
 
     /// Try to start a floating-panel list scrollbar drag. Returns

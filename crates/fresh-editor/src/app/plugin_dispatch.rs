@@ -4696,6 +4696,7 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
+            out.scroll_regions,
         );
         // Mark the buffer as hosting an interactive widget panel so the
         // focus/click paths keep routing focus to it even when it opts out
@@ -4762,6 +4763,7 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
+            out.scroll_regions,
         ) {
             Ok(buffer_id) => {
                 if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
@@ -5229,6 +5231,7 @@ impl Editor {
             out.instance_states,
             out.focus_key,
             out.tabbable,
+            scroll_regions.clone(),
         );
         if let Some(fwp) = self.panel_mut(slot) {
             fwp.entries = entries;
@@ -5307,6 +5310,7 @@ impl Editor {
                 out.instance_states,
                 out.focus_key,
                 out.tabbable,
+                scroll_regions.clone(),
             )
             .is_err()
         {

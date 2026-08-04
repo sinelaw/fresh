@@ -253,6 +253,13 @@ pub struct WidgetPanelState {
     /// current `focus_key`'s position in this list and advances by
     /// the requested delta (with wraparound).
     pub tabbable: Vec<String>,
+    /// Geometry + scroll state of every keyed `List`/`Tree` in the
+    /// most recent render, panel-relative (row 0 = first rendered
+    /// row, columns in display cells). Mouse-wheel routing hit-tests
+    /// the pointer against these so the wheel scrolls the list under
+    /// it, and the split render pass paints a scrollbar over each
+    /// overflowing one.
+    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
 }
 
 /// Global registry of mounted widget panels, keyed by composite
@@ -287,6 +294,7 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
+        scroll_regions: Vec<crate::widgets::ScrollRegion>,
     ) -> Option<WidgetPanelState> {
         self.panels.insert(
             panel_key,
@@ -297,6 +305,7 @@ impl WidgetRegistry {
                 instance_states,
                 focus_key,
                 tabbable,
+                scroll_regions,
             },
         )
     }
@@ -317,6 +326,7 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
+        scroll_regions: Vec<crate::widgets::ScrollRegion>,
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
             Some(state) => {
@@ -325,6 +335,7 @@ impl WidgetRegistry {
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
                 state.tabbable = tabbable;
+                state.scroll_regions = scroll_regions;
                 Ok(state.buffer_id)
             }
             None => Err(()),
@@ -411,12 +422,14 @@ impl WidgetRegistry {
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
         tabbable: Vec<String>,
+        scroll_regions: Vec<crate::widgets::ScrollRegion>,
     ) -> Option<BufferId> {
         let state = self.panels.get_mut(panel_key)?;
         state.hits = hits;
         state.instance_states = instance_states;
         state.focus_key = focus_key;
         state.tabbable = tabbable;
+        state.scroll_regions = scroll_regions;
         Some(state.buffer_id)
     }
 
@@ -663,6 +676,7 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            Vec::new(),
         );
         let hit = reg.hit_test(BufferId(7), 0, 8).expect("inside b");
         assert_eq!(hit.0, pk(42));
@@ -679,6 +693,7 @@ mod tests {
             vec![make_hit(0, 0, 5, "a")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
             Vec::new(),
         );
         assert!(
@@ -718,6 +733,7 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            Vec::new(),
         );
         // Byte 10 is the exclusive end, so `hit_test` alone misses...
         assert!(reg.hit_test(BufferId(2), 0, 10).is_none());
@@ -742,6 +758,7 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            Vec::new(),
         );
         let (_, hit) = reg
             .hit_test_row_aware(BufferId(3), 0, 2)
@@ -762,6 +779,7 @@ mod tests {
             vec![make_row_select_hit(0, 8, "only-row")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
             Vec::new(),
         );
         assert!(reg.hit_test_row_aware(BufferId(4), 3, 0).is_none());
@@ -785,6 +803,7 @@ mod tests {
             Vec::new(),
             states,
             String::new(),
+            Vec::new(),
             Vec::new(),
         );
     }
@@ -849,6 +868,7 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            Vec::new(),
         );
         let evicted = reg.mount(
             PanelKey::new("beta", 1),
@@ -857,6 +877,7 @@ mod tests {
             vec![make_hit(0, 0, 5, "b-btn")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
             Vec::new(),
         );
         assert!(evicted.is_none(), "beta:1 must not evict alpha:1");
@@ -885,6 +906,7 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            Vec::new(),
         );
         assert!(reg.hit_test(BufferId(2), 0, 1).is_some());
         reg.unmount(&pk(5));
@@ -902,6 +924,7 @@ mod tests {
             HashMap::new(),
             String::new(),
             Vec::new(),
+            Vec::new(),
         );
         reg.update(
             &pk(5),
@@ -909,6 +932,7 @@ mod tests {
             vec![make_hit(1, 4, 9, "new")],
             HashMap::new(),
             String::new(),
+            Vec::new(),
             Vec::new(),
         )
         .expect("mounted");

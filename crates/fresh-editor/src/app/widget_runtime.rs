@@ -904,6 +904,7 @@ impl Editor {
                 out_pieces.instance_states,
                 out_pieces.focus_key,
                 out_pieces.tabbable,
+                scroll_regions.clone(),
             )
             .is_none()
         {
@@ -2447,18 +2448,36 @@ impl Editor {
         false
     }
 
-    /// Mouse-wheel scroll over a widget panel buffer. Finds the
-    /// first `Tree`/`List` in any panel rendering into `buffer_id`
-    /// and shifts its viewport by `delta` rows. Sets the widget's
+    /// Mouse-wheel scroll over a widget panel buffer, without pointer
+    /// geometry. Falls back to the first `Tree`/`List` in the spec —
+    /// see [`handle_widget_panel_wheel_at`] for the position-aware
+    /// variant every pointer-driven caller should prefer.
+    pub(super) fn handle_widget_panel_wheel(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        delta: i32,
+    ) -> bool {
+        self.handle_widget_panel_wheel_at(buffer_id, None, delta)
+    }
+
+    /// Mouse-wheel scroll over a widget panel buffer. With `pos` —
+    /// the pointer's panel-relative (row, display column) — the wheel
+    /// scrolls the `List`/`Tree` whose rendered region contains the
+    /// pointer, so two side-by-side lists (the code tour's Steps rail
+    /// and prose column) each answer to the wheel hovering over them.
+    /// Without a position, or when the pointer sits on panel chrome
+    /// outside every list, it falls back to the first `Tree`/`List`
+    /// in the spec (the pre-position behaviour). Sets the widget's
     /// `user_scrolled` flag so the renderer's auto-scroll doesn't
     /// snap the offset back to the selection. No focus change,
     /// no `widget_event` fires — wheel is viewport navigation, not
     /// selection.
     ///
     /// Returns `true` if any panel consumed the scroll.
-    pub(super) fn handle_widget_panel_wheel(
+    pub(super) fn handle_widget_panel_wheel_at(
         &mut self,
         buffer_id: crate::model::event::BufferId,
+        pos: Option<(u32, u32)>,
         delta: i32,
     ) -> bool {
         let panels = self.widget_registry.panels_for_buffer(buffer_id);
@@ -2483,11 +2502,29 @@ impl Editor {
                 consumed = true;
                 continue;
             }
-            let spec = match self.widget_registry.get(&panel_key) {
-                Some(p) => p.spec.clone(),
+            // Position-aware routing: the rendered region under the
+            // pointer names the widget to scroll. Regions are emitted
+            // for every keyed List/Tree (overflowing or not), so a
+            // wheel over a list that happens to fit is *not* rerouted
+            // to a scrollable sibling elsewhere on the panel.
+            let (spec, hovered_key) = match self.widget_registry.get(&panel_key) {
+                Some(p) => {
+                    let hovered = pos.and_then(|(row, col)| {
+                        p.scroll_regions
+                            .iter()
+                            .find(|r| {
+                                row >= r.buffer_row
+                                    && row < r.buffer_row.saturating_add(r.height_rows)
+                                    && col >= r.col_in_row
+                                    && col < r.col_in_row.saturating_add(r.width_cols)
+                            })
+                            .map(|r| r.list_key.clone())
+                    });
+                    (p.spec.clone(), hovered)
+                }
                 None => continue,
             };
-            let Some(widget_key) = find_scrollable_widget_key(&spec) else {
+            let Some(widget_key) = hovered_key.or_else(|| find_scrollable_widget_key(&spec)) else {
                 continue;
             };
             let widget = crate::widgets::find_widget_by_key(&spec, &widget_key);
