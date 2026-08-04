@@ -721,6 +721,13 @@ async function revealStep(t: TourInstance): Promise<void> {
   // Naming a split explicitly would bypass that guard and let the step's
   // source land beside the panels.
   editor.openFile(step.file_path, step.lines[0], 1);
+  // Hand the keyboard straight back. Both calls are FIFO commands, so
+  // queueing the focus restore in the same turn leaves no window where
+  // a key typed at the panel lands in the source file instead — parking
+  // it after the scroll/overlay awaits below let an n/p/arrow pressed
+  // during those awaits type into the code (seen as CI timeouts and a
+  // literal "n" inserted into the step's file).
+  editor.focusSplit(t.splitId);
   // `openFile` is a queued FIFO command — wait for the queue, not the clock.
   // A fixed 30 ms said nothing about whether the host had drained it; on a
   // loaded runner it often hadn't, `stepBufferId` below then missed the
@@ -743,9 +750,6 @@ async function revealStep(t: TourInstance): Promise<void> {
     editor.scrollBufferToLine(bufferId, Math.min(middle, keepTopVisible));
     await paintStepOverlay(t);
   }
-  // `openFile` focused the editor. Hand the keyboard back to the panel so
-  // n / p keep stepping instead of typing into the source file.
-  editor.focusSplit(t.splitId);
   renderPanel(t);
 }
 
