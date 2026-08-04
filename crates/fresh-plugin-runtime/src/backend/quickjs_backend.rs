@@ -2378,6 +2378,29 @@ impl JsEditorApi {
         text.len() as u32
     }
 
+    /// Line-level diff of two texts (native patience diff; see
+    /// `crate::diff`). Returns hunks of differing line ranges in
+    /// increasing order; equal regions are not reported. Lines are
+    /// 0-indexed `\n`-terminated segments (a final unterminated segment
+    /// counts as a line), matching the `text.split("\n")`-and-drop-
+    /// trailing-empty convention plugins already use for line arrays.
+    ///
+    /// Never refuses an input: pathological chunks degrade to coarser
+    /// hunks instead of failing, so callers don't need a "diff too
+    /// large" path. Runs synchronously on the plugin thread — cost is
+    /// near-linear in input size, far below the JS it replaces.
+    #[plugin_api(ts_return = "LineDiffHunk[]")]
+    pub fn compute_line_diff<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        old_text: String,
+        new_text: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let hunks = crate::diff::compute_line_diff(&old_text, &new_text);
+        rquickjs_serde::to_value(ctx, &hunks)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
     // === File System ===
 
     /// Check if a file exists on the path's filesystem (a window's authority,

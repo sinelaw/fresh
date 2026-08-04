@@ -27,7 +27,7 @@
     "status.mode_disk": "Live Diff: comparing against file on disk",
     "status.mode_branch": "Live Diff: comparing against %{ref}",
     "status.refreshed": "Live Diff: reference refreshed",
-    "status.too_large": "Live Diff: file too large for live diff",
+    "status.simplified": "Live Diff: large change — simplified view",
     "status.bad_default": "Live Diff: invalid mode (use head, disk, or branch:<ref>)",
     "status.default_set": "Live Diff: default mode updated"
   },
@@ -59,7 +59,7 @@
     "status.mode_disk": "Živý Diff: porovnávám se souborem na disku",
     "status.mode_branch": "Živý Diff: porovnávám s %{ref}",
     "status.refreshed": "Živý Diff: reference obnovena",
-    "status.too_large": "Živý Diff: soubor je příliš velký pro živý diff",
+    "status.simplified": "Živý Diff: rozsáhlá změna — zjednodušené zobrazení",
     "status.bad_default": "Živý Diff: neplatný režim (použijte head, disk nebo branch:<ref>)",
     "status.default_set": "Živý Diff: výchozí režim aktualizován"
   },
@@ -91,7 +91,7 @@
     "status.mode_disk": "Live-Diff: Vergleich mit Datei auf der Festplatte",
     "status.mode_branch": "Live-Diff: Vergleich mit %{ref}",
     "status.refreshed": "Live-Diff: Referenz aktualisiert",
-    "status.too_large": "Live-Diff: Datei zu groß für Live-Diff",
+    "status.simplified": "Live-Diff: große Änderung — vereinfachte Ansicht",
     "status.bad_default": "Live-Diff: ungültiger Modus (head, disk oder branch:<ref> verwenden)",
     "status.default_set": "Live-Diff: Standardmodus aktualisiert"
   },
@@ -123,7 +123,7 @@
     "status.mode_disk": "Diff en vivo: comparando contra archivo en disco",
     "status.mode_branch": "Diff en vivo: comparando contra %{ref}",
     "status.refreshed": "Diff en vivo: referencia actualizada",
-    "status.too_large": "Diff en vivo: archivo demasiado grande para diff en vivo",
+    "status.simplified": "Diff en vivo: cambio extenso — vista simplificada",
     "status.bad_default": "Diff en vivo: modo inválido (use head, disk o branch:<ref>)",
     "status.default_set": "Diff en vivo: modo predeterminado actualizado"
   },
@@ -155,7 +155,7 @@
     "status.mode_disk": "Diff en direct : comparaison avec le fichier sur disque",
     "status.mode_branch": "Diff en direct : comparaison avec %{ref}",
     "status.refreshed": "Diff en direct : référence rafraîchie",
-    "status.too_large": "Diff en direct : fichier trop volumineux pour un diff en direct",
+    "status.simplified": "Diff en direct : changement volumineux — affichage simplifié",
     "status.bad_default": "Diff en direct : mode invalide (utilisez head, disk ou branch:<ref>)",
     "status.default_set": "Diff en direct : mode par défaut mis à jour"
   },
@@ -187,7 +187,7 @@
     "status.mode_disk": "Diff in tempo reale: confronto con il file su disco",
     "status.mode_branch": "Diff in tempo reale: confronto con %{ref}",
     "status.refreshed": "Diff in tempo reale: riferimento aggiornato",
-    "status.too_large": "Diff in tempo reale: file troppo grande per il diff in tempo reale",
+    "status.simplified": "Diff in tempo reale: modifica estesa — vista semplificata",
     "status.bad_default": "Diff in tempo reale: modalità non valida (usa head, disk o branch:<ref>)",
     "status.default_set": "Diff in tempo reale: modalità predefinita aggiornata"
   },
@@ -219,7 +219,7 @@
     "status.mode_disk": "ライブ差分: ディスク上のファイルと比較中",
     "status.mode_branch": "ライブ差分: %{ref} と比較中",
     "status.refreshed": "ライブ差分: リファレンスを更新しました",
-    "status.too_large": "ライブ差分: ファイルが大きすぎます",
+    "status.simplified": "ライブ差分: 変更が大きいため簡易表示",
     "status.bad_default": "ライブ差分: 無効なモード (head、disk、または branch:<ref> を使用)",
     "status.default_set": "ライブ差分: デフォルトモードを更新しました"
   },
@@ -251,7 +251,7 @@
     "status.mode_disk": "라이브 Diff: 디스크의 파일과 비교 중",
     "status.mode_branch": "라이브 Diff: %{ref}와 비교 중",
     "status.refreshed": "라이브 Diff: 참조 새로고침됨",
-    "status.too_large": "라이브 Diff: 파일이 너무 커서 라이브 diff 불가",
+    "status.simplified": "라이브 Diff: 변경이 커서 간소화된 표시",
     "status.bad_default": "라이브 Diff: 잘못된 모드 (head, disk, 또는 branch:<ref> 사용)",
     "status.default_set": "라이브 Diff: 기본 모드 업데이트됨"
   },
@@ -283,7 +283,7 @@
     "status.mode_disk": "Diff ao vivo: comparando com arquivo em disco",
     "status.mode_branch": "Diff ao vivo: comparando com %{ref}",
     "status.refreshed": "Diff ao vivo: referência atualizada",
-    "status.too_large": "Diff ao vivo: arquivo muito grande para diff ao vivo",
+    "status.simplified": "Diff ao vivo: alteração extensa — exibição simplificada",
     "status.bad_default": "Diff ao vivo: modo inválido (use head, disk ou branch:<ref>)",
     "status.default_set": "Diff ao vivo: modo padrão atualizado"
   },
@@ -315,7 +315,7 @@
     "status.mode_disk": "Живой Diff: сравнение с файлом на диске",
     "status.mode_branch": "Живой Diff: сравнение с %{ref}",
     "status.refreshed": "Живой Diff: эталон обновлён",
-    "status.too_large": "Живой Diff: файл слишком большой для живого diff",
+    "status.simplified": "Живой Diff: большое изменение — упрощённый вид",
     "status.bad_default": "Живой Diff: недопустимый режим (используйте head, disk или branch:<ref>)",
     "status.default_set": "Живой Diff: режим по умолчанию обновлён"
   },
@@ -347,7 +347,7 @@
     "status.mode_disk": "Diff สด: กำลังเปรียบเทียบกับไฟล์บนดิสก์",
     "status.mode_branch": "Diff สด: กำลังเปรียบเทียบกับ %{ref}",
     "status.refreshed": "Diff สด: รีเฟรชการอ้างอิงแล้ว",
-    "status.too_large": "Diff สด: ไฟล์ใหญ่เกินไปสำหรับ diff สด",
+    "status.simplified": "Diff สด: การเปลี่ยนแปลงขนาดใหญ่ — แสดงแบบย่อ",
     "status.bad_default": "Diff สด: โหมดไม่ถูกต้อง (ใช้ head, disk หรือ branch:<ref>)",
     "status.default_set": "Diff สด: อัปเดตโหมดเริ่มต้นแล้ว"
   },
@@ -379,7 +379,7 @@
     "status.mode_disk": "Живий Diff: порівняння з файлом на диску",
     "status.mode_branch": "Живий Diff: порівняння з %{ref}",
     "status.refreshed": "Живий Diff: еталон оновлено",
-    "status.too_large": "Живий Diff: файл завеликий для живого diff",
+    "status.simplified": "Живий Diff: велика зміна — спрощений вигляд",
     "status.bad_default": "Живий Diff: неприпустимий режим (використовуйте head, disk або branch:<ref>)",
     "status.default_set": "Живий Diff: типовий режим оновлено"
   },
@@ -411,7 +411,7 @@
     "status.mode_disk": "Diff trực tiếp: đang so sánh với tệp trên đĩa",
     "status.mode_branch": "Diff trực tiếp: đang so sánh với %{ref}",
     "status.refreshed": "Diff trực tiếp: đã làm mới tham chiếu",
-    "status.too_large": "Diff trực tiếp: tệp quá lớn để diff trực tiếp",
+    "status.simplified": "Diff trực tiếp: thay đổi lớn — hiển thị đơn giản hóa",
     "status.bad_default": "Diff trực tiếp: chế độ không hợp lệ (sử dụng head, disk hoặc branch:<ref>)",
     "status.default_set": "Diff trực tiếp: đã cập nhật chế độ mặc định"
   },
@@ -443,7 +443,7 @@
     "status.mode_disk": "实时 Diff: 正在与磁盘上的文件对比",
     "status.mode_branch": "实时 Diff: 正在与 %{ref} 对比",
     "status.refreshed": "实时 Diff: 参照已刷新",
-    "status.too_large": "实时 Diff: 文件过大，无法进行实时 diff",
+    "status.simplified": "实时 Diff: 变更较大 — 简化显示",
     "status.bad_default": "实时 Diff: 模式无效 (使用 head、disk 或 branch:<ref>)",
     "status.default_set": "实时 Diff: 默认模式已更新"
   }

@@ -21,11 +21,12 @@ use fresh_core::api::{
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
     CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
     GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
-    LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo,
-    ReplaceResult, ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot,
-    TerminalResult, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle,
-    ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig, OverlayColorSpec,
+    OverlayOptions, PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig,
+    RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker, SearchTakeResult, SpawnResult,
+    SplitSnapshot, TerminalResult, TextPropertiesAtCursor, TokenColor, TsHighlightSpan,
+    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -66,6 +67,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "WorkspaceDescription" => Some(fresh_core::api::WorkspaceDescription::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
         "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
+        "LineDiffHunk" => Some(LineDiffHunk::decl(&cfg)),
         "LayoutHints" => Some(LayoutHints::decl(&cfg)),
 
         // Process types
@@ -924,6 +926,7 @@ mod tests {
             "SplitSnapshot",
             "ActionSpec",
             "BufferSavedDiff",
+            "LineDiffHunk",
             "LayoutHints",
             "SpawnResult",
             "BackgroundProcessResult",
@@ -1358,6 +1361,7 @@ mod tests {
             "pathExtname",
             "pathIsAbsolute",
             "utf8ByteLength",
+            "computeLineDiff",
             "fileExists",
             "readFile",
             "writeFile",

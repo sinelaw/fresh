@@ -2336,6 +2336,24 @@ type LanguagePackConfig = {
 	*/
 	formatter: FormatterPackConfig | null;
 };
+type LineDiffHunk = {
+	/**
+	* First affected line in the old text (0-based).
+	*/
+	oldStart: number;
+	/**
+	* Number of old-side lines in the hunk (0 for pure insertion).
+	*/
+	oldCount: number;
+	/**
+	* First affected line in the new text (0-based).
+	*/
+	newStart: number;
+	/**
+	* Number of new-side lines in the hunk (0 for pure deletion).
+	*/
+	newCount: number;
+};
 type LocalPath = {
 	kind: "local";
 	value: string;
@@ -2964,6 +2982,20 @@ interface EditorAPI {
 	* lengths / regex match indices to the byte offsets the editor expects.
 	*/
 	utf8ByteLength(text: string): number;
+	/**
+	* Line-level diff of two texts (native patience diff; see
+	* `crate::diff`). Returns hunks of differing line ranges in
+	* increasing order; equal regions are not reported. Lines are
+	* 0-indexed `\n`-terminated segments (a final unterminated segment
+	* counts as a line), matching the `text.split("\n")`-and-drop-
+	* trailing-empty convention plugins already use for line arrays.
+	* 
+	* Never refuses an input: pathological chunks degrade to coarser
+	* hunks instead of failing, so callers don't need a "diff too
+	* large" path. Runs synchronously on the plugin thread — cost is
+	* near-linear in input size, far below the JS it replaces.
+	*/
+	computeLineDiff(oldText: string, newText: string): LineDiffHunk[];
 	/**
 	* Check if a file exists on the path's filesystem (a window's authority,
 	* or the local host for a `LocalPath`).

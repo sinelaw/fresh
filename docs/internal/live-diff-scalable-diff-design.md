@@ -1,6 +1,17 @@
 # Live Diff: scalable diff design (kill the "file too large" refusal)
 
-Status: proposal
+Status: implemented — with one deviation from the original proposal:
+per review feedback, no new dependency was added. `computeLineDiff` is
+backed by an in-house patience diff (`fresh-plugin-runtime/src/diff.rs`:
+line interning → unique-line anchors chained by LIS → recursion between
+anchors, with a small dense-LCS fallback for anchor-free chunks and a
+coarse whole-chunk replacement past `FALLBACK_LCS_CELLS`) instead of the
+`imara-diff` crate discussed below. The API shape, degraded render
+levels, and test strategy are as proposed. The API also ended up
+synchronous rather than promise-based: it executes on the plugin
+runtime's own thread — the same thread that previously ran the JS DP —
+so a native sub-millisecond call needs no async plumbing, and the editor
+loop was never involved.
 Motivated by: `live-diff-old-file-refusal-repro.md` (checkout of
 `HEAD~1200`'s `main.rs` → 24.9M DP cells → `lineDiff` bails → plugin
 renders nothing).

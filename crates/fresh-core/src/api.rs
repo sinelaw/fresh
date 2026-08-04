@@ -590,6 +590,25 @@ pub struct BufferSavedDiff {
     pub byte_ranges: Vec<Range<usize>>,
 }
 
+/// One hunk from `computeLineDiff`: a maximal run of differing lines.
+/// Line indices are 0-based; a line is a `\n`-terminated (or final
+/// unterminated) segment of the input text. `old_count == 0` is a pure
+/// insertion, `new_count == 0` a pure deletion, both non-zero a
+/// replacement. Equal regions between hunks are not reported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct LineDiffHunk {
+    /// First affected line in the old text (0-based).
+    pub old_start: u32,
+    /// Number of old-side lines in the hunk (0 for pure insertion).
+    pub old_count: u32,
+    /// First affected line in the new text (0-based).
+    pub new_start: u32,
+    /// Number of new-side lines in the hunk (0 for pure deletion).
+    pub new_count: u32,
+}
+
 /// Information about the viewport
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

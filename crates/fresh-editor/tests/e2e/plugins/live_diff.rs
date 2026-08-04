@@ -1108,3 +1108,136 @@ fn test_live_diff_clears_after_commit() {
         .wait_until(|h| !has_glyph(&h.screen_to_string(), '+'))
         .unwrap();
 }
+
+// =============================================================================
+// Large-drift regressions (live-diff-old-file-refusal-repro.md)
+// =============================================================================
+//
+// Checking out a very old revision of a file used to make live-diff refuse
+// outright: the plugin's dense-LCS DP bailed past 16M cells, cleared every
+// decoration, and reported "file too large for live diff". The line diff now
+// runs natively (`editor.computeLineDiff`) with no size bail, and oversized
+// *rendering* degrades locally (fewer decorations) instead of globally
+// (none). Both tests below construct buffer-vs-HEAD pairs whose stripped
+// diff middle exceeds the old 16M-cell cap, so without the fix they time
+// out waiting for gutter glyphs that never appear.
+
+/// Build a file of `total` lines where every 5th line is unique to `side`
+/// and the rest are shared filler. Two such files for different sides give
+/// a diff middle of ~total x total lines (the old DP refused past ~4000)
+/// while only ~total/5 lines actually differ — so the render stays at full
+/// detail, virtual deletion lines included.
+fn interleaved_drift_file(side: &str, total: usize) -> String {
+    let mut text = String::new();
+    for i in 0..total {
+        if i % 5 == 4 {
+            text.push_str(&format!("{side} unique payload {i}\n"));
+        } else {
+            text.push_str(&format!("shared filler line {i}\n"));
+        }
+    }
+    text
+}
+
+/// A buffer whose diff-vs-HEAD middle is ~4900x4900 lines (24M DP cells —
+/// past the old refusal cap) but with under 1000 changed lines: must render
+/// at FULL detail. The `-` virtual line carrying old-side text proves the
+/// full pipeline ran; a `+` glyph proves the gutter did.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_old_revision_large_middle_renders_full_detail() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file("src/big.rs", &interleaved_drift_file("old", 4_900));
+    repo.git_add(&["src/big.rs"]);
+    repo.git_commit("old revision of big file");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // The working tree holds the "new revision"; the buffer diffs it
+    // against the committed old one — the same shape as checking out an
+    // old revision of a tracked file and enabling live diff.
+    repo.modify_file("src/big.rs", &interleaved_drift_file("new", 4_900));
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/big.rs");
+
+    // Full-detail rendering: the low-similarity rewrite pair at line 5
+    // splits into removed + added, so the OLD text renders as a virtual
+    // deletion line above the new one, and the added half gets `+`.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            has_glyph(&screen, '+') && has_text(&screen, "old unique payload 4")
+        })
+        .unwrap();
+}
+
+/// A near-total rewrite at the reported scale (~5k vs ~6k lines, <1%
+/// shared): far too many virtual lines to be usable, so rendering degrades
+/// to "no virtual lines" — but gutter glyphs still appear and the status
+/// bar says the view is simplified. Before the fix this scenario rendered
+/// nothing at all.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_near_total_rewrite_degrades_but_renders() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    let mut old_text = String::new();
+    for i in 0..5_000 {
+        if i % 100 == 0 {
+            old_text.push_str(&format!("shared anchor line {i}\n"));
+        } else {
+            old_text.push_str(&format!("ancient line {i} content {}\n", i * 7919));
+        }
+    }
+    repo.create_file("src/big.rs", &old_text);
+    repo.git_add(&["src/big.rs"]);
+    repo.git_commit("ancient revision");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut new_text = String::new();
+    for i in 0..6_000 {
+        if i % 100 == 0 {
+            new_text.push_str(&format!("shared anchor line {i}\n"));
+        } else {
+            new_text.push_str(&format!("modern line {i} content {}\n", i * 6271));
+        }
+    }
+    repo.modify_file("src/big.rs", &new_text);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/big.rs");
+
+    // Gutter glyphs render (the whole visible region changed vs HEAD) and
+    // the degraded-detail status is announced. The status assertion reads
+    // the full screen (not content_lines) because the status bar is one of
+    // the rows content_lines strips.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            has_glyph(&screen, '~') && screen.contains("simplified view")
+        })
+        .unwrap();
+}
