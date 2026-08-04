@@ -191,13 +191,15 @@ fn test_venv_prompts_then_activates_on_trust() {
         .unwrap();
 
     // Now the path-only env activates silently (no second prompt) via the
-    // `trust_changed` hook.
+    // `trust_changed` hook. `Reloading` is also a successful visible outcome:
+    // `setEnv` may make the environment active before the status message is
+    // rendered, in which case env-manager reports the ensuing reload.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
             !s.contains("SECURITY WARNING")
                 && s.contains(".venv")
-                && (s.contains("Activating") || s.contains("active"))
+                && (s.contains("Activating") || s.contains("Reloading") || s.contains("active"))
         })
         .unwrap();
 }
@@ -266,7 +268,10 @@ fn test_orchestrator_session_prompts_then_activates_venv() {
         .unwrap();
 
     // Trust it (mnemonic 't' + Enter); the path-only env then activates in the
-    // new window via `trust_changed`.
+    // new window via `trust_changed`. The terminal view does not always show
+    // the env status pill, and the transient `Activating` message may already
+    // have advanced to the equally successful `Reloading` state by the time
+    // the harness renders.
     harness
         .send_key(KeyCode::Char('t'), KeyModifiers::NONE)
         .unwrap();
@@ -278,7 +283,7 @@ fn test_orchestrator_session_prompts_then_activates_venv() {
             let s = h.screen_to_string();
             !s.contains("SECURITY WARNING")
                 && s.contains(".venv")
-                && (s.contains("Activating") || s.contains("active"))
+                && (s.contains("Activating") || s.contains("Reloading") || s.contains("active"))
         })
         .unwrap();
 }
