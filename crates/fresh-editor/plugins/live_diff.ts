@@ -1513,6 +1513,21 @@ editor.on("after_file_save", (args) => {
   return true;
 });
 
+editor.on("after_file_revert", (args) => {
+  const state = states.get(args.buffer_id);
+  if (!state) return true;
+  // The buffer was reloaded from disk (auto-revert after an external change,
+  // or an explicit revert). The disk-mode reference *is* the file on disk,
+  // so it is stale now; every mode needs a recompute against the reloaded
+  // content — the edit hooks don't fire for a wholesale buffer replacement.
+  state.filePath = args.path;
+  if (state.mode.kind === "disk") {
+    dropReference(state);
+  }
+  recompute(args.buffer_id).catch((e) => editor.error(`live-diff: ${e}`));
+  return true;
+});
+
 editor.on("buffer_closed", (args) => {
   states.delete(args.buffer_id);
   return true;

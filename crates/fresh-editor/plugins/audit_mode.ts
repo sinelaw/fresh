@@ -4352,19 +4352,24 @@ function review_toggle_watch() {
 }
 registerHandler("review_toggle_watch", review_toggle_watch);
 
-editor.on("after_file_save", () => {
-    if (!reviewWatchEnabled || state.groupId === null) return true;
-    // Range reviews are ref-to-ref; working-tree saves don't change them.
-    if (state.mode === 'range') return true;
-    const myGen = ++reviewWatchGen;
-    void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
-        // Superseded by a later save, or the review closed / watch turned
-        // off while we waited.
-        if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
-        void refreshMagitData();
+// A save and an external reset (auto-revert reload, e.g. `git checkout
+// <ref> -- <file>` in another terminal) both change the working tree the
+// review diffs against, so they share one refresh handler.
+for (const event of ["after_file_save", "after_file_revert"] as const) {
+    editor.on(event, () => {
+        if (!reviewWatchEnabled || state.groupId === null) return true;
+        // Range reviews are ref-to-ref; working-tree changes don't affect them.
+        if (state.mode === 'range') return true;
+        const myGen = ++reviewWatchGen;
+        void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
+            // Superseded by a later change, or the review closed / watch
+            // turned off while we waited.
+            if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
+            void refreshMagitData();
+        });
+        return true;
     });
-    return true;
-});
+}
 
 // --- Hunk navigation for side-by-side diff view ---
 
