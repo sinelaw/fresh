@@ -1587,7 +1587,7 @@ impl EditorServer {
 
         // Render to capture backend
         terminal
-            .draw(|frame| editor.render(frame))
+            .draw(|frame| editor.render_for_terminal(frame))
             .map_err(|e| io::Error::other(e.to_string()))?;
 
         // Get the captured output

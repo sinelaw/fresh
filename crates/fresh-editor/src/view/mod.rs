@@ -47,6 +47,10 @@ pub mod viewport;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod virtual_text;
 
+/// Blanks the padding cell behind a double-width glyph so the terminal
+/// stays on the column the frame buffer says it is on.
+pub mod wide_glyph_padding;
+
 /// Byte <-> visual row, repaired rather than invalidated.
 pub mod wrap_index;
 

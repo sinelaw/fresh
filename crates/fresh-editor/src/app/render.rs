@@ -65,6 +65,27 @@ impl Editor {
         }
     }
 
+    /// Render a frame destined for a terminal, i.e. one that reaches the
+    /// screen as ANSI produced by diffing this buffer against the last one.
+    ///
+    /// Every backend that emits ANSI goes through here rather than calling
+    /// [`Self::render`] directly, so the wide-glyph padding fixup can't be
+    /// forgotten at one of the call sites. Frontends that consume the buffer
+    /// as data — the web UI reads cells straight out of a `TestBackend` —
+    /// keep calling [`Self::render`]: the fixup below is meaningless to them
+    /// and would only blank cells they still want to lay out.
+    pub fn render_for_terminal(&mut self, frame: &mut Frame) {
+        self.render(frame);
+
+        // Blank the reserved cell behind each double-width glyph. ratatui
+        // leaves it holding a space, and for clusters made double-width by a
+        // variation selector the diff prints that space on top of the glyph's
+        // own two columns — from there the terminal runs a column ahead of the
+        // buffer, later writes on the row step over columns, and whatever the
+        // previous frame left in them stays on screen (issue #2877).
+        crate::view::wide_glyph_padding::normalize_wide_glyph_padding(frame.buffer_mut());
+    }
+
     /// Render the editor to the terminal
     pub fn render(&mut self, frame: &mut Frame) {
         let _span = tracing::info_span!("render").entered();

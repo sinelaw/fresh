@@ -5266,7 +5266,7 @@ where
                 let _span = tracing::info_span!("terminal_draw").entered();
                 use crossterm::ExecutableCommand;
                 stdout().execute(crossterm::terminal::BeginSynchronizedUpdate)?;
-                terminal.draw(|frame| editor.render(frame))?;
+                terminal.draw(|frame| editor.render_for_terminal(frame))?;
                 stdout().execute(crossterm::terminal::EndSynchronizedUpdate)?;
             }
             tracing::info!(target: "paste_timing", "render: {}ms (paste_pending={})", r0.elapsed().as_millis(), was_paste_pending);
