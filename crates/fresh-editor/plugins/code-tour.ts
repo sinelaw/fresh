@@ -16,6 +16,7 @@ import {
   spacer,
   type StyledSegment,
   styledRow,
+  text,
   type TextPropertyEntry,
   type WidgetAction,
   WidgetPanel,
@@ -130,7 +131,6 @@ type RGB = [number, number, number];
 const C = {
   dim: [120, 120, 140] as RGB,
   accent: [140, 190, 255] as RGB,
-  code: [200, 170, 120] as RGB,
   rule: [80, 80, 100] as RGB,
   warn: [230, 170, 70] as RGB,
   path: [220, 160, 80] as RGB,
@@ -146,12 +146,6 @@ function charLen(s: string): number {
   return n;
 }
 
-function chars(s: string): string[] {
-  const out: string[] = [];
-  for (const c of s) out.push(c);
-  return out;
-}
-
 function truncate(s: string, max: number): string {
   if (max <= 0) return "";
   if (charLen(s) <= max) return s;
@@ -164,214 +158,6 @@ function truncate(s: string, max: number): string {
     n++;
   }
   return out + "…";
-}
-
-// ============================================================================
-// Markdown → styled rows
-//
-// The step `explanation` is authored markdown. The old popup dumped it into a
-// plain text box, which dropped the head of every wrapped line. Here it is
-// parsed once per (step, width) into styled rows the List widget scrolls.
-// ============================================================================
-
-type SpanKind = "bold" | "italic" | "code";
-interface Span {
-  start: number;
-  end: number;
-  kind: SpanKind;
-}
-
-/** Strip `**bold**` / `` `code` `` markers, recording the ranges they covered
- * as character offsets into the *stripped* text. Wrapping then happens on
- * plain text and the spans are intersected with each output line. */
-function parseInline(src: string): { text: string; spans: Span[] } {
-  const cs = chars(src);
-  let text = "";
-  let len = 0;
-  const spans: Span[] = [];
-  let boldStart: number | null = null;
-  let italicStart: number | null = null;
-  let codeStart: number | null = null;
-
-  for (let i = 0; i < cs.length; i++) {
-    const c = cs[i];
-    if (c === "*" && cs[i + 1] === "*" && codeStart === null) {
-      if (boldStart === null) {
-        boldStart = len;
-      } else {
-        if (len > boldStart) spans.push({ start: boldStart, end: len, kind: "bold" });
-        boldStart = null;
-      }
-      i++;
-      continue;
-    }
-    // Single `*` is emphasis — checked after `**` so bold still wins.
-    if (c === "*" && codeStart === null) {
-      if (italicStart === null) {
-        italicStart = len;
-      } else {
-        if (len > italicStart) spans.push({ start: italicStart, end: len, kind: "italic" });
-        italicStart = null;
-      }
-      continue;
-    }
-    if (c === "`") {
-      if (codeStart === null) {
-        codeStart = len;
-      } else {
-        if (len > codeStart) spans.push({ start: codeStart, end: len, kind: "code" });
-        codeStart = null;
-      }
-      continue;
-    }
-    text += c;
-    len++;
-  }
-  // Unterminated markers: the text is already emitted verbatim, so there is
-  // nothing to close — dropping the dangling span is the right recovery.
-  return { text, spans };
-}
-
-/** Greedy word wrap. Returns character ranges into `text`. */
-function wrapRanges(text: string, width: number): Array<[number, number]> {
-  if (width <= 0) return [[0, charLen(text)]];
-  const cs = chars(text);
-  if (cs.length === 0) return [[0, 0]];
-  const out: Array<[number, number]> = [];
-  let lineStart = 0;
-  let lastBreak = -1;
-  let i = 0;
-  while (i < cs.length) {
-    if (cs[i] === " ") lastBreak = i;
-    if (i - lineStart >= width) {
-      // Break at the last space that fits; if the word itself is longer than
-      // the line, hard-break it rather than overflowing the panel.
-      const brk = lastBreak > lineStart ? lastBreak : i;
-      out.push([lineStart, brk]);
-      lineStart = brk;
-      while (lineStart < cs.length && cs[lineStart] === " ") lineStart++;
-      lastBreak = -1;
-      i = lineStart;
-      continue;
-    }
-    i++;
-  }
-  out.push([lineStart, cs.length]);
-  return out;
-}
-
-/** Build one row: a plain `indent` prefix, then `text[lo,hi)` split at span
- * boundaries so each styled run becomes its own segment. */
-function spannedRow(
-  indent: string,
-  text: string,
-  spans: Span[],
-  lo: number,
-  hi: number,
-  base?: Partial<OverlayOptions>,
-): TextPropertyEntry {
-  const cs = chars(text);
-  const segments: StyledSegment[] = [];
-  if (indent.length > 0) segments.push({ text: indent });
-
-  // Boundaries inside [lo, hi) where the active style changes.
-  const cuts = new Set<number>([lo, hi]);
-  for (const s of spans) {
-    if (s.end > lo && s.start < hi) {
-      cuts.add(Math.max(s.start, lo));
-      cuts.add(Math.min(s.end, hi));
-    }
-  }
-  const ordered = [...cuts].sort((a, b) => a - b);
-  for (let i = 0; i + 1 < ordered.length; i++) {
-    const a = ordered[i];
-    const b = ordered[i + 1];
-    if (b <= a) continue;
-    const piece = cs.slice(a, b).join("");
-    const covering = spans.find((s) => s.start <= a && s.end >= b);
-    let style: Partial<OverlayOptions> | undefined = base;
-    if (covering?.kind === "bold") style = { ...(base ?? {}), bold: true };
-    else if (covering?.kind === "italic") style = { ...(base ?? {}), italic: true };
-    else if (covering?.kind === "code") style = { ...(base ?? {}), fg: C.code };
-    segments.push(style ? { text: piece, style } : { text: piece });
-  }
-  if (segments.length === 0) segments.push({ text: "" });
-  return styledRow(segments);
-}
-
-/** Render a markdown `explanation` into rows sized for `width` columns. */
-function renderExplanation(md: string, width: number): TextPropertyEntry[] {
-  const rows: TextPropertyEntry[] = [];
-  const w = Math.max(width, 8);
-  let inFence = false;
-
-  for (const rawLine of md.split("\n")) {
-    const line = rawLine.replace(/\r$/, "");
-    const fence = line.trimStart().startsWith("```");
-    if (fence) {
-      inFence = !inFence;
-      continue; // the fence markers themselves are chrome, not content
-    }
-    if (inFence) {
-      rows.push(styledRow([{ text: "  " + truncate(line, w - 2), style: { fg: C.code } }]));
-      continue;
-    }
-    if (line.trim().length === 0) {
-      rows.push(styledRow([{ text: "" }]));
-      continue;
-    }
-
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      const { text, spans } = parseInline(heading[2].trim());
-      for (const [lo, hi] of wrapRanges(text, w)) {
-        rows.push(spannedRow("", text, spans, lo, hi, { bold: true, fg: C.accent }));
-      }
-      rows.push(
-        styledRow([{
-          text: "─".repeat(Math.min(charLen(text), w)),
-          style: { fg: C.rule },
-        }]),
-      );
-      continue;
-    }
-
-    const bullet = /^\s*[-*]\s+(.*)$/.exec(line);
-    if (bullet) {
-      pushWrapped(rows, bullet[1], "  • ", "    ", w);
-      continue;
-    }
-
-    const ordered = /^\s*(\d+)\.\s+(.*)$/.exec(line);
-    if (ordered) {
-      const marker = `  ${ordered[1]}. `;
-      pushWrapped(rows, ordered[2], marker, " ".repeat(charLen(marker)), w);
-      continue;
-    }
-
-    pushWrapped(rows, line.trim(), "", "", w);
-  }
-
-  // Trim trailing blanks so the section does not end in dead space.
-  while (rows.length > 0 && rows[rows.length - 1].segments?.[0]?.text === "") rows.pop();
-  return rows;
-}
-
-/** Wrap `src` with a `first` prefix on line 1 and `cont` on the rest, so a
- * bullet's continuation lines align under its text rather than its marker. */
-function pushWrapped(
-  rows: TextPropertyEntry[],
-  src: string,
-  first: string,
-  cont: string,
-  width: number,
-): void {
-  const { text, spans } = parseInline(src);
-  const inner = Math.max(width - charLen(first), 8);
-  const ranges = wrapRanges(text, inner);
-  ranges.forEach(([lo, hi], i) => {
-    rows.push(spannedRow(i === 0 ? first : cont, text, spans, lo, hi));
-  });
 }
 
 // ============================================================================
@@ -468,62 +254,50 @@ function buildRailRows(t: TourInstance, width: number): TextPropertyEntry[] {
   });
 }
 
-function buildProseRows(t: TourInstance, width: number): TextPropertyEntry[] {
+/** The prose column's markdown source: the step explanation, prefixed
+ * with the missing-file warning when the step's file is gone. The host
+ * renders it through the shared markdown engine (the same one behind
+ * LSP hover docs) and word-wraps at its real column budget, so the
+ * plugin no longer parses or wraps anything itself. */
+function proseMarkdown(t: TourInstance): string {
   const step = currentStep(t);
-  const rows: TextPropertyEntry[] = [];
+  let head = "";
   if (t.fileMissing) {
-    rows.push(
-      styledRow([{
-        text: "⚠  " + editor.t("panel.file_missing", { file: step.file_path }),
-        style: { fg: C.warn },
-      }]),
-    );
-    if (t.drift) {
-      rows.push(styledRow([{ text: "   " + t.drift, style: { fg: C.dim } }]));
-    }
-    rows.push(styledRow([{ text: "" }]));
+    head += "⚠  " + editor.t("panel.file_missing", { file: step.file_path }) + "\n\n";
+    if (t.drift) head += "*" + t.drift + "*\n\n";
   }
-  const body = renderExplanation(step.explanation, width);
-  if (body.length === 0) {
-    rows.push(styledRow([{ text: editor.t("panel.no_explanation"), style: { fg: C.dim } }]));
-  }
-  return rows.concat(body);
+  const body = step.explanation.trim().length > 0
+    ? step.explanation
+    : editor.t("panel.no_explanation");
+  return head + body;
 }
 
 function buildBody(t: TourInstance): WidgetSpec {
   const step = currentStep(t);
   const rows = bodyRows(t);
   const label = `${t.step + 1}/${t.manifest.steps.length} · ${step.title}`;
+  // The prose is a markdown *document* view: read-only, rendered and
+  // wrapped host-side, with a caret the arrow keys move, Shift-selection,
+  // drag-to-select, and C-c copy over the rendered text.
+  const prose = text({
+    value: proseMarkdown(t),
+    rows,
+    markdown: true,
+    key: "prose",
+  });
 
   if (!showRail(t)) {
-    // Host inner width: the reserved-width panel less the section's 4
-    // columns of chrome, and one column of slack (see the rail path
-    // below for the full accounting).
-    const inner = Math.max(8, hostPanelWidth(t) - 5);
     return labeledSection({
       label: truncate(label, Math.max(8, t.dockWidth - 6)),
       key: "proseBox",
-      child: list({
-        // A List scrolls by moving its selection, so it needs one: with the
-        // default -1 the hint bar's "↑↓ scroll" does nothing.
-        items: buildProseRows(t, inner),
-        selectedIndex: 0,
-        visibleRows: rows,
-        key: "proseList",
-      }),
+      child: prose,
     });
   }
 
-  // Mirror the host's allocation exactly: the host renders the panel at
-  // `viewport.width - 2` (its `widget_panel_width` reserves two columns),
-  // then a Row's Block children with an explicit `widthPct` each take
-  // `panel_width * pct / 100`, and a labeled section spends 4 columns of
-  // chrome — the prose column is NOT "whatever the rail left over".
-  // Getting this wrong by a column makes the renderer truncate every
-  // wrapped line with an ellipsis, eating the word it broke on — which is
-  // exactly what happened while this math started from `dockWidth`
-  // (the viewport width) instead of the host's reserved-width panel.
-  // The extra column of slack absorbs rounding.
+  // The rail still sizes its labels itself: mirror the host's allocation
+  // (panel rendered at `viewport.width - 2`, the rail block takes
+  // `panel_width * pct / 100`, a labeled section spends 4 columns of
+  // chrome, one column of slack absorbs rounding).
   const panelWidth = hostPanelWidth(t);
   const railWidth = Math.max(8, Math.floor((panelWidth * RAIL_PCT) / 100) - 5);
   const proseWidth = Math.max(
@@ -547,12 +321,7 @@ function buildBody(t: TourInstance): WidgetSpec {
       label: truncate(label, Math.max(8, proseWidth - 2)),
       widthPct: 100 - RAIL_PCT,
       key: "proseBox",
-      child: list({
-        items: buildProseRows(t, proseWidth),
-        selectedIndex: 0,
-        visibleRows: rows,
-        key: "proseList",
-      }),
+      child: prose,
     }),
   );
 }
@@ -650,8 +419,7 @@ function renderPanel(t: TourInstance): void {
   if (showRail(t)) t.panel.setSelectedIndex("stepList", t.step);
   if (t.focusProse) {
     t.focusProse = false;
-    t.panel.setSelectedIndex("proseList", 0);
-    t.panel.setFocusKey("proseList");
+    t.panel.setFocusKey("prose");
   }
 }
 
@@ -1109,6 +877,15 @@ registerHandler("tour_panel_up", () => dispatch(widgetKey("Up")));
 registerHandler("tour_panel_down", () => dispatch(widgetKey("Down")));
 registerHandler("tour_panel_page_up", () => dispatch(widgetKey("PageUp")));
 registerHandler("tour_panel_page_down", () => dispatch(widgetKey("PageDown")));
+// Selection + clipboard over the prose document (markdown text widget).
+registerHandler("tour_panel_shift_up", () => dispatch(widgetKey("S-Up")));
+registerHandler("tour_panel_shift_down", () => dispatch(widgetKey("S-Down")));
+registerHandler("tour_panel_shift_left", () => dispatch(widgetKey("S-Left")));
+registerHandler("tour_panel_shift_right", () => dispatch(widgetKey("S-Right")));
+registerHandler("tour_panel_home", () => dispatch(widgetKey("Home")));
+registerHandler("tour_panel_end", () => dispatch(widgetKey("End")));
+registerHandler("tour_panel_copy", () => dispatch(widgetKey("C-c")));
+registerHandler("tour_panel_select_all", () => dispatch(widgetKey("C-a")));
 
 registerHandler("tour_panel_jump", () => {
   const t = targetTour();
@@ -1214,7 +991,7 @@ editor.on("widget_event", (args) => {
         }
         return;
       }
-      case "proseList":
+      case "prose":
         jumpToCode(t);
         return;
     }
@@ -1306,6 +1083,14 @@ const modeBindings: [string, string][] = [
   ["S-Tab", "tour_panel_shift_tab"],
   ["Up", "tour_panel_up"],
   ["Down", "tour_panel_down"],
+  ["S-Up", "tour_panel_shift_up"],
+  ["S-Down", "tour_panel_shift_down"],
+  ["S-Left", "tour_panel_shift_left"],
+  ["S-Right", "tour_panel_shift_right"],
+  ["Home", "tour_panel_home"],
+  ["End", "tour_panel_end"],
+  ["C-c", "tour_panel_copy"],
+  ["C-a", "tour_panel_select_all"],
   ["PageUp", "tour_panel_page_up"],
   ["PageDown", "tour_panel_page_down"],
   ["g", "tour_panel_steps"],

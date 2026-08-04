@@ -173,6 +173,13 @@ pub enum WidgetInstanceState {
         /// row. The first ↓ flips it true — the dropdown is now
         /// navigable, the selected row highlights, and Enter accepts.
         completion_navigated: bool,
+        /// True once the user wheel-scrolled a multi-line (markdown)
+        /// text viewport without moving the caret. While set, the
+        /// renderer respects `scroll` as-is instead of snapping it
+        /// back to keep the caret visible. Cleared whenever the caret
+        /// itself moves (keys or click), re-arming follow-the-caret.
+        /// Same contract as `List`/`Tree`'s flag.
+        user_scrolled: bool,
     },
     /// `Tree` instance state: host-owned scroll offset, selected
     /// index, and the set of expanded item keys. All three become

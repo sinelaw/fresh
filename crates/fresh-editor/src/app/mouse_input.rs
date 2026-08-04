@@ -346,6 +346,7 @@ impl Editor {
 
                 // Stop dragging and clear drag state
                 self.release_widget_scrollbar();
+                self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
                 // If we finished dragging a split separator, the split
@@ -2801,6 +2802,13 @@ impl Editor {
             }
             return Ok(());
         }
+        // Drag-to-select on a widget markdown/text document: armed by the
+        // press that placed the caret; every Drag extends the selection to
+        // the pointer.
+        if self.widget_text_drag.is_some() {
+            self.handle_widget_text_selection_drag(col, row);
+            return Ok(());
+        }
         // Floating-panel list scrollbar drag takes precedence — the
         // modal panel owns the input channel while it's up.
         if self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
@@ -4051,6 +4059,74 @@ impl Editor {
             Some((panel_row, panel_col))
         });
         self.handle_widget_panel_wheel_at(buffer_id, pos, delta)
+    }
+
+    /// Extend an armed widget-text drag selection to the pointer.
+    ///
+    /// Translates the screen position into the document's (rendered
+    /// line, byte-in-line) through the widget's recorded scroll region
+    /// — the same geometry wheel routing hit-tests — then hands the
+    /// caret move to the runtime. Rows above/below the region clamp to
+    /// its edges so a drag that overshoots keeps selecting.
+    fn handle_widget_text_selection_drag(&mut self, col: u16, row: u16) {
+        use crate::primitives::display_width::grapheme_byte_at_visual_column;
+        let Some(drag) = self.widget_text_drag.clone() else {
+            return;
+        };
+        let Some(panel) = self.widget_registry.get(&drag.panel) else {
+            return;
+        };
+        let buffer_id = panel.buffer_id;
+        let Some(region) = panel
+            .scroll_regions
+            .iter()
+            .find(|r| r.list_key == drag.widget)
+            .cloned()
+        else {
+            return;
+        };
+        let Some(rect) = self
+            .active_layout()
+            .split_areas
+            .iter()
+            .find(|(_, bid, ..)| *bid == buffer_id)
+            .map(|(_, _, rect, ..)| *rect)
+        else {
+            return;
+        };
+        let (top_line, gutter) = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|s| (0usize, s.margins.left_total_width() as u16))
+            .unwrap_or((0, 0));
+        // Buffer row under the pointer, clamped into the region's row
+        // band (dragging past either edge selects to the visible edge).
+        let brow = top_line + usize::from(row.max(rect.y) - rect.y);
+        let rel_row = brow
+            .saturating_sub(region.buffer_row as usize)
+            .min(region.height_rows.saturating_sub(1) as usize);
+        let line = (region.scroll + rel_row).min(region.total.saturating_sub(1));
+        // Byte within the rendered line, from the pointer's display
+        // column within the widget's region.
+        let widget_col = usize::from(col.saturating_sub(rect.x).saturating_sub(gutter))
+            .saturating_sub(region.col_in_row as usize);
+        let line_text = self
+            .widget_registry
+            .get(&drag.panel)
+            .and_then(|p| match p.instance_states.get(&drag.widget) {
+                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => Some(
+                    editor
+                        .value()
+                        .split('\n')
+                        .nth(line)
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let byte_in_line = grapheme_byte_at_visual_column(&line_text, widget_col);
+        self.extend_widget_text_selection_to(&drag, line, byte_in_line);
     }
 
     /// Try to start a floating-panel list scrollbar drag. Returns

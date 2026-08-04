@@ -184,6 +184,8 @@ pub fn setting_control_to_widget_aligned(
                 // in the same form column (issue: Text `[` started right
                 // after the label instead of at the shared column).
                 label_width: lw,
+                read_only: false,
+                markdown: false,
                 key,
             }
         }

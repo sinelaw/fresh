@@ -2478,6 +2478,8 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         sel_start,
         sel_end,
         label_width: 0,
+        read_only: false,
+        markdown: false,
         key: None,
     };
     let out = crate::widgets::render_spec_no_autofocus(

@@ -1226,6 +1226,19 @@ pub struct Editor {
     pub(crate) dock_width: Option<u16>,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
+    /// In-flight mouse drag-to-select on a widget markdown/text document:
+    /// armed by the press that placed the caret, extended on every Drag,
+    /// cleared on button-up. `anchor_flat` is the press position as a
+    /// flat byte offset into the widget's shadow TextEdit value.
+    pub(crate) widget_text_drag: Option<WidgetTextDrag>,
+}
+
+/// See [`Editor::widget_text_drag`].
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetTextDrag {
+    pub panel: crate::widgets::PanelKey,
+    pub widget: String,
+    pub anchor_flat: usize,
 }
 
 /// Sentinel `BufferId` registered with the widget registry for the

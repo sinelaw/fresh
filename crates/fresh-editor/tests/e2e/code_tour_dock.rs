@@ -961,6 +961,69 @@ fn test_selection_highlight_stays_inside_the_panel() {
     }
 }
 
+/// The prose column is a real (read-only) text area: Shift+Down extends
+/// a visible selection over the rendered markdown, and `C-c` puts the
+/// selected *rendered* text — never markdown markers or panel chrome —
+/// on the clipboard. The text stays read-only: typing changes nothing.
+#[test]
+fn test_prose_selects_and_copies_rendered_text() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+    harness.editor_mut().set_clipboard_for_test(String::new());
+
+    // The prose document is focused on load; the caret sits on its
+    // first rendered line. Extend the selection two lines down.
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+        .unwrap();
+    // The selection band is visible on the prose's first row: some cell
+    // right of the seam changed background versus an unselected row.
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(first_row).expect("prose row");
+    let seam_col = line[..line.find("││").expect("seam")].chars().count();
+    let sel_cell = harness.get_cell_style(seam_col as u16 + 4, first_row as u16);
+    let plain_cell = harness.get_cell_style(seam_col as u16 + 4, first_row as u16 + 4);
+    assert_ne!(
+        sel_cell.and_then(|s| s.bg),
+        plain_cell.and_then(|s| s.bg),
+        "expected a visible selection band on the selected prose rows\nScreen:\n{screen}"
+    );
+
+    // Copy — the clipboard gets the rendered heading, with the `##`
+    // marker consumed and no `│` chrome from the panel row.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::CONTROL)
+        .unwrap();
+    let copied = harness.editor_mut().clipboard_content_for_test();
+    assert!(
+        copied.contains("Heading one"),
+        "expected the rendered heading in the clipboard, got {copied:?}"
+    );
+    assert!(
+        !copied.contains('#') && !copied.contains('│'),
+        "clipboard must carry rendered text, not markers or chrome: {copied:?}"
+    );
+
+    // Read-only: typing must not change the document.
+    let before = harness.screen_to_string();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    // `z` is unbound in the tour panel mode and the document rejects
+    // insertion — the prose is untouched.
+    let after = harness.screen_to_string();
+    assert_eq!(
+        before, after,
+        "typing into the read-only prose must change nothing"
+    );
+}
+
 /// Long prose lines word-wrap; none is ellipsis-truncated. The host
 /// renders the panel at `viewport.width - 2`, and the plugin used to
 /// mirror the column math from the unreduced viewport width — at widths

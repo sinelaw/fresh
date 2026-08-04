@@ -2513,6 +2513,21 @@ pub enum WidgetSpec {
         /// narrow surfaces.
         #[serde(default)]
         label_width: u32,
+        /// Reject every mutating operation (typing, Backspace/Delete,
+        /// Cut, Paste) while keeping caret motion, selection, and Copy.
+        /// Implied by `markdown`.
+        #[serde(default)]
+        read_only: bool,
+        /// Render `value` as a markdown *document* (multi-line only,
+        /// `rows > 1`): the host renders it through the same markdown
+        /// engine as LSP hover docs — headings, emphasis, inline code,
+        /// links, syntax-highlighted fences — word-wrapped to the
+        /// widget's width. The caret, selection, and Copy operate on
+        /// the rendered plain text, so what you copy is what you see.
+        /// Markdown mode is **forcibly read-only**: the value only
+        /// changes via a spec update.
+        #[serde(default)]
+        markdown: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
