@@ -79,6 +79,12 @@ impl OverlayFace {
         if options.strikethrough {
             modifiers |= Modifier::CROSSED_OUT;
         }
+        if options.reversed {
+            // The widget block caret rides this: without it, a panel's
+            // markdown document showed no caret at all in buffer-mounted
+            // panels (the reversed cell was silently dropped here).
+            modifiers |= Modifier::REVERSED;
+        }
         if !modifiers.is_empty() {
             style = style.add_modifier(modifiers);
         }

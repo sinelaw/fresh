@@ -1194,7 +1194,7 @@ fn test_step_highlight_bands_are_full_width_on_every_line() {
         (2..25u16)
             .filter(|row| {
                 h.get_cell_style(60, *row)
-                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)))
+                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(0, 25, 55)))
             })
             .collect()
     };
@@ -1206,6 +1206,59 @@ fn test_step_highlight_bands_are_full_width_on_every_line() {
         "full-width bands must cover consecutive range rows, got {rows:?}\nScreen:\n{}",
         harness.screen_to_string()
     );
+}
+
+/// Clicking the prose places a VISIBLE caret (a reversed cell) at the
+/// clicked spot. The reversed flag used to be dropped on the way into
+/// buffer overlays, so the caret existed but never painted.
+#[test]
+fn test_click_places_a_visible_caret_in_the_prose() {
+    use ratatui::style::Modifier;
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+
+    let col = (prose_start_col(&harness) + 6) as u16;
+    harness.mouse_click(col, first_row as u16).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    harness.render().unwrap();
+    let reversed_on_row = (0..160u16).any(|x| {
+        harness
+            .get_cell_style(x, first_row as u16)
+            .is_some_and(|s| s.add_modifier.contains(Modifier::REVERSED))
+    });
+    assert!(
+        reversed_on_row,
+        "expected a reversed caret cell on the clicked prose row\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Clicking a step in the rail keeps the rail focused, so ↑/↓ right
+/// after the click keep browsing steps instead of moving the prose
+/// caret.
+#[test]
+fn test_rail_click_keeps_focus_for_arrow_browsing() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    let row = row_of(&harness, "2  The handler") as u16;
+    harness.mouse_click(20, row).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    // The rail kept focus: Up browses straight back to step 1.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 1 of 2"))
+        .unwrap();
 }
 
 /// Long prose lines word-wrap; none is ellipsis-truncated. The host
