@@ -3002,3 +3002,58 @@ fn position_to_lsp_position_counts_utf16_from_the_line_start() {
     let after_clef = after_word + "𝄞".len();
     assert_eq!(buffer.position_to_lsp_position(after_clef), (1, 8));
 }
+
+/// `find_all_in_range` streams the buffer once, so it has to reproduce what
+/// repeated `find_next_in_range` calls returned: non-overlapping matches, in
+/// order, including ones straddling the 64KB chunk boundary it reads in.
+#[test]
+fn find_all_in_range_matches_repeated_find_next() {
+    // Long enough to span several 64KB chunks, with a match landing on every
+    // boundary: the filler length is chosen so occurrences fall at regular
+    // offsets that cross 65536.
+    let mut text = String::new();
+    while text.len() < 200_000 {
+        text.push_str("some source code here\n");
+    }
+    let buffer = Buffer::from_bytes(text.into_bytes(), test_fs());
+
+    let mut expected = Vec::new();
+    let mut pos = 0;
+    while let Some(offset) = buffer.find_next_in_range("source", pos, Some(pos..buffer.len())) {
+        expected.push(offset);
+        pos = offset + "source".len();
+    }
+    assert!(expected.len() > 3_000, "expected many matches");
+
+    assert_eq!(
+        buffer.find_all_in_range("source", 0..buffer.len(), usize::MAX),
+        expected
+    );
+
+    // The limit caps the result without changing which matches come first.
+    assert_eq!(
+        buffer.find_all_in_range("source", 0..buffer.len(), 5),
+        expected[..5]
+    );
+
+    // A sub-range reports only matches fully inside it.
+    let third = expected[2];
+    let in_range = buffer.find_all_in_range("source", third..expected[5], usize::MAX);
+    assert_eq!(in_range, &expected[2..5]);
+}
+
+/// Overlapping candidates are skipped the same way the sequential search
+/// skipped them: each match resumes the scan after the previous one.
+#[test]
+fn find_all_in_range_skips_overlapping_matches() {
+    let buffer = Buffer::from_bytes(b"aaaaaa".to_vec(), test_fs());
+    assert_eq!(
+        buffer.find_all_in_range("aa", 0..buffer.len(), usize::MAX),
+        vec![0, 2, 4]
+    );
+
+    // An empty pattern never matches, as with find_next_in_range.
+    assert!(buffer
+        .find_all_in_range("", 0..buffer.len(), usize::MAX)
+        .is_empty());
+}
