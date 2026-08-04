@@ -1884,6 +1884,23 @@ impl PieceTree {
         // We iterate leaves ascending, and for each leaf we:
         //   1. First add any inserts that belong BEFORE this leaf
         //   2. Then add the leaf (if not deleted)
+        // Non-empty delete ranges, ascending and merged so they are disjoint —
+        // walked in step with the leaves below.
+        let mut sorted_deletes: Vec<(usize, usize)> = edit_ranges
+            .iter()
+            .filter(|(start, end, _)| end > start)
+            .map(|(start, end, _)| (*start, *end))
+            .collect();
+        sorted_deletes.sort_unstable();
+        let mut delete_ranges: Vec<(usize, usize)> = Vec::with_capacity(sorted_deletes.len());
+        for (start, end) in sorted_deletes {
+            match delete_ranges.last_mut() {
+                Some(last) if start <= last.1 => last.1 = last.1.max(end),
+                _ => delete_ranges.push((start, end)),
+            }
+        }
+        let mut delete_idx = 0;
+
         let mut new_leaves: Vec<LeafData> = Vec::with_capacity(leaves.len() + edits.len());
         let mut current_offset = 0;
         let mut edit_idx = edit_ranges.len(); // Points past the end; we access [edit_idx-1]
@@ -1909,33 +1926,19 @@ impl PieceTree {
                 edit_idx -= 1;
             }
 
-            // Check if this leaf overlaps with ANY edit's delete range
-            // We check ALL edits, not just remaining ones, because edits
-            // processed in the insert loop above may still have deletions
-            let mut keep_leaf = true;
-
-            for (edit_start, edit_end, _) in &edit_ranges {
-                // If edit's delete range is entirely after this leaf, skip
-                if *edit_start >= leaf_end {
-                    continue;
-                }
-
-                // If edit has no deletion (edit_start == edit_end), skip
-                if *edit_start == *edit_end {
-                    continue;
-                }
-
-                // If edit's delete range is entirely before this leaf, skip
-                if *edit_end <= leaf_start {
-                    continue;
-                }
-
-                // Leaf overlaps with this edit's delete range - filter it out
-                if leaf_start >= *edit_start && leaf_end <= *edit_end {
-                    keep_leaf = false;
-                    break;
-                }
+            // Check whether this leaf falls inside a delete range. Leaves were
+            // split at every edit boundary, so a leaf is either wholly inside
+            // one delete range or wholly outside all of them. `delete_ranges`
+            // is ascending and disjoint and the leaves are walked ascending, so
+            // one shared cursor finds the only candidate — scanning every edit
+            // per leaf made a large replace-all quadratic (issue #2893).
+            while delete_idx < delete_ranges.len() && delete_ranges[delete_idx].1 <= leaf_start {
+                delete_idx += 1;
             }
+            let keep_leaf = match delete_ranges.get(delete_idx) {
+                Some(&(del_start, del_end)) => !(leaf_start >= del_start && leaf_end <= del_end),
+                None => true,
+            };
 
             if keep_leaf {
                 new_leaves.push(leaf);
@@ -1967,7 +1970,9 @@ impl PieceTree {
         delta
     }
 
-    /// Collect leaves, splitting at multiple points in one traversal
+    /// Collect leaves, splitting at multiple points in one traversal.
+    ///
+    /// `split_points` must be sorted ascending and deduplicated.
     fn collect_leaves_with_multi_split(
         &self,
         node: &Arc<PieceTreeNode>,
@@ -2012,22 +2017,20 @@ impl PieceTree {
                 let piece_start = current_offset;
                 let piece_end = current_offset + bytes;
 
-                // Find split points within this piece
-                let mut split_offsets: Vec<usize> = Vec::new();
-                for &sp in split_points {
-                    if sp > piece_start && sp < piece_end {
-                        split_offsets.push(sp - piece_start);
-                    }
-                }
+                // Find split points within this piece. `split_points` is sorted
+                // and deduplicated, so binary search picks out this piece's
+                // slice instead of walking every point for every piece.
+                let first = split_points.partition_point(|&sp| sp <= piece_start);
+                let past = split_points.partition_point(|&sp| sp < piece_end);
+                let split_offsets: Vec<usize> = split_points[first..past]
+                    .iter()
+                    .map(|&sp| sp - piece_start)
+                    .collect();
 
                 if split_offsets.is_empty() {
                     // No splits needed, add entire piece
                     leaves.push(LeafData::new(*location, *offset, *bytes, *line_feed_cnt));
                 } else {
-                    // Split the piece at each point
-                    split_offsets.sort_unstable();
-                    split_offsets.dedup();
-
                     let mut prev_offset = 0;
                     for split_offset in split_offsets {
                         if split_offset > prev_offset {
