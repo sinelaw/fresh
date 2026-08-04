@@ -231,6 +231,12 @@ editor.on("after_file_open", () => {
 editor.on("after_file_save", () => {
   refreshGitExplorerDecorations();
 });
+// A reloaded buffer means the file changed on disk without a save — e.g.
+// `git checkout <ref> -- <file>` in another terminal — so its git status
+// badge may be stale.
+editor.on("after_file_revert", () => {
+  refreshGitExplorerDecorations();
+});
 editor.on("after_file_explorer_change", () => {
   refreshGitExplorerDecorations();
 });
