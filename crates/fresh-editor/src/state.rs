@@ -1320,33 +1320,14 @@ impl EditorState {
             // descending-position order, all sharing the post-bulk version.
             self.coord_map
                 .record_replace(version, pos, del_len, ins_len);
-            match (del_len, ins_len) {
-                (d, i) if d > 0 && i > 0 => {
-                    // Replacement: adjust by net delta only.
-                    if i > d {
-                        self.marker_list.adjust_for_insert(pos, i - d);
-                        self.margins.adjust_for_insert(pos, i - d);
-                        self.scrollbar_markers.adjust_for_insert(pos, i - d);
-                    } else if d > i {
-                        self.marker_list.adjust_for_delete(pos, d - i);
-                        self.margins.adjust_for_delete(pos, d - i);
-                        self.scrollbar_markers.adjust_for_delete(pos, d - i);
-                    }
-                    // Equal lengths: net delta 0, no adjustment needed.
-                }
-                (d, _) if d > 0 => {
-                    self.marker_list.adjust_for_delete(pos, d);
-                    self.margins.adjust_for_delete(pos, d);
-                    self.scrollbar_markers.adjust_for_delete(pos, d);
-                }
-                (_, i) if i > 0 => {
-                    self.marker_list.adjust_for_insert(pos, i);
-                    self.margins.adjust_for_insert(pos, i);
-                    self.scrollbar_markers.adjust_for_insert(pos, i);
-                }
-                _ => {}
-            }
         }
+
+        // Adjust each marker owner once for the whole batch. Doing it per edit
+        // costs O(markers) for every deletion, which made a replace-all over
+        // tens of thousands of matches quadratic (issue #2893).
+        self.marker_list.adjust_for_bulk_edits(edits);
+        self.margins.adjust_for_bulk_edits(edits);
+        self.scrollbar_markers.adjust_for_bulk_edits(edits);
     }
 
     /// Capture positions of markers strictly inside a deleted range.

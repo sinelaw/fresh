@@ -434,6 +434,160 @@ impl IntervalTree {
         true
     }
 
+    /// Adjusts all markers for a batch of non-overlapping edits in one pass.
+    ///
+    /// `edits` are `(pos, delta)` pairs in the same net-delta form
+    /// [`adjust_for_edit`](Self::adjust_for_edit) takes, in any order. The
+    /// outcome matches applying them one at a time from the highest position
+    /// down — the order a bulk edit uses — but costs O(n + m log m) for `n`
+    /// markers and `m` edits instead of O(n·m).
+    ///
+    /// The per-edit path cannot do better: a deletion has to visit every marker
+    /// at or after its position so each one can clamp into the deleted range,
+    /// which made a replace-all (one edit per match, one marker per match)
+    /// quadratic and effectively non-terminating (issue #2893).
+    ///
+    /// Edits must not overlap — deleted ranges are disjoint, which is what
+    /// `apply_bulk_edits` requires of them anyway.
+    pub fn adjust_for_bulk_edits(&mut self, edits: &[(u64, i64)]) {
+        if self.root.is_none() {
+            return;
+        }
+
+        // Edits ascending by position, alongside the summed delta of every
+        // edit strictly before each one. A marker is shifted by its own
+        // governing edit (the last one at or before it) plus that prefix.
+        let mut ordered: Vec<(u64, i64)> = edits.iter().copied().filter(|(_, d)| *d != 0).collect();
+        if ordered.is_empty() {
+            return;
+        }
+        ordered.sort_unstable_by_key(|(pos, _)| *pos);
+        let mut prefix: Vec<i64> = Vec::with_capacity(ordered.len());
+        let mut running: i64 = 0;
+        for (_, delta) in &ordered {
+            prefix.push(running);
+            running += delta;
+        }
+
+        // Collect every node with its true (delta-resolved) interval, then
+        // rewrite the intervals in place. The nodes themselves are reused so
+        // `marker_map` and every MarkerId stay valid.
+        let mut nodes: Vec<Rc<RefCell<Node>>> = Vec::with_capacity(self.marker_map.len());
+        Self::collect_nodes_in_order(&self.root, &mut nodes);
+
+        for node_rc in &nodes {
+            let mut node = node_rc.borrow_mut();
+            let left_gravity = !node.marker.right_gravity;
+            let (old_start, old_end) = (
+                node.marker.interval.start,
+                node.marker.interval.end.max(node.marker.interval.start),
+            );
+
+            // Edits at or before the start govern both coordinates; edits
+            // strictly inside the interval move only the end, and each one
+            // shrinks it against the (unmoved) start, so they are folded
+            // individually. For a point marker that window is empty.
+            let governing = ordered.partition_point(|(pos, _)| *pos <= old_start);
+            let inside_end = ordered.partition_point(|(pos, _)| *pos <= old_end);
+
+            let mut end = old_end as i64;
+            for &(pos, delta) in ordered[governing..inside_end].iter().rev() {
+                let shifts = if left_gravity && delta > 0 {
+                    end > pos as i64
+                } else {
+                    end >= pos as i64
+                };
+                if shifts {
+                    end = (end + delta).max(old_start as i64);
+                }
+            }
+
+            let head = &ordered[..governing];
+            let head_prefix = &prefix[..governing];
+            let start = Self::map_coord(old_start, left_gravity, head, head_prefix);
+            // Mirrors the per-edit path: an end never precedes its own start.
+            let end =
+                Self::map_coord(end.max(0) as u64, left_gravity, head, head_prefix).max(start);
+            node.marker.interval.start = start;
+            node.marker.interval.end = end;
+            node.lazy_delta = 0;
+            node.left = None;
+            node.right = None;
+            node.parent = Weak::new();
+        }
+
+        // Deletions can clamp several markers onto the same position, so the
+        // pre-edit order is not necessarily the post-edit `(start, id)` order.
+        // Re-sorting and rebuilding restores the BST invariant outright.
+        nodes.sort_unstable_by_key(|n| {
+            let n = n.borrow();
+            (n.marker.interval.start, n.marker.id)
+        });
+        self.root = Self::build_from_sorted(&nodes);
+    }
+
+    /// Maps one coordinate through the batch, applying the same rules as
+    /// [`adjust_recursive`](Self::adjust_recursive): a coordinate at or after
+    /// an edit shifts by its delta (strictly after, for a left-gravity marker
+    /// facing an insertion) and clamps to the edit position when the deletion
+    /// swallows it.
+    fn map_coord(coord: u64, left_gravity: bool, edits: &[(u64, i64)], prefix: &[i64]) -> u64 {
+        let idx = edits.partition_point(|(pos, _)| *pos <= coord);
+        if idx == 0 {
+            return coord;
+        }
+        let (pos, delta) = edits[idx - 1];
+        let base = if delta > 0 {
+            if left_gravity && coord == pos {
+                coord as i64
+            } else {
+                coord as i64 + delta
+            }
+        } else {
+            (coord as i64 + delta).max(pos as i64)
+        };
+        (base + prefix[idx - 1]).max(0) as u64
+    }
+
+    /// Collects every node in position order, resolving lazy deltas on the way
+    /// down so each node's stored interval is its true one.
+    fn collect_nodes_in_order(node: &NodePtr, out: &mut Vec<Rc<RefCell<Node>>>) {
+        let Some(n) = node else { return };
+        Node::push_delta(n);
+        let (left, right) = {
+            let borrowed = n.borrow();
+            (borrowed.left.clone(), borrowed.right.clone())
+        };
+        Self::collect_nodes_in_order(&left, out);
+        out.push(Rc::clone(n));
+        Self::collect_nodes_in_order(&right, out);
+    }
+
+    /// Rebuilds a balanced tree from nodes already sorted by `(start, id)`,
+    /// fixing parent links, heights and `max_end` as it goes.
+    fn build_from_sorted(nodes: &[Rc<RefCell<Node>>]) -> NodePtr {
+        if nodes.is_empty() {
+            return None;
+        }
+        let mid = nodes.len() / 2;
+        let node = Rc::clone(&nodes[mid]);
+        let left = Self::build_from_sorted(&nodes[..mid]);
+        let right = Self::build_from_sorted(&nodes[mid + 1..]);
+        if let Some(ref l) = left {
+            l.borrow_mut().parent = Rc::downgrade(&node);
+        }
+        if let Some(ref r) = right {
+            r.borrow_mut().parent = Rc::downgrade(&node);
+        }
+        {
+            let mut n = node.borrow_mut();
+            n.left = left;
+            n.right = right;
+        }
+        Node::update_stats(&node);
+        Some(node)
+    }
+
     /// Adjusts all markers for a text edit (insertion or deletion).
     /// Performance: O(log n) due to lazy delta propagation.
     pub fn adjust_for_edit(&mut self, pos: u64, delta: i64) {
@@ -1314,6 +1468,38 @@ mod tests {
             ]
         }
 
+        /// Fold one interval through the edits the way the per-edit path
+        /// does: highest position first, shifting a coordinate at or after
+        /// the edit (strictly after, for a left-gravity marker meeting an
+        /// insertion) and never letting the end precede the start.
+        fn shadow_adjust(
+            mut start: i64,
+            mut end: i64,
+            right_gravity: bool,
+            edits: &[(u64, i64)],
+        ) -> (u64, u64) {
+            for &(pos, delta) in edits {
+                let pos = pos as i64;
+                let left_gravity = !right_gravity;
+                if pos <= start && !(left_gravity && delta > 0 && pos == start) {
+                    start = if delta < 0 {
+                        (start + delta).max(pos)
+                    } else {
+                        start + delta
+                    };
+                }
+                let shift_end = if left_gravity && delta > 0 {
+                    end > pos
+                } else {
+                    end >= pos
+                };
+                if shift_end {
+                    end = (end + delta).max(start);
+                }
+            }
+            (start.max(0) as u64, end.max(0) as u64)
+        }
+
         proptest! {
             /// The tree's reported positions must always match a naive shadow
             /// model that slides/clamps point markers independently, regardless
@@ -1415,6 +1601,87 @@ mod tests {
                         live
                     );
                 }
+            }
+
+            /// `adjust_for_bulk_edits` must land every marker exactly where
+            /// applying the same edits one at a time (highest position first,
+            /// as a bulk edit does) would have put it — intervals included.
+            ///
+            /// Point markers are additionally compared against a tree that
+            /// really did apply the edits one at a time. Spanning intervals are
+            /// not: whether the per-edit path shifts an end that straddles the
+            /// edit depends on where the node sits in the tree, so only the
+            /// shadow pins down the intended result there.
+            #[test]
+            fn prop_bulk_adjust_matches_sequential(
+                markers in prop::collection::vec((0..1000u64, 0..40u64, any::<bool>()), 0..40),
+                raw_edits in prop::collection::vec((0..60u64, 0..20u64, 0..20u64), 0..25),
+            ) {
+                // Lay the edits out left to right so their ranges are disjoint,
+                // which is what a bulk edit guarantees.
+                let mut edits: Vec<(u64, i64)> = Vec::new();
+                let mut cursor = 0u64;
+                for (gap, del_len, ins_len) in raw_edits {
+                    cursor += gap;
+                    if del_len as i64 - ins_len as i64 != 0 || ins_len > 0 {
+                        edits.push((cursor, ins_len as i64 - del_len as i64));
+                    }
+                    cursor += del_len;
+                }
+                // Bulk edits arrive highest position first.
+                edits.reverse();
+
+                let mut sequential = IntervalTree::new();
+                let mut batched = IntervalTree::new();
+                let mut expected: Vec<(MarkerId, (u64, u64), bool)> = Vec::new();
+                for (start, len, right_gravity) in &markers {
+                    let (s, e) = (*start, start + len);
+                    let id = if *right_gravity {
+                        sequential.insert(s, e);
+                        batched.insert(s, e)
+                    } else {
+                        sequential.insert_left_gravity(s, e);
+                        batched.insert_left_gravity(s, e)
+                    };
+                    let shadow = shadow_adjust(s as i64, e as i64, *right_gravity, &edits);
+                    expected.push((id, shadow, *len == 0));
+                }
+
+                for (pos, delta) in &edits {
+                    sequential.adjust_for_edit(*pos, *delta);
+                }
+                batched.adjust_for_bulk_edits(&edits);
+
+                for (id, shadow, is_point) in expected {
+                    prop_assert_eq!(
+                        batched.get_position(id),
+                        Some(shadow),
+                        "marker {} diverged from the shadow for edits {:?}",
+                        id,
+                        edits
+                    );
+                    if is_point {
+                        prop_assert_eq!(
+                            batched.get_position(id),
+                            sequential.get_position(id),
+                            "point marker {} diverged from the per-edit path for edits {:?}",
+                            id,
+                            edits
+                        );
+                    }
+                }
+
+                // The rebuilt tree must still be position-ordered and hold
+                // every marker exactly once.
+                let dump = batched.debug_dump();
+                for w in dump.windows(2) {
+                    prop_assert!(
+                        w[0].1 <= w[1].1,
+                        "BST position order violated: id {}@{} before id {}@{}",
+                        w[0].0, w[0].1, w[1].0, w[1].1
+                    );
+                }
+                prop_assert_eq!(dump.len(), markers.len());
             }
         }
     }
