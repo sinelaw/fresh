@@ -393,6 +393,15 @@ function showRail(t: TourInstance): boolean {
   return t.railOpen && t.dockWidth >= RAIL_MIN_WIDTH;
 }
 
+/** The column budget the host actually renders this panel at. The host's
+ * `widget_panel_width` reserves two columns of the split's text viewport
+ * (gutter/scrollbar slack), so every width computation must start from
+ * this — starting from `dockWidth` overshoots by up to two columns and
+ * the host then ellipsis-truncates the overlong rows. */
+function hostPanelWidth(t: TourInstance): number {
+  return Math.max(10, t.dockWidth - 2);
+}
+
 /** Rows the body section's list may occupy.
  *
  * The panel must render *exactly* as many lines as the pane can show. One line
@@ -487,7 +496,10 @@ function buildBody(t: TourInstance): WidgetSpec {
   const label = `${t.step + 1}/${t.manifest.steps.length} · ${step.title}`;
 
   if (!showRail(t)) {
-    const inner = Math.max(8, t.dockWidth - 5);
+    // Host inner width: the reserved-width panel less the section's 4
+    // columns of chrome, and one column of slack (see the rail path
+    // below for the full accounting).
+    const inner = Math.max(8, hostPanelWidth(t) - 5);
     return labeledSection({
       label: truncate(label, Math.max(8, t.dockWidth - 6)),
       key: "proseBox",
@@ -502,15 +514,21 @@ function buildBody(t: TourInstance): WidgetSpec {
     });
   }
 
-  // Mirror the host's allocation exactly: a Row's Block children with an
-  // explicit `widthPct` each take `panel_width * pct / 100` — the prose column
-  // is NOT "whatever the rail left over". Getting this wrong by a column makes
-  // the renderer truncate every wrapped line with an ellipsis, eating the word
-  // it broke on. The extra column of slack absorbs rounding.
-  const railWidth = Math.max(8, Math.floor((t.dockWidth * RAIL_PCT) / 100) - 4);
+  // Mirror the host's allocation exactly: the host renders the panel at
+  // `viewport.width - 2` (its `widget_panel_width` reserves two columns),
+  // then a Row's Block children with an explicit `widthPct` each take
+  // `panel_width * pct / 100`, and a labeled section spends 4 columns of
+  // chrome — the prose column is NOT "whatever the rail left over".
+  // Getting this wrong by a column makes the renderer truncate every
+  // wrapped line with an ellipsis, eating the word it broke on — which is
+  // exactly what happened while this math started from `dockWidth`
+  // (the viewport width) instead of the host's reserved-width panel.
+  // The extra column of slack absorbs rounding.
+  const panelWidth = hostPanelWidth(t);
+  const railWidth = Math.max(8, Math.floor((panelWidth * RAIL_PCT) / 100) - 5);
   const proseWidth = Math.max(
     8,
-    Math.floor((t.dockWidth * (100 - RAIL_PCT)) / 100) - 5,
+    Math.floor((panelWidth * (100 - RAIL_PCT)) / 100) - 5,
   );
   return row(
     labeledSection({
