@@ -2587,18 +2587,6 @@ impl Editor {
         false
     }
 
-    /// Mouse-wheel scroll over a widget panel buffer, without pointer
-    /// geometry. Falls back to the first `Tree`/`List` in the spec —
-    /// see [`handle_widget_panel_wheel_at`] for the position-aware
-    /// variant every pointer-driven caller should prefer.
-    pub(super) fn handle_widget_panel_wheel(
-        &mut self,
-        buffer_id: crate::model::event::BufferId,
-        delta: i32,
-    ) -> bool {
-        self.handle_widget_panel_wheel_at(buffer_id, None, delta)
-    }
-
     /// Mouse-wheel scroll over a widget panel buffer. With `pos` —
     /// the pointer's panel-relative (row, display column) — the wheel
     /// scrolls the `List`/`Tree` whose rendered region contains the
