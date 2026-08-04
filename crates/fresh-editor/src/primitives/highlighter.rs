@@ -1,13 +1,17 @@
 //! Syntax highlighting with tree-sitter
 //!
 //! # Design
-//! - **Viewport-only parsing**: Only highlights visible lines for instant performance with large files
-//! - **Incremental updates**: Re-parses only edited regions
+//! - **Whole-file parsing for normal files**: Buffers at or below
+//!   `MAX_PARSE_BYTES` are parsed from offset 0, because a parse that starts
+//!   at an arbitrary mid-file offset can begin inside a multi-line construct
+//!   (a block comment or template literal) and mis-highlight everything after
+//!   it — e.g. a backtick inside chopped JSDoc text opens a phantom template
+//!   literal that swallows the whole viewport as a string. Matches the policy
+//!   of the syntect-based `TextMateEngine`.
+//! - **Viewport-only parsing for large files**: Above `MAX_PARSE_BYTES`, only
+//!   the viewport plus `context_bytes` of surrounding text is parsed, keeping
+//!   a jump into a 1GB file instant at the cost of best-effort accuracy.
 //! - **Lazy initialization**: Parsing happens on first render
-//!
-//! # Performance
-//! Must work instantly when loading a 1GB file and jumping to an arbitrary offset.
-//! This is achieved by only parsing the visible viewport (~50 lines), not the entire file.
 
 use crate::model::buffer::Buffer;
 use crate::view::theme::Theme;
@@ -166,10 +170,21 @@ impl Highlighter {
             }
         }
 
-        // Cache miss - need to parse
-        // Extend range for context (helps with multi-line constructs like strings, comments, nested blocks)
-        let parse_start = viewport_start.saturating_sub(context_bytes);
-        let parse_end = (viewport_end + context_bytes).min(buffer.len());
+        // Cache miss - need to parse.
+        //
+        // For buffers up to MAX_PARSE_BYTES, parse the whole file: starting a
+        // parse mid-file can land inside a multi-line construct (block
+        // comment, template literal) and derail highlighting for everything
+        // that follows. Larger buffers fall back to the viewport window plus
+        // `context_bytes` of context, which is best-effort.
+        let (parse_start, parse_end) = if buffer.len() <= MAX_PARSE_BYTES {
+            (0, buffer.len())
+        } else {
+            (
+                viewport_start.saturating_sub(context_bytes),
+                (viewport_end + context_bytes).min(buffer.len()),
+            )
+        };
         let parse_range = parse_start..parse_end;
 
         // Limit parse size for safety
@@ -491,6 +506,72 @@ mod tests {
                 viewport_end
             );
         }
+    }
+
+    #[test]
+    fn test_jump_open_mid_file_matches_whole_file_parse() {
+        // Regression test: opening a file directly at a line (`fresh
+        // file.ts:1118`) used to start the parse at `viewport_start -
+        // context_bytes`, an arbitrary byte offset. When that offset fell
+        // inside a block comment containing a backtick, tree-sitter read the
+        // backtick as opening a template literal that ran until the next
+        // backtick in a later comment, highlighting the entire viewport —
+        // real code — as one giant string.
+        let mut content = String::from("/**\n");
+        for _ in 0..120 {
+            content.push_str(" * plain filler line without special punctuation.\n");
+        }
+        content.push_str(" * a stray backtick ` lives here.\n");
+        for _ in 0..10 {
+            content.push_str(" * more filler after the backtick.\n");
+        }
+        content.push_str(" */\n");
+        let comment_end = content.len();
+        for i in 0..40 {
+            content.push_str(&format!(
+                "function f{i}(x: number): number {{ return x + {i}; }}\n"
+            ));
+        }
+        content.push_str("// the matching backtick ` closes the phantom template here\n");
+        for i in 40..60 {
+            content.push_str(&format!(
+                "function f{i}(x: number): number {{ return x + {i}; }}\n"
+            ));
+        }
+        let buffer = Buffer::from_str_test(&content);
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+
+        // Ground truth: parse from the start of the file.
+        let mut full = Highlighter::new(Language::TypeScript).unwrap();
+        let full_spans = full.highlight_viewport(&buffer, 0, content.len(), &theme, content.len());
+
+        // Jump-open: viewport over the code, positioned so the pre-fix parse
+        // window (viewport_start - context_bytes) started inside the comment,
+        // after which exactly one backtick preceded the code.
+        let viewport_start = comment_end + 500;
+        let viewport_end = comment_end + 1500;
+        let mut jump = Highlighter::new(Language::TypeScript).unwrap();
+        let jump_spans =
+            jump.highlight_viewport(&buffer, viewport_start, viewport_end, &theme, 2000);
+
+        let clip = |spans: &[HighlightSpan]| -> Vec<(usize, usize, Option<HighlightCategory>)> {
+            spans
+                .iter()
+                .filter(|s| s.range.start < viewport_end && s.range.end > viewport_start)
+                .map(|s| {
+                    (
+                        s.range.start.max(viewport_start),
+                        s.range.end.min(viewport_end),
+                        s.category,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            clip(&full_spans),
+            clip(&jump_spans),
+            "viewport highlighting after a jump-open must match a whole-file parse"
+        );
     }
 
     #[test]
