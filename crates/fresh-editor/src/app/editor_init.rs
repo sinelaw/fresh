@@ -685,6 +685,7 @@ impl Editor {
             dock: None,
             dock_width: None,
             dock_resizing: false,
+            widget_text_drag: None,
         };
 
         // The plugin per-window filesystem registry is populated on the first

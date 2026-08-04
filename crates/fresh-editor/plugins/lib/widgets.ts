@@ -595,6 +595,15 @@ export function text(
      * from the value with `: `, so a column of controls aligns their
      * value cells. `0` (default) keeps the compact `label [value]`. */
     labelWidth?: number;
+    /** Reject every mutating operation (typing, Backspace/Delete, Cut,
+     * Paste) while keeping caret motion, selection, and Copy. Implied
+     * by `markdown`. */
+    readOnly?: boolean;
+    /** Render `value` as a markdown document (multi-line only): the
+     * host renders it through the same engine as LSP hover docs and
+     * word-wraps to the widget's width. Forcibly read-only; the caret,
+     * selection, and Copy operate on the rendered plain text. */
+    markdown?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -614,6 +623,8 @@ export function text(
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
     labelWidth: options.labelWidth ?? 0,
+    readOnly: options.readOnly ?? false,
+    markdown: options.markdown ?? false,
     key: options.key,
   };
 }

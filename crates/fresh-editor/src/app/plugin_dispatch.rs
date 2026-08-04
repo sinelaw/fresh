@@ -4686,7 +4686,7 @@ impl Editor {
         let prev = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.widget_panel_width(buffer_id);
-        let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
+        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         self.widget_registry.mount(
             panel_key.clone(),
@@ -4753,7 +4753,7 @@ impl Editor {
             .map(|(b, _)| b)
             .unwrap_or(BufferId(0));
         let panel_width = self.widget_panel_width(buffer_id_for_width);
-        let out = crate::widgets::render_spec(&spec, &prev, &prev_focus, panel_width);
+        let out = self.render_panel_spec(&spec, &prev, &prev_focus, panel_width);
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         match self.widget_registry.update(
@@ -4830,6 +4830,7 @@ impl Editor {
                                 completion_selected_index,
                                 completion_scroll_offset,
                                 completion_navigated,
+                                ..
                             }) => (
                                 *scroll,
                                 editor.multiline,
@@ -4859,6 +4860,7 @@ impl Editor {
                             completion_selected_index: sel_idx,
                             completion_scroll_offset: scroll_off,
                             completion_navigated: navigated,
+                            user_scrolled: false,
                         },
                     );
                 }
@@ -5209,14 +5211,21 @@ impl Editor {
         // A fresh mount has nothing hovered: the pointer hasn't been
         // resolved against this panel's hit areas yet, and the next
         // `Moved` event will do so.
-        let out = super::widget_runtime::render_floating_spec(
-            focus_marker,
-            &spec,
-            &prev,
-            &prev_focus,
-            panel_width,
-            "",
-        );
+        let out = {
+            let theme_guard = self.theme.read().unwrap();
+            super::widget_runtime::render_floating_spec(
+                focus_marker,
+                &spec,
+                &prev,
+                &prev_focus,
+                panel_width,
+                "",
+                Some(crate::widgets::MarkdownCtx {
+                    theme: &theme_guard,
+                    grammars: Some(self.grammar_registry.as_ref()),
+                }),
+            )
+        };
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;
@@ -5287,14 +5296,21 @@ impl Editor {
             .panel(slot)
             .map(|f| f.hovered_widget_key.clone())
             .unwrap_or_default();
-        let out = super::widget_runtime::render_floating_spec(
-            focus_marker,
-            &spec,
-            &prev,
-            &prev_focus,
-            panel_width,
-            &hover_key,
-        );
+        let out = {
+            let theme_guard = self.theme.read().unwrap();
+            super::widget_runtime::render_floating_spec(
+                focus_marker,
+                &spec,
+                &prev,
+                &prev_focus,
+                panel_width,
+                &hover_key,
+                Some(crate::widgets::MarkdownCtx {
+                    theme: &theme_guard,
+                    grammars: Some(self.grammar_registry.as_ref()),
+                }),
+            )
+        };
         let focus_cursor = out.focus_cursor;
         let entries = out.entries;
         let embeds = out.embeds;

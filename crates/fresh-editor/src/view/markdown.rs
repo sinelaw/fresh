@@ -470,6 +470,12 @@ pub fn parse_markdown(
     let mut code_block_lang = String::new();
     // Track current link URL (if inside a link)
     let mut current_link_url: Option<String> = None;
+    // List nesting. Each level carries the next ordinal for an ordered
+    // list, or `None` for an unordered one, so items render with a
+    // leading `• ` / `N. ` marker indented by depth. Without a marker
+    // a hover doc's `- a` / `- b` collapsed into indistinguishable
+    // plain lines.
+    let mut list_stack: Vec<Option<u64>> = Vec::new();
 
     for event in parser {
         match event {
@@ -515,11 +521,34 @@ pub fn parse_markdown(
                         style_stack
                             .push(current.add_modifier(Modifier::UNDERLINED).fg(Color::Cyan));
                     }
-                    // Start list items on a new line
-                    Tag::List(_) | Tag::Item
-                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) =>
-                    {
-                        lines.push(StyledLine::new());
+                    Tag::List(start) => {
+                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
+                            lines.push(StyledLine::new());
+                        }
+                        list_stack.push(start);
+                    }
+                    Tag::Item => {
+                        if !lines.last().map(|l| l.spans.is_empty()).unwrap_or(true) {
+                            lines.push(StyledLine::new());
+                        }
+                        // Two columns of indent per nesting level, then the
+                        // item marker: `• ` for unordered lists, `N. ` for
+                        // ordered ones (advancing the level's counter). NBSP
+                        // indent so `preserve_leading_whitespace`-style
+                        // wrapping keeps the hanging indent.
+                        let depth = list_stack.len().saturating_sub(1);
+                        let marker = match list_stack.last_mut() {
+                            Some(Some(n)) => {
+                                let m = format!("{}{}. ", "\u{00A0}".repeat(depth * 2), n);
+                                *n += 1;
+                                m
+                            }
+                            _ => format!("{}• ", "\u{00A0}".repeat(depth * 2)),
+                        };
+                        let style = *style_stack.last().unwrap_or(&Style::default());
+                        if let Some(line) = lines.last_mut() {
+                            line.push(marker, style);
+                        }
                     }
                     Tag::Paragraph => {
                         // Start paragraphs on new line if we have any prior content.
@@ -558,6 +587,9 @@ pub fn parse_markdown(
                     }
                     TagEnd::Item => {
                         // Items end naturally
+                    }
+                    TagEnd::List(_) => {
+                        list_stack.pop();
                     }
                     _ => {}
                 }

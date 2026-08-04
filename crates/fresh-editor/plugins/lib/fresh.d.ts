@@ -1854,6 +1854,23 @@ type WidgetSpec = {
 	* narrow surfaces.
 	*/
 	labelWidth: number;
+	/**
+	* Reject every mutating operation (typing, Backspace/Delete,
+	* Cut, Paste) while keeping caret motion, selection, and Copy.
+	* Implied by `markdown`.
+	*/
+	readOnly: boolean;
+	/**
+	* Render `value` as a markdown *document* (multi-line only,
+	* `rows > 1`): the host renders it through the same markdown
+	* engine as LSP hover docs — headings, emphasis, inline code,
+	* links, syntax-highlighted fences — word-wrapped to the
+	* widget's width. The caret, selection, and Copy operate on
+	* the rendered plain text, so what you copy is what you see.
+	* Markdown mode is **forcibly read-only**: the value only
+	* changes via a spec update.
+	*/
+	markdown: boolean;
 	key?: string | null;
 } | {
 	"kind": "labeledSection";

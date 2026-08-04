@@ -294,6 +294,23 @@ struct CollectedOutput {
 /// growing a parameter every time the host learns to track something
 /// new; `marker_gutter` used to ride a thread-local for exactly that
 /// reason, and hover would have been the second.
+/// Host resources a `markdown: true` Text widget renders through: the
+/// live theme (heading / code / link colours) and, when available, the
+/// grammar registry for syntax-highlighted fences. Carried by reference
+/// beside the spec — theme state is host state, not spec state. `None`
+/// grammar falls back to uniform code styling, exactly like hover docs.
+#[derive(Clone, Copy)]
+pub struct MarkdownCtx<'a> {
+    pub theme: &'a crate::view::theme::Theme,
+    pub grammars: Option<&'a crate::primitives::grammar::GrammarRegistry>,
+}
+
+impl std::fmt::Debug for MarkdownCtx<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MarkdownCtx").finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct RenderContext<'a> {
     /// Widget key that owns the keyboard, or `""` for none. Resolved
@@ -302,6 +319,11 @@ pub struct RenderContext<'a> {
     pub focus_key: &'a str,
     /// Widget key the pointer is over, or `""` for none.
     pub hover_key: &'a str,
+    /// Theme + grammars for `markdown: true` Text widgets. `None`
+    /// (tests, callers without a theme in hand) renders the markdown
+    /// source as plain unstyled lines — layout identical, colours
+    /// absent.
+    pub markdown: Option<MarkdownCtx<'a>>,
     /// Reserve a leading two-column gutter on every focusable control
     /// for the `▸ ` focus marker: the focused control leads with `▸ `
     /// and every other focusable control with two spaces, so focus is
@@ -344,6 +366,8 @@ pub struct RenderOptions<'a> {
     /// focus can rest on the input with no toolbar control highlighted —
     /// set this `false`.
     pub auto_focus_first: bool,
+    /// See [`RenderContext::markdown`].
+    pub markdown: Option<MarkdownCtx<'a>>,
 }
 
 /// Render a spec to a [`RenderOutput`] under explicit [`RenderOptions`].
@@ -378,6 +402,7 @@ pub fn render_spec_with_options(
     let ctx = RenderContext {
         focus_key: &focus_key,
         hover_key: opts.hover_key,
+        markdown: opts.markdown,
         marker_gutter: opts.marker_gutter,
     };
     let mut next_state = HashMap::new();
@@ -820,6 +845,8 @@ fn render_collected(
             sel_start,
             sel_end,
             label_width,
+            read_only: _,
+            markdown,
             key,
         } => render_widget_text(
             value,
@@ -835,6 +862,7 @@ fn render_collected(
             *block_caret,
             (*sel_start, *sel_end),
             *label_width,
+            *markdown,
             key.as_deref(),
             prev,
             next_state,
@@ -2425,6 +2453,279 @@ fn push_block_caret_overlay(entry: &mut TextPropertyEntry, byte: usize) {
     });
 }
 
+/// Translate a concrete ratatui `Style` (as produced by the markdown
+/// renderer) into widget overlay options. Returns `None` for a style
+/// with nothing to say, so unstyled spans don't emit no-op overlays.
+fn ratatui_style_to_overlay(style: ratatui::style::Style) -> Option<OverlayOptions> {
+    use ratatui::style::Modifier;
+    let mut o = OverlayOptions::default();
+    let mut any = false;
+    if let Some(fg) = style.fg.and_then(ratatui_color_to_spec) {
+        o.fg = Some(fg);
+        any = true;
+    }
+    if let Some(bg) = style.bg.and_then(ratatui_color_to_spec) {
+        o.bg = Some(bg);
+        any = true;
+    }
+    let m = style.add_modifier;
+    if m.contains(Modifier::BOLD) {
+        o.bold = true;
+        any = true;
+    }
+    if m.contains(Modifier::ITALIC) {
+        o.italic = true;
+        any = true;
+    }
+    if m.contains(Modifier::UNDERLINED) {
+        o.underline = true;
+        any = true;
+    }
+    if m.contains(Modifier::CROSSED_OUT) {
+        o.strikethrough = true;
+        any = true;
+    }
+    any.then_some(o)
+}
+
+/// Concrete ratatui colour → overlay colour spec. Named ANSI colours ride
+/// the `ThemeKey` slot: the paint-time resolver tries
+/// `named_color_from_str` before theme lookup, so `"Cyan"` round-trips to
+/// `Color::Cyan` without a theme entry.
+fn ratatui_color_to_spec(c: ratatui::style::Color) -> Option<OverlayColorSpec> {
+    use ratatui::style::Color;
+    let named = |s: &str| Some(OverlayColorSpec::ThemeKey(s.to_string()));
+    match c {
+        Color::Rgb(r, g, b) => Some(OverlayColorSpec::Rgb(r, g, b)),
+        Color::Black => named("Black"),
+        Color::Red => named("Red"),
+        Color::Green => named("Green"),
+        Color::Yellow => named("Yellow"),
+        Color::Blue => named("Blue"),
+        Color::Magenta => named("Magenta"),
+        Color::Cyan => named("Cyan"),
+        Color::Gray => named("Gray"),
+        Color::DarkGray => named("DarkGray"),
+        Color::White => named("White"),
+        Color::LightRed => named("LightRed"),
+        Color::LightGreen => named("LightGreen"),
+        Color::LightYellow => named("LightYellow"),
+        Color::LightBlue => named("LightBlue"),
+        Color::LightMagenta => named("LightMagenta"),
+        Color::LightCyan => named("LightCyan"),
+        _ => None,
+    }
+}
+
+/// Markdown-mode multi-line Text: a read-only *document* view.
+///
+/// The value renders through the shared markdown engine (the same one
+/// behind LSP hover docs) and word-wraps to the widget's width; a shadow
+/// [`TextEdit`](crate::primitives::text_edit::TextEdit) holds the
+/// rendered **plain text** so the caret, selection, and Copy operate on
+/// exactly what's on screen — never on markdown markers, and never on
+/// the chrome of sibling widgets sharing a merged row. The shadow (and
+/// with it the caret) resets whenever the rendered text changes (new
+/// value or new width); scroll state and `user_scrolled` follow the
+/// List/Tree contract.
+#[allow(clippy::too_many_arguments)]
+fn render_markdown_text_area(
+    value: &str,
+    rows: u32,
+    is_focused: bool,
+    key: Option<&str>,
+    prev: &HashMap<String, WidgetInstanceState>,
+    next_state: &mut HashMap<String, WidgetInstanceState>,
+    ctx: RenderContext<'_>,
+    panel_width: u32,
+) -> CollectedOutput {
+    use crate::view::markdown::{parse_markdown, wrap_styled_lines, wrap_text_line, StyledLine};
+    let mut out = CollectedOutput::default();
+    let width = panel_width.max(8) as usize;
+
+    // Render + wrap. Without a theme (unit tests, plugin-less hosts) the
+    // source renders as plain wrapped lines — identical layout machinery,
+    // no styling.
+    let lines: Vec<StyledLine> = match ctx.markdown {
+        Some(md) => wrap_styled_lines(&parse_markdown(value, md.theme, md.grammars), width),
+        None => value
+            .split('\n')
+            .flat_map(|l| wrap_text_line(l, width))
+            .map(|l| {
+                let mut sl = StyledLine::new();
+                sl.push(l, ratatui::style::Style::default());
+                sl
+            })
+            .collect(),
+    };
+    let plain: Vec<String> = lines.iter().map(|l| l.plain_text()).collect();
+    let shadow = plain.join("\n");
+    // Byte offset of each line's start within `shadow`, for mapping the
+    // editor's flat selection range back onto rows.
+    let mut line_starts: Vec<usize> = Vec::with_capacity(plain.len());
+    let mut off = 0usize;
+    for l in &plain {
+        line_starts.push(off);
+        off += l.len() + 1;
+    }
+
+    // Shadow editor: keep caret/selection across renders while the
+    // rendered text is unchanged; any change (new step, resize) resets.
+    let mut editor;
+    let mut scroll: u32 = 0;
+    let mut user_scrolled = false;
+    match key.filter(|k| !k.is_empty()).and_then(|k| prev.get(k)) {
+        Some(WidgetInstanceState::Text {
+            editor: prev_editor,
+            scroll: prev_scroll,
+            user_scrolled: prev_user_scrolled,
+            ..
+        }) if prev_editor.value() == shadow => {
+            editor = prev_editor.clone();
+            scroll = *prev_scroll;
+            user_scrolled = *prev_user_scrolled;
+        }
+        _ => {
+            editor = crate::primitives::text_edit::TextEdit::with_text(&shadow);
+            editor.set_cursor_from_flat(0);
+        }
+    }
+
+    let total = lines.len() as u32;
+    let visible = rows.max(1);
+    let max_scroll = total.saturating_sub(visible);
+    scroll = scroll.min(max_scroll);
+    let cursor_row = editor.cursor_row.min(plain.len().saturating_sub(1));
+    if is_focused && !user_scrolled {
+        // Follow the caret, List-style: scroll just enough to keep it
+        // in the window.
+        if (cursor_row as u32) < scroll {
+            scroll = cursor_row as u32;
+        } else if cursor_row as u32 >= scroll + visible {
+            scroll = (cursor_row as u32 + 1)
+                .saturating_sub(visible)
+                .min(max_scroll);
+        }
+    }
+
+    let selection = if is_focused {
+        editor.selection_flat_range()
+    } else {
+        None
+    };
+    for vis in 0..visible {
+        let idx = (scroll + vis) as usize;
+        if idx >= lines.len() {
+            out.entries.push(blank_list_row());
+            continue;
+        }
+        let mut text = String::new();
+        let mut overlays: Vec<InlineOverlay> = Vec::new();
+        for span in &lines[idx].spans {
+            let start = text.len();
+            text.push_str(&span.text);
+            if let Some(style) = ratatui_style_to_overlay(span.style) {
+                overlays.push(InlineOverlay {
+                    start,
+                    end: text.len(),
+                    style,
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+        // Selection band: the flat range's intersection with this line,
+        // painted over the markdown styling (later overlays win per
+        // property, so the band's bg composes with the spans' fg).
+        if let Some((sel_start, sel_end)) = selection {
+            let ls = line_starts[idx];
+            let le = ls + text.len();
+            let a = sel_start.max(ls);
+            let b = sel_end.min(le);
+            if b > a {
+                overlays.push(InlineOverlay {
+                    start: a - ls,
+                    end: b - ls,
+                    style: OverlayOptions {
+                        fg: Some(OverlayColorSpec::theme_key(KEY_COMPLETION_SEL_FG)),
+                        bg: Some(OverlayColorSpec::theme_key(KEY_TEXT_INPUT_SELECTION_BG)),
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+        let mut entry = TextPropertyEntry {
+            text,
+            properties: Default::default(),
+            style: None,
+            inline_overlays: overlays,
+            segments: Vec::new(),
+            pad_to_chars: None,
+            truncate_to_chars: None,
+        };
+        if is_focused && idx == cursor_row {
+            let byte_in_row = editor
+                .flat_cursor_byte()
+                .saturating_sub(line_starts[idx])
+                .min(entry.text.len());
+            out.focus_cursor = Some(FocusCursor {
+                buffer_row: vis,
+                byte_in_row: byte_in_row as u32,
+            });
+            // The document usually renders inside a dock panel where no
+            // hardware cursor shows, so always paint the block caret too.
+            push_block_caret_overlay(&mut entry, byte_in_row);
+        }
+        // One `focus` hit per row. `mdLine` names the rendered line so a
+        // click (and a drag) can place the caret; the byte range extends
+        // past the text so clicks on the row's padding land at line-end.
+        if let Some(k) = key.filter(|k| !k.is_empty()) {
+            out.hits.push(HitArea {
+                overlay: false,
+                widget_key: k.to_string(),
+                widget_kind: "text",
+                buffer_row: vis,
+                byte_start: 0,
+                byte_end: entry.text.len() + width,
+                payload: json!({ "mdLine": idx }),
+                event_type: "focus",
+            });
+        }
+        ensure_trailing_newline(&mut entry);
+        out.entries.push(entry);
+    }
+
+    if let Some(k) = key.filter(|k| !k.is_empty()) {
+        // Geometry region: wheel routing hit-tests it, and the host
+        // paints a scrollbar when the document overflows.
+        out.scroll_regions.push(ScrollRegion {
+            list_key: k.to_string(),
+            buffer_row: 0,
+            col_in_row: 0,
+            width_cols: panel_width,
+            height_rows: visible,
+            total: total as usize,
+            visible: visible as usize,
+            scroll: scroll as usize,
+        });
+        next_state.insert(
+            k.to_string(),
+            WidgetInstanceState::Text {
+                editor,
+                scroll,
+                completions: Vec::new(),
+                completion_selected_index: 0,
+                completion_scroll_offset: 0,
+                completion_navigated: false,
+                user_scrolled,
+            },
+        );
+    }
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_widget_text(
     value: &str,
@@ -2440,12 +2741,34 @@ fn render_widget_text(
     block_caret: bool,
     spec_sel: (i32, i32),
     label_width: u32,
+    markdown: bool,
     key: Option<&str>,
     prev: &HashMap<String, WidgetInstanceState>,
     next_state: &mut HashMap<String, WidgetInstanceState>,
     ctx: RenderContext<'_>,
     panel_width: u32,
 ) -> CollectedOutput {
+    // Markdown mode is a multi-line document view: rendered through the
+    // shared hover-docs engine, forcibly read-only, with the caret /
+    // selection / Copy operating on the rendered plain text. It owns its
+    // whole render path — none of the input-chrome logic below applies.
+    if markdown && rows > 1 {
+        let is_focused = if key.is_some_and(|k| !k.is_empty()) {
+            ctx.is_focused(key)
+        } else {
+            focused
+        };
+        return render_markdown_text_area(
+            value,
+            rows,
+            is_focused,
+            key,
+            prev,
+            next_state,
+            ctx,
+            panel_width,
+        );
+    }
     let mut out = CollectedOutput::default();
     // Default popup height: 5 visible rows. Plugins override per-widget
     // by setting `completions_visible_rows`; 0 falls back to the default
@@ -2490,6 +2813,7 @@ fn render_widget_text(
             completion_selected_index,
             completion_scroll_offset,
             completion_navigated,
+            ..
         }) => {
             effective_editor = editor.clone();
             prev_scroll = *scroll;
@@ -2737,6 +3061,7 @@ fn render_widget_text(
                 completion_selected_index: prev_completion_idx,
                 completion_scroll_offset: prev_completion_scroll,
                 completion_navigated: prev_completion_navigated,
+                user_scrolled: false,
             },
         );
     }
@@ -6423,6 +6748,8 @@ mod tests {
             sel_start: -1,
             sel_end: -1,
             label_width: 18,
+            read_only: false,
+            markdown: false,
             key: None,
         };
         let (entries, _, _) = render_no_focus(&spec, &HashMap::new());
@@ -6463,6 +6790,8 @@ mod tests {
             sel_start: -1,
             sel_end: -1,
             label_width: 0,
+            read_only: false,
+            markdown: false,
             key: None,
         };
         let (entries, _, _) = render_no_focus(&spec, &HashMap::new());
@@ -7025,6 +7354,8 @@ mod tests {
                     full_width: false,
                     completions: Vec::new(),
                     completions_visible_rows: 0,
+                    read_only: false,
+                    markdown: false,
                     key: Some("ti".into()),
                 },
                 WidgetSpec::Toggle {
@@ -8720,6 +9051,8 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            read_only: false,
+            markdown: false,
             key: key.map(|s| s.into()),
         }
     }
@@ -8806,6 +9139,8 @@ mod tests {
             full_width: false,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            read_only: false,
+            markdown: false,
             key: Some("ta".into()),
         };
         let prev = HashMap::new();
@@ -8847,6 +9182,7 @@ mod tests {
                 completion_selected_index: 0,
                 completion_scroll_offset: 0,
                 completion_navigated: false,
+                user_scrolled: false,
             },
         );
         let out = render_spec(&spec, &prev, "ta", 80);
@@ -8938,6 +9274,8 @@ mod tests {
             full_width,
             completions: Vec::new(),
             completions_visible_rows: 0,
+            read_only: false,
+            markdown: false,
             key: key.map(|s| s.into()),
         }
     }
@@ -9062,6 +9400,88 @@ mod tests {
         assert!(
             saw_selection_band,
             "the selected row must still paint its selection band"
+        );
+    }
+
+    #[test]
+    fn markdown_text_renders_document_rows_with_region_and_shadow() {
+        // A markdown Text (no theme in a bare render context → plain
+        // line fallback, same layout machinery) renders one row per
+        // wrapped line, padded to `rows`, emits its geometry region,
+        // and shadows the rendered plain text into a TextEdit so
+        // selection/copy operate on exactly what's shown.
+        let spec = WidgetSpec::Text {
+            value: "alpha\nbeta\ngamma\ndelta\nepsilon".into(),
+            cursor_byte: -1,
+            focused: false,
+            label: String::new(),
+            placeholder: None,
+            rows: 3,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: true,
+            key: Some("doc".into()),
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 30);
+        assert_eq!(out.entries.len(), 3, "visible window is `rows` tall");
+        assert!(out.entries[0].text.starts_with("alpha"));
+        // Region covers every rendered line, not just the window.
+        assert_eq!(out.scroll_regions.len(), 1);
+        let region = &out.scroll_regions[0];
+        assert_eq!((region.total, region.visible), (5, 3));
+        // The shadow editor holds the rendered plain text.
+        match out.instance_states.get("doc") {
+            Some(WidgetInstanceState::Text { editor, .. }) => {
+                assert_eq!(editor.value(), "alpha\nbeta\ngamma\ndelta\nepsilon");
+            }
+            other => panic!("expected Text instance state, got {other:?}"),
+        }
+        // Every row is a caret target.
+        assert_eq!(out.hits.len(), 3);
+        assert!(out.hits.iter().all(|h| h.event_type == "focus"));
+    }
+
+    #[test]
+    fn markdown_text_caret_follows_focus_and_paints_block_caret() {
+        let spec = WidgetSpec::Text {
+            value: "one\ntwo".into(),
+            cursor_byte: -1,
+            focused: false,
+            label: String::new(),
+            placeholder: None,
+            rows: 2,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: true,
+            key: Some("doc".into()),
+        };
+        // The doc is the only tabbable → auto-focused; caret starts at
+        // the top and paints as a reversed cell.
+        let out = render_spec(&spec, &HashMap::new(), "", 30);
+        let fc = out.focus_cursor.expect("focused doc publishes a caret");
+        assert_eq!((fc.buffer_row, fc.byte_in_row), (0, 0));
+        assert!(
+            out.entries[0]
+                .inline_overlays
+                .iter()
+                .any(|o| o.style.reversed),
+            "caret renders as a reversed block cell"
         );
     }
 
