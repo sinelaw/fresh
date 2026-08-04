@@ -623,10 +623,17 @@ impl WidgetRegistry {
                 continue;
             }
             for hit in &state.hits {
-                if hit.buffer_row != row
-                    || hit.event_type != "select"
-                    || (hit.widget_kind != "list" && hit.widget_kind != "tree")
-                {
+                // Rows of a markdown text document compete too (their
+                // `focus` hit places the caret): without them, a click on
+                // the seam beside a document column would resolve to a
+                // *list* in the neighbouring column — the column the user
+                // visibly did not click.
+                let row_gesture = (hit.event_type == "select"
+                    && (hit.widget_kind == "list" || hit.widget_kind == "tree"))
+                    || (hit.event_type == "focus"
+                        && hit.widget_kind == "text"
+                        && hit.payload.get("mdLine").is_some());
+                if hit.buffer_row != row || !row_gesture {
                     continue;
                 }
                 let d = distance(hit, col);

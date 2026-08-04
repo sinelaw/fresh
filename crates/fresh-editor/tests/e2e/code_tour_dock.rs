@@ -1009,15 +1009,21 @@ fn test_prose_selects_and_copies_rendered_text() {
         "clipboard must carry rendered text, not markers or chrome: {copied:?}"
     );
 
-    // Read-only: typing must not change the document.
-    let before = harness.screen_to_string();
+    // Read-only: typing must not change the document. Compare everything
+    // above the status bar — the buffer's own editing-disabled guard may
+    // put a message there, which is fine; the panel must be untouched.
+    let strip_status = |screen: String| {
+        let lines: Vec<&str> = screen.lines().collect();
+        lines[..lines.len().saturating_sub(2)].join("\n")
+    };
+    let before = strip_status(harness.screen_to_string());
     harness
         .send_key(KeyCode::Char('z'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_async_quiescence(3).unwrap();
     // `z` is unbound in the tour panel mode and the document rejects
     // insertion — the prose is untouched.
-    let after = harness.screen_to_string();
+    let after = strip_status(harness.screen_to_string());
     assert_eq!(
         before, after,
         "typing into the read-only prose must change nothing"
