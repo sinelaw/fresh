@@ -325,6 +325,14 @@ fn test_live_diff_highlights_empty_added_line() {
             s.contains("UNIQUE_NEW_FN_MARKER") && has_glyph(&s, '+')
         })
         .unwrap();
+    // The `+` glyphs land before the background overlays: `renderHunks` sends
+    // its gutter indicators first and its bg highlights after, and the editor
+    // drains plugin commands partway through a render. So the wait above can be
+    // satisfied by a frame that has the gutter but not yet the stripe, and the
+    // bg assertion below then samples a half-applied pass — which is how this
+    // failed on macOS CI while passing everywhere else. Wait for the plugin
+    // pipeline itself to go quiet before reading a cell.
+    harness.wait_for_async_quiescence(3).unwrap();
 
     let buf = harness.buffer();
     let mut marker_row: Option<u16> = None;
