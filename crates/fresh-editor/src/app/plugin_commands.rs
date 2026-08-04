@@ -2231,6 +2231,25 @@ impl Editor {
         );
     }
 
+    /// Handle StartFilePickAsync (for the editor.pickFile() API): open
+    /// the native Open File browser — same anchoring and navigation as
+    /// Ctrl+O — but deliver the confirmed path to the plugin callback
+    /// instead of opening it as a buffer.
+    pub(super) fn handle_start_file_pick_async(
+        &mut self,
+        label: String,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        use crate::view::prompt::PromptType;
+        // start_prompt resolves any dangling pick callback as cancelled
+        // (including one from a pick interrupted by this pick), so this
+        // one is armed only after it runs.
+        self.start_prompt(label, PromptType::OpenFile);
+        self.active_window_mut().pending_file_pick_callback = Some(callback_id);
+        self.prefill_open_file_prompt();
+        self.init_file_open_state();
+    }
+
     /// Handle StartPromptAsync command (for editor.prompt() API)
     pub(super) fn handle_start_prompt_async(
         &mut self,

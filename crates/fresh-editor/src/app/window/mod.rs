@@ -703,6 +703,10 @@ pub struct Window {
     /// `editor.startPrompt` to deliver the prompt result back).
     pub pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
 
+    /// Pending `editor.pickFile` callback id. While set, the Open File
+    /// browser delivers the confirmed path here instead of opening it.
+    pub pending_file_pick_callback: Option<fresh_core::api::JsCallbackId>,
+
     /// Buffer ids the user picked "save before quit" for via the
     /// modified-buffers prompt; consumed in order on quit.
     pub pending_quit_unnamed_save: Vec<BufferId>,
@@ -2188,6 +2192,7 @@ impl Window {
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
             pending_async_prompt_callback: None,
+            pending_file_pick_callback: None,
             pending_quit_unnamed_save: Vec::new(),
             search_case_sensitive: true,
             search_whole_word: false,

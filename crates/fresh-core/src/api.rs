@@ -3701,6 +3701,17 @@ pub enum PluginCommand {
         callback_id: JsCallbackId,
     },
 
+    /// Open the editor's native Open File browser and resolve the chosen
+    /// file's absolute path via callback — the terminal analogue of a
+    /// browser's file-input dialog. Resolves null when the user cancels.
+    /// The browser anchors where Open File does (the active file's
+    /// directory, else the window's working directory), with the same
+    /// navigation: Backspace up the tree, Tab to descend, hidden toggle.
+    StartFilePickAsync {
+        label: String,
+        callback_id: JsCallbackId,
+    },
+
     /// Request the next keypress for the calling plugin.
     ///
     /// The editor enqueues `callback_id` and resolves it with a
