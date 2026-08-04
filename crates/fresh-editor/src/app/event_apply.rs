@@ -391,15 +391,21 @@ impl Editor {
         }
         position_deltas.sort_by_key(|(pos, _)| *pos);
 
+        // Prefix-summed deltas so the shift for a position is a binary search
+        // rather than a walk over every edit. Re-summing the whole list per
+        // cursor event made a replace-all quadratic in the match count — one
+        // edit per match, one event per match (issue #2893).
+        let delta_positions: Vec<usize> = position_deltas.iter().map(|(pos, _)| *pos).collect();
+        let delta_prefix: Vec<isize> = std::iter::once(0)
+            .chain(position_deltas.iter().scan(0isize, |acc, (_, delta)| {
+                *acc += delta;
+                Some(*acc)
+            }))
+            .collect();
+
         // Helper: calculate cumulative shift for a position based on edits at lower positions
         let calc_shift = |original_pos: usize| -> isize {
-            let mut shift: isize = 0;
-            for (edit_pos, delta) in &position_deltas {
-                if *edit_pos < original_pos {
-                    shift += delta;
-                }
-            }
-            shift
+            delta_prefix[delta_positions.partition_point(|pos| *pos < original_pos)]
         };
 
         // Apply adjustments to cursor positions
