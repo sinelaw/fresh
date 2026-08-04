@@ -2201,10 +2201,13 @@ fn collect_labeled_section(
     for mut sr in child_out.scroll_regions {
         sr.buffer_row += 1;
         sr.col_in_row += prefix_cols;
-        // The section padded the child to `inner_width`, so the
-        // scroll region's usable width is the inner width (not
-        // the child's requested width).
-        sr.width_cols = inner_width;
+        // The section padded the child to `inner_width`; extend the
+        // region two more columns — through the right padding onto the
+        // `│` border — so a scrollbar painted at the region's right
+        // edge lands ON the section border (not floating one column
+        // inboard with the selection band leaking past it), and a
+        // wheel over the border still scrolls this widget.
+        sr.width_cols = inner_width + 2;
         scroll_regions.push(sr);
     }
 
@@ -2670,12 +2673,11 @@ fn render_markdown_text_area(
                 .flat_cursor_byte()
                 .saturating_sub(line_starts[idx])
                 .min(entry.text.len());
-            out.focus_cursor = Some(FocusCursor {
-                buffer_row: vis,
-                byte_in_row: byte_in_row as u32,
-            });
-            // The document usually renders inside a dock panel where no
-            // hardware cursor shows, so always paint the block caret too.
+            // The block caret is the document's caret. Deliberately NO
+            // `focus_cursor`: publishing one moves the panel *buffer's*
+            // real cursor there, and the buffer viewport follows its
+            // cursor — caret-down near the bottom then scrolled the whole
+            // panel (header off the top, `~` rows below the content).
             push_block_caret_overlay(&mut entry, byte_in_row);
         }
         // One `focus` hit per row. `mdLine` names the rendered line so a
@@ -4021,31 +4023,35 @@ fn wrap_entry_between(
     suffix: &str,
 ) -> TextPropertyEntry {
     let prefix_bytes = prefix.len();
-    // Pad / truncate `child.text` to `inner_width` display cols.
-    let cur_cols = child.text.chars().count();
+    // Pad / truncate `child.text` to `inner_width` **display** cols —
+    // a wide glyph (`漢`, `😀`) is one char but two columns, and
+    // char-counted padding shifted the section's right border out of
+    // alignment on every row containing one.
+    let cur_cols = crate::primitives::display_width::str_width(&child.text);
     if cur_cols < inner_width {
         for _ in 0..(inner_width - cur_cols) {
             child.text.push(' ');
         }
     } else if cur_cols > inner_width {
-        // Tail-truncate at the codepoint boundary corresponding
-        // to `inner_width` chars, then if there's room replace
-        // the final visible char with `…` so the cut is visible
-        // (mirrors `pad_or_truncate_cols`).
-        let indices: Vec<usize> = child.text.char_indices().map(|(i, _)| i).collect();
-        let byte_cutoff = indices
-            .get(inner_width)
-            .copied()
-            .unwrap_or(child.text.len());
+        // Tail-truncate at the byte where the display width reaches
+        // `inner_width`, then if there's room make the final column an
+        // `…` so the cut is visible (mirrors `pad_or_truncate_cols`).
+        let byte_cutoff = crate::primitives::display_width::byte_offset_at_visual_column(
+            &child.text,
+            inner_width,
+        );
         child.text.truncate(byte_cutoff);
         if inner_width >= 2 {
-            // Replace the last visible char with `…`. `pop()` walks
-            // codepoint boundaries so multi-byte tails are handled
-            // correctly. We then update `byte_cutoff` to the new
-            // string length so overlay clamping below uses the
-            // post-ellipsis boundary.
-            child.text.pop();
+            while crate::primitives::display_width::str_width(&child.text)
+                > inner_width.saturating_sub(1)
+            {
+                child.text.pop();
+            }
             child.text.push('…');
+        }
+        let w = crate::primitives::display_width::str_width(&child.text);
+        for _ in 0..inner_width.saturating_sub(w) {
+            child.text.push(' ');
         }
         let byte_cutoff = child.text.len();
         // Drop any overlay that would now reference past the
@@ -6375,25 +6381,30 @@ fn merge_inline(merged: &mut TextPropertyEntry, next: &mut TextPropertyEntry) {
 /// `cols == 1` (no room for the ellipsis itself) fall back to a
 /// plain cut.
 fn pad_or_truncate_cols(text: &mut String, cols: usize) {
-    let cur = text.chars().count();
+    // Measure in display columns, not chars: a `漢` or `😀` is one char
+    // but two columns, and char-counted padding pushed every border to
+    // the right of a wide glyph out of alignment.
+    let cur = crate::primitives::display_width::str_width(text);
     if cur < cols {
         for _ in 0..(cols - cur) {
             text.push(' ');
         }
     } else if cur > cols {
-        // Cut to `cols` chars, then if we have room replace the
-        // last char with `…` so the truncation is visible.
-        let cutoff = text
-            .char_indices()
-            .nth(cols)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
+        // Cut at the byte where the display width reaches `cols`, then
+        // if we have room make the last column an `…` so the truncation
+        // is visible. A wide glyph straddling the cut is dropped whole,
+        // leaving a one-column gap the pad below fills.
+        let cutoff = crate::primitives::display_width::byte_offset_at_visual_column(text, cols);
         text.truncate(cutoff);
         if cols >= 2 {
-            // Drop the last char and append the ellipsis. We pop a
-            // char (not a byte) so multi-byte tails stay intact.
-            text.pop();
+            while crate::primitives::display_width::str_width(text) > cols.saturating_sub(1) {
+                text.pop();
+            }
             text.push('…');
+        }
+        let w = crate::primitives::display_width::str_width(text);
+        for _ in 0..cols.saturating_sub(w) {
+            text.push(' ');
         }
     }
 }
@@ -9471,11 +9482,16 @@ mod tests {
             markdown: true,
             key: Some("doc".into()),
         };
-        // The doc is the only tabbable → auto-focused; caret starts at
-        // the top and paints as a reversed cell.
+        // The doc is the only tabbable → auto-focused; the caret paints
+        // as a reversed block cell on the first row. Deliberately NO
+        // `focus_cursor`: publishing one would move the panel buffer's
+        // real cursor, and the buffer viewport following it scrolled the
+        // whole panel when the caret neared the bottom.
         let out = render_spec(&spec, &HashMap::new(), "", 30);
-        let fc = out.focus_cursor.expect("focused doc publishes a caret");
-        assert_eq!((fc.buffer_row, fc.byte_in_row), (0, 0));
+        assert!(
+            out.focus_cursor.is_none(),
+            "a markdown document must not publish a hardware cursor"
+        );
         assert!(
             out.entries[0]
                 .inline_overlays
@@ -9506,6 +9522,34 @@ mod tests {
             keys,
             vec![("fits", false), ("overflows", true)],
             "every keyed list surfaces a region; only the overflowing one scrolls"
+        );
+    }
+
+    #[test]
+    fn labeled_section_keeps_border_aligned_with_wide_glyphs() {
+        // `漢` / `😀` are one char but two display columns. Char-counted
+        // padding shifted the section's right border on every row that
+        // contained one — pad in display columns so all rows line up.
+        let wide = TextPropertyEntry::text("wide 漢😀 row");
+        let narrow = TextPropertyEntry::text("narrow row");
+        let spec = WidgetSpec::LabeledSection {
+            label: "".into(),
+            child: Box::new(WidgetSpec::Raw {
+                entries: vec![wide, narrow],
+                key: None,
+            }),
+            width_pct: None,
+            key: None,
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 30);
+        let widths: Vec<usize> = out
+            .entries
+            .iter()
+            .map(|e| crate::primitives::display_width::str_width(e.text.trim_end_matches('\n')))
+            .collect();
+        assert!(
+            widths.iter().all(|w| *w == widths[0]),
+            "every section row must span the same display width: {widths:?}"
         );
     }
 

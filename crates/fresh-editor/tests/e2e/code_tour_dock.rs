@@ -819,13 +819,34 @@ fn load_overflow_tour(harness: &mut EditorTestHarness, project_root: &Path) -> u
 /// The two halves of a panel screen row, split at the `││` seam between
 /// the Steps rail and the prose column.
 fn split_at_seam(harness: &EditorTestHarness, row: usize) -> (String, String) {
+    let seam_chars = prose_start_col(harness);
     let screen = harness.screen_to_string();
     let line = screen.lines().nth(row).expect("panel row");
-    let seam = line.find("││").expect("column seam");
-    (
-        line[..seam].to_string(),
-        line[seam + "││".len()..].to_string(),
-    )
+    let seam_byte = line
+        .char_indices()
+        .nth(seam_chars)
+        .map(|(i, _)| i)
+        .unwrap_or(line.len());
+    (line[..seam_byte].to_string(), line[seam_byte..].to_string())
+}
+
+/// Screen column (in chars == display cells here; the border row has no
+/// wide glyphs) where the prose section begins — its `╭`, read off the
+/// sections' shared top-border row. The rail's right border can't serve
+/// as the seam anymore: the rail's overlay scrollbar paints over it.
+fn prose_start_col(harness: &EditorTestHarness) -> usize {
+    let screen = harness.screen_to_string();
+    let border = screen
+        .lines()
+        .find(|l| l.contains("╭─ Steps"))
+        .expect("rail top border row");
+    border
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '╭')
+        .map(|(i, _)| i)
+        .nth(1)
+        .expect("prose top border")
 }
 
 /// The mouse wheel scrolls the list under the pointer: over the prose it
@@ -852,10 +873,7 @@ fn test_wheel_scrolls_the_hovered_list() {
     );
 
     // Wheel down over the prose column.
-    let screen = harness.screen_to_string();
-    let line = screen.lines().nth(first_row).expect("panel row");
-    let seam_col = line[..line.find("││").expect("seam")].chars().count();
-    let prose_col = (seam_col + 4) as u16;
+    let prose_col = (prose_start_col(&harness) + 4) as u16;
     harness
         .mouse_scroll_down(prose_col, first_row as u16)
         .unwrap();
@@ -897,14 +915,15 @@ fn test_overflowing_lists_show_scrollbars() {
         .collect();
     assert_eq!(closes.len(), 2, "expected both section borders\n{line}");
 
-    // Scrollbar column = two columns left of the section's right border
-    // (the last column of the section's inner area).
+    // The scrollbar paints ON the section's border column (where the
+    // `╮` sits), so nothing — not even the selection band — extends
+    // past it.
     for close in closes {
-        let sb_col = (close - 2) as u16;
+        let sb_col = close as u16;
         assert!(
             harness.is_scrollbar_thumb_at(sb_col, first_row as u16)
                 || harness.is_scrollbar_track_at(sb_col, first_row as u16),
-            "expected a scrollbar cell at col {sb_col} row {first_row}, got {:?}\nScreen:\n{}",
+            "expected a scrollbar cell on the border col {sb_col} row {first_row}, got {:?}\nScreen:\n{}",
             harness.get_cell_style(sb_col, first_row as u16),
             harness.screen_to_string()
         );
@@ -984,8 +1003,7 @@ fn test_prose_selects_and_copies_rendered_text() {
     // right of the seam changed background versus an unselected row.
     harness.render().unwrap();
     let screen = harness.screen_to_string();
-    let line = screen.lines().nth(first_row).expect("prose row");
-    let seam_col = line[..line.find("││").expect("seam")].chars().count();
+    let seam_col = prose_start_col(&harness);
     let sel_cell = harness.get_cell_style(seam_col as u16 + 4, first_row as u16);
     let plain_cell = harness.get_cell_style(seam_col as u16 + 4, first_row as u16 + 4);
     assert_ne!(
@@ -1027,6 +1045,166 @@ fn test_prose_selects_and_copies_rendered_text() {
     assert_eq!(
         before, after,
         "typing into the read-only prose must change nothing"
+    );
+}
+
+/// Moving the caret to the bottom of the prose scrolls only the prose
+/// viewport — never the panel itself. Before the fix, the caret published
+/// a hardware-cursor position and the panel *buffer's* viewport followed
+/// it: the header scrolled off the top and `~` rows appeared below.
+#[test]
+fn test_prose_caret_never_scrolls_the_panel() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+
+    let screen = harness.screen_to_string();
+    let tab_row = screen
+        .lines()
+        .position(|l| l.contains("*Tour: Overflow Tour*"))
+        .expect("dock tab row");
+    for _ in 0..30 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.wait_for_async_quiescence(3).unwrap();
+    let after = harness.screen_to_string();
+    assert_eq!(
+        after
+            .lines()
+            .position(|l| l.contains("*Tour: Overflow Tour*")),
+        Some(tab_row),
+        "the dock tab must not move when the caret pages the prose\nScreen:\n{after}"
+    );
+    assert!(
+        after.contains("Step 1 of 12"),
+        "the panel header must stay visible\nScreen:\n{after}"
+    );
+    // The prose viewport itself scrolled (caret is far below the fold).
+    let (_, prose_after) = split_at_seam(&harness, first_row);
+    assert!(
+        !prose_after.contains("Heading one"),
+        "the prose viewport should have followed the caret\nScreen:\n{after}"
+    );
+}
+
+/// Left / Right move the prose caret; they no longer step the tour.
+/// `n`/`p` (and the buttons) remain the step keys.
+#[test]
+fn test_left_right_move_the_caret_not_the_step() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    load_overflow_tour(&mut harness, &project_root);
+
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Step 1 of 12"),
+        "Right must not advance the step\nScreen:\n{screen}"
+    );
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    assert!(
+        harness.screen_to_string().contains("Step 1 of 12"),
+        "Left must not step back"
+    );
+    // Non-vacuous: `n` still advances.
+    press_step_key(&mut harness, 'n', "Step 2 of 12");
+}
+
+/// With the Steps rail focused (`g`), ↑/↓ don't just move a silent
+/// selection — they navigate to that step, exactly like clicking it,
+/// and the rail keeps focus so the next arrow keeps browsing.
+#[test]
+fn test_rail_arrows_navigate_steps() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    assert!(harness.screen_to_string().contains("Step 1 of 2"));
+
+    harness
+        .send_key(KeyCode::Char('g'), KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 2 of 2"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Handling"),
+        "the prose must follow the rail navigation\nScreen:\n{screen}"
+    );
+    // The rail kept focus: ↑ browses straight back.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Step 1 of 2"))
+        .unwrap();
+}
+
+/// A step whose range is taller than the pane keeps the range's FIRST
+/// line (where the cursor lands) on screen, instead of centring the
+/// range's middle and scrolling the top away.
+#[test]
+fn test_tall_step_range_keeps_its_first_line_visible() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    // Step 2: wide.rs lines 5–44 — far taller than the ~23 visible rows.
+    press_step_key(&mut harness, 'n', "Step 2 of 2");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("fn f5()"))
+        .unwrap();
+}
+
+/// Every line of the step range paints a full-width band — not just the
+/// first. Before the fix a single range-wide overlay tail-filled only
+/// the row it started on; the rest highlighted their text width alone.
+#[test]
+fn test_step_highlight_bands_are_full_width_on_every_line() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    press_step_key(&mut harness, 'n', "Step 2 of 2");
+
+    // wide.rs rows are ~28 columns of text; column 60 is well past every
+    // line's end, so a band there proves the full-width fill. Require it
+    // on at least three consecutive highlighted rows.
+    let banded = |h: &EditorTestHarness| -> Vec<u16> {
+        (2..25u16)
+            .filter(|row| {
+                h.get_cell_style(60, *row)
+                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)))
+            })
+            .collect()
+    };
+    harness.wait_until(|h| banded(h).len() >= 3).unwrap();
+    let rows = banded(&harness);
+    let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
+    assert!(
+        consecutive,
+        "full-width bands must cover consecutive range rows, got {rows:?}\nScreen:\n{}",
+        harness.screen_to_string()
     );
 }
 

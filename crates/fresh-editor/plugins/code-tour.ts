@@ -382,8 +382,8 @@ function buildLocation(t: TourInstance): WidgetSpec {
 
 function buildHints(t: TourInstance): HintEntry[] {
   const core: HintEntry[] = [
-    { keys: "n/→", label: editor.t("hint.next") },
-    { keys: "p/←", label: editor.t("hint.prev") },
+    { keys: "n", label: editor.t("hint.next") },
+    { keys: "p", label: editor.t("hint.prev") },
     { keys: "⏎", label: editor.t("hint.jump") },
     { keys: "q", label: t.step === t.manifest.steps.length - 1 ? editor.t("hint.finish") : editor.t("hint.exit") },
   ];
@@ -460,7 +460,7 @@ async function lineRangeBytes(
   bufferId: number,
   from: number,
   to: number,
-): Promise<[number, number] | null> {
+): Promise<Array<[number, number]> | null> {
   const text = await editor.getBufferText(bufferId);
   if (typeof text !== "string") return null;
   const lines = text.split("\n");
@@ -471,11 +471,17 @@ async function lineRangeBytes(
   for (let i = 0; i < from - 1; i++) {
     offset += editor.utf8ByteLength(lines[i]) + 1;
   }
-  const start = offset;
+  const ranges: Array<[number, number]> = [];
   for (let i = from - 1; i < last; i++) {
-    offset += editor.utf8ByteLength(lines[i]) + (i < last - 1 ? 1 : 0);
+    const len = editor.utf8ByteLength(lines[i]);
+    // An empty line still gets a band: cover its newline byte so the
+    // painter has a cell to extend from (a zero-length overlay paints
+    // nothing at all).
+    const end = len > 0 ? offset + len : Math.min(offset + 1, text.length);
+    if (end > offset) ranges.push([offset, end]);
+    offset += len + 1;
   }
-  return [start, offset];
+  return ranges;
 }
 
 /** Resolve the buffer showing `filePath`.
@@ -517,17 +523,25 @@ async function paintStepOverlay(t: TourInstance): Promise<void> {
   if (!bufferId) return;
 
   clearTourOverlays(t);
-  const range = await lineRangeBytes(bufferId, step.lines[0], step.lines[1]);
-  if (!range) {
+  const ranges = await lineRangeBytes(bufferId, step.lines[0], step.lines[1]);
+  if (!ranges || ranges.length === 0) {
     editor.warn(
       `Tour: could not resolve lines ${step.lines[0]}-${step.lines[1]} in ${step.file_path}`,
     );
     return;
   }
-  editor.addOverlay(bufferId, t.namespace, range[0], range[1], {
-    bg: [42, 74, 106],
-    extendToLineEnd: true,
-  });
+  // One overlay per line, each extending to the line end: a single
+  // range-wide overlay only tail-filled the row it *started* on, so the
+  // first line showed a full-width band and the rest highlighted just
+  // their text. Per-line bands make every row full width — a region
+  // marker visually distinct from a text selection (which never covers
+  // the empty tail of a line).
+  for (const [start, end] of ranges) {
+    editor.addOverlay(bufferId, t.namespace, start, end, {
+      bg: [42, 74, 106],
+      extendToLineEnd: true,
+    });
+  }
   t.paintedBuffers.add(bufferId);
 }
 
@@ -746,10 +760,18 @@ async function revealStep(t: TourInstance): Promise<void> {
 
   const bufferId = stepBufferId(step.file_path);
   if (bufferId) {
+    // Centre the range — but never at the cost of its first line. The
+    // host parks the passed line a third of the viewport from the top,
+    // so clamp the target: a range taller than the pane keeps its top
+    // (where the cursor sits) on screen instead of centring the middle
+    // and scrolling the cursor away.
     const middle = Math.floor((step.lines[0] + step.lines[1]) / 2) - 1;
+    const paneHeight = editor.listSplits().find((sp) => sp.bufferId === bufferId)
+      ?.viewport.height ?? 24;
+    const keepTopVisible = (step.lines[0] - 1) + Math.floor(paneHeight / 3);
     // Scrolls every split showing the buffer — no split id needed, which is
     // the point: we deliberately don't track which split the host chose.
-    editor.scrollBufferToLine(bufferId, middle);
+    editor.scrollBufferToLine(bufferId, Math.min(middle, keepTopVisible));
     await paintStepOverlay(t);
   }
   // `openFile` focused the editor. Hand the keyboard back to the panel so
@@ -809,7 +831,11 @@ async function closeTourBuffer(t: TourInstance): Promise<void> {
   if (pane && pane.kind === "file") editor.closeSplit(t.splitId);
 }
 
-async function goToStep(t: TourInstance, index: number): Promise<void> {
+async function goToStep(
+  t: TourInstance,
+  index: number,
+  options: { focusProse?: boolean } = {},
+): Promise<void> {
   const total = t.manifest.steps.length;
   if (index < 0 || index >= total) {
     editor.setStatus(
@@ -819,7 +845,9 @@ async function goToStep(t: TourInstance, index: number): Promise<void> {
   }
   t.step = index;
   t.visited.add(index);
-  t.focusProse = true;
+  // Arrow-browsing from the Steps rail keeps the rail focused so the
+  // next arrow keeps browsing; everything else parks focus on the prose.
+  t.focusProse = options.focusProse !== false;
   lastTourId = t.id;
   persist();
   await revealStep(t);
@@ -880,6 +908,8 @@ registerHandler("tour_panel_page_down", () => dispatch(widgetKey("PageDown")));
 // Selection + clipboard over the prose document (markdown text widget).
 registerHandler("tour_panel_shift_up", () => dispatch(widgetKey("S-Up")));
 registerHandler("tour_panel_shift_down", () => dispatch(widgetKey("S-Down")));
+registerHandler("tour_panel_left", () => dispatch(widgetKey("Left")));
+registerHandler("tour_panel_right", () => dispatch(widgetKey("Right")));
 registerHandler("tour_panel_shift_left", () => dispatch(widgetKey("S-Left")));
 registerHandler("tour_panel_shift_right", () => dispatch(widgetKey("S-Right")));
 registerHandler("tour_panel_home", () => dispatch(widgetKey("Home")));
@@ -1000,8 +1030,12 @@ editor.on("widget_event", (args) => {
 
   if (args.event_type === "select" && args.widget_key === "stepList") {
     const payload = args.payload as { index?: number; via?: string } | undefined;
-    if (typeof payload?.index === "number" && payload.via === "click") {
-      goToStep(t, payload.index).catch((e) => editor.error(`code-tour: ${e}`));
+    if (typeof payload?.index === "number" && payload.index !== t.step) {
+      // A click navigates and hands focus to the prose (reading is next);
+      // keyboard browsing in the rail navigates too but keeps the rail
+      // focused so ↑/↓ keep stepping.
+      goToStep(t, payload.index, { focusProse: payload.via === "click" })
+        .catch((e) => editor.error(`code-tour: ${e}`));
     }
   }
 });
@@ -1073,10 +1107,10 @@ async function restoreTours(stored: PersistedTour[]): Promise<void> {
 
 const modeBindings: [string, string][] = [
   ["n", "tour_panel_next"],
-  ["Right", "tour_panel_next"],
+  ["Right", "tour_panel_right"],
   ["Space", "tour_panel_next"],
   ["p", "tour_panel_prev"],
-  ["Left", "tour_panel_prev"],
+  ["Left", "tour_panel_left"],
   ["Backspace", "tour_panel_prev"],
   ["Return", "tour_panel_enter"],
   ["Tab", "tour_panel_tab"],
