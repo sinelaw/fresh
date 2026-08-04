@@ -2,8 +2,10 @@
 //!
 //! This module groups plugin commands by domain for better maintainability.
 
+use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, ContainerId, CursorId, Event, LeafId, OverlayFace, SplitId};
+use crate::primitives::highlight_engine::HighlightEngine;
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
 use crate::view::split::{BufferViewState, SplitViewState};
 use anyhow::Result as AnyhowResult;
@@ -11,6 +13,7 @@ use fresh_core::api::{
     GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
     ReplaceResult,
 };
+use std::path::Path;
 use std::sync::Arc;
 
 use super::Editor;
@@ -1358,6 +1361,47 @@ impl Editor {
         };
 
         self.send_plugin_response(PluginResponse::HighlightsComputed { request_id, spans });
+    }
+
+    /// Highlight source text without creating a visible editor buffer.
+    ///
+    /// Parsing begins at byte zero, so multiline language state is derived
+    /// from the complete source rather than guessed from a diff hunk. The
+    /// returned theme keys are suitable for overlays and remain dynamic when
+    /// the user changes themes.
+    pub(super) fn handle_request_text_highlights(
+        &mut self,
+        path: String,
+        text: String,
+        request_id: u64,
+    ) {
+        let first_line = text.lines().next();
+        let mut highlighter =
+            HighlightEngine::for_file(Path::new(&path), first_line, &self.grammar_registry);
+        let buffer = Buffer::from_str(
+            &text,
+            self.config
+                .editor
+                .large_file_threshold_bytes
+                .try_into()
+                .unwrap_or(usize::MAX),
+            Arc::clone(&self.local_filesystem),
+        );
+        let theme = self.theme.read().unwrap();
+        let spans = highlighter
+            .highlight_viewport(&buffer, 0, text.len(), &theme, 0)
+            .into_iter()
+            .filter_map(|span| {
+                let category = span.category?;
+                Some(fresh_core::api::TsTextHighlightSpan {
+                    start: u32::try_from(span.range.start).ok()?,
+                    end: u32::try_from(span.range.end).ok()?,
+                    theme_key: category.theme_key().to_string(),
+                })
+            })
+            .collect();
+
+        self.send_plugin_response(PluginResponse::TextHighlightsComputed { request_id, spans });
     }
 
     // ==================== Text Editing Commands ====================

@@ -725,6 +725,13 @@ impl Editor {
             } => {
                 self.handle_request_highlights(buffer_id, range, request_id);
             }
+            PluginCommand::RequestTextHighlights {
+                path,
+                text,
+                request_id,
+            } => {
+                self.handle_request_text_highlights(path, text, request_id);
+            }
             PluginCommand::CloseSplit { split_id } => {
                 self.handle_close_split(split_id);
             }

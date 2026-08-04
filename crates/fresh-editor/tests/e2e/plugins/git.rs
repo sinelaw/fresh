@@ -1,7 +1,7 @@
 //! E2E tests for git features (git grep and git find file)
 
 use crate::common::git_test_helper::{DirGuard, GitTestRepo};
-use crate::common::harness::EditorTestHarness;
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -1333,6 +1333,107 @@ fn test_git_log_diff_coloring() {
         screen.contains("Author:") || screen.contains("Date:"),
         "Should show commit info"
     );
+}
+
+/// Regression for dandavison/delta#117: a hunk that starts inside a Python
+/// docstring must not treat the closing triple quote as an opener and colour
+/// all following code as a string. Git Log now highlights the complete old
+/// and new blobs independently, then maps those spans back onto the hunk.
+#[test]
+fn test_git_log_mid_docstring_hunk_uses_full_source_state() {
+    let repo = GitTestRepo::new();
+    let before = r#"def sample():
+    """A deliberately long docstring.
+    doc line 01
+    doc line 02
+    doc line 03
+    doc line 04
+    doc line 05
+    doc line 06
+    doc line 07
+    original tail
+    """
+    return True
+"#;
+    let after = before.replace("original tail", "updated tail");
+    repo.create_file("sample.py", before);
+    repo.git_add_all();
+    repo.git_commit("add long docstring");
+    repo.create_file("sample.py", &after);
+    repo.git_add_all();
+    repo.git_commit("update docstring tail");
+    repo.setup_git_log_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let keyword = harness.editor().theme().resolve_theme_key("syntax.keyword");
+    // Fresh's Python grammar intentionally treats docstrings as comments.
+    let docstring = harness.editor().theme().resolve_theme_key("syntax.comment");
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let color_at = |needle: &str| {
+                screen.lines().enumerate().find_map(|(y, row)| {
+                    row.find(needle).and_then(|x| {
+                        h.get_cell_style(row[..x].chars().count() as u16, y as u16)
+                            .and_then(|style| style.fg)
+                    })
+                })
+            };
+            color_at("return True") == keyword
+                && color_at("original tail") == docstring
+                && color_at("updated tail") == docstring
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let (x, y) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(y, row)| {
+            row.find("return True")
+                .map(|x| (row[..x].chars().count() as u16, y as u16))
+        })
+        .expect("diff should display the code after the closing docstring");
+    assert_eq!(
+        harness.get_cell_style(x, y).and_then(|s| s.fg),
+        keyword,
+        "`return` after a mid-docstring hunk must be a keyword, not a string"
+    );
+    for needle in ["original tail", "updated tail"] {
+        let (x, y) = screen
+            .lines()
+            .enumerate()
+            .find_map(|(y, row)| {
+                row.find(needle)
+                    .map(|x| (row[..x].chars().count() as u16, y as u16))
+            })
+            .unwrap_or_else(|| panic!("diff should display {needle:?}"));
+        assert_eq!(
+            harness.get_cell_style(x, y).and_then(|s| s.fg),
+            docstring,
+            "old and new docstring rows must use their independent full-source states"
+        );
+    }
 }
 
 /// REPRODUCTION TEST: Opening different commits after closing should open the correct commit

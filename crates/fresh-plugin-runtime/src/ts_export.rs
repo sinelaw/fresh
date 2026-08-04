@@ -24,9 +24,9 @@ use fresh_core::api::{
     KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
     OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
     ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
-    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
-    VirtualBufferResult, WindowInfo,
+    TerminalResult, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, TsTextHighlightSpan,
+    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
+    WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -124,6 +124,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "AddMenuItemOptions" => Some(fresh_core::api::AddMenuItemOptions::decl(&cfg)),
         "TsLspMenuItem" | "LspMenuItem" => Some(fresh_core::api::LspMenuItem::decl(&cfg)),
         "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
+        "TsTextHighlightSpan" => Some(TsTextHighlightSpan::decl(&cfg)),
         "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
         "FileExplorerSlotEntry" => Some(FileExplorerSlotEntry::decl(&cfg)),
         "FileExplorerLeadingSlot" => Some(FileExplorerLeadingSlot::decl(&cfg)),
@@ -1014,6 +1015,7 @@ mod tests {
             "TsActionPopupAction",
             "ActionPopupOptions",
             "TsHighlightSpan",
+            "TsTextHighlightSpan",
             "FileExplorerDecoration",
             "TextPropertyEntry",
             "CreateVirtualBufferOptions",
@@ -1487,6 +1489,7 @@ mod tests {
             "compositeNextHunk",
             "compositePrevHunk",
             "getHighlights",
+            "getTextHighlights",
             "addOverlay",
             "clearNamespace",
             "clearAllOverlays",

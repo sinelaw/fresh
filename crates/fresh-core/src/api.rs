@@ -244,6 +244,11 @@ pub enum PluginResponse {
         request_id: u64,
         spans: Vec<TsHighlightSpan>,
     },
+    /// Response to RequestTextHighlights
+    TextHighlightsComputed {
+        request_id: u64,
+        spans: Vec<TsTextHighlightSpan>,
+    },
     /// Response to GetBufferText with the text content
     BufferText {
         request_id: u64,
@@ -302,6 +307,7 @@ impl PluginResponse {
             | Self::TerminalCreated { request_id, .. }
             | Self::LspRequest { request_id, .. }
             | Self::HighlightsComputed { request_id, .. }
+            | Self::TextHighlightsComputed { request_id, .. }
             | Self::BufferText { request_id, .. }
             | Self::LineStartPosition { request_id, .. }
             | Self::LineEndPosition { request_id, .. }
@@ -4472,6 +4478,14 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Request syntax highlights for detached source text. `path` is used
+    /// only to select the language; no file is opened or added to the UI.
+    RequestTextHighlights {
+        path: String,
+        text: String,
+        request_id: u64,
+    },
+
     /// Close a split (if not the last one)
     CloseSplit { split_id: SplitId },
 
@@ -5687,6 +5701,21 @@ pub struct TsHighlightSpan {
     pub color: (u8, u8, u8),
     pub bold: bool,
     pub italic: bool,
+}
+
+/// Syntax highlight span for detached source text.
+///
+/// Unlike [`TsHighlightSpan`], this carries a theme key instead of a resolved
+/// RGB value so callers can install overlays that continue to follow theme
+/// changes.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TsTextHighlightSpan {
+    pub start: u32,
+    pub end: u32,
+    #[serde(rename = "themeKey")]
+    #[ts(rename = "themeKey")]
+    pub theme_key: String,
 }
 
 /// Result from spawning a process with spawnProcess
@@ -7131,6 +7160,20 @@ impl PluginApi {
         self.send_command(PluginCommand::RequestHighlights {
             buffer_id,
             range,
+            request_id,
+        })
+    }
+
+    /// Request syntax highlights for detached source text.
+    pub fn get_text_highlights(
+        &self,
+        path: String,
+        text: String,
+        request_id: u64,
+    ) -> Result<(), String> {
+        self.send_command(PluginCommand::RequestTextHighlights {
+            path,
+            text,
             request_id,
         })
     }

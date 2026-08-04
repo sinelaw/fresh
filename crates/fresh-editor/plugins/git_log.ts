@@ -91,6 +91,10 @@ interface GitLogState {
    * of starting a second spawn for the same sha.
    */
   inFlightSpawns: Map<string, ProcessHandle<SpawnResult>>;
+  /** Buffers whose completed diffs have exact, source-backed foregrounds. */
+  sourceHighlightedBuffers: Set<number>;
+  /** Prevent duplicate old/new blob reads while a highlight job is running. */
+  sourceHighlightingBuffers: Set<number>;
   /**
    * Debounce token for List `select` events. Rapid selection moves
    * (PageDown, held j/k) shouldn't churn through buffer swaps + spawns;
@@ -115,6 +119,8 @@ const state: GitLogState = {
   pathFilter: null,
   commitBuffers: new Map(),
   inFlightSpawns: new Map(),
+  sourceHighlightedBuffers: new Set(),
+  sourceHighlightingBuffers: new Set(),
   pendingSelectId: 0,
 };
 
@@ -368,6 +374,275 @@ function isCommitDiffComplete(hash: string): boolean {
 /** Polling interval while git is still writing. ~5 fps is plenty. */
 const STREAM_POLL_MS = 200;
 
+/** Source files above this size retain the normal hunk-local fallback. */
+const SOURCE_HIGHLIGHT_MAX_BYTES = 2 * 1024 * 1024;
+const SOURCE_HIGHLIGHT_NS = "git-log-source-syntax";
+
+interface SourceSnapshot {
+  spans: TsTextHighlightSpan[];
+  lineStarts: number[];
+  lineEnds: number[];
+}
+
+interface MappedDiffLine {
+  diffContentStart: number;
+  diffContentEnd: number;
+  side: "old" | "new";
+  sourceLine: number;
+}
+
+interface DiffFileMapping {
+  oldPath: string | null;
+  newPath: string | null;
+  lines: MappedDiffLine[];
+}
+
+/** Decode a `---` / `+++` path. Git normally emits an unquoted remainder;
+ * JSON-style quoted paths are accepted as a best-effort compatibility path. */
+function parseDiffPath(raw: string, prefix: "a/" | "b/"): string | null {
+  let value = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      value = JSON.parse(value) as string;
+    } catch {
+      return null;
+    }
+  }
+  if (value === "/dev/null") return null;
+  return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+}
+
+/** Parse standard unified hunks and attach each displayed code row to an
+ * old- or new-file line number. Context uses the new side when available. */
+function buildDiffSourceMap(text: string): DiffFileMapping[] {
+  const files: DiffFileMapping[] = [];
+  let file: DiffFileMapping | null = null;
+  let oldLine = 0;
+  let newLine = 0;
+  let inHunk = false;
+  let diffByte = 0;
+
+  for (const line of text.split("\n")) {
+    const lineBytes = editor.utf8ByteLength(line);
+
+    if (line.startsWith("diff --git ")) {
+      file = { oldPath: null, newPath: null, lines: [] };
+      files.push(file);
+      inHunk = false;
+    } else if (file !== null) {
+      if (inHunk) {
+        const marker = line.charAt(0);
+        if (marker === " " || marker === "+" || marker === "-") {
+          const side =
+            marker === "-" || (marker === " " && file.newPath === null)
+              ? "old"
+              : "new";
+          const sourceLine = side === "old" ? oldLine : newLine;
+          file.lines.push({
+            diffContentStart: diffByte + 1,
+            diffContentEnd: diffByte + lineBytes,
+            side,
+            sourceLine,
+          });
+          if (marker !== "+") oldLine += 1;
+          if (marker !== "-") newLine += 1;
+          diffByte += lineBytes + 1;
+          continue;
+        }
+        if (line.startsWith("\\ No newline at end of file")) {
+          diffByte += lineBytes + 1;
+          continue;
+        }
+        inHunk = false;
+      }
+
+      if (line.startsWith("--- ")) {
+        file.oldPath = parseDiffPath(line.slice(4), "a/");
+      } else if (line.startsWith("+++ ")) {
+        file.newPath = parseDiffPath(line.slice(4), "b/");
+      } else {
+        const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+        if (hunk) {
+          oldLine = Number(hunk[1]);
+          newLine = Number(hunk[2]);
+          inHunk = true;
+        }
+      }
+    }
+
+    diffByte += lineBytes + 1;
+  }
+  return files;
+}
+
+function sourceLineOffsets(text: string): {
+  starts: number[];
+  ends: number[];
+} {
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let byte = 0;
+  for (const line of text.split("\n")) {
+    const len = editor.utf8ByteLength(line);
+    starts.push(byte);
+    ends.push(byte + len);
+    byte += len + 1;
+  }
+  return { starts, ends };
+}
+
+async function readSourceSnapshot(
+  repo: GitRepo,
+  revision: string,
+  path: string,
+): Promise<SourceSnapshot | null> {
+  try {
+    const result = await git(editor, repo, ["show", `${revision}:${path}`]);
+    if (result.exit_code !== 0 || result.stdout.includes("\0")) return null;
+    if (editor.utf8ByteLength(result.stdout) > SOURCE_HIGHLIGHT_MAX_BYTES) {
+      return null;
+    }
+    const spans = await editor.getTextHighlights(path, result.stdout);
+    spans.sort((a, b) => a.start - b.start || a.end - b.end);
+    const offsets = sourceLineOffsets(result.stdout);
+    return { spans, lineStarts: offsets.starts, lineEnds: offsets.ends };
+  } catch {
+    // The diff itself remains usable with the hunk-local fallback if a blob
+    // cannot be read or highlighted (shallow clone, missing grammar, etc.).
+    return null;
+  }
+}
+
+/** First span whose exclusive end is after `position`. */
+function firstOverlappingSpan(
+  spans: TsTextHighlightSpan[],
+  position: number,
+): number {
+  let lo = 0;
+  let hi = spans.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (spans[mid].end <= position) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** Paint one diff code row from the exact full-file parse. Gaps explicitly
+ * receive editor.fg, which masks any erroneous hunk-local multiline state. */
+function overlayMappedLine(
+  bufferId: number,
+  mapped: MappedDiffLine,
+  source: SourceSnapshot,
+): void {
+  const index = mapped.sourceLine - 1;
+  const sourceStart = source.lineStarts[index];
+  const sourceEnd = source.lineEnds[index];
+  if (sourceStart === undefined || sourceEnd === undefined) return;
+
+  const codeLength = mapped.diffContentEnd - mapped.diffContentStart;
+  const sourceLength = sourceEnd - sourceStart;
+  const mappedLength = Math.min(codeLength, sourceLength);
+  const mappedSourceEnd = sourceStart + mappedLength;
+  let cursor = sourceStart;
+  let spanIndex = firstOverlappingSpan(source.spans, sourceStart);
+
+  while (spanIndex < source.spans.length) {
+    const span = source.spans[spanIndex];
+    if (span.start >= mappedSourceEnd) break;
+    const start = Math.max(cursor, span.start, sourceStart);
+    const end = Math.min(span.end, mappedSourceEnd);
+    if (start > cursor) {
+      editor.addOverlay(
+        bufferId,
+        SOURCE_HIGHLIGHT_NS,
+        mapped.diffContentStart + cursor - sourceStart,
+        mapped.diffContentStart + start - sourceStart,
+        { fg: "editor.fg" },
+      );
+    }
+    if (end > start) {
+      editor.addOverlay(
+        bufferId,
+        SOURCE_HIGHLIGHT_NS,
+        mapped.diffContentStart + start - sourceStart,
+        mapped.diffContentStart + end - sourceStart,
+        { fg: span.themeKey },
+      );
+      cursor = Math.max(cursor, end);
+    }
+    spanIndex += 1;
+  }
+
+  if (cursor < mappedSourceEnd) {
+    editor.addOverlay(
+      bufferId,
+      SOURCE_HIGHLIGHT_NS,
+      mapped.diffContentStart + cursor - sourceStart,
+      mapped.diffContentStart + mappedSourceEnd - sourceStart,
+      { fg: "editor.fg" },
+    );
+  }
+}
+
+/** Replace hunk-local foreground guesses with old/new full-source parses.
+ * Deletions use the first parent, additions use the commit, and the two
+ * parser states can therefore never contaminate one another. */
+async function applySourceBackedHighlights(
+  hash: string,
+  bufferId: number,
+): Promise<void> {
+  if (
+    state.sourceHighlightedBuffers.has(bufferId) ||
+    state.sourceHighlightingBuffers.has(bufferId)
+  ) {
+    return;
+  }
+  const repo = state.repo;
+  if (!repo) return;
+  state.sourceHighlightingBuffers.add(bufferId);
+
+  try {
+    const total = editor.getBufferLength(bufferId);
+    if (total === 0) return;
+    const diff = await editor.getBufferText(bufferId, 0, total);
+    const files = buildDiffSourceMap(diff);
+    const snapshots = new Map<string, SourceSnapshot | null>();
+
+    editor.clearNamespace(bufferId, SOURCE_HIGHLIGHT_NS);
+    for (const file of files) {
+      if (!state.isOpen || state.commitBuffers.get(hash) !== bufferId) return;
+      const oldKey = file.oldPath ? `${hash}^\0${file.oldPath}` : null;
+      const newKey = file.newPath ? `${hash}\0${file.newPath}` : null;
+
+      if (oldKey && !snapshots.has(oldKey)) {
+        snapshots.set(
+          oldKey,
+          await readSourceSnapshot(repo, `${hash}^`, file.oldPath!),
+        );
+      }
+      if (newKey && !snapshots.has(newKey)) {
+        snapshots.set(
+          newKey,
+          await readSourceSnapshot(repo, hash, file.newPath!),
+        );
+      }
+
+      const oldSource = oldKey ? snapshots.get(oldKey) ?? null : null;
+      const newSource = newKey ? snapshots.get(newKey) ?? null : null;
+      for (const line of file.lines) {
+        const source = line.side === "old" ? oldSource : newSource;
+        if (source) overlayMappedLine(bufferId, line, source);
+      }
+    }
+    if (state.isOpen && state.commitBuffers.get(hash) === bufferId) {
+      state.sourceHighlightedBuffers.add(bufferId);
+    }
+  } finally {
+    state.sourceHighlightingBuffers.delete(bufferId);
+  }
+}
+
 /**
  * Start a `git show --patch` for `hash`, piping stdout straight into the
  * cache file (the host opens it with `File::create`, which truncates any
@@ -387,7 +662,7 @@ function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
   // form keeps the call type-checked without a cast.
   return editor.spawnProcess(
     "git",
-    ["show", "--stat", "--patch", hash],
+    ["-c", "core.quotePath=false", "show", "--stat", "--patch", hash],
     cwd,
     cachePathForHash(hash),
   );
@@ -444,6 +719,7 @@ async function pollUntilSpawnDone(
   // says "complete". Written after the bytes are on disk so a reader
   // that sees the marker also sees the full diff.
   editor.writeFile(editor.localPath(donePathForHash(hash)), "");
+  void applySourceBackedHighlights(hash, bufferId);
 }
 
 /**
@@ -467,9 +743,15 @@ async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<numbe
     // clean exit (e.g. git was killed externally) and left the buffer
     // partial — regenerate into the same buffer id so the panel retarget
     // and scroll handling are unaffected.
-    if (state.inFlightSpawns.has(hash) || isCommitDiffComplete(hash)) {
+    if (state.inFlightSpawns.has(hash)) {
       return existing;
     }
+    if (isCommitDiffComplete(hash)) {
+      void applySourceBackedHighlights(hash, existing);
+      return existing;
+    }
+    state.sourceHighlightedBuffers.delete(existing);
+    editor.clearNamespace(existing, SOURCE_HIGHLIGHT_NS);
     const handle = spawnGitShow(hash, cwd);
     state.inFlightSpawns.set(hash, handle);
     void pollUntilSpawnDone(hash, existing, handle);
@@ -500,6 +782,7 @@ async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<numbe
   const bufferId = await editor.openFileStreaming(path);
   if (bufferId === null) return null;
   state.commitBuffers.set(hash, bufferId);
+  void applySourceBackedHighlights(hash, bufferId);
   return bufferId;
 }
 
@@ -729,6 +1012,8 @@ function git_log_cleanup(): void {
     editor.closeBuffer(bufferId);
   }
   state.commitBuffers.clear();
+  state.sourceHighlightedBuffers.clear();
+  state.sourceHighlightingBuffers.clear();
   // The buffer-group's `close` will tear down its own panel buffers
   // (toolbar/log/initialDetail) too, which implicitly drops the widget
   // panels rendering into them. We still null out the handles so any
@@ -777,6 +1062,8 @@ function on_git_log_buffer_closed(data: { buffer_id: number }): void {
   for (const [hash, bufId] of state.commitBuffers) {
     if (bufId === data.buffer_id) {
       state.commitBuffers.delete(hash);
+      state.sourceHighlightedBuffers.delete(bufId);
+      state.sourceHighlightingBuffers.delete(bufId);
       state.inFlightSpawns.get(hash)?.kill?.();
       state.inFlightSpawns.delete(hash);
       break;
@@ -799,6 +1086,8 @@ async function git_log_refresh(): Promise<void> {
   state.inFlightSpawns.clear();
   for (const [, bufferId] of state.commitBuffers) editor.closeBuffer(bufferId);
   state.commitBuffers.clear();
+  state.sourceHighlightedBuffers.clear();
+  state.sourceHighlightingBuffers.clear();
   if (state.selectedIndex >= state.commits.length) {
     state.selectedIndex = Math.max(0, state.commits.length - 1);
   }

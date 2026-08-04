@@ -3875,6 +3875,32 @@ impl JsEditorApi {
         Ok(id)
     }
 
+    /// Highlight detached source text using the language selected by `path`.
+    #[plugin_api(
+        async_promise,
+        js_name = "getTextHighlights",
+        ts_return = "TsTextHighlightSpan[]"
+    )]
+    #[qjs(rename = "_getTextHighlightsStart")]
+    pub fn get_text_highlights_start<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        path: String,
+        text: String,
+    ) -> rquickjs::Result<u64> {
+        let id = self.alloc_request_id();
+
+        let _ = self
+            .command_sender
+            .send(PluginCommand::RequestTextHighlights {
+                path,
+                text,
+                request_id: id,
+            });
+
+        Ok(id)
+    }
+
     // === Overlays ===
 
     /// Add an overlay with styling options
@@ -8456,6 +8482,7 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.createCompositeBuffer = _wrapAsync("_createCompositeBufferStart", "createCompositeBuffer");
                 editor.getCompositeCursorInfo = _wrapAsync("_getCompositeCursorInfoStart", "getCompositeCursorInfo");
                 editor.getHighlights = _wrapAsync("_getHighlightsStart", "getHighlights");
+                editor.getTextHighlights = _wrapAsync("_getTextHighlightsStart", "getTextHighlights");
                 editor.loadPlugin = _wrapAsync("_loadPluginStart", "loadPlugin");
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
                 editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");

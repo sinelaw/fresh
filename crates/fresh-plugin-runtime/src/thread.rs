@@ -452,6 +452,9 @@ impl PluginThreadHandle {
             PluginResponse::HighlightsComputed { request_id, spans } => {
                 self.resolve_json_callback(request_id, &spans, "[]");
             }
+            PluginResponse::TextHighlightsComputed { request_id, spans } => {
+                self.resolve_json_callback(request_id, &spans, "[]");
+            }
             PluginResponse::BufferText { request_id, text } => match text {
                 Ok(content) => {
                     // JSON stringify the content string

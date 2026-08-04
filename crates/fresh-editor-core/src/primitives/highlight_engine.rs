@@ -2794,6 +2794,37 @@ mod tests {
     }
 
     #[test]
+    fn test_python_full_source_closes_docstring_before_return() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let source = "def sample():\n    \"\"\"docs\n    more docs\n    \"\"\"\n    return True\n";
+        let mut engine =
+            HighlightEngine::for_file(Path::new("sample.py"), source.lines().next(), &registry);
+        let buffer = Buffer::from_str(source, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let spans = engine.highlight_viewport(&buffer, 0, source.len(), &theme, 0);
+        assert!(
+            spans
+                .windows(2)
+                .all(|pair| pair[0].range.start <= pair[1].range.start),
+            "full-source spans must be sorted for diff line mapping: {spans:?}"
+        );
+        let return_pos = source.find("return").unwrap();
+        let category = spans
+            .iter()
+            .find(|span| span.range.contains(&return_pos))
+            .and_then(|span| span.category);
+        assert_eq!(category, Some(HighlightCategory::Keyword));
+        let docs_pos = source.find("more docs").unwrap();
+        let docs_category = spans
+            .iter()
+            .find(|span| span.range.contains(&docs_pos))
+            .and_then(|span| span.category);
+        assert_eq!(docs_category, Some(HighlightCategory::Comment));
+    }
+
+    #[test]
     fn test_fish_indented_control_keywords_stay_keywords() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());

@@ -2680,6 +2680,11 @@ type TsHighlightSpan = {
 	bold: boolean;
 	italic: boolean;
 };
+type TsTextHighlightSpan = {
+	start: number;
+	end: number;
+	themeKey: string;
+};
 type VirtualBufferResult = {
 	/**
 	* The created buffer ID
@@ -3628,6 +3633,10 @@ interface EditorAPI {
 	* Request syntax highlights for a buffer range (async)
 	*/
 	getHighlights(bufferId: number, start: number, end: number): Promise<TsHighlightSpan[]>;
+	/**
+	* Highlight detached source text using the language selected by `path`.
+	*/
+	getTextHighlights(path: string, text: string): Promise<TsTextHighlightSpan[]>;
 	/**
 	* Add an overlay with styling options
 	* 
