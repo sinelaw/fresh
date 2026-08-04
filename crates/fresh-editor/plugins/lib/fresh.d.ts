@@ -3602,6 +3602,17 @@ interface EditorAPI {
 	*/
 	prompt(label: string, initialValue: string): Promise<string | null>;
 	/**
+	* Open the editor's native Open File browser and wait for a pick
+	* (async) — the terminal analogue of a browser's file-input dialog.
+	* Resolves with the chosen file's absolute path, or null if the
+	* user cancels. The browser anchors where Open File does (the
+	* active file's directory, else the window's working directory),
+	* with the same navigation: Backspace walks up the tree, Tab
+	* descends into directories, and typed input filters or resolves
+	* as a path. No buffer is opened — the path is only returned.
+	*/
+	pickFile(label: string): Promise<string | null>;
+	/**
 	* Start an interactive prompt.
 	* 
 	* When `floatingOverlay` is true, the editor renders the prompt

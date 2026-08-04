@@ -215,18 +215,12 @@ fn run_command(harness: &mut EditorTestHarness, name: &str) {
 /// dock panel to paint.
 fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) {
     run_command(harness, "Tour: Load Definition");
-    // Wait for the plugin's own path prompt rather than any prompt — the
-    // palette is still closing when the command fires.
+    // Wait for the plugin's file-pick browser rather than any prompt — the
+    // palette is still closing when the command fires. Its filter input
+    // starts empty; an absolute path typed into it resolves directly.
     harness
         .wait_until(|h| h.screen_to_string().contains("tour file path"))
         .unwrap();
-    // The prompt is prefilled with `.fresh-tour.json`; clear it before typing
-    // a different manifest so the two tests can load different files.
-    for _ in 0..64 {
-        harness
-            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-            .unwrap();
-    }
     harness.type_text(manifest).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -1358,43 +1352,48 @@ fn test_blank_line_in_range_keeps_band_under_indent_guides() {
         .unwrap();
 }
 
-/// The load prompt is a real path prompt: its label ends with a space,
-/// and the `path_complete` plugin serves it directory suggestions the
-/// user can pick instead of typing a full path blind.
+/// The load prompt is the editor's native Open File browser in pick
+/// mode (`editor.pickFile`): anchored at the active file's directory —
+/// not the process cwd or the user's home — with Backspace walking up
+/// the tree, and Enter delivering the picked manifest to the plugin
+/// instead of opening it as a buffer.
 #[test]
-fn test_load_prompt_offers_path_completion() {
+fn test_load_prompt_is_the_native_file_browser() {
     let (_temp, project_root) = setup_tour_project();
-    copy_plugin(&project_root.join("plugins"), "path_complete");
     let mut harness = harness_in(&project_root, 160, 40);
 
     run_command(&mut harness, "Tour: Load Definition");
-    // Label and prefill, with the space between them.
+    // Anchored where Open File anchors: the active file is src/main.rs,
+    // so the browser lists its siblings.
     harness
         .wait_until(|h| {
-            h.screen_to_string()
-                .contains("tour file path: .fresh-tour.json")
+            let s = h.screen_to_string();
+            s.contains("tour file path") && s.contains("wide.rs")
         })
         .unwrap();
 
-    // Clear the prefill: the empty input lists the project root, whose
-    // entries only appear on screen as suggestions.
-    for _ in 0..20 {
-        harness
-            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-            .unwrap();
-    }
+    // Backspace on an empty filter walks up to the project root.
+    harness
+        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+        .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("storage-tour.json"))
         .unwrap();
 
-    // Narrow to the second manifest and confirm the suggestion.
-    harness.type_text("storage").unwrap();
+    // Confirm the manifest; the pick loads the tour, it does not open
+    // the JSON as a buffer.
+    harness.type_text("storage-tour.json").unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
         .wait_until(|h| h.screen_to_string().contains("*Tour: Storage Tour*"))
         .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("storage-tour.json ×"),
+        "the picked manifest must not open as an editor tab\nScreen:\n{screen}"
+    );
 }
 
 /// The reclaimed vertical layout: no divider row under the header, the
@@ -1544,9 +1543,6 @@ fn code_tour_showcase() {
     snap(&mut h, &mut s, Some("Ctrl+P"), 150);
     hold(&mut h, &mut s, 8, 100);
 
-    for _ in 0..64 {
-        h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
-    }
     h.type_text(&manifest).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| {

@@ -936,28 +936,14 @@ function jumpToCode(t: TourInstance): void {
 // Handlers — commands
 // ============================================================================
 
-/** The prompt's custom type. The `-file-path` suffix is what opts it
- * into the `path_complete` plugin's directory-listing suggestions —
- * the same machinery behind the Open File and Save As prompts — so
- * the user can Tab-descend to the manifest instead of typing a full
- * path blind. */
-const TOUR_PATH_PROMPT = "tour-file-path";
-
-function tour_load(): void {
-  editor.startPromptWithInitial(
-    editor.t("prompt.path") + " ",
-    TOUR_PATH_PROMPT,
-    ".fresh-tour.json",
-  );
+async function tour_load(): Promise<void> {
+  // The editor's native Open File browser, in pick mode: anchored to the
+  // window's working tree with Backspace-up / Tab-descend navigation, it
+  // resolves with the chosen path instead of opening a buffer.
+  const path = await editor.pickFile(editor.t("prompt.path") + " ");
+  if (path) await openTour(path);
 }
 registerHandler("tour_load", tour_load);
-
-editor.on("prompt_confirmed", (args) => {
-  if (args.prompt_type !== TOUR_PATH_PROMPT) return true;
-  const path = (args.input || "").trim();
-  if (path) void openTour(path);
-  return true;
-});
 
 async function tour_next(): Promise<void> {
   const t = targetTour();

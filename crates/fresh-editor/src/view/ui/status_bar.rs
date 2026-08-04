@@ -879,8 +879,10 @@ impl StatusBarRenderer {
 
         let mut spans = Vec::new();
 
-        // "Open: " prefix
-        let open_prompt = t!("file.open_prompt").to_string();
+        // Label prefix — the prompt's own message, not a hardcoded
+        // "Open file: ": a plugin-opened pick browser (editor.pickFile)
+        // carries its own label ("Enter tour file path: ", …).
+        let open_prompt = prompt.message.clone();
         spans.push(Span::styled(open_prompt.clone(), base_style));
 
         // Calculate if we need to truncate

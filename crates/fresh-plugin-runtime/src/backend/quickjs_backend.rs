@@ -4574,6 +4574,27 @@ impl JsEditorApi {
         id
     }
 
+    /// Open the editor's native Open File browser and wait for a pick
+    /// (async) — the terminal analogue of a browser's file-input dialog.
+    /// Resolves with the chosen file's absolute path, or null if the
+    /// user cancels. The browser anchors where Open File does (the
+    /// active file's directory, else the window's working directory),
+    /// with the same navigation: Backspace walks up the tree, Tab
+    /// descends into directories, and typed input filters or resolves
+    /// as a path. No buffer is opened — the path is only returned.
+    #[plugin_api(async_promise, js_name = "pickFile", ts_return = "string | null")]
+    #[qjs(rename = "_pickFileStart")]
+    pub fn pick_file_start(&self, _ctx: rquickjs::Ctx<'_>, label: String) -> u64 {
+        let id = self.alloc_request_id();
+
+        let _ = self.command_sender.send(PluginCommand::StartFilePickAsync {
+            label,
+            callback_id: JsCallbackId::new(id),
+        });
+
+        id
+    }
+
     /// Start an interactive prompt.
     ///
     /// When `floatingOverlay` is true, the editor renders the prompt

@@ -308,12 +308,34 @@ impl Editor {
     }
 
     /// Open a file from the file browser and optionally jump to line/column
+    /// When the browser was opened by `editor.pickFile`, a confirmed
+    /// path is *delivered*, not opened: tear down the browser, resolve
+    /// the plugin's promise with the absolute path, and report handled.
+    fn resolve_pending_file_pick(&mut self, path: &std::path::Path) -> bool {
+        let Some(callback_id) = self.active_window_mut().pending_file_pick_callback.take() else {
+            return false;
+        };
+        self.active_window_mut().file_open_state = None;
+        self.active_window_mut().prompt = None;
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
+        let json = serde_json::to_string(&path.display().to_string())
+            .unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(callback_id, json);
+        true
+    }
+
     fn file_open_open_file_at_location(
         &mut self,
         path: std::path::PathBuf,
         line: Option<usize>,
         column: Option<usize>,
     ) {
+        if self.resolve_pending_file_pick(&path) {
+            return;
+        }
         // Check if encoding detection is disabled - if so, prompt for encoding first
         let detect_encoding = self
             .active_window_mut()
@@ -453,6 +475,12 @@ impl Editor {
 
     /// Create a new file (opens an unsaved buffer that will create the file on save)
     fn file_open_create_new_file(&mut self, path: std::path::PathBuf) {
+        // A pick resolves with the typed path even when no such file
+        // exists yet — the caller validates; mirrors how a browser's
+        // file input leaves validation to the page.
+        if self.resolve_pending_file_pick(&path) {
+            return;
+        }
         // Close the file browser
         self.active_window_mut().file_open_state = None;
         self.active_window_mut().prompt = None;
