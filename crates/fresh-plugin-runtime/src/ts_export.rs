@@ -24,9 +24,9 @@ use fresh_core::api::{
     KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
     OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
     ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
-    TerminalResult, TextPropertiesAtCursor, TokenColor, TsHighlightSpan, TsTextHighlightSpan,
-    ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo, VirtualBufferResult,
-    WindowInfo,
+    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
+    TokenColor, TsHighlightSpan, TsTextHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{

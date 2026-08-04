@@ -1,4 +1,12 @@
 /// <reference path="./lib/fresh.d.ts" />
+
+import {
+  computeWordDiff,
+  type WordDiff,
+  type WordRange,
+  utf8ByteLength,
+} from "./lib/word_diff.ts";
+
 const editor = getEditor();
 
 /**
@@ -104,8 +112,8 @@ const MAX_REFINE_CELLS = 10_000_000;
 let similarityThreshold = 0.95;
 // Bail out of char-LCS on huge lines; cost is O(m * n).
 const MAX_LINE_LCS_CHARS = 2000;
-// Bail out of word-LCS when either side has more tokens than this;
-// O(m * n) in tokens.
+// Bail out of shared word alignment when either side has more tokens than
+// this; the dynamic program is O(m * n) in tokens.
 const MAX_WORD_TOKENS = 1000;
 
 // =============================================================================
@@ -118,16 +126,6 @@ type DiffMode =
   | { kind: "branch"; ref: string };
 
 type HunkKind = "added" | "removed" | "modified";
-
-/** Byte range inside a single new-side line, used to emphasise the
- * word-level diff result with bold + underline overlays. Offsets are
- * UTF-8 byte offsets relative to the start of the line, NOT the
- * buffer — `renderHunks` adds the line's own byte offset before
- * passing them to `addOverlay`. */
-interface WordRange {
-  start: number;
-  end: number;
-}
 
 interface Hunk {
   kind: HunkKind;
@@ -432,190 +430,17 @@ function lineSimilarity(a: string, b: string): number {
 }
 
 /**
- * UTF-8 byte length of a JS (UTF-16) string, computed locally.
- * Equivalent to `editor.utf8ByteLength`, but without an FFI hop — the
- * render path calls this once per buffer line and once per token, so
- * at file scale the bridge crossings dominated the render.
+ * Live Diff ignores whitespace-only edits in its word emphasis and preserves
+ * its bounded fallback for generated lines, while sharing the actual token
+ * alignment and UTF-8 range calculation with Git Log.
  */
-function utf8Len(s: string): number {
-  let bytes = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x80) {
-      bytes += 1;
-    } else if (c < 0x800) {
-      bytes += 2;
-    } else if (c >= 0xd800 && c < 0xdc00 && i + 1 < s.length) {
-      const next = s.charCodeAt(i + 1);
-      if (next >= 0xdc00 && next < 0xe000) {
-        // Surrogate pair: one astral code point, 4 bytes.
-        bytes += 4;
-        i++;
-      } else {
-        // Unpaired high surrogate encodes as a 3-byte replacement.
-        bytes += 3;
-      }
-    } else {
-      bytes += 3;
-    }
-  }
-  return bytes;
-}
-
-/** A run of word, whitespace, or punctuation characters, with the
- * UTF-8 byte offsets it occupies inside its source string. */
-interface Token {
-  text: string;
-  byteStart: number;
-  byteEnd: number;
-}
-
-const WORD_CHAR = /[A-Za-z0-9_]/;
-const WHITESPACE_CHAR = /\s/;
-
-/** Tokenize into word runs (`\w+`), whitespace runs (`\s+`), and
- * single non-word non-whitespace characters. Byte offsets are
- * computed once per run so downstream overlays can index without
- * re-scanning the string. */
-function tokenize(s: string): Token[] {
-  const tokens: Token[] = [];
-  let i = 0;
-  let bytePos = 0;
-  while (i < s.length) {
-    let j = i;
-    const c = s[i];
-    if (WHITESPACE_CHAR.test(c)) {
-      while (j < s.length && WHITESPACE_CHAR.test(s[j])) j++;
-    } else if (WORD_CHAR.test(c)) {
-      while (j < s.length && WORD_CHAR.test(s[j])) j++;
-    } else {
-      j = i + 1;
-    }
-    const text = s.slice(i, j);
-    const byteLen = utf8Len(text);
-    tokens.push({ text, byteStart: bytePos, byteEnd: bytePos + byteLen });
-    bytePos += byteLen;
-    i = j;
-  }
-  return tokens;
-}
-
-/** Word-level diff result: byte ranges on each side that aren't part
- * of the longest common token subsequence. `newRanges` drives the
- * bold + underline overlay on the new (modified) line; `oldRanges`
- * drives the same overlay on the deletion virtual line so removed
- * words are visually called out, not just present in the gutter. */
-interface WordDiff {
-  newRanges: WordRange[];
-  oldRanges: WordRange[];
-}
-
-/**
- * Token-level LCS over the two lines. Returns the byte ranges of
- * non-whitespace tokens on each side that aren't part of the LCS.
- * Whitespace-only tokens are never highlighted (whitespace changes
- * mid-word look like noise; whole-line whitespace edits are handled
- * by the line-level diff). Adjacent unmatched non-whitespace tokens
- * are coalesced into a single range so a renamed `foo.bar.baz`
- * becomes one underline, not three.
- */
-function computeWordDiff(oldS: string, newS: string): WordDiff {
-  const oldTokens = tokenize(oldS);
-  const newTokens = tokenize(newS);
-  const m = oldTokens.length;
-  const n = newTokens.length;
-  if (m === 0 && n === 0) return { newRanges: [], oldRanges: [] };
-  if (m > MAX_WORD_TOKENS || n > MAX_WORD_TOKENS) {
-    // Token DP would dwarf the line-level pass; degrade to "every
-    // non-whitespace token changed" on whichever side has tokens.
-    return {
-      newRanges: collapseRanges(
-        newTokens.filter((t) => !WHITESPACE_CHAR.test(t.text[0] ?? "")),
-      ),
-      oldRanges: collapseRanges(
-        oldTokens.filter((t) => !WHITESPACE_CHAR.test(t.text[0] ?? "")),
-      ),
-    };
-  }
-  if (m === 0) {
-    return {
-      newRanges: collapseRanges(
-        newTokens.filter((t) => !WHITESPACE_CHAR.test(t.text[0] ?? "")),
-      ),
-      oldRanges: [],
-    };
-  }
-  if (n === 0) {
-    return {
-      newRanges: [],
-      oldRanges: collapseRanges(
-        oldTokens.filter((t) => !WHITESPACE_CHAR.test(t.text[0] ?? "")),
-      ),
-    };
-  }
-  const stride = n + 1;
-  const dp: number[] = new Array((m + 1) * stride).fill(0);
-  for (let i = 1; i <= m; i++) {
-    const ot = oldTokens[i - 1].text;
-    for (let j = 1; j <= n; j++) {
-      if (ot === newTokens[j - 1].text) {
-        dp[i * stride + j] = dp[(i - 1) * stride + (j - 1)] + 1;
-      } else {
-        const x = dp[(i - 1) * stride + j];
-        const y = dp[i * stride + (j - 1)];
-        dp[i * stride + j] = x >= y ? x : y;
-      }
-    }
-  }
-  // Backtrack to find which old/new tokens participate in the LCS.
-  const matchedOld: boolean[] = new Array(m).fill(false);
-  const matchedNew: boolean[] = new Array(n).fill(false);
-  let i = m;
-  let j = n;
-  while (i > 0 && j > 0) {
-    if (oldTokens[i - 1].text === newTokens[j - 1].text) {
-      matchedOld[i - 1] = true;
-      matchedNew[j - 1] = true;
-      i--;
-      j--;
-    } else if (dp[(i - 1) * stride + j] >= dp[i * stride + (j - 1)]) {
-      i--;
-    } else {
-      j--;
-    }
-  }
-  const unmatchedOf = (
-    tokens: Token[],
-    matched: boolean[],
-  ): WordRange[] => {
-    const out: Token[] = [];
-    for (let k = 0; k < tokens.length; k++) {
-      if (matched[k]) continue;
-      const t = tokens[k];
-      if (WHITESPACE_CHAR.test(t.text[0] ?? "")) continue;
-      out.push(t);
-    }
-    return collapseRanges(out);
-  };
-  return {
-    newRanges: unmatchedOf(newTokens, matchedNew),
-    oldRanges: unmatchedOf(oldTokens, matchedOld),
-  };
-}
-
-/** Merge adjacent or touching token ranges into a single range so
- * downstream overlay creation costs are O(runs), not O(tokens). */
-function collapseRanges(tokens: Token[]): WordRange[] {
-  const ranges: WordRange[] = [];
-  for (const t of tokens) {
-    const last = ranges[ranges.length - 1];
-    if (last && last.end === t.byteStart) {
-      last.end = t.byteEnd;
-    } else {
-      ranges.push({ start: t.byteStart, end: t.byteEnd });
-    }
-  }
-  return ranges;
+function computeLiveWordDiff(oldText: string, newText: string): WordDiff {
+  return computeWordDiff(oldText, newText, {
+    maxTokensPerSide: MAX_WORD_TOKENS,
+    includeWhitespace: false,
+    highlightAllOnLimit: true,
+    groupWhitespace: true,
+  })!;
 }
 
 /**
@@ -668,7 +493,7 @@ function refineHunks(hunks: Hunk[], newLines: string[]): Hunk[] {
       const newLine = newLines[h.newStart + i] ?? "";
       const sim = lineSimilarity(oldLine, newLine);
       if (sim >= similarityThreshold) {
-        const wd = computeWordDiff(oldLine, newLine);
+        const wd = computeLiveWordDiff(oldLine, newLine);
         // Always emit the in-place modified hunk (drives the new-line
         // bg highlight + new-side word-diff). When old-side has
         // unmatched non-WS tokens, also emit a deletion line above
@@ -696,7 +521,7 @@ function refineHunks(hunks: Hunk[], newLines: string[]): Hunk[] {
         // diff still runs so the pair calls out *which* words were
         // removed/added — tokens common to both lines stay unmarked
         // (issue #1949).
-        const wd = computeWordDiff(oldLine, newLine);
+        const wd = computeLiveWordDiff(oldLine, newLine);
         out.push({
           kind: "removed",
           newStart: h.newStart + i,
@@ -742,7 +567,7 @@ function clearDecorations(bufferId: number): void {
  * line at a time. Computing locally from the buffer text keeps the
  * whole render in a single JS turn → instant repaint.
  *
- * Uses the local `utf8Len` once per *whole* line. Computing it per
+ * Uses the shared `utf8ByteLength` once per *whole* line. Computing it per
  * character would be incorrect because `text[i]` splits a surrogate
  * pair into invalid half-code-units; passing whole lines is safe —
  * `splitLines` always returns valid Unicode strings.
@@ -752,7 +577,7 @@ function computeLineByteStarts(lines: string[]): number[] {
   let pos = 0;
   starts[0] = 0;
   for (let i = 0; i < lines.length; i++) {
-    pos += utf8Len(lines[i]) + 1; // +1 for the trailing newline
+    pos += utf8ByteLength(lines[i]) + 1; // +1 for the trailing newline
     starts[i + 1] = pos;
   }
   return starts;
