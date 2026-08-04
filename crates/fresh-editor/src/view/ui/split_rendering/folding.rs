@@ -279,7 +279,13 @@ pub(super) fn diff_indicators_for_viewport(
         for (i, &byte) in bytes[rel_lo..rel_hi].iter().enumerate() {
             if byte == b'\n' {
                 let next_line_start = viewport_start + rel_lo + i + 1;
-                if next_line_start < viewport_end {
+                // `< hi`, not just `< viewport_end`: a range is half-open, so
+                // one ending exactly on a line boundary — which is what
+                // inserting whole lines produces — covers no byte of the line
+                // that starts there. Marking it anyway put a bar on the first
+                // untouched line after every insertion, and that bar then
+                // vanished on save when git reported the real line set.
+                if next_line_start < hi && next_line_start < viewport_end {
                     indicators
                         .entry(next_line_start)
                         .or_insert_with(|| indicator.clone());

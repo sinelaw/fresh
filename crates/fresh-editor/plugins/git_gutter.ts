@@ -287,8 +287,13 @@ async function updateGitGutter(bufferId: number): Promise<void> {
     // Positions are 0-based logical lines: this plugin never reads the buffer
     // text — it parses `git diff` output — so line numbers are the only
     // coordinate it can supply honestly, and the editor converts each to a byte
-    // anchor at set time against the buffer being decorated. One mark per
-    // changed line paints the same proportional streak a byte range would.
+    // anchor at set time against the buffer being decorated.
+    //
+    // One mark per *hunk*, spanning `line`..`endLine`, not one per changed
+    // line. The track paints the same streak either way, but per-line markers
+    // cost a byte lookup and two anchors each: on a file with 20 000 changed
+    // lines that added ~27 ms to every save, on top of the same again when the
+    // projection re-read them.
     const scrollMarkers: ScrollbarMarker[] = [];
 
     // Apply new indicators
@@ -328,8 +333,15 @@ async function updateGitGutter(bufferId: number): Promise<void> {
             color[2],
             PRIORITY
           );
-          scrollMarkers.push({ line, color, priority: PRIORITY });
         }
+        // `endLine` is inclusive, so a one-line hunk marks one row.
+        const first = Math.max(0, hunk.startLine - 1);
+        scrollMarkers.push({
+          line: first,
+          endLine: Math.max(first, first + hunk.lineCount - 1),
+          color,
+          priority: PRIORITY,
+        });
       }
     }
 
