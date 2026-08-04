@@ -836,25 +836,18 @@ impl Editor {
                 .map(|m| (m.offset, m.len, m.replacement))
                 .collect()
         } else {
-            // Plain text mode - replacement is used literally
+            // Plain text mode - replacement is used literally.
+            // One streaming pass over the buffer: asking for the next match
+            // from scratch per occurrence re-reads a chunk each time, which
+            // dominated the whole replace on files with many matches.
             let state = self.active_state();
             let buffer_len = state.buffer.len();
-            let mut matches = Vec::new();
-            let mut current_pos = 0;
-
-            while current_pos < buffer_len {
-                if let Some(offset) = state.buffer.find_next_in_range(
-                    search,
-                    current_pos,
-                    Some(current_pos..buffer_len),
-                ) {
-                    matches.push((offset, search.len(), replacement.to_string()));
-                    current_pos = offset + search.len();
-                } else {
-                    break;
-                }
-            }
-            matches
+            state
+                .buffer
+                .find_all_in_range(search, 0..buffer_len, usize::MAX)
+                .into_iter()
+                .map(|offset| (offset, search.len(), replacement.to_string()))
+                .collect()
         };
 
         let count = matches.len();
