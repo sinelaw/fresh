@@ -242,13 +242,15 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
 }
 
 /// Screen rows (within the editor area) whose column 20 carries the step
-/// highlight's background colour. The highlight is painted `extendToLineEnd`,
-/// so column 20 is covered for every fixture file in this module.
+/// highlight's background colour — the theme key `ui.semantic_highlight_bg`,
+/// which the harness's high-contrast theme resolves to rgb(0, 25, 55). The
+/// highlight is painted `extendToLineEnd`, so column 20 is covered for every
+/// fixture file in this module.
 fn highlighted_rows(h: &EditorTestHarness) -> Vec<u16> {
     (2..30u16)
         .filter(|row| {
             h.get_cell_style(20, *row)
-                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)))
+                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(0, 25, 55)))
         })
         .collect()
 }
