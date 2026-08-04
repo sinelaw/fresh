@@ -11,6 +11,7 @@ use rust_i18n::t;
 
 use crate::config::{Config, FileExplorerSide};
 use crate::config_io::{ConfigLayer, ConfigResolver};
+use crate::config_keys::{self, SettingKey};
 
 use super::Editor;
 
@@ -56,7 +57,7 @@ impl Editor {
         // to the user config layer (issue #474). Without this the change lives
         // only in the per-split runtime state and is forgotten on next launch.
         self.config_mut().editor.line_numbers = new_value;
-        self.persist_config_change("/editor/line_numbers", serde_json::Value::Bool(new_value));
+        self.persist_config_change(config_keys::EDITOR_LINE_NUMBERS, new_value);
 
         let status = if new_value {
             t!("toggle.line_numbers_shown")
@@ -455,7 +456,7 @@ impl Editor {
         if !self.active_window_mut().menu_bar_visible {
             self.menu_state.close_menu();
         }
-        self.persist_config_change("/editor/show_menu_bar", serde_json::Value::Bool(new_value));
+        self.persist_config_change(config_keys::EDITOR_SHOW_MENU_BAR, new_value);
         let status = if self.active_window_mut().menu_bar_visible {
             t!("toggle.menu_bar_shown")
         } else {
@@ -476,7 +477,7 @@ impl Editor {
         self.active_window_mut().toggle_tab_bar();
         let new_value = self.active_window().tab_bar_visible;
         self.config_mut().editor.show_tab_bar = new_value;
-        self.persist_config_change("/editor/show_tab_bar", serde_json::Value::Bool(new_value));
+        self.persist_config_change(config_keys::EDITOR_SHOW_TAB_BAR, new_value);
     }
 
     /// Toggle the status bar, saving the new editor-wide default.
@@ -484,10 +485,7 @@ impl Editor {
         self.active_window_mut().toggle_status_bar();
         let new_value = self.active_window().status_bar_visible;
         self.config_mut().editor.show_status_bar = new_value;
-        self.persist_config_change(
-            "/editor/show_status_bar",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_SHOW_STATUS_BAR, new_value);
     }
 
     /// Toggle the prompt line, saving the new editor-wide default.
@@ -495,10 +493,7 @@ impl Editor {
         self.active_window_mut().toggle_prompt_line();
         let new_value = self.active_window().prompt_line_visible;
         self.config_mut().editor.show_prompt_line = new_value;
-        self.persist_config_change(
-            "/editor/show_prompt_line",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_SHOW_PROMPT_LINE, new_value);
     }
 
     /// Toggle the file explorer side between left and right.
@@ -513,13 +508,7 @@ impl Editor {
         };
         self.config_mut().file_explorer.side = new_side;
         self.active_window_mut().file_explorer_side = new_side;
-        self.persist_config_change(
-            "/file_explorer/side",
-            serde_json::json!(match new_side {
-                FileExplorerSide::Left => "left",
-                FileExplorerSide::Right => "right",
-            }),
-        );
+        self.persist_config_change(config_keys::FILE_EXPLORER_SIDE, new_side);
         let status = match new_side {
             FileExplorerSide::Left => t!("toggle.file_explorer_side_left"),
             FileExplorerSide::Right => t!("toggle.file_explorer_side_right"),
@@ -533,10 +522,7 @@ impl Editor {
         self.config_mut().editor.show_vertical_scrollbar = new_value;
         // Persist to the user config layer so the choice survives restart
         // (issue #474), matching the other global View-menu toggles.
-        self.persist_config_change(
-            "/editor/show_vertical_scrollbar",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_SHOW_VERTICAL_SCROLLBAR, new_value);
         let status = if new_value {
             t!("toggle.vertical_scrollbar_shown")
         } else {
@@ -551,10 +537,7 @@ impl Editor {
         self.config_mut().editor.show_horizontal_scrollbar = new_value;
         // Persist to the user config layer so the choice survives restart
         // (issue #474), matching the other global View-menu toggles.
-        self.persist_config_change(
-            "/editor/show_horizontal_scrollbar",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_SHOW_HORIZONTAL_SCROLLBAR, new_value);
         let status = if new_value {
             t!("toggle.horizontal_scrollbar_shown")
         } else {
@@ -663,10 +646,7 @@ impl Editor {
     pub fn toggle_mouse_hover(&mut self) {
         let new_value = !self.config.editor.mouse_hover_enabled;
         self.config_mut().editor.mouse_hover_enabled = new_value;
-        self.persist_config_change(
-            "/editor/mouse_hover_enabled",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_MOUSE_HOVER_ENABLED, new_value);
 
         if self.config.editor.mouse_hover_enabled {
             self.set_status_message(t!("toggle.mouse_hover_enabled").to_string());
@@ -709,10 +689,7 @@ impl Editor {
     pub fn toggle_inlay_hints(&mut self) {
         let new_value = !self.config.editor.enable_inlay_hints;
         self.config_mut().editor.enable_inlay_hints = new_value;
-        self.persist_config_change(
-            "/editor/enable_inlay_hints",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_ENABLE_INLAY_HINTS, new_value);
         // `Window::send_lsp_changes_for_buffer` reads
         // `resources.config.editor.enable_inlay_hints`; sync so the per-edit
         // LSP refresh sees the new value without waiting for a reload.
@@ -922,13 +899,27 @@ impl Editor {
     ///
     /// Used when toggling settings via menu/command palette so that
     /// the change is saved immediately (matching the settings UI behavior).
-    pub(super) fn persist_config_change(&self, json_pointer: &str, value: serde_json::Value) {
+    ///
+    /// Accepts only a [`SettingKey`], never a raw pointer string: the keys are
+    /// a closed set of constants, each pinned by a generated CI test to the
+    /// spelling and value type serde actually uses (see
+    /// [`crate::config_keys`]). The value is typed by the key, so persisting
+    /// the wrong type does not compile, and serde serializes it — the enum
+    /// casing for `FILE_EXPLORER_SIDE` is no longer spelled by hand.
+    pub(super) fn persist_config_change<T: serde::Serialize>(&self, key: SettingKey<T>, value: T) {
+        let json = match serde_json::to_value(&value) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!("Setting {} not serializable: {e}", key.pointer());
+                return;
+            }
+        };
         let resolver =
             ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
-        let changes = std::collections::HashMap::from([(json_pointer.to_string(), value)]);
+        let changes = std::collections::HashMap::from([(key.pointer().to_string(), json)]);
         let deletions = std::collections::HashSet::new();
         if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, ConfigLayer::User) {
-            tracing::error!("Failed to persist config change {}: {}", json_pointer, e);
+            tracing::error!("Failed to persist config change {}: {}", key.pointer(), e);
         }
     }
 }
