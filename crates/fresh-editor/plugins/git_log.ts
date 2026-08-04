@@ -377,6 +377,266 @@ const STREAM_POLL_MS = 200;
 /** Source files above this size retain the normal hunk-local fallback. */
 const SOURCE_HIGHLIGHT_MAX_BYTES = 2 * 1024 * 1024;
 const SOURCE_HIGHLIGHT_NS = "git-log-source-syntax";
+const INTRALINE_HIGHLIGHT_NS = "git-log-intraline";
+
+// Match delta's default: lines at or below this normalized edit distance are
+// treated as old/new versions of one another and receive emphasized
+// within-line backgrounds. The distance is computed from the same token
+// alignment that produces the highlighted ranges (see alignDiffLines).
+const MAX_LINE_DISTANCE = 0.6;
+// The alignment table is quadratic. Large generated/minified lines keep their
+// ordinary whole-line diff background rather than stalling the Git Log view.
+const MAX_INLINE_ALIGNMENT_CELLS = 100_000;
+const MAX_INLINE_PAIR_ATTEMPTS = 256;
+
+interface InlineToken {
+  text: string;
+  byteStart: number;
+  byteEnd: number;
+}
+
+interface InlineRange {
+  start: number;
+  end: number;
+}
+
+interface InlineLine {
+  text: string;
+  contentStart: number;
+}
+
+interface LineAlignment {
+  distance: number;
+  oldRanges: InlineRange[];
+  newRanges: InlineRange[];
+}
+
+const ALIGN_MATCH = 0;
+const ALIGN_DELETE = 1;
+const ALIGN_INSERT = 2;
+const ALIGN_EDIT_COST = 2;
+const ALIGN_INITIAL_EDIT_PENALTY = 1;
+
+/** JavaScript's `\w` is deliberately used here: like delta's default
+ * `word-diff-regex=\w+`, identifier runs are one token while punctuation is
+ * aligned at code-point granularity. `for ... of` keeps surrogate pairs
+ * intact, so emoji and non-BMP punctuation never produce invalid byte ranges. */
+function tokenizeInlineLine(text: string): InlineToken[] {
+  const tokens: InlineToken[] = [];
+  let word = "";
+  let wordStart = 0;
+  let bytePos = 0;
+
+  const flushWord = (): void => {
+    if (word.length === 0) return;
+    tokens.push({ text: word, byteStart: wordStart, byteEnd: bytePos });
+    word = "";
+  };
+
+  for (const char of text) {
+    const byteLength = editor.utf8ByteLength(char);
+    if (/\w/.test(char)) {
+      if (word.length === 0) wordStart = bytePos;
+      word += char;
+    } else {
+      flushWord();
+      tokens.push({
+        text: char,
+        byteStart: bytePos,
+        byteEnd: bytePos + byteLength,
+      });
+    }
+    bytePos += byteLength;
+  }
+  flushWord();
+  return tokens;
+}
+
+function collapseInlineRanges(
+  tokens: InlineToken[],
+  matched: boolean[],
+): InlineRange[] {
+  const ranges: InlineRange[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (matched[i]) continue;
+    const token = tokens[i];
+    const last = ranges[ranges.length - 1];
+    if (last && last.end === token.byteStart) {
+      last.end = token.byteEnd;
+    } else {
+      ranges.push({ start: token.byteStart, end: token.byteEnd });
+    }
+  }
+  return ranges;
+}
+
+/** Token alignment adapted from delta's align.rs + edits.rs.
+ *
+ * Insertions/deletions cost two, starting a changed run costs one, and ties
+ * prefer insertion then deletion so moved tokens display as remove/add. The
+ * normalized distance weights unchanged display columns twice; this makes a
+ * small edit to a long line close to zero and a full rewrite equal to one. */
+function alignDiffLines(oldText: string, newText: string): LineAlignment | null {
+  const oldTokens = tokenizeInlineLine(oldText);
+  const newTokens = tokenizeInlineLine(newText);
+  const rows = oldTokens.length + 1;
+  const columns = newTokens.length + 1;
+  if (rows * columns > MAX_INLINE_ALIGNMENT_CELLS) return null;
+
+  const costs = new Uint32Array(rows * columns);
+  const operations = new Uint8Array(rows * columns);
+  const index = (i: number, j: number): number => i * columns + j;
+
+  for (let i = 1; i < rows; i++) {
+    costs[index(i, 0)] = i * ALIGN_EDIT_COST + ALIGN_INITIAL_EDIT_PENALTY;
+    operations[index(i, 0)] = ALIGN_DELETE;
+  }
+  for (let j = 1; j < columns; j++) {
+    costs[index(0, j)] = j * ALIGN_EDIT_COST + ALIGN_INITIAL_EDIT_PENALTY;
+    operations[index(0, j)] = ALIGN_INSERT;
+  }
+
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < columns; j++) {
+      const insertionParent = index(i, j - 1);
+      const deletionParent = index(i - 1, j);
+      const diagonalParent = index(i - 1, j - 1);
+      let bestOperation = ALIGN_INSERT;
+      let bestCost = costs[insertionParent] + ALIGN_EDIT_COST +
+        (operations[insertionParent] === ALIGN_MATCH
+          ? ALIGN_INITIAL_EDIT_PENALTY
+          : 0);
+      const deletionCost = costs[deletionParent] + ALIGN_EDIT_COST +
+        (operations[deletionParent] === ALIGN_MATCH
+          ? ALIGN_INITIAL_EDIT_PENALTY
+          : 0);
+      if (deletionCost < bestCost) {
+        bestCost = deletionCost;
+        bestOperation = ALIGN_DELETE;
+      }
+      if (
+        oldTokens[i - 1].text === newTokens[j - 1].text &&
+        costs[diagonalParent] < bestCost
+      ) {
+        bestCost = costs[diagonalParent];
+        bestOperation = ALIGN_MATCH;
+      }
+      const cell = index(i, j);
+      costs[cell] = bestCost;
+      operations[cell] = bestOperation;
+    }
+  }
+
+  const matchedOld = new Array(oldTokens.length).fill(false) as boolean[];
+  const matchedNew = new Array(newTokens.length).fill(false) as boolean[];
+  let changedWidth = 0;
+  let unchangedWidth = 0;
+  let i = oldTokens.length;
+  let j = newTokens.length;
+  while (i > 0 || j > 0) {
+    const operation = operations[index(i, j)];
+    if (i > 0 && j > 0 && operation === ALIGN_MATCH) {
+      i -= 1;
+      j -= 1;
+      matchedOld[i] = true;
+      matchedNew[j] = true;
+      unchangedWidth += editor.stringWidth(oldTokens[i].text.trim());
+    } else if (i > 0 && (j === 0 || operation === ALIGN_DELETE)) {
+      i -= 1;
+      changedWidth += editor.stringWidth(oldTokens[i].text.trim());
+    } else {
+      j -= 1;
+      changedWidth += editor.stringWidth(newTokens[j].text.trim());
+    }
+  }
+
+  const denominator = changedWidth + 2 * unchangedWidth;
+  return {
+    distance: denominator === 0 ? 0 : changedWidth / denominator,
+    oldRanges: collapseInlineRanges(oldTokens, matchedOld),
+    newRanges: collapseInlineRanges(newTokens, matchedNew),
+  };
+}
+
+/** Pair homologous -/+ lines in one contiguous change block, following
+ * delta's monotonic greedy search, then paint only their unmatched tokens. */
+function highlightInlineBlock(
+  bufferId: number,
+  removed: InlineLine[],
+  added: InlineLine[],
+): void {
+  let nextAdded = 0;
+  let attempts = 0;
+  for (const oldLine of removed) {
+    for (let j = nextAdded; j < added.length; j++) {
+      if (attempts >= MAX_INLINE_PAIR_ATTEMPTS) return;
+      attempts += 1;
+      const alignment = alignDiffLines(oldLine.text, added[j].text);
+      if (alignment === null || alignment.distance > MAX_LINE_DISTANCE) continue;
+
+      for (const range of alignment.oldRanges) {
+        editor.addOverlay(
+          bufferId,
+          INTRALINE_HIGHLIGHT_NS,
+          oldLine.contentStart + range.start,
+          oldLine.contentStart + range.end,
+          { bg: "editor.diff_remove_highlight_bg" },
+        );
+      }
+      for (const range of alignment.newRanges) {
+        editor.addOverlay(
+          bufferId,
+          INTRALINE_HIGHLIGHT_NS,
+          added[j].contentStart + range.start,
+          added[j].contentStart + range.end,
+          { bg: "editor.diff_add_highlight_bg" },
+        );
+      }
+      nextAdded = j + 1;
+      break;
+    }
+  }
+}
+
+/** Parse unified hunks and apply delta-style emphasized backgrounds to the
+ * changed token ranges of paired deletion/addition lines. */
+function applyIntralineHighlights(bufferId: number, diff: string): void {
+  editor.clearNamespace(bufferId, INTRALINE_HIGHLIGHT_NS);
+  let removed: InlineLine[] = [];
+  let added: InlineLine[] = [];
+  let inHunk = false;
+  let diffByte = 0;
+
+  const flush = (): void => {
+    if (removed.length > 0 && added.length > 0) {
+      highlightInlineBlock(bufferId, removed, added);
+    }
+    removed = [];
+    added = [];
+  };
+
+  for (const line of diff.split("\n")) {
+    const lineBytes = editor.utf8ByteLength(line);
+    if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(line)) {
+      flush();
+      inHunk = true;
+    } else if (inHunk) {
+      const marker = line.charAt(0);
+      if (marker === "-") {
+        removed.push({ text: line.slice(1), contentStart: diffByte + 1 });
+      } else if (marker === "+") {
+        added.push({ text: line.slice(1), contentStart: diffByte + 1 });
+      } else if (marker === " ") {
+        flush();
+      } else if (!line.startsWith("\\ No newline at end of file")) {
+        flush();
+        inHunk = false;
+      }
+    }
+    diffByte += lineBytes + 1;
+  }
+  flush();
+}
 
 interface SourceSnapshot {
   spans: TsTextHighlightSpan[];
@@ -610,6 +870,7 @@ async function applySourceBackedHighlights(
     const snapshots = new Map<string, SourceSnapshot | null>();
 
     editor.clearNamespace(bufferId, SOURCE_HIGHLIGHT_NS);
+    applyIntralineHighlights(bufferId, diff);
     for (const file of files) {
       if (!state.isOpen || state.commitBuffers.get(hash) !== bufferId) return;
       const oldKey = file.oldPath ? `${hash}^\0${file.oldPath}` : null;
@@ -752,6 +1013,7 @@ async function ensureCommitBuffer(commit: GitCommit, cwd: string): Promise<numbe
     }
     state.sourceHighlightedBuffers.delete(existing);
     editor.clearNamespace(existing, SOURCE_HIGHLIGHT_NS);
+    editor.clearNamespace(existing, INTRALINE_HIGHLIGHT_NS);
     const handle = spawnGitShow(hash, cwd);
     state.inFlightSpawns.set(hash, handle);
     void pollUntilSpawnDone(hash, existing, handle);

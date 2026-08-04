@@ -1436,6 +1436,100 @@ fn test_git_log_mid_docstring_hunk_uses_full_source_state() {
     }
 }
 
+/// Paired -/+ lines receive delta-style emphasized backgrounds only on the
+/// tokens that changed; their shared suffix keeps the ordinary diff row bg.
+#[test]
+fn test_git_log_emphasizes_intraline_changes() {
+    let repo = GitTestRepo::new();
+    repo.create_file("sample.rs", "fn main() {\n    let old_name = keep;\n}\n");
+    repo.git_add_all();
+    repo.git_commit("add sample");
+    repo.create_file("sample.rs", "fn main() {\n    let new_name = keep;\n}\n");
+    repo.git_add_all();
+    repo.git_commit("rename local");
+    repo.setup_git_log_plugin();
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+
+    trigger_git_log(&mut harness);
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.process_async_and_render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    let remove_emphasis = harness
+        .editor()
+        .theme()
+        .resolve_theme_key("editor.diff_remove_highlight_bg");
+    let add_emphasis = harness
+        .editor()
+        .theme()
+        .resolve_theme_key("editor.diff_add_highlight_bg");
+    let remove_bg = harness
+        .editor()
+        .theme()
+        .resolve_theme_key("editor.diff_remove_bg");
+    let add_bg = harness
+        .editor()
+        .theme()
+        .resolve_theme_key("editor.diff_add_bg");
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            let bg_at = |needle: &str| {
+                screen.lines().enumerate().find_map(|(y, row)| {
+                    row.find(needle).and_then(|x| {
+                        h.get_cell_style(row[..x].chars().count() as u16, y as u16)
+                            .and_then(|style| style.bg)
+                    })
+                })
+            };
+            bg_at("old_name") == remove_emphasis && bg_at("new_name") == add_emphasis
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let bg_at_in_row = |row_needle: &str, cell_needle: &str| {
+        screen.lines().enumerate().find_map(|(y, row)| {
+            if !row.contains(row_needle) {
+                return None;
+            }
+            row.find(cell_needle).and_then(|x| {
+                harness
+                    .get_cell_style(row[..x].chars().count() as u16, y as u16)
+                    .and_then(|style| style.bg)
+            })
+        })
+    };
+
+    assert_eq!(bg_at_in_row("old_name", "old_name"), remove_emphasis);
+    assert_eq!(bg_at_in_row("new_name", "new_name"), add_emphasis);
+    assert_eq!(
+        bg_at_in_row("old_name", "keep"),
+        remove_bg,
+        "unchanged deletion suffix must keep the normal removal background"
+    );
+    assert_eq!(
+        bg_at_in_row("new_name", "keep"),
+        add_bg,
+        "unchanged addition suffix must keep the normal addition background"
+    );
+}
+
 /// REPRODUCTION TEST: Opening different commits after closing should open the correct commit
 /// This tests the bug where after opening a commit with Enter, quitting with q, navigating
 /// to a different commit and pressing Enter would open the first commit again instead of
