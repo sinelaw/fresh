@@ -819,6 +819,11 @@ async function goToStep(
   t.focusProse = options.focusProse !== false;
   lastTourId = t.id;
   persist();
+  // Paint the new step's header/rail/prose NOW — revealStep's file-open
+  // chain (open, scroll, overlay, focus handback) re-renders again when
+  // it lands, but the panel must not wait on it: on a loaded machine
+  // that chain can take long enough that the step change looks ignored.
+  renderPanel(t);
   await revealStep(t);
 }
 
