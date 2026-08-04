@@ -124,8 +124,13 @@ pub(super) fn render_line_cells<'a, 'c>(
 
     // Reset the per-row touched set. Wrap continuations inherit overlays
     // still active from the previous row of the same source line; new
-    // source lines do not (see OverlayActiveSet).
-    overlay_sweep.enter_row(matches!(input.view_line.line_start, LineStart::AfterBreak));
+    // source lines seed from the overlays covering their first byte, so
+    // a range-wide overlay tail-fills every row it spans (see
+    // OverlayActiveSet::enter_row).
+    overlay_sweep.enter_row(
+        matches!(input.view_line.line_start, LineStart::AfterBreak),
+        input.view_line.source_start_byte,
+    );
 
     let mut pass = CellPass {
         // ANSI parser threaded from the caller across wrapped rows.

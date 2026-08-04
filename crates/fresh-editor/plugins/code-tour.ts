@@ -126,14 +126,14 @@ const tourByPanel = new Map<number, string>();
  * fire from a split where there is no tour buffer to read. */
 let lastTourId: string | null = null;
 
-type RGB = [number, number, number];
-
+// Theme keys, not RGB literals: every tour colour restyles with the
+// active theme (the host resolves ThemedStyle overlays at paint time).
 const C = {
-  dim: [120, 120, 140] as RGB,
-  accent: [140, 190, 255] as RGB,
-  rule: [80, 80, 100] as RGB,
-  warn: [230, 170, 70] as RGB,
-  path: [220, 160, 80] as RGB,
+  dim: "ui.menu_disabled_fg",
+  accent: "ui.help_key_fg",
+  rule: "ui.help_separator_fg",
+  warn: "ui.status_warning_indicator_bg",
+  path: "syntax.string",
 };
 
 // ============================================================================
@@ -460,7 +460,7 @@ async function lineRangeBytes(
   bufferId: number,
   from: number,
   to: number,
-): Promise<Array<[number, number]> | null> {
+): Promise<[number, number] | null> {
   const text = await editor.getBufferText(bufferId);
   if (typeof text !== "string") return null;
   const lines = text.split("\n");
@@ -471,17 +471,11 @@ async function lineRangeBytes(
   for (let i = 0; i < from - 1; i++) {
     offset += editor.utf8ByteLength(lines[i]) + 1;
   }
-  const ranges: Array<[number, number]> = [];
+  const start = offset;
   for (let i = from - 1; i < last; i++) {
-    const len = editor.utf8ByteLength(lines[i]);
-    // An empty line still gets a band: cover its newline byte so the
-    // painter has a cell to extend from (a zero-length overlay paints
-    // nothing at all).
-    const end = len > 0 ? offset + len : Math.min(offset + 1, text.length);
-    if (end > offset) ranges.push([offset, end]);
-    offset += len + 1;
+    offset += editor.utf8ByteLength(lines[i]) + (i < last - 1 ? 1 : 0);
   }
-  return ranges;
+  return [start, offset];
 }
 
 /** Resolve the buffer showing `filePath`.
@@ -523,25 +517,22 @@ async function paintStepOverlay(t: TourInstance): Promise<void> {
   if (!bufferId) return;
 
   clearTourOverlays(t);
-  const ranges = await lineRangeBytes(bufferId, step.lines[0], step.lines[1]);
-  if (!ranges || ranges.length === 0) {
+  const range = await lineRangeBytes(bufferId, step.lines[0], step.lines[1]);
+  if (!range) {
     editor.warn(
       `Tour: could not resolve lines ${step.lines[0]}-${step.lines[1]} in ${step.file_path}`,
     );
     return;
   }
-  // One overlay per line, each extending to the line end: a single
-  // range-wide overlay only tail-filled the row it *started* on, so the
-  // first line showed a full-width band and the rest highlighted just
-  // their text. Per-line bands make every row full width — a region
-  // marker visually distinct from a text selection (which never covers
-  // the empty tail of a line).
-  for (const [start, end] of ranges) {
-    editor.addOverlay(bufferId, t.namespace, start, end, {
-      bg: [42, 74, 106],
-      extendToLineEnd: true,
-    });
-  }
+  // One range-wide overlay; the host tail-fills every row it spans, so
+  // each line paints a full-width band — a region marker visually
+  // distinct from a text selection (which never covers the empty tail
+  // of a line). The bg is a theme key so the band restyles with the
+  // theme, like every other tour colour.
+  editor.addOverlay(bufferId, t.namespace, range[0], range[1], {
+    bg: "ui.semantic_highlight_bg",
+    extendToLineEnd: true,
+  });
   t.paintedBuffers.add(bufferId);
 }
 
@@ -1031,10 +1022,10 @@ editor.on("widget_event", (args) => {
   if (args.event_type === "select" && args.widget_key === "stepList") {
     const payload = args.payload as { index?: number; via?: string } | undefined;
     if (typeof payload?.index === "number" && payload.index !== t.step) {
-      // A click navigates and hands focus to the prose (reading is next);
-      // keyboard browsing in the rail navigates too but keeps the rail
-      // focused so ↑/↓ keep stepping.
-      goToStep(t, payload.index, { focusProse: payload.via === "click" })
+      // Rail navigation — click or ↑/↓ — keeps the rail focused, so the
+      // arrows right after a click keep stepping. (`n`/`p`/the buttons
+      // still park focus on the prose for reading.)
+      goToStep(t, payload.index, { focusProse: false })
         .catch((e) => editor.error(`code-tour: ${e}`));
     }
   }
