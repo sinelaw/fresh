@@ -448,7 +448,10 @@ impl IntervalTree {
     /// quadratic and effectively non-terminating (issue #2893).
     ///
     /// Edits must not overlap — deleted ranges are disjoint, which is what
-    /// `apply_bulk_edits` requires of them anyway.
+    /// `apply_bulk_edits` requires of them anyway — and no two may share a
+    /// position: each marker is resolved against the single edit governing it,
+    /// which cannot express two edits applying in turn at the same spot. A
+    /// bulk edit merges its same-position edits before this point.
     pub fn adjust_for_bulk_edits(&mut self, edits: &[(u64, i64)]) {
         if self.root.is_none() {
             return;
@@ -462,6 +465,10 @@ impl IntervalTree {
             return;
         }
         ordered.sort_unstable_by_key(|(pos, _)| *pos);
+        debug_assert!(
+            ordered.windows(2).all(|w| w[0].0 != w[1].0),
+            "adjust_for_bulk_edits needs one edit per position, got {ordered:?}"
+        );
         let mut prefix: Vec<i64> = Vec::with_capacity(ordered.len());
         let mut running: i64 = 0;
         for (_, delta) in &ordered {
@@ -1617,16 +1624,20 @@ mod tests {
                 markers in prop::collection::vec((0..1000u64, 0..40u64, any::<bool>()), 0..40),
                 raw_edits in prop::collection::vec((0..60u64, 0..20u64, 0..20u64), 0..25),
             ) {
-                // Lay the edits out left to right so their ranges are disjoint,
-                // which is what a bulk edit guarantees.
+                // Lay the edits out left to right so their ranges are disjoint
+                // and no position repeats, which is what a bulk edit
+                // guarantees — it merges same-position edits before this point.
                 let mut edits: Vec<(u64, i64)> = Vec::new();
                 let mut cursor = 0u64;
                 for (gap, del_len, ins_len) in raw_edits {
                     cursor += gap;
-                    if del_len as i64 - ins_len as i64 != 0 || ins_len > 0 {
-                        edits.push((cursor, ins_len as i64 - del_len as i64));
+                    let delta = ins_len as i64 - del_len as i64;
+                    if delta != 0 {
+                        edits.push((cursor, delta));
+                        cursor += del_len.max(1);
+                    } else {
+                        cursor += del_len;
                     }
-                    cursor += del_len;
                 }
                 // Bulk edits arrive highest position first.
                 edits.reverse();
