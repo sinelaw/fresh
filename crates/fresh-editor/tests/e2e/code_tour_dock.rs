@@ -82,6 +82,48 @@ fn second_tour_json(root: &Path) -> String {
 
 const MAIN_RS: &str = "fn main() {\n    let l = listen();\n}\n\nfn handle() {\n    todo!()\n}\n";
 
+/// A tour whose Steps rail *and* prose column both overflow their visible
+/// rows: twelve steps, and an explanation long enough that most of it sits
+/// below the fold. Step 1 also leads with an unbroken token far longer than
+/// any prose column, so the wrap-vs-truncate behaviour is on screen without
+/// scrolling. Titles are deliberately short — several assertions check that
+/// no `…` appears anywhere, so nothing else may legitimately truncate.
+fn overflow_tour_json(root: &Path) -> String {
+    let main_rs = json_path(&root.join("src/main.rs"));
+    let para = "The backend emits MoveTo only when the cell it is about to \
+                draw is not immediately to the right of the last one it \
+                drew, which means consecutive columns are printed as a run \
+                with no repositioning at all.";
+    let long_word = format!("wordwrap{}", "x".repeat(220));
+    let explanation =
+        format!("## Heading one\n\n{long_word}\n\n{para}\n\n{para}\n\n{para}\n\n{para}\n\n{para}");
+    let steps = (1..=12)
+        .map(|i| {
+            format!(
+                r###"{{
+      "step_id": {i},
+      "title": "S{i}",
+      "file_path": {main_rs},
+      "lines": [1, 3],
+      "explanation": "{explanation}"
+    }}"###,
+                explanation = explanation.replace('\n', "\\n"),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",\n    ");
+    format!(
+        r###"{{
+  "title": "Overflow Tour",
+  "description": "Both lists overflow",
+  "schema_version": "1.0",
+  "steps": [
+    {steps}
+  ]
+}}"###
+    )
+}
+
 /// Project with the code-tour plugin and a tour manifest at the root.
 fn setup_tour_project() -> (tempfile::TempDir, PathBuf) {
     let temp_dir = tempfile::TempDir::new().unwrap();
@@ -118,6 +160,11 @@ fn setup_tour_project() -> (tempfile::TempDir, PathBuf) {
     fs::write(
         project_root.join("storage-tour.json"),
         second_tour_json(&project_root),
+    )
+    .unwrap();
+    fs::write(
+        project_root.join("overflow-tour.json"),
+        overflow_tour_json(&project_root),
     )
     .unwrap();
 
@@ -749,6 +796,190 @@ fn test_step_range_is_highlighted_in_the_editor() {
         "a step range taller than the pane should fill it, got {} rows\nScreen:\n{}",
         rows.len(),
         harness.screen_to_string()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Scrolling: the wheel, the scrollbars, and the selection band
+// ---------------------------------------------------------------------------
+
+/// Load the overflow tour (12 steps, prose far taller than the visible
+/// window) and return the screen row of the two lists' first content row —
+/// the row directly below the sections' top border.
+fn load_overflow_tour(harness: &mut EditorTestHarness, project_root: &Path) -> usize {
+    let manifest = project_root.join("overflow-tour.json");
+    load_tour(
+        harness,
+        &manifest.display().to_string(),
+        "*Tour: Overflow Tour*",
+    );
+    row_of(harness, "1/12 ·") + 1
+}
+
+/// The two halves of a panel screen row, split at the `││` seam between
+/// the Steps rail and the prose column.
+fn split_at_seam(harness: &EditorTestHarness, row: usize) -> (String, String) {
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(row).expect("panel row");
+    let seam = line.find("││").expect("column seam");
+    (
+        line[..seam].to_string(),
+        line[seam + "││".len()..].to_string(),
+    )
+}
+
+/// The mouse wheel scrolls the list under the pointer: over the prose it
+/// scrolls the prose and leaves the rail alone; over the rail it scrolls
+/// the rail.
+///
+/// Before the fix, wheel routing picked the *first* scrollable widget in
+/// the panel spec — the Steps rail — so a wheel anywhere in the panel
+/// scrolled the rail and the prose never moved.
+#[test]
+fn test_wheel_scrolls_the_hovered_list() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+
+    let (rail_before, prose_before) = split_at_seam(&harness, first_row);
+    assert!(
+        rail_before.contains("▸ ") && rail_before.contains("S1"),
+        "rail must start at step 1\nrow: {rail_before}"
+    );
+    assert!(
+        prose_before.contains("Heading one"),
+        "prose must start at its heading\nrow: {prose_before}"
+    );
+
+    // Wheel down over the prose column.
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(first_row).expect("panel row");
+    let seam_col = line[..line.find("││").expect("seam")].chars().count();
+    let prose_col = (seam_col + 4) as u16;
+    harness
+        .mouse_scroll_down(prose_col, first_row as u16)
+        .unwrap();
+    harness
+        .wait_until(|h| !split_at_seam(h, first_row).1.contains("Heading one"))
+        .unwrap();
+    let (rail_after, _) = split_at_seam(&harness, first_row);
+    assert_eq!(
+        rail_before, rail_after,
+        "a wheel over the prose column must not scroll the Steps rail"
+    );
+
+    // Wheel down over the rail: now the rail scrolls.
+    harness.mouse_scroll_down(5, first_row as u16).unwrap();
+    harness
+        .wait_until(|h| !split_at_seam(h, first_row).0.contains("S1"))
+        .unwrap();
+}
+
+/// Both overflowing lists paint a scrollbar in their rightmost inner
+/// column. Before the fix, split-mounted widget panels dropped their
+/// scroll-region geometry and painted no scrollbar at all.
+#[test]
+fn test_overflowing_lists_show_scrollbars() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+
+    // The sections' top-border row: `╭─ Steps ──…──╮╭─ 1/12 · S1 ──…──╮`.
+    // Every glyph on it is single-width, so char index == screen column.
+    let border_row = first_row - 1;
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(border_row).expect("border row");
+    let closes: Vec<usize> = line
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '╮')
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(closes.len(), 2, "expected both section borders\n{line}");
+
+    // Scrollbar column = two columns left of the section's right border
+    // (the last column of the section's inner area).
+    for close in closes {
+        let sb_col = (close - 2) as u16;
+        assert!(
+            harness.is_scrollbar_thumb_at(sb_col, first_row as u16)
+                || harness.is_scrollbar_track_at(sb_col, first_row as u16),
+            "expected a scrollbar cell at col {sb_col} row {first_row}, got {:?}\nScreen:\n{}",
+            harness.get_cell_style(sb_col, first_row as u16),
+            harness.screen_to_string()
+        );
+    }
+}
+
+/// The selected rows' highlight stays inside the panel. Before the fix,
+/// the selection band's `extend_to_line_end` survived the row zipper and
+/// the painter flooded every cell right of the panel border — a stray
+/// highlight block at the screen's right edge.
+#[test]
+fn test_selection_highlight_stays_inside_the_panel() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+    let first_row = load_overflow_tour(&mut harness, &project_root);
+
+    // The selection band's colour is theme-dependent: read it off a cell
+    // inside the rail's selected row (step 1, marked `▸`) rather than
+    // hard-coding a theme value. An unselected row's cell pins down the
+    // panel's plain background, proving the two really differ — without
+    // that, "no band past the border" could pass vacuously.
+    let selection_bg = harness
+        .get_cell_style(5, first_row as u16)
+        .and_then(|s| s.bg)
+        .expect("the rail's selected row must carry a selection background");
+    let plain_bg = harness
+        .get_cell_style(5, first_row as u16 + 1)
+        .and_then(|s| s.bg);
+    assert_ne!(
+        Some(selection_bg),
+        plain_bg,
+        "selected and unselected rail rows must differ for this test to bite"
+    );
+
+    // The cells past the prose section's right border must not carry the
+    // band. Before the fix they did — the tail-fill flooded them.
+    let border_row = first_row - 1;
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(border_row).expect("border row");
+    let panel_edge = line
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '╮')
+        .map(|(i, _)| i)
+        .last()
+        .expect("prose top border");
+    for col in (panel_edge + 1)..(panel_edge + 3) {
+        let style = harness.get_cell_style(col as u16, first_row as u16);
+        assert!(
+            !style.is_some_and(|s| s.bg == Some(selection_bg)),
+            "selection band leaked past the panel border at col {col}: {style:?}\nScreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
+}
+
+/// Long prose lines word-wrap; none is ellipsis-truncated. The host
+/// renders the panel at `viewport.width - 2`, and the plugin used to
+/// mirror the column math from the unreduced viewport width — at widths
+/// where the rounding differed, every full-width wrapped line lost its
+/// last character to a `…`. 219 columns is such a width.
+#[test]
+fn test_long_prose_lines_wrap_without_truncation() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 219, 50);
+    load_overflow_tour(&mut harness, &project_root);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("wordwrapxxx"),
+        "the long token must be on screen for the assertion to bite\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains('…'),
+        "prose must word-wrap, never ellipsis-truncate\nScreen:\n{screen}"
     );
 }
 
