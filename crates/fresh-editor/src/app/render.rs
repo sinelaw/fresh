@@ -710,6 +710,11 @@ impl Editor {
         self.active_layout_mut().maximize_split_areas = maximize_split_areas;
         self.active_layout_mut().view_line_mappings = view_line_mappings;
 
+        // Widget panels mounted into splits render through the ordinary
+        // buffer pipeline, which knows nothing about widget geometry —
+        // paint their overflowing lists' scrollbars on top.
+        self.render_split_widget_panel_scrollbars(frame);
+
         // Promote any deferred virtual-buffer animations whose Rect is now
         // known. Done here (after split_areas is recomputed, before
         // apply_all runs at the end of render) so the first frame of the
@@ -4332,6 +4337,101 @@ impl Editor {
         (Some(dock), chrome)
     }
 
+    /// Paint a scrollbar over each overflowing `List`/`Tree` of every
+    /// widget panel mounted into a visible editor split (Settings,
+    /// Search & Replace, the code-tour dock). Floating panels paint
+    /// theirs inside [`render_floating_widget_panel`]; split-mounted
+    /// panels go through the ordinary buffer pipeline, which knows
+    /// nothing about widget geometry, so without this pass their
+    /// overflowing lists show no scrollbar at all.
+    fn render_split_widget_panel_scrollbars(&mut self, frame: &mut Frame) {
+        use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
+
+        // Collect paint jobs first so the layout/registry borrows end
+        // before the frame is written.
+        let mut jobs: Vec<(ratatui::layout::Rect, ScrollbarState)> = Vec::new();
+        for (split_id, buffer_id, content_rect, _, _, _) in &self.active_layout().split_areas {
+            let panels = self.widget_registry.panels_for_buffer(*buffer_id);
+            if panels.is_empty() {
+                continue;
+            }
+            // The panel body is pinned to the top in practice, but honour
+            // a scrolled viewport all the same (mirrors the wheel-routing
+            // translation in `handle_split_widget_panel_wheel`).
+            let top_byte = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .and_then(|vs| vs.get(split_id))
+                .map(|vs| vs.viewport.top_byte())
+                .unwrap_or(0);
+            let (top_line, gutter) = self
+                .windows
+                .get(&self.active_window)
+                .map(|w| &w.buffers)
+                .and_then(|b| b.get(buffer_id))
+                .map(|s| {
+                    (
+                        s.buffer.get_line_number(top_byte),
+                        s.margins.left_total_width() as u16,
+                    )
+                })
+                .unwrap_or((0, 0));
+            for panel_key in panels {
+                let Some(panel) = self.widget_registry.get(&panel_key) else {
+                    continue;
+                };
+                for region in &panel.scroll_regions {
+                    // Geometry regions cover every keyed list; only
+                    // overflowing ones earn a scrollbar.
+                    if region.total <= region.visible {
+                        continue;
+                    }
+                    let Some(rel_row) = (region.buffer_row as usize).checked_sub(top_line) else {
+                        continue;
+                    };
+                    let y = content_rect.y as usize + rel_row;
+                    let bottom = (content_rect.y + content_rect.height) as usize;
+                    if y >= bottom {
+                        continue;
+                    }
+                    let h = (region.height_rows as usize).min(bottom - y);
+                    if h == 0 {
+                        continue;
+                    }
+                    // Scrollbar column = right edge of the list's region,
+                    // clamped inside the split.
+                    let sb_x = content_rect
+                        .x
+                        .saturating_add(gutter)
+                        .saturating_add(region.col_in_row as u16)
+                        .saturating_add(region.width_cols.saturating_sub(1) as u16)
+                        .min(content_rect.x + content_rect.width.saturating_sub(1));
+                    jobs.push((
+                        ratatui::layout::Rect {
+                            x: sb_x,
+                            y: y as u16,
+                            width: 1,
+                            height: h as u16,
+                        },
+                        ScrollbarState::new(region.total, region.visible, region.scroll),
+                    ));
+                }
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let colors = {
+            let theme = self.theme.read().unwrap();
+            ScrollbarColors::from_theme(&theme)
+        };
+        for (rect, state) in jobs {
+            render_scrollbar(frame, rect, &state, &colors);
+        }
+    }
+
     pub(super) fn render_floating_widget_panel(
         &mut self,
         frame: &mut Frame,
@@ -4658,6 +4758,11 @@ impl Editor {
             use crate::view::ui::scrollbar::{render_scrollbar, ScrollbarColors, ScrollbarState};
             let colors = ScrollbarColors::from_theme(&theme);
             for region in &scroll_regions {
+                // Regions are emitted for every keyed list (wheel routing
+                // hit-tests them); only overflowing ones get a scrollbar.
+                if region.total <= region.visible {
+                    continue;
+                }
                 // Scrollbar column = right edge of the list's column,
                 // clamped inside the panel. Height = visible rows,
                 // clamped to the panel bottom.

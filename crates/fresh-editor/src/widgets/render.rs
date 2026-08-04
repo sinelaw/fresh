@@ -2053,22 +2053,23 @@ fn collect_list(
         entries.push(blank_list_row());
     }
 
-    // Surface a scroll region for the host to paint a draggable
-    // scrollbar when the list overflows. Totals are in items;
+    // Surface the list's geometry + scroll state. The host paints a
+    // draggable scrollbar for lists that overflow (`total > visible`),
+    // and mouse-wheel routing hit-tests the pointer against the region
+    // either way — a wheel over a list that fits must not scroll a
+    // sibling list elsewhere on the panel. Totals are in items;
     // height_rows is the painted band so the thumb spans it.
-    if total > visible_items {
-        if let Some(k) = list_key {
-            scroll_regions.push(ScrollRegion {
-                list_key: k.to_string(),
-                buffer_row: 0,
-                col_in_row: 0,
-                width_cols: panel_width,
-                height_rows: avail_rows,
-                total: total as usize,
-                visible: visible_items as usize,
-                scroll: scroll as usize,
-            });
-        }
+    if let Some(k) = list_key {
+        scroll_regions.push(ScrollRegion {
+            list_key: k.to_string(),
+            buffer_row: 0,
+            col_in_row: 0,
+            width_cols: panel_width,
+            height_rows: avail_rows,
+            total: total as usize,
+            visible: visible_items as usize,
+            scroll: scroll as usize,
+        });
     }
 
     CollectedOutput {
@@ -3130,21 +3131,21 @@ fn render_widget_tree(
     // Surface a scroll region so the host paints a draggable overlay
     // scrollbar when the tree overflows — mirroring the List path, so the
     // dock's session tree gets the same hover scrollbar the card list had.
+    // Emitted whenever the tree is keyed (not only on overflow) so wheel
+    // routing can hit-test the pointer against the tree's geometry too.
     // Totals are in rows (matching the row-based scroll offset), so the
     // thumb size/position track line-level scrolling exactly.
-    if total_rows > rows_emitted {
-        if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
-            out.scroll_regions.push(ScrollRegion {
-                list_key: k.to_string(),
-                buffer_row: 0,
-                col_in_row: 0,
-                width_cols: panel_width,
-                height_rows: rows_emitted,
-                total: total_rows as usize,
-                visible: rows_emitted as usize,
-                scroll: scroll as usize,
-            });
-        }
+    if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
+        out.scroll_regions.push(ScrollRegion {
+            list_key: k.to_string(),
+            buffer_row: 0,
+            col_in_row: 0,
+            width_cols: panel_width,
+            height_rows: rows_emitted,
+            total: total_rows as usize,
+            visible: rows_emitted as usize,
+            scroll: scroll as usize,
+        });
     }
 
     out
@@ -3733,6 +3734,17 @@ fn wrap_entry_between(
             }
             true
         });
+    }
+
+    // The child is now padded to exactly `inner_width` and flanked by
+    // border chrome, so a whole-row `extend_to_line_end` style (a list
+    // selection band) has nothing left to fill *inside* the section —
+    // all it could reach is whatever lies past the section's right
+    // edge: the split's spare columns, or a sibling column once a Row
+    // zips this line. Scope the style to the row's own cells so the
+    // selection can't flood the screen past the panel border.
+    if let Some(style) = child.style.as_mut() {
+        style.extend_to_line_end = false;
     }
 
     // Compose final text: `<prefix>` + child + `<suffix>\n`.
@@ -6241,10 +6253,18 @@ fn zip_row_blocks(
                         // selection highlight disappears in the
                         // zipped output.
                         if let Some(line_style) = &line.style {
+                            // In the merged row this block owns only its
+                            // own columns. A surviving `extend_to_line_end`
+                            // (list selection band) would tail-fill the
+                            // merged line past every sibling column to the
+                            // split's right edge — the stray highlight
+                            // block at the screen edge.
+                            let mut style = line_style.clone();
+                            style.extend_to_line_end = false;
                             overlays.push(InlineOverlay {
                                 start: byte_shift,
                                 end: byte_shift + padded_byte_len,
-                                style: line_style.clone(),
+                                style,
                                 properties: Default::default(),
                                 unit: OffsetUnit::Byte,
                             });
@@ -6263,10 +6283,16 @@ fn zip_row_blocks(
                             if start >= end {
                                 continue;
                             }
+                            // Same reasoning as the whole-line style above:
+                            // an inline overlay's `extend_to_line_end` was
+                            // authored against the block's own line and
+                            // must not tail-fill the merged row.
+                            let mut style = overlay.style.clone();
+                            style.extend_to_line_end = false;
                             overlays.push(InlineOverlay {
                                 start: start + byte_shift,
                                 end: end + byte_shift,
-                                style: overlay.style.clone(),
+                                style,
                                 properties: overlay.properties.clone(),
                                 unit: overlay.unit,
                             });
@@ -8985,6 +9011,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn zip_row_blocks_scopes_selection_to_its_column() {
+        // Two side-by-side sections, each holding a keyed list, the left
+        // one with a selected row. The selection band's
+        // `extend_to_line_end` must not survive into the merged rows: on
+        // a merged row the block owns only its own columns, and a
+        // surviving flag makes the painter tail-fill the row past the
+        // panel's right border (the code tour's stray highlight block at
+        // the screen edge).
+        let left = WidgetSpec::LabeledSection {
+            label: "Steps".into(),
+            child: Box::new(make_list(0, 3, 10, Some("rail"))),
+            width_pct: Some(30),
+            key: None,
+        };
+        let right = WidgetSpec::LabeledSection {
+            label: "Prose".into(),
+            child: Box::new(make_list(-1, 3, 10, Some("prose"))),
+            width_pct: Some(70),
+            key: None,
+        };
+        let spec = WidgetSpec::Row {
+            wrap: false,
+            children: vec![left, right],
+            key: None,
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 60);
+        let mut saw_selection_band = false;
+        for e in &out.entries {
+            assert!(
+                !e.style.as_ref().is_some_and(|s| s.extend_to_line_end),
+                "merged row must not carry a row-level extend_to_line_end: {:?}",
+                e.text
+            );
+            for o in &e.inline_overlays {
+                assert!(
+                    !o.style.extend_to_line_end,
+                    "overlay [{}, {}) of {:?} must not extend to line end",
+                    o.start, o.end, e.text
+                );
+                if matches!(&o.style.bg, Some(OverlayColorSpec::ThemeKey(k)) if k == KEY_FOCUSED_BG)
+                {
+                    saw_selection_band = true;
+                }
+            }
+        }
+        assert!(
+            saw_selection_band,
+            "the selected row must still paint its selection band"
+        );
+    }
+
+    #[test]
+    fn lists_emit_scroll_regions_even_when_they_fit() {
+        // Wheel routing hit-tests the pointer against every keyed list's
+        // region — a list that fits must still claim its geometry, or a
+        // wheel over it gets rerouted to a scrollable sibling.
+        let fits = make_list(-1, 10, 3, Some("fits"));
+        let overflows = make_list(-1, 3, 10, Some("overflows"));
+        let spec = WidgetSpec::Col {
+            children: vec![fits, overflows],
+            key: None,
+        };
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let keys: Vec<(&str, bool)> = out
+            .scroll_regions
+            .iter()
+            .map(|r| (r.list_key.as_str(), r.total > r.visible))
+            .collect();
+        assert_eq!(
+            keys,
+            vec![("fits", false), ("overflows", true)],
+            "every keyed list surfaces a region; only the overflowing one scrolls"
+        );
     }
 
     #[test]
