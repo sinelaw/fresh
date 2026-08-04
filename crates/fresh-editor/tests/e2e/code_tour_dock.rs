@@ -1283,6 +1283,167 @@ fn test_long_prose_lines_wrap_without_truncation() {
     );
 }
 
+/// A blank line inside the step range keeps its full-width band even
+/// when indentation guides are on. The guide synthesis for blank rows
+/// painted its cells with the default bg before the tail fill ran, so
+/// every guide column punched a hole in the band.
+#[test]
+fn test_blank_line_in_range_keeps_band_under_indent_guides() {
+    use fresh::config::{Config, IndentationGuideMode};
+
+    let (_temp, project_root) = setup_tour_project();
+    fs::write(
+        project_root.join("src/gap.rs"),
+        "fn outer() {\n    let a = 1;\n\n    let b = 2;\n}\n",
+    )
+    .unwrap();
+    let gap_rs = json_path(&project_root.join("src/gap.rs"));
+    fs::write(
+        project_root.join("gap-tour.json"),
+        format!(
+            r###"{{
+  "title": "Gap Tour",
+  "description": "Blank line in range",
+  "schema_version": "1.0",
+  "steps": [
+    {{
+      "step_id": 1,
+      "title": "Gap",
+      "file_path": {gap_rs},
+      "lines": [1, 5],
+      "explanation": "A blank line sits inside this range."
+    }}
+  ]
+}}"###
+        ),
+    )
+    .unwrap();
+
+    let mut config = Config::default();
+    config.editor.indentation_guide = IndentationGuideMode::All;
+    // 120 columns doubles as the rail-breakpoint check: the Steps rail
+    // must show at this width (the old 130 breakpoint folded it away).
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(120, 40, config, project_root.to_path_buf())
+            .unwrap();
+    harness
+        .open_file(&project_root.join("src/main.rs"))
+        .unwrap();
+    harness.render().unwrap();
+
+    let manifest = project_root.join("gap-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Gap Tour*",
+    );
+    assert!(
+        harness.screen_to_string().contains("─ Steps"),
+        "the Steps rail must show at 120 columns\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("let a = 1;"))
+        .unwrap();
+    let (x, row_a) = harness.find_text_on_screen("fn outer()").unwrap();
+    let blank_row = row_a + 2; // fn outer() / let a / blank
+                               // The blank row's guide column (line-start column) must carry the
+                               // band's bg like the rest of the row.
+    harness
+        .wait_until(|h| {
+            h.get_cell_style(x, blank_row)
+                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(0, 25, 55)))
+        })
+        .unwrap();
+}
+
+/// The load prompt is a real path prompt: its label ends with a space,
+/// and the `path_complete` plugin serves it directory suggestions the
+/// user can pick instead of typing a full path blind.
+#[test]
+fn test_load_prompt_offers_path_completion() {
+    let (_temp, project_root) = setup_tour_project();
+    copy_plugin(&project_root.join("plugins"), "path_complete");
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    run_command(&mut harness, "Tour: Load Definition");
+    // Label and prefill, with the space between them.
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .contains("tour file path: .fresh-tour.json")
+        })
+        .unwrap();
+
+    // Clear the prefill: the empty input lists the project root, whose
+    // entries only appear on screen as suggestions.
+    for _ in 0..20 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("storage-tour.json"))
+        .unwrap();
+
+    // Narrow to the second manifest and confirm the suggestion.
+    harness.type_text("storage").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*Tour: Storage Tour*"))
+        .unwrap();
+}
+
+/// The reclaimed vertical layout: no divider row under the header, the
+/// step actions live in the header row, and the step's location is the
+/// first line of the prose.
+#[test]
+fn test_panel_layout_spends_its_rows_on_prose() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    let header_row = row_of(&harness, "Step 1 of 2");
+    // Jump / Re-highlight moved up into the header row.
+    assert_eq!(
+        row_of(&harness, "[ Jump to code ⏎ ]"),
+        header_row,
+        "step actions must share the header row\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert_eq!(
+        row_of(&harness, "[ Re-highlight ]"),
+        header_row,
+        "step actions must share the header row\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    // No divider row: the body's section border sits directly under the
+    // header.
+    let section_row = row_of(&harness, "╭");
+    assert_eq!(
+        section_row,
+        header_row + 1,
+        "the body must start directly under the header\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    // The location leads the prose, directly under the section border.
+    assert_eq!(
+        row_of(&harness, "lines 1–3"),
+        section_row + 1,
+        "the step location must be the first prose line\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 // =========================================================================
 // Showcase
 // =========================================================================

@@ -4,7 +4,6 @@ import { git, resolveGitRepo } from "./lib/git_repo.ts";
 import {
   button,
   col,
-  divider,
   flexSpacer,
   hintBar,
   type HintEntry,
@@ -113,7 +112,7 @@ const STATE_KEY = "openTours";
 const DEFAULT_DOCK_WIDTH = 100;
 const DEFAULT_DOCK_HEIGHT = 16;
 /** Below this dock width the Steps rail folds away (§3.4). */
-const RAIL_MIN_WIDTH = 130;
+const RAIL_MIN_WIDTH = 110;
 /** Below this the header's button cluster loses its labels. */
 const COMPACT_WIDTH = 100;
 /** Fraction of the dock width the Steps rail takes when shown. */
@@ -131,9 +130,6 @@ let lastTourId: string | null = null;
 const C = {
   dim: "ui.menu_disabled_fg",
   accent: "ui.help_key_fg",
-  rule: "ui.help_separator_fg",
-  warn: "ui.status_warning_indicator_bg",
-  path: "syntax.string",
 };
 
 // ============================================================================
@@ -195,9 +191,9 @@ function hostPanelWidth(t: TourInstance): number {
  * that isn't a widget hit area — a section border, the padding under a short
  * step — moves the buffer cursor and scrolls the panel's own header out of
  * view. Pane height less the tab bar, then less
- * `header + rule + 2 border rows + location + hints`. */
+ * `header + 2 border rows + hints`. */
 function bodyRows(t: TourInstance): number {
-  return Math.max(3, t.dockHeight - 7);
+  return Math.max(3, t.dockHeight - 5);
 }
 
 function buildHeader(t: TourInstance): WidgetSpec {
@@ -219,12 +215,28 @@ function buildHeader(t: TourInstance): WidgetSpec {
       total: String(total),
     }) + "  " + meter(t.step, total);
 
+  // The step's context actions live up here (not on a bottom row of
+  // their own — vertical space goes to the prose instead).
+  const actions: WidgetSpec[] = t.fileMissing
+    ? [button(editor.t("btn.skip"), { key: "next", disabled: last })]
+    : compact
+    ? [button(editor.t("btn.jump_short"), { key: "jump" })]
+    : [
+      button(editor.t("btn.jump"), { key: "jump" }),
+      spacer(1),
+      button(editor.t("btn.rehighlight"), { key: "rehighlight" }),
+    ];
+
   return row(
     spacer(1),
-    raw([styledRow(titleSegments, { truncateToChars: Math.max(8, t.dockWidth - 40) })], "title"),
+    raw([styledRow(titleSegments, {
+      truncateToChars: Math.max(8, t.dockWidth - 42 - actionsWidth(t)),
+    })], "title"),
     flexSpacer(),
     raw([styledRow([{ text: counter, style: { fg: C.dim } }])], "progress"),
     spacer(2),
+    ...actions,
+    spacer(1),
     button(compact ? "◀" : editor.t("btn.prev"), { key: "prev", disabled: t.step === 0 }),
     spacer(1),
     button(compact ? "▶" : editor.t("btn.next"), {
@@ -265,6 +277,14 @@ function proseMarkdown(t: TourInstance): string {
   if (t.fileMissing) {
     head += "⚠  " + editor.t("panel.file_missing", { file: step.file_path }) + "\n\n";
     if (t.drift) head += "*" + t.drift + "*\n\n";
+  } else {
+    // The step's location leads the prose (its old dedicated row below
+    // the body was a whole line the description can use better).
+    head += editor.t("panel.location", {
+      file: "`" + step.file_path + "`",
+      from: String(step.lines[0]),
+      to: String(step.lines[1]),
+    }) + "\n\n";
   }
   const body = step.explanation.trim().length > 0
     ? step.explanation
@@ -326,7 +346,7 @@ function buildBody(t: TourInstance): WidgetSpec {
   );
 }
 
-/** Rendered width of the location row's trailing buttons, including the
+/** Rendered width of the header's step-action buttons, including the
  * spacer between them. `[ Label ]` is the button chrome, so a label of n
  * characters occupies n + 4 columns. */
 function actionsWidth(t: TourInstance): number {
@@ -335,48 +355,8 @@ function actionsWidth(t: TourInstance): number {
   if (t.dockWidth < COMPACT_WIDTH) return charLen(editor.t("btn.jump_short")) + chrome;
   return (
     charLen(editor.t("btn.jump")) + chrome +
-    2 +
+    1 +
     charLen(editor.t("btn.rehighlight")) + chrome
-  );
-}
-
-function buildLocation(t: TourInstance): WidgetSpec {
-  const step = currentStep(t);
-  const compact = t.dockWidth < COMPACT_WIDTH;
-  const location = t.fileMissing
-    ? editor.t("panel.location_missing")
-    : editor.t("panel.location", {
-      file: step.file_path,
-      from: String(step.lines[0]),
-      to: String(step.lines[1]),
-    });
-
-  const actions: WidgetSpec[] = t.fileMissing
-    ? [button(editor.t("btn.skip"), { key: "next", disabled: t.step === t.manifest.steps.length - 1 })]
-    : compact
-    ? [button(editor.t("btn.jump_short"), { key: "jump" })]
-    : [
-      button(editor.t("btn.jump"), { key: "jump" }),
-      spacer(2),
-      button(editor.t("btn.rehighlight"), { key: "rehighlight" }),
-    ];
-
-  return row(
-    spacer(1),
-    raw([
-      styledRow([
-        { text: t.fileMissing ? "⚠ " : "▸ ", style: { fg: t.fileMissing ? C.warn : C.dim } },
-        { text: location, style: { fg: t.fileMissing ? C.warn : C.path } },
-      ], {
-        // Hard cap so this row can never wrap: whatever the buttons need,
-        // plus the leading marker and the row's own margins. A wrapped
-        // location row costs a line the pane does not have.
-        truncateToChars: Math.max(8, t.dockWidth - actionsWidth(t) - 6),
-      }),
-    ], "location"),
-    flexSpacer(),
-    ...actions,
-    spacer(1),
   );
 }
 
@@ -408,9 +388,7 @@ function renderPanel(t: TourInstance): void {
   t.panel.set(
     col(
       buildHeader(t),
-      divider({ style: { fg: C.rule } }),
       buildBody(t),
-      buildLocation(t),
       hintBar(buildHints(t)),
     ),
   );
@@ -953,11 +931,28 @@ function jumpToCode(t: TourInstance): void {
 // Handlers — commands
 // ============================================================================
 
-async function tour_load(): Promise<void> {
-  const result = await editor.prompt(editor.t("prompt.path"), ".fresh-tour.json");
-  if (result) await openTour(result);
+/** The prompt's custom type. The `-file-path` suffix is what opts it
+ * into the `path_complete` plugin's directory-listing suggestions —
+ * the same machinery behind the Open File and Save As prompts — so
+ * the user can Tab-descend to the manifest instead of typing a full
+ * path blind. */
+const TOUR_PATH_PROMPT = "tour-file-path";
+
+function tour_load(): void {
+  editor.startPromptWithInitial(
+    editor.t("prompt.path") + " ",
+    TOUR_PATH_PROMPT,
+    ".fresh-tour.json",
+  );
 }
 registerHandler("tour_load", tour_load);
+
+editor.on("prompt_confirmed", (args) => {
+  if (args.prompt_type !== TOUR_PATH_PROMPT) return true;
+  const path = (args.input || "").trim();
+  if (path) void openTour(path);
+  return true;
+});
 
 async function tour_next(): Promise<void> {
   const t = targetTour();
