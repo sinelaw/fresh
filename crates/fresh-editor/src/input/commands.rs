@@ -12,7 +12,10 @@
 //!   restart. Every unsuffixed toggle must persist; one that only mutates the
 //!   in-memory `Arc<Config>` (or a `Window` flag) silently forgets the user's
 //!   choice on the next launch. `Config::config_mut` does *not* persist on its
-//!   own — it is only `Arc::make_mut`.
+//!   own — it is only `Arc::make_mut`. `persist_config_change` accepts only a
+//!   [`SettingKey`](crate::config_keys::SettingKey) constant — never a raw
+//!   JSON-pointer string — and every constant carries a generated CI test
+//!   pinning it to serde's actual spelling and value type.
 //! * **`Toggle X (Current Buffer)`** — changes only the active buffer and
 //!   leaves the global default and every other buffer alone. The override is
 //!   recorded on `BufferSettings` (or `BufferViewState`) as an explicit

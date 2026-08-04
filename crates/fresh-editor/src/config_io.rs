@@ -81,7 +81,7 @@ fn strip_empty_defaults(value: Value) -> Option<Value> {
 
 /// Set a value at a JSON pointer path, creating intermediate objects as needed.
 /// The pointer should be in JSON Pointer format (e.g., "/editor/tab_size").
-fn set_json_pointer(root: &mut Value, pointer: &str, value: Value) {
+pub(crate) fn set_json_pointer(root: &mut Value, pointer: &str, value: Value) {
     if pointer.is_empty() || pointer == "/" {
         *root = value;
         return;

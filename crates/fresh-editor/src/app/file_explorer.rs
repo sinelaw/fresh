@@ -916,10 +916,7 @@ impl Editor {
 
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_hidden = show_hidden;
-        self.persist_config_change(
-            "/file_explorer/show_hidden",
-            serde_json::Value::Bool(show_hidden),
-        );
+        self.persist_config_change(crate::config_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden);
     }
 
     pub fn file_explorer_toggle_gitignored(&mut self) {
@@ -940,8 +937,8 @@ impl Editor {
         // Persist to config so the setting survives across sessions
         self.config_mut().file_explorer.show_gitignored = show_gitignored;
         self.persist_config_change(
-            "/file_explorer/show_gitignored",
-            serde_json::Value::Bool(show_gitignored),
+            crate::config_keys::FILE_EXPLORER_SHOW_GITIGNORED,
+            show_gitignored,
         );
     }
 

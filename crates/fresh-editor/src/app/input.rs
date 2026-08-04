@@ -1627,7 +1627,7 @@ impl Editor {
                 // unsuffixed toggle saves it to the user config layer — see the
                 // scope convention on `COMMANDS` in `input/commands.rs`. The
                 // per-buffer variant is "Toggle Line Wrap (Current Buffer)".
-                self.persist_config_change("/editor/line_wrap", serde_json::Value::Bool(new_value));
+                self.persist_config_change(crate::config_keys::EDITOR_LINE_WRAP, new_value);
 
                 let state = if self.config.editor.line_wrap {
                     t!("view.state_enabled").to_string()
@@ -1681,8 +1681,8 @@ impl Editor {
                 }
 
                 self.persist_config_change(
-                    "/editor/highlight_current_line",
-                    serde_json::Value::Bool(new_value),
+                    crate::config_keys::EDITOR_HIGHLIGHT_CURRENT_LINE,
+                    new_value,
                 );
 
                 let state = if self.config.editor.highlight_current_line {
@@ -1730,8 +1730,8 @@ impl Editor {
                 }
 
                 self.persist_config_change(
-                    "/editor/highlight_occurrences",
-                    serde_json::Value::Bool(new_value),
+                    crate::config_keys::EDITOR_HIGHLIGHT_OCCURRENCES,
+                    new_value,
                 );
 
                 let state = if new_value {

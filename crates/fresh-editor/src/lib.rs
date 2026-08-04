@@ -21,6 +21,7 @@ pub mod types;
 // Runtime-only modules (require the "runtime" feature)
 #[cfg(feature = "runtime")]
 pub mod config_io;
+pub mod config_keys;
 #[cfg(feature = "runtime")]
 pub mod init_script;
 #[cfg(feature = "runtime")]
