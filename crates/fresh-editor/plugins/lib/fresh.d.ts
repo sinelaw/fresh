@@ -4517,6 +4517,18 @@ interface HookEventMap {
 		buffer_id: number;
 	};
 	/**
+	* Fired after a buffer is reloaded from disk: auto-revert picked up an
+	* external change (e.g. `git checkout <ref> -- <file>` in another
+	* terminal), or the user ran an explicit revert. Reloads don't fire
+	* `after_file_save`, so plugins that surface disk-derived state
+	* (git gutter, etc.) should subscribe to this too or their decorations
+	* go stale on every external reset.
+	*/
+	after_file_revert: {
+		path: string;
+		buffer_id: number;
+	};
+	/**
 	* Fired by the file explorer after a paste/duplicate/etc. mutates
 	* the filesystem without going through a buffer save. Plugins that
 	* surface FS-derived state (git status badges, etc.) should

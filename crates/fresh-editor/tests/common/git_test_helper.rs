@@ -425,6 +425,17 @@ A sample project for testing.
     pub fn stage_file(&self, relative_path: &str) {
         self.git_add(&[relative_path]);
     }
+
+    /// Reset a file's index and working-tree state to `refspec`, the way an
+    /// external tool would (`git checkout <ref> -- <path>` in another
+    /// terminal while the editor has the file open).
+    pub fn git_checkout_file(&self, refspec: &str, relative_path: &str) {
+        run_git_mutation(
+            &self.path,
+            &["checkout", refspec, "--", relative_path],
+            "checkout",
+        );
+    }
 }
 
 /// Helper to restore original directory

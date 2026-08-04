@@ -490,6 +490,29 @@ editor.on("after_file_save", (args) => {
 
   return true;
 });
+editor.on("after_file_revert", (args) => {
+  const bufferId = args.buffer_id;
+
+  // A reload replaced the buffer content (auto-revert after an external
+  // change like `git checkout <ref> -- <file>`, or an explicit revert),
+  // which drops the old indicators along with the old buffer state — but
+  // never goes through after_file_save. Re-diff so the gutter and
+  // scrollbar reflect the reloaded content.
+  const state = bufferStates.get(bufferId);
+  if (state) {
+    state.filePath = args.path;
+  } else {
+    bufferStates.set(bufferId, {
+      filePath: args.path,
+      hunks: [],
+      updating: false,
+    });
+  }
+
+  updateGitGutter(bufferId);
+
+  return true;
+});
 editor.on("buffer_closed", (args) => {
   bufferStates.delete(args.buffer_id);
   return true;
