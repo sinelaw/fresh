@@ -861,9 +861,10 @@ fn test_wheel_scrolls_the_hovered_list() {
         rail_before.contains("▸ ") && rail_before.contains("S1"),
         "rail must start at step 1\nrow: {rail_before}"
     );
+    // The step's location leads the prose.
     assert!(
-        prose_before.contains("Heading one"),
-        "prose must start at its heading\nrow: {prose_before}"
+        prose_before.contains("lines 1–3"),
+        "prose must start at its location line\nrow: {prose_before}"
     );
 
     // Wheel down over the prose column.
@@ -872,7 +873,7 @@ fn test_wheel_scrolls_the_hovered_list() {
         .mouse_scroll_down(prose_col, first_row as u16)
         .unwrap();
     harness
-        .wait_until(|h| !split_at_seam(h, first_row).1.contains("Heading one"))
+        .wait_until(|h| !split_at_seam(h, first_row).1.contains("lines 1–3"))
         .unwrap();
     let (rail_after, _) = split_at_seam(&harness, first_row);
     assert_eq!(
@@ -986,13 +987,13 @@ fn test_prose_selects_and_copies_rendered_text() {
     harness.editor_mut().set_clipboard_for_test(String::new());
 
     // The prose document is focused on load; the caret sits on its
-    // first rendered line. Extend the selection two lines down.
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Down, KeyModifiers::SHIFT)
-        .unwrap();
+    // first rendered line (the step's location). Extend the selection
+    // three lines down, through the blank line and the heading.
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::SHIFT)
+            .unwrap();
+    }
     // The selection band is visible on the prose's first row: some cell
     // right of the seam changed background versus an unselected row.
     harness.render().unwrap();
