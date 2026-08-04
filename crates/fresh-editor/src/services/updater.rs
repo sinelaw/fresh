@@ -59,8 +59,13 @@ impl Default for UpdateOptions {
             allow_downgrade: false,
             print_command: false,
             force: false,
-            releases_url: super::release_checker::DEFAULT_RELEASES_URL.to_string(),
-            download_base: format!("https://github.com/{REPO}/releases/download"),
+            // Same env overrides the editor's background check reads, so the
+            // child the popup spawns inherits them without argv plumbing.
+            releases_url: super::release_checker::releases_url(),
+            download_base: std::env::var(super::release_checker::DOWNLOAD_BASE_ENV)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| format!("https://github.com/{REPO}/releases/download")),
         }
     }
 }

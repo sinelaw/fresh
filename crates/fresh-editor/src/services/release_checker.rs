@@ -22,6 +22,27 @@ pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Default GitHub releases API URL for the fresh editor
 pub const DEFAULT_RELEASES_URL: &str = "https://api.github.com/repos/sinelaw/fresh/releases/latest";
 
+/// Environment overrides for the release feed and asset host, matching the
+/// `--releases-url` / `--download-base` flags on `fresh --cmd update`.
+///
+/// The env var is what makes the override reach the *whole* editor rather than
+/// one CLI invocation: the background check reads it here, and the update child
+/// the popup spawns inherits it through the environment, so the version the
+/// indicator offers and the artifact that gets installed come from the same
+/// place. Pointing only the CLI at a mirror while the UI still asked GitHub
+/// would be worse than no override at all.
+pub const RELEASES_URL_ENV: &str = "FRESH_RELEASES_URL";
+/// See [`RELEASES_URL_ENV`].
+pub const DOWNLOAD_BASE_ENV: &str = "FRESH_DOWNLOAD_BASE";
+
+/// The release feed to poll: `$FRESH_RELEASES_URL` if set, else the GitHub API.
+pub fn releases_url() -> String {
+    std::env::var(RELEASES_URL_ENV)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| DEFAULT_RELEASES_URL.to_string())
+}
+
 /// Lifecycle of an interactive in-editor self-update, surfaced through the
 /// status-bar update indicator (never a transient status message). Stays
 /// [`SelfUpdatePhase::Idle`] unless the `self-update` feature actually launches
@@ -527,6 +548,25 @@ mod tests {
                 assert_ne!(a, b, "terminal phases collapsed into one another");
             }
         }
+    }
+
+    /// The override has to reach the whole editor, not one CLI invocation:
+    /// the background check that decides whether to show the indicator, and
+    /// the update child the popup spawns, must agree on where releases come
+    /// from. They share one env var so they cannot drift.
+    #[test]
+    fn the_release_feed_override_is_shared_by_check_and_update() {
+        // Not set: both fall back to the GitHub API.
+        std::env::remove_var(RELEASES_URL_ENV);
+        assert_eq!(releases_url(), DEFAULT_RELEASES_URL);
+
+        std::env::set_var(RELEASES_URL_ENV, "http://mirror:8080/releases/latest");
+        assert_eq!(releases_url(), "http://mirror:8080/releases/latest");
+
+        // Blank is treated as unset rather than as an empty URL.
+        std::env::set_var(RELEASES_URL_ENV, "   ");
+        assert_eq!(releases_url(), DEFAULT_RELEASES_URL);
+        std::env::remove_var(RELEASES_URL_ENV);
     }
 
     /// Signals and unrecognised codes are failures, not silent successes.

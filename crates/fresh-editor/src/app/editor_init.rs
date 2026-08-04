@@ -1214,7 +1214,9 @@ impl Editor {
             tracing::debug!("Update checking enabled, starting periodic checker");
             Some(
                 crate::services::release_checker::start_periodic_update_check(
-                    crate::services::release_checker::DEFAULT_RELEASES_URL,
+                    // Honours $FRESH_RELEASES_URL so the indicator and the
+                    // update it launches agree on where releases come from.
+                    &crate::services::release_checker::releases_url(),
                     time_source.clone(),
                     dir_context.data_dir.clone(),
                 ),
