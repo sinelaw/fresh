@@ -1006,6 +1006,18 @@ pub struct ScrollbarMarker {
     #[ts(optional)]
     pub end: Option<u32>,
 
+    /// Optional 0-based end line, **inclusive**, making this a range marker.
+    /// Ignored when `end` is present.
+    ///
+    /// The line counterpart to `end`, for producers that work in line
+    /// coordinates — a `git diff` parser knows a hunk's first and last line
+    /// but not their byte offsets. Without it such a plugin has to emit one
+    /// marker per line to paint a hunk's streak, which costs a byte lookup
+    /// and two anchors per line for a resolution the track cannot show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub end_line: Option<u32>,
+
     /// Marker color — RGB array or theme key. Theme keys resolve at render
     /// time, so markers follow theme changes.
     pub color: OverlayColorSpec,

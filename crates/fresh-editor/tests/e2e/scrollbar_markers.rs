@@ -28,6 +28,7 @@ fn marker(position: u32, color: OverlayColorSpec) -> ScrollbarMarker {
         position: Some(position),
         line: None,
         end: None,
+        end_line: None,
         color,
         priority: None,
     }
@@ -246,6 +247,7 @@ fn range_markers_paint_a_streak() {
             markers: vec![ScrollbarMarker {
                 position: Some(0),
                 line: None,
+                end_line: None,
                 end: Some(len / 2),
                 color: OverlayColorSpec::Rgb(0, 0, 255),
                 priority: None,
@@ -411,6 +413,7 @@ fn plugin_markers_and_unsaved_marks_coexist() {
                 position: Some(0),
                 line: None,
                 end: None,
+                end_line: None,
                 color: OverlayColorSpec::Rgb(255, 0, 0),
                 priority: Some(10),
             },

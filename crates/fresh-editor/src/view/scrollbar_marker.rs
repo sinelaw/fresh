@@ -274,9 +274,18 @@ impl ResolvedMarker {
             (None, Some(l)) => line_to_byte(l as usize)?,
             (None, None) => return None,
         };
+        // `end_line` is inclusive, so its *start* byte is the right end
+        // coordinate: the projection maps it to that line's row, which is the
+        // last row the streak should cover. An unresolvable end line degrades
+        // to a point marker rather than dropping the marker entirely.
+        let end = match (marker.end, marker.end_line) {
+            (Some(e), _) => Some(e as usize),
+            (None, Some(l)) => line_to_byte(l as usize),
+            (None, None) => None,
+        };
         Some(Self {
             start,
-            end: marker.end.map(|e| e as usize),
+            end,
             color: marker.color.clone(),
             priority: marker.priority.unwrap_or(0),
         })
@@ -633,6 +642,7 @@ mod tests {
             position: None,
             line: Some(42),
             end: None,
+            end_line: None,
             color: red(),
             priority: None,
         };
@@ -645,12 +655,44 @@ mod tests {
         );
     }
 
+    /// A line-coordinate producer (a `git diff` parser) can span a hunk with
+    /// one marker instead of one per line.
+    #[test]
+    fn from_api_resolves_an_inclusive_end_line() {
+        let m = ScrollbarMarker {
+            position: None,
+            line: Some(10),
+            end: None,
+            end_line: Some(14),
+            color: red(),
+            priority: None,
+        };
+        let r = ResolvedMarker::from_api(&m, |l| Some(l * 10)).unwrap();
+        assert_eq!((r.start, r.end), (100, Some(140)));
+    }
+
+    /// An explicit byte `end` wins, matching how `position` beats `line`.
+    #[test]
+    fn from_api_prefers_byte_end_over_end_line() {
+        let m = ScrollbarMarker {
+            position: Some(0),
+            line: None,
+            end: Some(55),
+            end_line: Some(14),
+            color: red(),
+            priority: None,
+        };
+        let r = ResolvedMarker::from_api(&m, |l| Some(l * 10)).unwrap();
+        assert_eq!(r.end, Some(55));
+    }
+
     #[test]
     fn from_api_prefers_byte_position_over_line() {
         let m = ScrollbarMarker {
             position: Some(7),
             line: Some(42),
             end: None,
+            end_line: None,
             color: red(),
             priority: None,
         };
