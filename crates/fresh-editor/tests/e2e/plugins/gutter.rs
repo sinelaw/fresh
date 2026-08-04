@@ -1653,3 +1653,80 @@ fn test_git_gutter_scrollbar_marks_appear_after_save() {
         "the inserted line is an addition, so its mark is green; saw {rows:?}"
     );
 }
+
+/// Resetting an open file to a different state with an external tool
+/// (`git checkout <ref> -- <file>` in another terminal) auto-reverts the
+/// buffer — and the gutter and scrollbar must re-diff against HEAD, not
+/// keep showing the pre-reset (empty) state.
+// TODO: Fix git gutter tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_gutter_refreshes_after_external_git_checkout() {
+    let repo = GitTestRepo::new();
+    repo.setup_git_gutter_plugin();
+
+    // v1: 200 plain numbered lines.
+    let v1 = numbered_lines(200);
+    repo.create_file("long.txt", &format!("{}\n", v1.join("\n")));
+    repo.git_add_all();
+    repo.git_commit("v1");
+
+    // v2 (HEAD): two lines rewritten near the top, where they are on screen.
+    let mut v2 = v1.clone();
+    v2[4] = "line 0004 CHANGED IN HEAD".to_string();
+    v2[5] = "line 0005 CHANGED IN HEAD".to_string();
+    repo.modify_file("long.txt", &format!("{}\n", v2.join("\n")));
+    repo.git_add_all();
+    repo.git_commit("v2");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    open_file(&mut harness, &repo.path, "long.txt");
+    trigger_git_gutter_refresh(&mut harness);
+
+    // The working tree matches HEAD, so the plugin's first pass reports no
+    // hunks — the status line proves the pass completed.
+    harness.wait_for_screen_contains("0 change(s)").unwrap();
+    assert!(
+        !has_gutter_indicator(&harness.screen_to_string(), "│"),
+        "a file matching HEAD should have no gutter indicators"
+    );
+
+    // Filesystems with 1s mtime granularity need the reset's mtime to land
+    // after the open's recorded mtime, or auto-revert won't see a change.
+    harness.sleep(std::time::Duration::from_millis(2100));
+
+    // Externally reset the file to its v1 state while it is open.
+    repo.git_checkout_file("HEAD~1", "long.txt");
+
+    // Auto-revert reloads the buffer from disk.
+    harness
+        .wait_until(|h| !h.get_buffer_content().unwrap().contains("CHANGED IN HEAD"))
+        .expect("auto-revert should reload the externally reset file");
+
+    // The reverted content differs from HEAD on the two rewritten lines, so
+    // the gutter must show modified indicators without any user action...
+    wait_for_indicator(&mut harness, "│");
+
+    // ...and the same hunk must be marked on the scrollbar.
+    harness
+        .wait_until(|h| !scrollbar_marker_rows(h).is_empty())
+        .expect("the re-diffed hunk should mark the scrollbar too");
+
+    let rows = scrollbar_marker_rows(&harness);
+    assert_eq!(
+        rows.first().map(|(_, fg)| *fg),
+        Some(Some(Color::Rgb(255, 184, 108))),
+        "the reset lines differ from HEAD as modifications, so their mark is \
+         orange; saw {rows:?}"
+    );
+}

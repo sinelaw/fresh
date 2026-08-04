@@ -25,6 +25,14 @@ pub enum HookArgs {
     /// After a buffer is successfully saved
     AfterFileSave { buffer_id: BufferId, path: PathBuf },
 
+    /// A buffer was reloaded from disk — auto-revert picked up an external
+    /// change (e.g. `git checkout <ref> -- <file>` run in another terminal)
+    /// or the user ran an explicit revert. Fires after the new content is
+    /// live. Reloads don't go through `AfterFileSave`, so plugins that
+    /// surface disk-derived state (git gutter, etc.) must subscribe to this
+    /// too or their decorations go stale on every external reset.
+    AfterFileRevert { buffer_id: BufferId, path: PathBuf },
+
     /// The file explorer mutated the filesystem (paste, duplicate, ...)
     /// without going through a buffer save. Plugins that surface
     /// filesystem-derived state (git status decorations, etc.) use this
