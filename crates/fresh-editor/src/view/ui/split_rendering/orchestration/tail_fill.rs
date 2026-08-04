@@ -108,7 +108,12 @@ pub(super) fn resolve_tail_fill(input: TailFillInput<'_>) -> Option<TailFillResu
     Some(TailFillResult { style, source_byte })
 }
 
-fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style> {
+/// Resolve the fill bg an `extend_to_line_end` overlay paints with.
+/// Also used by the blank-line indentation-guide synthesis: guide
+/// cells render before the tail fill and count as "rendered", so
+/// without carrying this bg themselves they'd punch holes in the
+/// overlay's full-width band on empty rows.
+pub(super) fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style> {
     use crate::view::overlay::OverlayFace;
 
     // Set fg = bg so terminals that suppress empty-bg ANSI sequences

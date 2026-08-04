@@ -150,9 +150,21 @@ function generateCompletions(input: string): PromptSuggestion[] {
 // Handle prompt changes for file prompts
 
 
+// Prompts served: the core file prompts, plus any plugin prompt whose
+// custom type opts in by ending in "-file-path" (e.g. the code tour's
+// "tour-file-path" manifest picker). The suffix convention lets other
+// plugins reuse this completion without a registration handshake.
+function isPathPrompt(promptType: string): boolean {
+  return (
+    promptType === "open-file" ||
+    promptType === "save-file-as" ||
+    promptType.endsWith("-file-path")
+  );
+}
+
 // Register event handler
 editor.on("prompt_changed", (args) => {
-  if (args.prompt_type !== "open-file" && args.prompt_type !== "save-file-as") {
+  if (!isPathPrompt(args.prompt_type)) {
     return true; // Not our prompt
   }
 
