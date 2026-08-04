@@ -1378,11 +1378,9 @@ fn test_git_log_mid_docstring_hunk_uses_full_source_state() {
     .unwrap();
 
     trigger_git_log(&mut harness);
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // Git Log selects and loads HEAD itself. Sending Down here used to race
+    // initialization: under --all-features it landed after cursor tracking was
+    // registered and selected the older commit, so this wait could never pass.
 
     let keyword = harness.editor().theme().resolve_theme_key("syntax.keyword");
     // Fresh's Python grammar intentionally treats docstrings as comments.
@@ -1463,11 +1461,8 @@ fn test_git_log_emphasizes_intraline_changes() {
     .unwrap();
 
     trigger_git_log(&mut harness);
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    harness.process_async_and_render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // HEAD is the rename commit and is loaded automatically; avoid the same
+    // initialization race covered by the docstring-state regression above.
 
     let remove_emphasis = harness
         .editor()
