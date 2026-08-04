@@ -193,29 +193,49 @@ fn load_tour(harness: &mut EditorTestHarness, manifest: &str, tab_marker: &str) 
             screen.contains(tab_marker) && screen.contains("jump to code")
         })
         .unwrap();
-    // Opening a step is an async chain — open the file, await, paint the
-    // overlay, then hand focus back to the panel. Content on screen does not
-    // mean that chain has finished, and until it has focus is still on the
-    // editor, where a key types into the source file instead of stepping the
-    // tour.
-    //
-    // Wait for where focus actually landed, read off the status bar: the tour
-    // buffer is read-only plain text (`[RO]` … `Text`), while the editor shows
-    // a cursor position and the file's language. Plugin-thread quiescence was
-    // the obvious gate and is the wrong one — it is a heuristic that reports
-    // quiet while the handoff is still in flight, which is exactly how this
-    // timed out on CI but never locally.
-    wait_for_panel_focus(harness);
+    // Opening a step is an async chain — open the file, paint the overlay,
+    // then hand focus back to the panel. Content on screen does not mean that
+    // chain has finished; wait for its rendered end state before the caller
+    // sends a key.
+    wait_for_step_settled(harness);
 }
 
-/// Block until keyboard focus is on the tour panel, read off the status bar:
-/// the tour buffer is read-only plain text (`[RO]` … `Text`), while the editor
-/// split shows a cursor position and the file's language.
-fn wait_for_panel_focus(harness: &mut EditorTestHarness) {
+/// Screen rows (within the editor area) whose column 20 carries the step
+/// highlight's background colour. The highlight is painted `extendToLineEnd`,
+/// so column 20 is covered for every fixture file in this module.
+fn highlighted_rows(h: &EditorTestHarness) -> Vec<u16> {
+    (2..30u16)
+        .filter(|row| {
+            h.get_cell_style(20, *row)
+                .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)))
+        })
+        .collect()
+}
+
+/// Block until the current step's async chain has fully landed, read entirely
+/// off rendered output: a step highlight is painted in the editor AND the
+/// panel holds focus (status bar shows the tour buffer's `[RO]` … `Text`,
+/// where the editor split would show a cursor position and the file's
+/// language) — both in the same frame.
+///
+/// Panel focus alone is not a sound wait: the panel is focused *twice* per
+/// step — transiently, before `revealStep` opens the step's file (focus →
+/// editor split), and finally when the chain hands focus back. A wait that
+/// returns on the transient state lets the next key race the chain — the key
+/// is dispatched to the plugin, whose handler then resolves it against a
+/// mid-flight active-buffer snapshot — which is how this module used to time
+/// out on CI. The highlight only paints after the file open, so
+/// highlight ∧ panel-focus is first true once the chain is done. (A
+/// previously-loaded tour's highlight can satisfy the highlight half, so
+/// tests that navigate by key load a single tour.)
+///
+/// Plugin-thread quiescence is deliberately not used here — it is a
+/// heuristic that reports quiet while the handoff is still in flight.
+fn wait_for_step_settled(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("[RO]") && screen.contains("Text")
+            !highlighted_rows(h).is_empty() && screen.contains("[RO]") && screen.contains("Text")
         })
         .unwrap();
 }
@@ -224,15 +244,10 @@ fn wait_for_panel_focus(harness: &mut EditorTestHarness) {
 ///
 /// Changing step re-runs the same async chain as loading one: open the step's
 /// file — which moves focus to the editor split — paint the overlay, then hand
-/// focus back to the panel. The panel header updates at the *start* of that
-/// chain, so waiting only for "Step N of M" returns while focus is still on the
-/// editor, and the next key typed goes into the source file instead of stepping
-/// the tour.
-///
-/// That is what hung this module on CI three runs running: the `n` was fine,
-/// and the `p` after it landed in wide.rs, so "Step 1 of 2" never came back and
-/// the wait blocked until nextest killed it at 180s. Only one test sends a
-/// second navigation key, and only that test timed out.
+/// focus back to the panel. Waiting only for "Step N of M" is not enough: the
+/// header can repaint mid-chain (a dock resize re-renders it with the new step
+/// already set), so the wait continues to the chain's rendered end state
+/// before the caller trusts focus or sends another key.
 fn press_step_key(harness: &mut EditorTestHarness, key: char, expect: &str) {
     harness
         .send_key(KeyCode::Char(key), KeyModifiers::NONE)
@@ -240,9 +255,7 @@ fn press_step_key(harness: &mut EditorTestHarness, key: char, expect: &str) {
     harness
         .wait_until(|h| h.screen_to_string().contains(expect))
         .unwrap();
-    // The header moved; let the rest of the chain finish before trusting focus.
-    harness.wait_for_async_quiescence(3).unwrap();
-    wait_for_panel_focus(harness);
+    wait_for_step_settled(harness);
 }
 
 /// Screen row (0-based) of the first line containing `needle`.
@@ -713,22 +726,17 @@ fn test_step_range_is_highlighted_in_the_editor() {
     press_step_key(&mut harness, 'n', "Step 2 of 2");
 
     // The highlight is a background colour, so read rendered cell styles
-    // rather than the plain text. Painting it is the tail of an async chain,
-    // so wait for it to land — waiting for *a* highlighted row and then
-    // asserting *which* rows carry it keeps the check from passing vacuously.
-    let highlighted = |h: &EditorTestHarness| -> Vec<u16> {
-        (2..30u16)
-            .filter(|row| {
-                h.get_cell_style(20, *row)
-                    .is_some_and(|s| s.bg == Some(ratatui::style::Color::Rgb(42, 74, 106)))
-            })
-            .collect()
-    };
-    harness.wait_until(|h| !highlighted(h).is_empty()).unwrap();
+    // rather than the plain text. `press_step_key` already waited for *a*
+    // highlighted row; step 2's range fills the pane, and waiting for more
+    // rows than step 1's three-line range could ever paint keeps the check
+    // from passing on step 1's leftovers.
+    harness
+        .wait_until(|h| highlighted_rows(h).len() > 10)
+        .unwrap();
 
     // The step's range is taller than the pane, so every code row on screen
     // carries it — contiguously, with no unhighlighted gap in the middle.
-    let rows = highlighted(&harness);
+    let rows = highlighted_rows(&harness);
     let (first, last) = (rows[0], rows[rows.len() - 1]);
     assert_eq!(
         rows,

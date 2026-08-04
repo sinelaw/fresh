@@ -952,7 +952,11 @@ async function revealStep(t: TourInstance): Promise<void> {
   // Naming a split explicitly would bypass that guard and let the step's
   // source land beside the panels.
   editor.openFile(step.file_path, step.lines[0], 1);
-  await editor.delay(30);
+  // `openFile` is a queued FIFO command — wait for the queue, not the clock.
+  // A fixed 30 ms said nothing about whether the host had drained it; on a
+  // loaded runner it often hadn't, `stepBufferId` below then missed the
+  // buffer, and the step silently painted no highlight at all.
+  await editor.flush();
 
   const bufferId = stepBufferId(step.file_path);
   if (bufferId) {
@@ -1050,21 +1054,33 @@ function targetTour(): TourInstance | null {
 }
 
 function dispatch(action: WidgetAction): void {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (t) t.panel.command(action);
 }
 
 // ============================================================================
 // Handlers — panel mode
 // ============================================================================
+//
+// These handlers resolve their tour with `targetTour()`, not
+// `tourForActiveBuffer()` alone. The mode that binds them is attached to the
+// tour panel's buffer, so the key can only have been pressed *in a panel* —
+// but the handler runs on the plugin thread after the fact, and the
+// active-buffer snapshot it would read may be mid-flight: a step's own
+// `revealStep` chain moves focus to the source file (`openFile`) and back
+// (`focusSplit`), and a key dispatched around that window used to resolve to
+// the source buffer, find no tour, and be dropped without a trace — `n`
+// pressed right after a step landed simply did nothing. `lastTourId` is
+// maintained at open and on every step change, so the fallback names the
+// tour the user is driving.
 
 registerHandler("tour_panel_next", () => {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (t) goToStep(t, t.step + 1).catch((e) => editor.error(`code-tour: ${e}`));
 });
 
 registerHandler("tour_panel_prev", () => {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (t) goToStep(t, t.step - 1).catch((e) => editor.error(`code-tour: ${e}`));
 });
 
@@ -1077,17 +1093,17 @@ registerHandler("tour_panel_page_up", () => dispatch(widgetKey("PageUp")));
 registerHandler("tour_panel_page_down", () => dispatch(widgetKey("PageDown")));
 
 registerHandler("tour_panel_jump", () => {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (t) jumpToCode(t);
 });
 
 registerHandler("tour_panel_rehighlight", () => {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (t) revealStep(t).catch((e) => editor.error(`code-tour: ${e}`));
 });
 
 registerHandler("tour_panel_steps", () => {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (!t) return;
   if (!t.railOpen || t.dockWidth < RAIL_MIN_WIDTH) {
     t.railOpen = true;
@@ -1098,7 +1114,7 @@ registerHandler("tour_panel_steps", () => {
 });
 
 registerHandler("tour_panel_close", () => {
-  const t = tourForActiveBuffer();
+  const t = targetTour();
   if (t) closeTour(t, true);
 });
 
