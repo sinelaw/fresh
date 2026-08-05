@@ -45,7 +45,7 @@ const BEFORE_HELP_EN: &str =
 #[command(before_help = BEFORE_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update
+    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update, script (api|check|run|types), help (tour|script)
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -3526,6 +3526,216 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
     }
 }
 
+// ===========================================================================
+// `fresh --cmd help` — feature guides with generated reference sections
+// ===========================================================================
+
+/// The tour-manifest JSON schema, embedded from the same file the
+/// code-tour plugin ships and validates against
+/// (`plugins/schemas/tour.schema.json`), so the reference `help tour`
+/// prints cannot drift from what the editor actually loads.
+const TOUR_SCHEMA_JSON: &str = include_str!("../plugins/schemas/tour.schema.json");
+
+/// The generated plugin-API declarations (`write_fresh_dts` output) as
+/// this build embeds them — the authoritative answer to "what can a
+/// script call *in this binary*", available before the editor has ever
+/// run and written its config-dir copy.
+const EMBEDDED_FRESH_DTS: &str = include_str!("../plugins/lib/fresh.d.ts");
+
+/// `fresh --cmd help [TOPIC]` — long-form feature guides on stdout.
+///
+/// English-only, like the other `--cmd` verb output. The reference
+/// sections are *generated* from artifacts compiled into this binary —
+/// the tour schema, the API declarations — not hand-maintained prose, so
+/// they describe the running version rather than whenever someone last
+/// edited a help string.
+fn help_command(topic: &[&str]) -> AnyhowResult<()> {
+    match topic {
+        [] | ["topics"] => {
+            println!("usage: fresh --cmd help <topic>");
+            println!();
+            println!("topics:");
+            println!(
+                "  tour     guided code tours — authoring, both manifest formats \
+                 (fresh + VS Code CodeTour), generated schema reference"
+            );
+            println!(
+                "  script   drive a running editor with TypeScript — verbs, examples, \
+                 the API surface of this build"
+            );
+            Ok(())
+        }
+        ["tour", flags @ ..] => help_tour(flags),
+        ["script", ..] => help_script(),
+        [other, ..] => {
+            eprintln!("unknown help topic: {other} (available: tour, script)");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// `fresh --cmd help tour [--schema]` — how to author and open code tours.
+fn help_tour(flags: &[&str]) -> AnyhowResult<()> {
+    // `--schema` prints the raw JSON schema alone, for piping into a
+    // validator or handing to an agent.
+    if flags.contains(&"--schema") {
+        println!("{}", TOUR_SCHEMA_JSON.trim_end());
+        return Ok(());
+    }
+    print!("{}", tour_help_text()?);
+    Ok(())
+}
+
+/// The `help tour` body. A separate builder so tests can assert the
+/// generated reference tracks the embedded schema.
+fn tour_help_text() -> AnyhowResult<String> {
+    let mut out = String::from(
+        "\
+Guided code tours
+
+Fresh plays guided walkthroughs of a codebase from a JSON manifest,
+shown in the Utility Dock with a step rail and highlighted code.
+Two formats load, auto-detected by content:
+
+  .fresh-tour.json    fresh's native manifest (reference below)
+  CodeTour .tour      VS Code CodeTour files are converted on load:
+                      line/selection/pattern anchors become line ranges,
+                      content-only steps keep their prose, and a
+                      commit-hash `ref` is checked for drift.
+
+Where tours are discovered (\"Tour: Open Workspace Tour...\" in the palette):
+  .fresh-tour.json, .tour, main.tour, .vscode/main.tour
+  .tours/, .vscode/tours/, .github/tours/   (either format, nested dirs ok)
+
+Opening a tour:
+  - Command palette: \"Tour: Load Definition...\" (pick a file), or
+    \"Tour: Open Workspace Tour...\" (scan the locations above)
+  - From a script or agent (see also: fresh --cmd help script):
+      echo 'return editor.getPluginApi(\"code-tour\")
+        .openTour(\".fresh-tour.json\")' | fresh --cmd script run
+
+Minimal manifest:
+  {
+    \"title\": \"Request pipeline\",
+    \"description\": \"How a request reaches the handler\",
+    \"schema_version\": \"1.0\",
+    \"steps\": [
+      { \"step_id\": 1, \"title\": \"Entry point\", \"file_path\": \"src/main.rs\",
+        \"lines\": [1, 40], \"explanation\": \"## Where it starts\\n...\" }
+    ]
+  }
+
+Format reference (generated from the schema this build ships):
+
+",
+    );
+
+    let schema: serde_json::Value =
+        serde_json::from_str(TOUR_SCHEMA_JSON).context("embedded tour schema is not valid JSON")?;
+    push_schema_fields(&mut out, "Manifest", &schema);
+    if let Some(defs) = schema["definitions"].as_object() {
+        for (name, def) in defs {
+            push_schema_fields(&mut out, name, def);
+        }
+    }
+    out.push_str("Full JSON schema (machine-readable): fresh --cmd help tour --schema\n");
+    Ok(out)
+}
+
+/// One schema object's fields — name, type, required/optional, prose —
+/// read from the schema itself rather than restated by hand.
+fn push_schema_fields(out: &mut String, title: &str, obj: &serde_json::Value) {
+    use std::fmt::Write as _;
+    let Some(props) = obj["properties"].as_object() else {
+        return;
+    };
+    let required: Vec<&str> = obj["required"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    let _ = writeln!(out, "{title}:");
+    for (name, spec) in props {
+        let ty = if let Some(vals) = spec["enum"].as_array() {
+            vals.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join("|")
+        } else if spec["$ref"].is_string() {
+            spec["$ref"]
+                .as_str()
+                .unwrap_or_default()
+                .rsplit('/')
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        } else {
+            spec["type"].as_str().unwrap_or("any").to_string()
+        };
+        let req = if required.contains(&name.as_str()) {
+            "required"
+        } else {
+            "optional"
+        };
+        let desc = spec["description"].as_str().unwrap_or("");
+        let _ = writeln!(out, "  {name:<16} {ty:<22} {req:<9} {desc}");
+    }
+    out.push('\n');
+}
+
+/// `fresh --cmd help script` — the TypeScript scripting feature.
+fn help_script() -> AnyhowResult<()> {
+    print!("{}", script_help_text());
+    Ok(())
+}
+
+/// The `help script` body. A separate builder so tests can assert the
+/// API-surface section is generated from the embedded declarations.
+fn script_help_text() -> String {
+    let mut out = String::from(
+        "\
+Scripting the editor (TypeScript)
+
+Drive a running Fresh with the same API plugins use. A script runs as
+the body of an async function with an `editor` global; whatever it
+returns is printed as JSON. Source comes from a file or stdin.
+
+  fresh --cmd script run [FILE|-]           evaluate against this workspace
+  fresh --cmd script check [FILE|-]         parse + check editor.* names, no run
+  fresh --cmd script api <query> [--json]   search the API by name/description
+  fresh --cmd script types                  paths of the API declaration files
+
+Target a specific daemon with --session NAME (default: the daemon of the
+current working directory).
+
+Examples:
+  echo 'return editor.listBuffers().map(b => b.path)' | fresh --cmd script run
+  fresh --cmd script api splitWindow
+  fresh --cmd script run make-tour.ts   # author + open a code tour
+                                        # (see: fresh --cmd help tour)
+
+",
+    );
+
+    // Generated: what this binary's API actually contains, counted from the
+    // embedded declarations rather than asserted in prose.
+    use std::fmt::Write as _;
+    let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
+    let callable = entries.iter().filter(|e| e.signature.contains('(')).count();
+    out.push_str("API surface of this build (generated from the shipped declarations):\n");
+    let _ = writeln!(
+        out,
+        "  fresh.d.ts: {} documented members, {} callable",
+        entries.len(),
+        callable
+    );
+    out.push('\n');
+    out.push_str(
+        "Search it with `fresh --cmd script api <query>`; `fresh --cmd script types`\n\
+         prints where the full declaration files live on disk.\n",
+    );
+    out
+}
+
 /// `fresh --cmd script types` — print where the API declarations live.
 ///
 /// The discovery verb. An agent that has just learned it can script the editor
@@ -4339,6 +4549,14 @@ fn build_localized_after_help() -> String {
         "  init                      {}\n",
         t("cli.cmd.init")
     ));
+    out.push_str(&format!(
+        "  script <verb>             {}\n",
+        t("cli.cmd.script")
+    ));
+    out.push_str(&format!(
+        "  help [TOPIC]              {}\n",
+        t("cli.cmd.help")
+    ));
     out.push('\n');
 
     out.push_str(&format!("{}\n", t("cli.section.session")));
@@ -4533,6 +4751,11 @@ fn real_main() -> AnyhowResult<()> {
         match cmd_args.as_slice() {
             ["script", ..] => {
                 run_cmd_command(&cmd_args)?;
+                return Ok(());
+            }
+            // Feature guides are static output — no daemon, no editor.
+            ["help", topic @ ..] => {
+                help_command(topic)?;
                 return Ok(());
             }
             _ => {}
@@ -5480,6 +5703,75 @@ fn coalesce_mouse_moves(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `help tour`'s field reference must be generated from the embedded
+    /// schema: every property name and description that appears in
+    /// `tour.schema.json` (manifest, step, and overlay levels) must appear
+    /// in the output without being restated by hand. If someone edits the
+    /// schema, the help text follows automatically — this test pins that
+    /// wiring, not any particular field list.
+    #[test]
+    fn test_help_tour_reference_tracks_embedded_schema() {
+        let text = tour_help_text().expect("help tour text builds");
+        let schema: serde_json::Value = serde_json::from_str(TOUR_SCHEMA_JSON).unwrap();
+
+        let mut objects = vec![&schema];
+        if let Some(defs) = schema["definitions"].as_object() {
+            objects.extend(defs.values());
+        }
+        let mut seen_any = false;
+        for obj in objects {
+            let Some(props) = obj["properties"].as_object() else {
+                continue;
+            };
+            for (name, spec) in props {
+                seen_any = true;
+                assert!(
+                    text.contains(name.as_str()),
+                    "schema property '{name}' missing from help tour output"
+                );
+                if let Some(desc) = spec["description"].as_str() {
+                    assert!(
+                        text.contains(desc),
+                        "description of '{name}' missing from help tour output"
+                    );
+                }
+            }
+        }
+        assert!(seen_any, "embedded tour schema had no properties to render");
+        // The machine-readable escape hatch is advertised.
+        assert!(text.contains("--schema"));
+    }
+
+    /// `help tour --schema` output is the embedded schema verbatim — the
+    /// same file the code-tour plugin ships.
+    #[test]
+    fn test_help_tour_schema_is_valid_json() {
+        let schema: serde_json::Value = serde_json::from_str(TOUR_SCHEMA_JSON).unwrap();
+        assert_eq!(schema["title"], "Fresh Code Tour Manifest");
+        assert!(schema["definitions"]["TourStep"].is_object());
+    }
+
+    /// `help script`'s API-surface section is counted from the embedded
+    /// declarations, so it changes when the API does instead of rotting.
+    #[test]
+    fn test_help_script_api_surface_is_generated() {
+        let entries = parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts");
+        assert!(
+            entries.len() > 100,
+            "embedded fresh.d.ts parsed to implausibly few entries: {}",
+            entries.len()
+        );
+        let text = script_help_text();
+        assert!(text.contains(&format!("{} documented members", entries.len())));
+        // Every script verb the CLI dispatches is documented.
+        for verb in ["script run", "script check", "script api", "script types"] {
+            assert!(
+                text.contains(verb),
+                "verb '{verb}' missing from help script"
+            );
+        }
+    }
 
     #[test]
     fn test_extract_session_flag_removes_pair_anywhere() {
