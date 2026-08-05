@@ -590,6 +590,28 @@ pub struct BufferSavedDiff {
     pub byte_ranges: Vec<Range<usize>>,
 }
 
+/// Result of a host-side baseline diff (`diffAgainstBaseline` /
+/// `diffBaselinePair`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct DiffBaselineResult {
+    /// The buffer content version the hunks were computed against (0 for
+    /// baseline-pair diffs, which involve no live buffer). A plugin that
+    /// renders decorations re-checks this against the buffer's current
+    /// version instead of copying buffer text around for coherence.
+    pub revision: u64,
+    /// "exact": content-accurate line hunks. "byteCoarse": the buffer's
+    /// line index isn't available yet (large file before its line-feed
+    /// scan), so no line hunks could be produced; callers fall back to
+    /// their own coarse rendering.
+    #[ts(type = "\"exact\" | \"byteCoarse\"")]
+    pub fidelity: String,
+    /// Line hunks, same contract as `computeLineDiff`. Empty means the
+    /// sides are equal (when `fidelity` is "exact").
+    pub hunks: Vec<LineDiffHunk>,
+}
+
 /// One hunk from `computeLineDiff`: a maximal run of differing lines.
 /// Line indices are 0-based; a line is a `\n`-terminated (or final
 /// unterminated) segment of the input text. `old_count == 0` is a pure
@@ -4666,6 +4688,58 @@ pub enum PluginCommand {
     /// see `app/window/process_group.rs`). Idempotent across
     /// already-exited groups: callers can retry safely.
     SignalWindow { id: WindowId, signal: String },
+
+    /// Register a diff baseline for `buffer_id` (async). `kind` is one of
+    /// "saved" | "disk" | "gitRef" | "gitIndex"; `git_ref` carries the ref
+    /// for "gitRef". Disk and git baselines load their content off-loop
+    /// (filesystem read / `git show` on the window's authority); the
+    /// promise resolves with the baseline id once content is ready.
+    RegisterDiffBaseline {
+        buffer_id: BufferId,
+        kind: String,
+        git_ref: Option<String>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Diff `buffer_id`'s live content against a registered baseline
+    /// (async). Resolves with a `DiffBaselineResult`. No buffer text
+    /// crosses the plugin bridge in either direction.
+    DiffAgainstBaseline {
+        buffer_id: BufferId,
+        baseline_id: u64,
+        callback_id: JsCallbackId,
+    },
+
+    /// Diff two registered baselines against each other (async) — e.g.
+    /// disk vs HEAD, the git-gutter comparison. Resolves with a
+    /// `DiffBaselineResult` whose `revision` is 0.
+    DiffBaselinePair {
+        old_baseline_id: u64,
+        new_baseline_id: u64,
+        callback_id: JsCallbackId,
+    },
+
+    /// Fetch baseline line contents for the given `(start_line, count)`
+    /// ranges (async, one batched call). Lines are returned without their
+    /// trailing newline, grouped per requested range — how a diff view
+    /// fetches only the old-side lines it actually renders.
+    GetBaselineLines {
+        baseline_id: u64,
+        ranges: Vec<(u32, u32)>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Reload a baseline's content (async; e.g. after a HEAD move or an
+    /// external write) and bump its generation. Resolves when the new
+    /// content is in place.
+    RefreshDiffBaseline {
+        baseline_id: u64,
+        callback_id: JsCallbackId,
+    },
+
+    /// Drop a registered baseline. Baselines are also dropped
+    /// automatically when their buffer closes.
+    ReleaseDiffBaseline { baseline_id: u64 },
 
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.

@@ -2271,6 +2271,27 @@ type CreateVirtualBufferOptions = {
 	*/
 	indentationGuide?: boolean;
 };
+type DiffBaselineResult = {
+	/**
+	* The buffer content version the hunks were computed against (0 for
+	* baseline-pair diffs, which involve no live buffer). A plugin that
+	* renders decorations re-checks this against the buffer's current
+	* version instead of copying buffer text around for coherence.
+	*/
+	revision: bigint;
+	/**
+	* "exact": content-accurate line hunks. "byteCoarse": the buffer's
+	* line index isn't available yet (large file before its line-feed
+	* scan), so no line hunks could be produced; callers fall back to
+	* their own coarse rendering.
+	*/
+	fidelity: "exact" | "byteCoarse";
+	/**
+	* Line hunks, same contract as `computeLineDiff`. Empty means the
+	* sides are equal (when `fidelity` is "exact").
+	*/
+	hunks: Array<LineDiffHunk>;
+};
 type GrepMatch = {
 	/**
 	* Absolute file path
@@ -2984,7 +3005,7 @@ interface EditorAPI {
 	utf8ByteLength(text: string): number;
 	/**
 	* Line-level diff of two texts (native patience diff; see
-	* `crate::diff`). Returns hunks of differing line ranges in
+	* `fresh_core::diff`). Returns hunks of differing line ranges in
 	* increasing order; equal regions are not reported. Lines are
 	* 0-indexed `\n`-terminated segments (a final unterminated segment
 	* counts as a line), matching the `text.split("\n")`-and-drop-
@@ -4348,6 +4369,46 @@ interface EditorAPI {
 	* Byte offsets, not character or line offsets.
 	*/
 	getBufferText(bufferId: number, start?: number, end?: number): Promise<string>;
+	/**
+	* Register a diff baseline for a buffer (async). `kind` is one of
+	* "saved" | "disk" | "gitRef" | "gitIndex"; `gitRef` carries the ref
+	* for kind "gitRef". Resolves with the baseline id once the
+	* reference content is loaded host-side — no file content ever
+	* crosses the plugin bridge. Baselines are dropped automatically
+	* when their buffer closes, or explicitly via
+	* `releaseDiffBaseline`.
+	*/
+	registerDiffBaseline(bufferId: number, kind: string, gitRef: string | null): Promise<number>;
+	/**
+	* Diff a buffer's live content against a registered baseline
+	* (async). Resolves with a `DiffBaselineResult`; check its
+	* `revision` against the buffer's current version before anchoring
+	* decorations on the hunks.
+	*/
+	diffAgainstBaseline(bufferId: number, baselineId: number): Promise<DiffBaselineResult>;
+	/**
+	* Diff two registered baselines against each other (async) — e.g.
+	* disk vs HEAD, the git-gutter comparison. Resolves with a
+	* `DiffBaselineResult` whose `revision` is 0.
+	*/
+	diffBaselinePair(oldBaselineId: number, newBaselineId: number): Promise<DiffBaselineResult>;
+	/**
+	* Fetch baseline lines for `(startLine, count)` ranges in one
+	* batched call (async). Lines come back without trailing newlines,
+	* grouped per requested range — fetch only the old-side lines a
+	* diff view actually renders.
+	*/
+	getBaselineLines(baselineId: number, ranges: number[][]): Promise<string[][]>;
+	/**
+	* Reload a baseline's reference content (async; call after a HEAD
+	* move or an external write). Resolves once the fresh content is
+	* serving.
+	*/
+	refreshDiffBaseline(baselineId: number): Promise<void>;
+	/**
+	* Drop a registered diff baseline.
+	*/
+	releaseDiffBaseline(baselineId: number): void;
 	/**
 	* Delay/sleep (async, returns request_id)
 	*/

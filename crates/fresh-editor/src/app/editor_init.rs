@@ -654,6 +654,10 @@ impl Editor {
             plugin_command_backlog: std::collections::VecDeque::new(),
             #[cfg(feature = "plugins")]
             grep_project_cancel: None,
+            #[cfg(feature = "plugins")]
+            diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
+            #[cfg(feature = "plugins")]
+            next_diff_baseline_id: 1,
             async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,

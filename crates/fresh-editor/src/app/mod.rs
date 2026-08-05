@@ -16,6 +16,7 @@ mod clipboard;
 mod composite_buffer_actions;
 mod dabbrev_actions;
 mod diagnostic_jumps;
+pub(crate) mod diff_baselines;
 mod editor_accessors;
 mod editor_init;
 mod event_apply;
@@ -948,6 +949,15 @@ pub struct Editor {
     /// request supersedes the old one rather than queueing behind it.
     #[cfg(feature = "plugins")]
     grep_project_cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+
+    /// Registered diff baselines (registerDiffBaseline plugin API family).
+    /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.
+    #[cfg(feature = "plugins")]
+    diff_baselines: crate::app::diff_baselines::BaselineStore,
+
+    /// Next baseline id to allocate (editor thread only).
+    #[cfg(feature = "plugins")]
+    next_diff_baseline_id: u64,
 
     /// Async messages the frame budget deferred, in arrival order. Drained
     /// ahead of the bridges on the next tick.

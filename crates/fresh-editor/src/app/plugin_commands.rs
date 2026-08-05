@@ -2611,6 +2611,357 @@ impl Editor {
         self.pending_grammar_callbacks.push(callback_id);
     }
 
+    // ------------------------------------------------------------------
+    // Diff baselines (registerDiffBaseline / diffAgainstBaseline family)
+    // ------------------------------------------------------------------
+
+    /// Allocate a baseline id and, for content-backed baselines, kick the
+    /// off-loop loader. Registration resolves once content is in place, so
+    /// later diff/lines calls never observe a half-loaded entry.
+    pub(super) fn handle_register_diff_baseline(
+        &mut self,
+        buffer_id: BufferId,
+        kind: String,
+        git_ref: Option<String>,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::{BaselineEntry, BaselineSpec};
+
+        let buffer_id = self.resolve_buffer_id(buffer_id);
+        let path = {
+            let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .expect("active window present")
+                .buffer_state_mut(buffer_id)
+            else {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, format!("Buffer {buffer_id:?} not found"));
+                return;
+            };
+            state.buffer.file_path().map(|p| p.to_path_buf())
+        };
+
+        let spec = match kind.as_str() {
+            "saved" => BaselineSpec::Saved,
+            "disk" | "gitRef" | "gitIndex" => {
+                let Some(path) = path else {
+                    self.plugin_manager.read().unwrap().reject_callback(
+                        callback_id,
+                        "buffer has no file path to baseline against".to_string(),
+                    );
+                    return;
+                };
+                match kind.as_str() {
+                    "disk" => BaselineSpec::Disk { path },
+                    _ => {
+                        let git_ref = match kind.as_str() {
+                            "gitRef" => match git_ref {
+                                Some(r) if !r.trim().is_empty() => Some(r),
+                                _ => {
+                                    self.plugin_manager.read().unwrap().reject_callback(
+                                        callback_id,
+                                        "gitRef baseline requires a ref".to_string(),
+                                    );
+                                    return;
+                                }
+                            },
+                            _ => None, // gitIndex
+                        };
+                        let cwd = path
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| std::path::PathBuf::from("."));
+                        BaselineSpec::Git {
+                            cwd,
+                            file_path: path,
+                            git_ref,
+                        }
+                    }
+                }
+            }
+            other => {
+                self.plugin_manager.read().unwrap().reject_callback(
+                    callback_id,
+                    format!("unknown baseline kind: {other:?}"),
+                );
+                return;
+            }
+        };
+
+        let baseline_id = self.next_diff_baseline_id;
+        self.next_diff_baseline_id += 1;
+        if let Ok(mut inner) = self.diff_baselines.inner.lock() {
+            inner.entries.insert(
+                baseline_id,
+                BaselineEntry {
+                    buffer_id,
+                    spec: spec.clone(),
+                    generation: 0,
+                    content: None,
+                },
+            );
+        }
+
+        // Saved baselines have no content to load: resolve immediately.
+        if matches!(spec, BaselineSpec::Saved) {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, baseline_id.to_string());
+            return;
+        }
+
+        self.spawn_baseline_load(baseline_id, spec, callback_id, true);
+    }
+
+    /// Shared off-loop launch for registration and refresh loads.
+    fn spawn_baseline_load(
+        &mut self,
+        baseline_id: u64,
+        spec: super::diff_baselines::BaselineSpec,
+        callback_id: JsCallbackId,
+        is_registration: bool,
+    ) {
+        let Some(runtime) = self.tokio_runtime.clone() else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return;
+        };
+        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return;
+        };
+        super::plugin_offloop::load_diff_baseline(
+            super::plugin_offloop::OffLoop {
+                filesystem: self.authority().filesystem.clone(),
+                runtime,
+                sender,
+            },
+            super::plugin_offloop::BaselineLoadRequest {
+                baseline_id,
+                spec,
+                spawner: self.authority().process_spawner.clone(),
+                store: self.diff_baselines.clone(),
+                callback_id,
+                is_registration,
+            },
+        );
+    }
+
+    /// Diff a buffer's live content against a registered baseline.
+    pub(super) fn handle_diff_against_baseline(
+        &mut self,
+        buffer_id: BufferId,
+        baseline_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::{diff_against_saved, BaselineSpec, FIDELITY_EXACT};
+
+        let buffer_id = self.resolve_buffer_id(buffer_id);
+        let store = self.diff_baselines.clone();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, format!("Buffer {buffer_id:?} not found"));
+            return;
+        };
+
+        let result: Result<fresh_core::api::DiffBaselineResult, String> = (|| {
+            let inner = store
+                .inner
+                .lock()
+                .map_err(|_| "baseline store poisoned".to_string())?;
+            let entry = inner
+                .entries
+                .get(&baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {baseline_id}"))?;
+            match &entry.spec {
+                BaselineSpec::Saved => Ok(diff_against_saved(&mut state.buffer)),
+                _ => {
+                    let content = entry
+                        .content
+                        .as_ref()
+                        .ok_or_else(|| "baseline content not loaded".to_string())?;
+                    let len = state.buffer.len();
+                    let new_text = state.get_text_range(0, len);
+                    Ok(fresh_core::api::DiffBaselineResult {
+                        revision: state.buffer.version(),
+                        fidelity: FIDELITY_EXACT.to_string(),
+                        hunks: fresh_core::diff::compute_line_diff(&content.text, &new_text),
+                    })
+                }
+            }
+        })();
+
+        let callback = callback_id;
+        match result {
+            Ok(value) => {
+                let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback, json);
+            }
+            Err(e) => self.plugin_manager.read().unwrap().reject_callback(callback, e),
+        }
+    }
+
+    /// Diff two registered baselines against each other (e.g. disk vs
+    /// HEAD, the git-gutter comparison).
+    pub(super) fn handle_diff_baseline_pair(
+        &mut self,
+        old_baseline_id: u64,
+        new_baseline_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        let result: Result<fresh_core::api::DiffBaselineResult, String> = (|| {
+            let inner = self
+                .diff_baselines
+                .inner
+                .lock()
+                .map_err(|_| "baseline store poisoned".to_string())?;
+            let old = inner
+                .entries
+                .get(&old_baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {old_baseline_id}"))?
+                .content
+                .as_ref()
+                .ok_or_else(|| "old baseline content not loaded".to_string())?;
+            let new = inner
+                .entries
+                .get(&new_baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {new_baseline_id}"))?
+                .content
+                .as_ref()
+                .ok_or_else(|| "new baseline content not loaded".to_string())?;
+            Ok(super::diff_baselines::diff_contents(old, new))
+        })();
+        match result {
+            Ok(value) => {
+                let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, json);
+            }
+            Err(e) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, e),
+        }
+    }
+
+    /// Batched baseline line fetch: `(start_line, count)` ranges in, lines
+    /// (without trailing newlines) grouped per range out.
+    pub(super) fn handle_get_baseline_lines(
+        &mut self,
+        baseline_id: u64,
+        ranges: Vec<(u32, u32)>,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::{slice_lines, BaselineContent, BaselineSpec};
+
+        let store = self.diff_baselines.clone();
+        let result: Result<Vec<Vec<String>>, String> = (|| {
+            let inner = store
+                .inner
+                .lock()
+                .map_err(|_| "baseline store poisoned".to_string())?;
+            let entry = inner
+                .entries
+                .get(&baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {baseline_id}"))?;
+            match &entry.spec {
+                BaselineSpec::Saved => {
+                    // Saved baselines have no stored content; materialize the
+                    // saved text for this request. O(file), but Saved-line
+                    // fetches are rare (no shipped consumer renders
+                    // saved-side virtual lines yet).
+                    let buffer_id = entry.buffer_id;
+                    drop(inner);
+                    let state = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .expect("active window present")
+                        .buffer_state_mut(buffer_id)
+                        .ok_or_else(|| format!("Buffer {buffer_id:?} not found"))?;
+                    let total = state.buffer.saved_total_bytes();
+                    let bytes = state
+                        .buffer
+                        .extract_saved_range(0, total)
+                        .ok_or_else(|| "saved snapshot not readable".to_string())?;
+                    let content = BaselineContent::new(String::from_utf8_lossy(&bytes).into_owned());
+                    Ok(slice_lines(&content, &ranges))
+                }
+                _ => {
+                    let content = entry
+                        .content
+                        .as_ref()
+                        .ok_or_else(|| "baseline content not loaded".to_string())?;
+                    Ok(slice_lines(content, &ranges))
+                }
+            }
+        })();
+        match result {
+            Ok(value) => {
+                let json = serde_json::to_string(&value).unwrap_or_else(|_| "[]".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, json);
+            }
+            Err(e) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, e),
+        }
+    }
+
+    /// Reload a baseline's content (HEAD moved, file rewritten on disk).
+    pub(super) fn handle_refresh_diff_baseline(&mut self, baseline_id: u64, callback_id: JsCallbackId) {
+        use super::diff_baselines::BaselineSpec;
+        let spec = match self.diff_baselines.inner.lock() {
+            Ok(inner) => inner.entries.get(&baseline_id).map(|e| e.spec.clone()),
+            Err(_) => None,
+        };
+        match spec {
+            None => self.plugin_manager.read().unwrap().reject_callback(
+                callback_id,
+                format!("unknown baseline id {baseline_id}"),
+            ),
+            // Saved tracks the live snapshot by construction — nothing to
+            // reload.
+            Some(BaselineSpec::Saved) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, "null".to_string()),
+            Some(spec) => self.spawn_baseline_load(baseline_id, spec, callback_id, false),
+        }
+    }
+
+    pub(super) fn handle_release_diff_baseline(&mut self, baseline_id: u64) {
+        if let Ok(mut inner) = self.diff_baselines.inner.lock() {
+            inner.entries.remove(&baseline_id);
+        }
+    }
+
     /// Handle GrepProject: snapshot what only the editor thread can see, then
     /// hand the walk-and-search to [`plugin_offloop::grep_project`].
     ///

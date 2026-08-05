@@ -199,6 +199,11 @@ impl Editor {
             }
         }
 
+        // Drop any diff baselines registered against this buffer; their
+        // lifecycle follows the buffer's, like composite source panes.
+        #[cfg(feature = "plugins")]
+        self.diff_baselines.drop_for_buffer(id);
+
         // Notify plugins so they can reset any state tied to this buffer
         // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
         // when the group is closed via the tab's close button rather than

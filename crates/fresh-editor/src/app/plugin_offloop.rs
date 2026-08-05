@@ -265,3 +265,148 @@ fn search_one(
         })
         .collect()
 }
+
+// ============================================================================
+// Diff-baseline loading
+// ============================================================================
+
+/// Editor-thread-collected inputs for loading a diff baseline's content.
+/// The spawner and store handle are owned `Arc`s so the load runs entirely
+/// off-loop; the editor thread only allocated the id and inserted the
+/// placeholder entry.
+pub(crate) struct BaselineLoadRequest {
+    pub baseline_id: u64,
+    pub spec: crate::app::diff_baselines::BaselineSpec,
+    pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
+    pub store: crate::app::diff_baselines::BaselineStore,
+    pub callback_id: JsCallbackId,
+    /// Registration resolves with the baseline id; a refresh resolves with
+    /// null. A failed registration also removes the placeholder entry,
+    /// while a failed refresh keeps the previous content serving.
+    pub is_registration: bool,
+}
+
+/// Load a baseline's reference content (filesystem read or `git show` on
+/// the window's authority), install it in the shared store, and settle the
+/// plugin's promise. Runs on the tokio runtime.
+pub(crate) fn load_diff_baseline(cap: OffLoop, req: BaselineLoadRequest) {
+    use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
+
+    let runtime = Arc::clone(&cap.runtime);
+    runtime.spawn(async move {
+        let text: Result<String, String> = match &req.spec {
+            // Saved baselines never load content; the editor thread
+            // resolves them synchronously and never sends them here.
+            BaselineSpec::Saved => Ok(String::new()),
+            BaselineSpec::Disk { path } => {
+                let path = path.clone();
+                let fs = Arc::clone(&cap.filesystem);
+                tokio::task::spawn_blocking(move || fs.read_file(&path))
+                    .await
+                    .map_err(|e| format!("baseline read task failed: {e}"))
+                    .and_then(|r| {
+                        r.map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+                            .map_err(|e| format!("failed to read baseline file: {e}"))
+                    })
+            }
+            BaselineSpec::Git {
+                cwd,
+                file_path,
+                git_ref,
+            } => load_git_baseline(req.spawner.as_ref(), cwd, file_path, git_ref.as_deref()).await,
+        };
+
+        match text {
+            Ok(text) => {
+                let content = BaselineContent::new(text);
+                let installed = match req.store.inner.lock() {
+                    Ok(mut inner) => match inner.entries.get_mut(&req.baseline_id) {
+                        Some(entry) => {
+                            entry.content = Some(content);
+                            entry.generation += 1;
+                            true
+                        }
+                        // Released while the load was in flight.
+                        None => false,
+                    },
+                    Err(_) => false,
+                };
+                if installed {
+                    let json = if req.is_registration {
+                        req.baseline_id.to_string()
+                    } else {
+                        "null".to_string()
+                    };
+                    cap.settle(req.callback_id, Ok(json));
+                } else {
+                    cap.settle(
+                        req.callback_id,
+                        Err("baseline released during load".to_string()),
+                    );
+                }
+            }
+            Err(e) => {
+                if req.is_registration {
+                    if let Ok(mut inner) = req.store.inner.lock() {
+                        inner.entries.remove(&req.baseline_id);
+                    }
+                }
+                cap.settle(req.callback_id, Err(e));
+            }
+        }
+    });
+}
+
+/// Fetch a file's content at a git revision: resolve the repo-relative
+/// path, then `git show`. `git_ref` of `None` means the index (stage 0).
+async fn load_git_baseline(
+    spawner: &dyn crate::services::remote::ProcessSpawner,
+    cwd: &std::path::Path,
+    file_path: &std::path::Path,
+    git_ref: Option<&str>,
+) -> Result<String, String> {
+    let cwd_str = cwd.to_string_lossy().to_string();
+    let file_str = file_path.to_string_lossy().to_string();
+
+    let ls = spawner
+        .spawn(
+            "git".to_string(),
+            vec![
+                "ls-files".to_string(),
+                "--full-name".to_string(),
+                "--".to_string(),
+                file_str,
+            ],
+            Some(cwd_str.clone()),
+        )
+        .await
+        .map_err(|e| format!("git ls-files failed to spawn: {e}"))?;
+    if ls.exit_code != 0 {
+        return Err(format!("git ls-files failed: {}", ls.stderr.trim()));
+    }
+    let rel_path = ls
+        .stdout
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "file is not tracked in git".to_string())?
+        .to_string();
+
+    let show_spec = match git_ref {
+        Some(r) => format!("{r}:{rel_path}"),
+        None => format!(":0:{rel_path}"),
+    };
+    let show = spawner
+        .spawn(
+            "git".to_string(),
+            vec!["show".to_string(), show_spec],
+            Some(cwd_str),
+        )
+        .await
+        .map_err(|e| format!("git show failed to spawn: {e}"))?;
+    if show.exit_code != 0 {
+        return Err(format!("git show failed: {}", show.stderr.trim()));
+    }
+    Ok(show.stdout)
+}

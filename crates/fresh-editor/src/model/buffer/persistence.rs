@@ -264,6 +264,22 @@ impl Persistence {
         }
     }
 
+    /// Total bytes of the saved snapshot tree.
+    pub fn saved_total_bytes(&self) -> usize {
+        tree_total_bytes(&self.saved_root)
+    }
+
+    /// Read a byte range out of the saved snapshot tree. `None` when any
+    /// piece in the range is unreadable (e.g. unloaded chunk data).
+    pub fn extract_saved_range(
+        &self,
+        start: usize,
+        end: usize,
+        buffers: &[StringBuffer],
+    ) -> Option<Vec<u8>> {
+        extract_range_from_tree(&self.saved_root, start, end, buffers)
+    }
+
     /// Diff the current piece tree against the last saved snapshot.
     ///
     /// Two-phase algorithm:

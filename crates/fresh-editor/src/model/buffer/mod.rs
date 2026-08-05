@@ -992,6 +992,17 @@ impl TextBuffer {
             .diff_since_saved(&self.piece_tree, &self.buffers, self.version)
     }
 
+    /// Total bytes of the saved snapshot (the diff baseline's old side).
+    pub fn saved_total_bytes(&self) -> usize {
+        self.persistence.saved_total_bytes()
+    }
+
+    /// Read a byte range out of the saved snapshot. `None` when any piece
+    /// in the range is unreadable (unloaded chunk data).
+    pub fn extract_saved_range(&self, start: usize, end: usize) -> Option<Vec<u8>> {
+        self.persistence.extract_saved_range(start, end, &self.buffers)
+    }
+
     /// Convert a byte offset to a line/column position
     pub fn offset_to_position(&self, offset: usize) -> Option<Position> {
         self.piece_tree
