@@ -3896,3 +3896,95 @@ fn renaming_extracted_co_tenant_workspace_leaves_original_name_alone() {
         "the original workspace should keep its 'alphaproj' label, got screen:\n{screen}"
     );
 }
+
+/// Filing a workspace extracted from a tab ("Extract Tab to New
+/// Workspace") into a folder must move ONLY that workspace. Folder
+/// assignments used to be keyed per root — and the extracted co-tenant
+/// shares the original's project root, so moving either filed both. Like
+/// manual names, assignments are now keyed by the window's durable
+/// stable id, the root key surviving only as a legacy / windowless
+/// fallback.
+#[test]
+fn moving_extracted_co_tenant_workspace_to_folder_leaves_original_unfiled() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(160, 45, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Extract a file tab into a co-tenant workspace over the same root.
+    h.open_file(&root.join("readme.txt")).unwrap();
+    h.render().unwrap();
+    run_palette_command(&mut h, "Extract Tab to New Workspace");
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("Extracted readme.txt into workspace alphaproj (2)")
+    })
+    .unwrap();
+
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj (2)"))
+        .unwrap();
+
+    // Create an empty folder "Docs" (organize checkbox off).
+    let new_row = row_of(&h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("Docs").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("Docs")
+    })
+    .unwrap();
+
+    // Right-click the EXTRACTED workspace's row → "Move to Folder…" →
+    // pick "Docs" (cursor starts on "Top level"; ↓ lands on the folder).
+    let session_row = row_of(&h, "alphaproj (2)") as u16;
+    h.mouse_right_click(4, session_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    let (mcol, mrow) = pos_of(&h, "Move to Folder");
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The move landed once the folder header reports a member count at
+    // all (an empty folder shows none). Waiting on the bare "(" keeps
+    // this settle-wait bug-agnostic, so the count assertion below fails
+    // fast instead of hanging a broken build in `wait_until`.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("Docs") && l.contains("("))
+    })
+    .unwrap();
+    // Exactly ONE member — the extracted workspace. Per-root assignment
+    // used to file the original co-tenant too, reading "Docs (2)".
+    let screen = h.screen_to_string();
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("Docs") && l.contains("(1)")),
+        "the folder should hold only the extracted workspace (the original \
+         co-tenant must not be filed with it), got screen:\n{screen}"
+    );
+    // The original workspace still renders on a row of its own, outside
+    // the folder (its title row names it without the co-tenant counter).
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("alphaproj") && !l.contains("(2)") && !l.contains("Docs")),
+        "the original workspace should still render as its own top-level row, \
+         got screen:\n{screen}"
+    );
+}
