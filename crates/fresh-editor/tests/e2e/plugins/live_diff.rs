@@ -666,21 +666,19 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
         .wait_until(|h| {
             let s = h.screen_to_string();
             let rows: Vec<&str> = s.lines().collect();
-            let row_new_top = rows
-                .iter()
-                .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD));
+            let row_new_top = rows.iter().position(|r| {
+                r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD)
+            });
             let row_else = rows.iter().position(|r| r.contains("} else {"));
-            let row_new_bot = rows
-                .iter()
-                .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD));
-            let row_old_top = rows
-                .iter()
-                .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD));
-            let row_old_bot = rows
-                .iter()
-                .position(|r| {
-                    r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD)
-                });
+            let row_new_bot = rows.iter().position(|r| {
+                r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD)
+            });
+            let row_old_top = rows.iter().position(|r| {
+                r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD)
+            });
+            let row_old_bot = rows.iter().position(|r| {
+                r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD)
+            });
             match (row_old_top, row_new_top, row_else, row_old_bot, row_new_bot) {
                 (Some(old_top), Some(new_top), Some(els), Some(old_bot), Some(new_bot)) => {
                     old_top + 1 == new_top
