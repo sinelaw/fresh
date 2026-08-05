@@ -1,230 +1,116 @@
 # Scripting and Agent Control
 
-> **CLI:** `fresh --cmd script run|check|api|types`
->
 > **Palette:** `Run Agent…`, `Orchestrator: New Workspace`
 >
-> **Built-in guide:** `fresh --cmd help script`
+> **CLI:** `fresh --cmd script`, and `fresh --cmd help script` for the built-in guide
 
-Fresh can be driven from the outside while it is running. `fresh --cmd script run` hands a TypeScript script to the editor you are already sitting in, and the editor evaluates it against the same plugin API its own bundled plugins use. The script can open files, split panes, resize them, write a file and show it, create a workspace on a new git worktree, start a coding agent, open a [guided code tour](./code-tours.md) — whatever the API exposes.
+Fresh can be driven from the outside while it is running. A short TypeScript program, handed to the editor you are already sitting in, can open files, arrange panes, resize them, show output, create a workspace, start a coding agent, open a [guided tour](./code-tours.md) — anything the editor's plugin API can do. The program runs, does its work, and is forgotten. Whatever it created stays.
 
-The script runs to completion and is then forgotten. Whatever it created stays.
+![Searching the editor's API from a workspace terminal](/images/scripting-cmd-run.png)
 
-![Searching the plugin API from a workspace terminal with fresh --cmd script api](/images/scripting-cmd-run.png)
-
-*The CLI runs inside the editor it drives: `script api` searching the API from the terminal pane at the bottom, the panes it can act on above.*
+*The command line runs inside the editor it drives — searching the API from the terminal pane at the bottom, with the panes it can act on above.*
 
 ## Why this exists
 
-The point of the feature is the coding agent that is already running in one of your panes.
+The point of the feature is the coding agent already running in one of your panes.
 
-An agent launched into a Fresh workspace is a process in a terminal. It can read and write files and run commands, but it has no idea what the editor around it looks like and no way to change it. That leaves the editor as a dumb frame around the conversation. If the agent can submit a script, it can set up the editor for the task at hand: put the file it is changing next to the test it is fixing, open the log it wants you to read, hand you a walkthrough of the change it just made, or start a second agent in a second workspace and let you get back to what you were doing.
+An agent launched into a Fresh workspace is a process in a terminal. It can read and write files and run commands, but it has no idea what the editor around it looks like and no way to change it, which leaves the editor as a dumb frame around the conversation. Give it a way in, and it can set the editor up for the work: put the file it is changing next to the test it is fixing, show you the output it wants you to read, hand you a walkthrough of the change it just made, or start a second agent in a second workspace so you can carry on with what you were doing.
 
 So the goals are:
 
-- **The agent arranges the UI for you.** You ask for a layout, a walkthrough, a background task, in the chat you are already having with the agent. You do not stop to arrange panes by hand.
-- **No fixed verb menu.** An earlier version of this channel shipped a list of command ids over the socket. Every new capability then meant a new id, an argument schema, a CLI alias and a doc entry. The script channel carries code instead, so anything the plugin API can already do is reachable on day one.
-- **Discovery is a file on disk.** The API surface is TypeScript declarations (`fresh.d.ts`, `plugins.d.ts`) that an agent can read and search, which is what coding agents are good at. There is no API to learn about the API.
-- **No install and no restart.** A script is not a plugin. It is submitted, evaluated in the live editor, and gone.
+- **You ask in the conversation you are already having.** No stopping to arrange panes by hand.
+- **Everything the editor can do is reachable.** The channel carries a program rather than a fixed menu of commands, so a capability does not have to be exposed one verb at a time before an agent can use it.
+- **The agent can find out what it may ask for.** The editor writes its API out as TypeScript declarations, and there is a command-line search over them — reading declarations and writing code against them is what coding agents are good at.
+- **Nothing to install and nothing to restart.** This is not a plugin. It is submitted, it runs in the live editor, and it is gone.
 
-## How a script reaches the editor
+## What to ask the agent for
 
-Every local terminal Fresh spawns inherits two variables:
-
-| Variable | Meaning |
-|---|---|
-| `FRESH_SESSION` | Which editor's control socket to talk to. This is what makes a bare `fresh <file>` from inside a pane open in *this* editor instead of starting a second one. |
-| `FRESH_BIN` | The exact binary running this editor. Always invoke the CLI through `"$FRESH_BIN"` — a different `fresh` earlier on `PATH` may not have the same verbs. |
-
-Script evaluation needs one more thing: a capability token, `FRESH_CMD_TOKEN`. The Orchestrator mints one when it launches a workspace or runs an agent, bound to that workspace's window. A terminal that has no token gets a refusal:
-
-```
-no capability token: script evaluation is not authorized
-```
-
-So scripting works from panes the Orchestrator started — **Run Agent…** and **Orchestrator: New Workspace** — and not from an arbitrary shell elsewhere on your machine. Both dialogs mint a token whether you launch an agent or a plain shell, so a terminal you started through **Run Agent…** with the *Terminal* preset can script too.
-
-The token also decides *which* workspace a script acts on. The target window is derived from the token, never passed in, so a script submitted by the agent in workspace A cannot reach into workspace B's panes.
-
-From outside a Fresh pane, `--session NAME` picks the editor to talk to, but the token requirement still applies.
-
-## The verbs
-
-```
-fresh --cmd script run   [FILE|-]        evaluate against this workspace (default: stdin)
-fresh --cmd script check [FILE|-]        parse + check editor.* names, without running
-fresh --cmd script api   <query> [--json]  search the API by name or description
-fresh --cmd script types                 paths of the API declaration files
-```
-
-Source comes from a file or stdin, never from the argument vector — a script is multi-line and full of quotes, and a shell mangles that.
-
-```sh
-# stdin, via a heredoc
-"$FRESH_BIN" --cmd script run <<'EOF'
-return editor.describeWorkspace();
-EOF
-
-# a file
-"$FRESH_BIN" --cmd script run layouts/review.ts
-```
-
-Whatever the script returns is printed as JSON. A throw exits non-zero with the message on stderr.
-
-`script api` is the fast way in. It matches names first and doc prose second, and prints each hit with its doc comment, which usually answers the question without opening the declaration file:
-
-```sh
-"$FRESH_BIN" --cmd script api splitWindow
-"$FRESH_BIN" --cmd script api tour --json
-```
-
-`script check` catches the two failures worth catching before a script touches a workspace someone is looking at: it does not parse, and it calls an `editor` member that does not exist. A misremembered method name is otherwise indistinguishable from a missing feature until you run it.
-
-`fresh --cmd help script` prints the feature guide, including the API surface count of the build you are running — the numbers are generated from the shipped declarations, not typed into a help string.
-
-A script that creates a workspace waits on `git worktree add` and an agent process starting, so the CLI's wait is generous. `FRESH_CMD_TIMEOUT_MS` overrides it.
-
-## Writing a script
-
-The body runs as the body of an async function with an `editor` global. Top-level `await` works, `return` is the answer.
-
-```ts
-// current layout: panes left to right, with geometry, kind and focus
-return editor.describeWorkspace();
-```
-
-```ts
-// README in a new pane to the right, without taking focus from the user
-await editor.splitWindow({
-  direction: "vertical",
-  place: "after",
-  file: "README.md",
-  keepFocus: true,
-});
-```
-
-`direction` names the divider: `"vertical"` is side by side, `"horizontal"` is stacked. `place` is `"before"` (left or top) or `"after"` (right or bottom, the default).
-
-Mutations are queued, so a read in the same script sees the state from *before* them. Await the mutation, or `await editor.flush()`, before reading back:
-
-```ts
-editor.setSplitRatio(splitId, 0.3);
-await editor.flush();
-return editor.describeWorkspace();
-```
-
-`FRESH_WINDOW_ID` is the window the script's token is bound to. The active window can change under a script across an `await` — the user is still working — so prefer the calls that take an explicit id (`editor.windowPath`, `editor.openFileInBackground`, `editor.openFileInSplit`) over the ones that act on whatever is focused.
-
-## Launching an agent that knows about this
-
-**Run Agent…** and **Orchestrator: New Workspace** are the same dialog; a **Run in** switch picks the current workspace or a new one. Its fields:
-
-- **Agent** — a preset (`claude`, `codex`, `opencode`, `aider`), a plain terminal, or a custom command line you type.
-- **Run in** — current workspace, or a new workspace on its own git worktree.
-- **Auto mode** — the agent's reduced-approval mode, for agents that have one.
-- **Prompt** — an optional first message handed to the agent at launch.
-- **Teach agent the Fresh CLI** — on by default. Injects a system prompt that documents the script channel, with worked recipes.
-
-![The New Workspace dialog with claude selected, a start prompt, and Teach agent the Fresh CLI checked under Advanced](/images/scripting-run-agent-dialog.png)
-
-*The same dialog with **Run in** switched to a new workspace, and **Advanced** expanded to show the toggle and the branch fields.*
-
-The token is minted either way. **Teach agent the Fresh CLI** only controls whether the agent is *told* the capability is there. How the instruction is delivered depends on the agent:
-
-| Agent | Injection | Notes |
-|---|---|---|
-| `claude` | `--append-system-prompt` at launch | Nothing on disk is touched. |
-| `codex` | a marked block in `AGENTS.md` | Appended, never overwriting your file. |
-| `opencode` | a marked block in `AGENTS.md` | Same. |
-| `aider` | — | Not offered. aider has no autonomous shell; it only proposes commands for confirmation, so it cannot drive the editor on its own. |
-
-The `AGENTS.md` block is wrapped in `<!-- fresh-cli:start -->` / `<!-- fresh-cli:end -->` markers and is added at most once, so a restart or a retry does not stack copies of it.
-
-## Things to ask the agent for
-
-These are all things you type into the chat you are already having with the agent in the pane. The agent writes the script; you do not.
+These are things you type to the agent in its pane. The agent writes the program; you do not.
 
 ### A layout for the task
 
-> "Set me up for this: the file you are changing on the left, its test on the right, and a terminal along the bottom running the test in watch mode."
+> "Set me up for this: the file you are changing on the left, its test on the right, and a terminal along the bottom."
 
-The agent calls `describeWorkspace()` to see what is there, then `splitWindow` and `setSplitRatio` to build the arrangement, and reads the layout back to check it did what it said.
+The agent looks at the current layout, builds the arrangement, and reads it back to check it did what it said.
 
 Before — the workspace as the agent found it, one file and the terminal it is running in:
 
-![One editor pane above a terminal pane running a script that reports the pane list](/images/scripting-layout-before.png)
+![One editor pane above a terminal pane](/images/scripting-layout-before.png)
 
-After — one `script run` later:
+After:
 
-![Three panes: queue.rs left, queue_test.rs right, the terminal along the bottom](/images/scripting-layout-after.png)
-
-*The script splits, opens both files, hands the keyboard back to the terminal, then reads the layout back — the JSON in the terminal is what it returned.*
+![Three panes: source left, test right, terminal along the bottom](/images/scripting-layout-after.png)
 
 Layouts are worth asking for whenever the shape of the work changes: a wide diff and a narrow notes pane for review, four small panes for a refactor that touches four files, one big pane and a terminal for debugging.
 
 ### A walkthrough of a change
 
-> "Write me a tour of this PR — start at the entry point, then the three files you changed, and say why each change was needed."
+> "Write me a tour of this PR — start at the entry point, then the files you changed, and say why each change was needed."
 
-The agent writes a `.fresh-tour.json` and opens it in the tour dock. You get a step list on the left, the explanation on the right, and the code opening and highlighting as you step. See [Guided Code Tours](./code-tours.md).
+You get a step list, an explanation beside it, and the code opening and highlighting as you move through it. The same request works for a branch, a subsystem you have never read, or the code path behind a bug report. See [Guided Code Tours](./code-tours.md).
 
-This works the same way for a branch, a subsystem you have never read, or the code path behind a bug report.
+![A tour written and opened by a script, with the step's lines highlighted above](/images/scripting-tour-handoff.png)
 
-![A tour authored by a script, open in the dock with the step's lines highlighted in the source above](/images/scripting-tour-handoff.png)
-
-*A tour written and opened by one `script run`: the step's range highlighted in `queue.rs`, the explanation beside the step list.*
+*This tour was written and opened by the agent in one go — no file to author, nothing to open by hand.*
 
 ### A second agent, working in the background
 
-> "Start another agent in a new workspace off `main` and have it fix the flaky test in `queue_test.rs`. Leave it running, I want to keep working here."
+> "Start another agent in a new workspace off main and have it fix the flaky test. Leave it running, I want to keep working here."
 
-The agent calls the Orchestrator's API:
+The new workspace gets its own git worktree and its own agent, and it does not take your focus — a background task should not pull you out of what you are doing. It appears on the Orchestrator dock, where you can see whose agent is busy and switch to it when you want to catch up. You can also just ask your own agent how the other one is getting on.
 
-```ts
-const orch = editor.getPluginApi("orchestrator");
-return await orch.newWorkspace({
-  agent: "claude",
-  newBranch: "fix/flaky-queue",
-  prompt: "fix the flaky test in queue_test.rs",
-});
+![The Orchestrator dock listing four workspaces, two of them running agents](/images/scripting-orchestrator-dock.png)
+
+*Each row is a workspace: its name, the agent in it, its branch and its git state, with a marker on the one whose agent is producing output right now.*
+
+## Starting an agent that can do this
+
+**Run Agent…** and **Orchestrator: New Workspace** are the same dialog, with a switch for whether the agent starts in this workspace or a new one of its own. It offers the agents Fresh knows about — `claude`, `codex`, `opencode`, `aider` — or a plain terminal, or any command you type. You can hand the agent a first message, choose its reduced-approval mode where it has one, and decide whether to teach it that it can drive the editor at all.
+
+![The New Workspace dialog with an agent selected and the advanced options expanded](/images/scripting-run-agent-dialog.png)
+
+Teaching is on by default and is a single toggle. What it does is give the agent a short briefing on what it can ask the editor for, with worked examples; without it, the agent runs as it normally would and simply never uses the capability. `claude`, `codex` and `opencode` can all be briefed this way. `aider` cannot drive the editor at all — it has no autonomous shell of its own, it only proposes commands for you to confirm — so the option is not offered for it.
+
+## Driving the editor yourself
+
+The same channel is a general remote control, and nothing about it is agent-specific. From a workspace terminal:
+
+```sh
+echo 'return editor.splitWindow({ file: "README.md" })' | fresh --cmd script run
 ```
 
-That creates a git worktree, launches the agent in it, and answers with `{ workspaceId, windowId, root }`. `visit` defaults to false, so your focus stays where it is — a background task should not yank you out of what you are doing.
+That opens `README.md` in a new pane beside the current one. The editor's own launcher is reachable the same way, so a single line can also start a workspace on a new branch with an agent in it:
 
-The new workspace appears on the Orchestrator dock. Switch to it when you want to see how it went, or ask your own agent:
-
-```ts
-return editor.getPluginApi("orchestrator").listWorkspaces();
+```sh
+echo 'return editor.getPluginApi("orchestrator").newWorkspace({ agent: "claude", newBranch: "fix/flaky" })' | fresh --cmd script run
 ```
 
-which reports each workspace's branch, git state and whether its agent is `working` or `idle`.
+Longer programs come from a file. Alongside running one, the CLI will search the API by name or description, check a program for typos before it touches a workspace someone is looking at, and print the built-in guide — run `fresh --cmd help script` and try it.
 
-![The Orchestrator dock listing four workspaces, one running claude and one running codex](/images/scripting-orchestrator-dock.png)
+Some things this is good for that have nothing to do with agents:
 
-*Each row is a workspace: its name, the agent running in it, its branch and its git state. The `*` marks the one whose agent is producing output right now.*
-
-## Uses that have nothing to do with agents
-
-The channel is a general remote control for a running editor. Anything that can run a shell command in a workspace pane can use it.
-
-- **Committed layout scripts.** Keep `layouts/review.ts` and `layouts/debug.ts` in the repo and run them when you switch tasks. Everyone on the team gets the same arrangement, and the layout is reviewable like any other file.
-- **Build and test wrappers.** Have the wrapper open the report when it finishes — `editor.splitWindow({ file: "/tmp/report.md" })` — or jump straight to the first failure with `editor.openFileInSplit(splitId, file, line)`. Writing a file and opening it beats printing to a terminal: you get syntax highlighting, search and save.
+- **Layouts you keep.** Check a couple of arrangements into the repo and switch between them when you switch tasks. Everyone on the team gets the same layout, and it is reviewable like any other file.
+- **Build and test wrappers.** Have the wrapper open the report when it finishes, or jump straight to the first failure. Writing the output to a file and opening it beats printing it: you get syntax highlighting, search and save.
 - **Post-command cleanup.** After a rebase or a merge, open every conflicted file in its own pane.
 - **One-off work that does not deserve a plugin.** If you would have written a twenty-line plugin, installed it and restarted, write the twenty lines and pipe them in instead.
-- **Shell aliases and Makefile targets.** `make review` can leave the editor in exactly the state the review needs.
 
-## Limits
+## What it can and cannot do
 
-- **A runaway script wedges the plugin thread.** There is no timeout or memory cap, the same blast radius as a buggy `init.ts`.
-- **`fresh <file>` blocks.** The nested-forward path opens the file and waits until you close the buffer — the `$EDITOR` contract. From a script, use `editor.openFileInBackground` instead.
-- **Remote panes have no handle.** `FRESH_SESSION` is only set for local shells, so an agent in a docker, SSH or Kubernetes pane cannot reach the parent editor.
-- **The grant is all or nothing.** Holding a token means "may do anything the user could do from a plugin". What bounds an agent is the window its token is bound to, not a list of allowed verbs. A narrower-looking grant would describe a boundary that is not there.
-- **Script access is not Workspace Trust.** They answer different questions: trust asks whether this repo is safe to load, the token asks whether this agent may drive the editor. See [Workspace Trust](./workspace-trust.md).
+Driving the editor is a capability a workspace grants when it starts an agent, bound to that workspace. An agent can rearrange the workspace it lives in and cannot reach into a sibling workspace's panes. A shell somewhere else on your machine cannot drive the editor at all.
+
+Within its own workspace the grant is broad: holding it means being able to do what you could do from a plugin. That is deliberate — a program can reach the whole API, so a permission that looked narrower would be describing a boundary that is not there. What bounds an agent is the workspace it was given, and the fact that you decide, per launch, whether to hand it out.
+
+Worth knowing:
+
+- A program that never finishes will hang the editor's plugin work, the same way a broken plugin would.
+- Agents in remote panes — a container, an SSH host, a Kubernetes pod — have no route back to the editor that started them.
+- This is a different question from [Workspace Trust](./workspace-trust.md). Trust asks whether this repository is safe to load; this asks whether an agent may drive the editor.
+- You are letting something change a workspace you are looking at. Agents are told to prefer reversible changes and to leave panes they were not asked to touch alone, but the honest summary is that you are handing over the controls.
 
 ## See also
 
-- [Guided Code Tours](./code-tours.md) — the walkthrough format an agent can generate for you
+- [Guided Code Tours](./code-tours.md) — the walkthroughs an agent can generate for you
 - [Integrated Terminal](./terminal.md) — the panes agents run in
-- [Startup Script (`init.ts`)](../configuration/init.md) — the same API, run at startup
-- [Plugin API Reference](../plugins/api/) — the full surface a script can call
+- [Startup Script (`init.ts`)](../configuration/init.md) — the same API, run when the editor starts
+- [Plugin API Reference](../plugins/api/) — the full surface, for when you want to write more than a line
 - [Workspace Trust](./workspace-trust.md)
