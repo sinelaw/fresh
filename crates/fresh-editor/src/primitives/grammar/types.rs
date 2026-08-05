@@ -216,6 +216,8 @@ pub const NIX_GRAMMAR: &str = include_str!("../../grammars/nix.sublime-syntax");
 pub const HCL_GRAMMAR: &str = include_str!("../../grammars/hcl.sublime-syntax");
 /// Embedded Protocol Buffers grammar
 pub const PROTOBUF_GRAMMAR: &str = include_str!("../../grammars/protobuf.sublime-syntax");
+/// Embedded Apache Thrift grammar
+pub const THRIFT_GRAMMAR: &str = include_str!("../../grammars/thrift.sublime-syntax");
 /// Embedded GraphQL grammar
 pub const GRAPHQL_GRAMMAR: &str = include_str!("../../grammars/graphql.sublime-syntax");
 /// Embedded Julia grammar
@@ -772,6 +774,7 @@ impl GrammarRegistry {
             (NIX_GRAMMAR, "Nix"),
             (HCL_GRAMMAR, "HCL"),
             (PROTOBUF_GRAMMAR, "Protocol Buffers"),
+            (THRIFT_GRAMMAR, "Thrift"),
             (GRAPHQL_GRAMMAR, "GraphQL"),
             (JULIA_GRAMMAR, "Julia"),
             (NIM_GRAMMAR, "Nim"),

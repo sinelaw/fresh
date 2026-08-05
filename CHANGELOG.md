@@ -16,6 +16,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Unsaved changes show on the scrollbar** - the blue gutter bar for edits you haven't saved now has a matching mark on the track, so a change you left ten screens up is visible without scrolling to find it.
 * **File Explorer sticky parents** - a nested folder's expanded ancestors stay stacked at the top of the sidebar while you scroll (#2705, by @asukaminato0721).
 * **More graphics, docs and build-file grammars** - GLSL `.glslf`/`.glslv`, Wavefront `.obj`, Doxygen, Windows `.rc`, pkg-config, `.cmake.in` and `CMakeCache.txt` (by @asukaminato0721).
+* **Thrift syntax highlighting** - `.thrift` interface definition files now highlight out of the box.
 * **Broader LaTeX ecosystem highlighting** - TeX packages/classes, generated `.aux`/`.toc`, BibLaTeX, ConTeXt, BibTeX and `.bst`, plus `latexmkrc` (by @asukaminato0721).
 * **The Orchestrator dock's start-up state is configurable** - whether it opens on startup, its layout, and the starting state of the **all worktrees** and **show empty** checkboxes.
 * **Run Agent… and New Workspace are one dialog** - a "Launch in" switch picks the current workspace or a new one. Fixes `custom…` having nowhere to type a command.

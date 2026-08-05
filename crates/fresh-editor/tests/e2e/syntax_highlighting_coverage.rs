@@ -233,6 +233,7 @@ test_highlighting_works!(test_highlight_dockerfile_dev, "Dockerfile.dev", 2);
 test_highlighting_works!(test_highlight_containerfile, "Containerfile", 2);
 test_highlighting_works!(test_highlight_terraform, "hello.tf", 2);
 test_highlighting_works!(test_highlight_protobuf, "hello.proto", 2);
+test_highlighting_works!(test_highlight_thrift, "hello.thrift", 2);
 test_highlighting_works!(test_highlight_graphql, "hello.graphql", 2);
 test_highlighting_works!(test_highlight_earthfile, "Earthfile", 2);
 test_highlighting_works!(test_highlight_tiltfile, "Tiltfile", 2);

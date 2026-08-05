@@ -6452,6 +6452,33 @@ impl Config {
         );
 
         languages.insert(
+            "thrift".to_string(),
+            LanguageConfig {
+                extensions: vec!["thrift".to_string()],
+                filenames: vec![],
+                grammar: "Thrift".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: true,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: None,
+                tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        languages.insert(
             "cmake".to_string(),
             LanguageConfig {
                 extensions: vec!["cmake".to_string()],
@@ -8720,6 +8747,8 @@ mod tests {
         assert!(config.editor.syntax_highlighting);
         assert!(config.languages.contains_key("gdscript"));
         assert_eq!(config.languages["gdscript"].extensions, vec!["gd"]);
+        assert_eq!(config.languages["thrift"].extensions, vec!["thrift"]);
+        assert_eq!(config.languages["thrift"].grammar, "Thrift");
         // keybindings is empty by design - it's for user customizations only
         // The actual keybindings come from resolve_keymap(active_keybinding_map)
         assert!(config.keybindings.is_empty());
