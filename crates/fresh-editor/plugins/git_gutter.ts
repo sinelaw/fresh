@@ -128,16 +128,21 @@ function hostHunksToGutterHunks(raw: LineDiffHunk[]): DiffHunk[] {
  * cases the old `git ls-files` probe reported.
  */
 async function ensureBaselines(bufferId: number, state: BufferGitState): Promise<boolean> {
-  if (state.diskBaselineId === null) {
+  // HEAD first: registering it is the tracked-file probe (it fails for
+  // untracked files and non-repos, like the old `git ls-files` check),
+  // and it must run before the disk baseline so an untracked file never
+  // pays the disk read — restore of a large untracked file counts on
+  // that bounded I/O.
+  if (state.headBaselineId === null) {
     try {
-      state.diskBaselineId = await editor.registerDiffBaseline(bufferId, "disk", null);
+      state.headBaselineId = await editor.registerDiffBaseline(bufferId, "gitRef", "HEAD");
     } catch (_e) {
       return false;
     }
   }
-  if (state.headBaselineId === null) {
+  if (state.diskBaselineId === null) {
     try {
-      state.headBaselineId = await editor.registerDiffBaseline(bufferId, "gitRef", "HEAD");
+      state.diskBaselineId = await editor.registerDiffBaseline(bufferId, "disk", null);
     } catch (_e) {
       return false;
     }
