@@ -641,90 +641,57 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     harness.type_text(APPEND_PAYLOAD).unwrap();
     harness.render().unwrap();
 
-    // Wait until BOTH OLD virtual lines are present as their own rows AND
-    // the screen has stopped changing. Presence alone is necessary but not
-    // sufficient for the anchoring assertions below: the recompute is
-    // debounced/async, so there is a transient window where both virtual
-    // lines exist but the layout hasn't converged to its final anchoring
-    // yet. Snapshotting that intermediate frame produces an off-by-one row
-    // (the source of the rare flake). `wait_until_stable` drains the
-    // debounce before we read the buffer, so the positioning assertions run
-    // against a settled frame.
-    harness
-        .wait_until_stable(|h| {
-            let s = h.screen_to_string();
-            virtual_row_present(&s, "UNIQUE_IF_BODY_OLD_MARKER")
-                && virtual_row_present(&s, "UNIQUE_ELSE_BODY_OLD_MARKER")
-        })
-        .unwrap();
-
-    let buf = harness.buffer();
-    let rows: Vec<String> = (0..buf.area.height)
-        .map(|y| {
-            (0..buf.area.width)
-                .map(|x| buf[(x, y)].symbol().to_string())
-                .collect::<String>()
-        })
-        .collect();
-
-    let dump = || {
-        rows.iter()
-            .enumerate()
-            .map(|(i, r)| format!("{i:3} | {}", r.trim_end()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
+    // Wait until the layout CONVERGES to the anchoring invariants,
+    // instead of asserting on a single sampled frame. Presence of both
+    // virtual lines is necessary but not sufficient: the recompute is
+    // debounced/async, so there are transient frames where both virtual
+    // lines exist but anchoring hasn't settled — and under a loaded CI
+    // runner such a frame can even satisfy a "screen stopped changing"
+    // stability window while a recompute is still pending, which is how
+    // the snapshot-then-assert form of this test flaked. Waiting on the
+    // invariants themselves is immune to any transient ordering; a
+    // genuinely wrong final layout still fails loudly, because the wait
+    // never resolves and its periodic screen dumps show the mis-anchored
+    // rows.
+    //
     // After both edits the buffer holds the marker followed by
     // `APPEND_PAYLOAD` on each line, and the virtual lines hold the
-    // bare marker. Distinguish source rows from virtual rows by
-    // whether the payload is present.
-    let row_new_top = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("new top line not on screen. screen:\n{}", dump()));
-    let row_else = rows
-        .iter()
-        .position(|r| r.contains("} else {"))
-        .unwrap_or_else(|| panic!("unchanged else line not on screen. screen:\n{}", dump()));
-    let row_new_bot = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("new bot line not on screen. screen:\n{}", dump()));
-    let row_old_top = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("old top virtual line not on screen. screen:\n{}", dump()));
-    let row_old_bot = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("old bot virtual line not on screen. screen:\n{}", dump()));
-
-    // Layout invariants:
-    //   * the OLD virtual line for the first modification sits directly
-    //     above the NEW line that replaced it
-    //   * the OLD virtual line for the second modification sits directly
-    //     above the NEW line that replaced it (NOT above the unchanged
-    //     "else" context line — that's the user-reported bug)
-    assert_eq!(
-        row_old_top + 1,
-        row_new_top,
-        "OLD top virtual line ({row_old_top}) should be directly above NEW top ({row_new_top})",
-    );
-    assert!(
-        row_new_top < row_else,
-        "NEW top row ({row_new_top}) should come before the unchanged else row ({row_else})",
-    );
-    assert_eq!(
-        row_old_bot + 1,
-        row_new_bot,
-        "OLD bot virtual line ({row_old_bot}) should be directly above NEW bot ({row_new_bot}); \
-         the user-reported bug puts it above the unchanged 'else' line instead",
-    );
-    assert!(
-        row_else < row_old_bot,
-        "unchanged 'else' row ({row_else}) should come before OLD bot virtual line ({row_old_bot})",
-    );
+    // bare marker — distinguish source rows from virtual rows by
+    // whether the payload is present. Invariants:
+    //   * each OLD virtual line sits DIRECTLY above the NEW line that
+    //     replaced it (the user-reported bug put the second one above
+    //     the unchanged "} else {" context line instead)
+    //   * row order is: OLD top, NEW top, else, OLD bot, NEW bot
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            let rows: Vec<&str> = s.lines().collect();
+            let row_new_top = rows
+                .iter()
+                .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD));
+            let row_else = rows.iter().position(|r| r.contains("} else {"));
+            let row_new_bot = rows
+                .iter()
+                .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD));
+            let row_old_top = rows
+                .iter()
+                .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD));
+            let row_old_bot = rows
+                .iter()
+                .position(|r| {
+                    r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD)
+                });
+            match (row_old_top, row_new_top, row_else, row_old_bot, row_new_bot) {
+                (Some(old_top), Some(new_top), Some(els), Some(old_bot), Some(new_bot)) => {
+                    old_top + 1 == new_top
+                        && new_top < els
+                        && els < old_bot
+                        && old_bot + 1 == new_bot
+                }
+                _ => false,
+            }
+        })
+        .unwrap();
 }
 
 /// Regression: with live-diff active, deleting 3+ consecutive lines in
