@@ -318,14 +318,27 @@ impl Editor {
     ) {
         // Click-to-focus: if the clicked widget has a stable, tabbable key, move
         // focus there before firing the event so the next render reflects it.
-        if !hit.widget_key.is_empty() {
+        // A List row's `widget_key` is the row's *item* key; the focusable key
+        // is the owning List's spec key, carried in `payload.list_key` — so a
+        // row click focuses the list, and arrows right after it keep moving
+        // the list's selection.
+        let focus_key = if hit.widget_kind == "list" && hit.event_type == "select" {
+            hit.payload
+                .get("list_key")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| hit.widget_key.clone())
+        } else {
+            hit.widget_key.clone()
+        };
+        if !focus_key.is_empty() {
             let is_tabbable = self
                 .widget_registry
                 .get(panel_key)
-                .map(|p| p.tabbable.iter().any(|k| k == &hit.widget_key))
+                .map(|p| p.tabbable.iter().any(|k| k == &focus_key))
                 .unwrap_or(false);
             if is_tabbable {
-                self.set_panel_focus_and_notify(panel_key, hit.widget_key.clone());
+                self.set_panel_focus_and_notify(panel_key, focus_key);
             }
             self.rerender_widget_panel(panel_key);
         }
