@@ -146,6 +146,16 @@ fn palette_opened_from_dock_serves_the_editor_buffer() {
     h.render().unwrap();
     open_dock(&mut h);
 
+    // Distinctive content in the editor buffer, so "the command ran" is
+    // something visible rather than the mere absence of a refusal.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    h.type_text("UNIQUELINE").unwrap();
+    h.render().unwrap();
+
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_prompt().unwrap();
@@ -160,6 +170,11 @@ fn palette_opened_from_dock_serves_the_editor_buffer() {
         !screen.contains("not available in current context"),
         "Ctrl+P blurs the dock, so the palette belongs to the editor and its \
          buffer commands must run\nScreen:\n{screen}"
+    );
+    assert_eq!(
+        screen.matches("UNIQUELINE").count(),
+        2,
+        "Duplicate Line should have acted on the editor's buffer\nScreen:\n{screen}"
     );
 }
 
