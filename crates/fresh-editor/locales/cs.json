@@ -974,6 +974,7 @@
   "file.open_cancelled": "Otevření zrušeno",
   "file.open_prompt": "Otevřít: ",
   "file.opened": "Otevřeno %{path}",
+  "file.pick_not_found": "Soubor nenalezen: %{path}",
   "file.replace_prompt": "Nahradit: ",
   "file.revert_failed": "Obnovení selhalo: %{error}",
   "file.save_as_no_filename": "Zadejte prosím název souboru",

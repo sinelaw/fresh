@@ -974,6 +974,7 @@
   "file.open_cancelled": "ยกเลิกการเปิด",
   "file.open_prompt": "เปิดไฟล์: ",
   "file.opened": "เปิด %{path} แล้ว",
+  "file.pick_not_found": "ไม่พบไฟล์: %{path}",
   "file.replace_prompt": "แทนที่: ",
   "file.revert_failed": "การย้อนกลับล้มเหลว: %{error}",
   "file.save_as_no_filename": "กรุณาใส่ชื่อไฟล์",

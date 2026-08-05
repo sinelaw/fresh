@@ -77,6 +77,12 @@ pub struct FileOpenState {
     /// Error message if directory load failed
     pub error: Option<String>,
 
+    /// Transient rejection notice shown on the prompt row (e.g. a pick
+    /// confirm on a path that names nothing on disk). Unlike `error` it
+    /// leaves the entry list standing — the user is expected to fix the
+    /// input, and any edit or navigation clears it.
+    pub notice: Option<String>,
+
     /// Current sort mode
     pub sort_mode: SortMode,
 
@@ -135,6 +141,7 @@ impl FileOpenState {
             entries: Vec::new(),
             loading: true,
             error: None,
+            notice: None,
             sort_mode: SortMode::Name,
             sort_ascending: true,
             selected_index: None,
@@ -263,6 +270,7 @@ impl FileOpenState {
         self.raw_entries = entries;
         self.loading = false;
         self.error = None;
+        self.notice = None;
         self.rebuild_entries();
         self.sort_entries();
         // No selection by default - user must type or navigate to select
@@ -341,6 +349,9 @@ impl FileOpenState {
     /// Non-matching entries are de-emphasized visually but stay at the bottom.
     pub fn apply_filter(&mut self, filter: &str) {
         self.filter = filter.to_string();
+        // The user is editing the input — a rejection notice about the
+        // previous confirm no longer describes what they will submit.
+        self.notice = None;
         // Rebuild the displayed set so a filter that prefixes a hidden file's
         // name reveals it (and clearing the filter hides it again). This also
         // re-evaluates the fuzzy match state via `apply_filter_internal`.

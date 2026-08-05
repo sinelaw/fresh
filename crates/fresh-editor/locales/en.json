@@ -1003,6 +1003,7 @@
   "file.open_prompt": "Open file: ",
   "file.opened": "Opened %{path}",
   "file.created_new": "New file: %{path}",
+  "file.pick_not_found": "File not found: %{path}",
   "file.replace_prompt": "Replace: ",
   "file.revert_failed": "Failed to revert: %{error}",
   "file.save_as_no_filename": "Please enter a filename to save",

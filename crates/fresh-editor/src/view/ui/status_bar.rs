@@ -940,6 +940,24 @@ impl StatusBarRenderer {
         // User input (the filename part) - normal color
         spans.push(Span::styled(prompt.input.clone(), base_style));
 
+        // Rejection notice (e.g. a pick confirmed on a nonexistent path),
+        // right-aligned: the prompt covers the status bar, so this row is
+        // the only place the browser can say why Enter did nothing.
+        if let Some(notice) = &file_open_state.notice {
+            let used: usize = spans.iter().map(|s| str_width(&s.content)).sum();
+            let notice_width = str_width(notice);
+            let pad = (area.width as usize)
+                .saturating_sub(used + notice_width + 1)
+                .max(1);
+            spans.push(Span::styled(" ".repeat(pad), base_style));
+            spans.push(Span::styled(
+                notice.clone(),
+                Style::default()
+                    .fg(theme.diagnostic_error_fg)
+                    .bg(theme.prompt_bg),
+            ));
+        }
+
         let line = Line::from(spans);
         let prompt_line = Paragraph::new(line).style(base_style);
 

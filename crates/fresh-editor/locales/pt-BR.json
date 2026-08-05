@@ -974,6 +974,7 @@
   "file.open_cancelled": "Abertura cancelada",
   "file.open_prompt": "Abrir: ",
   "file.opened": "Aberto %{path}",
+  "file.pick_not_found": "Arquivo não encontrado: %{path}",
   "file.replace_prompt": "Substituir: ",
   "file.revert_failed": "Falha ao reverter: %{error}",
   "file.save_as_no_filename": "Por favor, insira um nome de arquivo",

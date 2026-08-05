@@ -974,6 +974,7 @@
   "file.open_cancelled": "開くをキャンセルしました",
   "file.open_prompt": "開く: ",
   "file.opened": "%{path} を開きました",
+  "file.pick_not_found": "ファイルが見つかりません: %{path}",
   "file.replace_prompt": "置換: ",
   "file.revert_failed": "元に戻せませんでした: %{error}",
   "file.save_as_no_filename": "ファイル名を入力してください",

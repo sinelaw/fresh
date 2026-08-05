@@ -1399,6 +1399,57 @@ fn test_load_prompt_is_the_native_file_browser() {
     );
 }
 
+/// Enter on a typed path that names nothing on disk must *reject* the
+/// confirm — browser still up, rejection stated — not resolve the pick
+/// with the bogus path. Before the fix the browser closed and the tour
+/// plugin failed the read after the fact, visible only in the log.
+#[test]
+fn test_pick_rejects_a_nonexistent_path_and_stays_open() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    run_command(&mut harness, "Tour: Load Definition");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("tour file path"))
+        .unwrap();
+
+    let bogus = "no-such-tour.json";
+    harness.type_text(bogus).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The rejection is visible and the browser survives it, in one frame.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("File not found") && s.contains("tour file path")
+        })
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("*Tour:"),
+        "no tour may open from a rejected pick\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The surviving prompt is still a working picker: fix the name and
+    // the pick goes through.
+    for _ in 0..bogus.chars().count() {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .type_text(&project_root.join("storage-tour.json").display().to_string())
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*Tour: Storage Tour*"))
+        .unwrap();
+}
+
 /// The reclaimed vertical layout: no divider row under the header, the
 /// step actions live in the header row, and the step's location is the
 /// first line of the prose.

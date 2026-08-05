@@ -974,6 +974,7 @@
   "file.open_cancelled": "打开已取消",
   "file.open_prompt": "打开: ",
   "file.opened": "已打开 %{path}",
+  "file.pick_not_found": "未找到文件: %{path}",
   "file.replace_prompt": "替换：",
   "file.revert_failed": "还原失败: %{error}",
   "file.save_as_no_filename": "请输入文件名",

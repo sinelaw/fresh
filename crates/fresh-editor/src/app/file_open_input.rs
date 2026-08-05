@@ -219,6 +219,24 @@ impl Editor {
                 // Only allowed in file mode, not folder mode
                 self.file_open_open_file_at_location(expanded_path, line, column);
                 return;
+            } else if !is_folder_mode
+                && self.active_window().pending_file_pick_callback.is_some()
+                && Self::should_create_new_file(&path_input)
+            {
+                // Pick mode (`editor.pickFile`): the typed path names nothing
+                // on disk, and a pick has nothing to create — resolving with a
+                // path that does not exist only moves the failure into the
+                // plugin, after the browser is already gone. Reject the
+                // confirm: say why on the prompt row (the status bar is
+                // covered by the prompt), keep the browser open, let the user
+                // fix the name or Escape out.
+                // The typed input, not `expanded_path`: the prompt row
+                // already shows the directory, and the absolute form of a
+                // deep path pushes the notice off the screen edge.
+                if let Some(state) = &mut self.active_window_mut().file_open_state {
+                    state.notice = Some(t!("file.pick_not_found", path = path_input).to_string());
+                }
+                return;
             } else if !is_folder_mode && Self::should_create_new_file(&path_input) {
                 // File doesn't exist but input looks like a filename - create new file
                 // This handles cases like "newfile.txt" or "/path/to/newfile.txt"
@@ -475,12 +493,9 @@ impl Editor {
 
     /// Create a new file (opens an unsaved buffer that will create the file on save)
     fn file_open_create_new_file(&mut self, path: std::path::PathBuf) {
-        // A pick resolves with the typed path even when no such file
-        // exists yet — the caller validates; mirrors how a browser's
-        // file input leaves validation to the page.
-        if self.resolve_pending_file_pick(&path) {
-            return;
-        }
+        // Unreachable in pick mode: `file_open_confirm` rejects a typed
+        // path that names nothing on disk before it gets here, so a pick
+        // never resolves with a file that does not exist.
         // Close the file browser
         self.active_window_mut().file_open_state = None;
         self.active_window_mut().prompt = None;
