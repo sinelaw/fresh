@@ -1,17 +1,17 @@
 {
   "bg": {
     "cmd.grep": "Git Grep",
-    "cmd.grep_desc": "Search for text in git-tracked files",
-    "prompt.grep": "Git grep: ",
-    "status.ready": "Git Grep plugin ready",
-    "status.type_to_search": "Type to search...",
-    "status.found": "Found %{count} matches",
-    "status.no_matches": "No matches found",
-    "status.not_in_git": "Not in git",
-    "status.error": "Git grep error: %{error}",
-    "status.opened": "Opened %{location}",
-    "status.no_selection": "No file selected",
-    "status.cancelled": "Git grep cancelled"
+    "cmd.grep_desc": "Търсене на текст във файлове проследявани с git",
+    "prompt.grep": "Git grep:",
+    "status.ready": "Плъгин Git Grep е готов",
+    "status.type_to_search": "Въведи за търсене...",
+    "status.found": "Намерени %{count} съответствия",
+    "status.no_matches": "Няма намерени съответствия",
+    "status.not_in_git": "Не е в git",
+    "status.error": "Git grep грешка: %{error}",
+    "status.opened": "Отворено %{location}",
+    "status.no_selection": "Няма избран файл",
+    "status.cancelled": "Git grep е прекъснат"
   },
   "cs": {
     "cmd.grep": "Git Grep",

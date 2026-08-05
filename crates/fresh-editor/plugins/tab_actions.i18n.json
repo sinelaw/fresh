@@ -1,18 +1,18 @@
 {
   "bg": {
-    "cmd.close_others": "Close Other Tabs",
-    "cmd.close_others_desc": "Close other tabs in the current split",
-    "cmd.close_all": "Close All Tabs",
-    "cmd.close_all_desc": "Close all tabs in the current split",
-    "cmd.close_to_right": "Close Tabs To Right",
-    "cmd.close_to_right_desc": "Close tabs to right in the current split",
-    "cmd.close_to_left": "Close Tabs To Left",
-    "cmd.close_to_left_desc": "Close tabs to left in the current split",
-    "cmd.move_to_left": "Move Tab To Left",
-    "cmd.move_to_left_desc": "Move active tab to the left in the current split",
-    "cmd.move_to_right": "Move Tab To Right",
-    "cmd.move_to_right_desc": "Move active tab to the right in the current split",
-    "status.plugin_loaded": "Tab actions plugin loaded"
+    "cmd.close_others": "Затваряне другите таблици",
+    "cmd.close_others_desc": "Затваряне на другите раздели в текущия панел",
+    "cmd.close_all": "Затваряне на Всички Таблици",
+    "cmd.close_all_desc": "Затваряне на всички раздели в текущия панел",
+    "cmd.close_to_right": "Затваряне на Таблици вдясно",
+    "cmd.close_to_right_desc": "Затваряне на раздели вдясно от текущия панел",
+    "cmd.close_to_left": "Затваряне на Таблици вляво",
+    "cmd.close_to_left_desc": "Затваряне на раздели вляво от текущия панел",
+    "cmd.move_to_left": "Премести раздел на ляво",
+    "cmd.move_to_left_desc": "Премести активния раздел вляво от текущия панел",
+    "cmd.move_to_right": "Премести раздела вдясно",
+    "cmd.move_to_right_desc": "Премести активния раздел вдясно от текущия панел",
+    "status.plugin_loaded": "Плъгинът Акции за раздел езареден"
   },
   "cs": {
     "cmd.close_others": "Zavřít ostatní karty",
