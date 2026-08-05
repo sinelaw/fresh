@@ -8,7 +8,9 @@
 
 A tour is a walkthrough of a codebase, defined in a JSON file and played inside the editor. It opens as a panel in the Utility Dock: the list of steps on the left, the current step's explanation on the right. Each step points at a file and a line range. When you move to a step, Fresh opens that file in the main area above, scrolls to the range and highlights it, so the code the step is talking about is on screen while you read about it.
 
-> **Screenshot placeholder** — the full window: source file in the main area with a highlighted range, tour panel docked below showing the step rail on the left and the explanation on the right.
+![A tour open in the dock, step 4 of 5, with the step's lines highlighted in the source file above](/images/code-tour-panel.png)
+
+*Step 4 of 5. The step's range is highlighted in `router.rs` above; the rail on the left ticks off the steps already visited.*
 
 ## Where the JSON comes from
 
@@ -52,11 +54,13 @@ echo 'return editor.getPluginApi("code-tour").openTour(".fresh-tour.json")' \
   | "$FRESH_BIN" --cmd script run
 ```
 
-> **Screenshot placeholder** — the workspace tour picker listing several tours found in the repo.
+![The workspace tour picker listing three tours found in the repository](/images/code-tour-picker.png)
+
+*Each row is a manifest found in one of the well-known locations, with its step count.*
 
 ## Moving through a tour
 
-The panel has the step rail on the left and the step's text on the right, with **◀ Prev**, **Next ▶** and **✕ Exit** buttons and a bar showing the current step's file and line range. The last step's button reads **✓ Finish**.
+The panel has the step rail on the left and the step's text on the right, a bar showing the current step's file and line range, and a row of buttons: **Jump to code ⏎**, **Re-highlight**, **◀ Prev**, **Next ▶**, **✕ Exit**. On the last step **Next ▶** reads **✓ Finish**.
 
 - Click a step in the rail to jump to it. The file opens and the range highlights.
 - `n` / `Space` / `→` for the next step, `p` / `Backspace` / `←` for the previous one, while the panel has focus.
@@ -67,7 +71,9 @@ The panel has the step rail on the left and the step's text on the right, with *
 
 Step text is markdown, rendered through the same engine as LSP hover docs — headings, lists, emphasis, links and syntax-highlighted code fences all work.
 
-> **Screenshot placeholder** — close-up of the panel: step rail with the current step selected, markdown explanation with a code fence in it, the location bar underneath.
+![The tour panel: step rail on the left, markdown explanation with a syntax-highlighted code fence on the right](/images/code-tour-steps.png)
+
+*The step rail, the location bar, the rendered markdown, and the key hints along the bottom.*
 
 ## The files it opens are just files
 
