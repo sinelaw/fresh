@@ -12,13 +12,36 @@ A tour is a walkthrough of a codebase, played inside the editor. It opens as a p
 
 ## Where tours come from
 
-A tour is a small JSON file. You can write one by hand, but the recommendation is not to: LLMs and coding agents are very good at producing them on demand, and asking takes a sentence.
+A tour is a small JSON file. A title, a description, and a list of steps — each step a file, a line range, and the prose that explains it:
 
-> "Give me a tour of this PR — start at the entry point and walk through the files that changed."
+```json
+{
+  "title": "Request pipeline",
+  "description": "How a request reaches the handler",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "Entry point",
+      "file_path": "src/main.rs",
+      "lines": [1, 40],
+      "explanation": "## Where it starts\n\nThe listener is built here."
+    }
+  ]
+}
+```
 
-> "I have never read the scheduler. Build me a tour of it, ten steps, focused on how a job gets picked up."
+`fresh --cmd help tour` prints the rest: every field, which are required, and where tours are conventionally kept. The reference is generated from the format the build you are running actually validates against, so it cannot go stale.
 
-An agent running in your workspace can write the tour *and* open it, so it appears in your panel without you touching a file — see [Scripting and Agent Control](./scripting.md).
+You can write one by hand, but the recommendation is not to. LLMs and coding agents are very good at producing these on demand, and asking takes a sentence — point them at that guide and they have everything they need:
+
+> "Give me a tour of the changes on this branch — start at the entry point and walk through what changed and why. Check `fresh --cmd help tour` for the manifest format."
+
+> "I have never read the scheduler. Build me a tour of it, ten steps, focused on how a job gets picked up. Check `fresh --cmd help tour` for the format, then write the manifest and open it."
+
+That last clause matters more than it looks: with it, an agent that has never seen Fresh reads the guide and gets the format right first time. Without it, it is guessing.
+
+An agent running in your workspace can write the tour *and* open it, so it appears in your panel without you touching a file — see [Scripting the Editor](./scripting.md).
 
 Generating a tour on the spot rather than maintaining one has two advantages. It is current, because it is written against the code as it is now rather than as it was when someone last updated the file. And it is written for whoever asked: you can ask for more or less detail, for a focus on the parts you do not know, or for a tour of only the code a particular change touched.
 
@@ -70,13 +93,9 @@ This is the other argument for generating tours on demand: one produced ten seco
 
 Tours in the [CodeTour](https://github.com/microsoft/codetour) format play in Fresh as well. The format is detected from the file, so there is nothing to convert and nothing to configure — point Fresh at an existing `.tour` file and it plays.
 
-## Authoring
-
-`fresh --cmd help tour` prints the authoring guide, including a field reference generated from the format the build you are running actually validates against, and can dump the raw schema for a validator or an agent to work from.
-
 ## See also
 
-- [Scripting and Agent Control](./scripting.md) — how an agent writes and opens a tour for you
+- [Scripting the Editor](./scripting.md) — how a script or an agent writes and opens a tour for you
 - [Git](./git.md) — reviewing diffs and hunks
 - [LSP Integration](./lsp.md) — navigation from inside a tour step
 - [Navigation](./navigation.md)
