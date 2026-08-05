@@ -1,9 +1,9 @@
 {
   "bg": {
-    "status.loaded": "Path completion plugin loaded successfully",
-    "suggestion.directory": "directory",
-    "suggestion.new_file": "%{filename} (new file)",
-    "suggestion.new_file_desc": "File does not exist yet"
+    "status.loaded": "Плъгин за завършване на спецификазия е зареден успешно",
+    "suggestion.directory": "директория",
+    "suggestion.new_file": "%{filename} (нов файл)",
+    "suggestion.new_file_desc": "файлът още не съществува"
   },
   "cs": {
     "status.loaded": "Plugin pro doplnovani cest uspesne nacten",

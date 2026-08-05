@@ -1,7 +1,7 @@
 {
   "bg": {
-    "cmd.goto_lsp_symbol": "Go to LSP Symbol",
-    "cmd.goto_lsp_symbol_desc": "List document symbols from LSP and navigate to selected"
+    "cmd.goto_lsp_symbol": "Към LSP символ",
+    "cmd.goto_lsp_symbol_desc": "Дай списък на символи от LSP и премини към избран"
   },
   "cs": {
     "cmd.goto_lsp_symbol": "Přejít na symbol LSP",
