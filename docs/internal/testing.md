@@ -399,10 +399,12 @@ Other workflows are release/packaging and docs deployment, not test gates.
 
 ## 12. Certain clarifications
 
-- **No JS-based e2e.** The root `package.json` and `bun.lock` are for the
-  VitePress docs site (the docs scripts), not test runners. Bun is the only
-  package manager for it — CI runs `bun install`. The only JS test is a
-  standalone Node unit test for a
+- **No JS-based e2e.** The root `package.json`, `bun.lock`, and
+  `package-lock.json` are for the VitePress docs site (the docs scripts), not
+  test runners. CI deploys the site with bun (`bun install` in
+  `deploy-docs.yml`); the npm lockfile is kept for contributors who use npm,
+  so both need refreshing when the docs dependencies move. The only JS test is
+  a standalone Node unit test for a
   merge-conflict regex (run with `node`, not in CI). There is no JS/bun e2e
   suite.
 - **Mock clock vs `TestTimeSource`:** the migration design names a "MockClock";
