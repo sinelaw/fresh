@@ -3164,6 +3164,49 @@ impl Editor {
             // editor (blur) and falls through so the editor handles it
             // (e.g. Ctrl-P opens the command palette).
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                // Clipboard chords on a focused Text field belong to the
+                // field, not the editor: Ctrl+V must paste into the
+                // New-Session form's Project Path, not be swallowed (and
+                // Ctrl+A / Ctrl+C / Ctrl+X select/copy/cut the field's
+                // own text). Resolve against the Normal context — the
+                // same lookup the buffer-mounted widget routing in
+                // `handle_action` uses — and route the clipboard actions
+                // to the widget. Everything else keeps the swallow/blur
+                // behaviour below.
+                if self.panel_focused_widget_is_text(&panel_key) {
+                    use crate::input::keybindings::Action;
+                    let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+                    let resolved = {
+                        let keybindings = self.keybindings.read().unwrap();
+                        keybindings.resolve(&key_event, crate::input::keybindings::KeyContext::Normal)
+                    };
+                    match resolved {
+                        Action::Paste => {
+                            if let Some(text) = self.clipboard.paste() {
+                                // Normalise line endings to LF, matching the
+                                // Action::Paste widget branch; single-line
+                                // TextEdit strips embedded newlines itself.
+                                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                                self.handle_widget_insert_str(&panel_key, &normalized);
+                                self.set_status_message(t!("clipboard.pasted").to_string());
+                            }
+                            return true;
+                        }
+                        Action::Copy => {
+                            self.handle_widget_copy(&panel_key);
+                            return true;
+                        }
+                        Action::Cut => {
+                            self.handle_widget_cut(&panel_key);
+                            return true;
+                        }
+                        Action::SelectAll => {
+                            self.handle_widget_select_all(&panel_key);
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
                 if matches!(
                     self.panel(slot).map(|f| f.placement),
                     Some(super::PanelPlacement::LeftDock { .. })
