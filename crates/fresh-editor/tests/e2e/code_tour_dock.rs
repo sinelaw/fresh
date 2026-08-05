@@ -1399,6 +1399,124 @@ fn test_load_prompt_is_the_native_file_browser() {
     );
 }
 
+/// Enter on a typed path that names nothing on disk must *reject* the
+/// confirm — the browser stays open with the input intact — not resolve
+/// the pick with the bogus path. Before the fix the browser closed and
+/// the tour plugin failed the read after the fact, visible only in the
+/// log.
+#[test]
+fn test_pick_rejects_a_nonexistent_path_and_stays_open() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    run_command(&mut harness, "Tour: Load Definition");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("tour file path"))
+        .unwrap();
+
+    let bogus = "no-such-tour.json";
+    harness.type_text(bogus).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // The browser survives the confirm. This render alone cannot prove
+    // it (the close might not have painted yet); the recovery flow below
+    // is the real gate — on the pre-fix build the browser is gone, the
+    // corrections land in the source buffer, and no tour ever opens.
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("tour file path") && screen.contains(bogus),
+        "the pick browser must survive Enter on a nonexistent path\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("*Tour:"),
+        "no tour may open from a rejected pick\nScreen:\n{screen}"
+    );
+
+    // The surviving prompt is still a working picker: fix the name and
+    // the pick goes through.
+    for _ in 0..bogus.chars().count() {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .type_text(&project_root.join("storage-tour.json").display().to_string())
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*Tour: Storage Tour*"))
+        .unwrap();
+}
+
+/// A manifest's relative `file_path`s resolve against the manifest's own
+/// directory — a tour authored next to the code it walks keeps working no
+/// matter where the editor was started — while a tour written against the
+/// old cwd-relative meaning still resolves through the fallback.
+#[test]
+fn test_relative_step_paths_resolve_against_the_manifest() {
+    let (_temp, project_root) = setup_tour_project();
+    fs::create_dir(project_root.join("tours")).unwrap();
+    // Step 1 is manifest-relative (`../src/...`); step 2 keeps the legacy
+    // cwd-relative form. Both must land on a real file.
+    fs::write(
+        project_root.join("tours/relative-tour.json"),
+        r###"{
+  "title": "Relative Tour",
+  "description": "Paths relative to the manifest",
+  "schema_version": "1.0",
+  "steps": [
+    {
+      "step_id": 1,
+      "title": "Manifest-relative",
+      "file_path": "../src/wide.rs",
+      "lines": [1, 3],
+      "explanation": "Resolved against the tour file's directory."
+    },
+    {
+      "step_id": 2,
+      "title": "Cwd-relative legacy",
+      "file_path": "src/store.rs",
+      "lines": [1, 2],
+      "explanation": "Old tours resolved against the working directory."
+    }
+  ]
+}"###,
+    )
+    .unwrap();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join("tours/relative-tour.json");
+    // `load_tour` waits for the step highlight — which only paints once the
+    // step's file resolved and opened, so this alone fails without the fix
+    // (the step reported its file missing and nothing opened).
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Relative Tour*",
+    );
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("fn f1()"),
+        "step 1's ../src/wide.rs must open via the manifest's directory\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("is not in this working tree"),
+        "a resolvable relative path must not report missing\nScreen:\n{screen}"
+    );
+
+    press_step_key(&mut harness, 'n', "Step 2 of 2");
+    assert!(
+        harness.screen_to_string().contains("struct Store;"),
+        "step 2's legacy cwd-relative path must still resolve\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// The reclaimed vertical layout: no divider row under the header, the
 /// step actions live in the header row, and the step's location is the
 /// first line of the prose.

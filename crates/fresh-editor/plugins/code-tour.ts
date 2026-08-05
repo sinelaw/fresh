@@ -456,6 +456,31 @@ async function lineRangeBytes(
   return [start, offset];
 }
 
+/** Directory of the tour manifest, absolute — the base a tour's relative
+ * step paths resolve against. */
+function manifestDir(manifestPath: string): string {
+  const norm = manifestPath.replace(/\\/g, "/");
+  const abs = editor.pathIsAbsolute(norm) ? norm : editor.pathJoin(editor.getCwd(), norm);
+  const idx = abs.lastIndexOf("/");
+  return idx > 0 ? abs.slice(0, idx) : "/";
+}
+
+/** A step's `file_path` as an openable path: absolute paths pass through,
+ * relative ones resolve against the manifest's own directory — a tour is
+ * authored next to the code it walks, and must keep working no matter
+ * where the editor was started. Tours written before this resolved
+ * against the working directory instead, so when the manifest-relative
+ * candidate names nothing but the cwd-relative one exists, the old
+ * meaning wins. */
+function resolveStepPath(manifestPath: string, filePath: string): string {
+  if (editor.pathIsAbsolute(filePath)) return filePath;
+  const manifestRelative = editor.pathJoin(manifestDir(manifestPath), filePath);
+  if (editor.fileExists(editor.authorityPath(manifestRelative))) return manifestRelative;
+  const cwdRelative = editor.pathJoin(editor.getCwd(), filePath);
+  if (editor.fileExists(editor.authorityPath(cwdRelative))) return cwdRelative;
+  return manifestRelative;
+}
+
 /** Resolve the buffer showing `filePath`.
  *
  * `findBufferByPath` compares `PathBuf`s for equality and buffers store
@@ -491,7 +516,7 @@ function clearTourOverlays(t: TourInstance): void {
 
 async function paintStepOverlay(t: TourInstance): Promise<void> {
   const step = currentStep(t);
-  const bufferId = stepBufferId(step.file_path);
+  const bufferId = stepBufferId(resolveStepPath(t.manifestPath, step.file_path));
   if (!bufferId) return;
 
   clearTourOverlays(t);
@@ -663,7 +688,9 @@ async function openTour(
   tourByPanel.set(t.panel.id(), t.id);
   lastTourId = t.id;
 
-  t.fileMissing = !editor.fileExists(editor.authorityPath(currentStep(t).file_path));
+  t.fileMissing = !editor.fileExists(
+    editor.authorityPath(resolveStepPath(t.manifestPath, currentStep(t).file_path)),
+  );
   renderPanel(t);
   editor.setContext("tour-active", true);
   persist();
@@ -705,7 +732,8 @@ function clampStep(step: number, total: number): number {
  * highlight. Never moves keyboard focus out of the panel. */
 async function revealStep(t: TourInstance): Promise<void> {
   const step = currentStep(t);
-  t.fileMissing = !editor.fileExists(editor.authorityPath(step.file_path));
+  const stepPath = resolveStepPath(t.manifestPath, step.file_path);
+  t.fileMissing = !editor.fileExists(editor.authorityPath(stepPath));
   if (t.fileMissing) {
     // Drop the previous step's highlight. Leaving it up would point at code
     // belonging to a step the user has already moved past, while the panel
@@ -720,7 +748,7 @@ async function revealStep(t: TourInstance): Promise<void> {
   // becomes a tab in the dock even though the tour panel is what holds focus.
   // Naming a split explicitly would bypass that guard and let the step's
   // source land beside the panels.
-  editor.openFile(step.file_path, step.lines[0], 1);
+  editor.openFile(stepPath, step.lines[0], 1);
   // Hand the keyboard straight back. Both calls are FIFO commands, so
   // queueing the focus restore in the same turn leaves no window where
   // a key typed at the panel lands in the source file instead — parking
@@ -734,7 +762,7 @@ async function revealStep(t: TourInstance): Promise<void> {
   // buffer, and the step silently painted no highlight at all.
   await editor.flush();
 
-  const bufferId = stepBufferId(step.file_path);
+  const bufferId = stepBufferId(stepPath);
   if (bufferId) {
     // Centre the range — but never at the cost of its first line. The
     // host parks the passed line a third of the viewport from the top,
@@ -930,7 +958,7 @@ function jumpToCode(t: TourInstance): void {
   // Deliberately no `focusSplit` back to the panel afterwards: this is the
   // explicit "put me in the code" gesture, so focus stays where `openFile`
   // left it.
-  editor.openFile(step.file_path, step.lines[0], 1);
+  editor.openFile(resolveStepPath(t.manifestPath, step.file_path), step.lines[0], 1);
   editor.setStatus(
     editor.t("status.jumped", { file: step.file_path, line: String(step.lines[0]) }),
   );
