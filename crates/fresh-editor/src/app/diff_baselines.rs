@@ -68,11 +68,6 @@ impl BaselineContent {
         Self { text, line_starts }
     }
 
-    /// Number of lines (final unterminated segment counts as a line).
-    pub fn line_count(&self) -> usize {
-        self.line_starts.len() - 1
-    }
-
     /// Line `idx` without its trailing newline (`\n` or `\r\n`).
     pub fn line(&self, idx: usize) -> Option<&str> {
         let start = *self.line_starts.get(idx)?;
@@ -265,7 +260,6 @@ mod tests {
     #[test]
     fn baseline_content_lines_and_slicing() {
         let c = BaselineContent::new("alpha\nbeta\r\ngamma".to_string());
-        assert_eq!(c.line_count(), 3);
         assert_eq!(c.line(0), Some("alpha"));
         assert_eq!(c.line(1), Some("beta"));
         assert_eq!(c.line(2), Some("gamma"));
