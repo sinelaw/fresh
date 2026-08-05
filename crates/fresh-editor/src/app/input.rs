@@ -3178,7 +3178,8 @@ impl Editor {
                     let key_event = crossterm::event::KeyEvent::new(code, modifiers);
                     let resolved = {
                         let keybindings = self.keybindings.read().unwrap();
-                        keybindings.resolve(&key_event, crate::input::keybindings::KeyContext::Normal)
+                        keybindings
+                            .resolve(&key_event, crate::input::keybindings::KeyContext::Normal)
                     };
                     match resolved {
                         Action::Paste => {
