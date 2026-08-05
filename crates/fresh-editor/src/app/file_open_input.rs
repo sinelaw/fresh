@@ -227,15 +227,8 @@ impl Editor {
                 // on disk, and a pick has nothing to create — resolving with a
                 // path that does not exist only moves the failure into the
                 // plugin, after the browser is already gone. Reject the
-                // confirm: say why on the prompt row (the status bar is
-                // covered by the prompt), keep the browser open, let the user
-                // fix the name or Escape out.
-                // The typed input, not `expanded_path`: the prompt row
-                // already shows the directory, and the absolute form of a
-                // deep path pushes the notice off the screen edge.
-                if let Some(state) = &mut self.active_window_mut().file_open_state {
-                    state.notice = Some(t!("file.pick_not_found", path = path_input).to_string());
-                }
+                // confirm silently: the browser stays open with the input
+                // intact, and the user fixes the name or Escapes out.
                 return;
             } else if !is_folder_mode && Self::should_create_new_file(&path_input) {
                 // File doesn't exist but input looks like a filename - create new file

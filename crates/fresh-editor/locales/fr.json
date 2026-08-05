@@ -974,7 +974,6 @@
   "file.open_cancelled": "Ouverture annulée",
   "file.open_prompt": "Ouvrir : ",
   "file.opened": "%{path} ouvert",
-  "file.pick_not_found": "Fichier introuvable: %{path}",
   "file.replace_prompt": "Remplacer: ",
   "file.revert_failed": "Échec du rétablissement : %{error}",
   "file.save_as_no_filename": "Veuillez entrer un nom de fichier",

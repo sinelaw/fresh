@@ -1400,9 +1400,10 @@ fn test_load_prompt_is_the_native_file_browser() {
 }
 
 /// Enter on a typed path that names nothing on disk must *reject* the
-/// confirm — browser still up, rejection stated — not resolve the pick
-/// with the bogus path. Before the fix the browser closed and the tour
-/// plugin failed the read after the fact, visible only in the log.
+/// confirm — the browser stays open with the input intact — not resolve
+/// the pick with the bogus path. Before the fix the browser closed and
+/// the tour plugin failed the read after the fact, visible only in the
+/// log.
 #[test]
 fn test_pick_rejects_a_nonexistent_path_and_stays_open() {
     let (_temp, project_root) = setup_tour_project();
@@ -1419,17 +1420,19 @@ fn test_pick_rejects_a_nonexistent_path_and_stays_open() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
 
-    // The rejection is visible and the browser survives it, in one frame.
-    harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains("File not found") && s.contains("tour file path")
-        })
-        .unwrap();
+    // The browser survives the confirm. This render alone cannot prove
+    // it (the close might not have painted yet); the recovery flow below
+    // is the real gate — on the pre-fix build the browser is gone, the
+    // corrections land in the source buffer, and no tour ever opens.
+    harness.render().unwrap();
+    let screen = harness.screen_to_string();
     assert!(
-        !harness.screen_to_string().contains("*Tour:"),
-        "no tour may open from a rejected pick\nScreen:\n{}",
-        harness.screen_to_string()
+        screen.contains("tour file path") && screen.contains(bogus),
+        "the pick browser must survive Enter on a nonexistent path\nScreen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("*Tour:"),
+        "no tour may open from a rejected pick\nScreen:\n{screen}"
     );
 
     // The surviving prompt is still a working picker: fix the name and

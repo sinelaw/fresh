@@ -974,7 +974,6 @@
   "file.open_cancelled": "Відкриття скасовано",
   "file.open_prompt": "Відкрити: ",
   "file.opened": "Відкрито %{path}",
-  "file.pick_not_found": "Файл не знайдено: %{path}",
   "file.replace_prompt": "Заміна: ",
   "file.revert_failed": "Не вдалося відновити: %{error}",
   "file.save_as_no_filename": "Будь ласка, введіть ім'я файлу",

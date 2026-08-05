@@ -974,7 +974,6 @@
   "file.open_cancelled": "Đã hủy mở",
   "file.open_prompt": "Mở tệp: ",
   "file.opened": "Đã mở %{path}",
-  "file.pick_not_found": "Không tìm thấy tệp: %{path}",
   "file.replace_prompt": "Thay thế: ",
   "file.revert_failed": "Hoàn nguyên thất bại: %{error}",
   "file.save_as_no_filename": "Vui lòng nhập tên tệp để lưu",
