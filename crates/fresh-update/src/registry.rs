@@ -159,7 +159,11 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
         .package_name
         .clone()
         .unwrap_or_else(|| "fresh-editor".to_string());
-    let formula = h.formula.clone().unwrap_or_else(|| pkg.clone());
+    // The tap ships `Formula/fresh.rb` (`class Fresh`), so the formula is
+    // `fresh` — *not* the `fresh-editor` package name. Defaulting to the
+    // package gave `brew upgrade fresh-editor`, which errors with
+    // "No available formula with the name".
+    let formula = h.formula.clone().unwrap_or_else(|| "fresh".to_string());
     let winget_id = h
         .winget_id
         .clone()
@@ -325,10 +329,15 @@ pub fn install_command_with(channel: Channel, file: &Path, reinstall: bool) -> O
         // The release .rpm is unsigned as far as zypper is concerned, and it
         // refuses a local file without this.
         Channel::Zypper => {
+            // `--allow-unsigned-rpm` covers the one unsigned local file being
+            // installed. `--no-gpg-checks` was here too and is deliberately
+            // gone: it is a *global* option, so under `sudo --non-interactive`
+            // it would also disable GPG verification of repository metadata and
+            // of any dependencies zypper resolves in the same transaction —
+            // far more than this one file needs.
             let mut z: Vec<String> = vec![
                 "zypper".into(),
                 "--non-interactive".into(),
-                "--no-gpg-checks".into(),
                 "install".into(),
                 "--allow-unsigned-rpm".into(),
             ];
@@ -362,10 +371,8 @@ mod tests {
 
     #[test]
     fn delegated_commands_template_defaults() {
-        assert_eq!(
-            plan(&prov(Channel::Homebrew)).human,
-            "brew upgrade fresh-editor"
-        );
+        // The tap's formula is `fresh` (Formula/fresh.rb), not the package name.
+        assert_eq!(plan(&prov(Channel::Homebrew)).human, "brew upgrade fresh");
         assert_eq!(
             plan(&prov(Channel::Winget)).human,
             "winget upgrade --id sinelaw.fresh-editor"
@@ -494,6 +501,11 @@ mod tests {
         // flake.nix sets `pname = "fresh"`, not the `fresh-editor` package name
         // the receipt carries.
         assert_eq!(plan(&prov(Channel::Nix)).human, "nix profile upgrade fresh");
+        // release.yml installs the tap formula as `Formula/fresh.rb`
+        // (`class Fresh`), so the formula is `fresh`. Naming the package
+        // instead gave `brew upgrade fresh-editor`, which errors with
+        // "No available formula with the name".
+        assert_eq!(plan(&prov(Channel::Homebrew)).human, "brew upgrade fresh");
     }
 
     #[test]

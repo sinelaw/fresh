@@ -238,8 +238,12 @@ fn package_update(
 
     let bytes = fetch_and_verify(&url)?;
 
+    // Staged in a directory only this user can enter: the package tool reads
+    // this path as root, so a world-writable location would let anyone swap the
+    // verified bytes for their own between here and the install.
     let file_name = url.rsplit('/').next().unwrap_or("fresh-update-package");
-    let path = std::env::temp_dir().join(file_name);
+    let dir = staging_dir()?;
+    let path = dir.join(file_name);
     std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     println!("Downloaded to {}", path.display());
 
@@ -250,13 +254,17 @@ fn package_update(
     let needs_privilege = fresh_update::plan(prov).needs_privilege;
 
     if opts.print_command || !opts.yes {
+        // The package stays on disk for the user to install; the directory is
+        // theirs alone, so leaving it is safe. Say where it is.
         println!();
         show_command(&elevated(&cmd, needs_privilege));
         return Ok(UpdateStatus::ActionRequired);
     }
 
     println!();
-    run_install(&cmd, needs_privilege).map(|()| UpdateStatus::Done)
+    let result = run_install(&cmd, needs_privilege).map(|()| UpdateStatus::Done);
+    let _ = std::fs::remove_dir_all(&dir);
+    result
 }
 
 /// Print a command for the user to run, rather than running it.
@@ -423,12 +431,65 @@ fn fetch_and_extract_binary(url: &str, bin_name: &str) -> Result<Vec<u8>, String
 
 /// Download a URL fully into memory (self-update assets are a few MB).
 fn download(url: &str) -> Result<Vec<u8>, String> {
-    let dir = std::env::temp_dir();
-    let tmp = dir.join(format!("fresh-update-dl-{}", std::process::id()));
-    http::download_to_file(url, &tmp)?;
+    let dir = staging_dir()?;
+    let tmp = dir.join("payload");
+    let status = http::download_to_file(url, &tmp)?;
+    if !(200..300).contains(&status) {
+        // `download_to_file` is built with `http_status_as_error(false)` and
+        // writes nothing on a non-2xx, so without this the next line reports a
+        // missing file instead of the actual HTTP status.
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(format!("HTTP {status} fetching {url}"));
+    }
     let bytes = std::fs::read(&tmp).map_err(|e| format!("read download: {e}"));
-    let _ = std::fs::remove_file(&tmp);
+    let _ = std::fs::remove_dir_all(&dir);
     bytes
+}
+
+/// Create a fresh, private directory to stage downloaded artifacts in.
+///
+/// Everything we download is eventually handed to another program by path —
+/// and for `.deb`/`.rpm` that program runs under `sudo`. Anything able to
+/// write to that path between our checksum check and the package tool's read
+/// gets its bytes installed as root. Staging under a predictable name in a
+/// world-writable `/tmp` made that a one-liner: pre-create the file (or point a
+/// symlink at something else), wait out the sudo prompt, swap the contents.
+///
+/// So: a directory nothing else can enter. `DirBuilder::create` fails rather
+/// than reusing an existing path, and on Unix the 0700 mode is applied at
+/// creation, so there is no window where the directory exists and is writable
+/// by anyone else. If an attacker pre-creates every name we try we fail
+/// closed — a denial of service, not a compromise.
+fn staging_dir() -> Result<PathBuf, String> {
+    let base = std::env::temp_dir();
+    let pid = std::process::id();
+    for attempt in 0..16u32 {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+            ^ attempt.wrapping_mul(0x9E37_79B9);
+        let dir = base.join(format!("fresh-update-{pid}-{nonce:08x}"));
+        match create_private_dir(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("create staging dir {}: {e}", dir.display())),
+        }
+    }
+    Err("could not create a private staging directory".to_string())
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new().mode(0o700).create(dir)
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    // The per-user temp directory on Windows is not world-writable, and
+    // `create` still refuses to reuse an existing path.
+    std::fs::DirBuilder::new().create(dir)
 }
 
 /// Fetch the `.sha256` sidecar and verify `bytes` against it. Fail-closed.

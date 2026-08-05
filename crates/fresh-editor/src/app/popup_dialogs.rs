@@ -1212,11 +1212,21 @@ impl Editor {
     /// been fetched, and re-running it would just download the same bytes again.
     pub fn show_update_action_required_popup(&mut self) {
         use crate::view::popup::PopupListItem;
-        let items =
-            vec![
-                PopupListItem::new(format!("    {}", t!("update.choice_show_pending_command")))
-                    .with_data("show_log".to_string()),
-            ];
+        let version = self.latest_version().unwrap_or("").to_string();
+        // "Run it for me after all" has to be offered here. Nothing resets the
+        // phase back to `Idle`, so without this row a user who picked "Show the
+        // command" and then changed their mind had no way back to an update
+        // short of restarting the editor — a dead end reachable in one click
+        // from a choice the popup itself offers.
+        let items = vec![
+            PopupListItem::new(format!("    {}", t!("update.choice_show_pending_command")))
+                .with_data("show_log".to_string()),
+            PopupListItem::new(format!(
+                "    {}",
+                t!("update.choice_update_now", version = version)
+            ))
+            .with_data("update".to_string()),
+        ];
         self.push_update_menu(
             t!("update.action_required_title").to_string(),
             Some(t!("update.body_action_required").to_string()),
