@@ -989,7 +989,7 @@ impl TextBuffer {
         .entered();
 
         self.persistence
-            .diff_since_saved(&self.piece_tree, &self.buffers)
+            .diff_since_saved(&self.piece_tree, &self.buffers, self.version)
     }
 
     /// Convert a byte offset to a line/column position
@@ -3410,6 +3410,12 @@ impl TextBuffer {
     }
 
     // Test helper methods
+
+    /// Test-only access to persistence internals (diff-memo assertions).
+    #[cfg(test)]
+    pub(crate) fn persistence_for_test(&self) -> &Persistence {
+        &self.persistence
+    }
 
     /// Create a buffer from a string for testing
     #[cfg(test)]
