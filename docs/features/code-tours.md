@@ -22,7 +22,7 @@ An agent running in your workspace can write the tour *and* open it, so it appea
 
 Generating a tour on the spot rather than maintaining one has two advantages. It is current, because it is written against the code as it is now rather than as it was when someone last updated the file. And it is written for whoever asked: you can ask for more or less detail, for a focus on the parts you do not know, or for a tour of only the code a particular change touched.
 
-Tours that pay off repeatedly are worth keeping — an onboarding tour of the main request path, an architecture tour that ships with the repository. Check those into source control like any other file. Both routes produce the same thing.
+Tours that pay off repeatedly are worth keeping — an onboarding tour of the main request path, an architecture tour that ships with the repository. Check those into source control like any other file; a manifest at the project root, or a `.tours` directory for a set of them, are the conventional homes, and are also where the CodeTour extension puts its own. Both routes produce the same thing.
 
 ## What tours are good for
 
@@ -33,9 +33,13 @@ Tours that pay off repeatedly are worth keeping — an onboarding tour of the ma
 
 ## Opening one
 
-From the command palette, ask Fresh to find the tours in this project, or point it at a tour file directly. Tours checked into a repository in the usual places are found automatically; if there is more than one, you get a picker.
+Ask for a tour from the command palette and Fresh opens a file browser at the project root, with hidden files shown — tours are dotfiles, so that is where they are. Pick the one you want.
 
-![The workspace tour picker listing four tours found in the repository](/images/code-tour-picker.png)
+It deliberately does not pick for you. A repository can hold several tours, and opening a guess is worse than one more keystroke.
+
+![The file browser showing the tour manifests in a project's .tours directory](/images/code-tour-picker.png)
+
+*Hidden files are shown for you, so the manifests are one keystroke away wherever the project keeps them.*
 
 ## Moving through a tour
 
