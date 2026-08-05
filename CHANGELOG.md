@@ -30,6 +30,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Tour: Load Definition... can actually reach tour files again** - the picker used to open in the active file's directory with hidden files off, and tour files are dotfiles at the workspace root (`.fresh-tour.json`, `.tours/*.tour`) - so the browser showed nothing pickable. It now anchors at the workspace root with hidden files visible, and a name typed there resolves root-relative. Plugins get the same control: `editor.pickFile(label, directory?, showHidden?)`.
 * **The tour panel's mouse wheel scrolls the list you point at** - the wheel used to scroll the Steps rail no matter where the pointer was, so the description column could not be scrolled by mouse at all. Applies to every widget panel with more than one list.
 * **Overflowing lists in dock panels show a scrollbar** - the tour's Steps rail and description column scrolled with no visual indication there was more; panels mounted into a split never painted list scrollbars.
 * **A tour's selection highlight stays inside the panel** - the selected step and description rows used to paint a stray block of highlight at the right edge of the screen, past the panel border.

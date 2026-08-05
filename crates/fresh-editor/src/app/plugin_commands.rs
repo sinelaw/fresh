@@ -2234,10 +2234,14 @@ impl Editor {
     /// Handle StartFilePickAsync (for the editor.pickFile() API): open
     /// the native Open File browser — same anchoring and navigation as
     /// Ctrl+O — but deliver the confirmed path to the plugin callback
-    /// instead of opening it as a buffer.
+    /// instead of opening it as a buffer. The caller may pin the anchor
+    /// directory and force hidden files visible, for pickers whose
+    /// target files the defaults would put out of reach.
     pub(super) fn handle_start_file_pick_async(
         &mut self,
         label: String,
+        directory: Option<String>,
+        show_hidden: Option<bool>,
         callback_id: fresh_core::api::JsCallbackId,
     ) {
         use crate::view::prompt::PromptType;
@@ -2247,7 +2251,15 @@ impl Editor {
         self.start_prompt(label, PromptType::OpenFile);
         self.active_window_mut().pending_file_pick_callback = Some(callback_id);
         self.prefill_open_file_prompt();
-        self.init_file_open_state();
+        let dir_override = directory.map(|d| {
+            let path = std::path::PathBuf::from(d);
+            if path.is_absolute() {
+                path
+            } else {
+                self.working_dir().join(path)
+            }
+        });
+        self.init_file_open_state_at(dir_override, show_hidden);
     }
 
     /// Handle StartPromptAsync command (for editor.prompt() API)

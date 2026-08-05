@@ -1280,10 +1280,18 @@ editor.on("action_popup_result", (data) => {
 // ============================================================================
 
 async function tour_load(): Promise<void> {
-  // The editor's native Open File browser, in pick mode: anchored to the
-  // window's working tree with Backspace-up / Tab-descend navigation, it
-  // resolves with the chosen path instead of opening a buffer.
-  const path = await editor.pickFile(editor.t("prompt.path") + " ");
+  // The editor's native Open File browser, in pick mode: Backspace-up /
+  // Tab-descend navigation, resolving with the chosen path instead of
+  // opening a buffer. Anchored at the workspace root with hidden files
+  // forced visible — tour files are dotfiles (`.fresh-tour.json`,
+  // `.tours/*.tour`), so the default anchor (the active file's
+  // directory, dotfiles hidden) shows a browser with nothing pickable
+  // in it.
+  const path = await editor.pickFile(
+    editor.t("prompt.path") + " ",
+    editor.getCwd(),
+    true,
+  );
   if (path) await openTour(path);
 }
 registerHandler("tour_load", tour_load);
