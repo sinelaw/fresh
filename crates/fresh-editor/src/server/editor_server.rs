@@ -1551,7 +1551,15 @@ impl EditorServer {
                 Ok(true)
             }
             Event::Paste(text) => {
-                editor.paste_text(text);
+                // Mirror the local terminal loop (`Ev::Paste` in
+                // app/lifecycle.rs): when a floating modal / dock owns the
+                // keyboard, a client's bracketed paste belongs to its focused
+                // text field, not the buffer underneath. Without this, pasting
+                // into the New-Session dialog in daemon mode dumped the text
+                // into the obscured buffer.
+                if !editor.paste_bracketed_into_focused_panel(&text) {
+                    editor.paste_text(text);
+                }
                 Ok(true)
             }
             _ => Ok(false),
@@ -1718,6 +1726,117 @@ mod wave_dismiss_tests {
         let mut server = EditorServer::new(config).expect("EditorServer::new");
         server.initialize_editor().expect("initialize_editor");
         server
+    }
+
+    /// A bracketed paste from a client must land in the focused floating-panel
+    /// text field, not in the buffer obscured behind the modal — the same
+    /// routing the local terminal loop applies (`Ev::Paste` in
+    /// app/lifecycle.rs). Regression: the daemon's `handle_event` called
+    /// `paste_text` directly, so pasting into the New-Session dialog in an
+    /// attached client dumped the text into the underlying buffer.
+    #[test]
+    fn bracketed_paste_routes_to_focused_panel_in_daemon_mode() {
+        use std::collections::HashMap;
+
+        let mut server = server_with_editor("paste-panel");
+        let editor = server.editor_mut().expect("editor present");
+
+        // Mount a centered floating panel whose focused widget is a Text
+        // field — the minimal stand-in for the New-Workspace dialog. The
+        // panel renders into its own (here: nonexistent) buffer, NOT the
+        // active one, mirroring production; rendering into the active
+        // buffer would make the leak assertion below see the panel's own
+        // re-render of the pasted value.
+        let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        let buffer_id = crate::model::event::BufferId(9999);
+        let spec = fresh_core::api::WidgetSpec::Text {
+            value: String::new(),
+            cursor_byte: 0,
+            focused: true,
+            label: String::new(),
+            placeholder: None,
+            rows: 1,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: true,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: false,
+            markdown: false,
+            key: Some("field".to_string()),
+        };
+        editor.widget_registry.mount(
+            panel_key.clone(),
+            buffer_id,
+            spec,
+            Vec::new(),
+            HashMap::new(),
+            "field".to_string(),
+            vec!["field".to_string()],
+            Vec::new(),
+        );
+        editor.floating_widget_panel = Some(crate::app::FloatingWidgetState {
+            panel_key: panel_key.clone(),
+            width_pct: 50,
+            height_pct: 50,
+            placement: crate::app::PanelPlacement::Centered,
+            focused: true,
+            entries: Vec::new(),
+            focus_cursor: None,
+            embeds: Vec::new(),
+            overlays: Vec::new(),
+            scroll_regions: Vec::new(),
+            scrollbar_tracks: Vec::new(),
+            scrollbar_mouse: Default::default(),
+            scrollbar_drag_key: None,
+            last_inner_rect: None,
+            scrollbar_hover_zones: Vec::new(),
+            scrollbar_zone_hovered: false,
+            scrollbar_flash_until: None,
+            fullscreen: false,
+            focus_marker: false,
+            title: None,
+            closable: false,
+            close_button_rect: None,
+            hovered_widget_key: String::new(),
+            dropdown_popup: None,
+            dropdown_popup_hits: Vec::new(),
+            dropdown_popup_rect: None,
+        });
+
+        let consumed = server
+            .handle_event(Event::Paste("SERVER_PASTE".to_string()))
+            .expect("handle_event");
+        assert!(consumed, "a paste should request a re-render");
+
+        let editor = server.editor().expect("editor present");
+        let panel = editor
+            .widget_registry
+            .get(&panel_key)
+            .expect("panel still mounted");
+        match panel.instance_states.get("field") {
+            Some(crate::widgets::WidgetInstanceState::Text { editor: text, .. }) => {
+                assert_eq!(
+                    text.value(),
+                    "SERVER_PASTE",
+                    "the paste must land in the focused Text widget"
+                );
+            }
+            other => panic!(
+                "focused field has no Text instance state: {:?}",
+                other.is_some()
+            ),
+        }
+        let buffer = editor.active_state().buffer.to_string().unwrap_or_default();
+        assert!(
+            !buffer.contains("SERVER_PASTE"),
+            "the paste must not leak into the buffer behind the modal, got: {:?}",
+            buffer
+        );
     }
 
     /// A key press while the wave is running stops it and is consumed — it does
