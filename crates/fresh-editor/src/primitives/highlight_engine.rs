@@ -2178,6 +2178,61 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_toml_multiline_array_strings_stay_strings() {
+        let registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        let mut engine = HighlightEngine::for_file(Path::new("config.toml"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "cmdline = [\n",
+            "  \"USER=root\",\n",
+            "  \"PATH=/bin:/benchmark\",\n",
+            "  \"init=/init\",\n",
+            "]\n",
+            "initramfs = \"test/initramfs/build/initramfs.cpio.gz\"\n",
+            "args = \"$(./tools/qemu_args.sh test)\"\n",
+            "package.metadata = { enabled = true, label = \"v1.2\" }\n",
+            "released = 2026-08-02\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for needle in [
+            "USER=root",
+            "/benchmark",
+            "init=/init",
+            ".cpio.gz",
+            "./tools",
+        ] {
+            let position = content.find(needle).unwrap();
+            assert_eq!(
+                engine.category_at_position(position),
+                Some(HighlightCategory::String),
+                "{needle:?} should be highlighted as part of its TOML string"
+            );
+        }
+
+        for needle in ["package.metadata", "enabled", "label"] {
+            let position = content.find(needle).unwrap();
+            assert_eq!(
+                engine.category_at_position(position),
+                Some(HighlightCategory::Property),
+                "{needle:?} should be highlighted as a TOML key"
+            );
+        }
+        assert_eq!(
+            engine.category_at_position(content.find("true").unwrap()),
+            Some(HighlightCategory::Number)
+        );
+        assert_eq!(
+            engine.category_at_position(content.find("2026-08-02").unwrap()),
+            Some(HighlightCategory::Constant)
+        );
+    }
+
     /// A recognized Markdown fence language must be highlighted with that
     /// language's grammar instead of the uniform `markup.raw` string color.
     #[test]
