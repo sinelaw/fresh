@@ -14,9 +14,9 @@
 //!
 //! This exists because plugins can't afford to implement diffs in
 //! QuickJS: a dense LCS over two ~5k-line texts was slow enough there
-//! that `live_diff.ts` refused to diff at all past a DP-cell cap
-//! (`live-diff-old-file-refusal-repro.md`). Native patience runs the
-//! same input in microseconds-to-milliseconds.
+//! that `live_diff.ts` refused to diff at all past a DP-cell cap.
+//! Native patience runs the same input in
+//! microseconds-to-milliseconds.
 
 use crate::api::LineDiffHunk;
 use std::collections::HashMap;
@@ -470,10 +470,10 @@ mod tests {
         }
     }
 
-    /// The scenario from `live-diff-old-file-refusal-repro.md`, at the
-    /// same scale: two ~5-6k-line texts sharing almost nothing. The old
-    /// dense-LCS plugin implementation refused this input (24.9M DP
-    /// cells > its 16M cap); the native path must handle it outright.
+    /// The old-checkout refusal scenario, at the same scale: two ~5-6k-line
+    /// texts sharing almost nothing. The old dense-LCS plugin
+    /// implementation refused this input (24.9M DP cells > its 16M cap);
+    /// the native path must handle it outright.
     /// No timing assertions (see CONTRIBUTING) — a quadratic regression
     /// would show up as an external test timeout.
     #[test]

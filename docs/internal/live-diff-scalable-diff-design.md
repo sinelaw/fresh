@@ -12,9 +12,8 @@ synchronous rather than promise-based: it executes on the plugin
 runtime's own thread — the same thread that previously ran the JS DP —
 so a native sub-millisecond call needs no async plumbing, and the editor
 loop was never involved.
-Motivated by: `live-diff-old-file-refusal-repro.md` (checkout of
-`HEAD~1200`'s `main.rs` → 24.9M DP cells → `lineDiff` bails → plugin
-renders nothing).
+Motivated by a reproduced refusal: checking out `HEAD~1200`'s `main.rs`
+→ 24.9M DP cells → `lineDiff` bails → plugin renders nothing.
 
 ## Why this happens at all
 
