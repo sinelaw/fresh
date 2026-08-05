@@ -1000,7 +1000,8 @@ impl TextBuffer {
     /// Read a byte range out of the saved snapshot. `None` when any piece
     /// in the range is unreadable (unloaded chunk data).
     pub fn extract_saved_range(&self, start: usize, end: usize) -> Option<Vec<u8>> {
-        self.persistence.extract_saved_range(start, end, &self.buffers)
+        self.persistence
+            .extract_saved_range(start, end, &self.buffers)
     }
 
     /// Convert a byte offset to a line/column position

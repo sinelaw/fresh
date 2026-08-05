@@ -143,9 +143,7 @@ pub fn diff_contents(old: &BaselineContent, new: &BaselineContent) -> DiffBaseli
 /// line diff on that region alone. This is what removes the old
 /// 64 KiB verify-cap semantics split: the answer is content-based at
 /// every size, for the cost of diffing the edited region, not the file.
-pub fn diff_against_saved(
-    buffer: &mut crate::model::buffer::TextBuffer,
-) -> DiffBaselineResult {
+pub fn diff_against_saved(buffer: &mut crate::model::buffer::TextBuffer) -> DiffBaselineResult {
     let structural = buffer.diff_since_saved();
     if structural.equal {
         return DiffBaselineResult {
@@ -161,8 +159,10 @@ pub fn diff_against_saved(
     // Changed span on the new side; empty ranges with !equal means the
     // structural diff couldn't localize (defensive) — treat the whole
     // buffer as the region.
-    let (span_start, span_end) = match (structural.byte_ranges.first(), structural.byte_ranges.last())
-    {
+    let (span_start, span_end) = match (
+        structural.byte_ranges.first(),
+        structural.byte_ranges.last(),
+    ) {
         (Some(first), Some(last)) => (first.start, last.end.min(new_len)),
         _ => (0, new_len),
     };

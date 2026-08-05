@@ -6895,11 +6895,13 @@ impl JsEditorApi {
         baseline_id: u64,
     ) -> u64 {
         let id = self.alloc_request_id();
-        let _ = self.command_sender.send(PluginCommand::DiffAgainstBaseline {
-            buffer_id: BufferId(buffer_id as usize),
-            baseline_id,
-            callback_id: JsCallbackId::new(id),
-        });
+        let _ = self
+            .command_sender
+            .send(PluginCommand::DiffAgainstBaseline {
+                buffer_id: BufferId(buffer_id as usize),
+                baseline_id,
+                callback_id: JsCallbackId::new(id),
+            });
         id
     }
 
@@ -6962,10 +6964,12 @@ impl JsEditorApi {
     #[qjs(rename = "_refreshDiffBaselineStart")]
     pub fn refresh_diff_baseline_start(&self, _ctx: rquickjs::Ctx<'_>, baseline_id: u64) -> u64 {
         let id = self.alloc_request_id();
-        let _ = self.command_sender.send(PluginCommand::RefreshDiffBaseline {
-            baseline_id,
-            callback_id: JsCallbackId::new(id),
-        });
+        let _ = self
+            .command_sender
+            .send(PluginCommand::RefreshDiffBaseline {
+                baseline_id,
+                callback_id: JsCallbackId::new(id),
+            });
         id
     }
 

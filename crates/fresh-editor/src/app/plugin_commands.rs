@@ -2683,10 +2683,10 @@ impl Editor {
                 }
             }
             other => {
-                self.plugin_manager.read().unwrap().reject_callback(
-                    callback_id,
-                    format!("unknown baseline kind: {other:?}"),
-                );
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, format!("unknown baseline kind: {other:?}"));
                 return;
             }
         };
@@ -2816,7 +2816,11 @@ impl Editor {
                     .unwrap()
                     .resolve_callback(callback, json);
             }
-            Err(e) => self.plugin_manager.read().unwrap().reject_callback(callback, e),
+            Err(e) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback, e),
         }
     }
 
@@ -2905,7 +2909,8 @@ impl Editor {
                         .buffer
                         .extract_saved_range(0, total)
                         .ok_or_else(|| "saved snapshot not readable".to_string())?;
-                    let content = BaselineContent::new(String::from_utf8_lossy(&bytes).into_owned());
+                    let content =
+                        BaselineContent::new(String::from_utf8_lossy(&bytes).into_owned());
                     Ok(slice_lines(&content, &ranges))
                 }
                 _ => {
@@ -2934,17 +2939,22 @@ impl Editor {
     }
 
     /// Reload a baseline's content (HEAD moved, file rewritten on disk).
-    pub(super) fn handle_refresh_diff_baseline(&mut self, baseline_id: u64, callback_id: JsCallbackId) {
+    pub(super) fn handle_refresh_diff_baseline(
+        &mut self,
+        baseline_id: u64,
+        callback_id: JsCallbackId,
+    ) {
         use super::diff_baselines::BaselineSpec;
         let spec = match self.diff_baselines.inner.lock() {
             Ok(inner) => inner.entries.get(&baseline_id).map(|e| e.spec.clone()),
             Err(_) => None,
         };
         match spec {
-            None => self.plugin_manager.read().unwrap().reject_callback(
-                callback_id,
-                format!("unknown baseline id {baseline_id}"),
-            ),
+            None => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, format!("unknown baseline id {baseline_id}")),
             // Saved tracks the live snapshot by construction — nothing to
             // reload.
             Some(BaselineSpec::Saved) => self
