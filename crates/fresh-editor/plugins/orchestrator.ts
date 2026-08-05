@@ -963,11 +963,15 @@ function configuredHideTrivial(): boolean {
 // lists every project's sessions, so the organisation is global, not
 // per-project) and persist across restarts.
 //
-// A session is assigned by its *canonical root path*, not its numeric
-// window id: the id churns (a discovered on-disk worktree carries a
-// synthetic negative id that becomes a positive window id the moment it
-// is opened) and isn't stable run-to-run, whereas the root is the
-// session's durable identity (§3 of orchestrator-sessions.md).
+// A session is assigned by a durable key, not its numeric window id:
+// the id churns (a discovered on-disk worktree carries a synthetic
+// negative id that becomes a positive window id the moment it is
+// opened) and isn't stable run-to-run. The durable key is the window's
+// stable id when the host reports one (`stableIdKey` — co-tenant
+// workspaces share a root, so a per-root key would file them all
+// together), falling back to the canonical root path for windowless
+// rows and entries written before stable-id keying (§3 of
+// orchestrator-sessions.md).
 // =============================================================================
 
 interface DockFolder {
@@ -1065,9 +1069,27 @@ function sessionNodeKey(id: number): string {
   return SESSION_NODE_PREFIX + id;
 }
 
-// The durable key a session is filed under (see the section header).
-function sessionAssignKey(s: AgentSession): string {
-  return normRoot(s.root);
+// Durable store key for a workspace-scoped entry (manual name, folder
+// assignment). Keyed by the host's stable id: co-tenant workspaces (a
+// tab extracted to a new workspace) share one root, so a per-root key
+// would apply the entry to all of them at once. The bare root remains
+// both the legacy key (entries written before stable-id keying) and the
+// only key available for rows without a live window (discovered
+// worktrees).
+function stableIdKey(stableId: string): string {
+  return "id:" + stableId;
+}
+
+// Whether another live workspace co-tenants `s`'s root. When one does, a
+// legacy per-root store entry may still describe *that* workspace, so
+// writers must leave it alone — touching it is the "renaming the
+// extracted workspace renamed the original too" bug, and its
+// move-to-folder twin.
+function hasLiveCoTenant(s: AgentSession): boolean {
+  const rootKey = normRoot(s.root);
+  return [...orchestratorSessions.values()].some(
+    (o) => o.id !== s.id && !o.discovered && o.id > 0 && normRoot(o.root) === rootKey,
+  );
 }
 
 function folderById(id: string): DockFolder | undefined {
@@ -1089,10 +1111,17 @@ function childFoldersOf(parent: string | null): DockFolder[] {
 
 // The folder a live session is filed under, or null when it is unfiled
 // or its folder was deleted out from under it (treated as top level).
+// The session's own stable-id entry wins; an empty string there is an
+// explicit "top level" (recorded when unfiling next to a co-tenant, so
+// the legacy per-root entry can't pull the row back into a folder).
+// Only a session with no entry of its own falls back to the legacy /
+// windowless per-root entry.
 function folderOfSession(id: number): string | null {
   const s = orchestratorSessions.get(id);
   if (!s) return null;
-  const a = loadAssign()[sessionAssignKey(s)];
+  const assign = loadAssign();
+  const own = s.stableId ? assign[stableIdKey(s.stableId)] : undefined;
+  const a = own !== undefined ? own : assign[normRoot(s.root)];
   return a && folderById(a) ? a : null;
 }
 
@@ -1218,22 +1247,12 @@ function saveNames(): void {
   editor.setGlobalState(WORKSPACE_NAMES_KEY, (dockNames ?? {}) as unknown as object);
 }
 
-// Store key for a workspace's manual name. Keyed by the durable stable id
-// when the host reports one: co-tenant workspaces (a tab extracted to a
-// new workspace) share one root, so a per-root key would rename them all
-// at once. The bare root remains both the legacy key (entries written
-// before stable-id keying) and the only key available for rows without a
-// live window (discovered worktrees).
-function nameKeyById(stableId: string): string {
-  return "id:" + stableId;
-}
-
 // The manual name pinned to a workspace, if any: its own stable-id entry
 // first, else the legacy / windowless per-root entry.
 function customNameFor(stableId: string | undefined, root: string): string | undefined {
   const store = loadNames();
   if (stableId) {
-    const own = store[nameKeyById(stableId)];
+    const own = store[stableIdKey(stableId)];
     if (own) return own;
   }
   return store[normRoot(root)];
@@ -1270,21 +1289,17 @@ function renameWorkspace(s: AgentSession, name: string): void {
   const rootKey = normRoot(s.root);
   const store = loadNames();
   const trimmed = name.trim();
-  // Whether another live workspace co-tenants this root. If so, the
-  // legacy per-root entry (when one exists) still names *that* workspace,
-  // so it must be left alone — touching it is exactly the "renaming the
-  // extracted workspace renamed the original too" bug.
-  const hasCoTenant = [...orchestratorSessions.values()].some(
-    (o) => o.id !== s.id && !o.discovered && o.id > 0 && normRoot(o.root) === rootKey,
-  );
   if (s.stableId) {
-    const idKey = nameKeyById(s.stableId);
+    const idKey = stableIdKey(s.stableId);
     if (trimmed) store[idKey] = trimmed;
     else delete store[idKey];
     // Keep the per-root entry in step when it can only mean this
     // workspace, so root-keyed lookups (a later discovered row at this
     // root, a legacy workspace file) agree with the rename / clear.
-    if (!hasCoTenant) {
+    // With a co-tenant present the entry may still name *that*
+    // workspace, so it is left alone — touching it is exactly the
+    // "renaming the extracted workspace renamed the original too" bug.
+    if (!hasLiveCoTenant(s)) {
       if (trimmed) store[rootKey] = trimmed;
       else delete store[rootKey];
     }
@@ -1325,9 +1340,27 @@ function assignSessionToFolder(id: number, folderId: string | null): void {
   const s = orchestratorSessions.get(id);
   if (!s) return;
   const assign = loadAssign();
-  const key = sessionAssignKey(s);
-  if (folderId) assign[key] = folderId;
-  else delete assign[key];
+  const rootKey = normRoot(s.root);
+  if (s.stableId) {
+    const idKey = stableIdKey(s.stableId);
+    const coTenant = hasLiveCoTenant(s);
+    if (folderId) assign[idKey] = folderId;
+    // Unfiling next to a co-tenant records an explicit "top level" ("")
+    // rather than deleting the entry — a bare delete would fall back to
+    // the co-tenant's legacy per-root entry and the move wouldn't stick.
+    else if (coTenant) assign[idKey] = "";
+    else delete assign[idKey];
+    // Keep the per-root entry in step when it can only mean this
+    // workspace, so root-keyed lookups (a later discovered row at this
+    // root, a legacy workspace file) agree with the move.
+    if (!coTenant) {
+      if (folderId) assign[rootKey] = folderId;
+      else delete assign[rootKey];
+    }
+  } else {
+    if (folderId) assign[rootKey] = folderId;
+    else delete assign[rootKey];
+  }
   saveAssign();
 }
 
