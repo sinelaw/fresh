@@ -1356,31 +1356,27 @@ fn test_blank_line_in_range_keeps_band_under_indent_guides() {
 }
 
 /// The load prompt is the editor's native Open File browser in pick
-/// mode (`editor.pickFile`): anchored at the active file's directory —
-/// not the process cwd or the user's home — with Backspace walking up
-/// the tree, and Enter delivering the picked manifest to the plugin
-/// instead of opening it as a buffer.
+/// mode (`editor.pickFile`): anchored at the workspace root — where
+/// tour files live, not the active file's directory — with hidden
+/// files visible so the dotfile manifests are listed, and Enter
+/// delivering the picked manifest to the plugin instead of opening it
+/// as a buffer.
 #[test]
 fn test_load_prompt_is_the_native_file_browser() {
     let (_temp, project_root) = setup_tour_project();
     let mut harness = harness_in(&project_root, 160, 40);
 
     run_command(&mut harness, "Tour: Load Definition");
-    // Anchored where Open File anchors: the active file is src/main.rs,
-    // so the browser lists its siblings.
+    // Anchored at the workspace root: the manifests sitting beside
+    // src/ are listed directly — including the hidden .fresh-tour.json,
+    // which the config's dotfile default would filter out.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("tour file path") && s.contains("wide.rs")
+            s.contains("tour file path")
+                && s.contains("storage-tour.json")
+                && s.contains(".fresh-tour.json")
         })
-        .unwrap();
-
-    // Backspace on an empty filter walks up to the project root.
-    harness
-        .send_key(KeyCode::Backspace, KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .wait_until(|h| h.screen_to_string().contains("storage-tour.json"))
         .unwrap();
 
     // Confirm the manifest; the pick loads the tour, it does not open
