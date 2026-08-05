@@ -1,4 +1,8 @@
-//! Native line-level diff for the `computeLineDiff` plugin API.
+//! Native line-level diff engine.
+//!
+//! Shared by the `computeLineDiff` plugin API and the host-side diff
+//! service; lives in `fresh-core` so both the editor and the plugin
+//! runtime consume one implementation.
 //!
 //! A dependency-free patience diff: lines are interned to integer ids,
 //! unique-in-both lines anchor the diff via a longest-increasing-
@@ -14,7 +18,7 @@
 //! (`live-diff-old-file-refusal-repro.md`). Native patience runs the
 //! same input in microseconds-to-milliseconds.
 
-use fresh_core::api::LineDiffHunk;
+use crate::api::LineDiffHunk;
 use std::collections::HashMap;
 
 /// Anchor-free chunks up to this many DP cells get a precise dense-LCS
@@ -37,25 +41,43 @@ const MAX_PATIENCE_DEPTH: u32 = 32;
 /// change on the last line is reported as a (1-line) hunk rather than
 /// hidden, the same way git reports "\ No newline at end of file".
 pub fn compute_line_diff(old_text: &str, new_text: &str) -> Vec<LineDiffHunk> {
-    let old_lines: Vec<&str> = old_text.split_inclusive('\n').collect();
-    let new_lines: Vec<&str> = new_text.split_inclusive('\n').collect();
+    let mut interner = LineInterner::default();
+    let old_ids: Vec<u32> = old_text
+        .split_inclusive('\n')
+        .map(|l| interner.intern(l))
+        .collect();
+    let new_ids: Vec<u32> = new_text
+        .split_inclusive('\n')
+        .map(|l| interner.intern(l))
+        .collect();
+    diff_interned_lines(&old_ids, &new_ids)
+}
 
-    // Intern lines to u32 ids so every comparison below is an integer
-    // compare, not a string compare.
-    let mut interner: HashMap<&str, u32> = HashMap::new();
-    let mut old_ids: Vec<u32> = Vec::with_capacity(old_lines.len());
-    for &line in &old_lines {
-        let next = interner.len() as u32;
-        old_ids.push(*interner.entry(line).or_insert(next));
-    }
-    let mut new_ids: Vec<u32> = Vec::with_capacity(new_lines.len());
-    for &line in &new_lines {
-        let next = interner.len() as u32;
-        new_ids.push(*interner.entry(line).or_insert(next));
-    }
+/// Interns lines to `u32` ids so every comparison in the diff is an
+/// integer compare, not a string compare. Callers that don't hold both
+/// sides as contiguous strings (e.g. a host service iterating two
+/// buffers' lines) intern each side themselves and call
+/// [`diff_interned_lines`]. Equal ids must mean equal line content
+/// *including* any line terminator, per the tokenization contract on
+/// [`compute_line_diff`].
+#[derive(Default)]
+pub struct LineInterner<'a> {
+    map: HashMap<&'a str, u32>,
+}
 
+impl<'a> LineInterner<'a> {
+    pub fn intern(&mut self, line: &'a str) -> u32 {
+        let next = self.map.len() as u32;
+        *self.map.entry(line).or_insert(next)
+    }
+}
+
+/// Diff two pre-interned line-id sequences. Same output contract as
+/// [`compute_line_diff`]: hunks in increasing order, equal regions
+/// unreported, never refuses an input.
+pub fn diff_interned_lines(old_ids: &[u32], new_ids: &[u32]) -> Vec<LineDiffHunk> {
     let mut hunks = Vec::new();
-    diff_range(&old_ids, &new_ids, 0, 0, 0, &mut hunks);
+    diff_range(old_ids, new_ids, 0, 0, 0, &mut hunks);
     hunks
 }
 

@@ -2379,7 +2379,7 @@ impl JsEditorApi {
     }
 
     /// Line-level diff of two texts (native patience diff; see
-    /// `crate::diff`). Returns hunks of differing line ranges in
+    /// `fresh_core::diff`). Returns hunks of differing line ranges in
     /// increasing order; equal regions are not reported. Lines are
     /// 0-indexed `\n`-terminated segments (a final unterminated segment
     /// counts as a line), matching the `text.split("\n")`-and-drop-
@@ -2396,7 +2396,7 @@ impl JsEditorApi {
         old_text: String,
         new_text: String,
     ) -> rquickjs::Result<Value<'js>> {
-        let hunks = crate::diff::compute_line_diff(&old_text, &new_text);
+        let hunks = fresh_core::diff::compute_line_diff(&old_text, &new_text);
         rquickjs_serde::to_value(ctx, &hunks)
             .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
     }
