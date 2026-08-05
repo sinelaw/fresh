@@ -1886,26 +1886,36 @@ fn test_codetour_manifest_loads_and_converts() {
 }
 
 // ---------------------------------------------------------------------------
-// Workspace tour discovery
+// Workspace tour command browses — it never opens a tour on its own
 // ---------------------------------------------------------------------------
 
-/// "Tour: Open Workspace Tour..." finds tours in the well-known locations
-/// without being handed a path. With exactly one tour in the workspace —
-/// a CodeTour file in `.tours/`, nothing at the root — it opens directly,
-/// no picker in between. Fails on the pre-discovery plugin, where the
-/// command does not exist.
+/// "Tour: Open Workspace Tour..." opens the file browser and lets the
+/// user choose — it must NOT auto-open a tour it found on its own, even
+/// when there is exactly one: an opinionated guess that opens the wrong
+/// manifest is worse than a browser that starts where tour files live.
+/// Fails on the auto-open behavior, where the lone `.tours/` manifest
+/// opened immediately and no browser ever appeared.
 #[test]
-fn test_workspace_discovery_opens_lone_codetour() {
+fn test_workspace_tour_command_browses_instead_of_auto_opening() {
     let (_temp, project_root) = setup_codetour_project();
     let mut harness = harness_in(&project_root, 160, 48);
 
     run_command(&mut harness, "Tour: Open Workspace Tour");
+    // The pick browser, anchored at the workspace root with hidden files
+    // visible — the `.tours/` directory is on screen, no tour is open.
     harness
         .wait_until(|h| {
             let s = h.screen_to_string();
-            s.contains("*Tour: CT Getting Started*") && s.contains("Welcome aboard")
+            s.contains("tour file path") && s.contains(".tours")
         })
         .unwrap();
+    assert!(
+        !harness
+            .screen_to_string()
+            .contains("*Tour: CT Getting Started*"),
+        "the command must not open a tour without the user picking one\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }
 
 // ---------------------------------------------------------------------------
