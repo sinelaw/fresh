@@ -3748,8 +3748,14 @@ pub enum PluginCommand {
     /// The browser anchors where Open File does (the active file's
     /// directory, else the window's working directory), with the same
     /// navigation: Backspace up the tree, Tab to descend, hidden toggle.
+    /// `directory` overrides the anchor (relative paths resolve against
+    /// the working directory); `show_hidden` overrides the config's
+    /// dotfile default — a picker for files that *are* dotfiles (e.g.
+    /// `.fresh-tour.json`) is useless without it.
     StartFilePickAsync {
         label: String,
+        directory: Option<String>,
+        show_hidden: Option<bool>,
         callback_id: JsCallbackId,
     },
 

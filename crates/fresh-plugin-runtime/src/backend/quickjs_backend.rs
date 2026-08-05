@@ -4605,13 +4605,31 @@ impl JsEditorApi {
     /// with the same navigation: Backspace walks up the tree, Tab
     /// descends into directories, and typed input filters or resolves
     /// as a path. No buffer is opened — the path is only returned.
+    ///
+    /// `directory` anchors the browser somewhere else (a relative path
+    /// resolves against the window's working directory) and typed
+    /// relative input then resolves there too. `showHidden` overrides
+    /// the config's dotfile visibility for this pick — pass `true` when
+    /// the file being picked is itself a dotfile (a tour manifest, an
+    /// editorconfig), which the default would hide.
+    // `Opt<Option<..>>` like `set_prompt_suggestions`: `Opt` accepts the
+    // argument being omitted entirely, `Option` accepts an explicit
+    // `undefined`/`null`, so `pickFile(label)` keeps working unchanged.
     #[plugin_api(async_promise, js_name = "pickFile", ts_return = "string | null")]
     #[qjs(rename = "_pickFileStart")]
-    pub fn pick_file_start(&self, _ctx: rquickjs::Ctx<'_>, label: String) -> u64 {
+    pub fn pick_file_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        label: String,
+        directory: rquickjs::function::Opt<Option<String>>,
+        show_hidden: rquickjs::function::Opt<Option<bool>>,
+    ) -> u64 {
         let id = self.alloc_request_id();
 
         let _ = self.command_sender.send(PluginCommand::StartFilePickAsync {
             label,
+            directory: directory.0.flatten(),
+            show_hidden: show_hidden.0.flatten(),
             callback_id: JsCallbackId::new(id),
         });
 

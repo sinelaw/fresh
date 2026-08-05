@@ -3663,8 +3663,15 @@ interface EditorAPI {
 	* with the same navigation: Backspace walks up the tree, Tab
 	* descends into directories, and typed input filters or resolves
 	* as a path. No buffer is opened — the path is only returned.
+	* 
+	* `directory` anchors the browser somewhere else (a relative path
+	* resolves against the window's working directory) and typed
+	* relative input then resolves there too. `showHidden` overrides
+	* the config's dotfile visibility for this pick — pass `true` when
+	* the file being picked is itself a dotfile (a tour manifest, an
+	* editorconfig), which the default would hide.
 	*/
-	pickFile(label: string): Promise<string | null>;
+	pickFile(label: string, directory?: string | null, showHidden?: boolean | null): Promise<string | null>;
 	/**
 	* Start an interactive prompt.
 	* 

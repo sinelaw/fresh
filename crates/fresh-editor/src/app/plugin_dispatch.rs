@@ -933,8 +933,13 @@ impl Editor {
             } => {
                 self.handle_start_prompt_async(label, initial_value, callback_id);
             }
-            PluginCommand::StartFilePickAsync { label, callback_id } => {
-                self.handle_start_file_pick_async(label, callback_id);
+            PluginCommand::StartFilePickAsync {
+                label,
+                directory,
+                show_hidden,
+                callback_id,
+            } => {
+                self.handle_start_file_pick_async(label, directory, show_hidden, callback_id);
             }
             PluginCommand::AwaitNextKey { callback_id } => {
                 self.handle_await_next_key(callback_id);

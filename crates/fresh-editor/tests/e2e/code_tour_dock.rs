@@ -1907,3 +1907,44 @@ fn test_workspace_discovery_opens_lone_codetour() {
         })
         .unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// The Load Definition picker can actually reach tour files
+// ---------------------------------------------------------------------------
+
+/// Tour files are dotfiles at the workspace root (`.fresh-tour.json`,
+/// `.tours/*.tour`), but the pick browser used to open at the *active
+/// file's* directory with hidden files off — a picker in `src/` showing
+/// `main.rs` and nothing else, with every tour file in the workspace
+/// unreachable. The picker must anchor at the workspace root with hidden
+/// files visible, and a name typed there must resolve root-relative.
+/// Fails on the old anchoring: `.fresh-tour.json` never appears on
+/// screen, and the typed name resolved against `src/` and was rejected.
+#[test]
+fn test_load_definition_picker_reaches_hidden_tour_files() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 48);
+
+    run_command(&mut harness, "Tour: Load Definition");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("tour file path"))
+        .unwrap();
+    // The browser must list the workspace root's hidden tour manifest —
+    // the directory listing is async, so wait for the entry itself.
+    harness
+        .wait_until(|h| h.screen_to_string().contains(".fresh-tour.json"))
+        .unwrap();
+
+    // Selecting by name must work too: typed input resolves against the
+    // browser's directory, which is now the workspace root. (No hint-bar
+    // assertion here — at some pane heights the hint row sits below the
+    // fold; the tab plus a settled step is the proof the pick landed.)
+    harness.type_text(".fresh-tour.json").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("*Tour: Pipeline Tour*"))
+        .unwrap();
+    wait_for_step_settled(&mut harness);
+}
