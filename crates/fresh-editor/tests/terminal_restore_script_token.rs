@@ -23,7 +23,12 @@
 //! Own integration binary because it sets the process-global `XDG_DATA_HOME`
 //! to isolate workspace persistence, mirroring `terminal_restore_live.rs`.
 //! Skips when there is no PTY.
-#![cfg(target_os = "linux")]
+//!
+//! Gated on `plugins`: the grant under test *is* a plugin-API capability
+//! ("may drive this editor as a plugin would"), and the spawn path that hands
+//! it out is the plugin `createTerminal` command, which the trimmed
+//! no-plugins build doesn't compile at all.
+#![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
