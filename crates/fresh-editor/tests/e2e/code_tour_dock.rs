@@ -621,6 +621,74 @@ fn test_narrow_dock_folds_the_steps_rail() {
 // Teardown
 // ---------------------------------------------------------------------------
 
+/// Column of a tab's `×` close button on the editor split's tab bar.
+///
+/// Counts characters, not bytes: tab labels are separated by `×` and the
+/// surrounding chrome is multibyte, so a byte offset lands in the wrong
+/// column.
+fn tab_close_col(harness: &EditorTestHarness, tab_row: usize, label: &str) -> u16 {
+    let screen = harness.screen_to_string();
+    let line = screen.lines().nth(tab_row).expect("tab bar row");
+    let byte_idx = line
+        .find(label)
+        .unwrap_or_else(|| panic!("expected tab '{label}' on the tab bar\nScreen:\n{screen}"));
+    let start = line[..byte_idx].chars().count();
+    let rest: String = line.chars().skip(start).collect();
+    let x_at = rest
+        .chars()
+        .position(|c| c == '×')
+        .unwrap_or_else(|| panic!("expected a close button after '{label}'\nScreen:\n{screen}"));
+    (start + x_at) as u16
+}
+
+/// Closing a file the tour opened must not eject the tour panel into the
+/// editor split.
+///
+/// The tour panel lives in the Utility Dock and holds focus while you step
+/// through a tour. Clicking a file tab's `×` up in the editor first focuses
+/// that split — and that focus change used to record the *globally* active
+/// buffer (the dock's tour panel) in the editor split's tab-focus LRU. The
+/// close that followed then resolved its replacement buffer from that LRU and
+/// pulled the tour panel up into the editor split, where it rendered as a tab
+/// full of widget text beside the source files. Closing that tab and closing
+/// another file brought it straight back, because the stale LRU entry survived.
+#[test]
+fn test_closing_a_tour_opened_file_does_not_eject_the_panel() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+    // Step 2 opens a second file in the editor split; focus stays in the dock.
+    press_step_key(&mut harness, 'n', "Step 2 of 2");
+
+    let tab_row = row_of(&harness, "main.rs ×");
+    let col = tab_close_col(&harness, tab_row, "wide.rs");
+    harness.mouse_click(col, tab_row as u16).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Tab closed"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert_eq!(
+        screen.matches("*Tour: Pipeline Tour*").count(),
+        1,
+        "the tour panel belongs to the dock alone; closing a file must not \
+         make it a tab in the editor split\nScreen:\n{screen}"
+    );
+    assert!(
+        screen
+            .lines()
+            .nth(tab_row)
+            .is_some_and(|l| l.contains("main.rs")),
+        "expected the remaining file to be the editor split's tab\nScreen:\n{screen}"
+    );
+}
+
 /// `q` closes the tour: its dock tab goes away and the editor split is intact.
 #[test]
 fn test_q_closes_the_tour() {

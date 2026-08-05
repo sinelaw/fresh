@@ -510,9 +510,19 @@ impl SplitViewState {
     }
 
     /// Remove a buffer from this split's tabs and clean up its keyed state
+    ///
+    /// `focus_history` is this split's tab LRU, so it goes with the tab: a
+    /// buffer that is no longer a tab here must not stay a candidate for
+    /// "what should this split show next" (`resolve_close_replacement`).
+    /// Done here rather than at each call site because every one of them —
+    /// a tab closing, a phantom tab being dropped after a panel moves to its
+    /// own split, a buffer migrating to another window — means the same
+    /// thing, and the sites that forgot the second call are what let a dock
+    /// panel get pulled into the editor split.
     pub fn remove_buffer(&mut self, buffer_id: BufferId) {
         self.open_buffers
             .retain(|t| *t != TabTarget::Buffer(buffer_id));
+        self.remove_from_history(buffer_id);
         // Clean up keyed state (but never remove the active buffer's state)
         if buffer_id != self.active_buffer {
             self.keyed_states.remove(&buffer_id);

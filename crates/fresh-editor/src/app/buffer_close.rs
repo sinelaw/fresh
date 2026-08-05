@@ -505,8 +505,8 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .values_mut()
         {
+            // `remove_buffer` drops the tab and its focus-history entry.
             view_state.remove_buffer(id);
-            view_state.remove_from_history(id);
         }
     }
 
