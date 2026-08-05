@@ -10,7 +10,9 @@ Fresh can be driven from the outside while it is running. `fresh --cmd script ru
 
 The script runs to completion and is then forgotten. Whatever it created stays.
 
-> **Screenshot placeholder** — a terminal pane on the right running `fresh --cmd script run`, and the editor panes on the left rearranging as a result.
+![Searching the plugin API from a workspace terminal with fresh --cmd script api](/images/scripting-cmd-run.png)
+
+*The CLI runs inside the editor it drives: `script api` searching the API from the terminal pane at the bottom, the panes it can act on above.*
 
 ## Why this exists
 
@@ -123,7 +125,9 @@ return editor.describeWorkspace();
 - **Prompt** — an optional first message handed to the agent at launch.
 - **Teach agent the Fresh CLI** — on by default. Injects a system prompt that documents the script channel, with worked recipes.
 
-> **Screenshot placeholder** — the Run Agent dialog, agent dropdown open, "Run in: New workspace" selected, "Teach agent the Fresh CLI" checked.
+![The New Workspace dialog with claude selected, a start prompt, and Teach agent the Fresh CLI checked under Advanced](/images/scripting-run-agent-dialog.png)
+
+*The same dialog with **Run in** switched to a new workspace, and **Advanced** expanded to show the toggle and the branch fields.*
 
 The token is minted either way. **Teach agent the Fresh CLI** only controls whether the agent is *told* the capability is there. How the instruction is delivered depends on the agent:
 
@@ -146,7 +150,15 @@ These are all things you type into the chat you are already having with the agen
 
 The agent calls `describeWorkspace()` to see what is there, then `splitWindow` and `setSplitRatio` to build the arrangement, and reads the layout back to check it did what it said.
 
-> **Screenshot placeholder** — before and after: a single editor pane, then the three-pane arrangement the agent built.
+Before — the workspace as the agent found it, one file and the terminal it is running in:
+
+![One editor pane above a terminal pane running a script that reports the pane list](/images/scripting-layout-before.png)
+
+After — one `script run` later:
+
+![Three panes: queue.rs left, queue_test.rs right, the terminal along the bottom](/images/scripting-layout-after.png)
+
+*The script splits, opens both files, hands the keyboard back to the terminal, then reads the layout back — the JSON in the terminal is what it returned.*
 
 Layouts are worth asking for whenever the shape of the work changes: a wide diff and a narrow notes pane for review, four small panes for a refactor that touches four files, one big pane and a terminal for debugging.
 
@@ -158,7 +170,9 @@ The agent writes a `.fresh-tour.json` and opens it in the tour dock. You get a s
 
 This works the same way for a branch, a subsystem you have never read, or the code path behind a bug report.
 
-> **Screenshot placeholder** — the tour dock open below a source file, with the step's lines highlighted.
+![A tour authored by a script, open in the dock with the step's lines highlighted in the source above](/images/scripting-tour-handoff.png)
+
+*A tour written and opened by one `script run`: the step's range highlighted in `queue.rs`, the explanation beside the step list.*
 
 ### A second agent, working in the background
 
@@ -185,7 +199,9 @@ return editor.getPluginApi("orchestrator").listWorkspaces();
 
 which reports each workspace's branch, git state and whether its agent is `working` or `idle`.
 
-> **Screenshot placeholder** — the Orchestrator dock with three workspaces, one marked as working.
+![The Orchestrator dock listing four workspaces, one running claude and one running codex](/images/scripting-orchestrator-dock.png)
+
+*Each row is a workspace: its name, the agent running in it, its branch and its git state. The `*` marks the one whose agent is producing output right now.*
 
 ## Uses that have nothing to do with agents
 
