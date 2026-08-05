@@ -761,7 +761,10 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.debug_toggle_highlight",
         desc_key: "cmd.debug_toggle_highlight_desc",
         action: || Action::ToggleDebugHighlights,
-        contexts: &[Normal, FileExplorer, Terminal],
+        // Per-buffer, not editor-wide: `Window::toggle_debug_highlights` flips
+        // `debug_highlight_mode` on the *active buffer*, so it belongs with the
+        // other buffer-scoped settings and stays out of the explorer/terminal.
+        contexts: &[Normal],
         custom_contexts: &[],
     },
     // Rulers
@@ -1527,9 +1530,10 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
-    // Offered in Normal context only: a terminal whose process quit has already
-    // dropped out of Terminal context into read-only scrollback, which is
-    // exactly the state this command acts on.
+    // A terminal whose process quit has already dropped out of Terminal
+    // context into read-only scrollback — the `Normal` entry is what covers
+    // that state, which is exactly the one this command acts on. The other two
+    // are for reaching it from a sibling live terminal or the explorer.
     CommandDef {
         name_key: "cmd.restart_terminal",
         desc_key: "cmd.restart_terminal_desc",

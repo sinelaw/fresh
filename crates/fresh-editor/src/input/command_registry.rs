@@ -250,21 +250,37 @@ impl CommandRegistry {
                 return true;
             }
 
+            // A plugin command that opted into `terminalBypass` runs wherever
+            // the keyboard is — that opt-in is the whole point of the flag.
+            if cmd.terminal_bypass
+                && (matches!(current_context, KeyContext::Terminal)
+                    || current_context.allows_ui_fallthrough())
+            {
+                return true;
+            }
+
             // Focus-independent actions stay available even when the keyboard
             // is owned by a non-editing surface. A terminal (or the explorer /
             // dock / a plugin mode) still lets these actions run from their
-            // keybinding — `is_terminal_ui_action` is exactly that allowlist,
-            // and `terminal_bypass` is its plugin-declared counterpart. Greying
-            // the same command out in the palette contradicted the keymap:
-            // Alt+` opened a dock terminal from a focused terminal while the
-            // palette refused "Open Terminal in Utility Dock".
-            if matches!(current_context, KeyContext::Terminal)
-                || current_context.allows_ui_fallthrough()
+            // keybinding — `is_terminal_ui_action` is exactly that allowlist.
+            // Greying the same command out in the palette contradicted the
+            // keymap: Alt+` opened a dock terminal from a focused terminal
+            // while the palette refused "Open Terminal in Utility Dock".
+            //
+            // Only for commands the editor context offers (`Normal`): the
+            // allowlist is keyed on the *action*, and a few of those actions
+            // belong to commands scoped to one surface — "Exit Terminal Mode"
+            // and "Toggle Keyboard Capture" are `Terminal`-only, and their
+            // handlers no-op unless a live terminal has focus. Without this
+            // guard the bypass would resurrect them in the file explorer as
+            // entries that look enabled and silently do nothing.
+            if cmd.contexts.contains(&KeyContext::Normal)
+                && (matches!(current_context, KeyContext::Terminal)
+                    || current_context.allows_ui_fallthrough())
             {
-                return cmd.terminal_bypass
-                    || crate::input::keybindings::KeybindingResolver::is_terminal_ui_action(
-                        &cmd.action,
-                    );
+                return crate::input::keybindings::KeybindingResolver::is_terminal_ui_action(
+                    &cmd.action,
+                );
             }
 
             false
@@ -795,6 +811,33 @@ mod tests {
             assert!(
                 enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
                 "'{name}' bypasses the terminal via its keybinding and must not be greyed out"
+            );
+        }
+    }
+
+    /// The bypass is keyed on the action, so it must not resurrect commands
+    /// scoped to a *different* surface. "Exit Terminal Mode" and "Toggle
+    /// Keyboard Capture" are `Terminal`-only and their handlers no-op unless a
+    /// live terminal has focus — offering them in the explorer would be an
+    /// entry that looks enabled and silently does nothing.
+    #[test]
+    fn test_terminal_only_commands_stay_disabled_outside_a_terminal() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        for name in ["Exit Terminal Mode", "Toggle Keyboard Capture"] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' is a terminal command and belongs in a terminal"
+            );
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' no-ops without a focused live terminal and must not be \
+                 offered in the explorer"
             );
         }
     }
