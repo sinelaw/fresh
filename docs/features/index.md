@@ -6,6 +6,8 @@
 - [File Explorer](./file-explorer.md) - Browse and manage project files
 - [Search and Replace](./search-replace.md) - Powerful search with regex support
 - [Integrated Terminal](./terminal.md) - Run shell commands without leaving the editor
+- [Scripting and Agent Control](./scripting.md) - Drive a running editor with TypeScript, and let a coding agent arrange it for you
+- [Guided Code Tours](./code-tours.md) - Play a JSON walkthrough of a codebase in a dock panel
 - [LSP Integration](./lsp.md) - Language server support for diagnostics and completion
 - [Git](./git.md) - Review diffs, browse log, navigate hunks
 - [Themes](./themes.md) - Customizable color themes
