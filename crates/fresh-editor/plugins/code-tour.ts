@@ -32,10 +32,11 @@ import {
  *
  * Two manifest formats load, auto-detected by content: our own
  * `.fresh-tour.json` (see `plugins/schemas/tour.schema.json`) and VS Code
- * CodeTour `.tour` files, which are converted on load. "Tour: Open
- * Workspace Tour..." finds either kind in the well-known locations
- * (`.fresh-tour.json`, `.tour`, `main.tour`, `.tours/`, `.vscode/tours/`,
- * `.github/tours/`). `fresh --cmd help tour` prints the authoring guide.
+ * CodeTour `.tour` files, which are converted on load. Both load commands
+ * open the native file browser anchored at the workspace root with hidden
+ * files shown — tour files are dotfiles (`.fresh-tour.json`, `.tours/`,
+ * `.vscode/tours/`, `.github/tours/`). `fresh --cmd help tour` prints the
+ * authoring guide.
  *
  * Several tours can be open at once — one dock tab each — and an unfinished
  * tour is restored on the next launch. Closing a tour forgets it.
@@ -1239,41 +1240,15 @@ function discoverTours(): DiscoveredTour[] {
   return found;
 }
 
-const DISCOVER_POPUP_ID = "code-tour-discover";
-/** Discovery results the open picker popup's action ids index into. */
-let discovered: DiscoveredTour[] = [];
-
+/** Same file browser as `tour_load`. This deliberately does NOT
+ * auto-open or suggest a discovered tour: an opinionated guess that
+ * opens the wrong manifest is worse than one more keystroke in a
+ * browser that starts where tour files actually live. `discoverTours`
+ * stays available to scripts through the exported plugin API. */
 async function tour_discover(): Promise<void> {
-  const found = discoverTours();
-  if (found.length === 0) {
-    editor.setStatus(editor.t("status.no_tours"));
-    return;
-  }
-  if (found.length === 1) {
-    await openTour(found[0].path);
-    return;
-  }
-  discovered = found;
-  const root = editor.getCwd();
-  editor.showActionPopup({
-    id: DISCOVER_POPUP_ID,
-    title: editor.t("discover.title"),
-    message: editor.t("discover.message"),
-    actions: found.map((f, i) => ({
-      id: String(i),
-      label: `${f.title} · ${
-        f.path.startsWith(root + "/") ? f.path.slice(root.length + 1) : f.path
-      } (${f.steps})`,
-    })),
-  });
+  await tour_load();
 }
 registerHandler("tour_discover", tour_discover);
-
-editor.on("action_popup_result", (data) => {
-  if (data.popup_id !== DISCOVER_POPUP_ID) return;
-  const pick = discovered[Number(data.action_id)];
-  if (pick) openTour(pick.path).catch((e) => editor.error(`code-tour: ${e}`));
-});
 
 // ============================================================================
 // Handlers — commands

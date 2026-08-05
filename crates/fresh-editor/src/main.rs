@@ -3603,13 +3603,14 @@ Two formats load, auto-detected by content:
                       content-only steps keep their prose, and a
                       commit-hash `ref` is checked for drift.
 
-Where tours are discovered (\"Tour: Open Workspace Tour...\" in the palette):
+Where tour files conventionally live (all dotfiles):
   .fresh-tour.json, .tour, main.tour, .vscode/main.tour
   .tours/, .vscode/tours/, .github/tours/   (either format, nested dirs ok)
 
 Opening a tour:
-  - Command palette: \"Tour: Load Definition...\" (pick a file), or
-    \"Tour: Open Workspace Tour...\" (scan the locations above)
+  - Command palette: \"Tour: Load Definition...\" or \"Tour: Open Workspace
+    Tour...\" — both open a file browser anchored at the workspace root
+    with hidden files shown, so the manifests above are in reach.
   - From a script or agent (see also: fresh --cmd help script):
       echo 'return editor.getPluginApi(\"code-tour\")
         .openTour(\".fresh-tour.json\")' | fresh --cmd script run
