@@ -864,6 +864,89 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
     );
 }
 
+/// `Ctrl+V` must paste the editor clipboard into the focused dialog
+/// field — same destination as a terminal bracketed paste, different
+/// entry path (a key event resolved through the keybinding table, not
+/// an `Event::Paste`).
+///
+/// Regression: the centered modal's key dispatcher swallowed every
+/// Ctrl-chord that had no mode binding, so Ctrl+V (and Ctrl+A / Ctrl+C /
+/// Ctrl+X) died before reaching the focused Text widget. Text copied
+/// from a buffer with Ctrl+C could not be pasted into the New-Workspace
+/// or Run-Agent dialogs at all.
+#[test]
+fn ctrl_v_pastes_into_focused_dialog_field() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("CTRLV_MARKER".to_string());
+
+    open_new_session_form(&mut harness);
+
+    // The Project Path text field is focused on open.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("CTRLV_MARKER"))
+        .unwrap();
+
+    // And it must not have leaked into the buffer underneath.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("CTRLV_MARKER"),
+        "Ctrl+V must not leak into the buffer behind the dialog. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// `Ctrl+A` selects the focused field's text, so a following paste
+/// replaces it instead of appending — the standard select-all-then-paste
+/// gesture. Same regression class as `ctrl_v_pastes_into_focused_dialog_field`:
+/// the modal swallowed the chord, the selection never happened, and the
+/// paste appended after the old text.
+#[test]
+fn ctrl_a_selects_field_text_so_paste_replaces_it() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+
+    harness.type_text("OLDTEXT").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("OLDTEXT"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_paste("NEWTEXT").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("NEWTEXT"))
+        .unwrap();
+
+    let value = project_path_field_value(&harness.screen_to_string());
+    assert!(
+        !value.contains("OLDTEXT"),
+        "paste after Ctrl+A must replace the selected field text, not append. \
+         Field value: {:?}. Screen:\n{}",
+        value,
+        harness.screen_to_string(),
+    );
+}
+
 // ===========================================================================
 // Focus model: visible `▸` marker, linear Tab, ←/→ within selectors,
 // scoped Esc, and the Ctrl+Enter submit shortcut.
