@@ -3817,3 +3817,82 @@ fn view_menu_row_toggles_the_dock_with_a_live_checkbox() {
     h.wait_until(|h| !h.screen_to_string().contains("New Task"))
         .unwrap();
 }
+
+// ── workspace rename stays per-workspace across co-tenants ─────────────────
+
+/// Renaming a workspace extracted from a tab ("Extract Tab to New
+/// Workspace") must rename ONLY that workspace. The extracted co-tenant
+/// shares the source's project root, and manual names used to be persisted
+/// per root — so renaming the new workspace silently renamed the original
+/// too (and vice versa). Names are now keyed by the window's durable
+/// stable id; the root key survives only as a legacy / windowless
+/// fallback.
+#[test]
+fn renaming_extracted_co_tenant_workspace_leaves_original_name_alone() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(160, 45, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // A file-backed tab is required for extraction.
+    h.open_file(&root.join("readme.txt")).unwrap();
+    h.render().unwrap();
+
+    // Extract the tab into a co-tenant workspace over the same root.
+    run_palette_command(&mut h, "Extract Tab to New Workspace");
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("Extracted readme.txt into workspace alphaproj (2)")
+    })
+    .unwrap();
+
+    // The dock lists both co-tenants.
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj (2)"))
+        .unwrap();
+
+    // Right-click the extracted workspace's row → "Rename…" → the centered
+    // Rename Workspace dialog, pre-filled with "alphaproj (2)".
+    let row = row_of(&h, "alphaproj (2)") as u16;
+    h.mouse_right_click(4, row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Rename…"))
+        .unwrap();
+    let (rcol, rrow) = pos_of(&h, "Rename…");
+    h.mouse_click(rcol, rrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Rename Workspace"))
+        .unwrap();
+    h.assert_screen_contains("Workspace name");
+
+    // Replace the pre-filled name wholesale with a distinct one.
+    for _ in 0.."alphaproj (2)".len() {
+        h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+    h.type_text("extracted-ws").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Rename Workspace") && s.contains("extracted-ws")
+    })
+    .unwrap();
+
+    // Only the extracted workspace carries the new name...
+    let screen = h.screen_to_string();
+    let renamed_rows = screen
+        .lines()
+        .filter(|l| l.contains("extracted-ws"))
+        .count();
+    assert_eq!(
+        renamed_rows, 1,
+        "exactly one dock row should carry the new name (renaming the \
+         extracted co-tenant must not rename the original), got screen:\n{screen}"
+    );
+    // ...and the original workspace still shows its own label on a row of
+    // its own (a row naming it WITHOUT the new name).
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("alphaproj") && !l.contains("extracted-ws")),
+        "the original workspace should keep its 'alphaproj' label, got screen:\n{screen}"
+    );
+}
