@@ -72,9 +72,16 @@ type CompletionItem = { value: string; kind?: "history" };
 interface AgentSession {
   // Editor's stable session id.
   id: number;
+  // Durable workspace identity (`ws-…`) reported by the host window.
+  // Unlike `root` it distinguishes co-tenant workspaces sharing one
+  // project root (e.g. a tab extracted to a new workspace), so manual
+  // renames are keyed by it. Undefined for rows without a live window
+  // (discovered worktrees, pending placeholders) and for legacy
+  // workspace files that predate stable ids.
+  stableId?: string;
   // Resolved display name shown in the dock / picker. Computed by
   // `workspaceDisplayName` from three sources, most-specific first: a
-  // manual rename (`renameWorkspace`, persisted per root), else an
+  // manual rename (`renameWorkspace`, persisted per workspace), else an
   // auto-name tracking the terminal's tab title (constant workspace
   // prefix + the terminal/process title), else `hostLabel`.
   label: string;
@@ -1179,7 +1186,7 @@ function sessionLastActiveDay(s: AgentSession): number {
 // ── Workspace names: manual rename + terminal-tracking auto-name ─────────
 //
 // A workspace's display name comes from three sources, most-specific first:
-//   1. a manual rename (persisted per canonical root, survives restarts),
+//   1. a manual rename (persisted per workspace, survives restarts),
 //   2. else, when it has a terminal that reports a title, an auto-name that
 //      tracks that terminal: a constant prefix (the workspace's own name, so
 //      you can still tell which workspace it is) + the changing terminal/
@@ -1211,9 +1218,30 @@ function saveNames(): void {
   editor.setGlobalState(WORKSPACE_NAMES_KEY, (dockNames ?? {}) as unknown as object);
 }
 
-// The manual name pinned to this session's root, if any.
+// Store key for a workspace's manual name. Keyed by the durable stable id
+// when the host reports one: co-tenant workspaces (a tab extracted to a
+// new workspace) share one root, so a per-root key would rename them all
+// at once. The bare root remains both the legacy key (entries written
+// before stable-id keying) and the only key available for rows without a
+// live window (discovered worktrees).
+function nameKeyById(stableId: string): string {
+  return "id:" + stableId;
+}
+
+// The manual name pinned to a workspace, if any: its own stable-id entry
+// first, else the legacy / windowless per-root entry.
+function customNameFor(stableId: string | undefined, root: string): string | undefined {
+  const store = loadNames();
+  if (stableId) {
+    const own = store[nameKeyById(stableId)];
+    if (own) return own;
+  }
+  return store[normRoot(root)];
+}
+
+// The manual name pinned to this session, if any.
 function workspaceCustomName(s: AgentSession): string | undefined {
-  return loadNames()[normRoot(s.root)];
+  return customNameFor(s.stableId, s.root);
 }
 
 // Compute the display name for a session from the three sources above.
@@ -1239,11 +1267,31 @@ function applyResolvedLabel(s: AgentSession): void {
 // refresh its resolved label. Clearing lets the auto-name / host label take
 // over again.
 function renameWorkspace(s: AgentSession, name: string): void {
-  const key = normRoot(s.root);
+  const rootKey = normRoot(s.root);
   const store = loadNames();
   const trimmed = name.trim();
-  if (trimmed) store[key] = trimmed;
-  else delete store[key];
+  // Whether another live workspace co-tenants this root. If so, the
+  // legacy per-root entry (when one exists) still names *that* workspace,
+  // so it must be left alone — touching it is exactly the "renaming the
+  // extracted workspace renamed the original too" bug.
+  const hasCoTenant = [...orchestratorSessions.values()].some(
+    (o) => o.id !== s.id && !o.discovered && o.id > 0 && normRoot(o.root) === rootKey,
+  );
+  if (s.stableId) {
+    const idKey = nameKeyById(s.stableId);
+    if (trimmed) store[idKey] = trimmed;
+    else delete store[idKey];
+    // Keep the per-root entry in step when it can only mean this
+    // workspace, so root-keyed lookups (a later discovered row at this
+    // root, a legacy workspace file) agree with the rename / clear.
+    if (!hasCoTenant) {
+      if (trimmed) store[rootKey] = trimmed;
+      else delete store[rootKey];
+    }
+  } else {
+    if (trimmed) store[rootKey] = trimmed;
+    else delete store[rootKey];
+  }
   saveNames();
   applyResolvedLabel(s);
 }
@@ -1744,7 +1792,8 @@ function reconcileSessions(): void {
       if (remote) pendingRemoteFacet = null;
       orchestratorSessions.set(s.id, {
         id: s.id,
-        label: loadNames()[normRoot(s.root)] ?? s.label,
+        stableId: s.stable_id || undefined,
+        label: customNameFor(s.stable_id || undefined, s.root) ?? s.label,
         hostLabel: s.label,
         root: s.root,
         projectPath: s.project_path,
@@ -1760,7 +1809,9 @@ function reconcileSessions(): void {
       });
     } else {
       // Track the host's raw label, then re-resolve the display name (a
-      // manual rename or terminal auto-name overrides it).
+      // manual rename or terminal auto-name overrides it). The stable id
+      // is adopted first — the manual-name lookup is keyed by it.
+      existing.stableId = s.stable_id || undefined;
       existing.hostLabel = s.label;
       applyResolvedLabel(existing);
       existing.root = s.root;
@@ -1879,7 +1930,7 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
         } else {
           orchestratorSessions.set(id, {
             id,
-            label: loadNames()[normRoot(wt.path)] ?? label,
+            label: customNameFor(undefined, wt.path) ?? label,
             hostLabel: label,
             root: wt.path,
             projectPath: listed.mainRoot,
@@ -5431,6 +5482,7 @@ async function ensureReplacementWindow(projectRoot: string): Promise<boolean> {
     // close-and-switch below sees a second live window.
     orchestratorSessions.set(result.windowId, {
       id: result.windowId,
+      stableId: result.stableId || undefined,
       label,
       hostLabel: label,
       root: projectRoot,
@@ -9045,7 +9097,8 @@ async function runLocalCreate(id: number): Promise<void> {
     savePendingSpecs();
     orchestratorSessions.set(winId, {
       id: winId,
-      label: loadNames()[normRoot(root)] ?? sessionName,
+      stableId: result.stableId || undefined,
+      label: customNameFor(result.stableId || undefined, root) ?? sessionName,
       hostLabel: sessionName,
       root,
       projectPath: effectiveProjectPath,
@@ -9300,7 +9353,8 @@ async function attachToWorktree(opts: {
     }
     orchestratorSessions.set(id, {
       id,
-      label: loadNames()[normRoot(opts.root)] ?? opts.label,
+      stableId: result.stableId || undefined,
+      label: customNameFor(result.stableId || undefined, opts.root) ?? opts.label,
       hostLabel: opts.label,
       root: opts.root,
       projectPath: opts.projectPath,
