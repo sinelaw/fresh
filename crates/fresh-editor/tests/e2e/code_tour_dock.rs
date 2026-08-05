@@ -1712,3 +1712,198 @@ fn code_tour_showcase() {
 
     s.finalize().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// VS Code CodeTour manifests load, auto-detected and converted
+// ---------------------------------------------------------------------------
+
+/// A CodeTour-format manifest, shaped after the CodeTour extension's own
+/// `.tours/intro.tour` (microsoft/codetour): a `$schema` key, a top-level
+/// `description`, an *untitled content-only first step* (prose, no file),
+/// then file steps. Step paths are workspace-root-relative by definition —
+/// deliberately not interpolated, since resolving them against the root the
+/// `.tours/` directory sits in is part of what is under test. A `selection`
+/// and a `pattern` anchor cover the two range shapes `intro.tour` doesn't.
+fn codetour_json() -> String {
+    // Four hashes: the markdown headings inside put `"###` in the body,
+    // which would close an r### string mid-JSON.
+    r####"{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "CT Getting Started",
+  "description": "Getting Started",
+  "steps": [
+    {
+      "description": "### Welcome aboard\n\nA **content** step: prose only, no file."
+    },
+    {
+      "title": "Entry point",
+      "file": "src/main.rs",
+      "selection": {
+        "start": { "line": 1, "character": 1 },
+        "end": { "line": 3, "character": 2 }
+      },
+      "description": "### The listener\n\nBound at startup."
+    },
+    {
+      "file": "src/main.rs",
+      "pattern": "fn handle",
+      "description": "### The handler\n\nAnchored by regex, not a line number."
+    }
+  ]
+}"####
+        .to_string()
+}
+
+/// Project with the code-tour plugin and a CodeTour manifest in `.tours/`,
+/// and nothing else discoverable — no root `.fresh-tour.json`.
+fn setup_codetour_project() -> (tempfile::TempDir, PathBuf) {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+    let project_root = fs::canonicalize(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "code-tour");
+
+    fs::create_dir(project_root.join("src")).unwrap();
+    fs::write(project_root.join("src/main.rs"), MAIN_RS).unwrap();
+    fs::create_dir(project_root.join(".tours")).unwrap();
+    fs::write(
+        project_root.join(".tours/getting-started.tour"),
+        codetour_json(),
+    )
+    .unwrap();
+
+    (temp_dir, project_root)
+}
+
+/// Loading a `.tour` file converts it: the tour opens under its CodeTour
+/// title, the untitled content-only first step renders its prose with no
+/// file-missing warning, no highlight and no Jump button, the `selection`
+/// step highlights its line range, and the `pattern` step lands on the line
+/// the regex matches — all through the ordinary Load Definition flow, no
+/// format switch anywhere. On the pre-CodeTour plugin this manifest is
+/// rejected ("Unsupported tour schema version: undefined") and no panel
+/// ever mounts.
+#[test]
+fn test_codetour_manifest_loads_and_converts() {
+    let (_temp, project_root) = setup_codetour_project();
+    let mut harness = harness_in(&project_root, 160, 48);
+
+    let manifest = project_root.join(".tours/getting-started.tour");
+    run_command(&mut harness, "Tour: Load Definition");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("tour file path"))
+        .unwrap();
+    harness.type_text(&manifest.display().to_string()).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    // A content-only first step opens no file and paints no highlight, so
+    // `wait_for_step_settled` would wait for a frame that never comes. Its
+    // rendered end state is the prose in a focused panel.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*Tour: CT Getting Started*")
+                && s.contains("Welcome aboard")
+                && s.contains("[RO]")
+                && s.contains("Text")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Step 1 of 3"),
+        "expected the converted tour to keep all three steps\nScreen:\n{screen}"
+    );
+    // The step title came from the description's markdown heading — the
+    // manifest itself has no `title` on this step.
+    assert!(
+        screen.contains("Welcome aboard"),
+        "expected the heading-derived step title/prose\nScreen:\n{screen}"
+    );
+    // Content step: no file was named, so nothing may claim one is missing…
+    assert!(
+        !screen.contains("is not in this working tree"),
+        "a content-only step must not warn about a missing file\nScreen:\n{screen}"
+    );
+    // …no Jump button is offered (the lowercase hint-bar entry remains)…
+    assert!(
+        !screen.contains("[ Jump"),
+        "a content-only step has no code location to jump to\nScreen:\n{screen}"
+    );
+    // …and nothing is highlighted in the editor.
+    assert!(
+        highlighted_rows(&harness).is_empty(),
+        "a content-only step must not paint a highlight"
+    );
+
+    // Step 2: `selection` start/end lines become the [1, 3] range.
+    press_step_key(&mut harness, 'n', "Step 2 of 3");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Entry point"),
+        "expected the explicit step title\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("lines 1–3"),
+        "expected the selection converted to a 1–3 line range\nScreen:\n{screen}"
+    );
+    assert_eq!(
+        highlighted_rows(&harness).len(),
+        3,
+        "expected exactly the selection's three lines highlighted\nScreen:\n{screen}"
+    );
+
+    // Step 3: the `pattern` resolves against file content, not a stored
+    // line number — `fn handle` lives on line 5 of the fixture.
+    press_step_key(&mut harness, 'n', "Step 3 of 3");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("The handler"),
+        "expected the heading-derived title of the pattern step\nScreen:\n{screen}"
+    );
+    assert!(
+        screen.contains("lines 5–5"),
+        "expected the pattern to resolve to line 5\nScreen:\n{screen}"
+    );
+    let rows = highlighted_rows(&harness);
+    assert_eq!(
+        rows.len(),
+        1,
+        "expected a single-line highlight\nScreen:\n{screen}"
+    );
+    let highlighted_line = screen.lines().nth(rows[0] as usize).unwrap_or_default();
+    assert!(
+        highlighted_line.contains("fn handle"),
+        "expected the highlight on the line the pattern matches, got row {}: '{}'\nScreen:\n{screen}",
+        rows[0],
+        highlighted_line
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Workspace tour discovery
+// ---------------------------------------------------------------------------
+
+/// "Tour: Open Workspace Tour..." finds tours in the well-known locations
+/// without being handed a path. With exactly one tour in the workspace —
+/// a CodeTour file in `.tours/`, nothing at the root — it opens directly,
+/// no picker in between. Fails on the pre-discovery plugin, where the
+/// command does not exist.
+#[test]
+fn test_workspace_discovery_opens_lone_codetour() {
+    let (_temp, project_root) = setup_codetour_project();
+    let mut harness = harness_in(&project_root, 160, 48);
+
+    run_command(&mut harness, "Tour: Open Workspace Tour");
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("*Tour: CT Getting Started*") && s.contains("Welcome aboard")
+        })
+        .unwrap();
+}

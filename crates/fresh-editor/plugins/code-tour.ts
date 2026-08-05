@@ -30,6 +30,13 @@ import {
  * through the widget library: a step rail, markdown-rendered prose, clickable
  * Prev/Next/Exit buttons and a source-location bar.
  *
+ * Two manifest formats load, auto-detected by content: our own
+ * `.fresh-tour.json` (see `plugins/schemas/tour.schema.json`) and VS Code
+ * CodeTour `.tour` files, which are converted on load. "Tour: Open
+ * Workspace Tour..." finds either kind in the well-known locations
+ * (`.fresh-tour.json`, `.tour`, `main.tour`, `.tours/`, `.vscode/tours/`,
+ * `.github/tours/`). `fresh --cmd help tour` prints the authoring guide.
+ *
  * Several tours can be open at once — one dock tab each — and an unfinished
  * tour is restored on the next launch. Closing a tour forgets it.
  *
@@ -63,6 +70,34 @@ interface TourManifest {
   schema_version: "1.0";
   commit_hash?: string;
   steps: TourStep[];
+}
+
+// VS Code CodeTour (`.tour`) manifests, as written by the CodeTour
+// extension (https://github.com/microsoft/codetour). Loaded read-only:
+// `parseManifest` sniffs the format and converts to `TourManifest`, so
+// everything downstream speaks one shape. Only the fields the conversion
+// reads are declared here.
+interface CodeTourPosition {
+  line?: number;
+  character?: number;
+}
+
+interface CodeTourStep {
+  description?: string;
+  file?: string;
+  directory?: string;
+  uri?: string;
+  line?: number;
+  pattern?: string;
+  selection?: { start?: CodeTourPosition; end?: CodeTourPosition };
+  title?: string;
+}
+
+interface CodeTourFile {
+  title?: string;
+  description?: string;
+  ref?: string;
+  steps?: CodeTourStep[];
 }
 
 /** One open tour. Keyed in `tours` by `id` (the manifest path as given). */
@@ -171,6 +206,14 @@ function currentStep(t: TourInstance): TourStep {
   return t.manifest.steps[t.step];
 }
 
+/** A step with no file at all — a converted CodeTour content step
+ * (intro/outro prose, or a directory step). Prose renders as usual;
+ * there is no location to show, highlight, or jump to, and no
+ * "file missing" warning to raise about a file that was never named. */
+function isContentStep(step: TourStep): boolean {
+  return step.file_path === "";
+}
+
 function showRail(t: TourInstance): boolean {
   return t.railOpen && t.dockWidth >= RAIL_MIN_WIDTH;
 }
@@ -217,7 +260,9 @@ function buildHeader(t: TourInstance): WidgetSpec {
 
   // The step's context actions live up here (not on a bottom row of
   // their own — vertical space goes to the prose instead).
-  const actions: WidgetSpec[] = t.fileMissing
+  const actions: WidgetSpec[] = isContentStep(currentStep(t))
+    ? []
+    : t.fileMissing
     ? [button(editor.t("btn.skip"), { key: "next", disabled: last })]
     : compact
     ? [button(editor.t("btn.jump_short"), { key: "jump" })]
@@ -274,7 +319,9 @@ function buildRailRows(t: TourInstance, width: number): TextPropertyEntry[] {
 function proseMarkdown(t: TourInstance): string {
   const step = currentStep(t);
   let head = "";
-  if (t.fileMissing) {
+  if (isContentStep(step)) {
+    // No location line and no warning — the prose is the whole step.
+  } else if (t.fileMissing) {
     head += "⚠  " + editor.t("panel.file_missing", { file: step.file_path }) + "\n\n";
     if (t.drift) head += "*" + t.drift + "*\n\n";
   } else {
@@ -351,6 +398,7 @@ function buildBody(t: TourInstance): WidgetSpec {
  * characters occupies n + 4 columns. */
 function actionsWidth(t: TourInstance): number {
   const chrome = 4;
+  if (isContentStep(currentStep(t))) return 0;
   if (t.fileMissing) return charLen(editor.t("btn.skip")) + chrome;
   if (t.dockWidth < COMPACT_WIDTH) return charLen(editor.t("btn.jump_short")) + chrome;
   return (
@@ -465,17 +513,39 @@ function manifestDir(manifestPath: string): string {
   return idx > 0 ? abs.slice(0, idx) : "/";
 }
 
+/** The workspace root a CodeTour manifest's step paths are relative to.
+ *
+ * CodeTour stores tours *inside* the workspace they describe — in
+ * `.tours/`, `.vscode/tours/`, `.github/tours/` (arbitrarily nested), or
+ * as `.vscode/main.tour` — with every step path relative to the
+ * workspace root, not the manifest. Strip the well-known tour directory
+ * from the manifest's own location to recover that root. Null when the
+ * manifest is not under one (e.g. a root-level `.tour`, where the
+ * manifest directory *is* the root and manifest-relative already works). */
+function tourRootDir(manifestPath: string): string | null {
+  const dir = manifestDir(manifestPath);
+  const m = dir.match(/^(.*?)\/(?:\.tours|\.github\/tours|\.vscode(?:\/tours)?)(?:\/|$)/);
+  if (!m) return null;
+  return m[1] || "/";
+}
+
 /** A step's `file_path` as an openable path: absolute paths pass through,
  * relative ones resolve against the manifest's own directory — a tour is
  * authored next to the code it walks, and must keep working no matter
- * where the editor was started. Tours written before this resolved
- * against the working directory instead, so when the manifest-relative
- * candidate names nothing but the cwd-relative one exists, the old
- * meaning wins. */
+ * where the editor was started. A manifest living in a well-known
+ * CodeTour directory also tries the workspace root those formats are
+ * relative to. Tours written before this resolved against the working
+ * directory instead, so when no other candidate names anything but the
+ * cwd-relative one exists, the old meaning wins. */
 function resolveStepPath(manifestPath: string, filePath: string): string {
   if (editor.pathIsAbsolute(filePath)) return filePath;
   const manifestRelative = editor.pathJoin(manifestDir(manifestPath), filePath);
   if (editor.fileExists(editor.authorityPath(manifestRelative))) return manifestRelative;
+  const root = tourRootDir(manifestPath);
+  if (root) {
+    const rootRelative = editor.pathJoin(root, filePath);
+    if (editor.fileExists(editor.authorityPath(rootRelative))) return rootRelative;
+  }
   const cwdRelative = editor.pathJoin(editor.getCwd(), filePath);
   if (editor.fileExists(editor.authorityPath(cwdRelative))) return cwdRelative;
   return manifestRelative;
@@ -581,12 +651,17 @@ function readPersisted(): PersistedTour[] {
 function parseManifest(path: string): TourManifest | string {
   const content = editor.readFile(editor.authorityPath(path));
   if (!content) return editor.t("error.read_failed", { path });
-  let manifest: TourManifest;
+  let parsed: unknown;
   try {
-    manifest = JSON.parse(content);
+    parsed = JSON.parse(content);
   } catch (e) {
     return editor.t("error.parse_failed", { path, error: String(e) });
   }
+  // Format sniff on content, not extension: a CodeTour exported as `.json`
+  // still loads, and a fresh manifest renamed `.tour` still validates as one.
+  const manifest = looksLikeCodeTour(parsed)
+    ? convertCodeTour(parsed, path)
+    : (parsed as TourManifest);
   if (manifest.schema_version !== "1.0") {
     return editor.t("error.bad_version", { version: String(manifest.schema_version) });
   }
@@ -594,6 +669,124 @@ function parseManifest(path: string): TourManifest | string {
     return editor.t("error.no_steps");
   }
   return manifest;
+}
+
+/** A CodeTour file, not a fresh manifest? Keyed on what each format
+ * *requires*: fresh steps carry `explanation`/`step_id`, CodeTour steps
+ * carry `description` and never those. A fresh manifest that merely
+ * forgot its `schema_version` keeps failing with `error.bad_version`
+ * rather than being mis-read as a CodeTour. */
+function looksLikeCodeTour(raw: unknown): raw is CodeTourFile {
+  if (!raw || typeof raw !== "object") return false;
+  const m = raw as Record<string, unknown>;
+  if (typeof m.schema_version === "string") return false;
+  if (typeof m.title !== "string" || !Array.isArray(m.steps)) return false;
+  return (m.steps as unknown[]).every(
+    (s) =>
+      !!s && typeof s === "object" &&
+      !("explanation" in (s as object)) && !("step_id" in (s as object)),
+  );
+}
+
+function convertCodeTour(tour: CodeTourFile, manifestPath: string): TourManifest {
+  const manifest: TourManifest = {
+    title: tour.title ?? "",
+    description: tour.description ?? "",
+    schema_version: "1.0",
+    steps: (tour.steps ?? []).map((s, i) => convertCodeTourStep(s, i, manifestPath)),
+  };
+  // `ref` may be a branch or tag as well as a commit; only a hash fits
+  // `commit_hash` (and the drift check's prefix comparison against HEAD).
+  if (tour.ref && /^[a-f0-9]{7,40}$/i.test(tour.ref)) {
+    manifest.commit_hash = tour.ref.toLowerCase();
+  }
+  return manifest;
+}
+
+function convertCodeTourStep(
+  s: CodeTourStep,
+  index: number,
+  manifestPath: string,
+): TourStep {
+  // A CodeTour step may reference no file at all (content-only steps, or
+  // a `directory`/`view` step) — those become content steps here: empty
+  // `file_path`, prose still rendered, nothing to highlight or jump to.
+  const file = typeof s.file === "string" ? s.file : "";
+  // CodeTour steps rarely carry a `title`; the extension labels them from
+  // their description. Mirror that: a leading markdown heading (or first
+  // line) names the step better than the file's basename ever would.
+  let title = s.title;
+  if (!title && typeof s.description === "string") {
+    const first = s.description.split("\n").find((l) => l.trim().length > 0);
+    if (first) {
+      const heading = first.trim().replace(/^#+\s*/, "");
+      if (heading.length > 0 && heading.length <= 60) title = heading;
+    }
+  }
+  if (!title && file) title = file.replace(/\\/g, "/").split("/").pop();
+  if (!title && typeof s.directory === "string") title = s.directory;
+  let explanation = typeof s.description === "string" ? s.description : "";
+  if (typeof s.directory === "string" && s.directory.length > 0) {
+    explanation = "`" + s.directory + "/`\n\n" + explanation;
+  }
+  return {
+    step_id: index + 1,
+    title: title || editor.t("step.untitled", { n: String(index + 1) }),
+    file_path: file,
+    lines: codeTourStepLines(s, file, manifestPath),
+    explanation,
+  };
+}
+
+/** A CodeTour step's anchor as a fresh line range. CodeTour lines are
+ * 1-indexed like ours; a bare `line` means that single line, a
+ * `selection` spans its start/end lines, and a `pattern` is resolved
+ * against the file's current content at load time — which is exactly
+ * what makes patterns survive edits that shift line numbers. */
+function codeTourStepLines(
+  s: CodeTourStep,
+  file: string,
+  manifestPath: string,
+): [number, number] {
+  const start = s.selection?.start?.line;
+  const end = s.selection?.end?.line;
+  if (typeof start === "number" && typeof end === "number" && start >= 1) {
+    const from = Math.floor(start);
+    return [from, Math.max(from, Math.floor(end))];
+  }
+  if (typeof s.line === "number" && s.line >= 1) {
+    const line = Math.floor(s.line);
+    return [line, line];
+  }
+  if (typeof s.pattern === "string" && file) {
+    const hit = findPatternLine(manifestPath, file, s.pattern);
+    if (hit) return [hit, hit];
+  }
+  return [1, 1];
+}
+
+/** First line (1-indexed) of `file` matching `pattern`, or null when the
+ * file is unreadable or the regex is invalid / matches nothing. */
+function findPatternLine(
+  manifestPath: string,
+  file: string,
+  pattern: string,
+): number | null {
+  const text = editor.readFile(
+    editor.authorityPath(resolveStepPath(manifestPath, file)),
+  );
+  if (typeof text !== "string") return null;
+  let re: RegExp;
+  try {
+    re = new RegExp(pattern);
+  } catch {
+    return null;
+  }
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) return i + 1;
+  }
+  return null;
 }
 
 /** `recorded at <a> · you are on <b>`, or null when there is nothing to say. */
@@ -688,9 +881,10 @@ async function openTour(
   tourByPanel.set(t.panel.id(), t.id);
   lastTourId = t.id;
 
-  t.fileMissing = !editor.fileExists(
-    editor.authorityPath(resolveStepPath(t.manifestPath, currentStep(t).file_path)),
-  );
+  t.fileMissing = !isContentStep(currentStep(t)) &&
+    !editor.fileExists(
+      editor.authorityPath(resolveStepPath(t.manifestPath, currentStep(t).file_path)),
+    );
   renderPanel(t);
   editor.setContext("tour-active", true);
   persist();
@@ -732,6 +926,14 @@ function clampStep(step: number, total: number): number {
  * highlight. Never moves keyboard focus out of the panel. */
 async function revealStep(t: TourInstance): Promise<void> {
   const step = currentStep(t);
+  if (isContentStep(step)) {
+    // Nothing to open or highlight; drop the previous step's highlight so
+    // it does not linger next to prose about something else.
+    t.fileMissing = false;
+    clearTourOverlays(t);
+    renderPanel(t);
+    return;
+  }
   const stepPath = resolveStepPath(t.manifestPath, step.file_path);
   t.fileMissing = !editor.fileExists(editor.authorityPath(stepPath));
   if (t.fileMissing) {
@@ -950,11 +1152,15 @@ registerHandler("tour_panel_close", () => {
 });
 
 function jumpToCode(t: TourInstance): void {
+  const step = currentStep(t);
+  if (isContentStep(step)) {
+    editor.setStatus(editor.t("panel.content_step"));
+    return;
+  }
   if (t.fileMissing) {
     editor.setStatus(editor.t("panel.location_missing"));
     return;
   }
-  const step = currentStep(t);
   // Deliberately no `focusSplit` back to the panel afterwards: this is the
   // explicit "put me in the code" gesture, so focus stays where `openFile`
   // left it.
@@ -963,6 +1169,111 @@ function jumpToCode(t: TourInstance): void {
     editor.t("status.jumped", { file: step.file_path, line: String(step.lines[0]) }),
   );
 }
+
+// ============================================================================
+// Workspace tour discovery
+// ============================================================================
+
+/** Well-known single-file tour locations, relative to the workspace root:
+ * ours, then the CodeTour extension's. */
+const KNOWN_TOUR_FILES = [
+  ".fresh-tour.json",
+  ".tour",
+  "main.tour",
+  ".vscode/main.tour",
+];
+
+/** Directories the CodeTour extension scans for tour files. */
+const KNOWN_TOUR_DIRS = [".tours", ".vscode/tours", ".github/tours"];
+
+/** How deep inside a tour directory to look — CodeTour allows arbitrary
+ * nesting, but an unbounded walk of a weird workspace is worse than
+ * missing a tour buried four folders down. */
+const TOUR_SCAN_DEPTH = 3;
+
+interface DiscoveredTour {
+  path: string;
+  title: string;
+  steps: number;
+}
+
+function collectTourFiles(dir: string, depth: number, out: string[]): void {
+  let entries: ReturnType<typeof editor.readDir>;
+  try {
+    entries = editor.readDir(editor.authorityPath(dir));
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const p = editor.pathJoin(dir, entry.name);
+    if (entry.is_dir) {
+      if (depth < TOUR_SCAN_DEPTH) collectTourFiles(p, depth + 1, out);
+    } else if (
+      entry.is_file &&
+      (entry.name.endsWith(".tour") || entry.name.endsWith(".json"))
+    ) {
+      out.push(p);
+    }
+  }
+}
+
+/** Every loadable tour in the workspace's well-known locations, either
+ * format. Files that do not parse as a tour are skipped silently — a
+ * `.json` in `.tours/` may simply be something else. */
+function discoverTours(): DiscoveredTour[] {
+  const root = editor.getCwd();
+  const candidates: string[] = [];
+  for (const rel of KNOWN_TOUR_FILES) {
+    const p = editor.pathJoin(root, rel);
+    if (editor.fileExists(editor.authorityPath(p))) candidates.push(p);
+  }
+  for (const rel of KNOWN_TOUR_DIRS) {
+    collectTourFiles(editor.pathJoin(root, rel), 0, candidates);
+  }
+  const found: DiscoveredTour[] = [];
+  for (const path of candidates) {
+    const parsed = parseManifest(path);
+    if (typeof parsed === "string") continue;
+    found.push({ path, title: parsed.title, steps: parsed.steps.length });
+  }
+  return found;
+}
+
+const DISCOVER_POPUP_ID = "code-tour-discover";
+/** Discovery results the open picker popup's action ids index into. */
+let discovered: DiscoveredTour[] = [];
+
+async function tour_discover(): Promise<void> {
+  const found = discoverTours();
+  if (found.length === 0) {
+    editor.setStatus(editor.t("status.no_tours"));
+    return;
+  }
+  if (found.length === 1) {
+    await openTour(found[0].path);
+    return;
+  }
+  discovered = found;
+  const root = editor.getCwd();
+  editor.showActionPopup({
+    id: DISCOVER_POPUP_ID,
+    title: editor.t("discover.title"),
+    message: editor.t("discover.message"),
+    actions: found.map((f, i) => ({
+      id: String(i),
+      label: `${f.title} · ${
+        f.path.startsWith(root + "/") ? f.path.slice(root.length + 1) : f.path
+      } (${f.steps})`,
+    })),
+  });
+}
+registerHandler("tour_discover", tour_discover);
+
+editor.on("action_popup_result", (data) => {
+  if (data.popup_id !== DISCOVER_POPUP_ID) return;
+  const pick = discovered[Number(data.action_id)];
+  if (pick) openTour(pick.path).catch((e) => editor.error(`code-tour: ${e}`));
+});
 
 // ============================================================================
 // Handlers — commands
@@ -1150,6 +1461,12 @@ editor.registerCommand(
   null,
 );
 editor.registerCommand(
+  "%cmd.tour_discover",
+  "%cmd.tour_discover_desc",
+  "tour_discover",
+  null,
+);
+editor.registerCommand(
   "%cmd.tour_next",
   "%cmd.tour_next_desc",
   "tour_next",
@@ -1192,6 +1509,7 @@ editor.exportPluginApi("code-tour", {
       step: t.step,
       total: t.manifest.steps.length,
     })),
+  discoverTours: () => discoverTours(),
 });
 
 editor.debug("Code Tour plugin loaded");
