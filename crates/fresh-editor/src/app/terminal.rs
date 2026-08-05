@@ -162,6 +162,77 @@ pub(crate) fn agent_command_env(
     env
 }
 
+impl Window {
+    /// Remember which capability token `terminal_id`'s freshly-spawned child
+    /// was handed, reading it out of the env [`agent_command_env`] built.
+    ///
+    /// A no-op for a terminal spawned without `allowScript` (no token in the
+    /// map), so every spawn site can call it unconditionally. The membership
+    /// this records is what workspace capture persists and what a later
+    /// restore/respawn re-mints from.
+    pub(crate) fn record_terminal_script_token(
+        &mut self,
+        terminal_id: TerminalId,
+        env: &HashMap<String, String>,
+    ) {
+        if let Some(token) = env.get("FRESH_CMD_TOKEN") {
+            self.terminal_script_tokens
+                .insert(terminal_id, token.clone());
+        }
+    }
+
+    /// Re-arm the script capability for a terminal being spawned from a
+    /// *remembered* grant — workspace restore, an exited agent's restart, a
+    /// remote reconnect — and return the env to inject into the new PTY child.
+    ///
+    /// The grant is re-minted rather than carried: the token table is
+    /// in-memory and process-global, so the token a previous editor run
+    /// handed this terminal resolves to nothing here, and within one run the
+    /// respawned child never inherits the dead one's environment anyway.
+    /// Without this a restored agent comes back able to *reach* the editor
+    /// (`FRESH_SESSION` is injected for every local terminal) but not to drive
+    /// it — every `fresh --cmd script run` fails with "no capability token:
+    /// script evaluation is not authorized" until the workspace is recreated
+    /// from scratch (fresh#2903).
+    ///
+    /// The new token is bound to *this* window, which is the right target: a
+    /// restored workspace is a new `WindowId`, and the terminal is coming back
+    /// inside it. Any token the terminal's previous incarnation held is
+    /// revoked on the way past so repeated restarts don't pile up live grants.
+    ///
+    /// `key` is the terminal id the token is filed under — the predicted id at
+    /// restore, the dying terminal's id at respawn. Callers re-key it onto the
+    /// real id afterwards, exactly as they do for the backing/log paths.
+    pub(crate) fn remint_terminal_script_env(
+        &mut self,
+        key: TerminalId,
+    ) -> HashMap<String, String> {
+        if let Some(stale) = self.terminal_script_tokens.remove(&key) {
+            crate::server::command_access::revoke(&stale);
+        }
+        let env = agent_command_env(self.id, None, true);
+        self.record_terminal_script_token(key, &env);
+        env
+    }
+
+    /// Move a terminal's script-token entry onto the id the manager actually
+    /// handed out, for the spawn paths that have to guess the id up front.
+    pub(crate) fn rekey_terminal_script_token(&mut self, from: TerminalId, to: TerminalId) {
+        if from == to {
+            return;
+        }
+        if let Some(token) = self.terminal_script_tokens.remove(&from) {
+            self.terminal_script_tokens.insert(to, token);
+        }
+    }
+
+    /// Whether `terminal_id`'s child holds a script capability token — the
+    /// grant workspace capture persists and a respawn re-mints.
+    pub(crate) fn terminal_has_script_access(&self, terminal_id: TerminalId) -> bool {
+        self.terminal_script_tokens.contains_key(&terminal_id)
+    }
+}
+
 /// Build a [`TerminalWrapper`] that runs `argv` directly as a local PTY child,
 /// mirroring `Authority::terminal_command`'s `CommandWrap::Direct` arm but
 /// unconditionally local — it consults no window authority. Used for terminals
@@ -1097,6 +1168,7 @@ impl Window {
                 .filter(|argv| !argv.is_empty())
                 .cloned();
             let ephemeral = self.ephemeral_terminals.contains(&old_id);
+            let script_access = self.terminal_has_script_access(old_id);
 
             let spawn = RespawnSpec {
                 old_id,
@@ -1108,6 +1180,7 @@ impl Window {
                 resume_argv,
                 launch_argv,
                 ephemeral,
+                script_access,
             };
             match self.respawn_terminal_pty(buffer_id, spawn) {
                 Some(_) => revived += 1,
@@ -1151,6 +1224,15 @@ impl Window {
         let wrapper = self.apply_remote_terminal_env(wrapper);
         let env_delta = self.terminal_env_delta(&wrapper);
 
+        // An agent that was granted editor control keeps it across the
+        // respawn: the reborn child gets a freshly-minted token bound to this
+        // window, since the one its predecessor carried died with that PTY.
+        let extra_env = if spec.script_access {
+            self.remint_terminal_script_env(spec.old_id)
+        } else {
+            HashMap::new()
+        };
+
         let new_id = match self.terminal_manager.spawn(
             spec.cols,
             spec.rows,
@@ -1162,7 +1244,7 @@ impl Window {
             crate::services::terminal::BackingMode::Continue,
             wrapper,
             env_delta,
-            HashMap::new(),
+            extra_env,
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -1183,6 +1265,7 @@ impl Window {
         // Re-key every terminal-id-keyed entry onto the reborn terminal. The
         // values come from the caller's spec rather than the maps, so this is
         // correct even when the exit path already dropped the old entries.
+        self.rekey_terminal_script_token(spec.old_id, new_id);
         if new_id != spec.old_id {
             self.terminal_backing_files.remove(&spec.old_id);
             self.terminal_log_files.remove(&spec.old_id);
@@ -1304,6 +1387,7 @@ impl Window {
             resume_argv,
             launch_argv,
             ephemeral: exited.ephemeral,
+            script_access: exited.script_access,
         };
         let Some(new_id) = self.respawn_terminal_pty(buffer_id, spec) else {
             // Put the record back so the user can retry the restart.
@@ -1352,6 +1436,11 @@ struct RespawnSpec {
     resume_argv: Option<Vec<String>>,
     launch_argv: Option<Vec<String>>,
     ephemeral: bool,
+    /// Whether the terminal being reborn held a script capability token. The
+    /// reborn child is minted a new one (see
+    /// [`Window::remint_terminal_script_env`]) rather than inheriting the dead
+    /// one's, which it could not see anyway.
+    script_access: bool,
 }
 
 impl Editor {

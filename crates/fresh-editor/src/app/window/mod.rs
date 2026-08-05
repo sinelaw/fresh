@@ -112,6 +112,10 @@ pub struct ExitedTerminal {
     pub resume: Option<Vec<String>>,
     /// Whether the dead terminal was ephemeral (plugin/Orchestrator-created).
     pub ephemeral: bool,
+    /// Whether the dead terminal's child held a script capability token, so a
+    /// restart mints it a new one instead of bringing the agent back unable to
+    /// drive the editor.
+    pub script_access: bool,
     /// The tab title as it read *before* the exit marker was appended, so a
     /// restart can put it back. `None` for an auto-named tab, which re-derives
     /// its name from the reborn process.
@@ -899,6 +903,19 @@ pub struct Window {
     /// just re-run their launch command.
     pub terminal_resume_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
+
+    /// Terminals whose child was handed a `FRESH_CMD_TOKEN` capability token
+    /// (`allowScript`), mapped to the token that terminal's *current*
+    /// incarnation carries.
+    ///
+    /// Membership — not the token value — is what survives a restart: it is
+    /// persisted as the workspace's `script_access` flag and re-minted on
+    /// restore, because the token table is in-memory and process-global, so
+    /// the string a previous run handed out means nothing to this one. The
+    /// value is kept so a respawn can revoke the token its predecessor held
+    /// instead of leaving it in the table for the life of the process.
+    pub terminal_script_tokens:
+        std::collections::HashMap<crate::services::terminal::TerminalId, String>,
 
     /// Terminals whose process has quit while their buffer stayed open,
     /// keyed by that buffer. Everything needed to respawn the same process
@@ -2229,6 +2246,7 @@ impl Window {
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
+            terminal_script_tokens: std::collections::HashMap::new(),
             exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),

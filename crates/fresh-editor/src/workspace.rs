@@ -511,6 +511,26 @@ pub struct SerializedTerminalWorkspace {
     /// re-derive their name the same way after restore.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Whether this terminal's child was granted editor control — the
+    /// Orchestrator's `allowScript`, which stamps a `FRESH_CMD_TOKEN`
+    /// capability token into the agent's environment.
+    ///
+    /// Only the *grant* is persisted, never the token: the token table is
+    /// in-memory and process-global, so the string this terminal carried in a
+    /// previous run means nothing to the run that restores it. Restore mints a
+    /// fresh token bound to the restored window (see
+    /// `Window::remint_terminal_script_env`); without this flag a restored
+    /// agent came back unable to drive the editor at all. Absent for plain
+    /// terminals and in workspaces written before this field existed — which
+    /// read back as `false`, i.e. no grant, the safe direction.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub script_access: bool,
+}
+
+/// `skip_serializing_if` helper: keeps the default-`false` capability flag out
+/// of the JSON for the overwhelming majority of terminals that never had it.
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 /// The saved state of a terminal whose process had quit before the editor did.

@@ -1236,6 +1236,7 @@ impl Editor {
                 .filter(|argv| !argv.is_empty())
                 .cloned(),
             ephemeral: window.ephemeral_terminals.contains(&terminal_id),
+            script_access: window.terminal_has_script_access(terminal_id),
             title: None,
         }
     }
