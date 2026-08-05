@@ -900,6 +900,15 @@ impl crate::app::window::Window {
         };
         let wrapper_for_spawn = self.apply_remote_terminal_env(wrapper_for_spawn);
         let env_delta = self.terminal_env_delta(&wrapper_for_spawn);
+        // A terminal saved with the script grant comes back holding it: mint a
+        // token bound to *this* (restored) window and stamp it into the child's
+        // environment. The saved workspace records only that the grant existed
+        // — the token itself belonged to the editor run that is gone.
+        let extra_env = if terminal.script_access {
+            self.remint_terminal_script_env(predicted_id)
+        } else {
+            std::collections::HashMap::new()
+        };
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
             terminal.rows,
@@ -911,7 +920,7 @@ impl crate::app::window::Window {
             crate::services::terminal::BackingMode::Continue,
             wrapper_for_spawn,
             env_delta,
-            std::collections::HashMap::new(),
+            extra_env,
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -925,6 +934,7 @@ impl crate::app::window::Window {
         };
 
         // Ensure maps keyed by actual ID
+        self.rekey_terminal_script_token(predicted_id, terminal_id);
         if terminal_id != predicted_id {
             self.terminal_log_files
                 .insert(terminal_id, log_path.clone());
@@ -1018,6 +1028,9 @@ impl crate::app::window::Window {
                 // A restored terminal is re-persisted by the branch above on
                 // the next save, so it must not be treated as throwaway.
                 ephemeral: false,
+                // Nothing is spawned here, so no token is minted — the grant
+                // is carried so the restart (which does spawn) mints one.
+                script_access: terminal.script_access,
                 title: terminal.title.clone(),
             },
         );
@@ -2522,6 +2535,7 @@ impl crate::app::window::Window {
                     agent_resume,
                     exited: None,
                     title,
+                    script_access: self.terminal_has_script_access(terminal_id),
                 });
             }
         }
@@ -2570,6 +2584,7 @@ impl crate::app::window::Window {
                 // The pre-exit tab title, not the "(exited)" form the tab is
                 // showing now — restore re-applies the marker itself.
                 title: exited.title.clone(),
+                script_access: exited.script_access,
             });
         }
 

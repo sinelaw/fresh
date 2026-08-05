@@ -435,7 +435,7 @@ impl crate::app::Editor {
                 persistent: false, // ephemeral by default; orchestrator owns persistence
                 command,
                 title: title.filter(|t| !t.is_empty()),
-                env: terminal_env,
+                env: terminal_env.clone(),
             })
         };
 
@@ -460,6 +460,11 @@ impl crate::app::Editor {
         // command on restore — see `restore_terminal_from_workspace`.
         if let Some(target) = self.windows.get_mut(&id) {
             target.mark_terminal_restorable(terminal_id, Some(restore_command), resume);
+            // File the token this terminal's child was handed, so workspace
+            // capture persists the grant and a restore re-mints it — without
+            // it a restored agent keeps its conversation but loses the ability
+            // to drive the editor.
+            target.record_terminal_script_token(terminal_id, &terminal_env);
         }
 
         // The switch has now committed (the spawn succeeded and the active

@@ -4087,7 +4087,7 @@ impl Editor {
                 persistent,
                 command: command.clone(),
                 title: title.filter(|t| !t.is_empty()),
-                env: terminal_env,
+                env: terminal_env.clone(),
             };
             let spawned = target.create_plugin_terminal(spec);
             // Record the launch/resume argv exactly as `create_window_with_terminal`
@@ -4097,6 +4097,9 @@ impl Editor {
             // respawned a bare shell instead of the agent.
             if let Ok((terminal_id, _, _)) = &spawned {
                 target.mark_terminal_restorable(*terminal_id, command, resume);
+                // File the token this terminal's child was handed, so workspace
+                // capture persists the grant and a restore re-mints it.
+                target.record_terminal_script_token(*terminal_id, &terminal_env);
             }
             spawned
         };
