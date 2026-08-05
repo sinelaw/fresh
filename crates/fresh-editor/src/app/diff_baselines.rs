@@ -15,7 +15,7 @@
 //! `Arc<Mutex<..>>` solely for that producer/consumer handoff — the
 //! same shape as the search-handle registry.
 
-use fresh_core::api::{DiffBaselineResult, LineDiffHunk};
+use fresh_core::api::DiffBaselineResult;
 use fresh_core::BufferId;
 use std::collections::HashMap;
 use std::path::PathBuf;

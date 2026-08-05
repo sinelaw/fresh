@@ -1,6 +1,17 @@
 # Host diff service: baselines as buffers, one diff engine, one cache
 
-Status: proposal (follow-up to `live-diff-scalable-diff-design.md`)
+Status: implemented (follow-up to `live-diff-scalable-diff-design.md`).
+Notes on deviations: baseline reference content is currently stored as
+loaded text in the `BaselineStore` rather than as hidden file-backed
+`TextBuffer`s — the buffer-backed representation (lazy loading for huge
+refs) is the documented follow-up, isolated behind the store. Reference
+invalidation watches (reflog, file watcher) remain plugin-driven via
+`refreshDiffBaseline` rather than host-registered. The audit_mode /
+composite-alignment consumer is not yet migrated. Everything else below
+is as designed: the memoized saved-diff, the shared engine in
+fresh-core, the tier-composed content-accurate saved baseline (the
+64 KiB verify-cap split is gone from service consumers), the plugin API
+family, and the live_diff + git_gutter migrations.
 
 ## The landscape today — four diff paths, three coordinate systems
 

@@ -63,6 +63,10 @@ interface BufferGitState {
   hunks: DiffHunk[];
   /** Whether we're currently updating */
   updating: boolean;
+  /** Host-side baseline for the file on disk (the diff's new side). */
+  diskBaselineId: number | null;
+  /** Host-side baseline for the file at HEAD (the diff's old side). */
+  headBaselineId: number | null;
 }
 
 // =============================================================================
@@ -74,167 +78,83 @@ const bufferStates: Map<number, BufferGitState> = new Map();
 
 
 // =============================================================================
-// Git Diff Parsing
+// Hunk mapping (host-side diff)
 // =============================================================================
 
 /**
- * Parse unified diff output to extract hunks
- * Unified diff format:
- * @@ -start,count +start,count @@
+ * Map host `LineDiffHunk`s (0-based, old/new line ranges) onto this
+ * plugin's gutter hunks, preserving the placement conventions of the
+ * old `git diff -U0` parser exactly:
+ *
+ *   - a replacement pairs up min(oldCount, newCount) lines as
+ *     `modified`, then classifies the excess as `added` (after the
+ *     modified run) or `deleted`;
+ *   - `deleted.startLine` is 1-based and names the row the ▾ glyph
+ *     sits on: the line *before* the seam for a pure deletion
+ *     (`newStart`, since `newStart` 0-based is the line after it), or
+ *     the first modified row for a shrink-replacement (`newStart + 1`).
  */
-function parseDiffOutput(diffOutput: string): DiffHunk[] {
+function hostHunksToGutterHunks(raw: LineDiffHunk[]): DiffHunk[] {
   const hunks: DiffHunk[] = [];
-  const lines = diffOutput.split("\n");
-
-  let currentOldLine = 0;
-  let currentNewLine = 0;
-  let inHunk = false;
-  let addedStart = 0;
-  let addedCount = 0;
-  let modifiedStart = 0;
-  let modifiedCount = 0;
-  let deletedAtLine = 0;
-  let deletedCount = 0;
-
-  const flushAdded = () => {
-    if (addedCount > 0) {
-      hunks.push({ type: "added", startLine: addedStart, lineCount: addedCount });
-      addedCount = 0;
+  for (const h of raw) {
+    const paired = Math.min(h.oldCount, h.newCount);
+    if (paired > 0) {
+      hunks.push({ type: "modified", startLine: h.newStart + 1, lineCount: paired });
     }
-  };
-
-  const flushModified = () => {
-    if (modifiedCount > 0) {
-      hunks.push({ type: "modified", startLine: modifiedStart, lineCount: modifiedCount });
-      modifiedCount = 0;
-    }
-  };
-
-  const flushDeleted = () => {
-    if (deletedCount > 0) {
-      // Deleted lines are shown as a marker on the line after the deletion
-      hunks.push({ type: "deleted", startLine: deletedAtLine, lineCount: deletedCount });
-      deletedCount = 0;
-    }
-  };
-
-  for (const line of lines) {
-    // Match hunk header: @@ -old_start,old_count +new_start,new_count @@
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-    if (hunkMatch) {
-      // Flush any pending changes from previous hunk
-      flushAdded();
-      flushModified();
-      flushDeleted();
-
-      currentOldLine = parseInt(hunkMatch[1], 10);
-      currentNewLine = parseInt(hunkMatch[3], 10);
-      inHunk = true;
-      continue;
-    }
-
-    if (!inHunk) continue;
-
-    if (line.startsWith("+") && !line.startsWith("+++")) {
-      // Added line
-      if (deletedCount > 0) {
-        // If there were deletions right before, this is a modification
-        if (modifiedCount === 0) {
-          modifiedStart = currentNewLine;
-        }
-        modifiedCount++;
-        deletedCount--;
-      } else {
-        // Pure addition
-        if (addedCount === 0) {
-          addedStart = currentNewLine;
-        }
-        addedCount++;
-      }
-      currentNewLine++;
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
-      // Deleted line - flush any pending additions first
-      flushAdded();
-
-      if (deletedCount === 0) {
-        deletedAtLine = currentNewLine;
-      }
-      deletedCount++;
-      currentOldLine++;
-    } else if (line.startsWith(" ")) {
-      // Context line (unchanged)
-      flushAdded();
-      flushModified();
-      flushDeleted();
-      currentOldLine++;
-      currentNewLine++;
-    } else if (line === "\\ No newline at end of file") {
-      // Ignore this marker
-      continue;
+    if (h.newCount > h.oldCount) {
+      hunks.push({
+        type: "added",
+        startLine: h.newStart + paired + 1,
+        lineCount: h.newCount - h.oldCount,
+      });
+    } else if (h.oldCount > h.newCount) {
+      hunks.push({
+        type: "deleted",
+        startLine: paired > 0 ? h.newStart + 1 : h.newStart,
+        lineCount: h.oldCount - h.newCount,
+      });
     }
   }
-
-  // Flush any remaining changes
-  flushAdded();
-  flushModified();
-  flushDeleted();
-
   return hunks;
 }
 
 // =============================================================================
-// Git Operations
+// Baseline management
 // =============================================================================
 
 /**
- * Get the directory containing a file
+ * Ensure disk + HEAD baselines are registered for this buffer. Returns
+ * false when the file has no HEAD version (untracked, no repo) — the
+ * cases the old `git ls-files` probe reported.
  */
-function getFileDirectory(filePath: string): string {
-  const lastSlash = filePath.lastIndexOf("/");
-  if (lastSlash > 0) {
-    return filePath.substring(0, lastSlash);
+async function ensureBaselines(bufferId: number, state: BufferGitState): Promise<boolean> {
+  if (state.diskBaselineId === null) {
+    try {
+      state.diskBaselineId = await editor.registerDiffBaseline(bufferId, "disk", null);
+    } catch (_e) {
+      return false;
+    }
   }
-  return ".";
+  if (state.headBaselineId === null) {
+    try {
+      state.headBaselineId = await editor.registerDiffBaseline(bufferId, "gitRef", "HEAD");
+    } catch (_e) {
+      return false;
+    }
+  }
+  return true;
 }
 
-/**
- * Check if a file is tracked by git
- */
-async function isGitTracked(filePath: string): Promise<boolean> {
-  const cwd = getFileDirectory(filePath);
-  const result = await editor.spawnProcess("git", ["ls-files", "--error-unmatch", filePath], cwd);
-  return result.exit_code === 0;
-}
-
-/**
- * Get git diff for a file
- * Compares working tree against HEAD to show all uncommitted changes
- * (both staged and unstaged)
- */
-async function getGitDiff(filePath: string): Promise<string> {
-  const cwd = getFileDirectory(filePath);
-
-  // Diff against HEAD to show all changes (staged + unstaged) vs last commit.
-  // Force Git's native unified format: user-configured external diff/textconv
-  // tools can emit side-by-side or ANSI output that this parser cannot consume.
-  const result = await editor.spawnProcess("git", [
-    "--no-pager",
-    "diff",
-    "--no-ext-diff",
-    "--no-textconv",
-    "HEAD",
-    "--no-color",
-    "--unified=0", // No context lines for cleaner parsing
-    "--",
-    filePath,
-  ], cwd);
-
-  // Exit code 0 = no differences, 1 = differences found, >1 = error
-  if (result.exit_code <= 1) {
-    return result.stdout;
+/** Forget this buffer's baselines (save-as; the host drops them on buffer close). */
+function releaseBaselines(state: BufferGitState): void {
+  if (state.diskBaselineId !== null) {
+    editor.releaseDiffBaseline(state.diskBaselineId);
+    state.diskBaselineId = null;
   }
-
-  return "";
+  if (state.headBaselineId !== null) {
+    editor.releaseDiffBaseline(state.headBaselineId);
+    state.headBaselineId = null;
+  }
 }
 
 // =============================================================================
@@ -253,10 +173,9 @@ async function updateGitGutter(bufferId: number): Promise<void> {
   try {
     editor.debug(`Git Gutter: updating for ${state.filePath}`);
 
-    // Check if file is git tracked
-    const tracked = await isGitTracked(state.filePath);
-    if (!tracked) {
-      // Clear indicators for non-tracked files
+    // Register (or re-register) the disk + HEAD baselines. Registration
+    // failing means no HEAD version exists — untracked file or no repo.
+    if (!(await ensureBaselines(bufferId, state))) {
       editor.debug("Git Gutter: file not tracked by git");
       editor.clearLineIndicators(bufferId, NAMESPACE);
       editor.clearScrollbarMarkers(bufferId, SCROLL_NAMESPACE);
@@ -266,16 +185,18 @@ async function updateGitGutter(bufferId: number): Promise<void> {
       return;
     }
 
-    editor.debug("Git Gutter: file is tracked, getting diff...");
-
-    // Get diff
-    const diffOutput = await getGitDiff(state.filePath);
-    editor.debug(`Git Gutter: diff output length = ${diffOutput.length}`);
-    if (diffOutput.length > 0 && diffOutput.length < 500) {
-      editor.debug(`Git Gutter: diff = ${diffOutput.replace(/\n/g, "\\n")}`);
-    }
-    const hunks = parseDiffOutput(diffOutput);
-    editor.debug(`Git Gutter: parsed ${hunks.length} hunks`);
+    // This update runs on open, save, and manual refresh — moments when
+    // the disk content (and possibly HEAD) just changed, so re-fetch
+    // both references before diffing. The diff itself runs host-side;
+    // no file content crosses the plugin bridge.
+    await editor.refreshDiffBaseline(state.diskBaselineId!);
+    await editor.refreshDiffBaseline(state.headBaselineId!);
+    const result = await editor.diffBaselinePair(
+      state.headBaselineId!,
+      state.diskBaselineId!,
+    );
+    const hunks = hostHunksToGutterHunks(result.hunks);
+    editor.debug(`Git Gutter: ${hunks.length} hunks from host diff`);
 
     // Clear existing indicators
     editor.clearLineIndicators(bufferId, NAMESPACE);
@@ -411,6 +332,8 @@ function git_gutter_refresh() : void {
       filePath,
       hunks: [],
       updating: false,
+      diskBaselineId: null,
+      headBaselineId: null,
     });
   }
 
@@ -443,6 +366,8 @@ editor.on("after_file_open", (args) => {
     filePath,
     hunks: [],
     updating: false,
+    diskBaselineId: null,
+    headBaselineId: null,
   });
 
   // Update immediately (no debounce for file open)
@@ -461,6 +386,8 @@ editor.on("buffer_activated", (args) => {
         filePath,
         hunks: [],
         updating: false,
+        diskBaselineId: null,
+        headBaselineId: null,
       });
       updateGitGutter(bufferId);
     }
@@ -473,15 +400,21 @@ editor.on("buffer_activated", (args) => {
 editor.on("after_file_save", (args) => {
   const bufferId = args.buffer_id;
 
-  // Update state with new path (in case of save-as)
+  // Update state with new path (in case of save-as); a changed path
+  // invalidates both baselines, which are bound to the old one.
   const state = bufferStates.get(bufferId);
   if (state) {
-    state.filePath = args.path;
+    if (state.filePath !== args.path) {
+      state.filePath = args.path;
+      releaseBaselines(state);
+    }
   } else {
     bufferStates.set(bufferId, {
       filePath: args.path,
       hunks: [],
       updating: false,
+      diskBaselineId: null,
+      headBaselineId: null,
     });
   }
 
@@ -511,6 +444,8 @@ if (initPath && initPath !== "") {
     filePath: initPath,
     hunks: [],
     updating: false,
+    diskBaselineId: null,
+    headBaselineId: null,
   });
   updateGitGutter(initBufferId);
 }
