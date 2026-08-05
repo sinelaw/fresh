@@ -3925,9 +3925,17 @@ impl Window {
     /// Adjust cursors in other splits that share the same buffer after
     /// an edit. The split that originated the event already had its
     /// cursors moved by `BufferState::apply`; this method walks every
-    /// other split displaying the same buffer and shifts (or, for a
-    /// `BulkEdit`, resets) their cursors so they don't dangle past
-    /// freshly-deleted text.
+    /// other split displaying the same buffer and shifts their cursors by
+    /// the edit deltas so they keep pointing at the same text instead of
+    /// dangling past freshly-deleted bytes.
+    ///
+    /// Every edit shape funnels through the same `adjust_for_edit` loop,
+    /// `BulkEdit` included. `BulkEdit` used to *assign* the originating
+    /// split's new cursor position to every other split, which teleported
+    /// a second view of the file to wherever the edit happened. Any
+    /// multi-event editing action (transpose, move-line, toggle-comment,
+    /// …) takes the bulk path even with a single cursor, so editing in
+    /// one pane dragged every other pane along (issue #2878).
     pub fn adjust_other_split_cursors_for_event(&mut self, event: &Event) {
         let current_buffer_id = self.active_buffer();
         let buffer_len = self
@@ -3941,22 +3949,6 @@ impl Window {
         let current_split_id = mgr.active_split();
         let splits_for_buffer = mgr.splits_for_buffer(current_buffer_id);
 
-        if let Event::BulkEdit { new_cursors, .. } = event {
-            for split_id in splits_for_buffer {
-                if split_id == current_split_id {
-                    continue;
-                }
-                if let Some(view_state) = vs_map.get_mut(&split_id) {
-                    if let Some((_, pos, _)) = new_cursors.first() {
-                        let new_pos = (*pos).min(buffer_len);
-                        view_state.cursors.primary_mut().position = new_pos;
-                        view_state.cursors.primary_mut().anchor = None;
-                    }
-                }
-            }
-            return;
-        }
-
         let adjustments: Vec<(usize, usize, usize)> = match event {
             Event::Insert { position, text, .. } => {
                 vec![(*position, 0, text.len())]
@@ -3964,6 +3956,11 @@ impl Window {
             Event::Delete { range, .. } => {
                 vec![(range.start, range.len(), 0)]
             }
+            // `edits` is sorted descending by position, which is safe to
+            // replay in order: each adjustment leaves a cursor at or after
+            // the edit it just shifted for, so the comparison against the
+            // next (lower) edit position still reflects pre-edit order.
+            Event::BulkEdit { edits, .. } => edits.clone(),
             Event::Batch { events, .. } => events
                 .iter()
                 .filter_map(|e| match e {
@@ -3989,6 +3986,13 @@ impl Window {
                         .cursors
                         .adjust_for_edit(*edit_pos, *old_len, *new_len);
                 }
+                // A cursor can still sit past the end when the edit shrank
+                // the tail out from under it; clamp so no view holds an
+                // out-of-bounds position.
+                view_state.cursors.map(|cursor| {
+                    cursor.position = cursor.position.min(buffer_len);
+                    cursor.anchor = cursor.anchor.map(|a| a.min(buffer_len));
+                });
             }
         }
     }

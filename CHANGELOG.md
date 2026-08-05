@@ -26,6 +26,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Bug Fixes
 
 * **Replace-all now finishes on files with tens of thousands of matches** - four unrelated quadratic hot spots made a 60 000-match replace run for over a minute, or hang outright (#2893).
+* **Two splits on the same file keep independent edit points** - editing in one pane moved the other pane's cursor to the edit and scrolled it there, so the second edit point had to be repositioned after every change. Plain typing was unaffected, but any action that emits more than one event (`Ctrl+T` transpose, `Alt+↑`/`Alt+↓` move line, toggle comment) took the bulk-edit path, which reset other panes' cursors instead of shifting them by the edit (#2878, reported by @FreekyFrank).
 * **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`), because the terminal reports the *base* key and the shift separately (#2880, reported by @akarinotomoshibi).
 * **TOML multiline arrays highlight correctly**, and bare dots are no longer misread as floats (#2887, by @asukaminato0721).
 * **Pasting works in the New Workspace and Run Agent dialogs** - `Ctrl+V`/`Ctrl+A`/`Ctrl+C`/`Ctrl+X` and bracketed paste reach the focused text field instead of the buffer behind the dialog, in daemon mode (`fresh -a`) too.
