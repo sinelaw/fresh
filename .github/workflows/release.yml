@@ -393,7 +393,7 @@ jobs:
                 self_update = false
 
                 [hints]
-                formula = "fresh-editor"
+                formula = "fresh"
                 tap = "sinelaw/homebrew-fresh"
               RECEIPT
             end
