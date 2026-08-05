@@ -67,7 +67,7 @@ export default defineConfig({
           { text: "File Explorer", link: "/features/file-explorer" },
           { text: "Search and Replace", link: "/features/search-replace" },
           { text: "Integrated Terminal", link: "/features/terminal" },
-          { text: "Scripting and Agent Control", link: "/features/scripting" },
+          { text: "Scripting the Editor", link: "/features/scripting" },
           { text: "Guided Code Tours", link: "/features/code-tours" },
           { text: "Language Support", link: "/features/languages" },
           { text: "LSP Integration", link: "/features/lsp" },
