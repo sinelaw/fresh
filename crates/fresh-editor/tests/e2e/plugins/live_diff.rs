@@ -641,90 +641,55 @@ fn test_live_diff_virtual_line_anchored_to_correct_modified_line() {
     harness.type_text(APPEND_PAYLOAD).unwrap();
     harness.render().unwrap();
 
-    // Wait until BOTH OLD virtual lines are present as their own rows AND
-    // the screen has stopped changing. Presence alone is necessary but not
-    // sufficient for the anchoring assertions below: the recompute is
-    // debounced/async, so there is a transient window where both virtual
-    // lines exist but the layout hasn't converged to its final anchoring
-    // yet. Snapshotting that intermediate frame produces an off-by-one row
-    // (the source of the rare flake). `wait_until_stable` drains the
-    // debounce before we read the buffer, so the positioning assertions run
-    // against a settled frame.
-    harness
-        .wait_until_stable(|h| {
-            let s = h.screen_to_string();
-            virtual_row_present(&s, "UNIQUE_IF_BODY_OLD_MARKER")
-                && virtual_row_present(&s, "UNIQUE_ELSE_BODY_OLD_MARKER")
-        })
-        .unwrap();
-
-    let buf = harness.buffer();
-    let rows: Vec<String> = (0..buf.area.height)
-        .map(|y| {
-            (0..buf.area.width)
-                .map(|x| buf[(x, y)].symbol().to_string())
-                .collect::<String>()
-        })
-        .collect();
-
-    let dump = || {
-        rows.iter()
-            .enumerate()
-            .map(|(i, r)| format!("{i:3} | {}", r.trim_end()))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
+    // Wait until the layout CONVERGES to the anchoring invariants,
+    // instead of asserting on a single sampled frame. Presence of both
+    // virtual lines is necessary but not sufficient: the recompute is
+    // debounced/async, so there are transient frames where both virtual
+    // lines exist but anchoring hasn't settled — and under a loaded CI
+    // runner such a frame can even satisfy a "screen stopped changing"
+    // stability window while a recompute is still pending, which is how
+    // the snapshot-then-assert form of this test flaked. Waiting on the
+    // invariants themselves is immune to any transient ordering; a
+    // genuinely wrong final layout still fails loudly, because the wait
+    // never resolves and its periodic screen dumps show the mis-anchored
+    // rows.
+    //
     // After both edits the buffer holds the marker followed by
     // `APPEND_PAYLOAD` on each line, and the virtual lines hold the
-    // bare marker. Distinguish source rows from virtual rows by
-    // whether the payload is present.
-    let row_new_top = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("new top line not on screen. screen:\n{}", dump()));
-    let row_else = rows
-        .iter()
-        .position(|r| r.contains("} else {"))
-        .unwrap_or_else(|| panic!("unchanged else line not on screen. screen:\n{}", dump()));
-    let row_new_bot = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("new bot line not on screen. screen:\n{}", dump()));
-    let row_old_top = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("old top virtual line not on screen. screen:\n{}", dump()));
-    let row_old_bot = rows
-        .iter()
-        .position(|r| r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD))
-        .unwrap_or_else(|| panic!("old bot virtual line not on screen. screen:\n{}", dump()));
-
-    // Layout invariants:
-    //   * the OLD virtual line for the first modification sits directly
-    //     above the NEW line that replaced it
-    //   * the OLD virtual line for the second modification sits directly
-    //     above the NEW line that replaced it (NOT above the unchanged
-    //     "else" context line — that's the user-reported bug)
-    assert_eq!(
-        row_old_top + 1,
-        row_new_top,
-        "OLD top virtual line ({row_old_top}) should be directly above NEW top ({row_new_top})",
-    );
-    assert!(
-        row_new_top < row_else,
-        "NEW top row ({row_new_top}) should come before the unchanged else row ({row_else})",
-    );
-    assert_eq!(
-        row_old_bot + 1,
-        row_new_bot,
-        "OLD bot virtual line ({row_old_bot}) should be directly above NEW bot ({row_new_bot}); \
-         the user-reported bug puts it above the unchanged 'else' line instead",
-    );
-    assert!(
-        row_else < row_old_bot,
-        "unchanged 'else' row ({row_else}) should come before OLD bot virtual line ({row_old_bot})",
-    );
+    // bare marker — distinguish source rows from virtual rows by
+    // whether the payload is present. Invariants:
+    //   * each OLD virtual line sits DIRECTLY above the NEW line that
+    //     replaced it (the user-reported bug put the second one above
+    //     the unchanged "} else {" context line instead)
+    //   * row order is: OLD top, NEW top, else, OLD bot, NEW bot
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            let rows: Vec<&str> = s.lines().collect();
+            let row_new_top = rows.iter().position(|r| {
+                r.contains("UNIQUE_IF_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD)
+            });
+            let row_else = rows.iter().position(|r| r.contains("} else {"));
+            let row_new_bot = rows.iter().position(|r| {
+                r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && r.contains(APPEND_PAYLOAD)
+            });
+            let row_old_top = rows.iter().position(|r| {
+                r.contains("UNIQUE_IF_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD)
+            });
+            let row_old_bot = rows.iter().position(|r| {
+                r.contains("UNIQUE_ELSE_BODY_OLD_MARKER") && !r.contains(APPEND_PAYLOAD)
+            });
+            match (row_old_top, row_new_top, row_else, row_old_bot, row_new_bot) {
+                (Some(old_top), Some(new_top), Some(els), Some(old_bot), Some(new_bot)) => {
+                    old_top + 1 == new_top
+                        && new_top < els
+                        && els < old_bot
+                        && old_bot + 1 == new_bot
+                }
+                _ => false,
+            }
+        })
+        .unwrap();
 }
 
 /// Regression: with live-diff active, deleting 3+ consecutive lines in
@@ -1106,5 +1071,140 @@ fn test_live_diff_clears_after_commit() {
 
     harness
         .wait_until(|h| !has_glyph(&h.screen_to_string(), '+'))
+        .unwrap();
+}
+
+// =============================================================================
+// Large-drift regressions (live-diff-old-file-refusal-repro.md)
+// =============================================================================
+//
+// Checking out a very old revision of a file used to make live-diff refuse
+// outright: the plugin's dense-LCS DP bailed past 16M cells, cleared every
+// decoration, and reported "file too large for live diff". The line diff now
+// runs natively (`editor.computeLineDiff`) with no size bail, and oversized
+// *rendering* degrades locally (fewer decorations) instead of globally
+// (none). Both tests below construct buffer-vs-HEAD pairs whose stripped
+// diff middle exceeds the old 16M-cell cap, so without the fix they time
+// out waiting for gutter glyphs that never appear.
+
+/// Build a file of `total` lines where every 5th line is unique to `side`
+/// and the rest are shared filler. Two such files for different sides give
+/// a diff middle of ~total x total lines (the old DP refused past ~4000)
+/// while only ~total/5 lines actually differ — so the render stays at full
+/// detail, virtual deletion lines included.
+fn interleaved_drift_file(side: &str, total: usize) -> String {
+    let mut text = String::new();
+    for i in 0..total {
+        if i % 5 == 4 {
+            text.push_str(&format!("{side} unique payload {i}\n"));
+        } else {
+            text.push_str(&format!("shared filler line {i}\n"));
+        }
+    }
+    text
+}
+
+/// A buffer whose diff-vs-HEAD middle is ~4900x4900 lines (24M DP cells —
+/// past the old refusal cap) but with under 1000 changed lines: must render
+/// at FULL detail. The `-` virtual line carrying old-side text proves the
+/// full pipeline ran; a `+` glyph proves the gutter did.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_old_revision_large_middle_renders_full_detail() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    repo.create_file("src/big.rs", &interleaved_drift_file("old", 4_900));
+    repo.git_add(&["src/big.rs"]);
+    repo.git_commit("old revision of big file");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    // The working tree holds the "new revision"; the buffer diffs it
+    // against the committed old one — the same shape as checking out an
+    // old revision of a tracked file and enabling live diff.
+    repo.modify_file("src/big.rs", &interleaved_drift_file("new", 4_900));
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/big.rs");
+
+    // Full-detail rendering: the low-similarity rewrite pair at line 5
+    // splits into removed + added, so the OLD text renders as a virtual
+    // deletion line above the new one, and the added half gets `+`.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            has_glyph(&screen, '+') && has_text(&screen, "old unique payload 4")
+        })
+        .unwrap();
+}
+
+/// A near-total rewrite at the reported scale (~5k vs ~6k lines, <1%
+/// shared): far too many virtual lines to be usable, so rendering degrades
+/// to "no virtual lines" — but gutter glyphs still appear and the status
+/// bar says the view is simplified. Before the fix this scenario rendered
+/// nothing at all.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_live_diff_near_total_rewrite_degrades_but_renders() {
+    let repo = GitTestRepo::new();
+    repo.setup_live_diff_plugin();
+
+    let mut old_text = String::new();
+    for i in 0..5_000 {
+        if i % 100 == 0 {
+            old_text.push_str(&format!("shared anchor line {i}\n"));
+        } else {
+            old_text.push_str(&format!("ancient line {i} content {}\n", i * 7919));
+        }
+    }
+    repo.create_file("src/big.rs", &old_text);
+    repo.git_add(&["src/big.rs"]);
+    repo.git_commit("ancient revision");
+
+    let original_dir = repo.change_to_repo_dir();
+    let _guard = DirGuard::new(original_dir);
+
+    let mut new_text = String::new();
+    for i in 0..6_000 {
+        if i % 100 == 0 {
+            new_text.push_str(&format!("shared anchor line {i}\n"));
+        } else {
+            new_text.push_str(&format!("modern line {i} content {}\n", i * 6271));
+        }
+    }
+    repo.modify_file("src/big.rs", &new_text);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    enable_live_diff_globally(&mut harness);
+    open_file(&mut harness, &repo.path, "src/big.rs");
+
+    // Gutter glyphs render (the whole visible region changed vs HEAD) and
+    // the degraded-detail status is announced. The status assertion reads
+    // the full screen (not content_lines) because the status bar is one of
+    // the rows content_lines strips. Assert only the message's prefix: at
+    // this harness width the status bar truncates the tail ("…simplifi..."),
+    // so the full "simplified view" phrase never fits on screen.
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            has_glyph(&screen, '~') && screen.contains("Live Diff: large change")
+        })
         .unwrap();
 }

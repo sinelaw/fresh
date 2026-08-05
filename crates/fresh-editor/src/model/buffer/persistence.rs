@@ -52,6 +52,16 @@ pub struct Persistence {
     /// pre-save diff. Consumers fold this in; see
     /// [`TextBuffer::save_state_version`](super::TextBuffer::save_state_version).
     save_state_version: u64,
+
+    /// Memo of the last [`Self::diff_since_saved`] result, keyed by
+    /// `(content_version, save_state_version)`. The diff is re-derived
+    /// per frame by up to three independent consumers (gutter,
+    /// scrollbar, plugin state snapshot); the version pair is exactly
+    /// the invalidation contract documented on `save_state_version`, so
+    /// a single memo makes the second and third calls free. Interior
+    /// mutability because the diff is computed behind `&self` on read
+    /// paths.
+    saved_diff_memo: std::sync::RwLock<Option<(u64, u64, PieceTreeDiff)>>,
 }
 
 impl Persistence {
@@ -69,6 +79,7 @@ impl Persistence {
             saved_root,
             saved_file_size,
             save_state_version: 0,
+            saved_diff_memo: std::sync::RwLock::new(None),
         }
     }
 
@@ -253,6 +264,22 @@ impl Persistence {
         }
     }
 
+    /// Total bytes of the saved snapshot tree.
+    pub fn saved_total_bytes(&self) -> usize {
+        tree_total_bytes(&self.saved_root)
+    }
+
+    /// Read a byte range out of the saved snapshot tree. `None` when any
+    /// piece in the range is unreadable (e.g. unloaded chunk data).
+    pub fn extract_saved_range(
+        &self,
+        start: usize,
+        end: usize,
+        buffers: &[StringBuffer],
+    ) -> Option<Vec<u8>> {
+        extract_range_from_tree(&self.saved_root, start, end, buffers)
+    }
+
     /// Diff the current piece tree against the last saved snapshot.
     ///
     /// Two-phase algorithm:
@@ -267,6 +294,7 @@ impl Persistence {
         &self,
         piece_tree: &PieceTree,
         buffers: &[StringBuffer],
+        content_version: u64,
     ) -> PieceTreeDiff {
         // Fast path: if the buffer hasn't been modified since loading
         // or saving, content is identical by definition.
@@ -287,6 +315,30 @@ impl Persistence {
             };
         }
 
+        // Memo probe: every mutation that can change this diff bumps
+        // either `content_version` (edits) or `save_state_version`
+        // (saves, saved-root rewrites on chunk load), so a matching
+        // pair means the cached result is current.
+        if let Ok(memo) = self.saved_diff_memo.read() {
+            if let Some((cv, ssv, diff)) = memo.as_ref() {
+                if *cv == content_version && *ssv == self.save_state_version {
+                    return diff.clone();
+                }
+            }
+        }
+
+        let result = self.diff_since_saved_uncached(piece_tree, buffers);
+        if let Ok(mut memo) = self.saved_diff_memo.write() {
+            *memo = Some((content_version, self.save_state_version, result.clone()));
+        }
+        result
+    }
+
+    fn diff_since_saved_uncached(
+        &self,
+        piece_tree: &PieceTree,
+        buffers: &[StringBuffer],
+    ) -> PieceTreeDiff {
         // Phase 1: structure-based diff to find which byte ranges
         // differ. O(number of leaves).
         let structure_diff = self.diff_trees_by_structure(piece_tree);
@@ -502,4 +554,62 @@ fn get_text_range(
     }
 
     Some(result)
+}
+
+#[cfg(test)]
+impl Persistence {
+    /// Test-only view of the memo key, so tests can distinguish a memo
+    /// hit from a recompute (the returned diff is identical either way).
+    pub(crate) fn saved_diff_memo_key(&self) -> Option<(u64, u64)> {
+        self.saved_diff_memo
+            .read()
+            .ok()
+            .and_then(|m| m.as_ref().map(|(cv, ssv, _)| (*cv, *ssv)))
+    }
+}
+
+#[cfg(test)]
+mod memo_tests {
+    use crate::model::buffer::TextBuffer;
+
+    /// The diff memo must populate on first computation, key on the
+    /// (content_version, save_state_version) pair, and go stale on the
+    /// next edit — the contract that lets the gutter, scrollbar, and
+    /// plugin snapshot share one computation per frame.
+    #[test]
+    fn diff_since_saved_memoizes_on_version_pair() {
+        let mut buffer = TextBuffer::from_str_test("alpha\nbeta\ngamma\n");
+        // Unmodified: the !modified fast path answers without touching
+        // the memo.
+        assert!(buffer.diff_since_saved().equal);
+        assert_eq!(buffer.persistence_for_test().saved_diff_memo_key(), None);
+
+        buffer.insert(0, "x");
+        let first = buffer.diff_since_saved();
+        assert!(!first.equal);
+        let key = buffer
+            .persistence_for_test()
+            .saved_diff_memo_key()
+            .expect("memo populated after computing a real diff");
+        assert_eq!(key, (buffer.version(), buffer.save_state_version()));
+
+        // Second call with unchanged versions returns the same ranges
+        // (served from the memo).
+        let second = buffer.diff_since_saved();
+        assert_eq!(first.byte_ranges, second.byte_ranges);
+
+        // An edit bumps the content version: the stored key no longer
+        // matches, and the next call recomputes and re-keys.
+        buffer.insert(0, "y");
+        assert_ne!(
+            buffer.persistence_for_test().saved_diff_memo_key(),
+            Some((buffer.version(), buffer.save_state_version()))
+        );
+        let third = buffer.diff_since_saved();
+        assert!(!third.equal);
+        assert_eq!(
+            buffer.persistence_for_test().saved_diff_memo_key(),
+            Some((buffer.version(), buffer.save_state_version()))
+        );
+    }
 }
