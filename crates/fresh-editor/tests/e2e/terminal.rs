@@ -408,6 +408,65 @@ fn test_palette_runs_save_all_while_terminal_focused() {
     );
 }
 
+/// Column/row of `label` inside the open File menu, and the fg colour the
+/// renderer gave it.
+fn menu_item_fg(
+    harness: &EditorTestHarness,
+    label: &str,
+) -> (u16, u16, Option<ratatui::style::Color>) {
+    let (col, row) = harness
+        .find_text_on_screen(label)
+        .unwrap_or_else(|| panic!("menu should list '{label}'\n{}", harness.screen_to_string()));
+    let fg = harness.get_cell_style(col, row).and_then(|s| s.fg);
+    (col, row, fg)
+}
+
+/// File → Save is not offered while a terminal is focused.
+///
+/// A terminal is a real buffer, so it satisfied the menu's `has_buffer`
+/// condition and Save ran on it: the terminal's own scrollback transcript was
+/// written back over its backing file, reporting "Saved" — and once the
+/// terminal had appended to that file since the last sync, a "File changed on
+/// disk. (o)verwrite, (C)ancel?" prompt for a file the user never edited.
+#[test]
+fn test_file_menu_disables_save_for_a_terminal_buffer() {
+    let mut harness = harness_or_return!(120, 30);
+
+    // Baseline: with an ordinary buffer focused, Save renders like New File.
+    harness
+        .send_key(KeyCode::F(10), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (_, _, enabled_fg) = menu_item_fg(&harness, "New File");
+    let (_, _, save_fg) = menu_item_fg(&harness, "Save");
+    assert_eq!(
+        save_fg,
+        enabled_fg,
+        "Save should be enabled for a text buffer\n{}",
+        harness.screen_to_string()
+    );
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    harness.editor_mut().open_terminal();
+    harness.render().unwrap();
+    harness.assert_screen_contains("*Terminal 0*");
+
+    harness
+        .send_key(KeyCode::F(10), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let (_, _, enabled_fg) = menu_item_fg(&harness, "New File");
+    let (_, _, save_fg) = menu_item_fg(&harness, "Save");
+    assert_ne!(
+        save_fg,
+        enabled_fg,
+        "Save must be greyed out for a terminal buffer — it has no file of the \
+         user's to write\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Test closing a terminal
 #[test]
 fn test_close_terminal() {
