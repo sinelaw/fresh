@@ -397,13 +397,21 @@ impl Editor {
             tracing::error!("Error handling plugin command {}: {}", label, e);
         }
         let elapsed = started.elapsed();
-        if elapsed > super::PLUGIN_COMMAND_HANDLER_LIMIT {
+        if elapsed > super::PLUGIN_COMMAND_HANDLER_HARD_LIMIT {
             tracing::warn!(
                 target: "plugin_budget",
                 handler = label,
                 elapsed_ms = elapsed.as_millis() as u64,
-                limit_ms = super::PLUGIN_COMMAND_HANDLER_LIMIT.as_millis() as u64,
+                limit_ms = super::PLUGIN_COMMAND_HANDLER_HARD_LIMIT.as_millis() as u64,
                 "plugin command handler blocked the editor thread — move this work to plugin_offloop"
+            );
+        } else if elapsed > super::PLUGIN_COMMAND_HANDLER_LIMIT {
+            tracing::debug!(
+                target: "plugin_budget",
+                handler = label,
+                elapsed_ms = elapsed.as_millis() as u64,
+                limit_ms = super::PLUGIN_COMMAND_HANDLER_LIMIT.as_millis() as u64,
+                "plugin command handler ran over its editor-thread budget"
             );
         }
     }
