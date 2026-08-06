@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "垂直滚动条已显示",
   "toggle.whitespace_indicators_hidden": "空白字符指示器已隐藏",
   "toggle.whitespace_indicators_shown": "空白字符指示器已显示",
+  "toggle.tab_indicators_shown": "制表符指示器已显示",
+  "toggle.tab_indicators_hidden": "制表符指示器已隐藏",
   "view.background_set": "背景已设置为 %{path}",
   "view.compose": "组合",
   "view.current_line_highlight_state": "当前行高亮 %{state}",

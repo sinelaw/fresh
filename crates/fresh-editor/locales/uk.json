@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Вертикальну смугу прокрутки показано",
   "toggle.whitespace_indicators_hidden": "Індикатори пробілів приховано",
   "toggle.whitespace_indicators_shown": "Індикатори пробілів показано",
+  "toggle.tab_indicators_shown": "Індикатори табуляції показано",
+  "toggle.tab_indicators_hidden": "Індикатори табуляції приховано",
   "view.background_set": "Фон встановлено на %{path}",
   "view.compose": "Компонування",
   "view.current_line_highlight_state": "Підсвічування поточного рядка %{state}",

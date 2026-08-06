@@ -1565,6 +1565,8 @@
   "toggle.horizontal_scrollbar_shown": "Horizontal scrollbar shown",
   "toggle.whitespace_indicators_hidden": "Whitespace indicators hidden",
   "toggle.whitespace_indicators_shown": "Whitespace indicators shown",
+  "toggle.tab_indicators_shown": "Tab indicators shown",
+  "toggle.tab_indicators_hidden": "Tab indicators hidden",
   "view.background_set": "Background set to %{path}",
   "view.compose": "Compose",
   "view.page_view": "Page View",

@@ -113,6 +113,12 @@ pub struct BufferSettings {
     /// the command is a master on/off, and storing the resolved struct would
     /// freeze the buffer against later config edits.
     pub whitespace_override: Option<bool>,
+    /// Explicit per-buffer override for the tab indicators alone (the `tabs_*`
+    /// trio of [`WhitespaceVisibility`](crate::config::WhitespaceVisibility)),
+    /// layered on top of `whitespace_override`: the master toggle answers "any
+    /// indicators at all?", this answers "tab arrows specifically?". `None` =
+    /// follow whatever the master/config resolution produced.
+    pub tab_indicators_override: Option<bool>,
 
     /// Tab size (number of spaces per tab character) for rendering.
     /// Used for visual display of tab characters and indent calculations.
@@ -180,6 +186,7 @@ impl Default for BufferSettings {
             use_tabs: false,
             use_tabs_override: None,
             whitespace_override: None,
+            tab_indicators_override: None,
             tab_size: 4,
             auto_close: true,
             auto_surround: true,
@@ -235,6 +242,7 @@ impl BufferSettings {
         self.virtual_space_override = None;
         self.use_tabs_override = None;
         self.whitespace_override = None;
+        self.tab_indicators_override = None;
         self.indentation_guide_user_override = None;
         self.fold_indicators_override = None;
         self.highlight_occurrences_override = None;
@@ -256,6 +264,14 @@ impl BufferSettings {
             Some(true) if !configured.any_visible() => WhitespaceVisibility::default(),
             _ => configured,
         };
+        // The tab pin layers on top of the master resolution, so "hide the
+        // arrows but keep the space dots" (and the reverse) survives both a
+        // config re-application and a session restore.
+        if let Some(tabs) = self.tab_indicators_override {
+            self.whitespace.tabs_leading = tabs;
+            self.whitespace.tabs_inner = tabs;
+            self.whitespace.tabs_trailing = tabs;
+        }
     }
 
     /// Whether the gutter should draw fold arrows for this buffer. Defaults to

@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Barra de rolagem vertical exibida",
   "toggle.whitespace_indicators_hidden": "Indicadores de espaços ocultos",
   "toggle.whitespace_indicators_shown": "Indicadores de espaços visíveis",
+  "toggle.tab_indicators_shown": "Indicadores de tabulação visíveis",
+  "toggle.tab_indicators_hidden": "Indicadores de tabulação ocultos",
   "view.background_set": "Plano de fundo definido para %{path}",
   "view.compose": "Compor",
   "view.current_line_highlight_state": "Destaque da linha atual %{state}",

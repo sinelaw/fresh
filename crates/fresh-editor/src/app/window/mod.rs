@@ -3045,6 +3045,7 @@ impl Window {
             fold_indicators: None,
             use_tabs: None,
             whitespace_indicators: None,
+            tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
             plugin_state: std::collections::HashMap::new(),

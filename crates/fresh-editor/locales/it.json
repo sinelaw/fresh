@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Barra di scorrimento verticale mostrata",
   "toggle.whitespace_indicators_hidden": "Indicatori spazi bianchi nascosti",
   "toggle.whitespace_indicators_shown": "Indicatori spazi bianchi visibili",
+  "toggle.tab_indicators_shown": "Indicatori tabulazione visibili",
+  "toggle.tab_indicators_hidden": "Indicatori tabulazione nascosti",
   "view.background_set": "Sfondo impostato su %{path}",
   "view.compose": "Componi",
   "view.current_line_highlight_state": "Evidenziazione riga corrente %{state}",

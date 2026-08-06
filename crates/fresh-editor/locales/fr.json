@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Barre de défilement verticale affichée",
   "toggle.whitespace_indicators_hidden": "Indicateurs d'espaces masqués",
   "toggle.whitespace_indicators_shown": "Indicateurs d'espaces affichés",
+  "toggle.tab_indicators_shown": "Indicateurs de tabulation affichés",
+  "toggle.tab_indicators_hidden": "Indicateurs de tabulation masqués",
   "view.background_set": "Arrière-plan défini sur %{path}",
   "view.compose": "Composer",
   "view.current_line_highlight_state": "Surbrillance de la ligne courante %{state}",

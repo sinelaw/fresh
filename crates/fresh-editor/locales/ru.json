@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Вертикальная полоса прокрутки показана",
   "toggle.whitespace_indicators_hidden": "Индикаторы пробелов скрыты",
   "toggle.whitespace_indicators_shown": "Индикаторы пробелов показаны",
+  "toggle.tab_indicators_shown": "Индикаторы табуляции показаны",
+  "toggle.tab_indicators_hidden": "Индикаторы табуляции скрыты",
   "view.background_set": "Фон установлен на %{path}",
   "view.compose": "Компоновка",
   "view.current_line_highlight_state": "Подсветка текущей строки %{state}",

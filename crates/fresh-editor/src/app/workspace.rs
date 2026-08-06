@@ -389,20 +389,18 @@ impl Editor {
     /// override (`mouse_enabled`) is applied by
     /// `Window::apply_workspace_layout`.
     fn restore_config_overrides(&mut self, overrides: &WorkspaceConfigOverrides) {
-        if let Some(line_numbers) = overrides.line_numbers {
-            self.config_mut().editor.line_numbers = line_numbers;
-        }
+        // `line_numbers`, `line_wrap`, and `enable_inlay_hints` are legacy
+        // fields — read for serde compatibility with workspaces written by
+        // older builds, but no longer applied: their global toggles persist
+        // to the config file, which is the single source of truth. Stamping
+        // a workspace snapshot here silently overrode config edits made in
+        // other projects or by hand (same treatment as `menu_bar_hidden`,
+        // issue #1156).
         if let Some(relative_line_numbers) = overrides.relative_line_numbers {
             self.config_mut().editor.relative_line_numbers = relative_line_numbers;
         }
-        if let Some(line_wrap) = overrides.line_wrap {
-            self.config_mut().editor.line_wrap = line_wrap;
-        }
         if let Some(syntax_highlighting) = overrides.syntax_highlighting {
             self.config_mut().editor.syntax_highlighting = syntax_highlighting;
-        }
-        if let Some(enable_inlay_hints) = overrides.enable_inlay_hints {
-            self.config_mut().editor.enable_inlay_hints = enable_inlay_hints;
         }
         // `overrides.menu_bar_hidden` is a legacy field — kept for serde
         // compatibility with workspaces written by older builds, but no
@@ -1562,15 +1560,20 @@ impl crate::app::window::Window {
                             state.buffer_settings.use_tabs = use_tabs;
                             state.buffer_settings.use_tabs_override = Some(use_tabs);
                         }
-                        // The master whitespace toggle stores a bool, not the
+                        // The whitespace toggles store bools, not the
                         // resolved struct, so the visibility is re-derived from
                         // config here — that way a config edit between sessions
                         // still lands. `buffer_settings.whitespace` is still the
                         // configured value at this point (nothing has toggled
                         // it yet), so it is the right baseline to pass in.
-                        if let Some(whitespace_visible) = file_state.whitespace_indicators {
+                        if file_state.whitespace_indicators.is_some()
+                            || file_state.tab_indicators.is_some()
+                        {
                             let configured = state.buffer_settings.whitespace;
-                            state.buffer_settings.whitespace_override = Some(whitespace_visible);
+                            state.buffer_settings.whitespace_override =
+                                file_state.whitespace_indicators;
+                            state.buffer_settings.tab_indicators_override =
+                                file_state.tab_indicators;
                             state.buffer_settings.apply_whitespace_override(configured);
                         }
                         if let Some(highlight_occurrences) = file_state.highlight_occurrences {
@@ -2030,6 +2033,7 @@ impl crate::app::window::Window {
             fold_indicators: None,
             use_tabs: None,
             whitespace_indicators: None,
+            tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
             plugin_state: std::collections::HashMap::new(),
@@ -2703,11 +2707,21 @@ impl crate::app::window::Window {
 
         let cfg = &self.resources.config.editor;
         let config_overrides = WorkspaceConfigOverrides {
-            line_numbers: Some(cfg.line_numbers),
+            // `line_numbers`, `line_wrap`, and `enable_inlay_hints` are no
+            // longer snapshotted: their global toggles persist straight to the
+            // config file, so a workspace copy could only ever be stale — it
+            // shadowed a default the user changed elsewhere (or edited by
+            // hand) every time this workspace was opened, forever, because
+            // the restore stamped the stale value and the next save
+            // re-serialized it. `None` here also self-heals workspaces that
+            // still carry a stale value from an older build. The fields that
+            // remain are the settings whose toggles are session-scoped — the
+            // workspace file is their only persistence.
+            line_numbers: None,
             relative_line_numbers: Some(cfg.relative_line_numbers),
-            line_wrap: Some(cfg.line_wrap),
+            line_wrap: None,
             syntax_highlighting: Some(cfg.syntax_highlighting),
-            enable_inlay_hints: Some(cfg.enable_inlay_hints),
+            enable_inlay_hints: None,
             mouse_enabled: Some(
                 self.resources
                     .mouse_capture
@@ -3169,6 +3183,9 @@ fn serialize_split_view_state(
                 whitespace_indicators: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.whitespace_override),
+                tab_indicators: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.tab_indicators_override),
                 highlight_current_line: buf_state.highlight_current_line_override,
                 highlight_occurrences: buffers
                     .get(buffer_id)

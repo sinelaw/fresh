@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Svislý posuvník zobrazen",
   "toggle.whitespace_indicators_hidden": "Indikátory bílých znaků skryty",
   "toggle.whitespace_indicators_shown": "Indikátory bílých znaků zobrazeny",
+  "toggle.tab_indicators_shown": "Indikátory tabulátorů zobrazeny",
+  "toggle.tab_indicators_hidden": "Indikátory tabulátorů skryty",
   "view.background_set": "Pozadí nastaveno na %{path}",
   "view.compose": "Kompozice",
   "view.current_line_highlight_state": "Zvýraznění aktuálního řádku %{state}",

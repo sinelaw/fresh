@@ -826,3 +826,186 @@ fn test_global_line_wrap_preserves_other_splits_pins() {
         "a's pin must survive global toggles"
     );
 }
+
+/// VS Code-style target derivation: a toggle writes the most specific config
+/// layer that already defines the key. With a project `.fresh/config.json`
+/// setting `editor.line_wrap`, "Toggle Line Wrap" must update the *project*
+/// file — writing the user layer instead leaves the project value winning on
+/// the next launch (the toggle appears dead in that project) while the
+/// stranded user-layer entry leaks the change into every other project.
+#[test]
+fn test_global_toggle_writes_the_layer_that_defines_the_key() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("a.txt"), "alpha\n").unwrap();
+    let project_config = project_dir.join(".fresh").join("config.json");
+    std::fs::create_dir_all(project_config.parent().unwrap()).unwrap();
+    std::fs::write(&project_config, r#"{ "editor": { "line_wrap": false } }"#).unwrap();
+
+    let dir_context = DirectoryContext::for_testing(temp_dir.path());
+    // The harness injects the config rather than resolving layers from disk,
+    // so start it the way a real launch would resolve: with the project's
+    // line_wrap=false already in effect.
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::create(
+        120,
+        24,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(project_dir.clone())
+            .with_shared_dir_context(dir_context.clone())
+            .without_empty_plugins_dir(),
+    )
+    .unwrap();
+    harness.open_file(&project_dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+
+    run_command(&mut harness, "Toggle Line Wrap");
+
+    let project_written = std::fs::read_to_string(&project_config).unwrap();
+    let project_json: serde_json::Value = serde_json::from_str(&project_written).unwrap();
+    assert_eq!(
+        project_json.pointer("/editor/line_wrap"),
+        Some(&serde_json::json!(true)),
+        "the project layer defines line_wrap, so the toggle must update it there:\n{project_written}"
+    );
+
+    let user_config = std::fs::read_to_string(dir_context.config_path()).unwrap_or_default();
+    let user_json: serde_json::Value =
+        serde_json::from_str(&user_config).unwrap_or(serde_json::json!({}));
+    assert_eq!(
+        user_json.pointer("/editor/line_wrap"),
+        None,
+        "the user layer must not get a stranded shadowed entry:\n{user_config}"
+    );
+
+    // A key no layer defines still lands in the user layer.
+    run_command(&mut harness, "Toggle Inlay Hints");
+    let user_config = std::fs::read_to_string(dir_context.config_path()).unwrap();
+    let user_json: serde_json::Value = serde_json::from_str(&user_config).unwrap();
+    assert!(
+        user_json.pointer("/editor/enable_inlay_hints").is_some(),
+        "an undefined key defaults to the user layer:\n{user_config}"
+    );
+}
+
+/// The workspace file must not shadow settings whose global toggles persist
+/// to the config file. A workspace saved when line wrap was off must not
+/// stamp "off" over a config that has since been set to wrapped — the config
+/// file is the single source of truth for these.
+#[test]
+fn test_workspace_does_not_shadow_config_persisted_settings() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.txt");
+    std::fs::write(&file, format!("{}TAILAAA\n", "A".repeat(80))).unwrap();
+
+    // Session 1: line wrap off; save the workspace in that state.
+    {
+        let mut config = Config::default();
+        config.editor.line_wrap = false;
+        let mut harness =
+            EditorTestHarness::with_config_and_working_dir(60, 24, config, project_dir.clone())
+                .unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_not_contains("TAILAAA");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Session 2: the user's config now says wrapped. The restored workspace
+    // must not stamp session 1's "off" over it.
+    {
+        let mut config = Config::default();
+        config.editor.line_wrap = true;
+        let mut harness =
+            EditorTestHarness::with_config_and_working_dir(60, 24, config, project_dir.clone())
+                .unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should have been restored");
+        harness.render().unwrap();
+        harness.assert_screen_contains("TAILAAA");
+    }
+}
+
+/// "Toggle Tab Indicators (Current Buffer)" must flip only the tab arrows —
+/// it used to share the master toggle-all with Whitespace Indicators, so
+/// "hide the arrows" also killed the space dots despite the command's
+/// description promising tab arrows only. The master toggle subsumes a tab
+/// pin (all means all), and the tab pin persists across a restart.
+#[test]
+fn test_tab_indicators_toggle_independent_of_space_dots() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    let file = project_dir.join("a.txt");
+    std::fs::write(&file, "\thello\n  world\n").unwrap();
+
+    // Leading-space dots on, so tabs and spaces are independently observable:
+    // '→' for the tab, '·' for the leading spaces.
+    let mk_config = || {
+        let mut c = Config::default();
+        c.editor.whitespace_spaces_leading = true;
+        c
+    };
+
+    // Session 1
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            100,
+            24,
+            mk_config(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        harness.open_file(&file).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains("→");
+        harness.assert_screen_contains("·");
+
+        // Tab toggle hides the arrows and leaves the dots alone (the old
+        // shared toggle-all would have hidden both).
+        run_command(&mut harness, "Toggle Tab Indicators (Current Buffer)");
+        harness.assert_screen_not_contains("→");
+        harness.assert_screen_contains("·");
+
+        // The master toggle subsumes the tab pin: off hides everything, on
+        // brings everything back — including the arrows the pin had hidden.
+        run_command(
+            &mut harness,
+            "Toggle Whitespace Indicators (Current Buffer)",
+        );
+        harness.assert_screen_not_contains("·");
+        run_command(
+            &mut harness,
+            "Toggle Whitespace Indicators (Current Buffer)",
+        );
+        harness.assert_screen_contains("→");
+        harness.assert_screen_contains("·");
+
+        // Pin the arrows off again and save for the restart check.
+        run_command(&mut harness, "Toggle Tab Indicators (Current Buffer)");
+        harness.assert_screen_not_contains("→");
+        harness.assert_screen_contains("·");
+        harness.editor_mut().save_workspace().unwrap();
+    }
+
+    // Session 2: the tab pin survives the restart; the dots still show.
+    {
+        let mut harness = EditorTestHarness::with_config_and_working_dir(
+            100,
+            24,
+            mk_config(),
+            project_dir.clone(),
+        )
+        .unwrap();
+        let restored = harness.editor_mut().try_restore_workspace().unwrap();
+        assert!(restored, "workspace should have been restored");
+        harness.render().unwrap();
+        harness.assert_screen_not_contains("→");
+        harness.assert_screen_contains("·");
+    }
+}

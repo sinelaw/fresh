@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Đã hiển thị thanh cuộn dọc",
   "toggle.whitespace_indicators_hidden": "Đã ẩn chỉ báo khoảng trắng",
   "toggle.whitespace_indicators_shown": "Đã hiển thị chỉ báo khoảng trắng",
+  "toggle.tab_indicators_shown": "Đã hiển thị chỉ báo tab",
+  "toggle.tab_indicators_hidden": "Đã ẩn chỉ báo tab",
   "view.background_set": "Đã đặt nền thành %{path}",
   "view.compose": "Soạn thảo",
   "view.current_line_highlight_state": "Đánh dấu dòng hiện tại %{state}",
