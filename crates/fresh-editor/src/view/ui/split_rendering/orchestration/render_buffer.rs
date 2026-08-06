@@ -110,6 +110,7 @@ pub(crate) fn compute_buffer_layout(
     software_cursor_only: bool,
     show_line_numbers: bool,
     highlight_current_line: bool,
+    fold_indicators_visible: bool,
     diagnostics_inline_text: bool,
     show_tilde: bool,
     indentation_guide: IndentationGuideMode,
@@ -550,6 +551,7 @@ pub(crate) fn compute_buffer_layout(
         diagnostics_inline_text,
         bracket_highlight,
         &view_data.lines,
+        fold_indicators_visible,
     );
 
     let calculated_offset = view_data.first_drawn;
@@ -839,6 +841,7 @@ pub(crate) fn render_buffer_in_split(
     rulers: &[usize],
     show_line_numbers: bool,
     highlight_current_line: bool,
+    fold_indicators_visible: bool,
     show_tilde: bool,
     highlight_current_column: bool,
     cell_theme_map: &mut Vec<CellThemeInfo>,
@@ -886,6 +889,7 @@ pub(crate) fn render_buffer_in_split(
         software_cursor_only,
         show_line_numbers,
         highlight_current_line,
+        fold_indicators_visible,
         diagnostics_inline_text,
         show_tilde,
         indentation_guide,

@@ -193,7 +193,7 @@ impl Editor {
     /// Toggle indentation guides for the current buffer only.
     ///
     /// Per-buffer counterpart of the global `editor.indentation_guide` setting:
-    /// it records an explicit override on the buffer's settings (persisted in
+    /// it records an explicit override on the split's view state (persisted in
     /// the per-file workspace state) and does not affect other buffers or the
     /// global config. Turning guides on in a buffer where the global mode is
     /// `none` draws every level (`all`); turning them on where the global mode
@@ -215,24 +215,47 @@ impl Editor {
 
         let Some(state) = self
             .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
             .expect("active window present")
-            .get_mut(&buffer_id)
+            .get(&buffer_id)
         else {
             return;
         };
+        let plugin_override = state.indentation_guide_override;
+        let language_gate = state.buffer_settings.indentation_guide;
 
-        let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
-            global,
-            user_override: state.buffer_settings.indentation_guide_user_override,
-            plugin_override: state.indentation_guide_override,
-            language_gate: state.buffer_settings.indentation_guide,
-            is_virtual_buffer,
-        }) != IndentationGuideMode::None;
-
-        let new_value = !currently_on;
-        state.buffer_settings.indentation_guide_user_override = Some(new_value);
+        // The pin lives on the split's view state (like line numbers and the
+        // current-line highlight), so the same buffer in another split keeps
+        // its own choice.
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
+                    global,
+                    user_override: vs.indentation_guide_user_override,
+                    plugin_override,
+                    language_gate,
+                    is_virtual_buffer,
+                }) != IndentationGuideMode::None;
+                let new_value = !currently_on;
+                vs.indentation_guide_user_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
 
         let status = if new_value {
             t!("view.state_enabled").to_string()
@@ -327,19 +350,30 @@ impl Editor {
     /// placeholder. There is no global setting for the arrows, so the default
     /// is "shown"; the override is persisted in the per-file workspace state.
     pub fn toggle_fold_indicators_current_buffer(&mut self) {
-        let buffer_id = self.active_buffer();
-        let Some(state) = self
+        // The pin lives on the split's view state (like line numbers and the
+        // current-line highlight), so the same buffer in another split keeps
+        // its own choice.
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
             .windows
             .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                let new_value = !vs.fold_indicators_visible();
+                vs.fold_indicators_override = Some(new_value);
+                new_value
+            })
         else {
             return;
         };
-
-        let new_value = !state.buffer_settings.fold_indicators_visible();
-        state.buffer_settings.fold_indicators_override = Some(new_value);
 
         let status = if new_value {
             t!("view.state_enabled").to_string()
@@ -643,6 +677,8 @@ impl Editor {
                 view_state.line_numbers_override = None;
                 view_state.line_wrap_override = None;
                 view_state.highlight_current_line_override = None;
+                view_state.indentation_guide_user_override = None;
+                view_state.fold_indicators_override = None;
                 view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
                     line_numbers: self.config.editor.line_numbers,
                     highlight_current_line: self.config.editor.highlight_current_line,

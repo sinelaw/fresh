@@ -235,6 +235,7 @@ pub(crate) fn fold_toggle_byte_from_position(
     target_position: usize,
     content_col: u16,
     gutter_width: u16,
+    fold_indicators_visible: bool,
 ) -> Option<usize> {
     if content_col >= gutter_width {
         return None;
@@ -250,9 +251,9 @@ pub(crate) fn fold_toggle_byte_from_position(
         return Some(target_position);
     }
 
-    // With fold indicators hidden for this buffer there is no arrow to aim at,
+    // With fold indicators hidden in this split there is no arrow to aim at,
     // so a gutter click must not silently create a fold.
-    if !state.buffer_settings.fold_indicators_visible() {
+    if !fold_indicators_visible {
         return None;
     }
 

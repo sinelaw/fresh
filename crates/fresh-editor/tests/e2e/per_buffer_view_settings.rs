@@ -1009,3 +1009,64 @@ fn test_tab_indicators_toggle_independent_of_space_dots() {
         harness.assert_screen_contains("·");
     }
 }
+
+/// The indentation-guide and fold-indicator pins are per (split, buffer),
+/// like line numbers and the current-line highlight: with the SAME buffer in
+/// two splits, pinning in one split must leave the other split alone. Under
+/// the old buffer-scoped pins, both splits changed together.
+///
+/// Same-glyph-in-both-splits means substring assertions can't tell the
+/// splits apart, so the discriminator is the glyph count across the screen.
+#[test]
+fn test_guide_and_fold_pins_scope_to_the_split() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 24).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.rs"), FOLDABLE_SOURCE).unwrap();
+
+    fn glyph_count(harness: &mut EditorTestHarness, glyph: &str) -> usize {
+        harness.screen_to_string().matches(glyph).count()
+    }
+
+    harness.open_file(&dir.join("a.rs")).unwrap();
+    harness.render().unwrap();
+
+    // Same buffer in two splits; the new (right) split is active.
+    run_command(&mut harness, "Split Vertical");
+    harness.render().unwrap();
+    let arrows_both_splits = glyph_count(&mut harness, EXPANDED_FOLD);
+    assert!(
+        arrows_both_splits >= 2,
+        "both splits should show a fold arrow for fn main"
+    );
+
+    // Hide fold indicators in the active split only: the count drops but must
+    // not reach zero — the other split keeps its arrows. The old buffer-wide
+    // pin zeroed it.
+    run_command(&mut harness, "Toggle Folding Indicators (Current Buffer)");
+    harness.render().unwrap();
+    let arrows_after = glyph_count(&mut harness, EXPANDED_FOLD);
+    assert!(
+        arrows_after < arrows_both_splits && arrows_after > 0,
+        "hiding fold arrows in one split must leave the other split's arrows \
+         ({arrows_both_splits} before, {arrows_after} after)"
+    );
+
+    // Guides on in the active split only, then also in the other split: the
+    // second pin must add more guide glyphs. The old buffer-wide pin lit both
+    // splits on the first toggle, so the second changed nothing.
+    run_command(&mut harness, "Toggle Indentation Guides (Current Buffer)");
+    harness.render().unwrap();
+    let guides_one_split = glyph_count(&mut harness, "▏");
+    assert!(guides_one_split > 0, "active split should now draw guides");
+
+    run_command(&mut harness, "Next Split");
+    harness.render().unwrap();
+    run_command(&mut harness, "Toggle Indentation Guides (Current Buffer)");
+    harness.render().unwrap();
+    let guides_both_splits = glyph_count(&mut harness, "▏");
+    assert!(
+        guides_both_splits > guides_one_split,
+        "pinning guides in the second split must add glyphs \
+         ({guides_one_split} then {guides_both_splits})"
+    );
+}

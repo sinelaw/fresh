@@ -314,6 +314,7 @@ impl SplitRenderer {
             rulers,
             show_line_numbers,
             highlight_current_line,
+            true, // preview leaves have no per-split fold pin
             show_tilde,
             highlight_current_column,
             cell_theme_map,
@@ -521,6 +522,7 @@ mod tests {
             false,             // inline diagnostics off for test
             BracketHighlightSettings::default(),
             &[],
+            true, // auxiliary render paths have no per-split fold pin
         );
 
         let mut dummy_theme_map = Vec::new();
@@ -629,6 +631,7 @@ mod tests {
             false,
             BracketHighlightSettings::default(),
             &[],
+            true, // auxiliary render paths have no per-split fold pin
         );
 
         let glyph = crate::config::default_indentation_guide_glyph();
@@ -3285,6 +3288,7 @@ mod tests {
             false,
             BracketHighlightSettings::default(),
             &[],
+            true, // auxiliary render paths have no per-split fold pin
         );
 
         render_view_lines(LineRenderInput {
