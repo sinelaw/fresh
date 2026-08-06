@@ -1085,7 +1085,15 @@ editor.setStatus("Test diagnostics plugin loaded");
     // Wait for the plugin to load before anything can emit the event it
     // subscribes to. Its last statement sets a status message, so "the plugin
     // finished evaluating, and `editor.on("diagnostics_updated", …)` is
-    // registered" is readable straight off the status bar.
+    // registered" is readable straight off the status bar. Without this the
+    // plugin can subscribe after the diagnostics have already been published,
+    // and `getAllDiagnostics` — the API under test — is never exercised at
+    // all, silently.
+    //
+    // Readable here specifically because nothing is open yet: the status bar
+    // elides elements that don't fit the terminal width, and once a file and
+    // its diagnostics are on screen this message no longer fits at 100
+    // columns.
     harness.wait_for_screen_contains("Test diagnostics plugin loaded")?;
 
     // Open the test file - this will start LSP
@@ -1112,19 +1120,16 @@ editor.setStatus("Test diagnostics plugin loaded");
         .unwrap();
     harness.render()?;
 
-    // Wait for the plugin's `diagnostics_updated` hook to run, observed
-    // through the status message it sets. That is the same signal the old
-    // code checked at the very end and then *didn't* assert on (it was
-    // wrapped in `if status.contains(…) { println!(…) }`, which passes
-    // whatever happens — CONTRIBUTING.md Code §16). Waiting on it here makes
-    // the hook a real gate: diagnostics arrived, the plugin was notified, and
-    // `editor.getAllDiagnostics()` — the API this test exists to cover —
-    // answered with the one file the editor stored, from inside the hook.
+    // Wait for the published diagnostic to reach the screen: the status bar's
+    // diagnostics element shows `E:1` once one error is known for the buffer.
     //
-    // Waited for rather than asserted at the end, because the hook can fire
-    // again later (an empty publish would rewrite the status) and this test
-    // is about the populated call.
-    harness.wait_for_screen_contains("Diagnostics received: 1 total")?;
+    // Deliberately *not* the plugin's own status text. That message does
+    // reach the status bar, but the bar lays its elements out within the
+    // terminal width and elides what doesn't fit — at this test's 100
+    // columns "Diagnostics received: 1 total, URI count: 1" renders as
+    // "Diagnostics ...", so waiting for the full string can never resolve.
+    // `E:1` is the compact, layout-stable rendering of the same fact.
+    harness.wait_for_screen_contains("E:1")?;
 
     // Verify the diagnostics content
     let stored = harness.editor().get_stored_diagnostics();

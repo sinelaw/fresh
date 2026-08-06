@@ -276,6 +276,36 @@ fn test_git_gutter_updates_after_save() {
         })
         .unwrap();
 
+    // Let the plugin's open-time pass finish before touching the buffer.
+    //
+    // This is load-bearing, and not for the reason it looks like: the plugin
+    // establishes its HEAD baseline for the file asynchronously on open, and
+    // editing before that lands leaves it without one — after the save it
+    // then never produces indicators at all, and any wait for one hangs to
+    // the external timeout.
+    //
+    // It used to be spelled `for _ in 0..5 { …; harness.sleep(50ms) }`, which
+    // reads as a 250 ms pause and is not one: `harness.sleep` advances
+    // *logical* time only (see its doc comment), so the loop's five
+    // `process_async_and_render` calls were the entire effect and the pause
+    // was zero. Waiting for the async pipeline to actually go quiet is the
+    // same intent, made real — and it is the helper written for precisely
+    // this case, plugin decorations produced off-thread.
+    harness.wait_for_async_quiescence(3).unwrap();
+
+    // For an unmodified file the settled state is no indicators at all.
+    // Asserting that beats sampling a baseline count to compare against
+    // later: the old code captured `initial_indicators` off whatever frame
+    // the async diff happened to have reached, and if that sample caught the
+    // settled count rather than the pre-diff one, the later `count > initial`
+    // could never be satisfied — a 180 s timeout rather than a failure.
+    assert_eq!(
+        count_gutter_indicators(&harness.screen_to_string(), "│"),
+        0,
+        "a file matching HEAD should have no gutter indicators once settled\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
     // Make a change
     harness.type_text("// New comment\n").unwrap();
     harness.render().unwrap();
@@ -283,20 +313,10 @@ fn test_git_gutter_updates_after_save() {
     // Save the file - this should trigger git gutter update
     save_file(&mut harness);
 
-    // Wait for the *end state* — the added line carries a green indicator in
-    // column 0 — rather than for "more indicators than a baseline".
-    //
-    // The baseline used to be sampled after a `for _ in 0..5 { …
-    // harness.sleep(50ms) }` settle loop, but `harness.sleep` advances
-    // *logical* time only (see its doc comment): the loop waited no real
-    // wall-clock at all, so the sample was taken from whatever frame the git
-    // diff happened to have reached. If that sample caught the settled count
-    // instead of the pre-diff one, `count > initial` was unsatisfiable and
-    // the wait below could never resolve — a 180 s timeout, not a failure.
-    //
-    // Waiting on the invariant itself is immune to that: it holds only once
-    // the post-save diff has landed, and a genuinely wrong result still fails
-    // loudly through the wait's periodic screen dumps.
+    // Wait for the end state: the added line carries a green indicator in
+    // column 0. That holds only once the post-save diff has landed, and a
+    // genuinely wrong result still fails loudly through the wait's periodic
+    // screen dumps.
     let comment_row = |h: &EditorTestHarness| -> Option<u16> {
         h.screen_to_string()
             .lines()

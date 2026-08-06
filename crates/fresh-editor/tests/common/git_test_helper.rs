@@ -112,19 +112,19 @@ impl GitTestRepo {
     /// Create a new git test repository with test files
     pub fn new() -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        // Canonicalize before anything records the path. On macOS a tempdir
-        // is `/var/folders/...`, a symlink to `/private/var/...`; the editor
-        // resolves and stores the latter on the buffer, while `repo.path`
-        // (the working dir handed to the harness, the root the git plugins
-        // compute repo-relative paths against, and the target of
-        // `change_to_repo_dir`) would keep the former. The two then don't
-        // compare equal, so a plugin asking "is this buffer inside the repo,
-        // and at which relative path?" answers wrongly and its decorations
-        // never appear — a macOS-only failure in tests that are not about
-        // paths at all. `tests/e2e/code_tour_dock.rs` canonicalizes its own
-        // fixture for exactly this reason; doing it here covers every
-        // git-backed test at once (CONTRIBUTING.md Code §12).
-        let path = fs::canonicalize(temp_dir.path()).expect("Failed to canonicalize temp dir");
+        // Deliberately *not* canonicalized. On macOS a tempdir is
+        // `/var/folders/...`, a symlink to `/private/var/...`, and the editor
+        // stores the resolved form on the buffer while `repo.path` keeps the
+        // unresolved one — which is a real hazard for anything comparing the
+        // two, and why `tests/e2e/code_tour_dock.rs` canonicalizes its own
+        // fixture. Resolving it *here* is not the fix, though: on Windows
+        // `fs::canonicalize` returns an extended-length `\\?\D:\...` path,
+        // which git and the plugins that shell out to it do not accept, and
+        // that broke `plugins::package_manager` (which uses a repo path as a
+        // git remote). Per-fixture canonicalization where a test actually
+        // needs it stays correct; doing it for every git-backed test at once
+        // does not.
+        let path = temp_dir.path().to_path_buf();
 
         // Initialize git repository. The test's own git invocations are
         // isolated by `git_command` so the host's signing program / background
