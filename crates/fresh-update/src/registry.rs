@@ -109,9 +109,23 @@ pub const fn kind_for(channel: Channel) -> UpdateKind {
         // nothing to upgrade *from*. Fetch the artifact and install it locally.
         // openSUSE has no OBS project either: a zypper user installed the
         // release .rpm by hand, so the next version arrives the same way.
-        Channel::Apt | Channel::Dnf | Channel::Zypper | Channel::Flatpak => {
-            UpdateKind::DownloadPackage
-        }
+        Channel::Apt | Channel::Dnf | Channel::Zypper => UpdateKind::DownloadPackage,
+        // Flatpak used to be here, and could not work. A Flatpak build of
+        // fresh runs inside `org.freedesktop.Platform`, which contains no
+        // `flatpak` binary — so the `flatpak install` we generated could not
+        // execute in the process that generated it. The user was shown a
+        // command, clicked it, and got "No such file or directory".
+        //
+        // The escape hatch, `flatpak-spawn --host`, needs
+        // `--talk-name=org.freedesktop.Flatpak` in the manifest, which is a
+        // total sandbox escape rather than a scoped permission and is not
+        // something to ship for an editor's update button. The sanctioned
+        // in-sandbox route is the `org.freedesktop.portal.Flatpak`
+        // `UpdateMonitor` — but it pulls from the app's remote, and we
+        // distribute a bundle with no usable remote, so it has nothing to pull
+        // from either. Publishing to Flathub is what unlocks that, and until
+        // then the honest answer is to say so and name the host command.
+        Channel::Flatpak => UpdateKind::Manual,
         // Arch ships through the AUR only, so `pacman` continues via the AUR
         // helper — that is how an Arch user got this build in the first place.
         Channel::Homebrew
@@ -135,6 +149,37 @@ pub const fn kind_for(channel: Channel) -> UpdateKind {
         | Channel::Chocolatey
         | Channel::Source
         | Channel::Unknown => UpdateKind::Manual,
+    }
+}
+
+/// What to tell a user whose channel has no command we can run for them.
+///
+/// The rule is that this never dead-ends at the releases page for a channel
+/// that actually installed fresh. Someone who installed through a package
+/// manager should carry on through that package manager; sending them to
+/// download a tarball would leave two copies on the machine, one of them
+/// unknown to the tool that owns `/usr/bin/fresh`. The releases page is only
+/// right when nothing else is true — an unknown or hand-placed binary.
+fn manual_instructions(channel: Channel) -> String {
+    match channel {
+        Channel::Source => "git pull && cargo install --path crates/fresh-editor".to_string(),
+        // Runs on the host, not in the sandbox — see `kind_for`. The app id is
+        // what `flatpak update` matches.
+        Channel::Flatpak => "run `flatpak update io.github.sinelaw.fresh` on the host, \
+             or update through GNOME Software / KDE Discover"
+            .to_string(),
+        // snapd already refreshes snaps about four times a day and cannot be
+        // told not to, so the honest message is that this will happen by
+        // itself — with the command for someone who does not want to wait.
+        Channel::Snap => "snapd refreshes snaps automatically; to do it now run \
+             `sudo snap refresh fresh`"
+            .to_string(),
+        // Nothing is published to these, so there is no same-channel
+        // continuation to name — see `kind_for`.
+        Channel::Scoop | Channel::Chocolatey => "no package is published for this tool; see \
+             https://github.com/sinelaw/fresh/releases"
+            .to_string(),
+        _ => "see https://github.com/sinelaw/fresh/releases".to_string(),
     }
 }
 
@@ -172,6 +217,7 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
         .npm_pkg
         .clone()
         .unwrap_or_else(|| "@fresh-editor/fresh-editor".to_string());
+    let npm_latest = format!("{npm_pkg}@latest");
     let aur_pkg = h.aur_pkg.clone().unwrap_or_else(|| match channel {
         Channel::AurBin => "fresh-editor-bin".to_string(),
         _ => "fresh-editor".to_string(),
@@ -179,19 +225,46 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
     let aur_argv = aur_command(&aur_pkg);
 
     let argv: Option<Vec<&str>> = match channel {
-        Channel::Homebrew => Some(vec!["brew", "upgrade", &formula]),
-        Channel::Winget => Some(vec!["winget", "upgrade", "--id", &winget_id]),
+        Channel::Homebrew => Some(vec!["brew", "upgrade", "--formula", &formula]),
+        // `--exact` so a prefix match can't select another package, and
+        // `--include-unknown` because we ship a .zip: winget often cannot read
+        // an installed version out of a portable/archive package, and without
+        // this it answers "No applicable upgrade found" forever.
+        Channel::Winget => Some(vec![
+            "winget",
+            "upgrade",
+            "--id",
+            &winget_id,
+            "--exact",
+            "--include-unknown",
+            "--silent",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+            "--disable-interactivity",
+        ]),
         // `flake.nix` builds with `pname = "fresh"`, which is the name a
         // profile element gets, so this is what `nix profile upgrade` matches.
         Channel::Nix => Some(vec!["nix", "profile", "upgrade", "fresh"]),
         Channel::FreebsdPkg => Some(vec!["pkg", "upgrade", "fresh"]),
         Channel::Cargo => Some(vec!["cargo", "install", "--locked", &pkg]),
         Channel::CargoBinstall => Some(vec!["cargo", "binstall", &pkg]),
-        Channel::Npm => Some(vec!["npm", "update", "-g", &npm_pkg]),
+        // `npm update -g` is the obvious command and the wrong one. npm's own
+        // v10 docs say a global install is treated as if it carried a caret
+        // range, and `^0.4.6` does not admit `0.5.0` — so every npm user would
+        // be pinned inside the current minor until fresh reaches 1.0. npm 10
+        // no longer behaves that way in practice, which is worse rather than
+        // better: the behaviour differs by npm version, and a rule that forbids
+        // runtime branching cannot rest on which npm the user happens to have.
+        // `install @latest` means the same thing on npm 6, 10 and 11.
+        Channel::Npm => Some(vec!["npm", "install", "-g", &npm_latest]),
         // mise installs this as a github backend tool (README:
         // `mise use github:sinelaw/fresh`), and that flake-style ref *is* the
         // tool's name in mise. A bare `fresh` matches nothing.
-        Channel::Mise => Some(vec!["mise", "upgrade", MISE_TOOL]),
+        //
+        // `--bump` because plain `mise upgrade` keeps the range recorded in
+        // mise.toml: a user who pinned `@0.4.6` would get exit 0 and no
+        // upgrade. It rewrites their mise.toml, which the confirmation names.
+        Channel::Mise => Some(vec!["mise", "upgrade", "--bump", MISE_TOOL]),
         // Built separately (owned, helper-dependent) — see `aur_argv`.
         Channel::Aur | Channel::AurBin | Channel::Pacman => None,
         // Resolved only once the release artifact is downloaded; see
@@ -223,10 +296,7 @@ pub fn plan(prov: &Provenance) -> UpdatePlan {
             "download the latest {} from the GitHub release and install it (fresh --cmd update)",
             package_extension(channel).unwrap_or("package")
         ),
-        UpdateKind::Manual if channel == Channel::Source => {
-            "git pull && cargo install --path crates/fresh-editor".to_string()
-        }
-        UpdateKind::Manual => "see https://github.com/sinelaw/fresh/releases".to_string(),
+        UpdateKind::Manual => manual_instructions(channel),
         _ => command
             .as_ref()
             .map(|c| c.join(" "))
@@ -321,11 +391,51 @@ pub fn install_command(channel: Channel, file: &Path) -> Option<Vec<String>> {
 pub fn install_command_with(channel: Channel, file: &Path, reinstall: bool) -> Option<Vec<String>> {
     let path = file.to_string_lossy().into_owned();
     let mut argv: Vec<String> = match channel {
-        Channel::Apt => vec!["dpkg".into(), "-i".into()],
-        Channel::Dnf if reinstall => {
-            vec!["rpm".into(), "-U".into(), "--replacepkgs".into()]
+        // `apt-get install <file>`, not `dpkg -i <file>`. dpkg is, in its own
+        // man page's words, "a medium-level tool": it unpacks and configures
+        // but resolves no dependencies, so the first release that adds a
+        // `Depends:` the system does not already satisfy would leave the
+        // package half-configured and every later apt run complaining. apt-get
+        // takes a local file, enters it into the transaction as a synthetic
+        // repository entry, and resolves against the configured repos.
+        //
+        // `env DEBIAN_FRONTEND=noninteractive` because a maintainer script is
+        // entitled to prompt via debconf, and there is nobody to answer inside
+        // an update we launched.
+        Channel::Apt => {
+            let mut a: Vec<String> = vec![
+                "env".into(),
+                "DEBIAN_FRONTEND=noninteractive".into(),
+                "apt-get".into(),
+                "install".into(),
+                "-y".into(),
+            ];
+            // apt reports "already the newest version" and exits 0 rather than
+            // reinstalling, so --force needs to say so explicitly.
+            if reinstall {
+                a.push("--reinstall".into());
+            }
+            a
         }
-        Channel::Dnf => vec!["rpm".into(), "-U".into()],
+        // `dnf install <file>`, not `rpm -U <file>`, for the same reason: rpm
+        // resolves nothing from the configured repositories. dnf also handles
+        // the same-version and older-version cases itself, where rpm errors
+        // out and needs --replacepkgs / --oldpackage.
+        //
+        // `--nogpgcheck` covers this one unsigned local file. Signing the
+        // release rpms would let it go away; see the follow-up issue.
+        Channel::Dnf if reinstall => vec![
+            "dnf".into(),
+            "reinstall".into(),
+            "-y".into(),
+            "--nogpgcheck".into(),
+        ],
+        Channel::Dnf => vec![
+            "dnf".into(),
+            "install".into(),
+            "-y".into(),
+            "--nogpgcheck".into(),
+        ],
         // The release .rpm is unsigned as far as zypper is concerned, and it
         // refuses a local file without this.
         Channel::Zypper => {
@@ -346,14 +456,17 @@ pub fn install_command_with(channel: Channel, file: &Path, reinstall: bool) -> O
             }
             z
         }
-        Channel::Flatpak => vec![
-            "flatpak".into(),
-            "install".into(),
-            "--user".into(),
-            "--or-update".into(),
-            "--noninteractive".into(),
-        ],
         _ => return None,
+    };
+    // apt-get reads a bare filename as a *package name* and fails with
+    // "Unable to locate package fresh-editor_0.4.7-1_amd64.deb"; it only treats
+    // an argument as a file when it looks like a path. Everything downloaded is
+    // staged under an absolute path, so this is belt-and-braces — but the
+    // failure it prevents is confusing enough to be worth two lines.
+    let path = if Path::new(&path).is_absolute() {
+        path
+    } else {
+        format!("./{path}")
     };
     argv.push(path);
     Some(argv)
@@ -372,11 +485,18 @@ mod tests {
     #[test]
     fn delegated_commands_template_defaults() {
         // The tap's formula is `fresh` (Formula/fresh.rb), not the package name.
-        assert_eq!(plan(&prov(Channel::Homebrew)).human, "brew upgrade fresh");
         assert_eq!(
-            plan(&prov(Channel::Winget)).human,
-            "winget upgrade --id sinelaw.fresh-editor"
+            plan(&prov(Channel::Homebrew)).human,
+            "brew upgrade --formula fresh"
         );
+        // `--include-unknown` is not optional for us: winget frequently cannot
+        // read an installed version out of a portable/archive package, and
+        // without it every upgrade answers "No applicable upgrade found".
+        let winget = plan(&prov(Channel::Winget)).human;
+        assert!(winget.starts_with("winget upgrade --id sinelaw.fresh-editor"));
+        for flag in ["--exact", "--include-unknown", "--disable-interactivity"] {
+            assert!(winget.contains(flag), "winget is missing {flag}: {winget}");
+        }
         assert!(plan(&prov(Channel::AurBin)).human.contains("makepkg"));
     }
 
@@ -475,14 +595,19 @@ mod tests {
         ];
         for channel in reachable {
             let p = plan(&prov(channel));
-            assert_ne!(
-                p.kind,
-                UpdateKind::Manual,
-                "{channel} dead-ends at the releases page instead of updating through {channel}"
+            // The invariant is about where the user is sent, not about the
+            // kind. Flatpak is `Manual` because nothing we could emit would
+            // run inside its sandbox — but it still names flatpak rather than
+            // a tarball, so the user continues through the tool that
+            // installed fresh.
+            assert!(
+                !p.human.contains("releases"),
+                "{channel} dead-ends at the releases page instead of continuing through {channel}: {}",
+                p.human
             );
             let has_route = matches!(
                 p.kind,
-                UpdateKind::SelfContained | UpdateKind::DownloadPackage
+                UpdateKind::SelfContained | UpdateKind::DownloadPackage | UpdateKind::Manual
             ) || p.command.as_ref().is_some_and(|c| !c.is_empty());
             assert!(has_route, "{channel} names no way to get the next version");
         }
@@ -496,7 +621,7 @@ mod tests {
         // tool's name in mise, so a bare `fresh` matches nothing.
         assert_eq!(
             plan(&prov(Channel::Mise)).human,
-            "mise upgrade github:sinelaw/fresh"
+            "mise upgrade --bump github:sinelaw/fresh"
         );
         // flake.nix sets `pname = "fresh"`, not the `fresh-editor` package name
         // the receipt carries.
@@ -505,7 +630,10 @@ mod tests {
         // (`class Fresh`), so the formula is `fresh`. Naming the package
         // instead gave `brew upgrade fresh-editor`, which errors with
         // "No available formula with the name".
-        assert_eq!(plan(&prov(Channel::Homebrew)).human, "brew upgrade fresh");
+        assert_eq!(
+            plan(&prov(Channel::Homebrew)).human,
+            "brew upgrade --formula fresh"
+        );
     }
 
     #[test]
@@ -586,7 +714,7 @@ mod tests {
     /// never emit a package-manager upgrade command.
     #[test]
     fn release_artifact_channels_do_not_delegate_to_a_repo() {
-        for channel in [Channel::Apt, Channel::Dnf, Channel::Flatpak] {
+        for channel in [Channel::Apt, Channel::Dnf, Channel::Zypper] {
             let p = plan(&prov(channel));
             assert_eq!(p.kind, UpdateKind::DownloadPackage, "{channel}");
             assert!(
@@ -628,12 +756,12 @@ mod tests {
         let rpm = Path::new("/tmp/x.rpm");
         assert_eq!(
             install_command_with(Channel::Dnf, rpm, true).unwrap(),
-            vec!["rpm", "-U", "--replacepkgs", "/tmp/x.rpm"]
+            vec!["dnf", "reinstall", "-y", "--nogpgcheck", "/tmp/x.rpm"]
         );
         // A normal upgrade must not silently reinstall.
         assert_eq!(
             install_command_with(Channel::Dnf, rpm, false).unwrap(),
-            vec!["rpm", "-U", "/tmp/x.rpm"]
+            vec!["dnf", "install", "-y", "--nogpgcheck", "/tmp/x.rpm"]
         );
         assert_eq!(
             install_command(Channel::Dnf, rpm).unwrap(),
@@ -648,11 +776,15 @@ mod tests {
             .contains(&"--force".to_string()));
 
         // dpkg needs no extra flag either way.
+        // apt-get reports "already the newest version" and exits 0 rather
+        // than reinstalling, so unlike the old `dpkg -i` these two differ.
         let deb = Path::new("/tmp/x.deb");
-        assert_eq!(
-            install_command_with(Channel::Apt, deb, true).unwrap(),
-            install_command_with(Channel::Apt, deb, false).unwrap()
-        );
+        assert!(install_command_with(Channel::Apt, deb, true)
+            .unwrap()
+            .contains(&"--reinstall".to_string()));
+        assert!(!install_command_with(Channel::Apt, deb, false)
+            .unwrap()
+            .contains(&"--reinstall".to_string()));
     }
 
     #[test]
@@ -660,18 +792,27 @@ mod tests {
         let f = Path::new("/tmp/fresh-editor_0.4.7-1_amd64.deb");
         assert_eq!(
             install_command(Channel::Apt, f).unwrap(),
-            vec!["dpkg", "-i", "/tmp/fresh-editor_0.4.7-1_amd64.deb"]
+            vec![
+                "env",
+                "DEBIAN_FRONTEND=noninteractive",
+                "apt-get",
+                "install",
+                "-y",
+                "/tmp/fresh-editor_0.4.7-1_amd64.deb"
+            ]
         );
         assert_eq!(
             install_command(Channel::Dnf, Path::new("/tmp/x.rpm")).unwrap(),
-            vec!["rpm", "-U", "/tmp/x.rpm"]
+            vec!["dnf", "install", "-y", "--nogpgcheck", "/tmp/x.rpm"]
         );
-        // The flatpak bundle installs per-user, so it needs no privilege.
-        assert!(
-            install_command(Channel::Flatpak, Path::new("/tmp/x.flatpak"))
-                .unwrap()
-                .contains(&"--user".to_string())
-        );
+        // Flatpak no longer has an install command at all: it could never
+        // have run in the sandbox that would have issued it.
+        assert!(install_command(Channel::Flatpak, Path::new("/tmp/x.flatpak")).is_none());
+        // apt-get reads a bare filename as a package name, so a relative path
+        // has to be made to look like one.
+        assert!(install_command(Channel::Apt, Path::new("x.deb"))
+            .unwrap()
+            .contains(&"./x.deb".to_string()));
         assert!(!plan(&prov(Channel::Flatpak)).needs_privilege);
         assert!(install_command(Channel::Homebrew, f).is_none());
     }
@@ -684,7 +825,7 @@ mod tests {
         );
         assert_eq!(
             plan(&prov(Channel::Npm)).human,
-            "npm update -g @fresh-editor/fresh-editor"
+            "npm install -g @fresh-editor/fresh-editor@latest"
         );
     }
 }
