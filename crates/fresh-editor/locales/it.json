@@ -1655,6 +1655,7 @@
   "update.body_delegated": "Installato come %{channel}, che gestisce gli aggiornamenti. Fresh eseguirà: %{command}",
   "update.body_delegated_privileged": "Installato come %{channel}, che gestisce gli aggiornamenti. Fresh eseguirà `%{command}` — ti verrà chiesta la password, perché servono i permessi di root.",
   "update.body_manual": "Fresh non può aggiornare questa copia sul posto. Scarica la v%{version} da https://github.com/sinelaw/fresh/releases, oppure guarda i passaggi esatti nell'output dell'aggiornamento.",
+  "update.choice_download_only": "Scaricalo, poi mostra il comando di installazione",
   "update.choice_show_command": "Mostra il comando di aggiornamento",
   "update.choice_update_now": "Aggiorna alla v%{version} ora",
   "update.choice_show_pending_command": "Mostra il comando in sospeso",

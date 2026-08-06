@@ -1471,14 +1471,22 @@ impl Editor {
     ///
     /// [`start_self_update_with`]: Self::start_self_update_with
     pub fn start_self_update(&mut self) {
-        self.start_self_update_with(false);
+        self.start_self_update_with(None);
     }
 
-    /// Run the update in "show me the command" mode: it still downloads and
-    /// verifies whatever it needs, but prints the install command instead of
-    /// running it, for a user who would rather drive that step themselves.
+    /// Run the update in "download only" mode: fetch and verify the release
+    /// package, then stop and print the install command against the file on
+    /// disk. The middle rung — the network half is done, the root half is the
+    /// user's.
+    pub fn start_self_update_download_only(&mut self) {
+        self.start_self_update_with(Some("--download-only"));
+    }
+
+    /// Run the update in "show me the command" mode: nothing is fetched and
+    /// nothing is written: it names the commands and stops, for a user who
+    /// wants to read before anything happens.
     pub fn start_self_update_print_command(&mut self) {
-        self.start_self_update_with(true);
+        self.start_self_update_with(Some("--print-command"));
     }
 
     /// Launch `fresh --cmd update --yes` (plus `--print-command` when
@@ -1490,7 +1498,7 @@ impl Editor {
     /// rather than being handed back to the user as a chore. Completion is
     /// reported via `TerminalExited` (see `handle`/`finish_self_update`), which
     /// moves the indicator to its `Succeeded`/`ActionRequired`/`Failed` state.
-    pub fn start_self_update_with(&mut self, print_command: bool) {
+    pub fn start_self_update_with(&mut self, mode_flag: Option<&str>) {
         let exe = match std::env::current_exe() {
             Ok(p) => p,
             Err(e) => {
@@ -1505,8 +1513,8 @@ impl Editor {
             "update".to_string(),
             "--yes".to_string(),
         ];
-        if print_command {
-            argv.push("--print-command".to_string());
+        if let Some(flag) = mode_flag {
+            argv.push(flag.to_string());
         }
         let title = t!("update.terminal_title").to_string();
         let window = self.active_window;

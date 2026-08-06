@@ -179,6 +179,7 @@ struct Args {
     update_yes: bool,
     update_allow_downgrade: bool,
     update_print_command: bool,
+    update_download_only: bool,
     update_force: bool,
     update_releases_url: Option<String>,
     update_download_base: Option<String>,
@@ -225,6 +226,7 @@ impl From<Cli> for Args {
         let update_yes = update && cli.cmd.iter().any(|a| a == "--yes" || a == "-y");
         let update_allow_downgrade = update && cli.cmd.iter().any(|a| a == "--allow-downgrade");
         let update_print_command = update && cli.cmd.iter().any(|a| a == "--print-command");
+        let update_download_only = update && cli.cmd.iter().any(|a| a == "--download-only");
         let update_force = update && cli.cmd.iter().any(|a| a == "--force");
         // Value flags: `--flag VALUE`. Point the update at a mirror of the
         // release feed — an air-gapped/enterprise mirror in production, and the
@@ -511,6 +513,7 @@ impl From<Cli> for Args {
             update_yes,
             update_allow_downgrade,
             update_print_command,
+            update_download_only,
             update_force,
             update_releases_url,
             update_download_base,
@@ -4364,7 +4367,8 @@ fn show_paths_command() -> AnyhowResult<()> {
 }
 
 /// Handle `fresh update [--check] [--yes] [--allow-downgrade] [--force]
-///                       [--print-command] [--releases-url U] [--download-base U]`.
+///                       [--download-only] [--print-command]
+///                       [--releases-url U] [--download-base U]`.
 fn update_command(args: &Args) -> AnyhowResult<()> {
     #[cfg(feature = "self-update")]
     {
@@ -4393,7 +4397,16 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             check_only: args.update_check,
             yes: args.update_yes,
             allow_downgrade: args.update_allow_downgrade,
-            print_command: args.update_print_command,
+            // Three rungs, most automatic first. `--print-command` wins if
+            // both are given: it is the one that promises to touch nothing,
+            // and a promise like that should not be overridden by accident.
+            execution: if args.update_print_command {
+                fresh_update::engine::Execution::PrintOnly
+            } else if args.update_download_only {
+                fresh_update::engine::Execution::DownloadOnly
+            } else {
+                fresh_update::engine::Execution::Install
+            },
             force: args.update_force,
             endpoints,
         };

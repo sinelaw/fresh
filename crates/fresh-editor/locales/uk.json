@@ -1655,6 +1655,7 @@
   "update.body_delegated": "Встановлено як %{channel}, який керує оновленнями. Fresh виконає: %{command}",
   "update.body_delegated_privileged": "Встановлено як %{channel}, який керує оновленнями. Fresh виконає `%{command}` — у вас запитають пароль, бо потрібні права root.",
   "update.body_manual": "Fresh не може оновити цю копію на місці. Завантажте v%{version} з https://github.com/sinelaw/fresh/releases або перегляньте точні кроки у виводі оновлення.",
+  "update.choice_download_only": "Завантажити, потім показати команду встановлення",
   "update.choice_show_command": "Показати команду оновлення",
   "update.choice_update_now": "Оновити до v%{version} зараз",
   "update.choice_show_pending_command": "Показати команду, що очікує",

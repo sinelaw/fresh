@@ -1655,6 +1655,7 @@
   "update.body_delegated": "以 %{channel} 方式安装，由它管理更新。Fresh 将执行：%{command}",
   "update.body_delegated_privileged": "以 %{channel} 方式安装，由它管理更新。Fresh 将执行 `%{command}` — 由于需要 root 权限，系统会要求你输入密码。",
   "update.body_manual": "Fresh 无法就地更新此副本。请从 https://github.com/sinelaw/fresh/releases 下载 v%{version}，或在更新输出中查看确切步骤。",
+  "update.choice_download_only": "下载后显示安装命令",
   "update.choice_show_command": "显示更新命令",
   "update.choice_update_now": "立即更新到 v%{version}",
   "update.choice_show_pending_command": "显示待执行的命令",

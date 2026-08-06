@@ -1655,6 +1655,7 @@
   "update.body_delegated": "ติดตั้งแบบ %{channel} ซึ่งดูแลการอัปเดต Fresh จะรัน: %{command}",
   "update.body_delegated_privileged": "ติดตั้งแบบ %{channel} ซึ่งดูแลการอัปเดต Fresh จะรัน `%{command}` โดยจะขอรหัสผ่านของคุณ เพราะต้องใช้สิทธิ์ root",
   "update.body_manual": "Fresh ไม่สามารถอัปเดตสำเนานี้ในที่เดิมได้ ดาวน์โหลด v%{version} จาก https://github.com/sinelaw/fresh/releases หรือดูขั้นตอนที่แน่ชัดในผลลัพธ์ของการอัปเดต",
+  "update.choice_download_only": "ดาวน์โหลด แล้วแสดงคำสั่งติดตั้ง",
   "update.choice_show_command": "แสดงคำสั่งอัปเดต",
   "update.choice_update_now": "อัปเดตเป็น v%{version} ตอนนี้",
   "update.choice_show_pending_command": "แสดงคำสั่งที่รออยู่",
