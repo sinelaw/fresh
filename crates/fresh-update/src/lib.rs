@@ -36,6 +36,7 @@
 pub mod channel;
 pub mod check;
 pub mod confidence;
+pub mod elevate;
 pub mod endpoint;
 pub mod feed;
 pub mod heuristic;
@@ -43,6 +44,7 @@ pub mod provenance;
 pub mod receipt;
 pub mod registry;
 pub mod self_update;
+pub mod staging;
 pub mod version;
 
 #[cfg(feature = "net")]
