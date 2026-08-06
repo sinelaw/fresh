@@ -1138,8 +1138,8 @@ impl Editor {
     ///
     /// [`UpdatePlan`]: fresh_update::UpdatePlan
     pub fn show_update_popup(&mut self, version: &str) {
-        use crate::app::update_prompt::{offer_for, UpdateChoice, UpdateOffer};
         use crate::view::popup::PopupListItem;
+        use fresh_update::{offer_for, UpdateChoice, UpdateOffer};
 
         let prov = self
             .get_update_result()

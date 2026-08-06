@@ -4,6 +4,7 @@
 //! inline in the editor's `release_checker`; the editor keeps only the HTTP
 //! fetch and the background-thread/debounce plumbing around it.
 
+use crate::feed::Release;
 use crate::provenance::{self, Provenance};
 use crate::version;
 
@@ -22,8 +23,7 @@ pub struct ReleaseCheck {
 /// from the live environment. Returns an error string if the body has no
 /// parseable `tag_name`.
 pub fn evaluate(current_version: &str, release_json: &str) -> Result<ReleaseCheck, String> {
-    let latest_version = version::parse_tag_name(release_json)
-        .ok_or_else(|| "tag_name not found in response".to_string())?;
+    let latest_version = Release::parse(release_json)?.version().to_string();
     let update_available = version::is_newer(current_version, &latest_version);
     Ok(ReleaseCheck {
         latest_version,
@@ -39,8 +39,7 @@ pub fn evaluate_with(
     release_json: &str,
     provenance: Provenance,
 ) -> Result<ReleaseCheck, String> {
-    let latest_version = version::parse_tag_name(release_json)
-        .ok_or_else(|| "tag_name not found in response".to_string())?;
+    let latest_version = Release::parse(release_json)?.version().to_string();
     let update_available = version::is_newer(current_version, &latest_version);
     Ok(ReleaseCheck {
         latest_version,

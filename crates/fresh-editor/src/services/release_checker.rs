@@ -31,16 +31,23 @@ pub const DEFAULT_RELEASES_URL: &str = "https://api.github.com/repos/sinelaw/fre
 /// indicator offers and the artifact that gets installed come from the same
 /// place. Pointing only the CLI at a mirror while the UI still asked GitHub
 /// would be worse than no override at all.
-pub const RELEASES_URL_ENV: &str = "FRESH_RELEASES_URL";
-/// See [`RELEASES_URL_ENV`].
-pub const DOWNLOAD_BASE_ENV: &str = "FRESH_DOWNLOAD_BASE";
+pub use fresh_update::endpoint::{DOWNLOAD_BASE_ENV, RELEASES_URL_ENV};
 
-/// The release feed to poll: `$FRESH_RELEASES_URL` if set, else the GitHub API.
+/// The release feed to poll.
+///
+/// Resolution and the https-only host policy live in
+/// `fresh_update::endpoint`, so the background check, the `fresh --cmd update`
+/// child and the engine cannot disagree about where a release comes from. An
+/// override the policy refuses falls back to the pinned default here rather
+/// than failing the poll: a background check is not worth a startup error, and
+/// the CLI path reports the same rejection loudly.
 pub fn releases_url() -> String {
-    std::env::var(RELEASES_URL_ENV)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_RELEASES_URL.to_string())
+    fresh_update::endpoint::Endpoints::from_env()
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ignoring an unusable release endpoint override");
+            fresh_update::endpoint::Endpoints::production()
+        })
+        .releases_url
 }
 
 /// Lifecycle of an interactive in-editor self-update, surfaced through the
@@ -292,11 +299,12 @@ pub fn fetch_latest_version(url: &str) -> Result<String, String> {
 
 /// Parse the version from a GitHub releases API body.
 ///
-/// Thin wrapper over `fresh_update::version::parse_tag_name` kept because
-/// callers/tests use the `Result` shape.
+/// Thin wrapper over `fresh_update::feed::Release` kept because callers/tests
+/// use the `Result` shape.
 fn parse_version_from_json(json: &str) -> Result<String, String> {
-    fresh_update::version::parse_tag_name(json)
-        .ok_or_else(|| "tag_name not found in response".to_string())
+    Ok(fresh_update::feed::Release::parse(json)?
+        .version()
+        .to_string())
 }
 
 /// Compare two versions; `true` if `latest` is newer than `current`.

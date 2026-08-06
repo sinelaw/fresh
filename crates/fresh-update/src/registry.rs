@@ -463,7 +463,12 @@ pub fn install_command_with(channel: Channel, file: &Path, reinstall: bool) -> O
     // an argument as a file when it looks like a path. Everything downloaded is
     // staged under an absolute path, so this is belt-and-braces — but the
     // failure it prevents is confusing enough to be worth two lines.
-    let path = if Path::new(&path).is_absolute() {
+    // `is_absolute` alone is wrong here: on Windows a POSIX-style `/tmp/x.rpm`
+    // has a root but no drive prefix, so it is not "absolute" and would get a
+    // `./` glued on. `has_root` is the property that actually matters — the
+    // package tool needs the argument to *look* like a path rather than a
+    // package name, and these tools only ever run on Unix anyway.
+    let path = if Path::new(&path).has_root() {
         path
     } else {
         format!("./{path}")

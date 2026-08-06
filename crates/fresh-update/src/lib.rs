@@ -49,8 +49,15 @@ pub mod version;
 
 #[cfg(feature = "archive")]
 pub mod archive;
+#[cfg(feature = "engine")]
+pub mod engine;
 #[cfg(feature = "net")]
 pub mod net;
+pub mod offer;
+
+#[cfg(feature = "engine")]
+pub use engine::{UpdateOptions, UpdateStatus};
+pub use offer::{offer_for, UpdateChoice, UpdateOffer};
 
 pub use channel::{Channel, ParseChannelError};
 pub use check::{evaluate, ReleaseCheck};
