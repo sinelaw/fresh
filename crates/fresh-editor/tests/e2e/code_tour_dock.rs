@@ -187,28 +187,19 @@ fn harness_in(project_root: &Path, width: u16, height: u16) -> EditorTestHarness
 }
 
 /// Run a palette command by name.
+///
+/// This module already knew to wait for the *filtered row* rather than the
+/// echoed query before pressing Enter. What it couldn't fix locally is that
+/// Quick Open rebuilds its suggestion list only when the input changes —
+/// never on a render or a tick. `Tour: …` is registered by the code-tour
+/// plugin during startup, so if that registration lands after the last
+/// keystroke the row can never appear, and waiting for it blocks until
+/// nextest kills the test at 180 s with no failed assertion. That is the
+/// remaining explanation for this module's CI timeouts on both ubuntu and
+/// windows. `run_palette_command` retypes to re-run the filter, so a
+/// late-registering plugin command is picked up as soon as it exists.
 fn run_command(harness: &mut EditorTestHarness, name: &str) {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text(name).unwrap();
-    // The query line echoes what was typed, so "the name is on screen" is true
-    // the moment typing lands, whether or not the palette has filtered its list
-    // yet — a wait that cannot fail and therefore gates nothing
-    // (CONTRIBUTING.md §16). Enter then fires on whatever row happens to be
-    // selected at that instant. Locally the filter finishes in the same frame
-    // and it always works; on a loaded runner it need not, and the command
-    // never runs, which is how this hung on CI with no failed assertion.
-    //
-    // Wait for the name *twice*: once as the query, once as the filtered row
-    // Enter is about to activate.
-    harness
-        .wait_until(|h| h.screen_to_string().matches(name).count() >= 2)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    harness.run_palette_command(name).unwrap();
 }
 
 /// Load a tour manifest through `Tour: Load Definition...` and wait for its

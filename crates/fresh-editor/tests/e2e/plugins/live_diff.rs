@@ -10,7 +10,6 @@
 
 use crate::common::git_test_helper::{DirGuard, GitTestRepo};
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 
 // =============================================================================
@@ -58,16 +57,18 @@ fn open_file(harness: &mut EditorTestHarness, repo_path: &std::path::Path, relat
 /// Live-diff is opt-in (off by default). Trigger the global-toggle
 /// command via the command palette so the rest of the test can observe
 /// gutter glyphs and virtual lines.
+///
+/// Via `run_palette_command`, which waits for the command to be listed
+/// before confirming. This one is registered by the live_diff *plugin*, and
+/// Quick Open only rebuilds its suggestion list when the input changes — so
+/// typing the name and pressing Enter immediately either activated whatever
+/// row was selected at that instant or, if the plugin hadn't registered yet,
+/// nothing at all. Either way live-diff stayed off and every later wait in
+/// the test blocked forever.
 fn enable_live_diff_globally(harness: &mut EditorTestHarness) {
     harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .run_palette_command("Live Diff: Toggle (Global)")
         .unwrap();
-    harness.render().unwrap();
-    harness.type_text("Live Diff: Toggle (Global)").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
 }
 
 // =============================================================================
