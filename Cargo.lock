@@ -1599,11 +1599,18 @@ dependencies = [
 name = "fresh-update"
 version = "0.4.6"
 dependencies = [
+ "libc",
  "serde",
+ "serde_json",
  "sha2",
+ "tar",
  "tempfile",
+ "tiny_http",
  "toml 0.8.23",
  "tracing",
+ "ureq",
+ "xz2",
+ "zip",
 ]
 
 [[package]]
