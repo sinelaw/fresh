@@ -19,16 +19,30 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * `script check` / `api` / `types` check a program, search the API, and find the declarations.
   * **Teach agent the Fresh CLI** briefs `claude`, `codex` and `opencode`, and is on by default.
   * The grant is scoped to the workspace that made it, so one agent cannot reach a sibling's panes.
-* **Git-gutter hunks and unsaved edits show on the scrollbar** - a change below the fold is visible on the track instead of only in the gutter, matching the marks live diff already draws (#2713).
+* **An agent can customize Fresh end to end** - `fresh --cmd init reload` re-reads `init.ts` and `fresh --cmd command run "<name>"` invokes a registered command, so writing a customization and trying it no longer needs you to press `Ctrl+P`. `fresh --cmd help plugin` documents the runtime contract with a worked example, and plugins gained `editor.setInterval` / `setTimeout` for host-driven refresh.
+* **Every settings toggle now says what it changes** - **Toggle X** changes the editor-wide default and saves it to your config; **Toggle X (Current Buffer)** pins just the active buffer. Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Read-Only Mode and Auto-Revert gained the suffix, and Indentation Guides, Folding Indicators, Current Line Highlight and Occurrence Highlight gained per-buffer variants.
+* **Git-gutter hunks and unsaved edits show on the scrollbar** - a change below the fold is visible on the track instead of only in the gutter, matching the marks live diff already draws (#2713, requested by @RetributionByRevenue).
 * **The Orchestrator dock can be closed without a keybinding** - a `×` on its title bar and a new **View → Orchestrator Dock** row, with a live checkmark.
 * **Thrift syntax highlighting** - `.thrift` interface definition files now highlight out of the box (#2884, by @asukaminato0721).
 
 ### Bug Fixes
 
 * **Replace-all now finishes on files with tens of thousands of matches** - four unrelated quadratic hot spots made a 60 000-match replace run for over a minute, or hang outright (#2893).
-* **Two splits on the same file keep independent edit points** - editing in one pane moved the other pane's cursor to the edit and scrolled it there, so the second edit point had to be repositioned after every change. Plain typing was unaffected, but any action that emits more than one event (`Ctrl+T` transpose, `Alt+↑`/`Alt+↓` move line, toggle comment) took the bulk-edit path, which reset other panes' cursors instead of shifting them by the edit (#2878, reported by @FreekyFrank).
-* **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`), because the terminal reports the *base* key and the shift separately (#2880, reported by @akarinotomoshibi).
+* **Two splits on the same file keep independent edit points** - any action emitting more than one event (`Ctrl+T` transpose, `Alt+↑`/`Alt+↓` move line, toggle comment) reset the other pane's cursor to the edit and scrolled it there (#2878, reported by @FreekyFrank).
+* **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`) (#2880, reported by @akarinotomoshibi).
 * **TOML multiline arrays highlight correctly**, and bare dots are no longer misread as floats (#2887, by @asukaminato0721).
+* **Settings you toggle actually stick**
+  * **Eight toggles that forgot your choice on restart** - Line Wrap, Current Line Highlight, Occurrence Highlight, Inlay Hints, Mouse Hover, Tab Bar, Status Bar and Prompt Line changed only the in-memory config, so the setting reverted on the next launch.
+  * **A toggle writes the config layer that owns the setting** - a project `.fresh/config.json` used to silently override the user-layer entry the toggle wrote, so the toggle looked dead in that project and leaked the change into every other one.
+  * **The workspace no longer shadows saved settings** - line numbers, line wrap and inlay hints were snapshotted into every workspace and stamped back on open, so an old workspace overrode the default you saved elsewhere.
+  * **Config writes are atomic**, and a hand-written empty override like `"status_bar": {"left": []}` is no longer deleted the next time anything saves.
+  * **Reset Buffer Settings really resets everything** - the occurrence highlight used to stay pinned for the rest of the session, and the current-line-highlight, line-number and line-wrap pins could not be cleared at all.
+  * **Toggle Tab Indicators toggles only tabs** - it shared the master whitespace toggle, so hiding the tab arrows also killed the space dots.
+  * **Per-buffer pins are per split**, and a global toggle no longer un-pins the other splits in the window.
+  * **Read-only and whitespace-indicator commands are translated** in every non-English locale.
+* **Menus and the command palette agree on what the buffer can do** - both asked only whether a buffer existed, so `Save` was offered for a terminal (where it wrote the scrollback transcript over the backing file and said "Saved") and for buffers with nothing unsaved, while `Undo`, `Cut` and `Paste` were offered for read-only buffers that then refused them. In the other direction, Save All, Navigate Back/Forward, the view toggles and tab and split management were greyed out whenever a terminal or the file explorer had focus, some while their own keybinding still worked.
+* **Updates finish through the channel that installed Fresh** - `.deb`, `.rpm` and `.flatpak` installs were sent to `apt-get`/`dnf`/`flatpak update` against repositories that never served Fresh, so they reported "already the newest version" forever; they now download and verify the release artifact instead. Homebrew's command named a formula that does not exist, `mise upgrade` kept a pinned version, `winget upgrade` could not read the installed version, and Flatpak's generated command could not run inside its own sandbox. The update popup also offers a download-only middle step, and **Show the update command** now prints without downloading anything.
+* **The in-place binary swap is safe on a shared install directory** - the staging file had a guessable name and followed symlinks, so on a group-writable `/usr/local/bin` another local user could redirect the write; the same class of hole let a staged package be swapped before `sudo dpkg -i` ran. Both stage unpredictably in owner-only locations now, and the swap fsyncs so a power loss can't leave a zero-length executable.
 * **Pasting works in the New Workspace and Run Agent dialogs** - `Ctrl+V`/`Ctrl+A`/`Ctrl+C`/`Ctrl+X` and bracketed paste reach the focused text field instead of the buffer behind the dialog, in daemon mode (`fresh -a`) too.
 * **Renaming or filing a workspace made with "Extract Tab to New Workspace" no longer hits its co-tenant** - both were keyed by the shared project root, so renaming or moving one did the same to the other.
 * **A restored workspace's agent can still drive the editor** - the script capability was never persisted, so after a restart `fresh --cmd script` failed as unauthorized in a workspace where it had worked.
@@ -40,10 +54,12 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Closing a file no longer pulls a dock panel into the editor split** - Search & Replace, Diagnostics or a tour panel could be adopted as a tab among your source files, and came back after every later close.
 * **Plugin panels handle the mouse properly** - a click on a border or empty padding no longer scrolls the panel's own header out of view, side-by-side lists route clicks to the column you clicked, the wheel scrolls the list under the pointer, and an overflowing list paints a scrollbar. Affects every widget panel (Search & Replace, Settings, the Orchestrator dock).
 * **A second panel opened in the Utility Dock renders like the first** instead of picking up a stray line-number gutter.
+* **Reloading a plugin stops stacking panels** - each reload of `init.ts` left the virtual buffers its previous copy created open, so the documented edit-reload-run loop added a duplicate panel every iteration.
+* **The plugin slow-handler warning stops crying wolf** - a handler crossing 50ms on a loaded machine logged a warning; only a genuinely blocking handler past 500ms does now.
 
 ### Internals
 
-* Continued flaky-e2e-test stabilization across the code-tour, live-diff and orchestrator-dock suites.
+* Continued flaky-e2e-test stabilization across the palette, code-tour, live-diff, git-gutter and orchestrator-dock suites, and removal of stale ad-hoc reports from the repo root (#2914).
 
 ## 0.4.6
 
@@ -57,8 +73,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * If you have customized your status bar, open Settings → **Status Bar** and move **Terminal Restart** from *Available* to *Included* (`Shift+→`) under Left or Right.
 * **Tabs for same-named files say which file they are** - open two `mod.rs` and the tabs read `model/mod.rs` and `view/mod.rs` instead of `mod.rs 1` and `mod.rs 2`. Each tab grows only as much of its path as it takes to be unique, and tabs whose name is already unique are untouched (#2851, requested by @anddimario).
 * **Line-ending indicators** - `↵` at every line break and `␍` for the CR half of a CRLF, both off by default (#2798, requested by @akarinotomoshibi).
-* **Per-buffer chrome toggles** - **Toggle Indentation Guides (Current Buffer)** and **Toggle Folding Indicators (Current Buffer)** flip the guides and the gutter fold arrows for the active buffer only, leaving the global setting and every other buffer alone. Turning guides on where the global mode is `none` draws every level; hiding the fold arrows leaves existing folds collapsed. Both choices persist across a restart with session restore.
-* **Every settings toggle now says what it changes** - a command palette entry named **Toggle X** changes the editor-wide default and saves it to your config; **Toggle X (Current Buffer)** pins just the active buffer and is remembered per file. Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Read-Only Mode and Auto-Revert gained the suffix — they always were per-buffer, they just didn't say so. **Toggle Current Line Highlight (Current Buffer)** and **Toggle Occurrence Highlight (Current Buffer)** are new, so the settings that became editor-wide-and-saved still have a way to change just one file.
 * **Scrollbar markers for plugins** - `editor.setScrollbarMarkers` paints marks on the scrollbar track; live-diff hunks and Markdown headings now use it (#2713, requested by @RetributionByRevenue).
 * **File Explorer sticky parents** - a nested folder's expanded ancestors stay stacked at the top of the sidebar while you scroll (#2705, by @asukaminato0721).
 * **More graphics, docs and build-file grammars** - GLSL `.glslf`/`.glslv`, Wavefront `.obj`, Doxygen, Windows `.rc`, pkg-config, `.cmake.in` and `CMakeCache.txt` (by @asukaminato0721).
@@ -71,16 +85,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Bug Fixes
 
 * **Four dead settings** - the bracket-matching toggles, `file_explorer.respect_gitignore` and `languages.<id>.textmate_grammar` now take effect; `editor.highlight_timeout_ms` was removed rather than wired up (#2842).
-* **Eight toggles that forgot your choice on restart** - **Toggle Line Wrap**, **Current Line Highlight**, **Occurrence Highlight**, **Inlay Hints**, **Mouse Hover**, **Tab Bar**, **Status Bar** and **Prompt Line** changed only the in-memory config, so the setting reverted on the next launch. They now save like **Toggle Line Numbers** always did. **Toggle Indentation: Spaces ↔ Tabs (Current Buffer)** and the whitespace-indicator toggles likewise survive a restart, and no longer get overwritten by a config reload or **Set Language**.
-* **Read-only and whitespace-indicator commands were untranslated** in every non-English locale.
-* **Reset Buffer Settings now really resets everything** - it used to leave the occurrence highlight stuck at its pinned state for the rest of the session, and couldn't un-pin the current-line highlight, line numbers, or line wrap at all.
-* **A hand-written empty override survives settings writes** - a value like `"status_bar": {"left": []}` (emptying the left status bar) was silently deleted from `config.json` whenever any setting was saved from the UI or a toggle.
-* **A global toggle no longer un-pins other splits** - **Toggle Line Wrap** cleared the per-buffer pin of every split in the window; now only the split you ran it in adopts the new default, matching the other toggles.
-* **Config writes are atomic** - a crash mid-write can no longer truncate `config.json` (which silently loaded as all-defaults on the next launch).
-* **Toggles write the config layer that owns the setting** - like VS Code: if a project `.fresh/config.json` sets the key, the toggle updates the project file instead of writing a user-layer entry the project silently overrode (the toggle looked dead in that project and leaked the change into every other one).
-* **The workspace no longer shadows saved settings** - line numbers, line wrap and inlay hints were snapshotted into every workspace and stamped back on open, so an old workspace kept overriding the default you saved elsewhere, forever. Their toggles persist to the config file, which is now the single source of truth.
-* **Guide and fold-arrow pins are per split** - "Toggle Indentation Guides (Current Buffer)" and "Toggle Folding Indicators (Current Buffer)" now pin the split you run them in, like the line-number, line-wrap and current-line-highlight pins already did — with the same buffer in two splits, each split keeps its own choice.
-* **Toggle Tab Indicators really toggles only tabs** - it shared the master whitespace toggle, so "hide the tab arrows" also killed the space dots. The two commands are now independent: the tab pin layers on the whitespace master, persists per file, and the master toggle still means "everything".
 * **Files that are one very long line**
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).
   * **Highlighting survives past the first wrapped rows**, and the wheel no longer snaps to a 100 KB boundary (#2843).
@@ -98,8 +102,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Scroll-back re-wraps when the pane resizes** - splitting, maximizing or dropping a tab left every line clipped (#2844).
   * **Modified keys reach the program inside** - `Ctrl+Shift+Right`, `Shift+Home`, `Shift+F3` and `Alt+Backspace` arrived stripped.
   * **Scrollback keeps streaming** after the grid history saturates.
-  * **Menus and the palette agree on what the buffer can actually do** - both asked only "is there a buffer at all", so `Save` was offered for a terminal (where it wrote the terminal's own scrollback transcript back over its backing file and said "Saved", or raised a "File changed on disk" conflict for a file only the terminal had ever written), for a plugin panel with no file behind it, and for a buffer with nothing unsaved in it; `Undo`, `Cut` and `Paste` were offered for read-only buffers that then refused them. `Save` now needs unsaved changes, `Save All` needs some buffer to have them, `Revert` and `Reload with Encoding` need a file to re-read, and the editing entries need a buffer that accepts edits. Reading is untouched: select, copy and search still work on a terminal's scrollback.
-  * **The command palette stays useful inside a terminal, and in the file explorer** - Save All, Navigate Back/Forward, the editor-wide view toggles, `init:` commands, tab and split management, Restart Terminal Process, Toggle Utility Dock and friends were greyed out whenever a terminal or the explorer had focus, some of them while their own keybinding still worked. Commands that act on the focused buffer's cursor (Undo, Delete Line, Save File, …) stay disabled there, as before.
 * **Input**
   * **One keypress no longer acts twice** with `keyboard_report_event_types` on (#2796, reported by @akarinotomoshibi).
   * **Horizontal wheel events no longer scroll vertically** (#2831, reported by @mruff-aeq, by @ttenneb).
