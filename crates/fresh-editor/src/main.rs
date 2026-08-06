@@ -4247,6 +4247,16 @@ fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
 
     let mut by_name = Vec::new();
     let mut by_doc = Vec::new();
+    // Names that only match sparsely (fzf-style), held back as a fallback.
+    //
+    // Substring matching alone answers "no API member matches" to a caller
+    // who guessed a plausible-but-wrong name — `setCursor` for
+    // `setBufferCursor`, `setBufferText` for `setVirtualBufferContent`. That
+    // is the worst possible reply, because it reads as "the editor cannot do
+    // this" when the member is right there under a name one word longer.
+    // A subsequence match finds those, and is only consulted when nothing
+    // matched properly, so it can never push a real hit down the list.
+    let mut fuzzy_names: Vec<(i32, ApiEntry)> = Vec::new();
     for (source, text) in &files {
         for entry in parse_dts_entries(text, source) {
             if entry.name.to_lowercase().contains(&needle) {
@@ -4257,6 +4267,11 @@ fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
                 .any(|line| line.to_lowercase().contains(&needle))
             {
                 by_doc.push(entry);
+            } else {
+                let m = fresh::input::fuzzy::fuzzy_match(query, &entry.name);
+                if m.matched {
+                    fuzzy_names.push((m.score, entry));
+                }
             }
         }
     }
@@ -4272,7 +4287,17 @@ fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
     // The same field name appears on many record types; one is informative,
     // six is noise.
     by_name.dedup_by(|a, b| a.name == b.name && a.signature == b.signature);
-    let hits: Vec<ApiEntry> = by_name.into_iter().chain(by_doc).collect();
+    let mut hits: Vec<ApiEntry> = by_name.into_iter().chain(by_doc).collect();
+
+    // Only when nothing matched outright: offer the near-misses, best first
+    // and capped, so a wrong guess gets an answer instead of a dead end.
+    let mut fuzzy_fallback = false;
+    if hits.is_empty() && !fuzzy_names.is_empty() {
+        fuzzy_fallback = true;
+        fuzzy_names.sort_by_key(|(score, e)| (std::cmp::Reverse(*score), e.name.len()));
+        fuzzy_names.dedup_by(|a, b| a.1.name == b.1.name && a.1.signature == b.1.signature);
+        hits = fuzzy_names.into_iter().take(8).map(|(_, e)| e).collect();
+    }
 
     if hits.is_empty() {
         eprintln!(
@@ -4281,6 +4306,13 @@ fn script_api(query: &str, flags: &[&str]) -> AnyhowResult<()> {
             query
         );
         std::process::exit(1);
+    }
+
+    // Say so, on stderr, so `--json` output stays machine-readable and a
+    // caller can tell "this is exactly what you asked for" from "this is the
+    // closest thing that exists".
+    if fuzzy_fallback {
+        eprintln!("no exact match for '{query}' — showing the closest names:\n");
     }
 
     if json {

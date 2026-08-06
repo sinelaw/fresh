@@ -2862,9 +2862,11 @@ interface EditorAPI {
 	*/
 	insertAtCursor(text: string): boolean;
 	/**
-	* Open a file, optionally at a specific line/column
+	* Open a file, optionally at a specific line/column.
+	* 
+	* `editor.openFile(path)` is the whole request most of the time.
 	*/
-	openFile(path: string, line: number | null, column: number | null): boolean;
+	openFile(path: string, line?: number | null, column?: number | null): boolean;
 	/**
 	* Open a file in the background — no focus change, no
 	* active-split mutation. `windowId` defaults to the active
@@ -2905,9 +2907,23 @@ interface EditorAPI {
 	*/
 	showBuffer(bufferId: number): boolean;
 	/**
-	* Close a buffer
+	* Close a buffer. Pass `force: true` to discard unsaved changes.
+	* 
+	* **A modified buffer is not closed** unless `force` is set — the user's
+	* unsaved edits are not a plugin's to throw away. A scratch buffer the
+	* plugin created and filled itself counts as modified, so disposing of
+	* one needs `closeBuffer(id, true)`.
+	* 
+	* The returned boolean is **"the request was delivered"**, not "the
+	* buffer closed": this call is fire-and-forget, and the editor decides
+	* afterwards. A refusal is logged editor-side but is invisible here, so
+	* confirm with `listBuffers()` (after `await editor.flush()`) when it
+	* matters. Without `force` the sequence that used to be required was
+	* delete-the-contents, `saveBufferToPath`, then close — three
+	* round-trips, the first two of which returned `true` while achieving
+	* nothing.
 	*/
-	closeBuffer(bufferId: number): boolean;
+	closeBuffer(bufferId: number, force?: boolean | null): boolean;
 	/**
 	* Close other buffers in split
 	*/
@@ -4564,10 +4580,15 @@ interface EditorAPI {
 	*/
 	setTimeout(delayMs: number, handlerName: string): number;
 	/**
-	* Cancel a timer from `setInterval` / `setTimeout`. Returns `false` if
-	* the id was never issued by this plugin; cancelling an already-fired
-	* one-shot, or cancelling twice, is a harmless `true`/`false` rather
-	* than an error.
+	* Cancel a timer from `setInterval` / `setTimeout`.
+	* 
+	* Returns `false` when this plugin holds no live timer under that id —
+	* which covers a typo, a double-cancel, and a one-shot that has already
+	* fired. None of those is an error, so none throws.
+	* 
+	* Only your own timers are cancellable: ids come from a counter shared
+	* across plugins, so accepting an arbitrary id would let one plugin stop
+	* another's refresh.
 	*/
 	clearInterval(timerId: number): boolean;
 	/**
