@@ -448,6 +448,46 @@ A sample project for testing.
             "checkout",
         );
     }
+
+    /// The file's current on-disk modification time.
+    pub fn mtime(&self, relative_path: &str) -> std::time::SystemTime {
+        fs::metadata(self.path.join(relative_path))
+            .and_then(|m| m.modified())
+            .expect("file should exist and expose an mtime")
+    }
+
+    /// Block until `relative_path`'s on-disk mtime is strictly newer than
+    /// `floor`, rewriting its (unchanged) bytes until the filesystem's clock
+    /// ticks past its own granularity.
+    ///
+    /// Auto-revert notices an external write by comparing mtimes, so a test
+    /// that rewrites a file the editor already opened has to guarantee the
+    /// new mtime is distinguishable from the recorded one. On a filesystem
+    /// with 1 s mtime granularity (HFS+, some CI volumes) a fast test does
+    /// the whole open-then-rewrite sequence inside a single tick, and the
+    /// reload never fires.
+    ///
+    /// The obvious fix — sleep past the granularity — is a fixed timer, and
+    /// the one this replaced was worse than that: it used `harness.sleep`,
+    /// which advances *logical* time only and so waited no real time at all,
+    /// leaving the hazard it was written to prevent fully live. Rewriting
+    /// until the observed mtime actually moves is semantic waiting on the
+    /// real condition (CONTRIBUTING.md Testing §3): it costs nothing on a
+    /// nanosecond-resolution filesystem and exactly one granularity tick on
+    /// a coarse one, and it cannot silently not-work.
+    pub fn touch_until_mtime_after(&self, relative_path: &str, floor: std::time::SystemTime) {
+        let full = self.path.join(relative_path);
+        let content = fs::read(&full).expect("file should exist");
+        loop {
+            if self.mtime(relative_path) > floor {
+                return;
+            }
+            // Same bytes back: this is a pure mtime bump, not a content edit,
+            // so it can't perturb what the test is actually asserting on.
+            fs::write(&full, &content).expect("failed to rewrite file for mtime bump");
+            std::thread::yield_now();
+        }
+    }
 }
 
 /// Helper to restore original directory
