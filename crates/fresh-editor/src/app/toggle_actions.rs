@@ -278,7 +278,9 @@ impl Editor {
         } else {
             t!("view.state_disabled").to_string()
         };
-        self.set_status_message(t!("view.current_line_highlight_state", state = state).to_string());
+        self.set_status_message(
+            t!("view.current_line_highlight_buffer_state", state = state).to_string(),
+        );
     }
 
     /// Toggle occurrence highlighting for the current buffer only.
@@ -313,7 +315,9 @@ impl Editor {
         } else {
             t!("view.state_disabled").to_string()
         };
-        self.set_status_message(t!("view.occurrence_highlight_state", state = status).to_string());
+        self.set_status_message(
+            t!("view.occurrence_highlight_buffer_state", state = status).to_string(),
+        );
     }
 
     /// Toggle the gutter folding indicators for the current buffer only.
@@ -592,6 +596,63 @@ impl Editor {
             // (the Git Log commit diff), not a user setting to reset.
             state.buffer_settings.clear_user_overrides();
             state.apply_buffer_config(&self.config);
+            // `apply_buffer_config` re-derives everything stored on
+            // `BufferSettings`, but the occurrence highlight renders from
+            // `reference_highlight_overlay.enabled`, which nothing rereads
+            // once the pin is gone — without this the screen keeps showing
+            // the pinned state for the rest of the session while the
+            // persisted state already follows the global default.
+            state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
+            if !state.reference_highlight_overlay.enabled {
+                state
+                    .reference_highlight_overlay
+                    .clear(&mut state.overlays, &mut state.marker_list);
+            }
+        }
+
+        // Line numbers, line wrap, and current-line highlight pin per
+        // (split, buffer) on `BufferViewState`, not on `BufferSettings`, so
+        // `clear_user_overrides` can't reach them: clear them wherever this
+        // buffer is visible in the window and re-stamp the rendered values
+        // from config, or those pins survive the very command meant to drop
+        // them.
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
+        let leaf_ids: Vec<_> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .keys()
+            .copied()
+            .collect();
+        for leaf_id in leaf_ids {
+            if self.split_manager_mut().get_buffer_id(leaf_id.into()) != Some(buffer_id) {
+                continue;
+            }
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&leaf_id)
+            {
+                view_state.line_numbers_override = None;
+                view_state.line_wrap_override = None;
+                view_state.highlight_current_line_override = None;
+                view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap,
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column,
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                });
+            }
         }
 
         self.set_status_message(t!("toggle.buffer_settings_reset").to_string());

@@ -38,38 +38,54 @@ fn strip_nulls(value: Value) -> Option<Value> {
     }
 }
 
-/// Recursively strip default values (empty strings, empty arrays) from a JSON value.
-/// This ensures that fields with default serde values don't get saved to config files.
-fn strip_empty_defaults(value: Value) -> Option<Value> {
+/// Recursively strip default values (empty strings, empty arrays) from a JSON
+/// value — but only where the on-disk file doesn't already have a value at the
+/// same path. This keeps redundant serde defaults out of freshly written
+/// config while never deleting an empty the user wrote by hand: an empty
+/// collection in the file is a *meaningful* override whenever the built-in
+/// default is non-empty (e.g. `"status_bar": {"left": []}` emptying the
+/// status bar), and every writer here funnels the user's own document back
+/// through this function, so an unconditional strip turns any unrelated
+/// settings write into silent data loss on those keys.
+///
+/// `existing` is the parsed value at the same path in the file being
+/// rewritten (`None` when the path is new).
+fn strip_empty_defaults(value: Value, existing: Option<&Value>) -> Option<Value> {
     match value {
         Value::Null => None,
-        Value::String(s) if s.is_empty() => None,
-        Value::Array(arr) if arr.is_empty() => None,
+        Value::String(s) if s.is_empty() => existing.map(|_| Value::String(s)),
+        Value::Array(arr) if arr.is_empty() => existing.map(|_| Value::Array(arr)),
         Value::Object(map) => {
             let filtered: serde_json::Map<String, Value> = map
                 .into_iter()
                 .filter_map(|(k, v)| {
-                    // An empty `args` array is a *meaningful* override for an LSP
-                    // server: it means "launch with no arguments", as opposed to an
-                    // omitted `args` which inherits the default server's arguments
-                    // (e.g. marksman's `server`). Stripping it as a redundant empty
-                    // default would make it impossible to replace a default server
-                    // that takes args with one that takes none (#2549), so keep it.
+                    let sub_existing = existing.and_then(|e| e.get(&k));
+                    // An empty `args` array is meaningful even when newly
+                    // written: it means "launch this LSP server with no
+                    // arguments", as opposed to an omitted `args` which
+                    // inherits the default server's arguments (e.g.
+                    // marksman's `server`). Stripping it would make it
+                    // impossible to replace a default server that takes args
+                    // with one that takes none (#2549), so keep it.
                     if k == "args" && matches!(&v, Value::Array(a) if a.is_empty()) {
                         return Some((k, v));
                     }
-                    strip_empty_defaults(v).map(|v| (k, v))
+                    strip_empty_defaults(v, sub_existing).map(|v| (k, v))
                 })
                 .collect();
-            if filtered.is_empty() {
+            if filtered.is_empty() && existing.is_none() {
                 None
             } else {
                 Some(Value::Object(filtered))
             }
         }
         Value::Array(arr) => {
-            let filtered: Vec<Value> = arr.into_iter().filter_map(strip_empty_defaults).collect();
-            if filtered.is_empty() {
+            let filtered: Vec<Value> = arr
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, v)| strip_empty_defaults(v, existing.and_then(|e| e.get(i))))
+                .collect();
+            if filtered.is_empty() && existing.is_none() {
                 None
             } else {
                 Some(Value::Array(filtered))
@@ -193,11 +209,26 @@ fn write_clean_value_to_path(path: &Path, value: Value) -> Result<(), ConfigErro
         std::fs::create_dir_all(parent_dir)
             .map_err(|e| ConfigError::IoError(format!("{}: {}", parent_dir.display(), e)))?;
     }
+    // What the file holds right now, for two purposes: empties already present
+    // in it survive the strip (see `strip_empty_defaults`), and the reconcile
+    // preserves its comments. Unparseable content degrades to `None` — the
+    // callers that refuse to clobber an unparseable file have already errored
+    // before reaching here.
+    let existing = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| crate::config::parse_config_jsonc(&text).ok());
     let stripped = strip_nulls(value).unwrap_or(Value::Object(Default::default()));
-    let clean = strip_empty_defaults(stripped).unwrap_or(Value::Object(Default::default()));
+    let clean = strip_empty_defaults(stripped, existing.as_ref())
+        .unwrap_or(Value::Object(Default::default()));
 
     let output = render_config_text(path, &clean)?;
-    std::fs::write(path, output)
+    // Write via a sibling temp file + rename so a crash mid-write can't leave
+    // a truncated config (a truncated file silently loads as defaults on the
+    // next launch) — same discipline as the workspace save.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, output)
+        .map_err(|e| ConfigError::IoError(format!("{}: {}", tmp.display(), e)))?;
+    std::fs::rename(&tmp, path)
         .map_err(|e| ConfigError::IoError(format!("{}: {}", path.display(), e)))?;
     Ok(())
 }
@@ -953,7 +984,9 @@ fn json_diff(defaults: &serde_json::Value, current: &serde_json::Value) -> serde
                     }
                 } else {
                     // Key only in current - include it, but strip empty defaults
-                    if let Some(stripped) = strip_empty_defaults(cur_val.clone()) {
+                    // (no `existing` here: this diff is against built-in
+                    // defaults, not a user-authored file)
+                    if let Some(stripped) = strip_empty_defaults(cur_val.clone(), None) {
                         result.insert(key.clone(), stripped);
                     }
                 }
@@ -1572,6 +1605,88 @@ mod tests {
     /// Without the guard, `read_existing_json` returns an empty object for an
     /// unparseable file, the one change is applied on top, and the user's
     /// entire config is overwritten — exactly the failure that was reported.
+    #[test]
+    /// A meaningful empty collection the user wrote by hand — e.g.
+    /// `"status_bar": {"left": []}` to empty the status bar, whose built-in
+    /// default is non-empty — must survive an unrelated settings write.
+    /// Before the `existing`-aware strip, any toggle persist funneled the
+    /// whole file through `strip_empty_defaults` and silently deleted it.
+    #[test]
+    fn save_changes_preserves_user_authored_empty_values() {
+        let (temp, resolver) = create_test_resolver();
+
+        let user_config_path = resolver.user_config_path();
+        std::fs::create_dir_all(user_config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &user_config_path,
+            "{\n  \"editor\": {\n    \"status_bar\": { \"left\": [] },\n    \"theme\": \"\"\n  }\n}",
+        )
+        .unwrap();
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert("/editor/line_wrap".to_string(), serde_json::json!(false));
+        resolver
+            .save_changes_to_layer(
+                &changes,
+                &std::collections::HashSet::new(),
+                ConfigLayer::User,
+            )
+            .unwrap();
+
+        let after: serde_json::Value =
+            crate::config::parse_config_jsonc(&std::fs::read_to_string(&user_config_path).unwrap())
+                .unwrap();
+        assert_eq!(
+            after.pointer("/editor/status_bar/left"),
+            Some(&serde_json::json!([])),
+            "user-authored empty array must survive an unrelated write"
+        );
+        assert_eq!(
+            after.pointer("/editor/theme"),
+            Some(&serde_json::json!("")),
+            "user-authored empty string must survive an unrelated write"
+        );
+        assert_eq!(
+            after.pointer("/editor/line_wrap"),
+            Some(&serde_json::json!(false))
+        );
+        drop(temp);
+    }
+
+    /// The strip still applies to values that are NOT already in the file:
+    /// a change introducing an empty collection is dropped as a redundant
+    /// serde default, exactly as before.
+    #[test]
+    fn save_changes_still_strips_newly_introduced_empties() {
+        let (temp, resolver) = create_test_resolver();
+
+        let mut changes = std::collections::HashMap::new();
+        changes.insert("/editor/rulers".to_string(), serde_json::json!([]));
+        changes.insert("/editor/line_wrap".to_string(), serde_json::json!(false));
+        resolver
+            .save_changes_to_layer(
+                &changes,
+                &std::collections::HashSet::new(),
+                ConfigLayer::User,
+            )
+            .unwrap();
+
+        let after: serde_json::Value = crate::config::parse_config_jsonc(
+            &std::fs::read_to_string(&resolver.user_config_path()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            after.pointer("/editor/rulers"),
+            None,
+            "an empty value not already in the file is a redundant default and stays stripped"
+        );
+        assert_eq!(
+            after.pointer("/editor/line_wrap"),
+            Some(&serde_json::json!(false))
+        );
+        drop(temp);
+    }
+
     #[test]
     fn save_changes_does_not_clobber_unparseable_config() {
         let (temp, resolver) = create_test_resolver();

@@ -1588,6 +1588,13 @@ impl Editor {
 
                 // Update all viewports to reflect the new line wrap setting,
                 // respecting per-language overrides
+                let active_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
                 let leaf_ids: Vec<_> = self
                     .windows
                     .get(&self.active_window)
@@ -1614,12 +1621,20 @@ impl Editor {
                         .expect("active window must have a populated split layout")
                         .get_mut(&leaf_id)
                     {
-                        view_state.viewport.line_wrap_enabled = effective_wrap;
-                        view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
-                        view_state.viewport.wrap_column = wrap_column;
-                        // Global toggle expresses global intent; drop the
-                        // per-buffer pin so it doesn't revert this change.
-                        view_state.line_wrap_override = None;
+                        // The active split's own pin is dropped — the user is
+                        // expressing a global intent on the view in front of
+                        // them. Every other pinned split keeps its choice: a
+                        // global default must not silently un-pin work the
+                        // user did elsewhere (same rule as the highlight
+                        // toggles below).
+                        if leaf_id == active_split {
+                            view_state.line_wrap_override = None;
+                        }
+                        if view_state.line_wrap_override.is_none() {
+                            view_state.viewport.line_wrap_enabled = effective_wrap;
+                            view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
+                            view_state.viewport.wrap_column = wrap_column;
+                        }
                     }
                 }
 
