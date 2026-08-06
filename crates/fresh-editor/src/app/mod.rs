@@ -91,7 +91,6 @@ mod theme_inspect;
 mod toggle_actions;
 pub mod types;
 mod undo_actions;
-pub mod update_prompt;
 mod view_actions;
 mod virtual_buffers;
 pub mod warning_domains;

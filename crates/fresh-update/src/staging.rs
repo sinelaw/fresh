@@ -55,8 +55,17 @@ impl Drop for Ephemeral {
 /// directory exists and is writable by anyone else. If an attacker pre-creates
 /// every name we try we fail closed — a denial of service, not a compromise.
 pub fn ephemeral() -> Result<Ephemeral, String> {
-    let base = std::env::temp_dir();
-    create_private_under(&base).map(|path| Ephemeral { path })
+    ephemeral_in(&std::env::temp_dir())
+}
+
+/// [`ephemeral`], under a directory of the caller's choosing.
+///
+/// The AppImage swap needs this: the final `rename` has to stay on the same
+/// filesystem as the install root to be atomic, and `$TMPDIR` frequently is
+/// not (it is a tmpfs on most modern distributions, and a rename across that
+/// boundary fails `EXDEV`).
+pub fn ephemeral_in(base: &Path) -> Result<Ephemeral, String> {
+    create_private_under(base).map(|path| Ephemeral { path })
 }
 
 /// Create a private staging directory that survives the process, for an

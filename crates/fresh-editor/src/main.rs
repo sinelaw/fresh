@@ -4368,24 +4368,34 @@ fn show_paths_command() -> AnyhowResult<()> {
 fn update_command(args: &Args) -> AnyhowResult<()> {
     #[cfg(feature = "self-update")]
     {
-        let opts = fresh::services::updater::UpdateOptions {
+        // The env vars are read inside `Endpoints::from_env`, so the
+        // background check and the update child the popup spawns agree on
+        // where releases come from. The CLI flags override on top, and go
+        // through the same policy: an endpoint that leaves the pinned host
+        // list is refused outright in a release build, and marks the run
+        // untrusted (no privileged install) in one that permits it.
+        let mut endpoints = match fresh_update::endpoint::Endpoints::from_env() {
+            Ok(ep) => ep,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        };
+        if let Some(url) = args.update_releases_url.clone() {
+            endpoints.releases_url = url;
+            endpoints.trusted = false;
+        }
+        if let Some(base) = args.update_download_base.clone() {
+            endpoints.download_base = base;
+            endpoints.trusted = false;
+        }
+        let opts = fresh_update::engine::UpdateOptions {
             check_only: args.update_check,
             yes: args.update_yes,
             allow_downgrade: args.update_allow_downgrade,
             print_command: args.update_print_command,
             force: args.update_force,
-            ..Default::default()
-        };
-        let opts = fresh::services::updater::UpdateOptions {
-            releases_url: args
-                .update_releases_url
-                .clone()
-                .unwrap_or(opts.releases_url),
-            download_base: args
-                .update_download_base
-                .clone()
-                .unwrap_or(opts.download_base),
-            ..opts
+            endpoints,
         };
         // Map the outcome to a process exit code without an anyhow backtrace
         // (the editor's update terminal keys the indicator off this exit
@@ -4396,8 +4406,8 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
         //                        printed what the user has to do, so add
         //                        nothing here
         //   - Err             -> clean one-line "Error: <msg>", exit 1
-        use fresh::services::updater::UpdateStatus;
-        match fresh::services::updater::run(&opts) {
+        use fresh_update::engine::UpdateStatus;
+        match fresh_update::engine::run(fresh::services::release_checker::CURRENT_VERSION, &opts) {
             Ok(UpdateStatus::Done) => Ok(()),
             Ok(UpdateStatus::ActionRequired) => {
                 std::process::exit(fresh_update::EXIT_ACTION_REQUIRED)

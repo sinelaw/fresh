@@ -34,7 +34,6 @@ pub mod terminal;
 pub mod terminal_modes;
 /// In-place self-update engine for self-contained installs (`fresh update`).
 #[cfg(feature = "self-update")]
-pub mod updater;
 // Unix host-input reader (raw stdin -> InputParser). Only needed by the
 // interactive binary, which requires `runtime`.
 pub mod terminal_title;

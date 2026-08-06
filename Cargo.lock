@@ -1485,7 +1485,6 @@ dependencies = [
  "sha1",
  "sha2",
  "syntect",
- "tar",
  "tempfile",
  "thiserror 2.0.18",
  "tiny_http",
@@ -1501,8 +1500,6 @@ dependencies = [
  "which",
  "windows-sys 0.61.2",
  "winresource",
- "xz2",
- "zip",
 ]
 
 [[package]]

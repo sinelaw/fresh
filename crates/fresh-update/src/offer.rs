@@ -18,7 +18,7 @@
 //! `app::popup_dialogs` turns an [`UpdateOffer`] into rows and body text so the
 //! locale keys stay literal at the `t!` call sites.
 
-use fresh_update::{UpdateKind, UpdatePlan};
+use crate::{UpdateKind, UpdatePlan};
 
 /// What "Update now" will actually do. One variant per distinct promise we can
 /// honestly make to the user — but in every case except [`UpdateOffer::Manual`]
@@ -87,10 +87,10 @@ pub fn offer_for(plan: &UpdatePlan) -> UpdateOffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fresh_update::{Channel, Confidence, Provenance};
+    use crate::{Channel, Confidence, Provenance};
 
     fn plan_for(channel: Channel) -> UpdatePlan {
-        fresh_update::plan(&Provenance::for_channel(channel, Confidence::Authoritative))
+        crate::plan(&Provenance::for_channel(channel, Confidence::Authoritative))
     }
 
     fn offer(channel: Channel) -> UpdateOffer {
