@@ -338,23 +338,14 @@ fn test_open_terminal_below_via_palette() {
     );
 }
 
-/// Run the palette entry matching `query` and return the resulting screen.
+/// Run `command` from the palette and return the resulting screen.
 ///
 /// Ctrl+P reaches the palette even while a terminal owns the keyboard, so this
 /// is the flow a user actually has from inside a shell.
-fn run_from_palette(harness: &mut EditorTestHarness, query: &str, command: &str) -> String {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-    harness.type_text(query).unwrap();
-    let command = command.to_string();
-    harness
-        .wait_until(|h| h.screen_to_string().contains(&command))
-        .expect("the palette should offer the command");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+/// `EditorTestHarness::run_palette_command` is what waits for the row to be
+/// listed before pressing Enter; this only adds the render + capture.
+fn run_from_palette(harness: &mut EditorTestHarness, command: &str) -> String {
+    harness.run_palette_command(command).unwrap();
     harness.render().unwrap();
     harness.screen_to_string()
 }
@@ -372,7 +363,7 @@ fn test_palette_runs_ui_command_while_terminal_focused() {
     harness.render().unwrap();
     harness.assert_screen_contains("*Terminal 0*");
 
-    let screen = run_from_palette(&mut harness, "toggle utility dock", "Toggle Utility Dock");
+    let screen = run_from_palette(&mut harness, "Toggle Utility Dock");
 
     assert!(
         !screen.contains("not available in current context"),
@@ -395,7 +386,7 @@ fn test_palette_runs_editor_wide_toggle_while_terminal_focused() {
     harness.render().unwrap();
     harness.assert_screen_contains("*Terminal 0*");
 
-    let screen = run_from_palette(&mut harness, "toggle line wrap", "Toggle Line Wrap");
+    let screen = run_from_palette(&mut harness, "Toggle Line Wrap");
 
     assert!(
         !screen.contains("not available in current context"),

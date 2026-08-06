@@ -330,20 +330,12 @@ fn test_file_explorer_focus_switching() {
     assert!(harness.editor().file_explorer_visible());
 }
 
-/// Open the palette, run the entry matching `query`, and return the screen.
-fn run_from_palette(harness: &mut EditorTestHarness, query: &str, command: &str) -> String {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-    harness.type_text(query).unwrap();
-    let command = command.to_string();
-    harness
-        .wait_until(|h| h.screen_to_string().contains(&command))
-        .expect("the palette should offer the command");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+/// Run `command` from the palette and return the resulting screen.
+///
+/// `EditorTestHarness::run_palette_command` is what waits for the row to be
+/// listed before pressing Enter; this only adds the render + capture.
+fn run_from_palette(harness: &mut EditorTestHarness, command: &str) -> String {
+    harness.run_palette_command(command).unwrap();
     harness.render().unwrap();
     harness.screen_to_string()
 }
@@ -363,7 +355,7 @@ fn test_palette_runs_focus_independent_command_while_explorer_focused() {
 
     // Editor-wide: the global view toggles don't care what has focus, and the
     // status line reports the new state — proof it ran.
-    let screen = run_from_palette(&mut harness, "toggle line wrap", "Toggle Line Wrap");
+    let screen = run_from_palette(&mut harness, "Toggle Line Wrap");
     assert!(
         !screen.contains("not available in current context"),
         "the palette refused an editor-wide toggle in the explorer\nScreen:\n{screen}"
@@ -375,7 +367,7 @@ fn test_palette_runs_focus_independent_command_while_explorer_focused() {
 
     // And a command whose keybinding already falls through to the explorer
     // (`is_terminal_ui_action`) is no longer greyed out in the palette either.
-    let screen = run_from_palette(&mut harness, "toggle utility dock", "Toggle Utility Dock");
+    let screen = run_from_palette(&mut harness, "Toggle Utility Dock");
     assert!(
         screen.contains("No Utility Dock open"),
         "Toggle Utility Dock should have run and reported no dock\nScreen:\n{screen}"
@@ -402,7 +394,7 @@ fn test_palette_saves_last_focused_buffer_from_explorer() {
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    let screen = run_from_palette(&mut harness, "save file", "Save File");
+    let screen = run_from_palette(&mut harness, "Save File");
     assert!(
         !screen.contains("not available in current context"),
         "Save File must not be refused in the explorer — Ctrl+S works there\nScreen:\n{screen}"
@@ -433,7 +425,7 @@ fn test_palette_refuses_buffer_command_while_explorer_focused() {
     let _ = harness.editor_mut().process_async_messages();
     harness.render().unwrap();
 
-    let screen = run_from_palette(&mut harness, "duplicate line", "Duplicate Line");
+    let screen = run_from_palette(&mut harness, "Duplicate Line");
 
     assert!(
         screen.contains("not available in current context"),
