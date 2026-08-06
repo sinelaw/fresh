@@ -184,6 +184,19 @@ pub struct BufferViewState {
     /// source of truth; this records the intent so the editor-wide toggle can
     /// tell a pinned buffer from one that is merely following the default.
     pub highlight_current_line_override: Option<bool>,
+    /// Explicit per-(split, buffer) indentation-guide override, set by
+    /// "Toggle Indentation Guides (Current Buffer)". `None` = follow the
+    /// plugin override / language gate / global resolution (see
+    /// [`resolve_indentation_guide_mode`](crate::config::resolve_indentation_guide_mode)).
+    /// Persisted in the per-file workspace state. Distinct from
+    /// `EditorState::indentation_guide_override`, the plugin-facing knob.
+    pub indentation_guide_user_override: Option<bool>,
+    /// Explicit per-(split, buffer) fold-indicator override, set by "Toggle
+    /// Folding Indicators (Current Buffer)". `None` = show them (the default;
+    /// there is no global setting). `Some(false)` hides the gutter fold
+    /// arrows in this split without touching existing folds. Persisted in the
+    /// per-file workspace state.
+    pub fold_indicators_override: Option<bool>,
 
     /// Plugin-managed state (arbitrary key-value pairs).
     /// Plugins can store per-buffer-per-split state here via the `setViewState`/`getViewState` API.
@@ -239,6 +252,8 @@ impl BufferViewState {
             line_numbers_override: None,
             line_wrap_override: None,
             highlight_current_line_override: None,
+            indentation_guide_user_override: None,
+            fold_indicators_override: None,
             plugin_state: std::collections::HashMap::new(),
             folds: FoldManager::new(),
         }
@@ -257,6 +272,12 @@ impl BufferViewState {
     /// global value there would silently undo "Toggle X (Current Buffer)" the
     /// next time that buffer was activated. Fields with no override
     /// (`None`, the case for every freshly created view state) are unaffected.
+    /// Whether the gutter should draw fold arrows in this split. Defaults to
+    /// on; only the per-buffer toggle turns them off.
+    pub fn fold_indicators_visible(&self) -> bool {
+        self.fold_indicators_override.unwrap_or(true)
+    }
+
     pub fn apply_config_defaults(&mut self, defaults: ViewConfigDefaults) {
         let ViewConfigDefaults {
             line_numbers,
@@ -307,6 +328,8 @@ impl Clone for BufferViewState {
             line_numbers_override: self.line_numbers_override,
             line_wrap_override: self.line_wrap_override,
             highlight_current_line_override: self.highlight_current_line_override,
+            indentation_guide_user_override: self.indentation_guide_user_override,
+            fold_indicators_override: self.fold_indicators_override,
             plugin_state: self.plugin_state.clone(),
             // Fold markers are per-view; clones start with no folded ranges.
             folds: FoldManager::new(),

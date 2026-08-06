@@ -154,29 +154,11 @@ pub struct BufferSettings {
     /// config.
     pub indentation_guide: bool,
 
-    /// Explicit per-buffer indentation-guide override, set by "Toggle
-    /// Indentation Guides (Current Buffer)". `None` = follow the global
-    /// `editor.indentation_guide` mode (and the language gate above).
-    /// Persisted in the per-file workspace state.
-    ///
-    /// Distinct from [`EditorState::indentation_guide_override`], which is the
-    /// plugin-facing (`setIndentationGuide`) knob: that one describes a tool
-    /// view and must NOT outlive the session, while this one is the user's
-    /// choice for a file and must.
-    pub indentation_guide_user_override: Option<bool>,
-
     /// Explicit per-buffer occurrence-highlight override, set by "Toggle
     /// Occurrence Highlight (Current Buffer)". `None` = follow the global
     /// `editor.highlight_occurrences` setting. Persisted in the per-file
     /// workspace state.
     pub highlight_occurrences_override: Option<bool>,
-
-    /// Explicit per-buffer fold-indicator override, set by "Toggle Folding
-    /// Indicators (Current Buffer)". `None` = show them (the default; there is
-    /// no global setting). `Some(false)` hides the gutter fold arrows for this
-    /// buffer without touching existing folds. Persisted in the per-file
-    /// workspace state.
-    pub fold_indicators_override: Option<bool>,
 }
 
 impl Default for BufferSettings {
@@ -194,8 +176,6 @@ impl Default for BufferSettings {
             virtual_space_override: None,
             word_characters: String::new(),
             indentation_guide: true,
-            indentation_guide_user_override: None,
-            fold_indicators_override: None,
             highlight_occurrences_override: None,
         }
     }
@@ -213,10 +193,9 @@ impl BufferSettings {
     /// Explicit per-buffer user overrides are preserved: `virtual_space`
     /// keeps following `virtual_space_override`, `use_tabs` follows
     /// `use_tabs_override` and `whitespace` follows `whitespace_override`
-    /// when one is set, and the
-    /// `indentation_guide_user_override` / `fold_indicators_override` choices
-    /// are left untouched (they are consulted at render time, so re-stamping
-    /// the language gate below can't clear them).
+    /// when one is set. (The indentation-guide and fold-indicator pins live
+    /// on `BufferViewState` — per split — and are consulted at render time,
+    /// so re-stamping the language gate below can't clear them.)
     pub fn apply_config(&mut self, resolved: &crate::config::BufferConfig) {
         self.tab_size = resolved.tab_size;
         self.use_tabs = self.use_tabs_override.unwrap_or(resolved.use_tabs);
@@ -243,8 +222,6 @@ impl BufferSettings {
         self.use_tabs_override = None;
         self.whitespace_override = None;
         self.tab_indicators_override = None;
-        self.indentation_guide_user_override = None;
-        self.fold_indicators_override = None;
         self.highlight_occurrences_override = None;
     }
 
@@ -272,12 +249,6 @@ impl BufferSettings {
             self.whitespace.tabs_inner = tabs;
             self.whitespace.tabs_trailing = tabs;
         }
-    }
-
-    /// Whether the gutter should draw fold arrows for this buffer. Defaults to
-    /// on; only the per-buffer toggle turns them off.
-    pub fn fold_indicators_visible(&self) -> bool {
-        self.fold_indicators_override.unwrap_or(true)
     }
 }
 

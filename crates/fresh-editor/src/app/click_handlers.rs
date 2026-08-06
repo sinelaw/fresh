@@ -114,12 +114,22 @@ impl Editor {
                 .map(|w| &w.buffers)
                 .expect("active window present")
                 .get(buffer_id)?;
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             ) {
                 return Some((*buffer_id, byte_pos));
             }
@@ -421,12 +431,22 @@ impl Editor {
                         .collapsed_header_bytes(&state.buffer, &state.marker_list)
                 })
                 .unwrap_or_default();
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             );
 
             let cursor_snapshot = self

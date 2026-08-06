@@ -141,6 +141,7 @@ pub(crate) fn decoration_context(
     diagnostics_inline_text: bool,
     bracket_highlight: BracketHighlightSettings,
     view_lines: &[ViewLine],
+    fold_indicators_visible: bool,
 ) -> DecorationContext {
     use crate::view::folding::indent_folding;
 
@@ -319,7 +320,7 @@ pub(crate) fn decoration_context(
     // "Toggle Folding Indicators (Current Buffer)" only hides the gutter
     // arrows: existing folds stay folded and keep rendering their placeholder,
     // so skipping the scan here costs nothing but the indicators themselves.
-    let fold_indicators = if state.buffer_settings.fold_indicators_visible() {
+    let fold_indicators = if fold_indicators_visible {
         fold_indicators_for_viewport(state, folds, view_lines)
     } else {
         BTreeMap::new()

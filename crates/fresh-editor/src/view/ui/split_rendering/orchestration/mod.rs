@@ -465,13 +465,24 @@ pub(crate) fn render_content(
             style.cfg.indentation_guide = crate::config::resolve_indentation_guide_mode(
                 crate::config::IndentationGuideInputs {
                     global: style.cfg.indentation_guide,
-                    user_override: state.buffer_settings.indentation_guide_user_override,
+                    // The user pin is per (split, buffer) on the view state,
+                    // so the same buffer in another split keeps its own guides.
+                    user_override: split_view_states
+                        .as_deref()
+                        .and_then(|vs| vs.get(&split_id))
+                        .and_then(|vs| vs.indentation_guide_user_override),
                     plugin_override: state.indentation_guide_override,
                     language_gate: state.buffer_settings.indentation_guide,
                     is_virtual_buffer,
                 },
             );
 
+            // Per-(split, buffer) pin, read before the mutable folds borrow.
+            let fold_indicators_visible = split_view_states
+                .as_deref()
+                .and_then(|vs| vs.get(&split_id))
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             let mut empty_folds = FoldManager::new();
             let folds = split_view_states
                 .as_deref_mut()
@@ -519,6 +530,7 @@ pub(crate) fn render_content(
                 effective_rulers,
                 view_prefs.show_line_numbers,
                 effective_highlight_current_line,
+                fold_indicators_visible,
                 split_show_tilde,
                 highlight_current_column && state.show_cursors,
                 cell_theme_map,
@@ -1234,6 +1246,10 @@ pub(crate) fn compute_content_layout(
         let effective_highlight_current_line =
             view_prefs.highlight_current_line && state.show_cursors;
 
+        let fold_indicators_visible = split_view_states
+            .get(&split_id)
+            .map(|vs| vs.fold_indicators_visible())
+            .unwrap_or(true);
         let mut empty_folds = FoldManager::new();
         let folds = split_view_states
             .get_mut(&split_id)
@@ -1259,6 +1275,7 @@ pub(crate) fn compute_content_layout(
             software_cursor_only,
             view_prefs.show_line_numbers,
             effective_highlight_current_line,
+            fold_indicators_visible,
             diagnostics_inline_text,
             show_tilde,
             IndentationGuideMode::None,

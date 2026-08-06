@@ -1549,12 +1549,14 @@ impl crate::app::window::Window {
                         // render time, so restoring the override is all it
                         // takes for the buffer to come back looking the way
                         // the user left it.
+                        // Guide/fold pins are per (split, buffer): they land
+                        // on this split's view state, not on the shared
+                        // BufferSettings.
                         if let Some(indentation_guide) = file_state.indentation_guide {
-                            state.buffer_settings.indentation_guide_user_override =
-                                Some(indentation_guide);
+                            buf_state.indentation_guide_user_override = Some(indentation_guide);
                         }
                         if let Some(fold_indicators) = file_state.fold_indicators {
-                            state.buffer_settings.fold_indicators_override = Some(fold_indicators);
+                            buf_state.fold_indicators_override = Some(fold_indicators);
                         }
                         if let Some(use_tabs) = file_state.use_tabs {
                             state.buffer_settings.use_tabs = use_tabs;
@@ -3171,12 +3173,8 @@ fn serialize_split_view_state(
                 virtual_space: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.virtual_space_override),
-                indentation_guide: buffers
-                    .get(buffer_id)
-                    .and_then(|state| state.buffer_settings.indentation_guide_user_override),
-                fold_indicators: buffers
-                    .get(buffer_id)
-                    .and_then(|state| state.buffer_settings.fold_indicators_override),
+                indentation_guide: buf_state.indentation_guide_user_override,
+                fold_indicators: buf_state.fold_indicators_override,
                 use_tabs: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.use_tabs_override),
