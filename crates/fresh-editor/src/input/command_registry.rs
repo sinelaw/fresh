@@ -770,11 +770,19 @@ mod tests {
             );
         }
 
-        // The buffer is not what has focus: commands that act on its cursor or
-        // its file stay disabled, exactly as they are in a terminal.
+        // Saving is the one buffer-touching exception, and it is the keymap's:
+        // `is_application_wide_action` lets Ctrl+S through from the explorer,
+        // so the palette must not refuse what the shortcut just did.
+        for name in ["Save File", "Save File As"] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' is application-wide in the keymap and must not be greyed out"
+            );
+        }
+
+        // Everything else that acts on the focused buffer's cursor stays
+        // disabled: the tree has the keyboard, not the buffer.
         for name in [
-            "Save File",
-            "Save File As",
             "Undo",
             "Redo",
             "Delete Line",
@@ -787,6 +795,15 @@ mod tests {
             assert!(
                 !enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
                 "'{name}' acts on the focused buffer and should stay disabled in the explorer"
+            );
+        }
+
+        // A terminal is different: Ctrl+S there goes to the process, and the
+        // active buffer is the terminal itself, so saving stays out.
+        for name in ["Save File", "Save File As"] {
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' has nothing to save while a terminal is focused"
             );
         }
     }
