@@ -1560,6 +1560,11 @@ fn test_command_palette_shortcuts_with_filtering() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(120, 30).unwrap();
 
+    // Give the buffer something to save: Save File is only offered when there
+    // are unsaved changes, and disabled entries sort below the visible rows.
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+
     // Trigger the command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)

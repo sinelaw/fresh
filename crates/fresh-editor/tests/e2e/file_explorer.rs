@@ -361,16 +361,16 @@ fn test_palette_runs_focus_independent_command_while_explorer_focused() {
     harness.render().unwrap();
     assert!(harness.editor().file_explorer_visible());
 
-    // Editor-wide: saving every modified buffer doesn't care what has focus.
-    // Nothing was edited, so it reports it had nothing to write — proof it ran.
-    let screen = run_from_palette(&mut harness, "save all", "Save All");
+    // Editor-wide: the global view toggles don't care what has focus, and the
+    // status line reports the new state — proof it ran.
+    let screen = run_from_palette(&mut harness, "toggle line wrap", "Toggle Line Wrap");
     assert!(
         !screen.contains("not available in current context"),
-        "the palette refused Save All in the explorer\nScreen:\n{screen}"
+        "the palette refused an editor-wide toggle in the explorer\nScreen:\n{screen}"
     );
     assert!(
-        screen.contains("No modified files to save"),
-        "Save All should have run and reported nothing to save\nScreen:\n{screen}"
+        screen.contains("Line wrap"),
+        "Toggle Line Wrap should have run and reported the new state\nScreen:\n{screen}"
     );
 
     // And a command whose keybinding already falls through to the explorer

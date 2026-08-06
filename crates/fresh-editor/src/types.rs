@@ -28,6 +28,21 @@ pub mod context_keys {
     /// terminal (select, copy, search its scrollback) still gates on
     /// `HAS_BUFFER`.
     pub const HAS_TEXT_BUFFER: &str = "has_text_buffer";
+    /// True when Save has something to write: a text buffer with unsaved
+    /// changes. `HAS_BUFFER` alone offered Save for an untouched buffer, where
+    /// it rewrites the same bytes and reports success.
+    pub const CAN_SAVE: &str = "can_save";
+    /// True when any buffer in the window has unsaved changes — what Save All
+    /// acts on.
+    pub const CAN_SAVE_ALL: &str = "can_save_all";
+    /// True when the active buffer has a file behind it to re-read, which
+    /// Revert and "reload with encoding" need and a never-saved scratch buffer
+    /// lacks.
+    pub const CAN_REVERT: &str = "can_revert";
+    /// True when the active buffer accepts edits — the same `editing_disabled`
+    /// flag the handlers check, so read-only buffers and plugin panels don't
+    /// advertise Undo, Delete Line or Replace.
+    pub const CAN_EDIT: &str = "can_edit";
     pub const LINE_NUMBERS: &str = "line_numbers";
     pub const LINE_WRAP: &str = "line_wrap";
     pub const PAGE_VIEW: &str = "page_view";

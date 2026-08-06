@@ -239,6 +239,7 @@ impl Editor {
                 .and_then(|m| m.virtual_mode())
                 .map(|s| s.to_string()),
             has_lsp_config,
+            buffer_caps: self.buffer_capabilities(),
             relative_line_numbers: self.config.editor.relative_line_numbers,
         }
     }

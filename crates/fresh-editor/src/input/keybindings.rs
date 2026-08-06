@@ -1885,6 +1885,42 @@ impl KeybindingResolver {
         )
     }
 
+    /// Whether an action mutates the active buffer's text, and so needs a
+    /// buffer that accepts edits.
+    ///
+    /// The handlers already refuse when `editing_disabled` is set — this is the
+    /// same question asked one step earlier, so the command palette and the
+    /// menus can grey the entry out instead of letting the user pick it and get
+    /// "editing is disabled for this buffer" back.
+    pub fn is_buffer_mutating_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::Undo
+                | Action::Redo
+                | Action::Cut
+                | Action::Paste
+                | Action::DeleteLine
+                | Action::DeleteWordBackward
+                | Action::DeleteWordForward
+                | Action::DeleteToLineEnd
+                | Action::TransposeChars
+                | Action::ToUpperCase
+                | Action::ToLowerCase
+                | Action::SortLines
+                | Action::OpenLine
+                | Action::DuplicateLine
+                | Action::ToggleComment
+                | Action::DedentSelection
+                | Action::Replace
+                | Action::QueryReplace
+                | Action::FormatBuffer
+                | Action::TrimTrailingWhitespace
+                | Action::EnsureFinalNewline
+                | Action::LspRename
+                | Action::ShellCommandReplace
+        )
+    }
+
     /// Check if an action is a UI action that should work in terminal mode
     /// (without keyboard capture). These are general navigation and UI actions
     /// that don't involve text editing.
