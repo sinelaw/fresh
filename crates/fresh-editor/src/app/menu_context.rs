@@ -87,6 +87,15 @@ impl Editor {
             .get(&self.active_buffer())
             .map(|m| m.synthetic_placeholder)
             .unwrap_or(false);
+        // A terminal is a real buffer, so `has_buffer` is true for it — but its
+        // "file" is the scrollback transcript the terminal itself writes, and
+        // its text isn't the user's to edit. Items that save, revert or edit
+        // gate on this narrower flag; reading one (select, copy, search) does
+        // not.
+        let has_text_buffer = has_buffer
+            && !self
+                .active_window()
+                .is_terminal_buffer(self.active_buffer());
         let has_selection = has_buffer && self.has_active_selection();
         let can_copy = has_selection
             || file_explorer_focused
@@ -95,13 +104,24 @@ impl Editor {
                 .as_ref()
                 .map(|fe| fe.get_selected().is_some())
                 .unwrap_or(false);
+        // Cut mirrors Copy in the explorer (it cuts the selected *file*), but in
+        // the editor it removes text and so needs a buffer whose text is the
+        // user's to remove — a terminal's is not.
+        let can_cut = if file_explorer_focused {
+            can_copy
+        } else {
+            can_copy && has_text_buffer
+        };
         // Paste is available in the explorer only when a file is in the clipboard,
         // or in the editor only when no file is in the clipboard. There's no
         // buffer to paste into in placeholder mode, so suppress it there.
         let can_paste = if file_explorer_focused {
             self.active_window().file_explorer_clipboard.is_some()
         } else {
-            has_buffer && self.active_window().file_explorer_clipboard.is_none()
+            // `Action::Paste` targets the buffer and honours `editing_disabled`,
+            // which a terminal always sets — pasting *into* a terminal is
+            // `TerminalPaste`, a different action with its own binding.
+            has_text_buffer && self.active_window().file_explorer_clipboard.is_none()
         };
         let menu_bar = self.active_window_mut().menu_bar_visible;
         let vertical_scrollbar = self.config.editor.show_vertical_scrollbar;
@@ -129,6 +149,7 @@ impl Editor {
         self.menu_state
             .context
             .set(context_keys::HAS_BUFFER, has_buffer)
+            .set(context_keys::HAS_TEXT_BUFFER, has_text_buffer)
             .set(context_keys::KEYMAP_DEFAULT, active_keymap == "default")
             .set(context_keys::KEYMAP_EMACS, active_keymap == "emacs")
             .set(context_keys::KEYMAP_VSCODE, active_keymap == "vscode")
@@ -149,6 +170,7 @@ impl Editor {
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
             .set(context_keys::HAS_SELECTION, has_selection)
             .set(context_keys::CAN_COPY, can_copy)
+            .set(context_keys::CAN_CUT, can_cut)
             .set(context_keys::CAN_PASTE, can_paste)
             .set(context_keys::MENU_BAR, menu_bar)
             .set(context_keys::FORMATTER_AVAILABLE, formatter_available)

@@ -18,6 +18,16 @@ pub mod context_keys {
     /// disabled. Buffer-specific menu items gate on this so they don't
     /// pretend to operate on a non-existent buffer.
     pub const HAS_BUFFER: &str = "has_buffer";
+    /// True when the active buffer is a real buffer *and* holds editable text
+    /// — i.e. not a terminal. A terminal buffer satisfies `HAS_BUFFER`, so
+    /// items gated on that alone were offered for it: File → Save wrote the
+    /// terminal's scrollback transcript back over its own backing file and
+    /// reported "Saved", and could raise a "File changed on disk" conflict
+    /// for a file only the terminal had ever written. Items that save, revert
+    /// or edit the active buffer's text gate on this instead. Reading a
+    /// terminal (select, copy, search its scrollback) still gates on
+    /// `HAS_BUFFER`.
+    pub const HAS_TEXT_BUFFER: &str = "has_text_buffer";
     pub const LINE_NUMBERS: &str = "line_numbers";
     pub const LINE_WRAP: &str = "line_wrap";
     pub const PAGE_VIEW: &str = "page_view";
@@ -40,6 +50,10 @@ pub mod context_keys {
     pub const HAS_SELECTION: &str = "has_selection";
     pub const CAN_COPY: &str = "can_copy";
     pub const CAN_PASTE: &str = "can_paste";
+    /// Like [`CAN_COPY`], but for the destructive half: in the editor it also
+    /// requires a buffer whose text is the user's to remove, so Cut is not
+    /// offered for a terminal's scrollback.
+    pub const CAN_CUT: &str = "can_cut";
     pub const FORMATTER_AVAILABLE: &str = "formatter_available";
     pub const INLAY_HINTS: &str = "inlay_hints";
     pub const SESSION_MODE: &str = "session_mode";

@@ -98,6 +98,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Scroll-back re-wraps when the pane resizes** - splitting, maximizing or dropping a tab left every line clipped (#2844).
   * **Modified keys reach the program inside** - `Ctrl+Shift+Right`, `Shift+Home`, `Shift+F3` and `Alt+Backspace` arrived stripped.
   * **Scrollback keeps streaming** after the grid history saturates.
+  * **The File and Edit menus stop offering to save or edit a terminal** - a terminal is a real buffer, so `Save`, `Revert`, `Undo`, `Cut` and friends were enabled for it: Save wrote the terminal's own scrollback transcript back over its backing file and said "Saved", and could raise a "File changed on disk" conflict for a file only the terminal had ever written. Reading a terminal — select, copy, search its scrollback — is unchanged, and `Save All` still works from one.
   * **The command palette stays useful inside a terminal, and in the file explorer** - Save All, Navigate Back/Forward, the editor-wide view toggles, `init:` commands, tab and split management, Restart Terminal Process, Toggle Utility Dock and friends were greyed out whenever a terminal or the explorer had focus, some of them while their own keybinding still worked. Commands that act on the focused buffer's cursor (Undo, Delete Line, Save File, …) stay disabled there, as before.
 * **Input**
   * **One keypress no longer acts twice** with `keyboard_report_event_types` on (#2796, reported by @akarinotomoshibi).
