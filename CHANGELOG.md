@@ -73,6 +73,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Four dead settings** - the bracket-matching toggles, `file_explorer.respect_gitignore` and `languages.<id>.textmate_grammar` now take effect; `editor.highlight_timeout_ms` was removed rather than wired up (#2842).
 * **Eight toggles that forgot your choice on restart** - **Toggle Line Wrap**, **Current Line Highlight**, **Occurrence Highlight**, **Inlay Hints**, **Mouse Hover**, **Tab Bar**, **Status Bar** and **Prompt Line** changed only the in-memory config, so the setting reverted on the next launch. They now save like **Toggle Line Numbers** always did. **Toggle Indentation: Spaces ↔ Tabs (Current Buffer)** and the whitespace-indicator toggles likewise survive a restart, and no longer get overwritten by a config reload or **Set Language**.
 * **Read-only and whitespace-indicator commands were untranslated** in every non-English locale.
+* **Reset Buffer Settings now really resets everything** - it used to leave the occurrence highlight stuck at its pinned state for the rest of the session, and couldn't un-pin the current-line highlight, line numbers, or line wrap at all.
+* **A hand-written empty override survives settings writes** - a value like `"status_bar": {"left": []}` (emptying the left status bar) was silently deleted from `config.json` whenever any setting was saved from the UI or a toggle.
+* **A global toggle no longer un-pins other splits** - **Toggle Line Wrap** cleared the per-buffer pin of every split in the window; now only the split you ran it in adopts the new default, matching the other toggles.
+* **Config writes are atomic** - a crash mid-write can no longer truncate `config.json` (which silently loaded as all-defaults on the next launch).
 * **Files that are one very long line**
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).
   * **Highlighting survives past the first wrapped rows**, and the wheel no longer snaps to a 100 KB boundary (#2843).

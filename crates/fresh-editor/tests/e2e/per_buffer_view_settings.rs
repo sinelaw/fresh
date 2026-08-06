@@ -720,3 +720,109 @@ fn test_occurrence_highlight_current_buffer_persists_across_restart() {
         harness.assert_screen_contains("Occurrence highlight enabled");
     }
 }
+
+/// "Reset Buffer Settings" must un-pin *every* per-buffer setting and bring
+/// the rendered state back to the config default — including the two whose
+/// state lives outside `BufferSettings`: the occurrence highlight (rendered
+/// from `reference_highlight_overlay.enabled`, which nothing re-derives
+/// unless reset does it explicitly) and the current-line highlight (pinned on
+/// the split's `BufferViewState`, which `clear_user_overrides` can't reach).
+///
+/// The discriminator is running the "(Current Buffer)" toggle again after the
+/// reset: both settings default to on, so a correct reset brings them back on
+/// and the toggle reports "disabled". With either regression the setting is
+/// still off after reset, and the toggle would report "enabled".
+#[test]
+fn test_reset_buffer_settings_unpins_highlights() {
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(200, 24, Config::default()).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.rs"), "let alpha = 1;\nlet beta = alpha;\n").unwrap();
+    harness.open_file(&dir.join("a.rs")).unwrap();
+    harness.render().unwrap();
+
+    // Pin both highlights off for this buffer.
+    run_command(&mut harness, "Toggle Occurrence Highlight (Current Buffer)");
+    harness.assert_screen_contains("Occurrence highlight disabled (this buffer)");
+    run_command(
+        &mut harness,
+        "Toggle Current Line Highlight (Current Buffer)",
+    );
+    harness.assert_screen_contains("Current line highlight disabled (this buffer)");
+
+    run_command(&mut harness, "Reset Buffer Settings");
+
+    // After the reset both settings follow config again (= on), so pinning
+    // again turns them *off*.
+    run_command(&mut harness, "Toggle Occurrence Highlight (Current Buffer)");
+    harness.assert_screen_contains("Occurrence highlight disabled (this buffer)");
+    run_command(
+        &mut harness,
+        "Toggle Current Line Highlight (Current Buffer)",
+    );
+    harness.assert_screen_contains("Current line highlight disabled (this buffer)");
+}
+
+/// The unsuffixed "Toggle Line Wrap" expresses global intent: it drops the
+/// *active* split's pin, but a pin the user set in another split must survive
+/// — same rule the current-line/occurrence global toggles follow, and what
+/// the configuration docs promise ("buffers you have pinned keep their
+/// choice").
+#[test]
+fn test_global_line_wrap_preserves_other_splits_pins() {
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    let mut harness = EditorTestHarness::with_temp_project_and_config(60, 24, config).unwrap();
+    let dir = harness.project_dir().unwrap().to_path_buf();
+    std::fs::write(dir.join("a.txt"), format!("{}TAILAAA\n", "A".repeat(80))).unwrap();
+    std::fs::write(dir.join("b.txt"), format!("{}TAILBBB\n", "B".repeat(80))).unwrap();
+
+    // In the narrow splits below, a wrapped line occupies several visual rows,
+    // so "how many rows show this file's letter" distinguishes wrapped (>1)
+    // from truncated (=1) without depending on where the wrap points fall.
+    fn rows_with(harness: &mut EditorTestHarness, needle: &str) -> usize {
+        harness
+            .screen_to_string()
+            .lines()
+            .filter(|l| l.contains(needle))
+            .count()
+    }
+
+    // Pin wrap ON for a.txt while the global default is off.
+    harness.open_file(&dir.join("a.txt")).unwrap();
+    harness.render().unwrap();
+    run_command(&mut harness, "Toggle Line Wrap (Current Buffer)");
+    harness.assert_screen_contains("TAILAAA");
+
+    // Second split with b.txt; it becomes the active split.
+    run_command(&mut harness, "Split Vertical");
+    harness.open_file(&dir.join("b.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Global toggle #1 (wrap on) then #2 (wrap off), both run from b's split.
+    // b follows the global both times; a's pin must survive both.
+    run_command(&mut harness, "Toggle Line Wrap");
+    harness.render().unwrap();
+    assert!(
+        rows_with(&mut harness, "BBB") > 1,
+        "b follows the global: wrapped"
+    );
+    assert!(
+        rows_with(&mut harness, "AAA") > 1,
+        "a's pin keeps it wrapped"
+    );
+
+    run_command(&mut harness, "Toggle Line Wrap");
+    harness.render().unwrap();
+    assert_eq!(
+        rows_with(&mut harness, "BBB"),
+        1,
+        "b follows the global: truncated"
+    );
+    // The old behavior cleared every split's pin on the first global toggle,
+    // so the second one would unwrap a.txt too and collapse it to one row.
+    assert!(
+        rows_with(&mut harness, "AAA") > 1,
+        "a's pin must survive global toggles"
+    );
+}

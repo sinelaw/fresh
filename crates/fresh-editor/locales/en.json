@@ -1576,6 +1576,8 @@
   "view.indentation_guide_state": "Indentation guides %{state} (this buffer)",
   "view.fold_indicators_state": "Folding indicators %{state} (this buffer)",
   "view.current_line_highlight_state": "Current line highlight %{state}",
+  "view.current_line_highlight_buffer_state": "Current line highlight %{state} (this buffer)",
+  "view.occurrence_highlight_buffer_state": "Occurrence highlight %{state} (this buffer)",
   "view.occurrence_highlight_state": "Occurrence highlight %{state}",
   "view.read_only_state": "Read-only mode %{state}",
   "view.mode": "Mode: %{mode}",
