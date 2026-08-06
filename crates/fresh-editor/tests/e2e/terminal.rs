@@ -566,31 +566,35 @@ fn test_terminal_tab_title_follows_foreground_process() {
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
 
-    let buffer_id = harness.editor().active_buffer_id();
-    let terminal_id = harness
-        .editor()
-        .active_window()
-        .get_terminal_id(buffer_id)
-        .expect("active buffer should be a terminal");
+    // What the tab must end up showing: the pty's foreground command, which
+    // right after open is the shell the terminal was spawned with. Derived
+    // from the same `detect_shell()` the spawn used, so this is a value the
+    // test knows independently — the old version read it back out of
+    // `terminal_manager()`, which made the assertion partly self-fulfilling
+    // and inspected model state besides (CONTRIBUTING.md Testing §2).
+    //
+    // `/proc/<pgid>/comm` carries the executable name, so compare against the
+    // shell path's file name.
+    let shell = fresh::services::terminal::detect_shell();
+    let expected = std::path::Path::new(&shell)
+        .file_name()
+        .expect("shell path has a file name")
+        .to_string_lossy()
+        .to_string();
 
-    // Semantic wait: the shell becomes the pty's foreground process group
-    // shortly after spawn. Drive renders until auto-naming resolves; the
-    // bound only guards against a hang (cargo nextest times out externally).
-    let mut expected = None;
-    for _ in 0..2000 {
-        if let Some(name) = harness
-            .editor()
-            .terminal_manager()
-            .get(terminal_id)
-            .and_then(|h| h.foreground_process_name())
-        {
-            expected = Some(name);
-            harness.render().unwrap();
-            break;
-        }
-        harness.render().unwrap();
-    }
-    let expected = expected.expect("foreground process name should resolve on Linux");
+    // Semantic wait, on rendered output: the shell becomes the pty's
+    // foreground process group shortly after spawn, and auto-naming repaints
+    // the tab when it does.
+    //
+    // This replaces a `for _ in 0..2000` loop with no sleep in it — a bound
+    // that could elapse in well under a second of spin and then panic on
+    // `expect`, i.e. a timeout inside a test (CONTRIBUTING.md Testing §3)
+    // sized in iterations rather than in anything the shell's startup relates
+    // to. `wait_until` waits indefinitely and paces itself, so a slow runner
+    // makes this slower, not red.
+    harness
+        .wait_until(|h| h.get_tab_bar().contains(&expected))
+        .unwrap();
 
     // The tab bar (row 1) now shows the foreground command, not the default.
     let tab_bar = harness.get_tab_bar();
