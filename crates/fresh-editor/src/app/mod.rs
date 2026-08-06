@@ -376,12 +376,23 @@ pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
 pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
 
 /// A single plugin command handler taking longer than this on the editor
-/// thread is a defect: the work belongs in `plugin_offloop`. Logged at WARN
-/// naming the offending variant — see `dispatch_plugin_command_measured` for
-/// why that is a diagnostic rather than a failure, and which test does fail.
+/// thread is over budget: the work belongs in `plugin_offloop`. Logged at
+/// DEBUG naming the offending variant — a handler can cross 50ms on a loaded
+/// machine or a cold cache without anything being wrong, so this is a lead to
+/// follow when profiling, not a complaint aimed at the user. See
+/// `dispatch_plugin_command_measured` for why an overrun is a diagnostic
+/// rather than a failure, and which test does fail.
 #[cfg(feature = "plugins")]
 pub(crate) const PLUGIN_COMMAND_HANDLER_LIMIT: std::time::Duration =
     std::time::Duration::from_millis(50);
+
+/// An overrun this far past `PLUGIN_COMMAND_HANDLER_LIMIT` is a visible stall
+/// — ten frames' worth of editor thread — and no amount of machine noise
+/// explains it. Logged at WARN, so the noisy-but-harmless case stays at DEBUG
+/// while the genuinely broken handler still gets named by default.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_HANDLER_HARD_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(500);
 
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
