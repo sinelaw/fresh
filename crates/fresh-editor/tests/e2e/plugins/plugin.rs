@@ -1082,16 +1082,29 @@ editor.setStatus("Test diagnostics plugin loaded");
         EditorTestHarness::with_config_and_working_dir(100, 30, config, project_root.clone())
             .unwrap();
 
+    // Wait for the plugin to load before anything can emit the event it
+    // subscribes to. Its last statement sets a status message, so "the plugin
+    // finished evaluating, and `editor.on("diagnostics_updated", …)` is
+    // registered" is readable straight off the status bar.
+    harness.wait_for_screen_contains("Test diagnostics plugin loaded")?;
+
     // Open the test file - this will start LSP
     harness.open_file(&test_file)?;
     harness.render()?;
 
-    // Wait for LSP to initialize and plugin to load
-    for _ in 0..10 {
-        harness.sleep(Duration::from_millis(100));
-        let _ = harness.editor_mut().process_async_messages();
-        harness.render()?;
-    }
+    // Wait for the server to finish initializing before saving.
+    //
+    // This replaces `for _ in 0..10 { harness.sleep(100ms); … }`, which looks
+    // like a one-second warm-up and is not one: `harness.sleep` advances
+    // *logical* time only (see its doc comment), so the loop ran ten
+    // iterations back-to-back and waited no real time whatsoever. The save
+    // below therefore raced LSP startup. The fake server publishes
+    // diagnostics only in reply to `textDocument/didSave`, so losing that
+    // race means no diagnostics are ever published and the wait that follows
+    // can never resolve — a 180 s nextest timeout, and precisely the
+    // didOpen-before-everything-else ordering CONTRIBUTING.md Code §3 is
+    // about.
+    harness.wait_until(|h| h.editor().active_window().is_lsp_server_ready("rust"))?;
 
     // Save the file to trigger diagnostics from fake LSP
     harness
@@ -1099,20 +1112,19 @@ editor.setStatus("Test diagnostics plugin loaded");
         .unwrap();
     harness.render()?;
 
-    // Wait for diagnostics to be received and processed
-    // Loop indefinitely - test framework timeout will catch actual failures
-    loop {
-        harness.sleep(Duration::from_millis(100));
-        let _ = harness.editor_mut().process_async_messages();
-        harness.render()?;
-
-        // Check if diagnostics were stored
-        let stored = harness.editor().get_stored_diagnostics();
-        if !stored.is_empty() {
-            println!("Diagnostics received: {:?}", stored);
-            break;
-        }
-    }
+    // Wait for the plugin's `diagnostics_updated` hook to run, observed
+    // through the status message it sets. That is the same signal the old
+    // code checked at the very end and then *didn't* assert on (it was
+    // wrapped in `if status.contains(…) { println!(…) }`, which passes
+    // whatever happens — CONTRIBUTING.md Code §16). Waiting on it here makes
+    // the hook a real gate: diagnostics arrived, the plugin was notified, and
+    // `editor.getAllDiagnostics()` — the API this test exists to cover —
+    // answered with the one file the editor stored, from inside the hook.
+    //
+    // Waited for rather than asserted at the end, because the hook can fire
+    // again later (an empty publish would rewrite the status) and this test
+    // is about the populated call.
+    harness.wait_for_screen_contains("Diagnostics received: 1 total")?;
 
     // Verify the diagnostics content
     let stored = harness.editor().get_stored_diagnostics();
@@ -1142,15 +1154,7 @@ editor.setStatus("Test diagnostics plugin loaded");
         "Diagnostic severity should be error"
     );
 
-    // Verify the plugin's diagnostics_updated hook was called
-    // by checking if the status message shows diagnostics count
-    if let Some(status) = harness.editor().get_status_message() {
-        println!("Status message: {}", status);
-        // The hook should have set status with "Diagnostics received"
-        if status.contains("Diagnostics received") {
-            println!("Plugin hook was triggered successfully");
-        }
-    }
+    harness.assert_no_plugin_errors();
 
     Ok(())
 }
