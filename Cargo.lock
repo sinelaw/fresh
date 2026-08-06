@@ -1455,7 +1455,6 @@ dependencies = [
  "fresh-input-parser",
  "fresh-languages",
  "fresh-parser-js",
- "fresh-plugin-api-macros",
  "fresh-plugin-runtime",
  "fresh-update",
  "fresh-winterm",

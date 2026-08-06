@@ -1075,7 +1075,7 @@ fn test_live_diff_clears_after_commit() {
 }
 
 // =============================================================================
-// Large-drift regressions (live-diff-old-file-refusal-repro.md)
+// Large-drift regressions
 // =============================================================================
 //
 // Checking out a very old revision of a file used to make live-diff refuse

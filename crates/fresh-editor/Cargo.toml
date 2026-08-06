@@ -54,7 +54,6 @@ default = ["plugins", "runtime", "embed-plugins", "tree-sitter", "http", "self-u
 plugins = [
     "dep:fresh-plugin-runtime",
     "dep:fresh-parser-js",
-    "dep:fresh-plugin-api-macros",
     # oxc parses init.ts, which only the plugin runtime can execute.
     "dep:oxc_allocator",
     "dep:oxc_parser",
@@ -223,9 +222,6 @@ regex = { version = "1.12" }
 libc = { version = "0.2", optional = true }
 libloading = { version = "0.9", optional = true }
 nix = { version = "0.31", features = ["signal", "pthread", "resource", "poll", "fs"], optional = true }
-
-# Plugin API proc macros for type-safe bindings
-fresh-plugin-api-macros = { workspace = true, optional = true }
 
 # anyhow is always needed for model error handling
 anyhow = { workspace = true }
