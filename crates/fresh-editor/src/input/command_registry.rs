@@ -212,6 +212,10 @@ impl CommandRegistry {
     ///
     /// `has_lsp_config` indicates whether the active buffer's language has an LSP server
     /// configured. When false, LSP start/restart/toggle commands are disabled.
+    ///
+    /// `buffer_caps` says what the active buffer can be asked to do — the same
+    /// answers the menus use, so the two surfaces agree on when Save has
+    /// something to write and when an edit would be refused.
     #[allow(clippy::too_many_arguments)]
     pub fn filter(
         &self,
@@ -222,6 +226,7 @@ impl CommandRegistry {
         active_custom_contexts: &std::collections::HashSet<String>,
         active_buffer_mode: Option<&str>,
         has_lsp_config: bool,
+        buffer_caps: crate::app::buffer_capabilities::BufferCapabilities,
     ) -> Vec<Suggestion> {
         let commands = self.get_all();
 
@@ -298,6 +303,28 @@ impl CommandRegistry {
                 if !has_lsp_config
                     && matches!(cmd.action, Action::LspRestart | Action::LspToggleForBuffer)
                 {
+                    available = false;
+                }
+                // What the buffer itself can be asked to do. A command whose
+                // whole job is to write or edit the active buffer is offered
+                // only when there is something to write and something willing
+                // to be written: not a terminal's transcript, not a plugin
+                // panel with no file behind it, not an untouched buffer, and
+                // not a read-only one.
+                let buffer_allows = match cmd.action {
+                    Action::Save => buffer_caps.can_save(),
+                    Action::SaveAs => buffer_caps.can_save_as(),
+                    Action::SaveAll => buffer_caps.any_modified,
+                    Action::Revert | Action::ReloadWithEncoding => buffer_caps.can_revert(),
+                    ref action
+                        if crate::input::keybindings::KeybindingResolver::
+                            is_buffer_mutating_action(action) =>
+                    {
+                        buffer_caps.editable
+                    }
+                    _ => true,
+                };
+                if !buffer_allows {
                     available = false;
                 }
                 let keybinding = keybinding_resolver
@@ -579,6 +606,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
         assert!(results.len() >= 2); // At least "Save File" + "Test Save"
 
@@ -626,6 +654,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
         let popup_only = results.iter().find(|s| s.text == "Popup Only");
         assert!(popup_only.is_some());
@@ -640,10 +669,25 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
         let normal_only = results.iter().find(|s| s.text == "Normal Only");
         assert!(normal_only.is_some());
         assert!(normal_only.unwrap().disabled);
+    }
+
+    /// A plain, saved, editable text buffer — the boring case, so tests that
+    /// aren't about buffer state don't have to think about it.
+    #[cfg(test)]
+    fn test_caps() -> crate::app::buffer_capabilities::BufferCapabilities {
+        crate::app::buffer_capabilities::BufferCapabilities {
+            has_buffer: true,
+            is_text_buffer: true,
+            editable: true,
+            modified: true,
+            has_path: true,
+            any_modified: true,
+        }
     }
 
     /// Look up one command by its exact palette name and report whether the
@@ -655,8 +699,30 @@ mod tests {
         context: KeyContext,
         name: &str,
     ) -> bool {
+        enabled_in_with_caps(registry, keybindings, context, test_caps(), name)
+    }
+
+    /// `enabled_in` with the buffer's capabilities spelled out, for the cases
+    /// that are about the buffer rather than the focused surface.
+    #[cfg(test)]
+    fn enabled_in_with_caps(
+        registry: &CommandRegistry,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        context: KeyContext,
+        caps: crate::app::buffer_capabilities::BufferCapabilities,
+        name: &str,
+    ) -> bool {
         let empty_contexts = std::collections::HashSet::new();
-        let results = registry.filter("", context, keybindings, false, &empty_contexts, None, true);
+        let results = registry.filter(
+            "",
+            context,
+            keybindings,
+            false,
+            &empty_contexts,
+            None,
+            true,
+            caps,
+        );
         let suggestion = results
             .iter()
             .find(|s| s.text == name)
@@ -813,6 +879,70 @@ mod tests {
                 "'{name}' bypasses the terminal via its keybinding and must not be greyed out"
             );
         }
+    }
+
+    /// Save-family commands answer to the buffer, not just to the focus: an
+    /// untouched buffer has nothing to write, a plugin panel and a terminal
+    /// have no file of the user's behind them, and a never-saved scratch
+    /// buffer has nothing to revert to.
+    #[test]
+    fn test_save_commands_follow_what_the_buffer_can_do() {
+        use crate::app::buffer_capabilities::BufferCapabilities;
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+        let enabled = |caps: BufferCapabilities, name: &str| {
+            enabled_in_with_caps(&registry, &keybindings, KeyContext::Normal, caps, name)
+        };
+
+        // A saved file: nothing to write, but Save As and Revert still apply.
+        let unmodified = BufferCapabilities {
+            modified: false,
+            any_modified: false,
+            ..test_caps()
+        };
+        assert!(!enabled(unmodified, "Save File"), "nothing to save");
+        assert!(!enabled(unmodified, "Save All"), "nothing to save anywhere");
+        assert!(enabled(unmodified, "Save File As"));
+        assert!(enabled(unmodified, "Revert File"));
+
+        // A virtual plugin panel (theme editor, tour, git log): no file behind
+        // it, and nothing in it is the user's to save or edit.
+        let panel = BufferCapabilities {
+            is_text_buffer: false,
+            editable: false,
+            has_path: false,
+            ..test_caps()
+        };
+        for name in ["Save File", "Save File As", "Revert File", "Undo", "Paste"] {
+            assert!(!enabled(panel, name), "'{name}' on a plugin panel");
+        }
+
+        // A never-saved scratch buffer: Save As writes it somewhere, but there
+        // is no file to revert to or reload.
+        let scratch = BufferCapabilities {
+            has_path: false,
+            ..test_caps()
+        };
+        assert!(enabled(scratch, "Save File As"));
+        assert!(enabled(scratch, "Save File"));
+        assert!(!enabled(scratch, "Revert File"));
+        assert!(!enabled(scratch, "Reload with Encoding..."));
+
+        // Read-only: the text is there but refuses edits, so the mutating
+        // commands are greyed rather than answering "editing is disabled".
+        let read_only = BufferCapabilities {
+            editable: false,
+            ..test_caps()
+        };
+        for name in ["Undo", "Redo", "Cut", "Paste", "Delete Line", "Sort Lines"] {
+            assert!(!enabled(read_only, name), "'{name}' on a read-only buffer");
+        }
+        assert!(enabled(read_only, "Copy"), "copying is still fine");
+        assert!(enabled(read_only, "Search"), "searching is still fine");
     }
 
     /// The bypass is keyed on the action, so it must not resurrect commands
@@ -982,6 +1112,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
 
         // Find positions of our test commands in results
@@ -1061,6 +1192,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
 
         let save_pos = results.iter().position(|s| s.text == "Save File").unwrap();

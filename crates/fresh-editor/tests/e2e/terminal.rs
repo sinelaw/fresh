@@ -385,26 +385,26 @@ fn test_palette_runs_ui_command_while_terminal_focused() {
     );
 }
 
-/// Same for an editor-wide command declared in the `Normal` context: saving
-/// every modified buffer has nothing to do with which buffer has focus.
+/// Same for an editor-wide command declared in the `Normal` context: the
+/// global view toggles apply to the editor, not to whichever buffer has focus.
 #[test]
-fn test_palette_runs_save_all_while_terminal_focused() {
+fn test_palette_runs_editor_wide_toggle_while_terminal_focused() {
     let mut harness = harness_or_return!(120, 24);
 
     harness.editor_mut().open_terminal();
     harness.render().unwrap();
     harness.assert_screen_contains("*Terminal 0*");
 
-    let screen = run_from_palette(&mut harness, "save all", "Save All");
+    let screen = run_from_palette(&mut harness, "toggle line wrap", "Toggle Line Wrap");
 
     assert!(
         !screen.contains("not available in current context"),
-        "the palette refused Save All in a terminal\nScreen:\n{screen}"
+        "the palette refused an editor-wide toggle in a terminal\nScreen:\n{screen}"
     );
-    // Nothing was edited, so Save All reports it had nothing to write.
+    // The toggle reports the new global state — proof it ran.
     assert!(
-        screen.contains("No modified files to save"),
-        "Save All should have run and reported nothing to save\nScreen:\n{screen}"
+        screen.contains("Line wrap"),
+        "Toggle Line Wrap should have run and reported the new state\nScreen:\n{screen}"
     );
 }
 
@@ -432,7 +432,10 @@ fn menu_item_fg(
 fn test_file_menu_disables_save_for_a_terminal_buffer() {
     let mut harness = harness_or_return!(120, 30);
 
-    // Baseline: with an ordinary buffer focused, Save renders like New File.
+    // Baseline: an ordinary buffer with unsaved changes — Save renders like
+    // New File, i.e. enabled.
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
     harness
         .send_key(KeyCode::F(10), KeyModifiers::NONE)
         .unwrap();
@@ -442,7 +445,7 @@ fn test_file_menu_disables_save_for_a_terminal_buffer() {
     assert_eq!(
         save_fg,
         enabled_fg,
-        "Save should be enabled for a text buffer\n{}",
+        "Save should be enabled for a modified text buffer\n{}",
         harness.screen_to_string()
     );
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();

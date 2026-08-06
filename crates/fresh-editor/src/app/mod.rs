@@ -4,6 +4,7 @@ mod async_dispatch;
 mod async_messages;
 mod bookmark_actions;
 mod bookmarks;
+pub mod buffer_capabilities;
 mod buffer_close;
 mod buffer_config_resolve;
 mod buffer_groups;

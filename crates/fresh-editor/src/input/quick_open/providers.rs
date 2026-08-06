@@ -60,6 +60,7 @@ impl QuickOpenProvider for CommandProvider {
             &context.custom_contexts,
             context.buffer_mode.as_deref(),
             context.has_lsp_config,
+            context.buffer_caps,
         )
     }
 
@@ -1037,6 +1038,14 @@ mod tests {
             custom_contexts: std::collections::HashSet::new(),
             buffer_mode: None,
             has_lsp_config: true,
+            buffer_caps: crate::app::buffer_capabilities::BufferCapabilities {
+                has_buffer: true,
+                is_text_buffer: true,
+                editable: true,
+                modified: true,
+                has_path: true,
+                any_modified: true,
+            },
             relative_line_numbers: false,
         }
     }
