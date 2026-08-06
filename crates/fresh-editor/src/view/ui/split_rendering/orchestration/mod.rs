@@ -87,6 +87,7 @@ pub(crate) struct ContentPass {
 pub(crate) struct FrameFacts<'a> {
     pub style: RenderStyle<'a>,
     pub buffer_metadata: &'a HashMap<BufferId, BufferMetadata>,
+    pub breadcrumbs: &'a HashMap<BufferId, Vec<fresh_core::api::BreadcrumbItem>>,
     pub grouped_subtrees: &'a HashMap<LeafId, crate::view::split::SplitNode>,
     /// What chrome each of the split manager's panes has, resolved once with
     /// the shell's description of the same grid — see `Window::pane_chrome`.
@@ -173,6 +174,7 @@ pub(crate) fn paint_leaf(
     let FrameFacts {
         style,
         buffer_metadata,
+        breadcrumbs,
         described_panes,
         ..
     } = *f;
@@ -236,6 +238,16 @@ pub(crate) fn paint_leaf(
     // `pane_interior` with those two flags off lays out. It used to be
     // four rectangles written by hand right here.
     let layout = split_layout(split_id, split_area, chrome);
+    if chrome.breadcrumbs {
+        if let Some(items) = breadcrumbs.get(&buffer_id) {
+            crate::view::ui::breadcrumbs::render_breadcrumbs(
+                buf,
+                layout.breadcrumbs_rect,
+                items,
+                theme,
+            );
+        }
+    }
     // The content rect this carves is the one the tree's `content_key` node
     // has: `pane_interior` is one statement laid out twice, at the pane's box
     // here and inside the frame there. The clip below is a release safety

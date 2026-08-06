@@ -467,6 +467,8 @@ impl Editor {
         self.active_window_mut().seen_byte_ranges.remove(&id);
         self.active_window_mut().buffer_metadata.remove(&id);
         self.active_window_mut().status_bar_values.remove(&id);
+        self.active_window_mut().breadcrumbs.remove(&id);
+        self.active_window_mut().breadcrumb_owners.remove(&id);
         if let Some((request_id, _, _)) = self
             .active_window_mut()
             .semantic_tokens_in_flight

@@ -35,6 +35,7 @@ pub(crate) struct ComposeLayout {
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct SplitLayout {
     pub tabs_rect: Rect,
+    pub breadcrumbs_rect: Rect,
     pub content_rect: Rect,
     pub scrollbar_rect: Rect,
     pub horizontal_scrollbar_rect: Rect,
@@ -64,7 +65,7 @@ pub(super) struct ViewPreferences {
 /// hangs off these rectangles can become nodes against the same description.
 pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> SplitLayout {
     use crate::view::shell::splits::{
-        content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
+        breadcrumbs_key, content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
     };
     let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
     ui.frame(
@@ -85,6 +86,7 @@ pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> 
     };
     SplitLayout {
         tabs_rect: at(tabs_key(id)),
+        breadcrumbs_rect: at(breadcrumbs_key(id)),
         content_rect: at(content_key(id)),
         scrollbar_rect: at(vscroll_key(id)),
         horizontal_scrollbar_rect: at(hscroll_key(id)),
@@ -97,10 +99,13 @@ pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> 
 pub(crate) fn reference_split_layout(
     split_area: Rect,
     tab_bar_visible: bool,
+    breadcrumbs_visible: bool,
     show_vertical_scrollbar: bool,
     show_horizontal_scrollbar: bool,
 ) -> SplitLayout {
     let tabs_height = if tab_bar_visible { 1u16 } else { 0u16 };
+    let breadcrumbs_height = if breadcrumbs_visible { 1u16 } else { 0u16 };
+    let top_height = tabs_height + breadcrumbs_height;
     let scrollbar_width = if show_vertical_scrollbar { 1u16 } else { 0u16 };
     let hscrollbar_height = if show_horizontal_scrollbar {
         1u16
@@ -109,22 +114,28 @@ pub(crate) fn reference_split_layout(
     };
 
     let tabs_rect = Rect::new(split_area.x, split_area.y, split_area.width, tabs_height);
-    let content_rect = Rect::new(
+    let breadcrumbs_rect = Rect::new(
         split_area.x,
         split_area.y + tabs_height,
+        split_area.width,
+        breadcrumbs_height,
+    );
+    let content_rect = Rect::new(
+        split_area.x,
+        split_area.y + top_height,
         split_area.width.saturating_sub(scrollbar_width),
         split_area
             .height
-            .saturating_sub(tabs_height)
+            .saturating_sub(top_height)
             .saturating_sub(hscrollbar_height),
     );
     let scrollbar_rect = Rect::new(
         split_area.x + split_area.width.saturating_sub(scrollbar_width),
-        split_area.y + tabs_height,
+        split_area.y + top_height,
         scrollbar_width,
         split_area
             .height
-            .saturating_sub(tabs_height)
+            .saturating_sub(top_height)
             .saturating_sub(hscrollbar_height),
     );
     let horizontal_scrollbar_rect = Rect::new(
@@ -136,6 +147,7 @@ pub(crate) fn reference_split_layout(
 
     SplitLayout {
         tabs_rect,
+        breadcrumbs_rect,
         content_rect,
         scrollbar_rect,
         horizontal_scrollbar_rect,
