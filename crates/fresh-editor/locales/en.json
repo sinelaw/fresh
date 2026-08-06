@@ -1360,6 +1360,7 @@
   "update.body_delegated": "Installed as %{channel}, which owns updates. Fresh will run: %{command}",
   "update.body_delegated_privileged": "Installed as %{channel}, which owns updates. Fresh will run `%{command}` — you will be asked for your password, because it needs root.",
   "update.body_manual": "Fresh has no way to update this copy in place. Download v%{version} from https://github.com/sinelaw/fresh/releases, or see the update output for the exact steps.",
+  "update.choice_download_only": "Download it, then show me the install command",
   "update.choice_show_command": "Show the update command",
   "update.choice_update_now": "Update to v%{version} now",
   "update.choice_show_pending_command": "Show the pending command",

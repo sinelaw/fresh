@@ -1635,6 +1635,7 @@
   "update.body_delegated": "Installiert als %{channel}, das die Updates verwaltet. Fresh führt aus: %{command}",
   "update.body_delegated_privileged": "Installiert als %{channel}, das die Updates verwaltet. Fresh führt `%{command}` aus — Sie werden nach Ihrem Passwort gefragt, da root-Rechte nötig sind.",
   "update.body_manual": "Fresh kann diese Kopie nicht an Ort und Stelle aktualisieren. Laden Sie v%{version} von https://github.com/sinelaw/fresh/releases herunter, oder sehen Sie die genauen Schritte in der Update-Ausgabe.",
+  "update.choice_download_only": "Herunterladen, dann den Installationsbefehl anzeigen",
   "update.choice_show_command": "Update-Befehl anzeigen",
   "update.choice_update_now": "Jetzt auf v%{version} aktualisieren",
   "update.choice_show_pending_command": "Ausstehenden Befehl anzeigen",

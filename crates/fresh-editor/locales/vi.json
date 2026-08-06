@@ -1635,6 +1635,7 @@
   "update.body_delegated": "Được cài đặt dưới dạng %{channel}, nơi quản lý các bản cập nhật. Fresh sẽ chạy: %{command}",
   "update.body_delegated_privileged": "Được cài đặt dưới dạng %{channel}, nơi quản lý các bản cập nhật. Fresh sẽ chạy `%{command}` — bạn sẽ được hỏi mật khẩu, vì cần quyền root.",
   "update.body_manual": "Fresh không thể cập nhật bản sao này tại chỗ. Hãy tải v%{version} từ https://github.com/sinelaw/fresh/releases, hoặc xem các bước chính xác trong kết quả cập nhật.",
+  "update.choice_download_only": "Tải xuống, sau đó hiện lệnh cài đặt",
   "update.choice_show_command": "Hiển thị lệnh cập nhật",
   "update.choice_update_now": "Cập nhật lên v%{version} ngay",
   "update.choice_show_pending_command": "Hiển thị lệnh đang chờ",

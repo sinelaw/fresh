@@ -1635,6 +1635,7 @@
   "update.body_delegated": "업데이트를 관리하는 %{channel}(으)로 설치되었습니다. Fresh가 다음을 실행합니다: %{command}",
   "update.body_delegated_privileged": "업데이트를 관리하는 %{channel}(으)로 설치되었습니다. Fresh가 `%{command}`을(를) 실행합니다. root 권한이 필요하므로 비밀번호를 입력하게 됩니다.",
   "update.body_manual": "Fresh는 이 사본을 제자리에서 업데이트할 수 없습니다. https://github.com/sinelaw/fresh/releases 에서 v%{version}을(를) 내려받거나, 업데이트 출력에서 정확한 단계를 확인하세요.",
+  "update.choice_download_only": "다운로드한 후 설치 명령 표시",
   "update.choice_show_command": "업데이트 명령 보기",
   "update.choice_update_now": "지금 v%{version}으로 업데이트",
   "update.choice_show_pending_command": "대기 중인 명령 보기",

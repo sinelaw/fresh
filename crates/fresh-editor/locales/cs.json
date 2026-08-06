@@ -1635,6 +1635,7 @@
   "update.body_delegated": "Nainstalováno jako %{channel}, který spravuje aktualizace. Fresh spustí: %{command}",
   "update.body_delegated_privileged": "Nainstalováno jako %{channel}, který spravuje aktualizace. Fresh spustí `%{command}` — budete požádáni o heslo, protože to vyžaduje práva roota.",
   "update.body_manual": "Fresh nemá jak tuto kopii aktualizovat na místě. Stáhněte v%{version} z https://github.com/sinelaw/fresh/releases, nebo si přesné kroky přečtěte ve výstupu aktualizace.",
+  "update.choice_download_only": "Stáhnout a poté zobrazit instalační příkaz",
   "update.choice_show_command": "Zobrazit příkaz aktualizace",
   "update.choice_update_now": "Aktualizovat na v%{version} nyní",
   "update.choice_show_pending_command": "Zobrazit čekající příkaz",

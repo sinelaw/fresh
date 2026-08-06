@@ -1194,6 +1194,7 @@ impl Editor {
                     UpdateChoice::UpdateNow => {
                         t!("update.choice_update_now", version = version).to_string()
                     }
+                    UpdateChoice::DownloadOnly => t!("update.choice_download_only").to_string(),
                     UpdateChoice::ShowCommand => t!("update.choice_show_command").to_string(),
                 };
                 PopupListItem::new(format!("    {label}"))
@@ -1360,6 +1361,7 @@ impl Editor {
     pub fn handle_update_menu_action(&mut self, action_key: &str) {
         match action_key {
             "update" => self.start_self_update(),
+            "download_only" => self.start_self_update_download_only(),
             "show_command" => self.start_self_update_print_command(),
             "show_log" => self.show_self_update_output(),
             _ => {}

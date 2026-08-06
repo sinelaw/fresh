@@ -49,9 +49,8 @@ pub struct UpdateOptions {
     /// packaging containers exercise download → verify → install without
     /// waiting for a new release.
     pub force: bool,
-    /// Print the command that would install the update and stop. The popup's
-    /// "Show the command" choice.
-    pub print_command: bool,
+    /// How far to go: install, fetch-and-stop, or print-and-stop.
+    pub execution: Execution,
     /// Where releases come from, and whether that is the pinned production
     /// location.
     pub endpoints: Endpoints,
@@ -64,7 +63,7 @@ impl Default for UpdateOptions {
             yes: false,
             allow_downgrade: false,
             force: false,
-            print_command: false,
+            execution: Execution::Install,
             // An out-of-policy override is refused outright in a release build,
             // so falling back to the pinned defaults here would silently ignore
             // what the user asked for. Better to start from production and let
@@ -74,6 +73,41 @@ impl Default for UpdateOptions {
                 Endpoints::production()
             }),
         }
+    }
+}
+
+/// How much of the update to actually perform.
+///
+/// Three rungs rather than two, because for a release package the work splits
+/// at a natural seam: fetching it needs the network, installing it needs root.
+/// A user can reasonably want us to do the first and keep the second.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Execution {
+    /// Fetch, verify, install.
+    #[default]
+    Install,
+    /// Fetch and verify, then stop and print the install command against the
+    /// file on disk. Only differs from [`Execution::PrintOnly`] where there is
+    /// something for *us* to fetch.
+    DownloadOnly,
+    /// Touch nothing: no request for an artifact, nothing written to disk.
+    /// Print what would happen.
+    ///
+    /// The release feed is still read — that is how the version being offered
+    /// is known at all, and it is the same request the background check makes
+    /// once a day.
+    PrintOnly,
+}
+
+impl Execution {
+    /// Whether the artifact may be fetched.
+    const fn may_download(self) -> bool {
+        matches!(self, Execution::Install | Execution::DownloadOnly)
+    }
+
+    /// Whether the install command may be run.
+    const fn may_install(self) -> bool {
+        matches!(self, Execution::Install)
     }
 }
 
@@ -130,6 +164,19 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
                 );
                 return Ok(UpdateStatus::Done);
             }
+            if !opts.execution.may_install() || !opts.yes {
+                // There is no command to hand over — the swap is ours to do —
+                // so the honest answer is to say what would happen and stop,
+                // rather than replacing the running binary for someone who
+                // asked to see it first.
+                println!("This copy updates in place: fresh would download the");
+                println!("{latest} release archive, verify it, and replace");
+                match std::env::current_exe() {
+                    Ok(p) => println!("{}.", p.display()),
+                    Err(_) => println!("the running binary."),
+                }
+                return Ok(UpdateStatus::ActionRequired);
+            }
             self_contained(&prov, &latest, &transport, opts).map(|()| UpdateStatus::Done)
         }
         UpdateKind::DownloadPackage => {
@@ -145,7 +192,10 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
                 println!("An update is available. Update with: {}", plan.human);
                 return Ok(UpdateStatus::Done);
             }
-            if opts.print_command || !opts.yes {
+            // Nothing here is ours to download — the package manager does its
+            // own fetching — so "download only" and "show the command" are the
+            // same thing for these channels.
+            if !opts.execution.may_install() || !opts.yes {
                 // Printing a command is not performing it, so this is
                 // ActionRequired rather than Done.
                 show_command(&crate::elevate::elevated(&cmd, plan.needs_privilege));
@@ -194,21 +244,40 @@ fn package(
 
     let needs_privilege = crate::plan(prov).needs_privilege;
     // Downloading from an unpinned endpoint is fine; installing what came back
-    // as root is not. Fall back to printing rather than refusing outright, so
+    // as root is not. Degrade to staging-and-printing rather than refusing, so
     // a test run still exercises download and verification.
-    let may_install = opts.endpoints.trusted || !needs_privilege;
-    let print_only = opts.print_command || !opts.yes || !may_install;
+    let may_install =
+        opts.execution.may_install() && opts.yes && (opts.endpoints.trusted || !needs_privilege);
+
+    if !opts.execution.may_download() {
+        // "Show the command" means exactly that: no request for the artifact,
+        // nothing written to disk. The two commands are still nameable, because
+        // the release feed — already fetched, and the same request the daily
+        // background check makes — carries the asset's URL and filename.
+        let cmd = crate::registry::install_command_with(
+            channel,
+            Path::new(&format!("./{}", asset.name)),
+            opts.force,
+        )
+        .ok_or_else(|| format!("no install command for {}", channel.label()))?;
+        println!();
+        println!("Download it from:");
+        println!();
+        println!("    {}", asset.browser_download_url);
+        println!();
+        show_command(&crate::elevate::elevated(&cmd, needs_privilege));
+        return Ok(UpdateStatus::ActionRequired);
+    }
 
     let bytes = fetch_and_verify(transport, &asset.browser_download_url)?;
 
-    // A printed command is installed by hand, later; an executed one is
-    // installed now. The first needs a directory nothing sweeps, the second
-    // needs one that disappears afterwards.
-    let (dir, cleanup) = if print_only {
-        (crate::staging::durable()?, None)
-    } else {
+    // A package the user installs by hand, later, needs a directory nothing
+    // sweeps; one we are about to install ourselves should disappear after.
+    let (dir, cleanup) = if may_install {
         let scratch = crate::staging::ephemeral()?;
         (scratch.path().to_path_buf(), Some(scratch))
+    } else {
+        (crate::staging::durable()?, None)
     };
     let path = dir.join(&asset.name);
     std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
@@ -217,8 +286,9 @@ fn package(
     let cmd = crate::registry::install_command_with(channel, &path, opts.force)
         .ok_or_else(|| format!("no install command for {}", channel.label()))?;
 
-    if print_only {
-        if !may_install {
+    if !may_install {
+        if opts.execution.may_install() && opts.yes {
+            // Wanted to install, was not allowed to.
             println!();
             println!(
                 "The release endpoint is overridden, so this package was not \
@@ -431,10 +501,76 @@ mod tests {
         assert!(ep.trusted || !needs_privilege);
     }
 
+    /// The point of "Show the command": a user who asks to see it first has
+    /// asked for nothing to happen yet. It previously downloaded and staged
+    /// the package anyway, which is a surprising amount of work — and a file
+    /// on disk — for a request to read something.
+    #[test]
+    fn only_show_the_command_declines_to_fetch() {
+        assert!(!Execution::PrintOnly.may_download());
+        assert!(!Execution::PrintOnly.may_install());
+        // The middle rung does the network half and stops at the root half.
+        assert!(Execution::DownloadOnly.may_download());
+        assert!(!Execution::DownloadOnly.may_install());
+        assert!(Execution::Install.may_download());
+        assert!(Execution::Install.may_install());
+    }
+
+    /// The rungs are ordered, and each one permits everything the one below it
+    /// does. A mode that installed without being allowed to download, or that
+    /// downloaded while claiming to touch nothing, would be a contradiction.
+    #[test]
+    fn each_rung_permits_at_least_what_the_one_below_does() {
+        for mode in [
+            Execution::PrintOnly,
+            Execution::DownloadOnly,
+            Execution::Install,
+        ] {
+            if mode.may_install() {
+                assert!(mode.may_download(), "{mode:?} installs without fetching");
+            }
+        }
+    }
+
+    /// The middle rung is offered exactly where the work splits at a seam the
+    /// user could stand on: we fetch, a package manager installs. Anywhere
+    /// else it would be a row that does the same thing as its neighbour.
+    #[test]
+    fn download_only_is_offered_only_where_there_is_something_to_download() {
+        use crate::offer::{offer_for, UpdateChoice, UpdateOffer};
+        for channel in [Channel::Apt, Channel::Dnf, Channel::Zypper] {
+            let plan = crate::plan(&Provenance::for_channel(channel, Confidence::Authoritative));
+            assert_eq!(offer_for(&plan), UpdateOffer::DownloadPackage);
+            assert!(
+                offer_for(&plan)
+                    .choices()
+                    .contains(&UpdateChoice::DownloadOnly),
+                "{channel} fetches its own package but offers no download-only rung"
+            );
+        }
+        // The package manager does its own downloading here, so the rung would
+        // be indistinguishable from "show the command".
+        for channel in [
+            Channel::Homebrew,
+            Channel::Npm,
+            Channel::Winget,
+            Channel::Nix,
+        ] {
+            let plan = crate::plan(&Provenance::for_channel(channel, Confidence::Authoritative));
+            assert!(
+                !offer_for(&plan)
+                    .choices()
+                    .contains(&UpdateChoice::DownloadOnly),
+                "{channel} offers a download-only rung with nothing to download"
+            );
+        }
+    }
+
     #[test]
     fn default_options_do_not_act_without_being_asked() {
         let opts = UpdateOptions::default();
         assert!(!opts.yes, "a bare `fresh --cmd update` must not install");
+        assert_eq!(opts.execution, Execution::Install);
         assert!(!opts.force);
         assert!(!opts.allow_downgrade);
     }

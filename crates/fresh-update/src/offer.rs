@@ -42,8 +42,14 @@ pub enum UpdateChoice {
     /// Do it — download and install, prompting for a password if the install
     /// needs root. Runs `fresh --cmd update --yes`.
     UpdateNow,
-    /// Print the command that would be run and stop, so the user can inspect
-    /// it or run it themselves. Runs `fresh --cmd update --yes --print-command`.
+    /// Fetch and verify the package, then stop and print the install command
+    /// against the file on disk. The middle rung: the part that needs the
+    /// network is done, the part that needs root is the user's. Runs
+    /// `fresh --cmd update --yes --download-only`.
+    DownloadOnly,
+    /// Touch nothing. Print the commands that would fetch and install the
+    /// update, for a user who wants to read before anything happens. Runs
+    /// `fresh --cmd update --yes --print-command`.
     ShowCommand,
 }
 
@@ -52,22 +58,37 @@ impl UpdateChoice {
     pub fn action_key(self) -> &'static str {
         match self {
             UpdateChoice::UpdateNow => "update",
+            UpdateChoice::DownloadOnly => "download_only",
             UpdateChoice::ShowCommand => "show_command",
         }
     }
 }
 
 impl UpdateOffer {
-    /// The rows to offer, in order. "Update now" comes first everywhere it is
-    /// possible, because completing the update is the point; "Show the command"
-    /// rides along wherever there is a concrete command to show, so a user who
-    /// would rather drive it themselves keeps that control.
+    /// The rows to offer, in order, from most automatic to least.
+    ///
+    /// "Update now" comes first everywhere it is possible, because completing
+    /// the update is the point. "Show the command" rides along wherever there
+    /// is a concrete command to name, so a user who would rather drive it
+    /// themselves keeps that control — and it is exactly what it says: nothing
+    /// is fetched and nothing is written.
+    ///
+    /// "Download only" exists for one case and would be meaningless anywhere
+    /// else: a release package that we fetch and a package manager installs.
+    /// There the work splits cleanly in two — the half that needs the network
+    /// and the half that needs root — so a user who is happy for us to do the
+    /// first but wants to run the second themselves has a rung to stand on.
+    /// The delegated channels have no such split (the package manager does its
+    /// own downloading), and a self-contained swap has nothing to hand over.
     pub fn choices(self) -> &'static [UpdateChoice] {
         match self {
             UpdateOffer::SelfContained => &[UpdateChoice::UpdateNow],
-            UpdateOffer::DownloadPackage | UpdateOffer::RunCommand => {
-                &[UpdateChoice::UpdateNow, UpdateChoice::ShowCommand]
-            }
+            UpdateOffer::DownloadPackage => &[
+                UpdateChoice::UpdateNow,
+                UpdateChoice::DownloadOnly,
+                UpdateChoice::ShowCommand,
+            ],
+            UpdateOffer::RunCommand => &[UpdateChoice::UpdateNow, UpdateChoice::ShowCommand],
             // Nothing to run and nothing to name.
             UpdateOffer::Manual => &[UpdateChoice::ShowCommand],
         }
