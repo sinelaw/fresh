@@ -179,7 +179,7 @@ pub fn run(opts: &UpdateOptions) -> Result<UpdateStatus, String> {
     }
 }
 
-/// Run a delegated package-manager command (e.g. `brew upgrade fresh-editor`).
+/// Run a delegated package-manager command (e.g. `brew upgrade --formula fresh`).
 fn run_delegated(cmd: &[String]) -> Result<(), String> {
     println!("Running: {}", cmd.join(" "));
     let status = std::process::Command::new(&cmd[0])
@@ -197,11 +197,11 @@ fn run_delegated(cmd: &[String]) -> Result<(), String> {
 /// Fetch and install the release artifact for a channel whose package manager
 /// has no repository to upgrade from (`.deb`, `.rpm`, `.flatpak`).
 ///
-/// The binary is owned by dpkg/rpm/flatpak, so an in-place swap is off the
+/// The binary is owned by dpkg/rpm, so an in-place swap is off the
 /// table — it would leave the package database describing a file that no longer
 /// exists. Instead we download and checksum-verify the new package and hand it
-/// to the local package tool, elevating with `sudo`/`doas` when the tool needs
-/// root — we run in an interactive PTY, so the password prompt works and the
+/// to the local package tool, elevating with `sudo` when the tool needs
+/// root (and not at all when we are already root) — we run in an interactive PTY, so the password prompt works and the
 /// update finishes in one step. `--print-command` (the popup's "Show the
 /// command" choice) stops after the download and prints instead, reporting
 /// [`UpdateStatus::ActionRequired`] so the indicator doesn't claim an update

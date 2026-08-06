@@ -57,7 +57,7 @@ pub enum SelfUpdatePhase {
     /// The background update finished successfully; a restart applies it.
     Succeeded,
     /// The update ran cleanly but did **not** install anything: it needs a step
-    /// the editor won't take for the user (a root `dpkg -i`/`rpm -U`, or a
+    /// the editor won't take for the user (a root `apt-get install`/`dnf install`, or a
     /// package-manager command we only print). Neither a success nor a failure
     /// — the pending command is waiting in the update output.
     ActionRequired,

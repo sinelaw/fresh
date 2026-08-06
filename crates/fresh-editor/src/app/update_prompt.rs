@@ -108,7 +108,6 @@ mod tests {
             (Channel::Apt, UpdateOffer::DownloadPackage),
             (Channel::Dnf, UpdateOffer::DownloadPackage),
             (Channel::Zypper, UpdateOffer::DownloadPackage),
-            (Channel::Flatpak, UpdateOffer::DownloadPackage),
             // The owning manager's own command.
             (Channel::Homebrew, UpdateOffer::RunCommand),
             (Channel::Winget, UpdateOffer::RunCommand),
@@ -117,7 +116,13 @@ mod tests {
             (Channel::FreebsdPkg, UpdateOffer::RunCommand),
             (Channel::Aur, UpdateOffer::RunCommand),
             (Channel::Pacman, UpdateOffer::RunCommand),
-            // Nothing we can do.
+            // Nothing we can do *here*. Flatpak is the interesting one: a
+            // Flatpak build runs in a sandbox with no `flatpak` binary, so
+            // any command we emitted could not execute in the process that
+            // emitted it. The popup names the host command instead of
+            // offering a button that fails.
+            (Channel::Flatpak, UpdateOffer::Manual),
+            (Channel::Snap, UpdateOffer::Manual),
             (Channel::Unknown, UpdateOffer::Manual),
             (Channel::Source, UpdateOffer::Manual),
         ];
@@ -126,9 +131,13 @@ mod tests {
         }
     }
 
-    /// Every channel a user can actually be on offers to complete the update,
+    /// Every channel we can actually finish the update for offers to do it,
     /// and every one with a nameable command also offers to show it instead —
     /// the user picks, we don't decide for them.
+    ///
+    /// Flatpak is deliberately absent: it is reachable, but nothing we could
+    /// run would work inside its sandbox, so offering "Update now" there would
+    /// be a button that cannot do what it says.
     #[test]
     fn reachable_channels_offer_to_finish_it_and_to_show_the_command() {
         let reachable = [
@@ -137,7 +146,6 @@ mod tests {
             Channel::Apt,
             Channel::Dnf,
             Channel::Zypper,
-            Channel::Flatpak,
             Channel::Homebrew,
             Channel::Winget,
             Channel::Npm,
