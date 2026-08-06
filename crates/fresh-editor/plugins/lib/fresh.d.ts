@@ -1107,7 +1107,11 @@ type CreateTerminalOptions = {
 	*/
 	cwd?: string;
 	/**
-	* Split direction: "horizontal" or "vertical" (default: "vertical")
+	* Split direction: `"horizontal"` or `"vertical"` (default:
+	* `"vertical"`).
+	*
+	* The name describes the **divider**, not the arrangement:
+	* `"vertical"` puts the panes side by side, `"horizontal"` stacks them.
 	*/
 	direction?: string;
 	/**
@@ -2185,7 +2189,11 @@ type CreateVirtualBufferInSplitOptions = {
 	*/
 	ratio?: number;
 	/**
-	* Split direction: "horizontal" or "vertical"
+	* Split direction: `"horizontal"` or `"vertical"`.
+	*
+	* The name describes the **divider**, not the arrangement:
+	* `"vertical"` puts the panes side by side (a vertical divider between
+	* them), `"horizontal"` stacks them. Same convention as `splitWindow`.
 	*/
 	direction?: string;
 	/**

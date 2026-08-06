@@ -9194,6 +9194,42 @@ impl QuickJsBackend {
             return;
         };
 
+        // Record a virtual buffer against the plugin that asked for it, so
+        // unload can close it.
+        //
+        // This has to happen here rather than in the `PluginResponse`
+        // handler, because every `createVirtualBuffer*` path answers by
+        // resolving the callback directly and never emits
+        // `PluginResponse::VirtualBufferCreated` — so the tracking that
+        // cleanup relies on was never populated, and `virtual_buffer_ids`
+        // stayed empty. The visible cost was that `edit → reload → run`, the
+        // documented plugin dev loop, left the previous panel open and
+        // stacked a new one every iteration.
+        //
+        // `async_resource_owners` holds an entry only for the calls that
+        // create a tracked resource, and the kinds that *do* answer through
+        // `PluginResponse` have already removed theirs by now — so an entry
+        // still present here, whose result carries a `bufferId`, is a
+        // virtual buffer.
+        let owned_resource = self
+            .async_resource_owners
+            .lock()
+            .ok()
+            .and_then(|mut owners| owners.remove(&id));
+        if owned_resource.is_some() {
+            if let Some(buffer_id) = serde_json::from_str::<serde_json::Value>(result_json)
+                .ok()
+                .and_then(|v| v.get("bufferId").and_then(serde_json::Value::as_u64))
+            {
+                self.plugin_tracked_state
+                    .borrow_mut()
+                    .entry(name.clone())
+                    .or_default()
+                    .virtual_buffer_ids
+                    .push(BufferId(buffer_id as usize));
+            }
+        }
+
         let plugin_contexts = self.plugin_contexts.borrow();
         let Some(context) = plugin_contexts.get(&name) else {
             tracing::warn!("resolve_callback: Context lost for plugin {}", name);

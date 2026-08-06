@@ -5758,7 +5758,11 @@ pub struct CreateVirtualBufferInSplitOptions {
     #[serde(default)]
     #[ts(optional)]
     pub ratio: Option<f32>,
-    /// Split direction: "horizontal" or "vertical"
+    /// Split direction: `"horizontal"` or `"vertical"`.
+    ///
+    /// The name describes the **divider**, not the arrangement:
+    /// `"vertical"` puts the panes side by side (a vertical divider between
+    /// them), `"horizontal"` stacks them. Same convention as `splitWindow`.
     #[serde(default)]
     #[ts(optional)]
     pub direction: Option<String>,
@@ -5883,7 +5887,11 @@ pub struct CreateTerminalOptions {
     #[serde(default)]
     #[ts(optional)]
     pub cwd: Option<String>,
-    /// Split direction: "horizontal" or "vertical" (default: "vertical")
+    /// Split direction: `"horizontal"` or `"vertical"` (default:
+    /// `"vertical"`).
+    ///
+    /// The name describes the **divider**, not the arrangement:
+    /// `"vertical"` puts the panes side by side, `"horizontal"` stacks them.
     #[serde(default)]
     #[ts(optional)]
     pub direction: Option<String>,

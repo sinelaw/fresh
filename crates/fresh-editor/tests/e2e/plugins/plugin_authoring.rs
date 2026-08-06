@@ -228,6 +228,70 @@ fn the_documented_live_panel_recipe_runs() {
     );
 }
 
+/// Reloading init.ts closes the panels its previous copy created, instead of
+/// leaving one behind on every iteration.
+///
+/// This is the plugin dev loop itself — edit, reload, run — so a leak here
+/// compounds: three iterations, three identical panels, and a layout the
+/// author has to clean up by hand before they can see what they changed. It
+/// went unnoticed because the cleanup path *looked* right: the runtime tracks
+/// `virtual_buffer_ids` and closes them on unload, but nothing ever populated
+/// that list (every `createVirtualBuffer*` answers by resolving its callback
+/// directly, bypassing the response handler that did the tracking), and the
+/// close it did send was refused anyway because a panel with content counts
+/// as modified.
+#[test]
+fn reloading_init_closes_the_panels_its_previous_copy_created() {
+    let (mut harness, _tmp, config_dir) = harness_with_scratch_config_dir();
+
+    let body = r#"
+        const editor = getEditor();
+        (async () => {
+            await editor.createVirtualBuffer({
+                name: "Leaky Panel",
+                entries: [{ text: "content makes it modified\n" }],
+            });
+            await editor.flush();
+            editor.setStatus("PANEL_OPEN");
+        })();
+    "#;
+
+    // Counted from the plugin state snapshot — the same view `listBuffers()`
+    // serves a plugin, so the test sees what an author would.
+    let count = |h: &EditorTestHarness| {
+        let Some(handle) = h.editor().plugin_manager().state_snapshot_handle() else {
+            return 0;
+        };
+        let Ok(snapshot) = handle.read() else {
+            return 0;
+        };
+        snapshot
+            .buffers
+            .values()
+            .filter(|b| b.name == "Leaky Panel")
+            .count()
+    };
+
+    write_init_ts(&config_dir, body);
+    harness.editor_mut().load_init_script(true);
+    assert!(
+        pump_until(&mut harness, |h| count(h) == 1),
+        "the first load should open exactly one panel, saw {}",
+        count(&harness)
+    );
+
+    // Reload the same source twice, as an author iterating would.
+    for round in 1..=2 {
+        write_init_ts(&config_dir, body);
+        harness.editor_mut().load_init_script(true);
+        assert!(
+            pump_until(&mut harness, |h| count(h) == 1),
+            "reload {round} should leave exactly one panel, saw {}",
+            count(&harness)
+        );
+    }
+}
+
 /// A virtual buffer is findable in `listBuffers()` by the name it was created
 /// with.
 ///
