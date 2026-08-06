@@ -28,7 +28,7 @@
 
 use std::marker::PhantomData;
 
-/// A CI-validated, typed JSON-pointer key into the user config layer.
+/// A CI-validated, typed JSON-pointer key into the config.
 ///
 /// The type parameter is the value type the key points at, so
 /// `persist_config_change(EDITOR_LINE_WRAP, value)` only compiles when

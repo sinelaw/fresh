@@ -8,8 +8,9 @@
 //! no third:
 //!
 //! * **`Toggle X`** — changes the editor-wide default and **saves it to the
-//!   user config layer** via `Editor::persist_config_change`, so it survives a
-//!   restart. Every unsuffixed toggle must persist; one that only mutates the
+//!   config layer that defines it** (project config if the project overrides
+//!   the key, the user config otherwise) via `Editor::persist_config_change`,
+//!   so it survives a restart. Every unsuffixed toggle must persist; one that only mutates the
 //!   in-memory `Arc<Config>` (or a `Window` flag) silently forgets the user's
 //!   choice on the next launch. `Config::config_mut` does *not* persist on its
 //!   own — it is only `Arc::make_mut`. `persist_config_change` accepts only a

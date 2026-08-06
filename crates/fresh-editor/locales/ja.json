@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "垂直スクロールバーを表示",
   "toggle.whitespace_indicators_hidden": "空白文字インジケーターを非表示",
   "toggle.whitespace_indicators_shown": "空白文字インジケーターを表示",
+  "toggle.tab_indicators_shown": "タブインジケーターを表示",
+  "toggle.tab_indicators_hidden": "タブインジケーターを非表示",
   "view.background_set": "背景を %{path} に設定しました",
   "view.compose": "作成",
   "view.current_line_highlight_state": "現在行のハイライト %{state}",

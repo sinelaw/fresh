@@ -314,6 +314,12 @@ pub struct SerializedFileState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whitespace_indicators: Option<bool>,
 
+    /// Explicit per-buffer tab-indicator override, layered on top of
+    /// `whitespace_indicators` (`None` = follow the master/config resolution).
+    /// Persists the "Toggle Tab Indicators (Current Buffer)" choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_indicators: Option<bool>,
+
     /// Explicit per-buffer current-line-highlight override (`None` = follow the
     /// global default). Persists the "Toggle Current Line Highlight (Current
     /// Buffer)" choice across restarts.
@@ -1503,6 +1509,7 @@ mod tests {
             fold_indicators: None,
             use_tabs: None,
             whitespace_indicators: None,
+            tab_indicators: None,
             highlight_current_line: None,
             highlight_occurrences: None,
             plugin_state: HashMap::new(),

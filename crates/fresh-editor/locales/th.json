@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "แสดงแถบเลื่อนแนวตั้งแล้ว",
   "toggle.whitespace_indicators_hidden": "ซ่อนตัวบ่งชี้ช่องว่างแล้ว",
   "toggle.whitespace_indicators_shown": "แสดงตัวบ่งชี้ช่องว่างแล้ว",
+  "toggle.tab_indicators_shown": "แสดงตัวบ่งชี้แท็บแล้ว",
+  "toggle.tab_indicators_hidden": "ซ่อนตัวบ่งชี้แท็บแล้ว",
   "view.background_set": "ตั้งค่าพื้นหลังเป็น %{path}",
   "view.compose": "การเขียน",
   "view.current_line_highlight_state": "การเน้นบรรทัดปัจจุบัน %{state}",

@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "세로 스크롤바 표시됨",
   "toggle.whitespace_indicators_hidden": "공백 표시기 숨김",
   "toggle.whitespace_indicators_shown": "공백 표시기 표시됨",
+  "toggle.tab_indicators_shown": "탭 표시기 표시됨",
+  "toggle.tab_indicators_hidden": "탭 표시기 숨김",
   "view.background_set": "배경이 %{path}(으)로 설정됨",
   "view.compose": "작성",
   "view.current_line_highlight_state": "현재 줄 강조 %{state}",

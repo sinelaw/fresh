@@ -1513,6 +1513,8 @@
   "toggle.vertical_scrollbar_shown": "Vertikale Scrollleiste angezeigt",
   "toggle.whitespace_indicators_hidden": "Leerzeichen-Indikatoren ausgeblendet",
   "toggle.whitespace_indicators_shown": "Leerzeichen-Indikatoren angezeigt",
+  "toggle.tab_indicators_shown": "Tabulator-Indikatoren angezeigt",
+  "toggle.tab_indicators_hidden": "Tabulator-Indikatoren ausgeblendet",
   "view.background_set": "Hintergrund gesetzt auf %{path}",
   "view.compose": "Komponieren",
   "view.current_line_highlight_state": "Aktuelle Zeilenhervorhebung %{state}",

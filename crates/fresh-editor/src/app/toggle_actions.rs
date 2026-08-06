@@ -956,10 +956,22 @@ impl Editor {
         self.emit_event("themes_changed", serde_json::json!({}));
     }
 
-    /// Persist a single config change to the user config file.
+    /// Persist a single config change to the config file that owns it.
     ///
     /// Used when toggling settings via menu/command palette so that
     /// the change is saved immediately (matching the settings UI behavior).
+    ///
+    /// The write goes to the most specific layer that already defines the key
+    /// (session, then project, then user; user when none does) — the same
+    /// target derivation VS Code's configuration service uses. Writing the
+    /// user layer unconditionally made a toggle appear dead in any project
+    /// whose `.fresh/config.json` set the same key (the project value kept
+    /// winning on the next launch) while the stranded user-layer entry leaked
+    /// the change into every *other* project.
+    ///
+    /// Failures land in the warning log at error level, which lights the
+    /// status-bar warning indicator — the toggle still applied in memory, but
+    /// the user can see it didn't stick.
     ///
     /// Accepts only a [`SettingKey`], never a raw pointer string: the keys are
     /// a closed set of constants, each pinned by a generated CI test to the
@@ -977,9 +989,23 @@ impl Editor {
         };
         let resolver =
             ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
+        let layer = match resolver.get_layer_sources() {
+            Ok(sources) => match sources.get(key.pointer()) {
+                Some(ConfigLayer::Session) => ConfigLayer::Session,
+                Some(ConfigLayer::Project) => ConfigLayer::Project,
+                _ => ConfigLayer::User,
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "Could not resolve the config layer defining {}: {e}; writing the user layer",
+                    key.pointer()
+                );
+                ConfigLayer::User
+            }
+        };
         let changes = std::collections::HashMap::from([(key.pointer().to_string(), json)]);
         let deletions = std::collections::HashSet::new();
-        if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, ConfigLayer::User) {
+        if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, layer) {
             tracing::error!("Failed to persist config change {}: {}", key.pointer(), e);
         }
     }

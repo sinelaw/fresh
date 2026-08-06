@@ -2107,7 +2107,7 @@ impl Editor {
                     self.set_status_message(status.to_string());
                 }
             }
-            Action::ToggleTabIndicators | Action::ToggleWhitespaceIndicators => {
+            Action::ToggleWhitespaceIndicators => {
                 let __buffer_id = self.active_buffer();
                 // Resolve the buffer's configured visibility up front so turning
                 // the master toggle back on restores the indicators the user
@@ -2124,10 +2124,42 @@ impl Editor {
                     state.buffer_settings.whitespace.toggle_all(restore);
                     let visible = state.buffer_settings.whitespace.any_visible();
                     state.buffer_settings.whitespace_override = Some(visible);
+                    // The master toggle answers "any indicators at all?", so
+                    // it subsumes a finer tab pin: "hide whitespace
+                    // indicators" hiding everything *except* pinned arrows
+                    // would make the master appear broken.
+                    state.buffer_settings.tab_indicators_override = None;
                     let status = if visible {
                         t!("toggle.whitespace_indicators_shown")
                     } else {
                         t!("toggle.whitespace_indicators_hidden")
+                    };
+                    self.set_status_message(status.to_string());
+                }
+            }
+            Action::ToggleTabIndicators => {
+                let __buffer_id = self.active_buffer();
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&__buffer_id)
+                {
+                    // Only the tab-arrow trio: the command's description has
+                    // always promised "tab arrow indicators (→)", but it used
+                    // to share the master toggle-all with Whitespace
+                    // Indicators and flipped the space dots too.
+                    let ws = &mut state.buffer_settings.whitespace;
+                    let new_value = !(ws.tabs_leading || ws.tabs_inner || ws.tabs_trailing);
+                    ws.tabs_leading = new_value;
+                    ws.tabs_inner = new_value;
+                    ws.tabs_trailing = new_value;
+                    state.buffer_settings.tab_indicators_override = Some(new_value);
+                    let status = if new_value {
+                        t!("toggle.tab_indicators_shown")
+                    } else {
+                        t!("toggle.tab_indicators_hidden")
                     };
                     self.set_status_message(status.to_string());
                 }

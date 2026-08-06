@@ -77,6 +77,9 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **A hand-written empty override survives settings writes** - a value like `"status_bar": {"left": []}` (emptying the left status bar) was silently deleted from `config.json` whenever any setting was saved from the UI or a toggle.
 * **A global toggle no longer un-pins other splits** - **Toggle Line Wrap** cleared the per-buffer pin of every split in the window; now only the split you ran it in adopts the new default, matching the other toggles.
 * **Config writes are atomic** - a crash mid-write can no longer truncate `config.json` (which silently loaded as all-defaults on the next launch).
+* **Toggles write the config layer that owns the setting** - like VS Code: if a project `.fresh/config.json` sets the key, the toggle updates the project file instead of writing a user-layer entry the project silently overrode (the toggle looked dead in that project and leaked the change into every other one).
+* **The workspace no longer shadows saved settings** - line numbers, line wrap and inlay hints were snapshotted into every workspace and stamped back on open, so an old workspace kept overriding the default you saved elsewhere, forever. Their toggles persist to the config file, which is now the single source of truth.
+* **Toggle Tab Indicators really toggles only tabs** - it shared the master whitespace toggle, so "hide the tab arrows" also killed the space dots. The two commands are now independent: the tab pin layers on the whitespace master, persists per file, and the master toggle still means "everything".
 * **Files that are one very long line**
   * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).
   * **Highlighting survives past the first wrapped rows**, and the wheel no longer snaps to a 100 KB boundary (#2843).
