@@ -27,15 +27,11 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
 /// Open Review Diff via command palette and wait for it to load.
 /// Returns the initial screen string.
 fn open_review_diff(harness: &mut EditorTestHarness) -> String {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text("Review Diff").unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
+    // `run_palette_command` waits for the row to be listed before confirming:
+    // this command comes from a plugin, so typing the name and pressing Enter
+    // could fire before it was registered (Quick Open re-filters on input
+    // change only, so a late registration is never picked up on its own).
+    harness.run_palette_command("Review Diff").unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
     harness
@@ -1957,9 +1953,13 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    for _ in 0..10 {
-        harness.tick_and_render().unwrap();
-    }
+    // Wait for the hunk to be on screen rather than pumping a fixed number of
+    // ticks: `tick_and_render` doesn't sleep, so `for _ in 0..10` elapses in
+    // microseconds and gates nothing. `d` on an unloaded panel discards
+    // nothing (or the wrong thing).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("NO_NEWLINE_LINE"))
+        .unwrap();
 
     // `d` opens the confirmation prompt; Enter accepts the default
     // ("Discard hunk").
@@ -1971,9 +1971,34 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
-    for _ in 0..20 {
-        harness.tick_and_render().unwrap();
-    }
+
+    // The discard must actually revert the working tree on disk: the
+    // unterminated added line is gone and the committed lines are restored.
+    // Compare line-ending-agnostically — whether git writes the restored file
+    // back as LF or CRLF depends on the user's core.autocrlf, which the test
+    // leaves at its platform default; that's git's choice, not the feature's.
+    //
+    // Wait for the write instead of reading the file straight after a fixed
+    // `for _ in 0..20 { tick_and_render() }` pump. The discard shells out to
+    // git on the plugin thread; twenty sleepless ticks are microseconds, so
+    // the old form read the file back before the patch had been applied and
+    // failed within a couple of seconds — the Windows failure on this test.
+    //
+    // The wait also terminates on a rendered patch error, so a genuine
+    // regression (the bug this test covers) still fails loudly and quickly
+    // instead of hanging until nextest's timeout.
+    let restored = |h: &EditorTestHarness| {
+        let _ = h;
+        fs::read_to_string(&notes)
+            .map(|s| s.replace("\r\n", "\n") == original)
+            .unwrap_or(false)
+    };
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            restored(h) || screen.contains("Patch failed") || screen.contains("does not apply")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     assert!(
@@ -1983,11 +2008,6 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         screen
     );
 
-    // The discard must actually revert the working tree on disk: the
-    // unterminated added line is gone and the committed lines are restored.
-    // Compare line-ending-agnostically — whether git writes the restored file
-    // back as LF or CRLF depends on the user's core.autocrlf, which the test
-    // leaves at its platform default; that's git's choice, not the feature's.
     let after = fs::read_to_string(&notes).unwrap();
     assert_eq!(
         after.replace("\r\n", "\n"),
