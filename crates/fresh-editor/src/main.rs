@@ -3742,7 +3742,10 @@ edit init.ts, `init reload`, then `command run` the command you registered.
 No keystroke from the user is needed at any point.
 
 Target a specific daemon with --session NAME (default: the daemon of the
-current working directory).
+current working directory). Inside a Fresh terminal the right session is
+already in `$FRESH_SESSION`, so no flag is needed — reach for --session only
+when running from outside, where `fresh --cmd daemon list` names the
+candidates.
 
 Examples:
   echo 'return editor.listBuffers().map(b => b.path)' | fresh --cmd script run
@@ -3828,6 +3831,13 @@ THE RUNTIME, IN FULL
     across the boundary. Declare them with the `registerHandler` global:
         registerHandler("my_handler", async function () { ... });
         editor.registerCommand("My Command", "desc", "my_handler", null);
+  - **Each plugin gets its own realm, and so does each `script run`.**
+    `registerHandler` puts the function on *that realm's* `globalThis`, so
+    init.ts can call its own handlers directly — but a script submitted with
+    `script run` cannot see them, and will report them `undefined`. A script
+    reaches a plugin through `editor.runCommand("...")` or through an API the
+    plugin published with `editor.exportPluginApi(...)` / read back with
+    `getPluginApi("...")`. Nothing else crosses between realms.
   - Most `editor.*` calls that ask the host a question are async and return a
     promise — `getBufferText`, `createVirtualBuffer`, `spawnProcess`,
     `listCommands`. Await them.
@@ -3873,6 +3883,7 @@ WORKED EXAMPLE — a live, auto-refreshing, clickable panel
     let opening = false;          // re-entrancy guard for the async open
     let token = 0;                // invalidates results from a previous open
     let inFlight = false;
+    let timer = null;             // the one refresh timer, never two
     let rows = {};                // buffer row -> windowId
     let last = null;              // last good data, for stale-while-revalidate
 
@@ -3906,27 +3917,45 @@ WORKED EXAMPLE — a live, auto-refreshing, clickable panel
     });
 
     registerHandler("open_panel", async function () {
-      if (panelId !== null) { editor.showBuffer(panelId); return; }
-      if (opening) return;
-      opening = true;
-      try {
-        const res = await editor.createVirtualBuffer({
-          name: "Workspaces",      // findable later via listBuffers()
-          readOnly: true, editingDisabled: true, showCursors: false,
-        });
-        panelId = res.bufferId;
-        token++;
-      } finally {
-        opening = false;
+      // Adopt a panel left over from a previous load of this file before
+      // creating one: reload drops commands and timers, but a virtual buffer
+      // outlives it, so `edit → reload → run` otherwise stacks a new panel
+      // every iteration — the loop you are in while developing.
+      if (panelId === null) {
+        const existing = editor.listBuffers()
+          .find(b => b.is_virtual && b.name === "Workspaces");
+        if (existing) panelId = existing.id;
+      }
+      if (panelId !== null) { editor.showBuffer(panelId); }
+      if (panelId === null) {
+        if (opening) return;
+        opening = true;
+        try {
+          const res = await editor.createVirtualBuffer({
+            name: "Workspaces",      // findable later via listBuffers()
+            readOnly: true, editingDisabled: true, showCursors: false,
+          });
+          panelId = res.bufferId;
+          token++;
+        } finally {
+          opening = false;
+        }
       }
       await globalThis.panel_render();          // instant first paint
-      editor.setInterval(5000, "panel_render"); // and keeps painting
+      // Exactly one timer: re-running the command (or closing and reopening
+      // the panel) must not double the refresh rate.
+      if (timer === null) timer = editor.setInterval(5000, "panel_render");
     });
     editor.registerCommand("Workspaces", "live workspace panel",
                            "open_panel", null);
 
     registerHandler("panel_closed", function (ev) {
-      if (ev.bufferId === panelId) { panelId = null; token++; }
+      if (ev.bufferId !== panelId) return;
+      panelId = null;
+      token++;
+      // Stop refreshing a panel that is gone, and drop the id so a reopen
+      // arms a fresh timer rather than skipping the `timer === null` check.
+      if (timer !== null) { editor.clearInterval(timer); timer = null; }
     });
     editor.on("buffer_closed", "panel_closed");
 
@@ -3948,6 +3977,8 @@ WORKED EXAMPLE — a live, auto-refreshing, clickable panel
                      the old panel's data.
     - `inFlight`     setInterval does not queue ticks; if a refresh outlasts
                      its period the next fires anyway.
+    - `timer`        arming unconditionally would double the refresh rate on
+                     every reopen, and again on every reload.
     - try/catch      a throw inside a refresh must not take the panel down.
                      (In a `delay` loop it would silently end the loop; here
                      it only costs one tick — but you still want `last` kept.)
@@ -3960,6 +3991,20 @@ WORKED EXAMPLE — a live, auto-refreshing, clickable panel
   as a fast tick plus a per-item TTL — re-run an item only once its own data
   is stale — so ambient cost tracks the sum of the items' rates instead of
   tick-rate × item-count. dashboard.ts does this at TICK_MS = 1000.
+
+VERIFYING YOUR OWN WORK
+
+  `setStatus` has no read side, so asserting on a status message from outside
+  looks impossible. It is not: every status message is appended to
+  `<state-dir>/logs/status-<pid>.log`, where <state-dir> is the one
+  `fresh --cmd config paths` prints. That file is the readback channel for
+  "did my command actually run and report what I expect".
+
+  For anything else, `fresh --cmd script run` reads live state directly —
+  `listBuffers()`, `getBufferText(id)`, `listSplits()`. Remember
+  `await editor.flush()` before reading back after a layout change, and that
+  a script runs in its own realm (above), so it sees the editor's state but
+  not your plugin's variables.
 
 DISCOVERY
 
