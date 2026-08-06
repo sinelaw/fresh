@@ -3006,12 +3006,21 @@ impl Editor {
     /// Handle GrepProject: snapshot what only the editor thread can see, then
     /// hand the walk-and-search to [`plugin_offloop::grep_project`].
     ///
-    /// The editor-thread half is bounded by the number of open buffers. The
-    /// project walk, the per-file greps and the callback resolution all happen
-    /// on the tokio runtime; a second grep supersedes and cancels the first so
-    /// a plugin looping on `grepProject` collapses instead of queueing.
+    /// The project walk, the per-file greps and the callback resolution all
+    /// happen on the tokio runtime; a second grep from the same plugin
+    /// supersedes and cancels the first, so a plugin looping on `grepProject`
+    /// collapses instead of queueing.
+    ///
+    /// What stays on the editor thread is the snapshot, and it is not free:
+    /// `search_hybrid_plan` copies the loaded bytes of every *modified* open
+    /// buffer, because the piece tree cannot cross threads. Unmodified buffers
+    /// cost only their id, and unloaded regions of a modified one are recorded
+    /// as file offsets rather than copied — but a large fully-loaded dirty
+    /// buffer is copied in full, once per call. Worth knowing before adding
+    /// anything else to this path.
     pub(super) fn handle_grep_project(
         &mut self,
+        plugin_name: String,
         pattern: String,
         fixed_string: bool,
         case_sensitive: bool,
@@ -3079,13 +3088,20 @@ impl Editor {
             return;
         };
 
-        // Coalesce: one live project grep at a time. The superseded request
-        // still settles, with whatever it had found, so no `await` dangles.
-        if let Some(prev) = self.grep_project_cancel.take() {
+        // Coalesce per plugin: a plugin looping on `grepProject` (one call per
+        // keystroke, say) collapses to its latest request instead of queueing.
+        // Keyed by plugin because the token used to be a single editor-wide
+        // slot, so any plugin's grep cancelled every other plugin's — and the
+        // loser settled with whatever partial results it happened to hold, with
+        // no way for its caller to tell. The superseded request now rejects
+        // instead, so a caller that really did want both answers hears about it
+        // rather than believing a truncated one.
+        if let Some(prev) = self.grep_project_cancel.remove(&plugin_name) {
             prev.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        self.grep_project_cancel = Some(Arc::clone(&cancel));
+        self.grep_project_cancel
+            .insert(plugin_name, Arc::clone(&cancel));
 
         super::plugin_offloop::grep_project(
             super::plugin_offloop::OffLoop {

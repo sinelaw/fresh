@@ -56,8 +56,11 @@ impl Editor {
     }
 
     /// Ask for another frame because plugin work was deferred out of this one.
-    /// The draw never waits on the plugin lock, so anything it skipped has to
-    /// be guaranteed a retry.
+    /// The drawing itself never blocks on the plugin lock — every hook site
+    /// inside the draw uses `try_read` and skips on contention — so anything
+    /// skipped has to be guaranteed a retry. (The pre-layout drain at the top
+    /// of `render` does take the lock; it runs before any drawing, which is the
+    /// point of doing it there.)
     fn request_plugin_render(&mut self) {
         #[cfg(feature = "plugins")]
         {
@@ -2070,10 +2073,9 @@ impl Editor {
     ///
     /// Must run before `compute_dock_split` because commands such as
     /// `UnmountFloatingWidget` affect the dock state that layout reads.
-    /// The mid-render drain (after `compute_dock_split`) runs too late for
-    /// those: the dock area would be computed from stale state and the freed
-    /// columns would render blank until the next input event.
-
+    /// Draining any later would compute the dock area from stale state and
+    /// leave the freed columns blank until the next input event — which is why
+    /// this is the render path's only dispatch point.
     fn drain_pre_layout_plugin_commands(&mut self) {
         #[cfg(feature = "plugins")]
         {

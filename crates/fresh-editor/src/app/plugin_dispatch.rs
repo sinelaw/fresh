@@ -381,9 +381,14 @@ impl Editor {
     /// This is the guard that keeps the "no plugin work on the editor thread
     /// except bounded state mutation" invariant honest: a handler that does
     /// unbounded I/O or computation shows up here by name instead of as an
-    /// unattributable stall. `FRESH_STRICT_PLUGIN_BUDGET` promotes the warning
-    /// to a panic so the e2e hostile-plugin test fails on a regression rather
-    /// than merely logging one.
+    /// unattributable stall.
+    ///
+    /// Naming the offender is all it does. Failing the process on a single
+    /// overrun would key correctness to wall-clock time on whatever machine is
+    /// running — the kind of test CONTRIBUTING §3 rules out, and the reason the
+    /// e2e hostile-plugin test judges a *median* dispatch latency instead. That
+    /// test is where a regression actually fails the build; this is how you
+    /// find out which handler caused it.
     pub(crate) fn dispatch_plugin_command_measured(&mut self, command: PluginCommand) {
         let label = VariantNameSink::of(&command);
         let label = label.as_str();
@@ -400,15 +405,6 @@ impl Editor {
                 limit_ms = super::PLUGIN_COMMAND_HANDLER_LIMIT.as_millis() as u64,
                 "plugin command handler blocked the editor thread — move this work to plugin_offloop"
             );
-            #[cfg(debug_assertions)]
-            if std::env::var_os("FRESH_STRICT_PLUGIN_BUDGET").is_some() {
-                panic!(
-                    "plugin command handler {} blocked the editor thread for {}ms (limit {}ms)",
-                    label,
-                    elapsed.as_millis(),
-                    super::PLUGIN_COMMAND_HANDLER_LIMIT.as_millis()
-                );
-            }
         }
     }
 
@@ -1751,6 +1747,7 @@ impl Editor {
             }
 
             PluginCommand::GrepProject {
+                plugin_name,
                 pattern,
                 fixed_string,
                 case_sensitive,
@@ -1759,6 +1756,7 @@ impl Editor {
                 callback_id,
             } => {
                 self.handle_grep_project(
+                    plugin_name,
                     pattern,
                     fixed_string,
                     case_sensitive,
@@ -6439,8 +6437,8 @@ impl VariantNameSink {
             len: 0,
         };
         // Errors are the expected exit: the sink aborts formatting as soon as
-        // the variant name ends.
-        if write!(sink, "{:?}", command).is_err() {}
+        // the variant name ends, so the `Err` is the success path here.
+        let _ = write!(sink, "{:?}", command);
         sink
     }
 

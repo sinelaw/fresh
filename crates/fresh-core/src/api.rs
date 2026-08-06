@@ -4777,6 +4777,9 @@ pub enum PluginCommand {
     /// Searches all project files via FileSystem trait, respecting .gitignore.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
     GrepProject {
+        /// Which plugin asked. Coalescing is per plugin: a newer grep replaces
+        /// that plugin's own in-flight one, and never another plugin's.
+        plugin_name: String,
         /// Search pattern (literal string)
         pattern: String,
         /// Whether the pattern is a fixed string (true) or regex (false)

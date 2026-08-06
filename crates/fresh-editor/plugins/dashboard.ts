@@ -579,12 +579,29 @@ async function refreshSection(entry: RegisteredSection, myToken: number) {
     const hasGoodData = entry.everLanded && !entry.drawIsError;
     try {
         const timedOut = Symbol("timeout");
+        // Keep a handle on the section's own promise. A timeout can stop
+        // *waiting* on it, but nothing here can stop it running — so the
+        // handle is what tells us when the section is free again.
+        const own = entry.refresh(ctx).then(() => "ok" as const);
         const race = await Promise.race([
-            entry.refresh(ctx).then(() => "ok" as const),
+            own,
             editor.delay(entry.timeoutMs).then(() => timedOut),
         ]);
-        entry.inFlight = false;
         if (race === timedOut) {
+            // `inFlight` deliberately stays set. Clearing it here would let the
+            // TTL scheduler start another refresh every `ttlMs` while the first
+            // one is still running — a section that hangs for good would then
+            // accumulate one pending promise, context and draw closure per
+            // tick, forever. Releasing it when (and only when) the original
+            // settles bounds a hung section to the single refresh it is stuck
+            // in, and lets a merely-slow one be retried once it finishes. The
+            // `.then` also swallows a late rejection, which would otherwise
+            // surface as an unhandled promise rejection long after the row
+            // already said "timed out".
+            const release = () => {
+                entry.inFlight = false;
+            };
+            own.then(release, release);
             if (hasGoodData) {
                 // Keep the last good body; the heading carries the reason.
                 entry.stale = true;
@@ -596,6 +613,7 @@ async function refreshSection(entry: RegisteredSection, myToken: number) {
             }
             return;
         }
+        entry.inFlight = false;
         land(draw, true);
     } catch (e) {
         entry.inFlight = false;

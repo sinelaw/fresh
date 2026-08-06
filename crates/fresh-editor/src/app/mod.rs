@@ -377,8 +377,8 @@ pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
 
 /// A single plugin command handler taking longer than this on the editor
 /// thread is a defect: the work belongs in `plugin_offloop`. Logged at WARN
-/// naming the offending variant, and a hard failure under `debug_assertions`
-/// when `FRESH_STRICT_PLUGIN_BUDGET` is set (the e2e hostile-plugin test).
+/// naming the offending variant — see `dispatch_plugin_command_measured` for
+/// why that is a diagnostic rather than a failure, and which test does fail.
 #[cfg(feature = "plugins")]
 pub(crate) const PLUGIN_COMMAND_HANDLER_LIMIT: std::time::Duration =
     std::time::Duration::from_millis(50);
@@ -949,7 +949,7 @@ pub struct Editor {
     /// Cancellation flag for the in-flight `grepProject`, if any. A new
     /// request supersedes the old one rather than queueing behind it.
     #[cfg(feature = "plugins")]
-    grep_project_cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    grep_project_cancel: std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
 
     /// Registered diff baselines (registerDiffBaseline plugin API family).
     /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.

@@ -653,7 +653,7 @@ impl Editor {
             #[cfg(feature = "plugins")]
             plugin_command_backlog: std::collections::VecDeque::new(),
             #[cfg(feature = "plugins")]
-            grep_project_cancel: None,
+            grep_project_cancel: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
             diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
             #[cfg(feature = "plugins")]
