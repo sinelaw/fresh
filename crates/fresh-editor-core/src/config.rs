@@ -1270,6 +1270,13 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_tab_bar: bool,
 
+    /// Whether LSP/plugin-provided symbol breadcrumbs are shown below each
+    /// split's tab bar. The row is only reserved when a trail is available.
+    /// Default: true
+    #[serde(default = "default_true")]
+    #[schemars(extend("x-section" = "Display"))]
+    pub show_breadcrumbs: bool,
+
     /// Whether the status bar is visible by default.
     /// The status bar shows file info, cursor position, and editor status at the bottom of the screen.
     /// Can be toggled at runtime via command palette or keybinding.
@@ -2067,6 +2074,7 @@ impl Default for EditorConfig {
             screensaver_idle_minutes: default_screensaver_idle_minutes(),
             menu_bar_mnemonics: true,
             show_tab_bar: true,
+            show_breadcrumbs: true,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
             show_prompt_line: false,

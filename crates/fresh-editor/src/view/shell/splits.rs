@@ -304,37 +304,50 @@ mod tests {
     fn a_pane_divides_itself_the_way_the_painter_did() {
         use crate::view::ui::split_rendering::layout::{reference_split_layout, split_layout};
         for tabs in [true, false] {
-            for vs in [true, false] {
-                for hs in [true, false] {
-                    for at in [
-                        Rect::new(0, 0, 80, 24),
-                        Rect::new(7, 3, 40, 12),
-                        Rect::new(0, 0, 3, 2),
-                        Rect::new(12, 5, 200, 60),
-                    ] {
-                        let id = LeafId(SplitId(9));
-                        let c = PaneChrome {
-                            tabs,
-                            vscroll: vs,
-                            hscroll: hs,
-                        };
-                        let got = split_layout(id, at, c);
-                        let want = reference_split_layout(at, tabs, vs, hs);
-                        assert_eq!(
-                            (
-                                got.tabs_rect,
-                                got.content_rect,
-                                got.scrollbar_rect,
-                                got.horizontal_scrollbar_rect
-                            ),
-                            (
-                                want.tabs_rect,
-                                want.content_rect,
-                                want.scrollbar_rect,
-                                want.horizontal_scrollbar_rect
-                            ),
-                            "tabs={tabs} vscroll={vs} hscroll={hs} at {at:?}"
-                        );
+            for breadcrumbs in [true, false] {
+                for vs in [true, false] {
+                    for hs in [true, false] {
+                        for at in [
+                            Rect::new(0, 0, 80, 24),
+                            Rect::new(7, 3, 40, 12),
+                            Rect::new(0, 0, 3, 2),
+                            Rect::new(12, 5, 200, 60),
+                        ] {
+                            // The reference arithmetic lets a bottom bar
+                            // overlap top chrome when those fixed rows do not
+                            // fit. The shell column deliberately starves the
+                            // last child instead; that divergence is covered
+                            // by the focused test below.
+                            if tabs as u16 + breadcrumbs as u16 + hs as u16 > at.height {
+                                continue;
+                            }
+                            let id = LeafId(SplitId(9));
+                            let c = PaneChrome {
+                                tabs,
+                                breadcrumbs,
+                                vscroll: vs,
+                                hscroll: hs,
+                            };
+                            let got = split_layout(id, at, c);
+                            let want = reference_split_layout(at, tabs, breadcrumbs, vs, hs);
+                            assert_eq!(
+                                (
+                                    got.tabs_rect,
+                                    got.breadcrumbs_rect,
+                                    got.content_rect,
+                                    got.scrollbar_rect,
+                                    got.horizontal_scrollbar_rect
+                                ),
+                                (
+                                    want.tabs_rect,
+                                    want.breadcrumbs_rect,
+                                    want.content_rect,
+                                    want.scrollbar_rect,
+                                    want.horizontal_scrollbar_rect
+                                ),
+                                "tabs={tabs} breadcrumbs={breadcrumbs} vscroll={vs} hscroll={hs} at {at:?}"
+                            );
+                        }
                     }
                 }
             }
@@ -362,6 +375,7 @@ mod tests {
         let host = LeafId(SplitId(0));
         let with_tabs = PaneChrome {
             tabs: true,
+            breadcrumbs: false,
             vscroll: true,
             hscroll: false,
         };
@@ -472,6 +486,7 @@ mod tests {
         let host_leaf = LeafId(SplitId(0));
         let chrome = PaneChrome {
             tabs: true,
+            breadcrumbs: false,
             vscroll: true,
             hscroll: false,
         };
@@ -520,6 +535,7 @@ mod tests {
             }
             let chrome = PaneChrome {
                 tabs: true,
+                breadcrumbs: false,
                 vscroll: true,
                 hscroll: false,
             };
@@ -606,6 +622,7 @@ mod tests {
         let root = split(SplitDirection::Vertical, leaf(0), leaf(1), 0.5, 10);
         let with_tabs = PaneChrome {
             tabs: true,
+            breadcrumbs: false,
             vscroll: false,
             hscroll: false,
         };
@@ -793,6 +810,7 @@ mod tests {
                     at,
                     PaneChrome {
                         tabs: false,
+                        breadcrumbs: false,
                         vscroll: vs,
                         hscroll: false,
                     },
@@ -829,12 +847,13 @@ mod tests {
     fn a_starved_pane_no_longer_draws_its_scrollbar_over_its_tabs() {
         use crate::view::ui::split_rendering::layout::{reference_split_layout, split_layout};
         let at = Rect::new(0, 0, 1, 1);
-        let old = reference_split_layout(at, true, true, true);
+        let old = reference_split_layout(at, true, false, true, true);
         let new = split_layout(
             LeafId(SplitId(9)),
             at,
             PaneChrome {
                 tabs: true,
+                breadcrumbs: false,
                 vscroll: true,
                 hscroll: true,
             },
@@ -1196,6 +1215,7 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
         PaneSlots {
             tabs: tab_strip(id),
             controls: live_controls(id, s.controls),
+            breadcrumbs: breadcrumb_surface(id),
             content,
             vscroll: scrollbar(id, Axis::Vertical),
             hscroll: scrollbar(id, Axis::Horizontal),
@@ -1378,6 +1398,26 @@ fn content_surface(id: LeafId) -> Node<UiMsg> {
                 Some(UiMsg::Ui(pane_wheel(id, x, y, e.delta, e.axis)))
             }),
         )
+}
+
+/// A pane's symbol breadcrumb row.
+///
+/// The breadcrumb painter records the exact rectangles occupied by labels;
+/// this surface only claims the row and reports the pressed cell. Empty row
+/// space is intentionally inert, but still must not place a text caret.
+fn breadcrumb_surface(id: LeafId) -> Node<UiMsg> {
+    gesture(row()).on(
+        GestureKind::Press,
+        Rc::new(move |e: &Event| {
+            if e.button != MouseButton::Left {
+                return None;
+            }
+            let x = e.pos.x.max(0) as u16;
+            let y = e.pos.y.max(0) as u16;
+            e.stop();
+            Some(UiMsg::Ui(UiFact::PaneBreadcrumbPress { pane: id, x, y }))
+        }),
+    )
 }
 
 /// The right-hand control cluster of a pane's strip: `[gap] > [□] [×] [trail]`.
@@ -1618,6 +1658,9 @@ pub fn tab_menu_guard(frame: Node<UiMsg>) -> Node<UiMsg> {
 pub fn tabs_key(id: LeafId) -> Key {
     Key::Pair("pane_tabs".into(), id.0 .0 as u64)
 }
+pub fn breadcrumbs_key(id: LeafId) -> Key {
+    Key::Pair("pane_breadcrumbs".into(), id.0 .0 as u64)
+}
 /// The `□` / `⧉` button at the right end of a pane's strip.
 pub fn maximize_key(id: LeafId) -> Key {
     Key::Pair("pane_maximize".into(), id.0 .0 as u64)
@@ -1636,10 +1679,11 @@ pub fn hscroll_key(id: LeafId) -> Key {
     Key::Pair("pane_hscroll".into(), id.0 .0 as u64)
 }
 
-/// Which of a pane's three chrome parts exist.
+/// Which of a pane's chrome parts exist.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PaneChrome {
     pub tabs: bool,
+    pub breadcrumbs: bool,
     pub vscroll: bool,
     pub hscroll: bool,
 }
@@ -1683,6 +1727,7 @@ impl PaneChrome {
     pub fn resolve(window: PaneChrome, pane: PaneKind) -> Self {
         PaneChrome {
             tabs: window.tabs && !pane.inner_group_leaf && !pane.suppress_chrome,
+            breadcrumbs: window.breadcrumbs && !pane.inner_group_leaf,
             vscroll: window.vscroll && pane.scrollable && !pane.terminal_live_grid,
             hscroll: window.hscroll && pane.scrollable && !pane.inner_group_leaf,
         }
@@ -1714,6 +1759,9 @@ pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> 
             .key(tabs_key(id))
             .h(cells(c.tabs))
             .children([s.tabs.flex(1), s.controls]),
+        s.breadcrumbs
+            .key(breadcrumbs_key(id))
+            .h(cells(c.breadcrumbs)),
         row().flex(1).children([
             s.content.key(content_key(id)).flex(1),
             s.vscroll.key(vscroll_key(id)).w(cells(c.vscroll)),
@@ -1737,6 +1785,7 @@ pub struct PaneSlots<M> {
     /// The right-hand control cluster, *inside* the strip. Its children carry
     /// the widths; this slot is whatever they come to.
     pub controls: Node<M>,
+    pub breadcrumbs: Node<M>,
     pub content: Node<M>,
     pub vscroll: Node<M>,
     pub hscroll: Node<M>,
@@ -1747,6 +1796,7 @@ impl<M: 'static> Default for PaneSlots<M> {
         Self {
             tabs: row(),
             controls: row(),
+            breadcrumbs: row(),
             content: row(),
             vscroll: row(),
             hscroll: row(),

@@ -16,17 +16,17 @@ use ts_rs::{Config as TsConfig, TS};
 
 use fresh_core::api::{
     ActionPopupAction, ActionPopupOptions, ActionSpec, AnimationRect, BackgroundProcessResult,
-    BufferGroupResult, BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig,
-    CompositePaneStyle, CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
-    CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, FormatterPackConfig,
-    GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
-    KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
-    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
-    ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
-    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
-    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
-    VirtualBufferResult, WindowInfo,
+    BreadcrumbItem, BufferGroupResult, BufferInfo, BufferSavedDiff, CompositeHunk,
+    CompositeLayoutConfig, CompositePaneStyle, CompositeSourceConfig, CreateCompositeBufferOptions,
+    CreateTerminalOptions, CreateVirtualBufferInExistingSplitOptions,
+    CreateVirtualBufferInSplitOptions, CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult,
+    DirEntry, FormatterPackConfig, GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition,
+    JsRange, JsTextPropertyEntry, KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk,
+    LspServerPackConfig, OverlayColorSpec, OverlayOptions, PluginAnimationEdge,
+    PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize,
+    ScrollbarMarker, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
+    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
+    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -63,6 +63,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "SplitAxis" => Some(fresh_core::api::SplitAxis::decl(&cfg)),
         "SplitPlacement" => Some(fresh_core::api::SplitPlacement::decl(&cfg)),
         "LineTarget" => Some(fresh_core::api::LineTarget::decl(&cfg)),
+        "BreadcrumbItem" => Some(BreadcrumbItem::decl(&cfg)),
         "PaneDescription" => Some(fresh_core::api::PaneDescription::decl(&cfg)),
         "WorkspaceDescription" => Some(fresh_core::api::WorkspaceDescription::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
@@ -353,6 +354,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "SplitAxis",                       // SplitWindowOptions.direction
     "SplitPlacement",                  // SplitWindowOptions.place
     "LineTarget",                      // Used by editor.setLineTargets()
+    "BreadcrumbItem",                  // Used by editor.setBreadcrumbs()
     "PaneDescription",                 // Part of WorkspaceDescription
     "WorkspaceDescription",            // Returned by editor.describeWorkspace()
     "LayoutHints",                     // Used by plugins for view transforms
@@ -1021,6 +1023,7 @@ mod tests {
             "CreateVirtualBufferInExistingSplitOptions",
             "TextPropertiesAtCursor",
             "VirtualBufferResult",
+            "BreadcrumbItem",
             "PromptSuggestion",
             "DirEntry",
             "JsDiagnostic",

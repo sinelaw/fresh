@@ -958,6 +958,7 @@ impl Editor {
             pane_rects,
             tab_layouts,
             view_line_mappings,
+            breadcrumb_hits,
             horizontal_scrollbar_areas,
         } = body.finish();
         self.shell_ui = Some(ui);
@@ -1188,6 +1189,7 @@ impl Editor {
         self.active_layout_mut().horizontal_scrollbar_areas = horizontal_scrollbar_areas;
         self.active_layout_mut().tab_layouts = tab_layouts;
         self.active_layout_mut().view_line_mappings = view_line_mappings;
+        self.active_layout_mut().breadcrumb_hits = breadcrumb_hits;
 
         // **The buffer answers where its caret is, and the layers hanging off
         // it are placed.** This is the seam the popup wave needed: the chrome's
@@ -4405,6 +4407,7 @@ impl Editor {
         self.active_window()
             .pane_chrome(crate::view::shell::splits::PaneChrome {
                 tabs: self.active_window().tab_bar_visible,
+                breadcrumbs: self.config.editor.show_breadcrumbs,
                 vscroll: self.config.editor.show_vertical_scrollbar,
                 hscroll: self.config.editor.show_horizontal_scrollbar,
             })
@@ -5658,10 +5661,12 @@ impl Editor {
         let __preview_pane_chrome =
             __win_for_preview.pane_chrome(crate::view::shell::splits::PaneChrome {
                 tabs: __win_for_preview.tab_bar_visible,
+                breadcrumbs: preview_style.cfg.show_breadcrumbs,
                 vscroll: false,
                 hscroll: false,
             });
         let __preview_metadata = &__win_for_preview.buffer_metadata;
+        let __preview_breadcrumbs = &__win_for_preview.breadcrumbs;
         let __preview_buffer_id = __win_for_preview.preview.map(|(_, b)| b);
         let __preview_event_logs = &mut __win_for_preview.event_logs;
         let __preview_composite_buffers = &mut __win_for_preview.composite_buffers;
@@ -5703,6 +5708,7 @@ impl Editor {
                     &*mgr,
                     preview_buffers,
                     __preview_metadata,
+                    __preview_breadcrumbs,
                     __preview_buffer_id,
                     __preview_event_logs,
                     __preview_composite_buffers,

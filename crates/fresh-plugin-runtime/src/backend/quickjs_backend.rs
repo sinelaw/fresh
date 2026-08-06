@@ -1577,6 +1577,23 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Replace the breadcrumb trail shown above a buffer. Each item carries
+    /// the byte position used when the user clicks it.
+    #[plugin_api(js_name = "setBreadcrumbs", ts_return = "boolean")]
+    pub fn set_breadcrumbs(
+        &self,
+        buffer_id: u32,
+        items: Vec<fresh_core::api::BreadcrumbItem>,
+    ) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetBreadcrumbs {
+                plugin_name: self.plugin_name.clone(),
+                buffer_id: buffer_id as u64,
+                items,
+            })
+            .is_ok()
+    }
+
     // === Translation ===
 
     /// Translate a string - reads plugin name from __pluginName__ global
@@ -1782,41 +1799,51 @@ impl JsEditorApi {
             .unwrap_or(0) as u32
     }
 
-    /// Get the byte offset of the start of a line (0-indexed line number)
-    /// Returns null if the line number is out of range
+    /// Get the byte offset of the start of a line (0-indexed line number).
+    /// `bufferId` defaults to the active buffer when omitted.
+    /// Returns null if the line number is out of range.
     #[plugin_api(
         async_promise,
         js_name = "getLineStartPosition",
-        ts_return = "number | null"
+        ts_raw = "getLineStartPosition(line: number, bufferId?: number): Promise<number | null>"
     )]
     #[qjs(rename = "_getLineStartPositionStart")]
-    pub fn get_line_start_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
+    pub fn get_line_start_position_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        line: u32,
+        buffer_id: rquickjs::function::Opt<u32>,
+    ) -> u64 {
         let id = self.alloc_request_id();
-        // Use buffer_id 0 for active buffer
         let _ = self
             .command_sender
             .send(PluginCommand::GetLineStartPosition {
-                buffer_id: BufferId(0),
+                buffer_id: BufferId(buffer_id.0.unwrap_or(0) as usize),
                 line,
                 request_id: id,
             });
         id
     }
 
-    /// Get the byte offset of the end of a line (0-indexed line number)
-    /// Returns the position after the last character of the line (before newline)
-    /// Returns null if the line number is out of range
+    /// Get the byte offset of the end of a line (0-indexed line number).
+    /// `bufferId` defaults to the active buffer when omitted. Returns the
+    /// position after the last character of the line (before newline), or null
+    /// if the line number is out of range.
     #[plugin_api(
         async_promise,
         js_name = "getLineEndPosition",
-        ts_return = "number | null"
+        ts_raw = "getLineEndPosition(line: number, bufferId?: number): Promise<number | null>"
     )]
     #[qjs(rename = "_getLineEndPositionStart")]
-    pub fn get_line_end_position_start(&self, _ctx: rquickjs::Ctx<'_>, line: u32) -> u64 {
+    pub fn get_line_end_position_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        line: u32,
+        buffer_id: rquickjs::function::Opt<u32>,
+    ) -> u64 {
         let id = self.alloc_request_id();
-        // Use buffer_id 0 for active buffer
         let _ = self.command_sender.send(PluginCommand::GetLineEndPosition {
-            buffer_id: BufferId(0),
+            buffer_id: BufferId(buffer_id.0.unwrap_or(0) as usize),
             line,
             request_id: id,
         });
@@ -11001,6 +11028,41 @@ mod tests {
                 assert!(request_id > 0); // Should have a valid request ID
             }
             _ => panic!("Expected GetBufferText, got {:?}", cmd),
+        }
+    }
+
+    #[test]
+    fn test_line_position_apis_target_explicit_buffer() {
+        let (mut backend, rx) = create_test_backend();
+
+        backend
+            .execute_js(
+                r#"
+            const editor = getEditor();
+            globalThis._lineStart = editor.getLineStartPosition(17, 42);
+            globalThis._lineEnd = editor.getLineEndPosition(17, 42);
+        "#,
+                "test.js",
+            )
+            .unwrap();
+
+        match rx.try_recv().unwrap() {
+            PluginCommand::GetLineStartPosition {
+                buffer_id, line, ..
+            } => {
+                assert_eq!(buffer_id, BufferId(42));
+                assert_eq!(line, 17);
+            }
+            cmd => panic!("Expected GetLineStartPosition, got {:?}", cmd),
+        }
+        match rx.try_recv().unwrap() {
+            PluginCommand::GetLineEndPosition {
+                buffer_id, line, ..
+            } => {
+                assert_eq!(buffer_id, BufferId(42));
+                assert_eq!(line, 17);
+            }
+            cmd => panic!("Expected GetLineEndPosition, got {:?}", cmd),
         }
     }
 

@@ -101,6 +101,7 @@ pub(crate) struct ContentPass {
 pub(crate) struct FrameFacts<'a> {
     pub style: RenderStyle<'a>,
     pub buffer_metadata: &'a HashMap<BufferId, BufferMetadata>,
+    pub breadcrumbs: &'a HashMap<BufferId, Vec<fresh_core::api::BreadcrumbItem>>,
     /// Buffer id of the window's single preview tab (`window.preview`), or
     /// `None`. Drives the italic "(preview)" tab styling.
     pub preview_buffer: Option<BufferId>,
@@ -178,6 +179,7 @@ pub(crate) struct PaneAreas {
     pub pane_rects: Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     pub tab_layouts: HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
     pub view_line_mappings: HashMap<LeafId, Vec<ViewLineMapping>>,
+    pub breadcrumb_hits: Vec<crate::view::ui::breadcrumbs::BreadcrumbHit>,
     /// Rect plus `max_content_width`, `thumb_start`, `thumb_end`.
     pub horizontal_scrollbar_areas: Vec<(LeafId, BufferId, usize, usize, usize)>,
 }
@@ -202,6 +204,7 @@ pub(crate) fn render_content(
     split_manager: &SplitManager,
     buffers: &mut HashMap<BufferId, EditorState>,
     buffer_metadata: &HashMap<BufferId, BufferMetadata>,
+    breadcrumbs: &HashMap<BufferId, Vec<fresh_core::api::BreadcrumbItem>>,
     preview_buffer: Option<BufferId>,
     event_logs: &mut HashMap<BufferId, EventLog>,
     composite_buffers: &mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
@@ -235,6 +238,7 @@ pub(crate) fn render_content(
     Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
     HashMap<LeafId, crate::view::ui::tabs::TabLayout>, // tab layouts per split
     HashMap<LeafId, Vec<ViewLineMapping>>,             // view line mappings for mouse clicks
+    Vec<crate::view::ui::breadcrumbs::BreadcrumbHit>,  // breadcrumb click targets
     Vec<(LeafId, BufferId, usize, usize, usize)>, // horizontal scrollbar areas (max_content_width + thumb_start + thumb_end)
 ) {
     let _span = tracing::trace_span!("render_content").entered();
@@ -246,6 +250,7 @@ pub(crate) fn render_content(
     let facts = FrameFacts {
         style,
         buffer_metadata,
+        breadcrumbs,
         preview_buffer,
         grouped_subtrees,
         pane_chrome,
@@ -275,6 +280,7 @@ pub(crate) fn render_content(
     // below and the three other layouts in this module read the same offer.
     let window_chrome = PaneChrome {
         tabs: tab_bar_visible,
+        breadcrumbs: style.cfg.show_breadcrumbs,
         vscroll: style.cfg.show_vertical_scrollbar,
         hscroll: style.cfg.show_horizontal_scrollbar,
     };
@@ -340,6 +346,7 @@ pub(crate) fn render_content(
         pane_rects,
         tab_layouts,
         view_line_mappings,
+        breadcrumb_hits,
         horizontal_scrollbar_areas,
     } = out;
     (
@@ -347,6 +354,7 @@ pub(crate) fn render_content(
         pane_rects,
         tab_layouts,
         view_line_mappings,
+        breadcrumb_hits,
         horizontal_scrollbar_areas,
     )
 }
@@ -434,6 +442,7 @@ pub(crate) fn paint_leaf(
     let FrameFacts {
         style,
         buffer_metadata,
+        breadcrumbs,
         preview_buffer,
         grouped_subtrees,
         pane_chrome: _,
@@ -472,6 +481,7 @@ pub(crate) fn paint_leaf(
         pane_rects,
         tab_layouts,
         view_line_mappings,
+        breadcrumb_hits,
         horizontal_scrollbar_areas,
         ..
     } = out;
@@ -577,6 +587,19 @@ pub(crate) fn paint_leaf(
             screen_width,
             tab_layouts,
         );
+    }
+
+    if chrome.breadcrumbs {
+        if let Some(items) = breadcrumbs.get(&buffer_id) {
+            breadcrumb_hits.extend(crate::view::ui::breadcrumbs::render_breadcrumbs(
+                buf,
+                layout.breadcrumbs_rect,
+                split_id,
+                buffer_id,
+                items,
+                theme,
+            ));
+        }
     }
 
     // For GroupTabBarOnly entries we've already rendered the tab bar;

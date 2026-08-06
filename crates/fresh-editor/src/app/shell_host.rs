@@ -415,10 +415,12 @@ fn with_grid<R>(
     // pane, before each narrows it by what it is.
     let window_chrome = PaneChrome {
         tabs: win.tab_bar_visible,
+        breadcrumbs: cfg.show_breadcrumbs,
         vscroll: cfg.show_vertical_scrollbar,
         hscroll: cfg.show_horizontal_scrollbar,
     };
     let metadata_ref = &win.buffer_metadata;
+    let breadcrumbs_ref = &win.breadcrumbs;
     let preview_buffer = win.preview.map(|(_, b)| b);
     let event_logs_mut = &mut win.event_logs;
     let grouped_ref = &win.grouped_subtrees;
@@ -436,6 +438,7 @@ fn with_grid<R>(
                 cfg,
             },
             buffer_metadata: metadata_ref,
+            breadcrumbs: breadcrumbs_ref,
             preview_buffer,
             grouped_subtrees: grouped_ref,
             pane_chrome,
@@ -2012,6 +2015,9 @@ impl Editor {
             }
             UiFact::PaneTabsPan { pane, delta } => {
                 self.active_window_mut().scroll_tab_strip(pane, delta);
+            }
+            UiFact::PaneBreadcrumbPress { pane, x, y } => {
+                self.handle_click_breadcrumb(pane, x, y);
             }
             UiFact::PaneContentPress {
                 pane,

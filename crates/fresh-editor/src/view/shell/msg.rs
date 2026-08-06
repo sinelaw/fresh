@@ -188,6 +188,17 @@ pub enum UiFact {
         delta: i32,
     },
 
+    /// A left press on one of a pane's symbol breadcrumbs.
+    ///
+    /// The rendered breadcrumb layout owns the individual item hit boxes;
+    /// this fact identifies the pane and cell so the editor can resolve the
+    /// item against the layout recorded by the same paint.
+    PaneBreadcrumbPress {
+        pane: LeafId,
+        x: u16,
+        y: u16,
+    },
+
     /// A left press on a pane's content, and which press of a run it is: one
     /// places the caret, two selects the word, three the line — or toggles a
     /// fold, when the cell is a folded line's gutter indicator.

@@ -1015,6 +1015,13 @@ pub struct Window {
     /// values plugins have pushed for individual buffers.
     pub status_bar_values: HashMap<BufferId, HashMap<String, String>>,
 
+    /// Per-buffer breadcrumb trails supplied by plugins. Entries carry their
+    /// navigation byte offset as well as the text rendered above the buffer.
+    pub breadcrumbs: HashMap<BufferId, Vec<fresh_core::api::BreadcrumbItem>>,
+    /// Plugin that last supplied each breadcrumb trail, used to clean up
+    /// chrome when that plugin is unloaded.
+    pub breadcrumb_owners: HashMap<BufferId, String>,
+
     /// Mouse drag/selection/scrollbar state for this window. Drag
     /// targets reference per-window LeafIds and BufferIds.
     pub(crate) mouse_state: crate::app::types::MouseState,
@@ -2402,6 +2409,8 @@ impl Window {
             exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),
+            breadcrumbs: HashMap::new(),
+            breadcrumb_owners: HashMap::new(),
             mouse_state: crate::app::types::MouseState::default(),
             key_context: crate::input::keybindings::KeyContext::Normal,
             chord_state: Vec::new(),
@@ -3023,7 +3032,12 @@ impl Window {
                 scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
                 terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
             };
-            (leaf, PaneChrome::resolve(window, kind))
+            let mut chrome = PaneChrome::resolve(window, kind);
+            chrome.breadcrumbs &= self
+                .breadcrumbs
+                .get(&buffer)
+                .is_some_and(|items| !items.is_empty());
+            (leaf, chrome)
         };
         for (leaf, buffer) in mgr.visible_leaves() {
             let (k, v) = resolve(leaf, buffer, false);
