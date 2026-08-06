@@ -73,7 +73,9 @@ pub(crate) struct GrepProjectRequest {
     /// Open, clean buffers keyed by path — attributed to their buffer id so
     /// plugins can jump straight to the buffer, but read from disk.
     pub clean_buffers: HashMap<PathBuf, BufferId>,
-    /// Flips when a newer grep from the same plugin supersedes this one.
+    /// Flips when a newer grep from the same plugin supersedes this one, at
+    /// which point the request settles as an error rather than reporting the
+    /// partial results it had reached.
     pub cancel: Arc<AtomicBool>,
 }
 
@@ -115,6 +117,9 @@ pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(8));
         let mut joins: Vec<tokio::task::JoinHandle<Vec<GrepMatch>>> = Vec::new();
         let mut results: Vec<GrepMatch> = Vec::new();
+        // Set when the walk stops because `max_results` was reached, which is a
+        // complete answer — as opposed to `cancel` being flipped from outside.
+        let mut enough_results = false;
 
         while let Some(file_path) = path_rx.recv().await {
             if cancel.load(Ordering::Relaxed) {
@@ -154,6 +159,10 @@ pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
             if joins.len() >= 32 {
                 drain_joins(&mut joins, &mut results, max_results).await;
                 if results.len() >= max_results {
+                    // Reusing `cancel` to stop the walk means the flag no
+                    // longer distinguishes "superseded" from "we have all the
+                    // matches we were asked for" — this remembers which.
+                    enough_results = true;
                     cancel.store(true, Ordering::Relaxed);
                     break;
                 }
@@ -189,9 +198,21 @@ pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
             }
         }
 
+        // A superseded request stopped mid-walk, so `results` is an arbitrary
+        // prefix of the real answer. Returning it would be indistinguishable
+        // from "the project contains exactly these matches" — the caller must
+        // be told instead. It still settles either way, so the `await` never
+        // dangles. Hitting `max_results` is not that case: the walk stopped
+        // because the answer was complete.
+        if cancel.load(Ordering::Relaxed) && !enough_results {
+            cap.settle(
+                callback_id,
+                Err("grepProject superseded by a newer call from this plugin".to_string()),
+            );
+            return;
+        }
+
         results.truncate(max_results);
-        // A superseded request still settles — with whatever it had found —
-        // so the plugin's `await` never dangles.
         let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
         cap.settle(callback_id, Ok(json));
     });
@@ -409,4 +430,78 @@ async fn load_git_baseline(
         return Err(format!("git show failed: {}", show.stderr.trim()));
     }
     Ok(show.stdout)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::filesystem::StdFileSystem;
+
+    fn opts() -> FileSearchOptions {
+        FileSearchOptions {
+            fixed_string: true,
+            case_sensitive: true,
+            whole_word: false,
+            max_matches: 100,
+        }
+    }
+
+    fn run_grep(root: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
+        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        grep_project(
+            OffLoop {
+                filesystem: Arc::new(StdFileSystem),
+                runtime,
+                sender: tx,
+            },
+            GrepProjectRequest {
+                pattern: "NEEDLE".to_string(),
+                opts: opts(),
+                regex: regex::bytes::Regex::new("NEEDLE").unwrap(),
+                max_results: 100,
+                root,
+                ignored_dirs: &[],
+                callback_id: JsCallbackId::new(1),
+                dirty_plans: HashMap::new(),
+                clean_buffers: HashMap::new(),
+                cancel,
+            },
+        );
+        match rx.recv().expect("the request must settle exactly once") {
+            AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => result,
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    /// A grep that runs to completion reports its matches.
+    #[test]
+    fn completed_grep_returns_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "NEEDLE here\n").unwrap();
+
+        let result = run_grep(dir.path().to_path_buf(), Arc::new(AtomicBool::new(false)))
+            .expect("an uncancelled grep should resolve");
+        assert!(
+            result.contains("a.txt"),
+            "the match should be reported: {result}"
+        );
+    }
+
+    /// A superseded grep stopped partway, so the matches it happened to collect
+    /// are a prefix of the answer, not the answer. Reporting them as success
+    /// would be indistinguishable from "this is all there is" — the caller has
+    /// to be able to tell, so it settles as an error instead.
+    #[test]
+    fn superseded_grep_reports_an_error_rather_than_partial_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "NEEDLE here\n").unwrap();
+
+        let err = run_grep(dir.path().to_path_buf(), Arc::new(AtomicBool::new(true)))
+            .expect_err("a superseded grep must not resolve with partial results");
+        assert!(
+            err.contains("superseded"),
+            "the error should say why: {err}"
+        );
+    }
 }

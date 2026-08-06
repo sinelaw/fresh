@@ -7047,6 +7047,7 @@ impl JsEditorApi {
     ) -> u64 {
         let id = self.alloc_request_id();
         let _ = self.command_sender.send(PluginCommand::GrepProject {
+            plugin_name: self.plugin_name.clone(),
             pattern,
             fixed_string: fixed_string.unwrap_or(true),
             case_sensitive: case_sensitive.unwrap_or(true),

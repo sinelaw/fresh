@@ -737,10 +737,6 @@ impl Editor {
         std::mem::replace(&mut self.active_window_mut().authority, placeholder)
     }
 
-    /// The editor's current working directory — the active window's
-    /// project root. Derived, not stored: there is no separate
-    /// `working_dir` field that could drift out of sync with the active
-    /// window (issue #2056). Individual buffers may live elsewhere.
     /// Run a blocking effect (filesystem writes/deletes, teardown I/O) off
     /// the editor thread. This is the escape hatch for the "mutation now,
     /// effect off-loop" decomposition: the caller snapshots whatever the
@@ -769,6 +765,10 @@ impl Editor {
         }
     }
 
+    /// The editor's current working directory — the active window's project
+    /// root. Derived, not stored: there is no separate `working_dir` field that
+    /// could drift out of sync with the active window (issue #2056).
+    /// Individual buffers may live elsewhere.
     pub fn working_dir(&self) -> &std::path::Path {
         &self.active_window().root
     }
