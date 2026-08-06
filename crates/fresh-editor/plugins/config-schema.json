@@ -54,6 +54,7 @@
         "screensaver_idle_minutes": 5,
         "menu_bar_mnemonics": true,
         "show_tab_bar": true,
+        "show_breadcrumbs": true,
         "show_status_bar": true,
         "status_bar": {
           "left": [
@@ -513,6 +514,12 @@
         },
         "show_tab_bar": {
           "description": "Whether the tab bar is visible by default.\nThe tab bar shows open files in each split pane.\nCan be toggled at runtime via command palette or keybinding.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "show_breadcrumbs": {
+          "description": "Whether LSP/plugin-provided symbol breadcrumbs are shown below each\nsplit's tab bar. The row is only reserved when a trail is available.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
