@@ -1129,8 +1129,8 @@ impl Editor {
             PluginCommand::ShowBuffer { buffer_id } => {
                 self.handle_show_buffer(buffer_id);
             }
-            PluginCommand::CloseBuffer { buffer_id } => {
-                self.handle_close_buffer(buffer_id);
+            PluginCommand::CloseBuffer { buffer_id, force } => {
+                self.handle_close_buffer(buffer_id, force);
             }
             PluginCommand::CloseOtherBuffersInSplit {
                 buffer_id,

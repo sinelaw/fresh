@@ -4076,7 +4076,17 @@ pub enum PluginCommand {
     },
 
     /// Close a buffer and remove it from all splits
-    CloseBuffer { buffer_id: BufferId },
+    CloseBuffer {
+        buffer_id: BufferId,
+        /// Discard unsaved changes instead of refusing.
+        ///
+        /// Without this a modified buffer is left open — correct for a
+        /// user-facing close (their edits are not the plugin's to throw
+        /// away), wrong for a plugin disposing of a scratch buffer it wrote
+        /// itself and never intends to save.
+        #[serde(default)]
+        force: bool,
+    },
 
     /// Close all buffers in the split except the specified one
     CloseOtherBuffersInSplit {

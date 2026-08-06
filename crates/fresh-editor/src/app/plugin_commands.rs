@@ -1592,8 +1592,15 @@ impl Editor {
     }
 
     /// Handle CloseBuffer command
-    pub(super) fn handle_close_buffer(&mut self, buffer_id: BufferId) {
-        match self.close_buffer(buffer_id) {
+    pub(super) fn handle_close_buffer(&mut self, buffer_id: BufferId, force: bool) {
+        // `force` skips the unsaved-changes check. A plugin closing a scratch
+        // buffer it authored is discarding its own writes, not the user's.
+        let result = if force {
+            self.force_close_buffer(buffer_id)
+        } else {
+            self.close_buffer(buffer_id)
+        };
+        match result {
             Ok(()) => {
                 tracing::info!("Closed buffer {:?}", buffer_id);
             }

@@ -1920,13 +1920,31 @@ impl JsEditorApi {
 
     // === File Operations ===
 
-    /// Open a file, optionally at a specific line/column
-    pub fn open_file(&self, path: String, line: Option<u32>, column: Option<u32>) -> bool {
+    /// Open a file, optionally at a specific line/column.
+    ///
+    /// `editor.openFile(path)` is the whole request most of the time.
+    pub fn open_file(
+        &self,
+        path: String,
+        line: rquickjs::function::Opt<Option<u32>>,
+        column: rquickjs::function::Opt<Option<u32>>,
+    ) -> bool {
+        // `Opt<Option<T>>` accepts all three forms callers actually write:
+        // omitted, explicit `null`, and a number.
+        //
+        // A bare `Option<T>` is optional in the *declaration* but still
+        // required at the bridge, so `openFile(path)` failed with "Error
+        // calling function with 1 argument(s) while 3 where expected" — an
+        // arity error naming no function, from a call whose own signature
+        // said the trailing arguments were optional. A bare `Opt<T>` fixes
+        // that but breaks the other direction: `openFile(path, null, null)`,
+        // which is what every existing caller writes, then fails converting
+        // null into a number. Only the nested form accepts both.
         self.command_sender
             .send(PluginCommand::OpenFileAtLocation {
                 path: PathBuf::from(path),
-                line: line.map(|l| l as usize),
-                column: column.map(|c| c as usize),
+                line: line.0.flatten().map(|l| l as usize),
+                column: column.0.flatten().map(|c| c as usize),
             })
             .is_ok()
     }
@@ -2030,11 +2048,33 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Close a buffer
-    pub fn close_buffer(&self, buffer_id: u32) -> bool {
+    /// Close a buffer. Pass `force: true` to discard unsaved changes.
+    ///
+    /// **A modified buffer is not closed** unless `force` is set — the user's
+    /// unsaved edits are not a plugin's to throw away. A scratch buffer the
+    /// plugin created and filled itself counts as modified, so disposing of
+    /// one needs `closeBuffer(id, true)`.
+    ///
+    /// The returned boolean is **"the request was delivered"**, not "the
+    /// buffer closed": this call is fire-and-forget, and the editor decides
+    /// afterwards. A refusal is logged editor-side but is invisible here, so
+    /// confirm with `listBuffers()` (after `await editor.flush()`) when it
+    /// matters. Without `force` the sequence that used to be required was
+    /// delete-the-contents, `saveBufferToPath`, then close — three
+    /// round-trips, the first two of which returned `true` while achieving
+    /// nothing.
+    pub fn close_buffer(
+        &self,
+        buffer_id: u32,
+        force: rquickjs::function::Opt<Option<bool>>,
+    ) -> bool {
+        // Nested `Opt<Option<_>>` so omitted, `null`, and `true`/`false` all
+        // work — see `open_file` for why the two simpler spellings each
+        // reject one of the forms callers write.
         self.command_sender
             .send(PluginCommand::CloseBuffer {
                 buffer_id: BufferId(buffer_id as usize),
+                force: force.0.flatten().unwrap_or(false),
             })
             .is_ok()
     }
@@ -8732,10 +8772,13 @@ impl QuickJsBackend {
                     });
             }
 
-            // Close virtual buffers created by this plugin
+            // Close virtual buffers created by this plugin. Forced: a panel
+            // the plugin wrote into counts as modified, and without this an
+            // unloaded plugin left its panels behind — one more per reload.
             for buffer_id in &tracked.virtual_buffer_ids {
                 let _ = self.command_sender.send(PluginCommand::CloseBuffer {
                     buffer_id: *buffer_id,
+                    force: true,
                 });
             }
 
@@ -9968,25 +10011,39 @@ mod tests {
     fn test_api_open_file() {
         let (mut backend, rx) = create_test_backend();
 
-        // openFile takes (path, line?, column?)
+        // All three forms a caller actually writes must work: the trailing
+        // arguments omitted, passed as explicit `null`, and passed as
+        // numbers. Omitting them used to be an arity error (an exception
+        // naming no function), and the obvious fix for that — a plain
+        // `Opt<u32>` — breaks `null`, which is what every existing caller
+        // passes. Both directions are pinned here.
         backend
             .execute_js(
                 r#"
             const editor = getEditor();
-            editor.openFile("/path/to/file.txt", null, null);
+            editor.openFile("/omitted.txt");
+            editor.openFile("/explicit-null.txt", null, null);
+            editor.openFile("/with-position.txt", 12, 3);
         "#,
                 "test.js",
             )
             .unwrap();
 
-        let cmd = rx.try_recv().unwrap();
-        match cmd {
-            PluginCommand::OpenFileAtLocation { path, line, column } => {
-                assert_eq!(path.to_str().unwrap(), "/path/to/file.txt");
-                assert!(line.is_none());
-                assert!(column.is_none());
+        let expected = [
+            ("/omitted.txt", None, None),
+            ("/explicit-null.txt", None, None),
+            ("/with-position.txt", Some(12), Some(3)),
+        ];
+        for (want_path, want_line, want_col) in expected {
+            let cmd = rx.try_recv().unwrap();
+            match cmd {
+                PluginCommand::OpenFileAtLocation { path, line, column } => {
+                    assert_eq!(path.to_str().unwrap(), want_path);
+                    assert_eq!(line, want_line, "line for {want_path}");
+                    assert_eq!(column, want_col, "column for {want_path}");
+                }
+                _ => panic!("Expected OpenFileAtLocation, got {:?}", cmd),
             }
-            _ => panic!("Expected OpenFileAtLocation, got {:?}", cmd),
         }
     }
 
@@ -11304,8 +11361,10 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            PluginCommand::CloseBuffer { buffer_id } => {
+            PluginCommand::CloseBuffer { buffer_id, force } => {
                 assert_eq!(buffer_id.0, 3);
+                // The one-argument call must not silently discard edits.
+                assert!(!force, "force defaults off when the caller omits it");
             }
             _ => panic!("Expected CloseBuffer, got {:?}", cmd),
         }
