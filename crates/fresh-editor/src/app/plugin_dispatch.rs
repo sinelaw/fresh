@@ -6438,7 +6438,7 @@ impl VariantNameSink {
         };
         // Errors are the expected exit: the sink aborts formatting as soon as
         // the variant name ends, so the `Err` is the success path here.
-        let _ = write!(sink, "{:?}", command);
+        let _stopped_at_name_end = write!(sink, "{:?}", command);
         sink
     }
 
