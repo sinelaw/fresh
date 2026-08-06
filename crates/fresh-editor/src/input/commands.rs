@@ -188,18 +188,24 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[],
         custom_contexts: &[],
     },
+    // Saving is application-wide, which is why `is_application_wide_action`
+    // lets Ctrl+S through from the file explorer. Focusing the tree doesn't
+    // change which buffer is active, so the save lands on the last focused
+    // buffer — the palette offers it there for the same reason the keybinding
+    // works there. Not in a terminal: Ctrl+S goes to the PTY, and the active
+    // buffer in that context is the terminal itself.
     CommandDef {
         name_key: "cmd.save_file",
         desc_key: "cmd.save_file_desc",
         action: || Action::Save,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.save_file_as",
         desc_key: "cmd.save_file_as_desc",
         action: || Action::SaveAs,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer],
         custom_contexts: &[],
     },
     CommandDef {

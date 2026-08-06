@@ -382,6 +382,43 @@ fn test_palette_runs_focus_independent_command_while_explorer_focused() {
     );
 }
 
+/// Saving is the keymap's application-wide exception — Ctrl+S already saves
+/// from the explorer — so the palette offers it there too, and it lands on the
+/// buffer that had focus before the tree took it.
+#[test]
+fn test_palette_saves_last_focused_buffer_from_explorer() {
+    let mut harness = EditorTestHarness::with_temp_project(120, 40).unwrap();
+    let project_root = harness.project_dir().unwrap();
+    let file = project_root.join("saveme.txt");
+    fs::write(&file, "before\n").unwrap();
+
+    harness.open_file(&file).unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+    // The tab carries the modified marker while the edit is unsaved.
+    harness.assert_screen_contains("saveme.txt*");
+
+    harness.editor_mut().focus_file_explorer();
+    let _ = harness.editor_mut().process_async_messages();
+    harness.render().unwrap();
+
+    let screen = run_from_palette(&mut harness, "save file", "Save File");
+    assert!(
+        !screen.contains("not available in current context"),
+        "Save File must not be refused in the explorer — Ctrl+S works there\nScreen:\n{screen}"
+    );
+
+    // The marker clears: the save reached the buffer that had focus before the
+    // tree did, not the tree's selection.
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("saveme.txt*"))
+        .expect("the modified marker should clear once the buffer is saved");
+    assert!(
+        fs::read_to_string(&file).unwrap().contains("EDITED"),
+        "the edit should have reached disk"
+    );
+}
+
 /// The other half of the rule: the explorer owns the keyboard, so commands that
 /// act on the focused buffer's cursor are *not* offered through it.
 #[test]
