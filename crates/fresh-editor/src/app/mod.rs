@@ -61,6 +61,8 @@ mod plugin_commands;
 mod plugin_dispatch;
 #[cfg(feature = "plugins")]
 mod plugin_offloop;
+#[cfg(feature = "plugins")]
+pub(crate) mod plugin_timers;
 mod popup_actions;
 mod popup_dialogs;
 mod popup_overlay_actions;
@@ -171,6 +173,14 @@ pub fn editor_tick(
         needs_render = true;
     }
     if editor.check_completion_trigger_timer() {
+        needs_render = true;
+    }
+    // Plugin `setInterval` / `setTimeout` fires from the tick rather than
+    // from a promise chain the plugin has to keep alive itself, so a throw in
+    // one handler costs one tick instead of ending the schedule, and unload
+    // can cancel it.
+    #[cfg(feature = "plugins")]
+    if editor.check_plugin_timers() {
         needs_render = true;
     }
     editor.active_window_mut().check_diagnostic_pull_timer();
@@ -950,6 +960,14 @@ pub struct Editor {
     /// request supersedes the old one rather than queueing behind it.
     #[cfg(feature = "plugins")]
     grep_project_cancel: std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+
+    /// Live `editor.setInterval` / `setTimeout` timers, checked once per
+    /// tick by `check_plugin_timers`. Held on the editor rather than in the
+    /// plugin runtime on purpose: the editor's tick is what runs whether or
+    /// not any JS is awaiting, which is the property that makes a timer fire
+    /// the same way regardless of where it was created.
+    #[cfg(feature = "plugins")]
+    plugin_timers: Vec<crate::app::plugin_timers::PluginTimer>,
 
     /// Registered diff baselines (registerDiffBaseline plugin API family).
     /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.

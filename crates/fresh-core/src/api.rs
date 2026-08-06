@@ -504,6 +504,17 @@ pub struct BufferInfo {
     #[serde(serialize_with = "serialize_path")]
     #[ts(type = "string")]
     pub path: Option<PathBuf>,
+    /// The buffer's display name — what the tab shows.
+    ///
+    /// For a file buffer this is the filename (or project-relative path). For
+    /// a **virtual buffer it is the `name` you passed to
+    /// `createVirtualBuffer`**, which is how a plugin finds its own panel
+    /// again: `listBuffers().find(b => b.is_virtual && b.name === "…")`.
+    /// Before this field existed the only handle was
+    /// `is_virtual && path === ""`, which cannot tell two plugins' panels
+    /// apart — or two panels of your own.
+    #[serde(default)]
+    pub name: String,
     /// Whether the buffer has been modified
     pub modified: bool,
     /// Length of buffer in bytes
@@ -4599,6 +4610,72 @@ pub enum PluginCommand {
         callback_id: JsCallbackId,
     },
 
+    /// Register a repeating (or one-shot) host-driven timer that invokes a
+    /// plugin handler by name.
+    ///
+    /// Distinct from `Delay` in the one way that matters: `Delay` resolves a
+    /// promise *inside* the caller's realm, so the code that resumes is
+    /// whatever was awaiting it — and if nothing in that realm ever awaits
+    /// again the chain stops. A timer is driven from the editor's own tick
+    /// and dispatches `PluginAction(handler_name)`, the same path a command
+    /// or keybinding takes, so it fires no matter where it was created from.
+    SetPluginTimer {
+        /// Id minted by the runtime, used to cancel.
+        #[ts(type = "number")]
+        timer_id: u64,
+        /// Owning plugin, so unload can cancel what it left running.
+        plugin_name: String,
+        /// Global function name to invoke on each fire.
+        handler_name: String,
+        /// Period (repeating) or delay (one-shot), in milliseconds.
+        #[ts(type = "number")]
+        interval_ms: u64,
+        /// `false` for a one-shot timer, which cancels itself after firing.
+        repeat: bool,
+    },
+
+    /// Cancel a timer registered by `SetPluginTimer`. Unknown ids are
+    /// ignored — cancelling twice, or cancelling a one-shot that already
+    /// fired, is not an error.
+    ClearPluginTimer {
+        #[ts(type = "number")]
+        timer_id: u64,
+    },
+
+    /// Re-read `~/.config/fresh/init.ts` and run it, exactly as the
+    /// "init: Reload" palette command does.
+    ///
+    /// The runtime's hot-reload semantics drop the prior init.ts's commands,
+    /// handlers, event subscriptions and settings before the new source runs,
+    /// so this is the whole author→reload→test loop in one call. Answers with
+    /// `{ ok, error }` — a syntax error in the file is reported, not thrown.
+    ReloadInit {
+        /// Callback ID for async response.
+        callback_id: JsCallbackId,
+    },
+
+    /// Run a registered command by its palette name — the same dispatch the
+    /// command palette performs when the user picks that row.
+    ///
+    /// Built-in and plugin commands both resolve; plugin commands win on a
+    /// name collision, matching the palette. Answers with `{ ok, error }`:
+    /// `ok: false` when no command carries that name, so a caller can tell
+    /// "not registered" from "ran and did nothing".
+    RunEditorCommand {
+        /// Exact command name as it appears in the palette.
+        name: String,
+        /// Callback ID for async response.
+        callback_id: JsCallbackId,
+    },
+
+    /// List every registered command (built-in + plugin) with the metadata
+    /// the palette shows. Lets a plugin author confirm from a script that
+    /// their `registerCommand` actually landed.
+    ListEditorCommands {
+        /// Callback ID for async response (JSON array of command info).
+        callback_id: JsCallbackId,
+    },
+
     /// Reload the theme registry from disk
     /// Call this after installing a theme package or saving a new theme.
     /// If `apply_theme` is set, apply that theme immediately after reloading.
@@ -5502,10 +5579,23 @@ pub struct JsTextPropertyEntry {
     #[serde(default)]
     #[ts(optional)]
     pub inline_overlays: Option<Vec<crate::text_property::InlineOverlay>>,
+    /// Pad this entry's text with spaces to this many columns when drawing.
+    ///
+    /// **Render-only**: the padding is applied at draw time, so
+    /// `getBufferText()` returns the unpadded text you supplied. Column
+    /// alignment cannot be checked by reading the buffer back — if you need
+    /// that, embed real spaces with `padEnd` instead.
+    ///
     /// See `TextPropertyEntry::pad_to_chars`.
     #[serde(default)]
     #[ts(optional)]
     pub pad_to_chars: Option<u32>,
+    /// Truncate this entry's text to at most this many columns when drawing,
+    /// with an ellipsis when the budget allows one.
+    ///
+    /// **Render-only**, like `padToChars`: `getBufferText()` returns the full
+    /// untruncated text.
+    ///
     /// See `TextPropertyEntry::truncate_to_chars`.
     #[serde(default)]
     #[ts(optional)]
@@ -7066,6 +7156,7 @@ mod tests {
             let buffer_info = BufferInfo {
                 id: BufferId(1),
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
+                name: "file.txt".to_string(),
                 modified: true,
                 length: 100,
                 line_count: Some(1),
@@ -7115,6 +7206,7 @@ mod tests {
                 BufferInfo {
                     id: BufferId(1),
                     path: Some(std::path::PathBuf::from("/file1.txt")),
+                    name: "file1.txt".to_string(),
                     modified: false,
                     length: 50,
                     line_count: Some(1),
@@ -7134,6 +7226,7 @@ mod tests {
                 BufferInfo {
                     id: BufferId(2),
                     path: Some(std::path::PathBuf::from("/file2.txt")),
+                    name: "file2.txt".to_string(),
                     modified: true,
                     length: 100,
                     line_count: Some(1),
@@ -7153,6 +7246,9 @@ mod tests {
                 BufferInfo {
                     id: BufferId(3),
                     path: None,
+                    // A virtual buffer: no path, but it still has the name it
+                    // was created with — which is the whole point of the field.
+                    name: "Scratch Panel".to_string(),
                     modified: false,
                     length: 0,
                     line_count: Some(1),

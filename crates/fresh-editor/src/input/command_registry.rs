@@ -454,6 +454,33 @@ impl CommandRegistry {
             .find(|c| c.name == name)
             .cloned()
     }
+
+    /// Resolve the name a *user* would type — what the palette displays —
+    /// to the command behind it.
+    ///
+    /// The palette shows `get_localized_name()`, which for a plugin command
+    /// registered under a `%key` is the translated string, not the key. A
+    /// caller naming a command from outside (a script, `fresh --cmd command
+    /// run`) only ever saw the displayed form, so that is matched first;
+    /// the raw registered name is accepted too, because that is what the
+    /// plugin's own source says. Case-insensitive display match is the last
+    /// resort, so `"pr dashboard"` finds `"PR Dashboard"`.
+    ///
+    /// Plugin commands shadow built-ins on a collision, matching `find_by_name`
+    /// and the palette's own precedence.
+    pub fn resolve_by_display_name(&self, name: &str) -> Option<Command> {
+        let all = self.get_all();
+        // Plugin commands are appended after built-ins by `get_all`, so
+        // scanning from the end gives them precedence on a name collision.
+        let find = |pred: &dyn Fn(&Command) -> bool| all.iter().rev().find(|c| pred(c)).cloned();
+
+        find(&|c: &Command| c.get_localized_name() == name)
+            .or_else(|| find(&|c: &Command| c.name == name))
+            .or_else(|| {
+                let lower = name.to_lowercase();
+                find(&|c: &Command| c.get_localized_name().to_lowercase() == lower)
+            })
+    }
 }
 
 impl Default for CommandRegistry {

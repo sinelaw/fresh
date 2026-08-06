@@ -655,6 +655,8 @@ impl Editor {
             #[cfg(feature = "plugins")]
             grep_project_cancel: std::collections::HashMap::new(),
             #[cfg(feature = "plugins")]
+            plugin_timers: Vec::new(),
+            #[cfg(feature = "plugins")]
             diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
             #[cfg(feature = "plugins")]
             next_diff_baseline_id: 1,
@@ -1605,7 +1607,13 @@ impl Editor {
 
     /// Auto-load `~/.config/fresh/init.ts` if present, through the existing
     /// plugin pipeline under the stable name `crate::init_script::INIT_PLUGIN_NAME`.
-    pub fn load_init_script(&mut self, enabled: bool) {
+    ///
+    /// Returns what happened, so a caller that has someone to answer —
+    /// `editor.reloadInit()` from a script, and through it
+    /// `fresh --cmd init reload` — can report the failure rather than only
+    /// logging it. The interactive callers ignore the value; for them the
+    /// status message this already sets is the report.
+    pub fn load_init_script(&mut self, enabled: bool) -> crate::init_script::InitOutcome {
         use crate::init_script::{
             check, decide_load, describe, record_success, refresh_types_scaffolding, CheckSeverity,
             InitOutcome, LoadDecision,
@@ -1667,7 +1675,7 @@ impl Editor {
         };
 
         let summary = describe(&outcome);
-        match outcome {
+        match &outcome {
             InitOutcome::NotFound | InitOutcome::Disabled => tracing::debug!("{}", summary),
             InitOutcome::Loaded => tracing::info!("{}", summary),
             InitOutcome::CrashFused { .. } | InitOutcome::Failed { .. } => {
@@ -1675,6 +1683,7 @@ impl Editor {
                 self.set_status_message(summary);
             }
         }
+        outcome
     }
 
     /// Non-blocking variant of [`Self::load_init_script`] for the TUI

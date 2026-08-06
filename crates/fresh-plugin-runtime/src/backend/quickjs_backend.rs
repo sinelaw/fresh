@@ -685,6 +685,10 @@ pub struct PluginTrackedState {
     /// `editor.watchPath`. Cleaned up by sending UnwatchPath on
     /// plugin unload.
     pub watch_handles: Vec<u64>,
+    /// Timer ids from `editor.setInterval` / `setTimeout`. Cancelled on
+    /// unload, so a hot-reload during plugin development doesn't leave the
+    /// previous copy's timers ticking against the new one.
+    pub timer_ids: Vec<u64>,
 }
 
 /// Type alias for the shared async resource owner map.
@@ -5003,24 +5007,60 @@ impl JsEditorApi {
     /// already active. Errors (id not found) are logged on the
     /// editor side; the JS caller can verify by reading
     /// `activeWindow()` after.
-    pub fn set_active_window(&self, id: u64) -> bool {
+    ///
+    /// **Not every id you can read is a window id.** The orchestrator's
+    /// `listWorkspaces()` reports a *negative* `windowId` for a workspace it
+    /// discovered on disk but has never activated — there is no window yet,
+    /// so the negative value is a placeholder, not a handle. Passing one here
+    /// returns `false`; to open such a workspace use
+    /// `getPluginApi("orchestrator").focusWorkspace(workspaceId)`, which
+    /// attaches a session at the worktree first.
+    ///
+    /// Returns `false` for any non-positive id rather than throwing. It used
+    /// to be declared as an unsigned integer, so a negative id failed inside
+    /// the JS→Rust conversion with `Error converting from js 'f64' into type
+    /// 'u64': Underflow` — an exception, from a line that looked fine, naming
+    /// nothing the caller had written.
+    pub fn set_active_window(&self, id: i64) -> bool {
+        let Some(id) = Self::window_id_arg(id, "setActiveWindow") else {
+            return false;
+        };
         self.command_sender
-            .send(PluginCommand::SetActiveWindow {
-                id: fresh_core::WindowId(id),
-            })
+            .send(PluginCommand::SetActiveWindow { id })
             .is_ok()
+    }
+
+    /// Validate a JS-supplied window id.
+    ///
+    /// Shared by the two `setActiveWindow*` entry points so they cannot
+    /// disagree about what a negative id means.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn window_id_arg(id: i64, api: &str) -> Option<fresh_core::WindowId> {
+        if id > 0 {
+            return Some(fresh_core::WindowId(id as u64));
+        }
+        tracing::warn!(
+            "{api}: {id} is not a window id. Negative ids come from \
+             listWorkspaces() for workspaces that have never been activated \
+             (no window exists yet) — open those with the orchestrator's \
+             focusWorkspace(workspaceId) instead."
+        );
+        None
     }
 
     /// Switch the active window with a directional wipe on the
     /// incoming content. `from_edge`: "top" | "bottom" | "left" |
     /// "right". See `PluginCommand::SetActiveWindowAnimated`.
+    ///
+    /// Same id rules as `setActiveWindow`: a non-positive id returns `false`.
     #[qjs(rename = "setActiveWindowAnimated")]
-    pub fn set_active_window_animated(&self, id: u64, from_edge: String) -> bool {
+    pub fn set_active_window_animated(&self, id: i64, from_edge: String) -> bool {
+        let Some(id) = Self::window_id_arg(id, "setActiveWindowAnimated") else {
+            return false;
+        };
         self.command_sender
-            .send(PluginCommand::SetActiveWindowAnimated {
-                id: fresh_core::WindowId(id),
-                from_edge,
-            })
+            .send(PluginCommand::SetActiveWindowAnimated { id, from_edge })
             .is_ok()
     }
 
@@ -6580,6 +6620,26 @@ impl JsEditorApi {
 
     /// Spawn a process (async, returns request_id)
     ///
+    /// **No shell is involved.** `command` is executed directly, so quoting,
+    /// globbing, `|`, `&&`, `>` and `$VAR` are not interpreted — pass the
+    /// program and its arguments already split:
+    ///
+    /// ```js
+    /// await editor.spawnProcess("gh", ["api", "graphql", "-f", query], repoDir);
+    /// ```
+    ///
+    /// Wrapping the call in `/bin/sh -lc "…"` to get shell behaviour is
+    /// usually a mistake: a login shell sources the user's profile, which is
+    /// slow and can block outright.
+    ///
+    /// The child inherits the **editor's** environment, including `PATH`, so
+    /// `git`, `gh` and anything else the user can run from their shell
+    /// resolves by bare name — no absolute paths needed.
+    ///
+    /// `cwd` is the third argument; without it the child inherits the
+    /// editor's working directory, which is not necessarily the workspace you
+    /// meant.
+    ///
     /// Optional 4th argument `stdoutTo: string` pipes the child's stdout
     /// directly into the named file instead of buffering it. The
     /// resolved `SpawnResult.stdout` is empty in that case; the bytes
@@ -7019,7 +7079,160 @@ impl JsEditorApi {
             .send(PluginCommand::ReleaseDiffBaseline { baseline_id });
     }
 
+    /// Run `handlerName` every `intervalMs` milliseconds until cancelled.
+    /// Returns a timer id for `clearInterval`.
+    ///
+    /// The alternative — a detached `while (alive) { await editor.delay(ms);
+    /// … }` loop — does work, and the bundled dashboard plugin uses one. But
+    /// it puts three obligations on you that a timer discharges for free:
+    ///
+    /// 1. **A throw anywhere in the loop body ends it, silently.** The loop
+    ///    is a detached async function, so the rejection has nowhere to
+    ///    surface; the panel simply stops updating, with nothing in the log
+    ///    pointing at why. Every `await` inside must be individually
+    ///    guarded. A timer handler's throw is caught and logged by the host,
+    ///    and the *next* tick still fires.
+    /// 2. **You must cancel it yourself.** A loop keeps running after its
+    ///    plugin is unloaded or reloaded until its own guard notices, so it
+    ///    needs a liveness check that survives a reload — an identity check
+    ///    (`myBufferId === currentBufferId`), not a boolean, or a reopened
+    ///    panel ends up with two loops. Timers are cancelled on unload.
+    /// 3. **The first iteration is one period late** unless you also do the
+    ///    work once before entering the loop.
+    ///
+    /// A loop is still the better shape when each iteration's decision
+    /// depends on the last one's result, or when you want a single ticker
+    /// driving many items on their own schedules (again: see dashboard.ts,
+    /// which ticks at 1s and re-runs a section only once its own TTL has
+    /// expired, so cost scales with the sum of the sections' rates rather
+    /// than tick-rate × section-count).
+    ///
+    /// The handler is named, not passed as a function, for the same reason
+    /// `registerCommand` takes a name: the host invokes it by looking it up
+    /// on `globalThis`. Declare it with `registerHandler("myTick", fn)`.
+    ///
+    /// The handler may be `async`; a fire is not awaited, and a slow handler
+    /// does not delay the editor. Ticks are *not* queued — if a fire is
+    /// still outstanding when the next is due, the next simply happens, so
+    /// guard re-entrancy yourself (`if (inFlight) return;`) when a tick can
+    /// outlast its period.
+    ///
+    /// Timers are cancelled automatically when the owning plugin is unloaded
+    /// or reloaded, so a hot-reload during development does not leave the
+    /// previous copy ticking alongside the new one.
+    ///
+    /// `intervalMs` is clamped to a floor (see `MIN_PLUGIN_TIMER_MS` in the
+    /// host) so a `0` cannot spin the editor.
+    #[plugin_api(js_name = "setInterval", ts_return = "number")]
+    pub fn set_interval(&self, interval_ms: u64, handler_name: String) -> u64 {
+        self.register_timer(interval_ms, handler_name, true)
+    }
+
+    /// Run `handlerName` once, `delayMs` from now. Returns a timer id, so a
+    /// pending one-shot can still be cancelled with `clearInterval`.
+    ///
+    /// Same contract as `setInterval` — named handler, host-driven, cancelled
+    /// on plugin unload. Use it when the continuation should happen whether
+    /// or not the code that scheduled it is still around; use
+    /// `await editor.delay(ms)` when you are pausing work you are already
+    /// inside of and want to keep the local variables.
+    #[plugin_api(js_name = "setTimeout", ts_return = "number")]
+    pub fn set_timeout(&self, delay_ms: u64, handler_name: String) -> u64 {
+        self.register_timer(delay_ms, handler_name, false)
+    }
+
+    /// Cancel a timer from `setInterval` / `setTimeout`.
+    ///
+    /// Returns `false` when this plugin holds no live timer under that id —
+    /// which covers a typo, a double-cancel, and a one-shot that has already
+    /// fired. None of those is an error, so none throws.
+    ///
+    /// Only your own timers are cancellable: ids come from a counter shared
+    /// across plugins, so accepting an arbitrary id would let one plugin stop
+    /// another's refresh.
+    #[plugin_api(js_name = "clearInterval", ts_return = "boolean")]
+    pub fn clear_interval(&self, timer_id: u64) -> bool {
+        let owned = {
+            let mut tracked = self.plugin_tracked_state.borrow_mut();
+            match tracked.get_mut(&self.plugin_name) {
+                Some(state) => {
+                    let before = state.timer_ids.len();
+                    state.timer_ids.retain(|id| *id != timer_id);
+                    state.timer_ids.len() != before
+                }
+                None => false,
+            }
+        };
+        if !owned {
+            return false;
+        }
+        self.command_sender
+            .send(PluginCommand::ClearPluginTimer { timer_id })
+            .is_ok()
+    }
+
+    /// Shared body of `setInterval` / `setTimeout`: mint an id, record it
+    /// against the plugin so unload can cancel it, and tell the host.
+    #[plugin_api(skip)]
+    #[qjs(skip)]
+    fn register_timer(&self, interval_ms: u64, handler_name: String, repeat: bool) -> u64 {
+        let timer_id = self.alloc_animation_id();
+        // Same bookkeeping `registerCommand` does, and for the same reason:
+        // a fire arrives from the host as a bare handler name, and this map
+        // is what tells the runtime *which realm* to look that name up in.
+        // Without it the lookup falls back to the main context, where a
+        // plugin's own function does not exist.
+        self.registered_actions.borrow_mut().insert(
+            handler_name.clone(),
+            PluginHandler {
+                plugin_name: self.plugin_name.clone(),
+                handler_name: handler_name.clone(),
+            },
+        );
+        self.plugin_tracked_state
+            .borrow_mut()
+            .entry(self.plugin_name.clone())
+            .or_default()
+            .timer_ids
+            .push(timer_id);
+        let _ = self.command_sender.send(PluginCommand::SetPluginTimer {
+            timer_id,
+            plugin_name: self.plugin_name.clone(),
+            handler_name,
+            interval_ms,
+            repeat,
+        });
+        timer_id
+    }
+
     /// Delay/sleep (async, returns request_id)
+    ///
+    /// Resolves after `durationMs`. Two things it is very good at:
+    ///
+    /// - a pause inside work you are already inside of — a debounce, a retry
+    ///   backoff, a settle before reading state back;
+    /// - a **timeout**, by racing it against the real work:
+    ///   ```js
+    ///   const timedOut = Symbol("timeout");
+    ///   const outcome = await Promise.race([
+    ///       doTheWork().then(() => "ok"),
+    ///       editor.delay(8000).then(() => timedOut),
+    ///   ]);
+    ///   ```
+    ///   which is how the bundled dashboard stops one slow section from
+    ///   stalling the panel.
+    ///
+    /// For a *periodic background* task, weigh it against
+    /// `editor.setInterval(ms, "handlerName")`. A detached
+    /// `while (…) { await editor.delay(ms); … }` loop works, but it dies
+    /// silently on the first unguarded throw, is not cancelled when the
+    /// plugin unloads, and does its first iteration one period late — see
+    /// `setInterval` for when each shape is the right one.
+    ///
+    /// Note the loop keeps running after the plugin that created it is
+    /// unloaded or reloaded, until its own guard notices. Gate it on an
+    /// identity (`myBufferId === currentBufferId`) rather than a boolean, or
+    /// reloading leaves two loops racing.
     #[plugin_api(async_promise, js_name = "delay", ts_return = "void")]
     #[qjs(rename = "_delayStart")]
     pub fn delay_start(&self, _ctx: rquickjs::Ctx<'_>, duration_ms: u64) -> u64 {
@@ -7463,6 +7676,77 @@ impl JsEditorApi {
         });
         id
     }
+
+    /// Re-read `~/.config/fresh/init.ts` and run it — the scriptable form of
+    /// the "init: Reload" palette command, and the same thing
+    /// `fresh --cmd init reload` sends.
+    ///
+    /// Use this rather than `reloadPlugin("init.ts")`: init.ts is not loaded
+    /// from a path (its plugin path is the sentinel `<buffer:init.ts>`), so
+    /// the by-name plugin reload cannot find it.
+    ///
+    /// Reloading drops the previous init.ts's commands, handlers, event
+    /// subscriptions and settings before the new source runs, so the
+    /// author → reload → test loop needs no editor restart. Resolves `true`
+    /// once the new source has run; rejects with the parse error if the file
+    /// does not compile (the old init.ts stays live in that case).
+    ///
+    /// Calling this *from* init.ts re-enters the reload; guard it if you do.
+    #[plugin_api(async_promise, js_name = "reloadInit", ts_return = "boolean")]
+    #[qjs(rename = "_reloadInitStart")]
+    pub fn reload_init_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReloadInit {
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Run a registered command by the exact name it shows in the command
+    /// palette — the same dispatch the palette performs on that row, so a
+    /// command handler is exercised through its real path rather than by
+    /// calling the plugin function directly.
+    ///
+    /// Resolves `true` when the command was found and dispatched; rejects
+    /// when no command carries that name (so a typo is an error, not a
+    /// silent no-op). The command's *own* async work is not awaited — this
+    /// resolves once dispatch happened, exactly like a keypress would.
+    ///
+    /// `fresh --cmd command run "<name>"` is this call from a shell.
+    #[plugin_api(async_promise, js_name = "runCommand", ts_return = "boolean")]
+    #[qjs(rename = "_runCommandStart")]
+    pub fn run_command_start(&self, _ctx: rquickjs::Ctx<'_>, name: String) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::RunEditorCommand {
+            name,
+            callback_id: JsCallbackId::new(id),
+        });
+        id
+    }
+
+    /// Every registered command — built-ins and plugin commands together —
+    /// as `{ name, description, source, plugin }`, where `source` is
+    /// `"builtin"` or `"plugin"` and `plugin` names the owner (empty for
+    /// built-ins).
+    ///
+    /// The point of this from a plugin's own script: confirming that your
+    /// `registerCommand` actually landed, under the name you expect, before
+    /// hunting for why the palette "doesn't show it".
+    #[plugin_api(
+        async_promise,
+        js_name = "listCommands",
+        ts_return = "Array<{name: string, description: string, source: string, plugin: string}>"
+    )]
+    #[qjs(rename = "_listCommandsStart")]
+    pub fn list_commands_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::ListEditorCommands {
+                callback_id: JsCallbackId::new(id),
+            });
+        id
+    }
 }
 
 /// Interpret the value `setVirtualBufferContent` was handed: a string, an
@@ -7803,6 +8087,9 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.unloadPlugin = _wrapAsync("_unloadPluginStart", "unloadPlugin");
                 editor.reloadPlugin = _wrapAsync("_reloadPluginStart", "reloadPlugin");
                 editor.listPlugins = _wrapAsync("_listPluginsStart", "listPlugins");
+                editor.reloadInit = _wrapAsync("_reloadInitStart", "reloadInit");
+                editor.runCommand = _wrapAsync("_runCommandStart", "runCommand");
+                editor.listCommands = _wrapAsync("_listCommandsStart", "listCommands");
                 editor.prompt = _wrapAsync("_promptStart", "prompt");
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
@@ -8475,6 +8762,18 @@ impl QuickJsBackend {
                 let _ = self
                     .command_sender
                     .send(PluginCommand::UnwatchPath { handle: *handle });
+            }
+
+            // Stop this plugin's timers. Without this a hot-reload — the
+            // normal inner loop of plugin development — would leave the
+            // previous copy's `setInterval` ticking into a handler that no
+            // longer exists, once per reload, forever.
+            for timer_id in &tracked.timer_ids {
+                let _ = self
+                    .command_sender
+                    .send(PluginCommand::ClearPluginTimer {
+                        timer_id: *timer_id,
+                    });
             }
         }
 
@@ -11162,6 +11461,7 @@ mod tests {
                 BufferInfo {
                     id: BufferId(0),
                     path: Some(PathBuf::from("/test1.txt")),
+                    name: "test1.txt".to_string(),
                     modified: false,
                     length: 100,
                     is_virtual: false,
@@ -11181,6 +11481,7 @@ mod tests {
                 BufferInfo {
                     id: BufferId(1),
                     path: Some(PathBuf::from("/test2.txt")),
+                    name: "test2.txt".to_string(),
                     modified: true,
                     length: 200,
                     is_virtual: false,
