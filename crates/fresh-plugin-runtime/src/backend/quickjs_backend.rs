@@ -7780,11 +7780,9 @@ impl JsEditorApi {
     #[qjs(rename = "_listCommandsStart")]
     pub fn list_commands_start(&self, _ctx: rquickjs::Ctx<'_>) -> u64 {
         let id = self.alloc_request_id();
-        let _ = self
-            .command_sender
-            .send(PluginCommand::ListEditorCommands {
-                callback_id: JsCallbackId::new(id),
-            });
+        let _ = self.command_sender.send(PluginCommand::ListEditorCommands {
+            callback_id: JsCallbackId::new(id),
+        });
         id
     }
 }
@@ -8812,11 +8810,9 @@ impl QuickJsBackend {
             // previous copy's `setInterval` ticking into a handler that no
             // longer exists, once per reload, forever.
             for timer_id in &tracked.timer_ids {
-                let _ = self
-                    .command_sender
-                    .send(PluginCommand::ClearPluginTimer {
-                        timer_id: *timer_id,
-                    });
+                let _ = self.command_sender.send(PluginCommand::ClearPluginTimer {
+                    timer_id: *timer_id,
+                });
             }
         }
 
