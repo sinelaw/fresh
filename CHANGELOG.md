@@ -18,26 +18,42 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
-* **Replace-all finishes on files with tens of thousands of matches** - used to run minutes or hang (#2893).
-* **Two splits on the same file keep independent edit points** - transpose, move-line and toggle-comment reset the other pane's cursor (#2878, reported by @FreekyFrank).
-* **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
 * **TOML multiline arrays highlight correctly** (#2887, by @asukaminato0721).
-* **Settings toggles actually stick** - eight toggles forgot your choice on restart; project configs silently overrode toggled values; workspaces stamped stale settings back on open; config writes are now atomic and no longer delete hand-written empty overrides; Reset Buffer Settings really resets; Toggle Tab Indicators no longer hides space dots too.
-* **Menus and the palette agree on what a buffer can do** - no more `Save` on a terminal (it overwrote the backing file with scrollback), no more greyed-out commands while a terminal or the explorer has focus.
-* **Updates finish through the channel that installed Fresh** - `.deb`/`.rpm`/`.flatpak` updates were pointed at repos that never served Fresh ("already the newest version", forever); Homebrew named a nonexistent formula; several other channels' commands fixed. **Show the update command** prints without downloading.
-* **Update security hardening** - closed a symlink race in the binary swap and a predictable staging path ahead of `sudo dpkg -i`.
-* **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
-* **Renaming a workspace made with "Extract Tab to New Workspace" no longer renames its co-tenant.**
-* **A restored workspace's agent can still drive the editor** - the script grant now survives a restart.
-* **Live diff never refuses a file** - "file too large for live diff" is gone; the shared diff engine degrades detail instead of giving up.
-* **Reverting a file outside Fresh refreshes the git gutter, live diff and conflict markers.**
-* **Opening a file straight to a line no longer breaks syntax highlighting.**
-* **Highlights taller than the window are drawn again.**
 * **The cursor can reach the last column when the scrollbar is shown** (by @ttenneb).
-* **Closing a file no longer pulls a dock panel into the editor split.**
-* **Plugin panels handle the mouse properly** - clicks, wheel and scrollbars work in every widget panel.
-* **A second Utility Dock panel renders like the first** - no stray line-number gutter.
-* **Reloading a plugin stops stacking duplicate panels.**
+* **Editing**
+  * **Replace-all finishes on files with tens of thousands of matches** - used to run minutes or hang (#2893).
+  * **Two splits on the same file keep independent edit points** - transpose, move-line and toggle-comment reset the other pane's cursor (#2878, reported by @FreekyFrank).
+  * **Opening a file straight to a line no longer breaks syntax highlighting.**
+  * **Highlights taller than the window are drawn again.**
+* **Input**
+  * **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
+  * **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
+* **Settings & commands**
+  * **Settings toggles actually stick**
+    * Eight toggles forgot your choice on restart.
+    * Project configs silently overrode toggled values; toggles now write the owning layer.
+    * Workspaces stamped stale settings back on open.
+    * Config writes are atomic and no longer delete hand-written empty overrides.
+    * **Reset Buffer Settings** really resets everything.
+    * **Toggle Tab Indicators** no longer hides the space dots too.
+  * **Menus and the palette agree on what a buffer can do** - no more `Save` on a terminal (it overwrote the backing file with scrollback), no more greyed-out commands while a terminal or the explorer has focus.
+* **Git & live diff**
+  * **Live diff never refuses a file** - "file too large for live diff" is gone; the shared diff engine degrades detail instead of giving up.
+  * **Reverting a file outside Fresh refreshes the git gutter, live diff and conflict markers.**
+* **Panels & docks**
+  * **Closing a file no longer pulls a dock panel into the editor split.**
+  * **Plugin panels handle the mouse properly** - clicks, wheel and scrollbars work in every widget panel.
+  * **A second Utility Dock panel renders like the first** - no stray line-number gutter.
+  * **Reloading a plugin stops stacking duplicate panels.**
+* **Workspaces & agents**
+  * **Renaming a workspace made with "Extract Tab to New Workspace" no longer renames its co-tenant.**
+  * **A restored workspace's agent can still drive the editor** - the script grant now survives a restart.
+* **Self-update**
+  * **Updates finish through the channel that installed Fresh**
+    * `.deb`/`.rpm`/`.flatpak` updates asked repos that never served Fresh ("already the newest version", forever).
+    * Homebrew named a nonexistent formula; several other channels' commands fixed.
+    * **Show the update command** prints without downloading anything.
+  * **Security hardening** - closed a symlink race in the binary swap and a predictable staging path ahead of `sudo dpkg -i`.
 
 ### Internals
 
