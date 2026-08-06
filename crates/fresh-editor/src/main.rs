@@ -4153,7 +4153,7 @@ fn command_list_command(session: Option<&str>, query: Option<&str>) -> AnyhowRes
 fn command_list_script(query: Option<&str>) -> AnyhowResult<String> {
     let encoded = serde_json::to_string(query.unwrap_or(""))?;
     Ok(format!(
-            r#"
+        r#"
             const q = {encoded}.toLowerCase();
             const rows = (await editor.listCommands()).filter(function (c) {{
                 return !q
