@@ -156,13 +156,7 @@ fn palette_opened_from_dock_serves_the_editor_buffer() {
     h.type_text("UNIQUELINE").unwrap();
     h.render().unwrap();
 
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text("duplicate line").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Duplicate Line"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.run_palette_command("Duplicate Line").unwrap();
     h.render().unwrap();
 
     let screen = h.screen_to_string();
