@@ -117,10 +117,23 @@ type TextPropertyEntry = {
 	*/
 	inlineOverlays?: Array<InlineOverlay>;
 	/**
+	* Pad this entry's text with spaces to this many columns when drawing.
+	*
+	* **Render-only**: the padding is applied at draw time, so
+	* `getBufferText()` returns the unpadded text you supplied. Column
+	* alignment cannot be checked by reading the buffer back — if you need
+	* that, embed real spaces with `padEnd` instead.
+	*
 	* See `TextPropertyEntry::pad_to_chars`.
 	*/
 	padToChars?: number;
 	/**
+	* Truncate this entry's text to at most this many columns when drawing,
+	* with an ellipsis when the budget allows one.
+	*
+	* **Render-only**, like `padToChars`: `getBufferText()` returns the full
+	* untruncated text.
+	*
 	* See `TextPropertyEntry::truncate_to_chars`.
 	*/
 	truncateToChars?: number;
@@ -580,6 +593,18 @@ type BufferInfo = {
 	* File path (if any)
 	*/
 	path: string;
+	/**
+	* The buffer's display name — what the tab shows.
+	*
+	* For a file buffer this is the filename (or project-relative path). For
+	* a **virtual buffer it is the `name` you passed to
+	* `createVirtualBuffer`**, which is how a plugin finds its own panel
+	* again: `listBuffers().find(b => b.is_virtual && b.name === "…")`.
+	* Before this field existed the only handle was
+	* `is_virtual && path === ""`, which cannot tell two plugins' panels
+	* apart — or two panels of your own.
+	*/
+	name: string;
 	/**
 	* Whether the buffer has been modified
 	*/
@@ -3835,12 +3860,28 @@ interface EditorAPI {
 	* already active. Errors (id not found) are logged on the
 	* editor side; the JS caller can verify by reading
 	* `activeWindow()` after.
+	* 
+	* **Not every id you can read is a window id.** The orchestrator's
+	* `listWorkspaces()` reports a *negative* `windowId` for a workspace it
+	* discovered on disk but has never activated — there is no window yet,
+	* so the negative value is a placeholder, not a handle. Passing one here
+	* returns `false`; to open such a workspace use
+	* `getPluginApi("orchestrator").focusWorkspace(workspaceId)`, which
+	* attaches a session at the worktree first.
+	* 
+	* Returns `false` for any non-positive id rather than throwing. It used
+	* to be declared as an unsigned integer, so a negative id failed inside
+	* the JS→Rust conversion with `Error converting from js 'f64' into type
+	* 'u64': Underflow` — an exception, from a line that looked fine, naming
+	* nothing the caller had written.
 	*/
 	setActiveWindow(id: number): boolean;
 	/**
 	* Switch the active window with a directional wipe on the
 	* incoming content. `from_edge`: "top" | "bottom" | "left" |
 	* "right". See `PluginCommand::SetActiveWindowAnimated`.
+	* 
+	* Same id rules as `setActiveWindow`: a non-positive id returns `false`.
 	*/
 	setActiveWindowAnimated(id: number, fromEdge: string): boolean;
 	/**
@@ -4285,6 +4326,26 @@ interface EditorAPI {
 	/**
 	* Spawn a process (async, returns request_id)
 	* 
+	* **No shell is involved.** `command` is executed directly, so quoting,
+	* globbing, `|`, `&&`, `>` and `$VAR` are not interpreted — pass the
+	* program and its arguments already split:
+	* 
+	* ```js
+	* await editor.spawnProcess("gh", ["api", "graphql", "-f", query], repoDir);
+	* ```
+	* 
+	* Wrapping the call in `/bin/sh -lc "…"` to get shell behaviour is
+	* usually a mistake: a login shell sources the user's profile, which is
+	* slow and can block outright.
+	* 
+	* The child inherits the **editor's** environment, including `PATH`, so
+	* `git`, `gh` and anything else the user can run from their shell
+	* resolves by bare name — no absolute paths needed.
+	* 
+	* `cwd` is the third argument; without it the child inherits the
+	* editor's working directory, which is not necessarily the workspace you
+	* meant.
+	* 
 	* Optional 4th argument `stdoutTo: string` pipes the child's stdout
 	* directly into the named file instead of buffering it. The
 	* resolved `SpawnResult.stdout` is empty in that case; the bytes
@@ -4445,7 +4506,99 @@ interface EditorAPI {
 	*/
 	releaseDiffBaseline(baselineId: number): void;
 	/**
+	* Run `handlerName` every `intervalMs` milliseconds until cancelled.
+	* Returns a timer id for `clearInterval`.
+	* 
+	* The alternative — a detached `while (alive) { await editor.delay(ms);
+	* … }` loop — does work, and the bundled dashboard plugin uses one. But
+	* it puts three obligations on you that a timer discharges for free:
+	* 
+	* 1. **A throw anywhere in the loop body ends it, silently.** The loop
+	* is a detached async function, so the rejection has nowhere to
+	* surface; the panel simply stops updating, with nothing in the log
+	* pointing at why. Every `await` inside must be individually
+	* guarded. A timer handler's throw is caught and logged by the host,
+	* and the *next* tick still fires.
+	* 2. **You must cancel it yourself.** A loop keeps running after its
+	* plugin is unloaded or reloaded until its own guard notices, so it
+	* needs a liveness check that survives a reload — an identity check
+	* (`myBufferId === currentBufferId`), not a boolean, or a reopened
+	* panel ends up with two loops. Timers are cancelled on unload.
+	* 3. **The first iteration is one period late** unless you also do the
+	* work once before entering the loop.
+	* 
+	* A loop is still the better shape when each iteration's decision
+	* depends on the last one's result, or when you want a single ticker
+	* driving many items on their own schedules (again: see dashboard.ts,
+	* which ticks at 1s and re-runs a section only once its own TTL has
+	* expired, so cost scales with the sum of the sections' rates rather
+	* than tick-rate × section-count).
+	* 
+	* The handler is named, not passed as a function, for the same reason
+	* `registerCommand` takes a name: the host invokes it by looking it up
+	* on `globalThis`. Declare it with `registerHandler("myTick", fn)`.
+	* 
+	* The handler may be `async`; a fire is not awaited, and a slow handler
+	* does not delay the editor. Ticks are *not* queued — if a fire is
+	* still outstanding when the next is due, the next simply happens, so
+	* guard re-entrancy yourself (`if (inFlight) return;`) when a tick can
+	* outlast its period.
+	* 
+	* Timers are cancelled automatically when the owning plugin is unloaded
+	* or reloaded, so a hot-reload during development does not leave the
+	* previous copy ticking alongside the new one.
+	* 
+	* `intervalMs` is clamped to a floor (see `MIN_PLUGIN_TIMER_MS` in the
+	* host) so a `0` cannot spin the editor.
+	*/
+	setInterval(intervalMs: number, handlerName: string): number;
+	/**
+	* Run `handlerName` once, `delayMs` from now. Returns a timer id, so a
+	* pending one-shot can still be cancelled with `clearInterval`.
+	* 
+	* Same contract as `setInterval` — named handler, host-driven, cancelled
+	* on plugin unload. Use it when the continuation should happen whether
+	* or not the code that scheduled it is still around; use
+	* `await editor.delay(ms)` when you are pausing work you are already
+	* inside of and want to keep the local variables.
+	*/
+	setTimeout(delayMs: number, handlerName: string): number;
+	/**
+	* Cancel a timer from `setInterval` / `setTimeout`. Returns `false` if
+	* the id was never issued by this plugin; cancelling an already-fired
+	* one-shot, or cancelling twice, is a harmless `true`/`false` rather
+	* than an error.
+	*/
+	clearInterval(timerId: number): boolean;
+	/**
 	* Delay/sleep (async, returns request_id)
+	* 
+	* Resolves after `durationMs`. Two things it is very good at:
+	* 
+	* - a pause inside work you are already inside of — a debounce, a retry
+	* backoff, a settle before reading state back;
+	* - a **timeout**, by racing it against the real work:
+	* ```js
+	* const timedOut = Symbol("timeout");
+	* const outcome = await Promise.race([
+	* doTheWork().then(() => "ok"),
+	* editor.delay(8000).then(() => timedOut),
+	* ]);
+	* ```
+	* which is how the bundled dashboard stops one slow section from
+	* stalling the panel.
+	* 
+	* For a *periodic background* task, weigh it against
+	* `editor.setInterval(ms, "handlerName")`. A detached
+	* `while (…) { await editor.delay(ms); … }` loop works, but it dies
+	* silently on the first unguarded throw, is not cancelled when the
+	* plugin unloads, and does its first iteration one period late — see
+	* `setInterval` for when each shape is the right one.
+	* 
+	* Note the loop keeps running after the plugin that created it is
+	* unloaded or reloaded, until its own guard notices. Gate it on an
+	* identity (`myBufferId === currentBufferId`) rather than a boolean, or
+	* reloading leaves two loops racing.
 	*/
 	delay(durationMs: number): Promise<void>;
 	/**
@@ -4543,6 +4696,54 @@ interface EditorAPI {
 		name: string;
 		path: string;
 		enabled: boolean;
+	}>>;
+	/**
+	* Re-read `~/.config/fresh/init.ts` and run it — the scriptable form of
+	* the "init: Reload" palette command, and the same thing
+	* `fresh --cmd init reload` sends.
+	* 
+	* Use this rather than `reloadPlugin("init.ts")`: init.ts is not loaded
+	* from a path (its plugin path is the sentinel `<buffer:init.ts>`), so
+	* the by-name plugin reload cannot find it.
+	* 
+	* Reloading drops the previous init.ts's commands, handlers, event
+	* subscriptions and settings before the new source runs, so the
+	* author → reload → test loop needs no editor restart. Resolves `true`
+	* once the new source has run; rejects with the parse error if the file
+	* does not compile (the old init.ts stays live in that case).
+	* 
+	* Calling this *from* init.ts re-enters the reload; guard it if you do.
+	*/
+	reloadInit(): Promise<boolean>;
+	/**
+	* Run a registered command by the exact name it shows in the command
+	* palette — the same dispatch the palette performs on that row, so a
+	* command handler is exercised through its real path rather than by
+	* calling the plugin function directly.
+	* 
+	* Resolves `true` when the command was found and dispatched; rejects
+	* when no command carries that name (so a typo is an error, not a
+	* silent no-op). The command's *own* async work is not awaited — this
+	* resolves once dispatch happened, exactly like a keypress would.
+	* 
+	* `fresh --cmd command run "<name>"` is this call from a shell.
+	*/
+	runCommand(name: string): Promise<boolean>;
+	/**
+	* Every registered command — built-ins and plugin commands together —
+	* as `{ name, description, source, plugin }`, where `source` is
+	* `"builtin"` or `"plugin"` and `plugin` names the owner (empty for
+	* built-ins).
+	* 
+	* The point of this from a plugin's own script: confirming that your
+	* `registerCommand` actually landed, under the name you expect, before
+	* hunting for why the palette "doesn't show it".
+	*/
+	listCommands(): Promise<Array<{
+		name: string;
+		description: string;
+		source: string;
+		plugin: string;
 	}>>;
 }
 /**

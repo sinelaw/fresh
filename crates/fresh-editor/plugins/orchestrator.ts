@@ -9612,6 +9612,19 @@ export type OrchestratorApi = {
    *  needs to find the one it made earlier, or to report on all of them.
    *  Reads the live model, so it reflects creations made moments ago. */
   listWorkspaces(): WorkspaceSummary[];
+  /** Focus a workspace by its durable `workspaceId` (or its `windowId`) —
+   *  what `listWorkspaces()` reports.
+   *
+   *  Use this rather than `editor.setActiveWindow(w.windowId)`. A workspace
+   *  discovered on disk but never activated has no window yet, and
+   *  `listWorkspaces()` reports a placeholder *negative* `windowId` for it,
+   *  which `setActiveWindow` rejects. This attaches a session at the worktree
+   *  first when that is what the row needs, so one call works for every row
+   *  the list returns.
+   *
+   *  Resolves `true` once the workspace is active, `false` if no workspace
+   *  matches. */
+  focusWorkspace(target: string | number): Promise<boolean>;
 };
 
 declare global {
@@ -9734,7 +9747,54 @@ function listWorkspaces(): WorkspaceSummary[] {
   });
 }
 
-editor.exportPluginApi("orchestrator", { runAgent, newWorkspace, listWorkspaces });
+/// Focus a workspace by durable `workspaceId` or per-process `windowId`.
+///
+/// The reason this exists rather than leaving callers to
+/// `editor.setActiveWindow(w.windowId)`: a workspace the orchestrator found
+/// on disk but has never activated has no window at all, and the
+/// `windowId` reported for it is a synthetic negative placeholder. Handing
+/// that to `setActiveWindow` cannot work — so the "focus a workspace I got
+/// from listWorkspaces()" operation has to know how to *make* the window when
+/// there isn't one. That is what `attachToWorktree` does, and doing it behind
+/// one verb means a caller never has to learn the distinction.
+async function focusWorkspace(target: string | number): Promise<boolean> {
+  reconcileSessions();
+  const windows = editor.listWindows();
+
+  // Match on either identity. `workspaceId` (the host's `stable_id`) is the
+  // one worth recording; `windowId` is accepted because it is right there in
+  // the same summary and a caller reaching for it is not wrong to.
+  const match = [...orchestratorSessions.values()].find((session) => {
+    if (typeof target === "number") return session.id === target;
+    const stable = windows.find((w) => w.id === session.id)?.stable_id;
+    return !!target && stable === target;
+  });
+  if (!match) return false;
+
+  if (match.discovered) {
+    // No window yet — attach a session at the worktree, which activates it.
+    await attachToWorktree({
+      root: match.root,
+      projectPath: match.projectPath ?? match.root,
+      label: match.label,
+      branch: match.branch,
+      discoveredId: match.id,
+      dive: true,
+    });
+    return true;
+  }
+
+  if (match.id <= 0) return false;
+  if (match.id !== editor.activeWindow()) editor.setActiveWindow(match.id);
+  return true;
+}
+
+editor.exportPluginApi("orchestrator", {
+  runAgent,
+  newWorkspace,
+  listWorkspaces,
+  focusWorkspace,
+});
 
 // Form key bindings — each delegates to smart-key dispatch on the
 // panel, which routes to the focused widget. `mode_text_input`

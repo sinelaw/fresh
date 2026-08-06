@@ -3518,9 +3518,30 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
                 }
             }
         }
+        // `init reload` only — every other `init` form is the *package*
+        // initializer, which `Args::from` handles and which never touches a
+        // running editor. Two different `init`s is unfortunate, but `reload`
+        // belongs with the thing it reloads.
+        Some("init") if rest.get(1).copied() == Some("reload") => init_reload_command(session),
+        Some("command") => match &rest[1..] {
+            ["run", name] => command_run_command(session, name),
+            ["list", query] => command_list_command(session, Some(query)),
+            ["list"] => command_list_command(session, None),
+            _ => {
+                eprintln!(
+                    "usage: fresh --cmd command run \"<name>\"   run a registered command by its palette name"
+                );
+                eprintln!(
+                    "       fresh --cmd command list [QUERY]    list registered commands (built-in + plugin)"
+                );
+                std::process::exit(2);
+            }
+        },
         _ => {
             eprintln!("Unknown command: {}", rest.join(" "));
             eprintln!("usage: fresh --cmd script <api|check|run|types> ...");
+            eprintln!("       fresh --cmd command <run|list> ...");
+            eprintln!("       fresh --cmd init reload");
             std::process::exit(2);
         }
     }
@@ -3563,12 +3584,17 @@ fn help_command(topic: &[&str]) -> AnyhowResult<()> {
                 "  script   drive a running editor with TypeScript — verbs, examples, \
                  the API surface of this build"
             );
+            println!(
+                "  plugin   write init.ts / a plugin — the runtime contract, the \
+                 dev loop, a worked auto-refreshing panel"
+            );
             Ok(())
         }
         ["tour", flags @ ..] => help_tour(flags),
         ["script", ..] => help_script(),
+        ["plugin", ..] | ["plugins", ..] | ["init", ..] => help_plugin(),
         [other, ..] => {
-            eprintln!("unknown help topic: {other} (available: tour, script)");
+            eprintln!("unknown help topic: {other} (available: tour, script, plugin)");
             std::process::exit(2);
         }
     }
@@ -3705,14 +3731,28 @@ returns is printed as JSON. Source comes from a file or stdin.
   fresh --cmd script api <query> [--json]   search the API by name/description
   fresh --cmd script types                  paths of the API declaration files
 
+Driving the editor without a script file:
+
+  fresh --cmd init reload                   re-read + run ~/.config/fresh/init.ts
+  fresh --cmd command run \"<name>\"          run a command by its palette name
+  fresh --cmd command list [QUERY]          list registered commands
+
+Those three are the author → reload → test loop for customizing the editor:
+edit init.ts, `init reload`, then `command run` the command you registered.
+No keystroke from the user is needed at any point.
+
 Target a specific daemon with --session NAME (default: the daemon of the
 current working directory).
 
 Examples:
   echo 'return editor.listBuffers().map(b => b.path)' | fresh --cmd script run
   fresh --cmd script api splitWindow
-  fresh --cmd script run make-tour.ts   # author + open a code tour
-                                        # (see: fresh --cmd help tour)
+  fresh --cmd command list dashboard     # did my registerCommand land?
+  fresh --cmd script run make-tour.ts    # author + open a code tour
+                                         # (see: fresh --cmd help tour)
+
+See also: fresh --cmd help plugin   — the runtime contract, and a worked
+                                      auto-refreshing panel
 
 ",
     );
@@ -3735,6 +3775,199 @@ Examples:
          prints where the full declaration files live on disk.\n",
     );
     out
+}
+
+/// `fresh --cmd help plugin` — how to write init.ts / a plugin.
+fn help_plugin() -> AnyhowResult<()> {
+    print!("{}", plugin_help_text());
+    Ok(())
+}
+
+/// The `help plugin` body.
+///
+/// Aimed squarely at someone — usually an agent, working in one of Fresh's own
+/// embedded terminals — who has been asked to customize the editor and wants
+/// to get it right on the first attempt. The two things that stop that are
+/// (a) not knowing the runtime's shape, and (b) not knowing the one shape a
+/// live panel has to have. Both are stated here rather than left to be
+/// rediscovered by trial.
+fn plugin_help_text() -> String {
+    String::from(
+        r#"Writing init.ts and plugins (TypeScript)
+
+Your customization lives in ~/.config/fresh/init.ts. It is loaded as a
+plugin at startup and can register commands, hook events, draw panels, and
+run processes. `fresh --cmd init reload` re-runs it; nothing needs restarting.
+
+THE DEV LOOP (no keystrokes from the user required)
+
+  1. edit  ~/.config/fresh/init.ts
+  2. fresh --cmd init check           syntax, without running it
+  3. fresh --cmd init reload          re-read + run it; errors exit non-zero
+  4. fresh --cmd command run "My Command"     exercise what you registered
+     fresh --cmd command list My                 ...or check it registered
+
+  Reloading drops the previous copy's commands, handlers, event subscriptions,
+  settings and timers before the new source runs, so iterating never stacks
+  duplicates.
+
+THE RUNTIME, IN FULL
+
+  - ES2020 in QuickJS. `new Date()`, `Math.random()`, `JSON`, `padEnd` etc.
+    all work. No DOM, no Node, no `require`/`import` of npm packages.
+  - Top-level `await` is available; init.ts is evaluated as an async body.
+  - An **unhandled promise rejection is fatal to the plugin runtime**, not a
+    logged warning. Any detached async work — a fire-and-forget IIFE, a
+    background loop, a handler you don't await — must catch its own errors.
+    This is the single most common way a plugin takes the editor's plugin
+    thread down with it.
+  - `setVirtualBufferContent(id, entries)` takes an array of *span objects*,
+    not strings: `[{ text: "a\n" }, { text: "b\n" }]`. Spans are concatenated
+    verbatim, so nothing inserts newlines for you.
+  - Handlers are named, not closures, because the host invokes them by name
+    across the boundary. Declare them with the `registerHandler` global:
+        registerHandler("my_handler", async function () { ... });
+        editor.registerCommand("My Command", "desc", "my_handler", null);
+  - Most `editor.*` calls that ask the host a question are async and return a
+    promise — `getBufferText`, `createVirtualBuffer`, `spawnProcess`,
+    `listCommands`. Await them.
+  - Layout mutations are queued, not immediate. After creating/closing splits
+    or buffers, `await editor.flush()` before reading state back, or you will
+    read the layout as it was.
+  - `editor.spawnProcess(cmd, args, cwd)` runs the program directly — no
+    shell. No pipes, globs, quoting or $VARS; pass args pre-split. It inherits
+    the editor's PATH, so `git` and `gh` resolve by bare name. Do not wrap it
+    in `/bin/sh -lc` — that sources the user's profile and can hang.
+  - `editor.setInterval(ms, "handler_name")` is the low-effort way to do
+    anything periodic: the host drives it, a throw in one tick doesn't stop
+    the next, and it is cancelled for you on reload. A detached
+    `while (alive) { await editor.delay(ms); ... }` loop also works and is
+    better when iterations depend on each other — but then *you* own the
+    three things the timer handles: one unguarded throw kills the loop
+    silently, nothing cancels it on reload (gate it on an identity, not a
+    boolean, or a reopen leaves two loops racing), and the first iteration
+    is one period late unless you also run the work once up front.
+  - `editor.delay(ms)` is also how you put a timeout on anything:
+        const timedOut = Symbol("timeout");
+        const outcome = await Promise.race([
+            work().then(() => "ok"),
+            editor.delay(8000).then(() => timedOut),
+        ]);
+  - `padToChars` / `truncateToChars` on a text entry are applied when the line
+    is *drawn*. `getBufferText()` returns the text unpadded, so column
+    alignment can't be verified by reading back. Embed real spaces with
+    `padEnd` if you need alignment that survives read-back.
+  - `listWorkspaces()` reports a negative `windowId` for a workspace that
+    exists on disk but has never been activated — there is no window yet.
+    `setActiveWindow` rejects those; use
+    `getPluginApi("orchestrator").focusWorkspace(workspaceId)` instead.
+
+WORKED EXAMPLE — a live, auto-refreshing, clickable panel
+
+  Distilled from plugins/dashboard.ts, which is the same thing at full size.
+  Every line below is load-bearing; the notes after say which failure each
+  one prevents.
+
+    const editor = getEditor();
+    let panelId = null;           // null = closed
+    let opening = false;          // re-entrancy guard for the async open
+    let token = 0;                // invalidates results from a previous open
+    let inFlight = false;
+    let rows = {};                // buffer row -> windowId
+    let last = null;              // last good data, for stale-while-revalidate
+
+    registerHandler("panel_render", async function () {
+      if (panelId === null || inFlight) return;
+      inFlight = true;
+      const mine = token;
+      try {
+        const timedOut = Symbol("timeout");
+        const orch = getPluginApi("orchestrator");
+        const got = await Promise.race([
+          orch.listWorkspaces(),
+          editor.delay(8000).then(() => timedOut),
+        ]);
+        if (got !== timedOut) last = got;
+      } catch (e) {
+        // Keep `last`: a flaky refresh should degrade to old data, not blank
+        // the panel. Swallowing here is what keeps the panel alive.
+      } finally {
+        inFlight = false;
+      }
+      if (mine !== token || panelId === null || last === null) return;
+      rows = {};
+      // Entries are *spans*, not lines: nothing inserts newlines for you,
+      // and each must be an object — an array of bare strings is rejected.
+      editor.setVirtualBufferContent(panelId, last.map(function (w, i) {
+        rows[i] = w.windowId;
+        // Real spaces: padToChars is render-only, invisible to getBufferText.
+        return { text: w.name.padEnd(24) + " " + (w.branch || "") + "\n" };
+      }));
+    });
+
+    registerHandler("open_panel", async function () {
+      if (panelId !== null) { editor.showBuffer(panelId); return; }
+      if (opening) return;
+      opening = true;
+      try {
+        const res = await editor.createVirtualBuffer({
+          name: "Workspaces",      // findable later via listBuffers()
+          readOnly: true, editingDisabled: true, showCursors: false,
+        });
+        panelId = res.bufferId;
+        token++;
+      } finally {
+        opening = false;
+      }
+      await globalThis.panel_render();          // instant first paint
+      editor.setInterval(5000, "panel_render"); // and keeps painting
+    });
+    editor.registerCommand("Workspaces", "live workspace panel",
+                           "open_panel", null);
+
+    registerHandler("panel_closed", function (ev) {
+      if (ev.bufferId === panelId) { panelId = null; token++; }
+    });
+    editor.on("buffer_closed", "panel_closed");
+
+    registerHandler("panel_click", function (ev) {
+      if (ev.bufferId !== panelId) return;
+      const target = rows[ev.buffer_row];
+      // Guard the sign: a workspace that has never been activated reports a
+      // negative placeholder windowId, which setActiveWindow refuses.
+      if (target > 0) editor.setActiveWindow(target);
+    });
+    editor.on("mouse_click", "panel_click");
+
+  What each guard is for:
+    - `opening`      createVirtualBuffer is async, so two opens in flight at
+                     once would create two panels. dashboard.ts hit this for
+                     real (its `ready` hook racing its own command).
+    - `token`        a refresh that resolves after the panel was closed and
+                     reopened would otherwise paint into the new panel with
+                     the old panel's data.
+    - `inFlight`     setInterval does not queue ticks; if a refresh outlasts
+                     its period the next fires anyway.
+    - try/catch      a throw inside a refresh must not take the panel down.
+                     (In a `delay` loop it would silently end the loop; here
+                     it only costs one tick — but you still want `last` kept.)
+    - Promise.race   a hung subprocess would otherwise wedge the panel
+                     forever at whatever it last drew.
+    - awaited first  without it the panel shows nothing until the first tick,
+      render         which is the classic "stuck on loading…" panel.
+
+  Scaling note: one ticker driving many independent items is better written
+  as a fast tick plus a per-item TTL — re-run an item only once its own data
+  is stale — so ambient cost tracks the sum of the items' rates instead of
+  tick-rate × item-count. dashboard.ts does this at TICK_MS = 1000.
+
+DISCOVERY
+
+  fresh --cmd script api <query>    search the API by name or description
+  fresh --cmd script types          where fresh.d.ts / plugins.d.ts live
+  fresh --cmd help script           driving a running editor from a shell
+"#,
+    )
 }
 
 /// `fresh --cmd script types` — print where the API declarations live.
@@ -3762,12 +3995,27 @@ fn script_types() -> AnyhowResult<()> {
 /// Whatever the script returns is printed as JSON; a throw becomes a non-zero
 /// exit with the message on stderr.
 fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
-    use fresh::server::protocol::ClientControl;
-
     let source = read_script_source(from)?;
     if source.trim().is_empty() {
         anyhow::bail!("empty script: pass a file, or pipe the source on stdin");
     }
+    submit_script(session, source, false)
+}
+
+/// Send `source` to a live editor's script channel and report the outcome:
+/// whatever the script returned on stdout, a throw on stderr with exit 1.
+///
+/// Every verb below is a thin wrapper over this. The script channel is
+/// already the authorized, window-scoped, capability-checked way into a
+/// running editor, so a new verb needs a new *script*, not a new socket
+/// message — and the verb inherits the token check for free.
+///
+/// `unwrap_string` decodes a JSON string result before printing it. `script
+/// run` leaves its output verbatim (a script's return value is data, and the
+/// caller asked for JSON); the convenience verbs return prose meant to be
+/// read, where the surrounding quotes and `\n` escapes would be noise.
+fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> AnyhowResult<()> {
+    use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
     let mut conn = connect_cmd(&socket)?;
@@ -3778,8 +4026,13 @@ fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
     // report a failure about something that is merely still running.
     let (ok, error, output) = read_script_result(&mut conn, cmd_build_timeout())?;
     if let Some(out) = output {
-        if !out.is_empty() {
-            println!("{}", out);
+        let text = if unwrap_string {
+            serde_json::from_str::<String>(&out).unwrap_or(out)
+        } else {
+            out
+        };
+        if !text.is_empty() {
+            println!("{}", text);
         }
     }
     if !ok {
@@ -3787,6 +4040,93 @@ fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// `fresh --cmd init reload` — re-read and run `~/.config/fresh/init.ts` in
+/// the running editor.
+///
+/// The loop this closes: an agent editing init.ts on the user's behalf could
+/// previously check its syntax (`init check`) but not *run* it, because
+/// reload was palette-only — so every iteration needed a human keystroke.
+/// `reloadPlugin("init.ts")` is not the substitute it looks like: init.ts is
+/// loaded from source under a sentinel path, not from disk by name.
+///
+/// Exits non-zero with the parse/eval error when the new source does not
+/// load, in which case the previous init.ts is still the live one.
+fn init_reload_command(session: Option<&str>) -> AnyhowResult<()> {
+    submit_script(session, init_reload_script().to_string(), true)
+}
+
+/// The script `init reload` submits. Split out so a test can check it still
+/// parses and still names only real API members — these sources never go
+/// through `script check`, so nothing else would catch a typo in one until a
+/// user hit the verb.
+fn init_reload_script() -> &'static str {
+    r#"
+    const loaded = await editor.reloadInit();
+    return loaded
+        ? "init.ts: reloaded"
+        : "init.ts: nothing to load (no init.ts, or started with --no-init / --safe)";
+    "#
+}
+
+/// `fresh --cmd command run "<name>"` — invoke a registered command by the
+/// name the palette shows, built-in or plugin-registered.
+///
+/// This is how an agent tests a command it just registered *through the path
+/// the user will take*, rather than by calling the plugin's exported function
+/// and hoping registration also worked.
+fn command_run_command(session: Option<&str>, name: &str) -> AnyhowResult<()> {
+    submit_script(session, command_run_script(name)?, true)
+}
+
+/// The script `command run` submits, with `name` JSON-encoded so a command
+/// containing a quote or a backslash cannot break out of the literal.
+fn command_run_script(name: &str) -> AnyhowResult<String> {
+    let encoded = serde_json::to_string(name)?;
+    Ok(format!(
+        r#"
+        const name = {encoded};
+        await editor.runCommand(name);
+        return "ran: " + name;
+        "#
+    ))
+}
+
+/// `fresh --cmd command list [QUERY]` — every registered command, optionally
+/// filtered by a case-insensitive substring of the name or description.
+///
+/// Answers "did my registerCommand land, and under what name" in one call —
+/// which is the question behind most "my command isn't in the palette" hunts.
+/// Filtering happens in the editor so a large registry doesn't cross the
+/// socket just to be discarded here.
+fn command_list_command(session: Option<&str>, query: Option<&str>) -> AnyhowResult<()> {
+    submit_script(session, command_list_script(query)?, true)
+}
+
+/// The script `command list` submits.
+fn command_list_script(query: Option<&str>) -> AnyhowResult<String> {
+    let encoded = serde_json::to_string(query.unwrap_or(""))?;
+    Ok(format!(
+            r#"
+            const q = {encoded}.toLowerCase();
+            const rows = (await editor.listCommands()).filter(function (c) {{
+                return !q
+                    || c.name.toLowerCase().indexOf(q) >= 0
+                    || c.description.toLowerCase().indexOf(q) >= 0;
+            }});
+            if (rows.length === 0) {{
+                return q ? "no command matches " + JSON.stringify(q) : "no commands registered";
+            }}
+            const width = rows.reduce(function (w, c) {{
+                return Math.max(w, c.name.length);
+            }}, 0);
+            return rows.map(function (c) {{
+                const origin = c.source === "plugin" ? "plugin:" + c.plugin : "builtin";
+                return c.name.padEnd(width) + "  " + origin.padEnd(16) + "  " + c.description;
+            }}).join("\n");
+            "#
+    ))
 }
 
 /// One `editor` member (or exported type) found in a `.d.ts`, with the doc
@@ -4551,6 +4891,22 @@ fn build_localized_after_help() -> String {
         t("cli.cmd.init")
     ));
     out.push_str(&format!(
+        "  init check                {}\n",
+        t("cli.cmd.init_check")
+    ));
+    out.push_str(&format!(
+        "  init reload               {}\n",
+        t("cli.cmd.init_reload")
+    ));
+    out.push_str(&format!(
+        "  command run \"<name>\"      {}\n",
+        t("cli.cmd.command_run")
+    ));
+    out.push_str(&format!(
+        "  command list [QUERY]      {}\n",
+        t("cli.cmd.command_list")
+    ));
+    out.push_str(&format!(
         "  script <verb>             {}\n",
         t("cli.cmd.script")
     ));
@@ -4750,7 +5106,15 @@ fn real_main() -> AnyhowResult<()> {
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["script", ..] => {
+            ["script", ..] | ["command", ..] => {
+                run_cmd_command(&cmd_args)?;
+                return Ok(());
+            }
+            // `init reload` drives a *running* editor; every other `init`
+            // form is the package initializer below. Matched here so the
+            // `Args::from` slice pattern (`["init", pkg_type, ..]`) doesn't
+            // claim it first and try to scaffold a package called "reload".
+            ["init", "reload", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }
@@ -5704,6 +6068,69 @@ fn coalesce_mouse_moves(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The scripts the convenience verbs submit must parse, and must call
+    /// only API members this build actually has.
+    ///
+    /// These sources never pass through `fresh --cmd script check` — they are
+    /// built in Rust and sent straight down the socket — so without this a
+    /// typo in one would surface as a runtime failure the first time a user
+    /// ran the verb, reported as "script failed" with a QuickJS message about
+    /// a line number in generated source they cannot see.
+    #[test]
+    fn generated_verb_scripts_parse_and_use_real_api_members() {
+        let sources = [
+            ("init reload", init_reload_script().to_string()),
+            (
+                "command run",
+                // A name with a quote and a backslash: the JSON encoding is
+                // the only thing stopping this from ending the JS literal
+                // early and producing a syntax error at the user's expense.
+                command_run_script(r#"Weird " \ Name"#).expect("command run script builds"),
+            ),
+            (
+                "command list",
+                command_list_script(Some("query")).expect("command list script builds"),
+            ),
+            (
+                "command list (no query)",
+                command_list_script(None).expect("command list script builds"),
+            ),
+        ];
+
+        // Wrapped exactly as the host wraps a submitted script, so top-level
+        // `await` and `return` are legal — the same reasoning as `script check`.
+        #[cfg(feature = "plugins")]
+        for (verb, source) in &sources {
+            let wrapped = format!("(async () => {{\n{source}\n}})();");
+            fresh_parser_js::transpile_typescript(&wrapped, "verb.ts")
+                .unwrap_or_else(|e| panic!("`{verb}` submits a script that does not parse: {e}"));
+        }
+
+        // Every `editor.foo(` must exist in the declarations this build ships.
+        let known: std::collections::HashSet<String> =
+            parse_dts_entries(EMBEDDED_FRESH_DTS, "fresh.d.ts")
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+        for (verb, source) in &sources {
+            let mut rest = source.as_str();
+            while let Some(idx) = rest.find("editor.") {
+                rest = &rest[idx + "editor.".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                    .collect();
+                if name.is_empty() {
+                    continue;
+                }
+                assert!(
+                    known.contains(&name),
+                    "`{verb}` calls editor.{name}(), which this build's fresh.d.ts does not declare"
+                );
+            }
+        }
+    }
 
     /// `help tour`'s field reference must be generated from the embedded
     /// schema: every property name and description that appears in

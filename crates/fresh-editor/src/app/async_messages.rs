@@ -1587,7 +1587,11 @@ impl Editor {
             | Pc::UnwatchPath { .. }
             | Pc::SetGlobalState { .. }
             | Pc::SetWindowState { .. }
-            | Pc::SetViewState { .. } => false,
+            | Pc::SetViewState { .. }
+            // Arming or cancelling a timer paints nothing; what the handler
+            // eventually draws arrives as its own command and is counted then.
+            | Pc::SetPluginTimer { .. }
+            | Pc::ClearPluginTimer { .. } => false,
             Pc::SetStatusBarValue {
                 buffer_id,
                 key,

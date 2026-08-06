@@ -1654,12 +1654,47 @@ impl Editor {
             PluginCommand::ListPlugins { callback_id } => {
                 self.handle_list_plugins(callback_id);
             }
+            PluginCommand::SetPluginTimer {
+                timer_id,
+                plugin_name,
+                handler_name,
+                interval_ms,
+                repeat,
+            } => {
+                self.handle_set_plugin_timer(
+                    timer_id,
+                    plugin_name,
+                    handler_name,
+                    interval_ms,
+                    repeat,
+                );
+            }
+
+            PluginCommand::ClearPluginTimer { timer_id } => {
+                self.handle_clear_plugin_timer(timer_id);
+            }
+
+            #[cfg(feature = "plugins")]
+            PluginCommand::ReloadInit { callback_id } => {
+                self.handle_reload_init(callback_id);
+            }
+            #[cfg(feature = "plugins")]
+            PluginCommand::RunEditorCommand { name, callback_id } => {
+                self.handle_run_editor_command(name, callback_id);
+            }
+            #[cfg(feature = "plugins")]
+            PluginCommand::ListEditorCommands { callback_id } => {
+                self.handle_list_editor_commands(callback_id);
+            }
             // When plugins feature is disabled, these commands are no-ops
             #[cfg(not(feature = "plugins"))]
             PluginCommand::LoadPlugin { .. }
             | PluginCommand::UnloadPlugin { .. }
             | PluginCommand::ReloadPlugin { .. }
-            | PluginCommand::ListPlugins { .. } => {
+            | PluginCommand::ListPlugins { .. }
+            | PluginCommand::ReloadInit { .. }
+            | PluginCommand::RunEditorCommand { .. }
+            | PluginCommand::ListEditorCommands { .. } => {
                 tracing::warn!("Plugin management commands require the 'plugins' feature");
             }
 
@@ -2461,6 +2496,195 @@ impl Editor {
                     "name": p.name,
                     "path": p.path.to_string_lossy(),
                     "enabled": p.enabled
+                })
+            })
+            .collect();
+        let json_str = serde_json::to_string(&json_array).unwrap_or_else(|_| "[]".to_string());
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(callback_id, json_str);
+    }
+
+    /// Register an `editor.setInterval` / `setTimeout` timer.
+    ///
+    /// Re-registering an id replaces it rather than adding a second entry, so
+    /// a plugin that re-runs its setup (a reload racing its own cleanup)
+    /// cannot end up with the same timer firing twice per period.
+    fn handle_set_plugin_timer(
+        &mut self,
+        timer_id: u64,
+        plugin_name: String,
+        handler_name: String,
+        interval_ms: u64,
+        repeat: bool,
+    ) {
+        use crate::app::plugin_timers::PluginTimer;
+
+        let now = self.time_source.now();
+        self.plugin_timers.retain(|t| t.id != timer_id);
+        self.plugin_timers.push(PluginTimer::new(
+            timer_id,
+            plugin_name,
+            handler_name,
+            interval_ms,
+            repeat,
+            now,
+        ));
+    }
+
+    /// Cancel a timer. Unknown ids are ignored: `clearInterval` on an
+    /// already-fired one-shot is normal, not an error.
+    fn handle_clear_plugin_timer(&mut self, timer_id: u64) {
+        self.plugin_timers.retain(|t| t.id != timer_id);
+    }
+
+    /// Fire every timer that has come due — called once per editor tick.
+    ///
+    /// Returns whether anything fired, so the tick can decide to render. The
+    /// handler runs through `Action::PluginAction`, the same dispatch a
+    /// command or keybinding uses — so a handler that throws is caught and
+    /// logged here, and the timer's next tick still fires. That is the
+    /// property a detached `delay` loop lacks: one unguarded rejection there
+    /// ends the loop for good, with nothing to report it.
+    ///
+    /// Due timers are collected, and one-shots retired, before any handler
+    /// runs. Handlers reach this table only by sending a plugin command that
+    /// a later tick drains, so they cannot mutate it underneath us — but
+    /// collecting first keeps that a property of this function rather than of
+    /// the channel's timing.
+    pub fn check_plugin_timers(&mut self) -> bool {
+        use crate::input::keybindings::Action;
+
+        if self.plugin_timers.is_empty() {
+            return false;
+        }
+        let now = self.time_source.now();
+
+        let mut due: Vec<(u64, String, String)> = Vec::new();
+        for timer in &mut self.plugin_timers {
+            if timer.next_fire <= now {
+                due.push((
+                    timer.id,
+                    timer.plugin_name.clone(),
+                    timer.handler_name.clone(),
+                ));
+                timer.rearm(now);
+            }
+        }
+        if due.is_empty() {
+            return false;
+        }
+        // A one-shot is retired before its handler runs, so a handler that
+        // throws can't leave a dead timer armed, and one that re-arms itself
+        // gets the new registration rather than having it dropped here.
+        let fired: std::collections::HashSet<u64> = due.iter().map(|(id, _, _)| *id).collect();
+        self.plugin_timers
+            .retain(|t| t.repeat || !fired.contains(&t.id));
+
+        for (id, plugin_name, handler_name) in due {
+            if let Err(e) = self.handle_action(Action::PluginAction(handler_name.clone())) {
+                tracing::warn!(
+                    "plugin timer {id} ({plugin_name}) handler '{handler_name}' failed: {e}"
+                );
+            }
+        }
+        true
+    }
+
+    /// Re-read and run `~/.config/fresh/init.ts` — `editor.reloadInit()`, and
+    /// through it `fresh --cmd init reload`.
+    ///
+    /// Deliberately the same two steps as `Action::InitReload` (the palette's
+    /// "init: Reload"), so what an agent exercises headlessly is what the user
+    /// gets interactively: the load, then `plugins_loaded` re-fired for
+    /// handlers that expect a post-load environment.
+    #[cfg(feature = "plugins")]
+    fn handle_reload_init(&mut self, callback_id: JsCallbackId) {
+        use crate::init_script::InitOutcome;
+
+        let outcome = self.load_init_script(true);
+        self.fire_plugins_loaded_hook();
+
+        let manager = self.plugin_manager.read().unwrap();
+        match outcome {
+            InitOutcome::Loaded => manager.resolve_callback(callback_id, "true".to_string()),
+            // "Nothing to load" is not a failure: an agent that reloads after
+            // writing init.ts for the first time, or on a `--safe` launch,
+            // gets an answer it can branch on rather than an exception.
+            InitOutcome::NotFound | InitOutcome::Disabled => {
+                manager.resolve_callback(callback_id, "false".to_string())
+            }
+            // A parse/eval failure is the case worth interrupting for: the
+            // previous init.ts is still live, and the caller's edit did not
+            // take effect.
+            other => manager.reject_callback(callback_id, crate::init_script::describe(&other)),
+        }
+    }
+
+    /// Run a registered command by its palette name — `editor.runCommand()`,
+    /// and through it `fresh --cmd command run "<name>"`.
+    ///
+    /// Dispatches the command's own `Action`, which for a plugin command is
+    /// `PluginAction(handler)` — the identical path the palette takes when
+    /// the user picks that row, rather than calling the plugin's exported
+    /// function directly. That is the whole point: it exercises registration,
+    /// name resolution and dispatch, not just the handler body.
+    #[cfg(feature = "plugins")]
+    fn handle_run_editor_command(&mut self, name: String, callback_id: JsCallbackId) {
+        let command = self
+            .command_registry
+            .read()
+            .unwrap()
+            .resolve_by_display_name(&name);
+
+        let Some(command) = command else {
+            self.plugin_manager.read().unwrap().reject_callback(
+                callback_id,
+                format!(
+                    "no registered command named '{name}' \
+                     (list them with editor.listCommands() or `fresh --cmd command list`)"
+                ),
+            );
+            return;
+        };
+
+        // Mirror the palette: a run counts as usage, so recency ordering
+        // reflects agent-driven runs the same way it reflects the user's.
+        self.command_registry
+            .write()
+            .unwrap()
+            .record_usage(&command.name);
+
+        let result = self.handle_action(command.action);
+        let manager = self.plugin_manager.read().unwrap();
+        match result {
+            Ok(()) => manager.resolve_callback(callback_id, "true".to_string()),
+            Err(e) => manager.reject_callback(callback_id, format!("command '{name}' failed: {e}")),
+        }
+    }
+
+    /// Every registered command, built-in and plugin alike —
+    /// `editor.listCommands()` / `fresh --cmd command list`.
+    #[cfg(feature = "plugins")]
+    fn handle_list_editor_commands(&mut self, callback_id: JsCallbackId) {
+        use crate::input::commands::CommandSource;
+
+        let commands = self.command_registry.read().unwrap().get_all();
+        let json_array: Vec<serde_json::Value> = commands
+            .iter()
+            .map(|c| {
+                let (source, plugin) = match &c.source {
+                    CommandSource::Builtin => ("builtin", String::new()),
+                    CommandSource::Plugin(name) => ("plugin", name.clone()),
+                };
+                serde_json::json!({
+                    // The displayed form, because that is the name
+                    // `runCommand` resolves and the palette shows.
+                    "name": c.get_localized_name(),
+                    "description": c.get_localized_description(),
+                    "source": source,
+                    "plugin": plugin,
                 })
             })
             .collect();
@@ -6146,6 +6370,15 @@ impl Window {
             let buffer_info = BufferInfo {
                 id: *buffer_id,
                 path: state.buffer.file_path().map(|p| p.to_path_buf()),
+                // The tab label. For a virtual buffer this is the `name` the
+                // creating plugin chose, which is the only stable way for it
+                // to find its own panel again — `path` is empty for every
+                // virtual buffer, so it distinguishes nothing.
+                name: self
+                    .buffer_metadata
+                    .get(buffer_id)
+                    .map(|m| m.display_name.clone())
+                    .unwrap_or_default(),
                 modified: state.buffer.is_modified(),
                 length: state.buffer.len(),
                 line_count: state.buffer.line_count(),
