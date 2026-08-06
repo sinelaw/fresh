@@ -319,7 +319,6 @@ mod tests {
         assert!(leftovers.is_empty(), "staging file not cleaned up");
     }
 
-    #[cfg(unix)]
     /// The staging file must never be written *through* something that was
     /// already there. `fs::write` opened with `O_CREAT|O_TRUNC` and followed
     /// symlinks, so on a machine where the install directory is writable by
@@ -364,6 +363,7 @@ mod tests {
         assert_eq!(first.parent(), target.parent());
     }
 
+    #[cfg(unix)]
     #[test]
     fn atomic_replace_sets_executable_bit() {
         use std::os::unix::fs::PermissionsExt;

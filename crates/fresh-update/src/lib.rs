@@ -47,6 +47,8 @@ pub mod self_update;
 pub mod staging;
 pub mod version;
 
+#[cfg(feature = "archive")]
+pub mod archive;
 #[cfg(feature = "net")]
 pub mod net;
 
