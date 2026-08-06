@@ -8,58 +8,40 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Guided code tours** - a walkthrough of a codebase, played in the editor: the steps on the left, the current step's explanation on the right, and the code it talks about open and highlighted above. Full guide: [Guided Code Tours](https://getfresh.dev/docs/features/code-tours).
-  * A tour is a small JSON file - `fresh --cmd help tour` prints the field reference, and an agent can write one and open it for you.
-  * **Tour: Open Workspace Tour...** browses the workspace root with hidden files shown, where tours live.
-  * The files it opens are ordinary buffers - navigate, edit, wander off; the tour waits.
-  * Several tours at once, and an unfinished one comes back on the next launch.
-  * VS Code [CodeTour](https://github.com/microsoft/codetour) files play as-is, and a tour written against another commit says so.
-* **Scripting the editor** - hand a running Fresh a short TypeScript program and it will do anything the plugin API can: open files, arrange panes, create a workspace, start a coding agent, open a tour. Mostly so the agent in your pane can arrange the editor around the task. Full guide: [Scripting the Editor](https://getfresh.dev/docs/features/scripting).
-  * `fresh --cmd script run` takes a one-liner on stdin or a program in a file; what it returns prints as JSON.
-  * `script check` / `api` / `types` check a program, search the API, and find the declarations.
-  * **Teach agent the Fresh CLI** briefs `claude`, `codex` and `opencode`, and is on by default.
-  * The grant is scoped to the workspace that made it, so one agent cannot reach a sibling's panes.
-* **An agent can customize Fresh end to end** - `fresh --cmd init reload` re-reads `init.ts` and `fresh --cmd command run "<name>"` invokes a registered command, so writing a customization and trying it no longer needs you to press `Ctrl+P`. `fresh --cmd help plugin` documents the runtime contract with a worked example, and plugins gained `editor.setInterval` / `setTimeout` for host-driven refresh.
-* **Every settings toggle now says what it changes** - **Toggle X** changes the editor-wide default and saves it to your config; **Toggle X (Current Buffer)** pins just the active buffer. Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Read-Only Mode and Auto-Revert gained the suffix, and Indentation Guides, Folding Indicators, Current Line Highlight and Occurrence Highlight gained per-buffer variants.
-* **Git-gutter hunks and unsaved edits show on the scrollbar** - a change below the fold is visible on the track instead of only in the gutter, matching the marks live diff already draws (#2713, requested by @RetributionByRevenue).
-* **The Orchestrator dock can be closed without a keybinding** - a `×` on its title bar and a new **View → Orchestrator Dock** row, with a live checkmark.
-* **Thrift syntax highlighting** - `.thrift` interface definition files now highlight out of the box (#2884, by @asukaminato0721).
+* **Guided code tours** - a codebase walkthrough played in the editor: steps on the left, the current step's explanation on the right, the code open and highlighted above. Tours are small JSON files (`fresh --cmd help tour`), VS Code [CodeTour](https://github.com/microsoft/codetour) files play as-is, and an unfinished tour resumes on next launch. Full guide: [Guided Code Tours](https://getfresh.dev/docs/features/code-tours).
+* **Scripting the editor** - `fresh --cmd script run` hands a running Fresh a TypeScript program with the full plugin API: open files, arrange panes, start a coding agent, open a tour. **Teach agent the Fresh CLI** briefs `claude`, `codex` and `opencode` (on by default). Full guide: [Scripting the Editor](https://getfresh.dev/docs/features/scripting).
+* **Agents can customize Fresh end to end** - `fresh --cmd init reload` re-reads `init.ts`, `fresh --cmd command run "<name>"` invokes any palette command, `fresh --cmd help plugin` documents the runtime.
+* **Every settings toggle says what it changes** - **Toggle X** = editor-wide, saved to config; **Toggle X (Current Buffer)** = this buffer only. Several toggles gained the missing variant.
+* **Git-gutter hunks and unsaved edits show on the scrollbar** (#2713, requested by @RetributionByRevenue).
+* **The Orchestrator dock has a close button** and a **View → Orchestrator Dock** menu row.
+* **Thrift syntax highlighting** (#2884, by @asukaminato0721).
 
 ### Bug Fixes
 
-* **Replace-all now finishes on files with tens of thousands of matches** - four unrelated quadratic hot spots made a 60 000-match replace run for over a minute, or hang outright (#2893).
-* **Two splits on the same file keep independent edit points** - any action emitting more than one event (`Ctrl+T` transpose, `Alt+↑`/`Alt+↓` move line, toggle comment) reset the other pane's cursor to the edit and scrolled it there (#2878, reported by @FreekyFrank).
-* **The Shift key works with "Keyboard Report All Keys As Escape Codes"** - with that flag on, every shifted key typed its unshifted character (`Shift+A` inserted `a`) (#2880, reported by @akarinotomoshibi).
-* **TOML multiline arrays highlight correctly**, and bare dots are no longer misread as floats (#2887, by @asukaminato0721).
-* **Settings you toggle actually stick**
-  * **Eight toggles that forgot your choice on restart** - Line Wrap, Current Line Highlight, Occurrence Highlight, Inlay Hints, Mouse Hover, Tab Bar, Status Bar and Prompt Line changed only the in-memory config, so the setting reverted on the next launch.
-  * **A toggle writes the config layer that owns the setting** - a project `.fresh/config.json` used to silently override the user-layer entry the toggle wrote, so the toggle looked dead in that project and leaked the change into every other one.
-  * **The workspace no longer shadows saved settings** - line numbers, line wrap and inlay hints were snapshotted into every workspace and stamped back on open, so an old workspace overrode the default you saved elsewhere.
-  * **Config writes are atomic**, and a hand-written empty override like `"status_bar": {"left": []}` is no longer deleted the next time anything saves.
-  * **Reset Buffer Settings really resets everything** - the occurrence highlight used to stay pinned for the rest of the session, and the current-line-highlight, line-number and line-wrap pins could not be cleared at all.
-  * **Toggle Tab Indicators toggles only tabs** - it shared the master whitespace toggle, so hiding the tab arrows also killed the space dots.
-  * **Per-buffer pins are per split**, and a global toggle no longer un-pins the other splits in the window.
-  * **Read-only and whitespace-indicator commands are translated** in every non-English locale.
-* **Menus and the command palette agree on what the buffer can do** - both asked only whether a buffer existed, so `Save` was offered for a terminal (where it wrote the scrollback transcript over the backing file and said "Saved") and for buffers with nothing unsaved, while `Undo`, `Cut` and `Paste` were offered for read-only buffers that then refused them. In the other direction, Save All, Navigate Back/Forward, the view toggles and tab and split management were greyed out whenever a terminal or the file explorer had focus, some while their own keybinding still worked.
-* **Updates finish through the channel that installed Fresh** - `.deb`, `.rpm` and `.flatpak` installs were sent to `apt-get`/`dnf`/`flatpak update` against repositories that never served Fresh, so they reported "already the newest version" forever; they now download and verify the release artifact instead. Homebrew's command named a formula that does not exist, `mise upgrade` kept a pinned version, `winget upgrade` could not read the installed version, and Flatpak's generated command could not run inside its own sandbox. The update popup also offers a download-only middle step, and **Show the update command** now prints without downloading anything.
-* **The in-place binary swap is safe on a shared install directory** - the staging file had a guessable name and followed symlinks, so on a group-writable `/usr/local/bin` another local user could redirect the write; the same class of hole let a staged package be swapped before `sudo dpkg -i` ran. Both stage unpredictably in owner-only locations now, and the swap fsyncs so a power loss can't leave a zero-length executable.
-* **Pasting works in the New Workspace and Run Agent dialogs** - `Ctrl+V`/`Ctrl+A`/`Ctrl+C`/`Ctrl+X` and bracketed paste reach the focused text field instead of the buffer behind the dialog, in daemon mode (`fresh -a`) too.
-* **Renaming or filing a workspace made with "Extract Tab to New Workspace" no longer hits its co-tenant** - both were keyed by the shared project root, so renaming or moving one did the same to the other.
-* **A restored workspace's agent can still drive the editor** - the script capability was never persisted, so after a restart `fresh --cmd script` failed as unauthorized in a workspace where it had worked.
-* **Live diff never refuses a file again** - checking out a very old revision of a large file used to render nothing at all and report "file too large for live diff"; live diff, the git gutter and the unsaved-changes indicator now share one diff engine that degrades detail instead of giving up.
-* **Reverting a file from outside Fresh refreshes the git gutter, live diff and merge-conflict markers** - running `git checkout` in another terminal left them showing the pre-revert state until the next save.
-* **Opening a file straight to a line no longer breaks syntax highlighting** - the parser could start mid-comment and read a stray backtick as opening a string that swallowed the viewport; whole files up to 1MB now parse from the start.
-* **Highlights taller than the window are drawn again** - an overlay starting above the top of the view and ending below the bottom vanished entirely, which hit diagnostics spanning a long block and diff hunks taller than the pane.
-* **The cursor can reach the last column when the vertical scrollbar is shown** - the column it reserves was being subtracted twice (by @ttenneb).
-* **Closing a file no longer pulls a dock panel into the editor split** - Search & Replace, Diagnostics or a tour panel could be adopted as a tab among your source files, and came back after every later close.
-* **Plugin panels handle the mouse properly** - a click on a border or empty padding no longer scrolls the panel's own header out of view, side-by-side lists route clicks to the column you clicked, the wheel scrolls the list under the pointer, and an overflowing list paints a scrollbar. Affects every widget panel (Search & Replace, Settings, the Orchestrator dock).
-* **A second panel opened in the Utility Dock renders like the first** instead of picking up a stray line-number gutter.
-* **Reloading a plugin stops stacking panels** - each reload of `init.ts` left the virtual buffers its previous copy created open, so the documented edit-reload-run loop added a duplicate panel every iteration.
-* **The plugin slow-handler warning stops crying wolf** - a handler crossing 50ms on a loaded machine logged a warning; only a genuinely blocking handler past 500ms does now.
+* **Replace-all finishes on files with tens of thousands of matches** - used to run minutes or hang (#2893).
+* **Two splits on the same file keep independent edit points** - transpose, move-line and toggle-comment reset the other pane's cursor (#2878, reported by @FreekyFrank).
+* **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
+* **TOML multiline arrays highlight correctly** (#2887, by @asukaminato0721).
+* **Settings toggles actually stick** - eight toggles forgot your choice on restart; project configs silently overrode toggled values; workspaces stamped stale settings back on open; config writes are now atomic and no longer delete hand-written empty overrides; Reset Buffer Settings really resets; Toggle Tab Indicators no longer hides space dots too.
+* **Menus and the palette agree on what a buffer can do** - no more `Save` on a terminal (it overwrote the backing file with scrollback), no more greyed-out commands while a terminal or the explorer has focus.
+* **Updates finish through the channel that installed Fresh** - `.deb`/`.rpm`/`.flatpak` updates were pointed at repos that never served Fresh ("already the newest version", forever); Homebrew named a nonexistent formula; several other channels' commands fixed. **Show the update command** prints without downloading.
+* **Update security hardening** - closed a symlink race in the binary swap and a predictable staging path ahead of `sudo dpkg -i`.
+* **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
+* **Renaming a workspace made with "Extract Tab to New Workspace" no longer renames its co-tenant.**
+* **A restored workspace's agent can still drive the editor** - the script grant now survives a restart.
+* **Live diff never refuses a file** - "file too large for live diff" is gone; the shared diff engine degrades detail instead of giving up.
+* **Reverting a file outside Fresh refreshes the git gutter, live diff and conflict markers.**
+* **Opening a file straight to a line no longer breaks syntax highlighting.**
+* **Highlights taller than the window are drawn again.**
+* **The cursor can reach the last column when the scrollbar is shown** (by @ttenneb).
+* **Closing a file no longer pulls a dock panel into the editor split.**
+* **Plugin panels handle the mouse properly** - clicks, wheel and scrollbars work in every widget panel.
+* **A second Utility Dock panel renders like the first** - no stray line-number gutter.
+* **Reloading a plugin stops stacking duplicate panels.**
 
 ### Internals
 
-* Continued flaky-e2e-test stabilization across the palette, code-tour, live-diff, git-gutter and orchestrator-dock suites, and removal of stale ad-hoc reports from the repo root (#2914).
+* Flaky-e2e stabilization, quieter plugin slow-handler warnings, repo-root cleanup (#2914).
 
 ## 0.4.6
 
