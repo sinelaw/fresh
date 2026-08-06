@@ -98,15 +98,80 @@ pub fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), UpdateError> {
     }
 }
 
-/// The temp path used while staging a new binary, alongside `target` so the
-/// final rename stays on the same filesystem (and is therefore atomic).
-fn staging_path(target: &Path) -> PathBuf {
+/// Create the temp file used while staging a new binary, alongside `target` so
+/// the final rename stays on the same filesystem (and is therefore atomic).
+///
+/// Three properties, each closing something the previous `.{name}.new-{pid}`
+/// plus `fs::write` did not:
+///
+/// * **Unpredictable name.** The pid is guessable and, on a machine where the
+///   install directory is writable by more than its owner — `/usr/local/bin` is
+///   group-writable on plenty of macOS setups, and any shared install
+///   qualifies — an attacker could pre-create the path.
+/// * **`O_NOFOLLOW` + `create_new`.** `fs::write` opens with `O_CREAT|O_TRUNC`
+///   and *follows symlinks*, so a pre-created symlink meant our 0755 content
+///   landed wherever it pointed. Refusing to open anything that already exists,
+///   and refusing to traverse a final symlink, removes that entirely; if the
+///   name is taken we try another and eventually fail closed, which is a denial
+///   of service rather than a compromise.
+/// * **Mode at creation.** 0600 while we write, widened on the descriptor once
+///   the contents are complete — never a window where a partially written file
+///   is executable.
+fn staging_file(target: &Path) -> Result<(PathBuf, std::fs::File), UpdateError> {
     let name = target
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "fresh".to_string());
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
-    dir.join(format!(".{name}.new-{}", std::process::id()))
+    for attempt in 0..16u32 {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+            ^ attempt.wrapping_mul(0x9E37_79B9);
+        let path = dir.join(format!(".{name}.new-{nonce:08x}"));
+        match create_exclusive(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(UpdateError::Io(e)),
+        }
+    }
+    Err(UpdateError::Io(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not create a private staging file next to the target",
+    )))
+}
+
+#[cfg(unix)]
+fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_exclusive(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
+/// Flush the directory entry itself, so the rename survives a crash.
+///
+/// Without this, `rename` can be visible in the page cache but not yet on
+/// disk. Losing power in that window leaves the name pointing at an inode
+/// whose contents were never written — and since the old inode has already
+/// been unlinked from the name, there is nothing to fall back to. A
+/// zero-length 0755 `fresh` is a worse outcome than a failed update.
+fn sync_dir(dir: &Path) {
+    if let Ok(handle) = std::fs::File::open(dir) {
+        let _ = handle.sync_all();
+    }
 }
 
 /// The path the previous binary is moved aside to on Windows before the swap.
@@ -130,14 +195,27 @@ fn backup_path(target: &Path) -> PathBuf {
 ///   we move the current binary aside to `<name>.old`, move the new one in, and
 ///   leave the stale `.old` for [`cleanup_previous`] to remove on next launch.
 pub fn atomic_replace(target: &Path, new_bytes: &[u8]) -> Result<(), UpdateError> {
-    let staging = staging_path(target);
-    std::fs::write(&staging, new_bytes)?;
-    set_executable(&staging)?;
+    use std::io::Write;
 
-    let result = do_swap(target, &staging);
+    let (staging, mut file) = staging_file(target)?;
+    let result = (|| -> Result<(), UpdateError> {
+        file.write_all(new_bytes)?;
+        // Widen the mode only now the contents are complete, and on the
+        // descriptor rather than the path — a path-based chmod is a second
+        // race, and one that can be steered onto a file we do not own.
+        set_executable(&file)?;
+        // Durable before it is reachable: the rename must not be able to
+        // publish a name whose contents have not reached disk.
+        file.sync_all()?;
+        drop(file);
+        do_swap(target, &staging)
+    })();
+
     if result.is_err() {
         // Best-effort cleanup of the staged file on failure.
         let _ = std::fs::remove_file(&staging);
+    } else if let Some(dir) = target.parent() {
+        sync_dir(dir);
     }
     result
 }
@@ -177,15 +255,13 @@ pub fn cleanup_previous(target: &Path) {
 }
 
 #[cfg(unix)]
-fn set_executable(path: &Path) -> std::io::Result<()> {
+fn set_executable(file: &std::fs::File) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
-    let mut perms = std::fs::metadata(path)?.permissions();
-    perms.set_mode(0o755);
-    std::fs::set_permissions(path, perms)
+    file.set_permissions(std::fs::Permissions::from_mode(0o755))
 }
 
 #[cfg(not(unix))]
-fn set_executable(_path: &Path) -> std::io::Result<()> {
+fn set_executable(_file: &std::fs::File) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -244,6 +320,50 @@ mod tests {
     }
 
     #[cfg(unix)]
+    /// The staging file must never be written *through* something that was
+    /// already there. `fs::write` opened with `O_CREAT|O_TRUNC` and followed
+    /// symlinks, so on a machine where the install directory is writable by
+    /// more than its owner, pre-creating the staging name as a symlink made
+    /// the updater write 0755 content to a target of someone else's choosing.
+    #[cfg(unix)]
+    #[test]
+    fn staging_refuses_a_path_that_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // A dangling symlink is the dangerous case: it does not exist as a
+        // file, so a plain create would happily follow it and write to the
+        // other end.
+        let victim = dir.path().join("victim");
+        let link = dir.path().join("staged-via-symlink");
+        std::os::unix::fs::symlink(&victim, &link).unwrap();
+        let err = create_exclusive(&link).expect_err("must refuse an existing symlink");
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(!victim.exists(), "wrote through the symlink to {victim:?}");
+
+        // And a plain existing file, so a staged binary can never be silently
+        // truncated and reused.
+        let existing = dir.path().join("existing");
+        std::fs::write(&existing, b"x").unwrap();
+        assert_eq!(
+            create_exclusive(&existing).unwrap_err().kind(),
+            std::io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&existing).unwrap(), b"x");
+    }
+
+    /// Two concurrent updates must not collide on the staging name — which
+    /// they would have, since the old name was derived from the pid and a
+    /// process only has one.
+    #[test]
+    fn staging_names_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("fresh");
+        let (first, _f1) = staging_file(&target).unwrap();
+        let (second, _f2) = staging_file(&target).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), target.parent());
+    }
+
     #[test]
     fn atomic_replace_sets_executable_bit() {
         use std::os::unix::fs::PermissionsExt;
