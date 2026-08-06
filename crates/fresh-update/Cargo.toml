@@ -14,11 +14,43 @@ categories = ["command-line-utilities", "config"]
 name = "fresh_update"
 path = "src/lib.rs"
 
+[features]
+default = []
+# HTTP transport for the release feed and release assets. Pulls in the TLS
+# stack (ureq + rustls + ring + webpki); off by default so a build that only
+# needs provenance resolution stays dependency-light.
+net = ["dep:ureq"]
+# Archive extraction for the self-contained channels (tarball / AppImage).
+archive = ["dep:tar", "dep:xz2", "dep:zip"]
+# The full `fresh --cmd update` engine: resolve provenance, fetch the feed,
+# download + verify, then delegate / install / swap.
+engine = ["net", "archive"]
+# Permit release endpoints outside the pinned host allowlist (plain http://,
+# a local mirror). Test-only: with an override in effect the engine refuses to
+# elevate, so a poisoned endpoint can never reach `sudo`. Never enable in a
+# published build.
+insecure-endpoints = []
+
 [dependencies]
 serde = { workspace = true }
+serde_json = { workspace = true }
 toml = "0.8"
 sha2 = "0.10"
 tracing = { workspace = true }
 
+ureq = { version = "3.1.4", default-features = false, features = [
+    "rustls",
+    "platform-verifier",
+], optional = true }
+tar = { version = "0.4", optional = true }
+xz2 = { version = "0.1", optional = true }
+zip = { version = "2", default-features = false, features = [
+    "deflate",
+], optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.25"
+tiny_http = "0.12"
