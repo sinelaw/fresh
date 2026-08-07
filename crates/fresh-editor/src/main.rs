@@ -5711,7 +5711,9 @@ fn run_event_loop(
     // Host input is read raw and parsed by fresh's own state machine (see
     // `services::tty_input`), not crossterm — this is what prevents mouse
     // reports from leaking into focused terminals (#2745).
-    let mut reader = fresh::services::tty_input::TtyReader::new();
+    let mut reader = fresh::services::tty_input::TtyReader::with_escape_grace(
+        std::time::Duration::from_millis(editor.config().editor.keyboard_escape_time_ms),
+    );
     run_event_loop_common(
         editor,
         terminal,
@@ -5834,7 +5836,9 @@ fn run_event_loop(
     // Host input is read raw and parsed by fresh's own state machine (see
     // `services::tty_input`), not crossterm — this is what prevents mouse
     // reports from leaking into focused terminals (#2745).
-    let mut reader = fresh::services::tty_input::TtyReader::new();
+    let mut reader = fresh::services::tty_input::TtyReader::with_escape_grace(
+        std::time::Duration::from_millis(editor.config().editor.keyboard_escape_time_ms),
+    );
     run_event_loop_common(
         editor,
         terminal,

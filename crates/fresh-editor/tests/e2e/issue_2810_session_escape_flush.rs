@@ -37,10 +37,16 @@ use std::time::{Duration, Instant};
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 30;
 
-/// Longer than the parser's escape grace window, so `flush_idle` resolves a
-/// buffered `ESC` the way an idle socket does on the server. Passed as an
-/// explicit `Instant` rather than slept, so the test stays time-insensitive.
-const PAST_ESC_GRACE: Duration = Duration::from_millis(50);
+/// Comfortably longer than the parser's escape grace window, so `flush_idle`
+/// resolves a buffered `ESC` the way an idle socket does on the server. Passed
+/// as an explicit `Instant` rather than slept, so the test stays
+/// time-insensitive.
+///
+/// Derived from the grace rather than hard-coded: it sat at exactly the default
+/// window, so raising that default (as #2793 did) left this test passing only on
+/// the `>=` boundary.
+const PAST_ESC_GRACE: Duration =
+    fresh::server::input_parser::DEFAULT_ESC_GRACE.saturating_add(Duration::from_millis(10));
 
 /// Raw bytes for the keys the report uses. A session client forwards exactly
 /// these; `Alt+A` is `ESC a`, Escape is a lone `ESC`, `Ctrl+P` is `0x10`.

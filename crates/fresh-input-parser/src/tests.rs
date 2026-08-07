@@ -1532,3 +1532,141 @@ fn utf8_lead_bytes_above_rfc3629_are_not_starts() {
     let ev = p.parse(&[0xf5, b'a']);
     assert_eq!(keys(&ev), vec![(KeyCode::Char('a'), KeyModifiers::empty())]);
 }
+
+// ---- #2793: the lone-`ESC` ambiguity ----
+
+#[test]
+fn flushed_escape_resyncs_a_split_x10_mouse_report() {
+    // The reported leak: a well-formed X10 report split right after its
+    // introducing `ESC`, with the two halves far enough apart that the caller's
+    // grace window expires in between and it flushes the `ESC` as the Escape
+    // key. The remainder must NOT become literal `[ M C H 4` keystrokes (which
+    // fresh forwards into a focused embedded terminal's child pty) — it is the
+    // tail of a mouse report and must decode as one.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b").is_empty(), "lone ESC surfaced early");
+    let flushed = p.flush();
+    assert_eq!(
+        keys(&flushed),
+        vec![(KeyCode::Esc, KeyModifiers::empty())],
+        "the flush must still deliver a responsive Escape key",
+    );
+
+    let ev = p.parse(b"[MCH4");
+    assert!(
+        !has_char_key(&ev),
+        "mouse bytes leaked as characters: {ev:?}"
+    );
+    assert_eq!(ev.len(), 1, "expected exactly the mouse event, got {ev:?}",);
+    assert!(
+        matches!(ev[0], Event::Mouse(_)),
+        "expected the split report to decode as a mouse event, got {:?}",
+        ev[0],
+    );
+}
+
+#[test]
+fn flushed_escape_resyncs_a_split_sgr_mouse_report() {
+    // Same, for the SGR encoding (`ESC [ < …M`).
+    let mut p = InputParser::new();
+    p.parse(b"\x1b");
+    p.flush();
+    let ev = p.parse(b"[<35;41;20M");
+    assert!(
+        !has_char_key(&ev),
+        "mouse bytes leaked as characters: {ev:?}"
+    );
+    assert_eq!(ev.len(), 1, "expected exactly the mouse event, got {ev:?}");
+    assert!(
+        matches!(ev[0], Event::Mouse(_)),
+        "expected a mouse event, got {:?}",
+        ev[0],
+    );
+}
+
+#[test]
+fn literal_bracket_after_a_flushed_escape_still_arrives() {
+    // The resync must not eat a real `[` keystroke that happens to follow an
+    // Escape press. `[` is held only until the next byte disproves a mouse
+    // report, then emitted in order.
+    let mut p = InputParser::new();
+    p.parse(b"\x1b");
+    p.flush();
+    let ev = p.parse(b"[a");
+    assert_eq!(
+        keys(&ev),
+        vec![
+            (KeyCode::Char('['), KeyModifiers::empty()),
+            (KeyCode::Char('a'), KeyModifiers::empty()),
+        ],
+        "literal `[` after Escape was dropped or reordered",
+    );
+}
+
+#[test]
+fn held_bracket_is_released_when_the_stream_goes_idle() {
+    // `[` as the very last byte before the stream goes quiet: the caller's next
+    // idle flush must release it, so typing `[` right after Escape cannot be
+    // swallowed indefinitely.
+    let mut p = InputParser::new();
+    p.parse(b"\x1b");
+    p.flush();
+    let ev = p.parse(b"[");
+    assert!(
+        ev.is_empty(),
+        "`[` surfaced before its fate was known: {ev:?}"
+    );
+    assert!(p.flush_pending(), "a held `[` must keep the flush armed");
+    assert_eq!(
+        keys(&p.flush()),
+        vec![(KeyCode::Char('['), KeyModifiers::empty())],
+        "the held `[` was never released",
+    );
+}
+
+#[test]
+fn unambiguous_escape_terminals_never_flush_a_lone_esc() {
+    // With the kitty protocol's "disambiguate escape codes" confirmed active,
+    // Escape arrives as `CSI 27 u`, so a bare `0x1b` can only be the head of a
+    // split sequence. Flushing it there could only tear the sequence apart, so
+    // the parser waits for the continuation however long it takes — the leak
+    // becomes structurally impossible rather than merely rarer.
+    let mut p = InputParser::new();
+    p.set_escape_unambiguous(true);
+    assert!(p.parse(b"\x1b").is_empty());
+    assert!(
+        p.flush().is_empty(),
+        "a lone ESC must not resolve to the Escape key on such terminals",
+    );
+    let ev = p.parse(b"[MCH4");
+    assert_eq!(ev.len(), 1, "expected just the mouse event, got {ev:?}");
+    assert!(matches!(ev[0], Event::Mouse(_)), "got {:?}", ev[0]);
+
+    // And the real Escape key still arrives, as `CSI 27 u`.
+    let esc = p.parse(b"\x1b[27u");
+    assert_eq!(keys(&esc), vec![(KeyCode::Esc, KeyModifiers::empty())]);
+}
+
+#[test]
+fn kitty_keyboard_flags_reply_is_reported_to_the_caller() {
+    // `CSI ? <flags> u` is still never a key event, but its flags are now
+    // readable so the caller can confirm disambiguate mode (bit 0) instead of
+    // assuming its optimistic `CSI > 1 u` push took effect.
+    let mut p = InputParser::new();
+    assert!(
+        p.take_keyboard_flags_reply().is_none(),
+        "nothing queried yet"
+    );
+    let ev = p.parse(b"\x1b[?1u");
+    assert!(ev.is_empty(), "flags reply leaked as input: {ev:?}");
+    assert_eq!(p.take_keyboard_flags_reply(), Some(1));
+    assert_eq!(
+        p.take_keyboard_flags_reply(),
+        None,
+        "the reply must be consumed exactly once",
+    );
+
+    // A reply with the disambiguate bit clear (e.g. only "report event types").
+    p.parse(b"\x1b[?2u");
+    assert_eq!(p.take_keyboard_flags_reply(), Some(2));
+}

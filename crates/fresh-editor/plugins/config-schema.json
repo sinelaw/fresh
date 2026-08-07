@@ -132,6 +132,7 @@
         "auto_recovery_save_interval_secs": 2,
         "auto_revert_poll_interval_ms": 2000,
         "keyboard_disambiguate_escape_codes": true,
+        "keyboard_escape_time_ms": 50,
         "keyboard_report_event_types": false,
         "keyboard_report_alternate_keys": true,
         "keyboard_report_all_keys_as_escape_codes": false,
@@ -884,6 +885,14 @@
           "description": "Enable keyboard enhancement: disambiguate escape codes using CSI-u sequences.\nThis allows unambiguous reading of Escape and modified keys.\nRequires terminal support (kitty keyboard protocol).\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Keyboard"
+        },
+        "keyboard_escape_time_ms": {
+          "description": "How long a lone Escape byte waits for a continuation before it is treated\nas the Escape key, in milliseconds.\nIn the legacy encoding `ESC` is both the Escape key and the prefix of every\nescape sequence, so this is a guess on a timer: too low and a mouse report\nsplit by a slow ssh/mosh link is torn apart mid-sequence, too high and the\nEscape key feels sluggish. Raise it on high-latency connections\n(tmux's equivalent, `escape-time`, defaults to 500).\nIgnored entirely on terminals that confirm the kitty keyboard protocol's\n\"disambiguate escape codes\" mode, where Escape is unambiguous and no\nguessing is needed.\nDefault: 50ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 50,
           "x-section": "Keyboard"
         },
         "keyboard_report_event_types": {

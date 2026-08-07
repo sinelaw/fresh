@@ -1173,7 +1173,13 @@ impl EditorServer {
             term_size: hello.term_size,
             env: hello.env,
             id: client_id,
-            input_parser: ClientInputParser::new(),
+            // Same escape grace as the direct tty path (#2793): the session
+            // path used to flush a lone `ESC` after a single 15ms window while
+            // the tty path allowed two, so `fresh -a` tore split sequences
+            // apart twice as readily.
+            input_parser: ClientInputParser::with_escape_grace(std::time::Duration::from_millis(
+                self.config.editor_config.editor.keyboard_escape_time_ms,
+            )),
             needs_full_render: true,
             wait_id: None,
             cmd_token: hello.cmd_token,
