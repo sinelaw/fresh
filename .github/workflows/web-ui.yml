@@ -63,7 +63,7 @@ jobs:
         id: playwright-version
         run: echo "version=$(node -p "require('./crates/fresh-editor/web-ui/test/package.json').devDependencies.playwright")" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
