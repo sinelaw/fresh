@@ -236,6 +236,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Auto-indent**: typing a dedent keyword now re-indents the line as you type it, matching the "electric" dedent already applied to closing brackets. Python `else:`/`elif`/`except`/`finally`/`case`, Ruby/Lua/Fish/Pascal `end`, Bash `fi`/`done`/`esac`, and any language's custom `decrease_indent_pattern` token snap one level shallower instead of staying over-indented until the next save (#2582).
 * **Cursor column** is preserved on vertical moves that used to drift it - indented soft-wrapped lines, off-screen up/down over short lines (#2565), and blank lines with indentation guides (#2564).
 * **LSP args** - an empty `args` list now overrides a built-in server's defaults, so you can use one that takes no arguments (e.g. markdown-oxide for marksman) (#2549, reported by @alex-ball).
 * **Settings icons** now render on all terminals by default - standard Unicode symbols replace the Nerd Font glyphs that showed as `?`; opt back in with `editor.nerd_font_icons` (#2032).

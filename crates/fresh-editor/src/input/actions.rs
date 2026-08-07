@@ -731,6 +731,23 @@ fn rules_dedent(state: &EditorState, position: usize, ch: char, tab_size: usize)
     })
 }
 
+/// Keyword variant of [`rules_dedent`]: when typing `ch` at `cursor` completes
+/// a dedent keyword (Python `else:`, Ruby/Lua `end`, Bash `fi`/`done`, …) on
+/// the line starting at `line_start`, returns the visual indent the line
+/// should snap to. Returns `None` when the language has no matching rule.
+fn rules_typed_dedent(
+    state: &EditorState,
+    ch: char,
+    cursor: usize,
+    line_start: usize,
+    tab_size: usize,
+) -> Option<usize> {
+    let rules = buffer_indent_rules(state)?;
+    rules.calculate_dedent_for_typed_char(&state.buffer, line_start, cursor, ch, tab_size, |b| {
+        byte_is_code(state, b)
+    })
+}
+
 /// Calculate the correct indent for a closing delimiter.
 ///
 /// Tiering mirrors the Enter-indent path: a language with a *bundled*
@@ -899,6 +916,74 @@ fn handle_auto_dedent(
         text,
         cursor_id,
     });
+}
+
+/// Handle keyword dedent-on-type: when the just-typed character `ch` completes
+/// a dedent keyword on the current line (e.g. Python `else:`, Ruby/Lua `end`),
+/// re-indent the line one level shallower — the same "electric" correction the
+/// editor already applies for a typed closing bracket, extended to the keyword
+/// triggers of `decrease_indent_pattern`.
+///
+/// Returns `true` when it handled the character (emitting the re-indent plus
+/// the inserted `ch`), so the caller skips the normal insertion. Returns
+/// `false` to leave the character to the normal path — including the no-op case
+/// where the line is already at the correct indent, which keeps the correction
+/// idempotent (no redundant undo step on every following keystroke).
+fn handle_typed_keyword_dedent(
+    state: &mut EditorState,
+    events: &mut Vec<Event>,
+    cursor_id: CursorId,
+    ch: char,
+    insert_position: usize,
+    line_start: usize,
+    tab_size: usize,
+) -> bool {
+    let Some(target_indent) = rules_typed_dedent(state, ch, insert_position, line_start, tab_size)
+    else {
+        return false;
+    };
+
+    // Current visual indent of the line (tabs count as tab_size columns).
+    let mut current_indent = 0;
+    let mut content_start = line_start;
+    while content_start < insert_position {
+        match state
+            .buffer
+            .slice_bytes(content_start..content_start + 1)
+            .first()
+        {
+            Some(&b' ') => current_indent += 1,
+            Some(&b'\t') => current_indent += tab_size,
+            _ => break,
+        }
+        content_start += 1;
+    }
+
+    if current_indent == target_indent {
+        // Already correctly indented — let the character insert normally.
+        return false;
+    }
+
+    // Replace the line's leading whitespace with the corrected indent, keeping
+    // the already-typed keyword text and appending the triggering character.
+    let leading = state.get_text_range(line_start, insert_position);
+    events.push(Event::Delete {
+        range: line_start..insert_position,
+        deleted_text: leading.clone(),
+        cursor_id,
+    });
+
+    let content = leading.trim_start_matches([' ', '\t']);
+    let use_tabs = state.buffer_settings.use_tabs;
+    let mut text = indent_to_string(target_indent, use_tabs, tab_size);
+    text.push_str(content);
+    text.push(ch);
+    events.push(Event::Insert {
+        position: line_start,
+        text,
+        cursor_id,
+    });
+    true
 }
 
 /// Check if auto-close should happen based on character after cursor.
@@ -1132,6 +1217,7 @@ fn insert_char_events(
         }
 
         // Delete selection if present
+        let had_selection = data.selection.is_some();
         if let (Some(range), Some(text)) = (data.selection, data.deleted_text) {
             events.push(Event::Delete {
                 range,
@@ -1197,6 +1283,33 @@ fn insert_char_events(
                 handle_auto_close(events, data.cursor_id, ch, close_char, data.insert_position);
                 continue;
             }
+        }
+
+        // Keyword dedent-on-type: if this character completes a dedent keyword
+        // (`else`, `end`, `fi`, …) on the current line, snap the line one level
+        // shallower — the electric-dedent counterpart to the closing-bracket
+        // handling above. Gated to the common, unambiguous case: no active
+        // selection, and the cursor at the end of the line's content (nothing
+        // but the whitespace/newline that a fresh auto-indented line carries
+        // after it). Restricting to end-of-line typing keeps the correction
+        // from firing while the user edits inside an existing line, and matches
+        // how the reported keywords are actually typed (`else:` / `end` at the
+        // tail of a freshly indented line).
+        let at_line_end = matches!(data.char_after, None | Some(b'\n'));
+        if auto_indent
+            && !had_selection
+            && at_line_end
+            && handle_typed_keyword_dedent(
+                state,
+                events,
+                data.cursor_id,
+                ch,
+                data.insert_position,
+                data.line_start,
+                tab_size,
+            )
+        {
+            continue;
         }
 
         // Normal character insertion
@@ -5448,6 +5561,141 @@ mod tests {
 
         assert_eq!(state.buffer.to_string().unwrap(), "\"\"");
         assert_eq!(cursors.primary().position, 1);
+    }
+
+    /// Type `text` one character at a time through the production insert path
+    /// (`Action::InsertChar`), applying the resulting events after each key.
+    fn type_chars(state: &mut EditorState, cursors: &mut Cursors, text: &str) {
+        for ch in text.chars() {
+            let events = action_to_events(
+                state,
+                cursors,
+                Action::InsertChar(ch),
+                4,
+                true, // auto_indent
+                true, // auto_close
+                true, // auto_surround
+                80,
+                24,
+            )
+            .unwrap();
+            for event in events {
+                state.apply(cursors, &event);
+            }
+        }
+    }
+
+    /// Issue #2582: typing a dedent-trigger keyword must re-indent the line as
+    /// it is typed, the same live correction the editor already did for `}`.
+    /// A private language id carries a Python-like rule set so the resolver
+    /// (`buffer_indent_rules`) finds it without a syntect grammar, exercising
+    /// the full typing pipeline end to end.
+    #[test]
+    fn typed_keyword_dedent_reindents_line() {
+        let _guard = crate::primitives::indent_rules::USER_RULES_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::primitives::indent_rules::set_user_rule(
+            "zz_dedent_py",
+            Some(r":\s*$"),
+            Some(r"^\s*(elif|else|except|finally|case)\b"),
+            None,
+            None,
+            None,
+        );
+
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.language = "zz_dedent_py".to_string();
+
+        // Post-Enter state: an auto-indented blank line under `if a:`.
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "if a:\n    x = 1\n    ".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+
+        // Typing `else:` snaps the line back to column 0.
+        type_chars(&mut state, &mut cursors, "else:");
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelse:",
+            "typing `else:` should dedent the line to column 0"
+        );
+        // Cursor stays right after the typed text.
+        assert_eq!(cursors.primary().position, "if a:\n    x = 1\nelse:".len());
+
+        // Pressing Enter now indents the body relative to the corrected `else:`
+        // (column 4), not the pre-dedent column 8 — the bug's compounding drift.
+        let events = action_to_events(
+            &mut state,
+            &mut cursors,
+            Action::InsertNewline,
+            4,
+            true,
+            true,
+            true,
+            80,
+            24,
+        )
+        .unwrap();
+        for event in events {
+            state.apply(&mut cursors, &event);
+        }
+        assert_eq!(
+            state.buffer.to_string().unwrap(),
+            "if a:\n    x = 1\nelse:\n    ",
+            "body after a corrected `else:` indents to column 4"
+        );
+
+        crate::primitives::indent_rules::clear_user_rules();
+    }
+
+    /// An ordinary statement (no decrease-rule match) keeps its indent when
+    /// typed — the electric dedent must not touch non-keyword lines.
+    #[test]
+    fn typed_ordinary_line_keeps_indent() {
+        let _guard = crate::primitives::indent_rules::USER_RULES_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::primitives::indent_rules::set_user_rule(
+            "zz_dedent_py2",
+            Some(r":\s*$"),
+            Some(r"^\s*(elif|else|except|finally|case)\b"),
+            None,
+            None,
+            None,
+        );
+
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.language = "zz_dedent_py2".to_string();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: "if a:\n    ".to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+
+        type_chars(&mut state, &mut cursors, "y = 2");
+        assert_eq!(state.buffer.to_string().unwrap(), "if a:\n    y = 2");
+
+        crate::primitives::indent_rules::clear_user_rules();
     }
 
     #[test]
