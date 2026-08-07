@@ -1629,7 +1629,6 @@
   "update.failed_title": "Неуспешна актуализация",
   "update.log_unavailable": "Информация за актуализацията не е налична.",
   "update.manual": "fresh v%{version} е налична. Вижте https://github.com/sinelaw/fresh/releases",
-  "update.popup_update": "Актуализиране до v%{version}",
   "update.retry": "Нов опит",
   "update.show_log": "Показване на дневника",
   "update.started": "Актуализиране на fresh във фонов режим. Дневник: %{path}. Рестартирайте fresh след приключване.",
