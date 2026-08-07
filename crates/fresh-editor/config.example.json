@@ -577,7 +577,7 @@
           "enable": false
         },
         "procMacro": {
-          "enable": false
+          "enable": true
         },
         "cargo": {
           "buildScripts": {

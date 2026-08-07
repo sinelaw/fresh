@@ -195,6 +195,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Bug Fixes
 
 * **LSP diagnostic fixes**: the gutter marker, `F8` target, hover, and panel now shift with inserted/deleted lines instead of freezing at the pre-edit position until the next save (#2602); and dismissing a hover popup no longer drops an unrelated error from the status bar, gutter, and `F8` navigation (#2601).
+* **Rust LSP Reduced Memory mode**: hover and Go to Definition no longer silently fail on macro names and inside macro arguments (e.g. a call inside `println!(...)`/`format!(...)`); the mode was disabling proc-macro expansion, which rust-analyzer also uses to resolve identifiers inside macro invocations. Proc-macro expansion now stays on in Reduced mode (#2598).
 * **LSP Rename keeps focus** - a cross-file F2 rename no longer jumps you to the definition's file at a stale cursor position (#2599).
 * **LSP now pulls diagnostics from every server** configured for a language, not just the first - e.g. both `ruff` and `ty` for Python now stay live (#2615, reported by @ak24watch).
 * **Format Buffer respects the selection** - with an active selection and a server that supports range formatting, only the selected range is formatted instead of silently reformatting the whole file (#2605).

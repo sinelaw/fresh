@@ -182,13 +182,23 @@ editor.on("action_popup_result", (data) => {
 // Reduced-memory init options for rust-analyzer:
 // - checkOnSave: false - disables cargo check on every save (#1 cause of slowdowns)
 // - cachePriming.enable: false - no background indexing of entire crate graph
-// - procMacro.enable: false - no proc-macro expansion (saves CPU/RAM)
 // - cargo.buildScripts.enable: false - no build.rs
 // - cargo.autoreload: false - manual reload only
+//
+// procMacro stays ENABLED on purpose. rust-analyzer resolves identifiers
+// *inside* a macro invocation's arguments (and the macro name itself)
+// through macro expansion, so turning procMacro off silently kills hover
+// and Go to Definition for the macro name and everything inside its args —
+// including built-in macros like println!/format!/assert!, which are among
+// the most common cursor positions in real Rust code. Losing navigation
+// there makes the editor look randomly broken, which is not the intent of a
+// memory mode. Proc-macro expansion is comparatively cheap next to
+// checkOnSave/cachePriming, and the process limits below still cap RAM/CPU.
+// See issue #2598.
 const REDUCED_MEMORY_INIT_OPTIONS = {
   checkOnSave: false,
   cachePriming: { enable: false },
-  procMacro: { enable: false },
+  procMacro: { enable: true },
   cargo: {
     buildScripts: { enable: false },
     autoreload: false,
@@ -258,7 +268,7 @@ editor.on("action_popup_result", (data) => {
         processLimits: REDUCED_MEMORY_PROCESS_LIMITS,
       });
       editor.restartLspForLanguage("rust");
-      editor.setStatus("Rust LSP: Reduced Memory mode — checkOnSave, procMacro, cachePriming disabled");
+      editor.setStatus("Rust LSP: Reduced Memory mode — checkOnSave, cachePriming, buildScripts disabled (macro navigation kept)");
       break;
 
     case "dismiss":
