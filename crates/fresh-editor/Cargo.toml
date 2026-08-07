@@ -10,6 +10,9 @@ repository.workspace = true
 homepage.workspace = true
 keywords = ["editor", "terminal", "tui", "text-editor", "lsp"]
 categories = ["command-line-utilities", "text-editors"]
+# web-ui/ itself must ship — build.rs assembles the embedded page from it under
+# the `web` feature — but its Playwright harness is dev-only.
+exclude = ["web-ui/test/**"]
 
 [[bin]]
 name = "fresh"

@@ -63,7 +63,7 @@ The served page is **one fully self-contained HTML file**, but it is
 *authored* here as separate sources:
 
 ```
-web-ui/
+crates/fresh-editor/web-ui/
   shell.html    document skeleton: <head>, body markup, style/script markers
   css/          NN-name.css — concatenated (in filename order) into <style>
   js/           NN-name.js  — concatenated (in filename order) into <script>
@@ -287,24 +287,25 @@ deps (`test/package.json`) on first use, start the server, run the suite,
 tear down:
 
 ```sh
-web-ui/test/run.sh
+crates/fresh-editor/web-ui/test/run.sh
 ```
 
 Env knobs: `PORT` (default `8141`) picks the bridge port; `PROFILE` (default
 `debug`, keeps CI cheap) selects the cargo profile — `PROFILE=release
-web-ui/test/run.sh` builds with `--release` and runs the suite against
-`target/release/examples/webui_server`; `CHROMIUM=/path/to/chrome`
+crates/fresh-editor/web-ui/test/run.sh` builds with `--release` and runs
+the suite against `target/release/examples/webui_server`;
+`CHROMIUM=/path/to/chrome`
 uses an existing Chromium binary and skips playwright's browser download
 (otherwise `run.sh` fetches Chromium via `npx playwright install chromium
 --with-deps` on first use). `SHOTS` (default `/tmp/pw/shots`) is where
 screenshots land. To run the driver against an already-running bridge:
 
 ```sh
-UI_URL=http://127.0.0.1:8141 node web-ui/test/drive.mjs
+UI_URL=http://127.0.0.1:8141 node crates/fresh-editor/web-ui/test/drive.mjs
 ```
 
 CI runs this suite plus the parity test via `.github/workflows/web-ui.yml` on
-changes touching `web-ui/` or the webui/scene code.
+changes touching `crates/fresh-editor/web-ui/` or the webui/scene code.
 
 A Rust web/TUI parity test (`crates/fresh-editor/tests/scene_parity.rs`) drives
 one `Editor` and asserts the chrome the web scene reports also appears in the
