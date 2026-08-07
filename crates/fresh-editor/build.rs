@@ -31,7 +31,14 @@ fn main() {
     // markers in shell.html and is written to $OUT_DIR/webui-index.html,
     // which webui/mod.rs embeds via include_str! — the served page stays a
     // single fully self-contained file.
-    assemble_webui();
+    //
+    // Only the `web` feature compiles webui/mod.rs, so only that build needs
+    // the page. Skipping otherwise also keeps default builds off the
+    // workspace-level web-ui/ directory, which lives outside the crate and so
+    // is absent from the packaged tarball `cargo publish` verifies.
+    if std::env::var_os("CARGO_FEATURE_WEB").is_some() {
+        assemble_webui();
+    }
 
     // Rerun if locales change
     println!("cargo::rerun-if-changed=locales");
@@ -449,6 +456,13 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
 /// self-contained.
 fn assemble_webui() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web-ui");
+    assert!(
+        root.is_dir(),
+        "the `web` feature needs the workspace's web-ui/ sources at {}, \
+         which the published crate tarball does not carry — build from a \
+         checkout of the repository instead",
+        root.display()
+    );
     println!(
         "cargo::rerun-if-changed={}",
         root.join("shell.html").display()
