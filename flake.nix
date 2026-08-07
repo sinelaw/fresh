@@ -69,7 +69,7 @@
               # embedded webui-index.html). The .js filter above already
               # catches web-ui/js, but shell.html and the css/ parts are
               # not covered by any extension filter, so include the tree.
-              ./web-ui
+              ./crates/fresh-editor/web-ui
               # Runtime assets in crates/fresh-editor
               ./crates/fresh-editor/docs
               ./crates/fresh-editor/keymaps

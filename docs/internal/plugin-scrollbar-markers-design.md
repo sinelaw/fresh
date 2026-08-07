@@ -365,7 +365,7 @@ The pane object in the scene JSON (`webui/mod.rs:1715`) gains:
 ```
 
 resolved to concrete hex at scene-build time (the web UI has no theme-key
-resolver). The frontend (`web-ui/js/30-render.js:52-56`) appends
+resolver). The frontend (`crates/fresh-editor/web-ui/js/30-render.js:52-56`) appends
 absolutely-positioned half-width divs to the existing `.scrollbar` region —
 same treatment as the thumb, ~6 lines of JS + a CSS rule per theme file.
 
