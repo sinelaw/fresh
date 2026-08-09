@@ -13,15 +13,15 @@
 //! assert only on what the status bar shows.
 
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::Event;
+use fresh::server::input_parser::Event;
 use fresh::server::input_parser::InputParser;
 
 /// Feed raw terminal bytes through the same parser the event loops use, and
 /// dispatch whatever events they produce into the editor.
 fn feed(harness: &mut EditorTestHarness, parser: &mut InputParser, bytes: &[u8]) {
     for event in parser.parse(bytes) {
-        if let Event::Key(key_event) = event {
-            harness.send_key_event(key_event).unwrap();
+        if let Event::Key(press) = event {
+            harness.send_key_press(press).unwrap();
         }
     }
 }

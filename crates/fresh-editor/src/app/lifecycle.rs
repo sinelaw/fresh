@@ -303,18 +303,21 @@ impl Editor {
     /// disturbing the live cursor.
     ///
     /// Returns whether the editor wants the next frame redrawn.
-    pub fn handle_input_event(&mut self, event: crossterm::event::Event) -> anyhow::Result<bool> {
+    pub fn handle_input_event(&mut self, event: fresh_input_parser::Event) -> anyhow::Result<bool> {
         use crate::input::is_keystroke;
-        use crossterm::event::Event as Ev;
+        use fresh_input_parser::{Event as Ev, KeyPress};
 
         match event {
-            Ev::Key(key_event) if is_keystroke(key_event.kind) => {
-                let key_code = format!("{:?}", key_event.code);
-                let modifiers = format!("{:?}", key_event.modifiers);
+            Ev::Key(press) if is_keystroke(press.kind) => {
+                let key_code = format!("{:?}", press.code);
+                let modifiers = format!("{:?}", press.modifiers);
                 self.active_window_mut()
                     .log_keystroke(&key_code, &modifiers);
-                let translated = self.key_translator().translate(key_event);
-                self.handle_key(translated.code, translated.modifiers)?;
+                // The calibration translator rewrites the physical chord only;
+                // the layout character rides along untouched, since it says
+                // what the key types rather than which chord arrived.
+                let translated = self.key_translator().translate(press.event);
+                self.handle_key_press(KeyPress::with_layout_char(translated, press.layout_char))?;
                 // If `paste()` just took the async placeholder path,
                 // skip the otherwise-automatic render for this
                 // keystroke. The placeholder is sitting in the

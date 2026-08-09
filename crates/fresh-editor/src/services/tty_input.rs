@@ -21,15 +21,15 @@
 //! *input* side moves here. Focus (`ESC[I`/`O`) and bracketed paste
 //! (`ESC[200~`…`201~`) arrive in the byte stream and are decoded by
 //! `InputParser`; terminal resizes do not, so we install our own `SIGWINCH`
-//! handler and synthesize [`CrosstermEvent::Resize`].
+//! handler and synthesize [`InputEvent::Resize`].
 
 use std::collections::VecDeque;
 use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::event::{Event as CrosstermEvent, MouseEventKind};
-use fresh_input_parser::InputParser;
+use crossterm::event::MouseEventKind;
+use fresh_input_parser::{Event as InputEvent, InputParser};
 
 /// How long a buffered lone `ESC` waits for a continuation before it is
 /// resolved as the Escape key. This bounds two waits: the in-`drain_stdin`
@@ -99,7 +99,7 @@ fn poll_readable(fd: RawFd, timeout: Duration) -> bool {
 /// Streaming reader that converts raw stdin bytes into crossterm events.
 pub struct TtyReader {
     parser: InputParser,
-    queue: VecDeque<CrosstermEvent>,
+    queue: VecDeque<InputEvent>,
     stdin_fd: RawFd,
 }
 
@@ -116,18 +116,18 @@ impl TtyReader {
     }
 
     /// Return a pending resize event if a `SIGWINCH` fired since last checked.
-    pub fn take_resize(&self) -> Option<CrosstermEvent> {
+    pub fn take_resize(&self) -> Option<InputEvent> {
         if SIGWINCH_PENDING.swap(false, Ordering::Relaxed) {
             crossterm::terminal::size()
                 .ok()
-                .map(|(cols, rows)| CrosstermEvent::Resize(cols, rows))
+                .map(|(cols, rows)| InputEvent::Resize(cols, rows))
         } else {
             None
         }
     }
 
     /// Pop the next already-decoded event, if any.
-    pub fn next_buffered(&mut self) -> Option<CrosstermEvent> {
+    pub fn next_buffered(&mut self) -> Option<InputEvent> {
         self.queue.pop_front()
     }
 
@@ -194,10 +194,10 @@ impl TtyReader {
     /// Queue an event, collapsing a run of mouse-move events down to the latest
     /// one (a motion flood produces one Moved event per read batch), matching
     /// the coalescing the crossterm path did in `coalesce_mouse_moves`.
-    fn push_coalesced(&mut self, ev: CrosstermEvent) {
-        if let CrosstermEvent::Mouse(m) = &ev {
+    fn push_coalesced(&mut self, ev: InputEvent) {
+        if let InputEvent::Mouse(m) = &ev {
             if m.kind == MouseEventKind::Moved {
-                if let Some(CrosstermEvent::Mouse(last)) = self.queue.back() {
+                if let Some(InputEvent::Mouse(last)) = self.queue.back() {
                     if last.kind == MouseEventKind::Moved {
                         *self.queue.back_mut().expect("back() was Some") = ev;
                         return;
@@ -209,7 +209,7 @@ impl TtyReader {
     }
 
     /// Blocking (up to `timeout`) read of the next event, or `None` on timeout.
-    pub fn poll(&mut self, timeout: Duration) -> anyhow::Result<Option<CrosstermEvent>> {
+    pub fn poll(&mut self, timeout: Duration) -> anyhow::Result<Option<InputEvent>> {
         if let Some(ev) = self.next_buffered() {
             return Ok(Some(ev));
         }
@@ -238,7 +238,7 @@ impl TtyReader {
 
     /// Non-blocking peek at the next event: drains stdin once if data is already
     /// pending. Used by mouse-move coalescing to look ahead without blocking.
-    pub fn try_next(&mut self) -> Option<CrosstermEvent> {
+    pub fn try_next(&mut self) -> Option<InputEvent> {
         if let Some(ev) = self.next_buffered() {
             return Some(ev);
         }
@@ -302,7 +302,7 @@ mod tests {
         }
     }
 
-    fn drain_events(r: &mut TtyReader) -> Vec<CrosstermEvent> {
+    fn drain_events(r: &mut TtyReader) -> Vec<InputEvent> {
         let mut out = Vec::new();
         while let Some(ev) = r.next_buffered() {
             out.push(ev);
@@ -339,7 +339,7 @@ mod tests {
             "expected exactly one event, got {events:?}",
         );
         assert!(
-            matches!(events[0], CrosstermEvent::Mouse(_)),
+            matches!(events[0], InputEvent::Mouse(_)),
             "expected a single Mouse event, got {:?}",
             events[0],
         );
@@ -366,7 +366,7 @@ mod tests {
         assert!(
             matches!(
                 events[0],
-                CrosstermEvent::Key(k) if k.code == KeyCode::Esc,
+                InputEvent::Key(k) if k.code == KeyCode::Esc,
             ),
             "expected Esc key, got {:?}",
             events[0],

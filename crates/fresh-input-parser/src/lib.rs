@@ -1,6 +1,7 @@
 //! Incremental terminal input (VT/ANSI) parser.
 //!
-//! Turns a raw byte stream from a terminal into [`crossterm::event::Event`]s.
+//! Turns a raw byte stream from a terminal into [`Event`]s (crossterm's, plus
+//! the keyboard-layout information a keymap needs — see [`KeyPress`]).
 //! The editor runs the whole UI server-side and keeps the client ultra-light,
 //! so all input parsing happens here on a byte stream that arrives in
 //! arbitrarily-sized chunks (a single escape sequence is regularly split
@@ -36,9 +37,130 @@
 //!
 //! [williams]: https://vt100.net/emu/dec_ansi_parser
 
+use std::ops::Deref;
+
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
+
+/// A key press, as the terminal reported it, plus the character the key
+/// actually types on the user's keyboard layout when the chord's own spelling
+/// hides it.
+///
+/// A chord is described by two different things at once, and on a US layout
+/// they happen to coincide so nothing forces the distinction:
+///
+/// * the **physical** key plus its modifiers — `Ctrl+Shift+7`; and
+/// * the **character the key produces** in that state — `&` on US, `/` on
+///   German (where `/` is Shift+7).
+///
+/// Terminals report both, and neither one alone is enough. The kitty keyboard
+/// protocol sends `CSI 55:47;6u` for the German chord: base codepoint 55
+/// (`7`), shifted codepoint 47 (`/`), modifiers Ctrl+Shift. Reporting only the
+/// base means a German user pressing what is, to them, `Ctrl+/` gets
+/// `Ctrl+Shift+7` — which `default.json` binds to `set_bookmark`, so the chord
+/// silently set a bookmark instead of toggling a comment (sinelaw/fresh#2933).
+/// Reporting only the shifted character is no better: it would break US
+/// `Ctrl+Shift+<digit>` bindings, which are keyed on the digit.
+///
+/// So the parser reports the physical chord and hangs the layout character off
+/// the side, and the *keymap* decides which reading wins — see
+/// `Editor::handle_key_press`, which prefers the layout reading only when it is
+/// actually bound. `layout_char` is `None` whenever the two readings agree,
+/// which is every key on a US layout and most keys everywhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyPress {
+    /// The chord as the terminal reported it: the physical key and its
+    /// modifiers, with SHIFT still set.
+    pub event: KeyEvent,
+    /// The character the key types on the current layout, when that differs
+    /// from `event.code`. The modifier that produced it (Shift) is spent on
+    /// the character and must not be part of a chord built from it.
+    pub layout_char: Option<char>,
+}
+
+impl KeyPress {
+    /// A key press whose physical spelling is the only reading there is.
+    pub fn new(event: KeyEvent) -> Self {
+        Self {
+            event,
+            layout_char: None,
+        }
+    }
+
+    /// A key press that also types `layout_char` on the current layout.
+    pub fn with_layout_char(event: KeyEvent, layout_char: Option<char>) -> Self {
+        Self { event, layout_char }
+    }
+}
+
+impl From<KeyEvent> for KeyPress {
+    fn from(event: KeyEvent) -> Self {
+        Self::new(event)
+    }
+}
+
+/// Reading a `KeyPress` as the key event it wraps keeps every existing
+/// `press.code` / `press.modifiers` / `press.kind` call site working: the
+/// layout character is extra information about the same press, not a different
+/// kind of press.
+impl Deref for KeyPress {
+    type Target = KeyEvent;
+
+    fn deref(&self) -> &KeyEvent {
+        &self.event
+    }
+}
+
+/// A terminal input event.
+///
+/// Mirrors [`crossterm::event::Event`] variant for variant, except that `Key`
+/// carries a [`KeyPress`] rather than a bare `KeyEvent` so the layout character
+/// survives the trip to the keymap. Convert with [`Event::into_crossterm`] at
+/// any boundary that only speaks crossterm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    FocusGained,
+    FocusLost,
+    Key(KeyPress),
+    Mouse(MouseEvent),
+    Paste(String),
+    Resize(u16, u16),
+}
+
+impl Event {
+    /// A key event with no separate layout character.
+    pub fn key(event: KeyEvent) -> Self {
+        Event::Key(KeyPress::new(event))
+    }
+
+    /// Drop the layout character and hand back a plain crossterm event.
+    pub fn into_crossterm(self) -> crossterm::event::Event {
+        use crossterm::event::Event as C;
+        match self {
+            Event::FocusGained => C::FocusGained,
+            Event::FocusLost => C::FocusLost,
+            Event::Key(press) => C::Key(press.event),
+            Event::Mouse(mouse) => C::Mouse(mouse),
+            Event::Paste(text) => C::Paste(text),
+            Event::Resize(w, h) => C::Resize(w, h),
+        }
+    }
+}
+
+impl From<crossterm::event::Event> for Event {
+    fn from(event: crossterm::event::Event) -> Self {
+        use crossterm::event::Event as C;
+        match event {
+            C::FocusGained => Event::FocusGained,
+            C::FocusLost => Event::FocusLost,
+            C::Key(key) => Event::key(key),
+            C::Mouse(mouse) => Event::Mouse(mouse),
+            C::Paste(text) => Event::Paste(text),
+            C::Resize(w, h) => Event::Resize(w, h),
+        }
+    }
+}
 
 /// Bracketed-paste end marker.
 const PASTE_END: &[u8] = b"\x1b[201~";
@@ -161,7 +283,7 @@ impl InputParser {
             return Vec::new();
         }
         self.state = State::Ground;
-        vec![Event::Key(KeyEvent::new(
+        vec![Event::key(KeyEvent::new(
             KeyCode::Esc,
             KeyModifiers::empty(),
         ))]
@@ -266,7 +388,7 @@ impl InputParser {
             }
             0x1b => {
                 // First ESC was standalone; stay in Escape for the second one.
-                out.push(Event::Key(KeyEvent::new(
+                out.push(Event::key(KeyEvent::new(
                     KeyCode::Esc,
                     KeyModifiers::empty(),
                 )));
@@ -291,7 +413,7 @@ impl InputParser {
                 // Dropping the Control bit made the two indistinguishable, so
                 // Alt+Ctrl+P silently ran the (bound) Alt+P command instead of
                 // resolving to an unbound chord — sinelaw/fresh#2810.
-                out.push(Event::Key(KeyEvent::new(
+                out.push(Event::key(KeyEvent::new(
                     byte_to_keycode(other),
                     c0_control_modifier(other) | KeyModifiers::ALT,
                 )));
@@ -382,7 +504,7 @@ impl InputParser {
             _ => None,
         };
         if let Some(code) = keycode {
-            out.push(Event::Key(KeyEvent::new(code, KeyModifiers::empty())));
+            out.push(Event::key(KeyEvent::new(code, KeyModifiers::empty())));
         } else {
             tracing::trace!("InputParser: unknown SS3 final {:#04x}, dropping", byte);
         }
@@ -454,7 +576,7 @@ impl InputParser {
         match std::str::from_utf8(&self.buffer) {
             Ok(s) => {
                 if let Some(c) = s.chars().next() {
-                    out.push(Event::Key(KeyEvent::new(KeyCode::Char(c), modifiers)));
+                    out.push(Event::key(KeyEvent::new(KeyCode::Char(c), modifiers)));
                 }
             }
             Err(_) => {
@@ -608,7 +730,7 @@ impl InputParser {
             // Shift+Tab. The event type still rides in the modifier field for
             // emulators that send one here, so decode it the same way; the
             // modifiers are fixed because the key *is* the shifted Tab.
-            b'Z' => out.push(Event::Key(KeyEvent::new_with_kind(
+            b'Z' => out.push(Event::key(KeyEvent::new_with_kind(
                 KeyCode::BackTab,
                 KeyModifiers::SHIFT,
                 kind_of(&params),
@@ -633,7 +755,7 @@ impl InputParser {
             let codepoint: u32 = first_subparam(parts[2]).parse().unwrap_or(0);
             let modifiers = modifiers_from_param(mods_param);
             if let Some(code) = functional_or_char(codepoint) {
-                out.push(Event::Key(KeyEvent::new(code, modifiers)));
+                out.push(Event::key(KeyEvent::new(code, modifiers)));
             }
             return;
         }
@@ -654,7 +776,7 @@ impl InputParser {
         }
         // Stray paste-end outside paste mode: ignore gracefully.
         if num == 201 {
-            out.push(Event::Key(KeyEvent::new(
+            out.push(Event::key(KeyEvent::new(
                 KeyCode::Null,
                 KeyModifiers::empty(),
             )));
@@ -687,7 +809,7 @@ impl InputParser {
                 return;
             }
         };
-        out.push(Event::Key(KeyEvent::new_with_kind(
+        out.push(Event::key(KeyEvent::new_with_kind(
             keycode, modifiers, kind,
         )));
     }
@@ -710,11 +832,20 @@ impl InputParser {
             // A shifted key must arrive as the character it types, exactly as
             // it does over the legacy encoding — the case (or symbol) carries
             // the shift, so the modifier bit goes with it.
+            let mut layout_char = None;
             if let Some(shifted) = shifted_char(key_field, code, modifiers) {
                 code = KeyCode::Char(shifted);
                 modifiers.remove(KeyModifiers::SHIFT);
+            } else {
+                // The chord keeps its physical spelling, which on a non-US
+                // layout can hide the character the user thinks they pressed.
+                // Carry that character alongside so the keymap can consider it.
+                layout_char = hidden_layout_char(key_field, code, modifiers);
             }
-            out.push(Event::Key(KeyEvent::new_with_kind(code, modifiers, kind)));
+            out.push(Event::Key(KeyPress::with_layout_char(
+                KeyEvent::new_with_kind(code, modifiers, kind),
+                layout_char,
+            )));
         }
     }
 }
@@ -743,7 +874,7 @@ fn event_kind_of(mods_field: &str) -> KeyEventKind {
 /// reporting every release as a press) is what made one arrow keypress move the
 /// cursor twice (sinelaw/fresh#2796).
 fn csi_key(code: KeyCode, params: &[u8]) -> Event {
-    Event::Key(KeyEvent::new_with_kind(
+    Event::key(KeyEvent::new_with_kind(
         code,
         modifiers_of(params),
         kind_of(params),
@@ -798,6 +929,40 @@ fn shifted_char(key_field: &str, code: KeyCode, modifiers: KeyModifiers) -> Opti
         },
         None if modifiers == KeyModifiers::SHIFT => uppercase_letter(base),
         None => None,
+    }
+}
+
+/// The character a key types on the current layout, when the chord's own
+/// spelling does not say so — the [`KeyPress::layout_char`] of a CSI-u report.
+///
+/// This is the leftover of [`shifted_char`]: the terminal told us what the key
+/// types, but the chord has to keep its base spelling anyway because CONTROL is
+/// held (folding the shifted character in there would collapse `Ctrl+Shift+A`
+/// onto `Ctrl+A`). On a US layout that discarded character is the one the
+/// binding never wanted — `Ctrl+Shift+7` types `&`, and the binding is on the
+/// digit. On a German layout it is the whole point: `Ctrl+Shift+7` types `/`,
+/// and the user pressed it meaning `Ctrl+/`.
+///
+/// Both readings are therefore kept and the keymap picks; see [`KeyPress`].
+/// `None` when the terminal reported no shifted codepoint (no
+/// `REPORT_ALTERNATE_KEYS`, nothing to disagree about) or when it matches the
+/// base, which is the US case for every letter.
+fn hidden_layout_char(key_field: &str, code: KeyCode, modifiers: KeyModifiers) -> Option<char> {
+    if !modifiers.contains(KeyModifiers::SHIFT) {
+        return None;
+    }
+    let KeyCode::Char(base) = code else {
+        return None;
+    };
+    match functional_or_char(shifted_subparam(key_field)?)? {
+        // A letter's shifted codepoint is only its uppercase, which the chord's
+        // own SHIFT bit already says — `ctrl+A` and `ctrl+shift+a` are one
+        // binding. Reporting it would put every shifted keystroke through a
+        // second keymap lookup that can only find the same thing.
+        KeyCode::Char(shifted) if shifted != base && uppercase_letter(base) != Some(shifted) => {
+            Some(shifted)
+        }
+        _ => None,
     }
 }
 
@@ -1154,7 +1319,7 @@ fn c0_control_modifier(byte: u8) -> KeyModifiers {
 /// C0 control characters (except Tab, LF, CR and Esc, which are their own
 /// keys).
 fn byte_to_event(byte: u8) -> Event {
-    Event::Key(KeyEvent::new(
+    Event::key(KeyEvent::new(
         byte_to_keycode(byte),
         c0_control_modifier(byte),
     ))

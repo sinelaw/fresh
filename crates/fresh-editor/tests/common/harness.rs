@@ -1450,7 +1450,20 @@ impl EditorTestHarness {
     /// must use this; `send_key` cannot express a release.
     pub fn send_key_event(&mut self, key_event: crossterm::event::KeyEvent) -> anyhow::Result<()> {
         self.editor
-            .handle_input_event(crossterm::event::Event::Key(key_event))?;
+            .handle_input_event(fresh::server::input_parser::Event::key(key_event))?;
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
+    /// Deliver a full [`KeyPress`], so a test can supply the keyboard-layout
+    /// character a non-US terminal reports alongside the physical chord.
+    pub fn send_key_press(
+        &mut self,
+        press: fresh::server::input_parser::KeyPress,
+    ) -> anyhow::Result<()> {
+        self.editor
+            .handle_input_event(fresh::server::input_parser::Event::Key(press))?;
         self.drain_async_work();
         self.render()?;
         Ok(())
@@ -1458,7 +1471,7 @@ impl EditorTestHarness {
 
     pub fn send_paste(&mut self, text: &str) -> anyhow::Result<()> {
         self.editor
-            .handle_input_event(crossterm::event::Event::Paste(text.to_string()))?;
+            .handle_input_event(fresh::server::input_parser::Event::Paste(text.to_string()))?;
         self.drain_async_work();
         self.render()?;
         Ok(())

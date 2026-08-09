@@ -12,7 +12,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crossterm::event::Event;
+use fresh_input_parser::Event;
 use ratatui::Terminal;
 
 use crate::app::Editor;
@@ -1533,10 +1533,10 @@ impl EditorServer {
         }
 
         match event {
-            Event::Key(key_event) => {
-                if crate::input::is_keystroke(key_event.kind) {
+            Event::Key(press) => {
+                if crate::input::is_keystroke(press.kind) {
                     editor
-                        .handle_key(key_event.code, key_event.modifiers)
+                        .handle_key_press(press)
                         .map_err(|e| io::Error::other(e.to_string()))?;
                     Ok(true)
                 } else {
@@ -1684,8 +1684,9 @@ mod wave_dismiss_tests {
     use crate::config::Config;
     use crate::config_io::DirectoryContext;
     use crossterm::event::{
-        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
+    use fresh_input_parser::Event;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1853,7 +1854,7 @@ mod wave_dismiss_tests {
         );
 
         let consumed = server
-            .handle_event(Event::Key(KeyEvent::new(
+            .handle_event(Event::key(KeyEvent::new(
                 KeyCode::Char('a'),
                 KeyModifiers::empty(),
             )))

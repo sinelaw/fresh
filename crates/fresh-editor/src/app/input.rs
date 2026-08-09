@@ -518,6 +518,62 @@ impl Editor {
             .expect("editor base layer always owns the keyboard")
     }
 
+    /// Handle a key press that a terminal reported, resolving which of its two
+    /// readings the keymap should see.
+    ///
+    /// A chord is both a physical key plus modifiers (`Ctrl+Shift+7`) and the
+    /// character that key types (`&` on a US layout, `/` on a German one). The
+    /// parser reports both when they disagree — see
+    /// [`fresh_input_parser::KeyPress`] — because neither is right on its own:
+    /// binding the physical chord leaves a German user's `Ctrl+/` firing
+    /// `set_bookmark` (sinelaw/fresh#2933), and binding the typed character
+    /// breaks every US `Ctrl+Shift+<digit>`.
+    ///
+    /// **The keymap decides.** The layout reading is tried first and used only
+    /// if something is actually bound to it; otherwise the physical chord is
+    /// handled exactly as before. So a US layout is unaffected — nothing binds
+    /// `ctrl+&`, so `Ctrl+Shift+7` still reaches `set_bookmark` — while a German
+    /// layout resolves the same keystroke to `ctrl+/`.
+    ///
+    /// One chord can only mean one thing, so this is a precedence, not a
+    /// merge: where a keymap binds both readings, the layout one wins and the
+    /// physical chord is unreachable from that key. A user who wants the other
+    /// way round rebinds it.
+    pub fn handle_key_press(&mut self, press: fresh_input_parser::KeyPress) -> AnyhowResult<()> {
+        let (code, modifiers) = self
+            .layout_reading(&press)
+            .unwrap_or((press.code, press.modifiers));
+        self.handle_key(code, modifiers)
+    }
+
+    /// The chord built from what the key types on this layout, if the keymap
+    /// binds it. `None` when there is no distinct layout character, or when
+    /// nothing is bound to it and the physical chord should be used instead.
+    fn layout_reading(
+        &self,
+        press: &fresh_input_parser::KeyPress,
+    ) -> Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)> {
+        use crate::input::keybindings::Action;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let layout_char = press.layout_char?;
+        // Shift is spent producing the character, so it is not part of the
+        // chord built from it: the German `/` is `ctrl+/`, not `ctrl+shift+/`.
+        let modifiers = press.modifiers - KeyModifiers::SHIFT;
+        let code = KeyCode::Char(layout_char);
+        let action = self
+            .keybindings
+            .read()
+            .ok()?
+            .resolve(&KeyEvent::new(code, modifiers), self.get_key_context());
+        // `InsertChar` is the resolver's "nothing bound, just type it" answer.
+        // Typing is the physical key's job, not this reading's.
+        match action {
+            Action::None | Action::InsertChar(_) => None,
+            _ => Some((code, modifiers)),
+        }
+    }
+
     /// Handle a key event and return whether it was handled
     /// This is the central key handling logic used by both main.rs and tests
     pub fn handle_key(

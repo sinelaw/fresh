@@ -10,9 +10,7 @@
 
 use std::time::{Duration, Instant};
 
-use crossterm::event::Event;
-
-pub use fresh_input_parser::InputParser;
+pub use fresh_input_parser::{Event, InputParser, KeyPress};
 
 /// How long a lone `ESC` stays buffered before it is resolved as the Escape
 /// key. Mirrors the tty reader's grace window: long enough that a control
