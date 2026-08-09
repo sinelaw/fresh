@@ -14,7 +14,8 @@
 //! * [`InstallReceipt`] — the `install-receipt.toml` an installer writes to
 //!   record provenance authoritatively.
 //! * [`Provenance`] / [`resolve`] — layered resolution (override → receipt →
-//!   embedded → heuristic) with a [`Confidence`] level.
+//!   embedded) with a [`Confidence`] level. There is no path-guessing layer:
+//!   an install that recorded nothing resolves to `Unknown`, not a guess.
 //! * [`registry::plan`] — the channel → update-command table.
 //! * [`self_update`] — checksum verification and the atomic in-place binary
 //!   swap for self-contained channels.
@@ -39,10 +40,10 @@ pub mod confidence;
 pub mod elevate;
 pub mod endpoint;
 pub mod feed;
-pub mod heuristic;
 pub mod provenance;
 pub mod receipt;
 pub mod registry;
+pub mod registry_checkout;
 pub mod self_update;
 pub mod staging;
 pub mod version;
