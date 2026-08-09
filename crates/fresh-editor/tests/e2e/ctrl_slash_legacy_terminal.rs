@@ -11,9 +11,8 @@
 //! (bytes → key event → binding → edit → screen) rather than any one layer.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
-use crossterm::event::Event;
 use fresh::config::Config;
-use fresh::server::input_parser::InputParser;
+use fresh::server::input_parser::{Event, InputParser};
 use tempfile::TempDir;
 
 /// Feed raw terminal bytes through the parser into the editor, exactly as
@@ -21,8 +20,8 @@ use tempfile::TempDir;
 fn send_bytes(harness: &mut EditorTestHarness, bytes: &[u8]) {
     let mut parser = InputParser::new();
     for event in parser.parse(bytes) {
-        if let Event::Key(ke) = event {
-            harness.send_key(ke.code, ke.modifiers).unwrap();
+        if let Event::Key(press) = event {
+            harness.send_key_press(press).unwrap();
         }
     }
 }
@@ -84,6 +83,41 @@ fn the_legacy_byte_round_trips_the_comment() {
 
     send_bytes(&mut harness, &[0x1f]);
     harness.render().unwrap();
+    harness.assert_screen_not_contains("// fn main() {}");
+    harness.assert_screen_contains("fn main() {}");
+}
+
+// ---- The non-US half of the same issue ----
+//
+// On a layout where `/` needs Shift (German, French, Spanish, …) there is no
+// `Ctrl+/` for a terminal to report. kitty sends the physical chord plus the
+// character it types — `CSI 55:47;6u`: base 55 (`7`), shifted 47 (`/`),
+// Ctrl+Shift — and `default.json` binds `ctrl+shift+7` to `set_bookmark`, so
+// the chord users press for "comment this line" silently set a bookmark.
+
+/// A German keyboard's Ctrl+/ must comment the line, exactly as a US one does.
+#[test]
+fn ctrl_slash_toggles_comment_on_a_layout_where_slash_needs_shift() {
+    let (_temp_dir, mut harness) = harness_with_rust_file();
+    harness.assert_screen_contains("fn main() {}");
+
+    send_bytes(&mut harness, b"\x1b[55:47;6u");
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("// fn main() {}");
+}
+
+/// …and the US reading of the very same physical chord is untouched: Shift+7
+/// types `&` there, nothing binds `ctrl+&`, so `Ctrl+Shift+7` still reaches
+/// `set_bookmark` rather than commenting the line. This is the test that says
+/// the layout reading is a fallback, not a rewrite.
+#[test]
+fn the_same_chord_on_a_us_layout_still_reaches_its_digit_binding() {
+    let (_temp_dir, mut harness) = harness_with_rust_file();
+
+    send_bytes(&mut harness, b"\x1b[55:38;6u");
+    harness.render().unwrap();
+
     harness.assert_screen_not_contains("// fn main() {}");
     harness.assert_screen_contains("fn main() {}");
 }

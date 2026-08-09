@@ -205,7 +205,7 @@ proptest! {
 
         prop_assert_eq!(ev.len(), pre.len() + 1 + post.len(), "events: {:?}", ev);
         for (e, &b) in ev.iter().zip(pre.iter()) {
-            prop_assert_eq!(e, &Event::Key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
+            prop_assert_eq!(e, &Event::key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
         }
         match &ev[pre.len()] {
             Event::Mouse(me) => {
@@ -215,7 +215,7 @@ proptest! {
             other => prop_assert!(false, "expected mouse at index {}, got {:?}", pre.len(), other),
         }
         for (e, &b) in ev[pre.len() + 1..].iter().zip(post.iter()) {
-            prop_assert_eq!(e, &Event::Key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
+            prop_assert_eq!(e, &Event::key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
         }
     }
 

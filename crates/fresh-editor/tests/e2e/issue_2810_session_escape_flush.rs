@@ -29,8 +29,8 @@
 //! the test fails at the first wait.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
-use crossterm::event::Event;
 use fresh::server::input_parser::ClientInputParser;
+use fresh::server::input_parser::Event;
 use std::fs;
 use std::time::{Duration, Instant};
 

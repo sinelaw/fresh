@@ -18,7 +18,7 @@ use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths};
 use crate::server::protocol::{
     ClientControl, ServerControl, ServerHello, TermSize, VersionMismatch, PROTOCOL_VERSION,
 };
-use crossterm::event::Event;
+use fresh_input_parser::Event;
 
 /// Server configuration
 #[derive(Debug, Clone)]

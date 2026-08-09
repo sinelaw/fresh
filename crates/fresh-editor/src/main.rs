@@ -7,7 +7,7 @@ use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 
 use anyhow::{Context, Result as AnyhowResult};
 use clap::{CommandFactory, FromArgMatches, Parser};
-use crossterm::event::{poll as event_poll, read as event_read, Event as CrosstermEvent};
+use crossterm::event::{poll as event_poll, read as event_read};
 use fresh::input::key_translator::KeyTranslator;
 #[cfg(target_os = "linux")]
 use fresh::services::gpm::{gpm_to_crossterm, GpmClient};
@@ -18,6 +18,7 @@ use fresh::{
     services::release_checker, services::remote, services::signal_handler,
     services::tracing_setup::TracingHandles, workspace,
 };
+use fresh_input_parser::Event as InputEvent;
 use ratatui::Terminal;
 use std::{
     io::{self, stdout},
@@ -5752,7 +5753,7 @@ fn run_event_loop(
     let reader = VtInputReader::spawn();
 
     let mut input_parser = InputParser::new();
-    let mut event_buffer: std::collections::VecDeque<CrosstermEvent> =
+    let mut event_buffer: std::collections::VecDeque<InputEvent> =
         std::collections::VecDeque::new();
 
     let result = run_event_loop_common(
@@ -5761,7 +5762,7 @@ fn run_event_loop(
         workspace_enabled,
         key_translator,
         terminal_modes,
-        |timeout| -> AnyhowResult<Option<CrosstermEvent>> {
+        |timeout| -> AnyhowResult<Option<InputEvent>> {
             // Return buffered events first
             if let Some(event) = event_buffer.pop_front() {
                 return Ok(Some(event));
@@ -5787,16 +5788,16 @@ fn run_event_loop(
                     }
                     Some(VtInputEvent::Resize) => {
                         if let Ok((cols, rows)) = crossterm::terminal::size() {
-                            event_buffer.push_back(CrosstermEvent::Resize(cols, rows));
+                            event_buffer.push_back(InputEvent::Resize(cols, rows));
                         }
                         got_any = true;
                     }
                     Some(VtInputEvent::FocusGained) => {
-                        event_buffer.push_back(CrosstermEvent::FocusGained);
+                        event_buffer.push_back(InputEvent::FocusGained);
                         got_any = true;
                     }
                     Some(VtInputEvent::FocusLost) => {
-                        event_buffer.push_back(CrosstermEvent::FocusLost);
+                        event_buffer.push_back(InputEvent::FocusLost);
                         got_any = true;
                     }
                     None => break,
@@ -5860,7 +5861,7 @@ fn run_event_loop(
 /// consecutive recovered panics and, past a small threshold, surface an error
 /// so the caller shuts the loop down cleanly instead of busy-looping. Any
 /// successful read resets the counter.
-fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
+fn safe_event_read() -> std::io::Result<Option<InputEvent>> {
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -5870,7 +5871,7 @@ fn safe_event_read() -> std::io::Result<Option<CrosstermEvent>> {
     match catch_unwind(AssertUnwindSafe(event_read)) {
         Ok(res) => {
             CONSECUTIVE_PANICS.store(0, Ordering::Relaxed);
-            res.map(Some)
+            res.map(|event| Some(InputEvent::from(event)))
         }
         Err(_) => {
             let n = CONSECUTIVE_PANICS.fetch_add(1, Ordering::Relaxed) + 1;
@@ -5899,14 +5900,14 @@ fn run_event_loop_common<F>(
     mut poll_event: F,
 ) -> AnyhowResult<()>
 where
-    F: FnMut(Duration) -> AnyhowResult<Option<CrosstermEvent>>,
+    F: FnMut(Duration) -> AnyhowResult<Option<InputEvent>>,
 {
     use std::time::Instant;
 
     const FRAME_DURATION: Duration = Duration::from_millis(16); // 60fps
     let mut last_render = Instant::now();
     let mut needs_render = true;
-    let mut pending_event: Option<CrosstermEvent> = None;
+    let mut pending_event: Option<InputEvent> = None;
     // Time of the last real input event, used to start the wave-animation
     // screensaver after the configured idle period. Read from the editor's
     // injected time source so tests can drive idle time deterministically.
@@ -6062,7 +6063,7 @@ where
         // Event debug dialog receives ALL RAW events (before any translation or processing)
         // This is essential for diagnosing terminal keybinding issues
         if editor.active_window().is_event_debug_active() {
-            if let CrosstermEvent::Key(key_event) = event {
+            if let InputEvent::Key(key_event) = &event {
                 if fresh::input::is_keystroke(key_event.kind) {
                     editor
                         .active_window_mut()
@@ -6080,7 +6081,7 @@ where
         // tracing spans + key-translation that depend on
         // event-loop-local state.
         let _span = match &event {
-            CrosstermEvent::Key(key_event) if fresh::input::is_keystroke(key_event.kind) => Some(
+            InputEvent::Key(key_event) if fresh::input::is_keystroke(key_event.kind) => Some(
                 tracing::trace_span!(
                     "handle_key",
                     code = ?key_event.code,
@@ -6104,7 +6105,7 @@ fn poll_with_gpm(
     reader: &mut fresh::services::tty_input::TtyReader,
     gpm_client: Option<&GpmClient>,
     timeout: Duration,
-) -> AnyhowResult<Option<CrosstermEvent>> {
+) -> AnyhowResult<Option<InputEvent>> {
     use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
     use std::os::unix::io::{AsRawFd, BorrowedFd};
 
@@ -6158,7 +6159,7 @@ fn poll_with_gpm(
         match gpm.read_event() {
             Ok(Some(gpm_event)) => {
                 if let Some(mouse_event) = gpm_to_crossterm(&gpm_event) {
-                    return Ok(Some(CrosstermEvent::Mouse(mouse_event)));
+                    return Ok(Some(InputEvent::Mouse(mouse_event)));
                 } else {
                     tracing::debug!("GPM event could not be converted to crossterm event");
                 }
@@ -6183,13 +6184,11 @@ fn poll_with_gpm(
 
 /// Skip stale mouse move events, return the latest one.
 /// If we read a non-move event while draining, return it as pending.
-fn coalesce_mouse_moves(
-    event: CrosstermEvent,
-) -> AnyhowResult<(CrosstermEvent, Option<CrosstermEvent>)> {
+fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<InputEvent>)> {
     use crossterm::event::MouseEventKind;
 
     // Only coalesce mouse moves
-    if !matches!(&event, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
+    if !matches!(&event, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
         return Ok((event, None));
     }
 
@@ -6206,7 +6205,7 @@ fn coalesce_mouse_moves(
         let Some(next) = safe_event_read()? else {
             continue;
         };
-        if matches!(&next, CrosstermEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
+        if matches!(&next, InputEvent::Mouse(m) if m.kind == MouseEventKind::Moved) {
             latest = next; // Newer move, skip the old one
         } else {
             return Ok((latest, Some(next))); // Hit a click/key, save it

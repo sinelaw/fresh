@@ -9,7 +9,8 @@
 //! literal text into the editor buffer.
 
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::server::input_parser::Event;
 use fresh::server::input_parser::InputParser;
 
 /// Helper: assert that InputParser produces exactly one Key event matching the

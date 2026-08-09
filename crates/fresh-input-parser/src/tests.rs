@@ -17,6 +17,17 @@ fn keys(events: &[Event]) -> Vec<(KeyCode, KeyModifiers)> {
         .collect()
 }
 
+/// Collect the `Key` events of a parse together with their layout characters.
+fn keys_with_layout(events: &[Event]) -> Vec<(KeyCode, KeyModifiers, Option<char>)> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Key(press) => Some((press.code, press.modifiers, press.layout_char)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// True if any event is a `Key(Char(_))` — used to prove mouse bytes never
 /// leak into the child as literal characters.
 fn has_char_key(events: &[Event]) -> bool {
@@ -84,6 +95,79 @@ fn other_separator_bytes_keep_their_keys() {
             (KeyCode::Char(']'), KeyModifiers::CONTROL),
             (KeyCode::Char('^'), KeyModifiers::CONTROL),
         ]
+    );
+}
+
+// ---- Keyboard layout (`KeyPress::layout_char`) ----
+
+/// The non-US half of sinelaw/fresh#2933. On a German layout `/` is Shift+7, so
+/// pressing Ctrl+/ reports base 55 (`7`), shifted 47 (`/`), Ctrl+Shift. The
+/// chord keeps its physical spelling — folding the `/` in would collapse
+/// `Ctrl+Shift+A` onto `Ctrl+A` for letters — but the `/` the user meant has to
+/// survive for the keymap to find `ctrl+/`.
+#[test]
+fn a_control_chord_carries_the_character_the_layout_types() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[55:47;6u")),
+        vec![(
+            KeyCode::Char('7'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            Some('/')
+        )]
+    );
+}
+
+/// The same chord on a US layout, where Shift+7 types `&`. The layout character
+/// is still reported — the parser does not know or care which layout is in use
+/// — and it is the keymap that declines to use it, since nothing binds
+/// `ctrl+&`. This is what keeps US `ctrl+shift+7` bindings intact.
+#[test]
+fn the_us_reading_of_that_chord_is_unchanged() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[55:38;6u")),
+        vec![(
+            KeyCode::Char('7'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            Some('&')
+        )]
+    );
+}
+
+/// No layout character when the two readings agree: a plain letter's shifted
+/// codepoint is just its uppercase, which the chord's SHIFT bit already says.
+/// Keeping this `None` is what stops every shifted keystroke from taking the
+/// keymap's second lookup.
+#[test]
+fn agreeing_readings_report_no_layout_char() {
+    let mut p = InputParser::new();
+    // Ctrl+Shift+A: base 97 (`a`), shifted 65 (`A`) — same key, and the chord
+    // is spelled `ctrl+shift+a`, so there is nothing extra to say.
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[97:65;6u")),
+        vec![(
+            KeyCode::Char('a'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            None
+        )]
+    );
+    // And a chord with no shifted codepoint reported at all.
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[47;5u")),
+        vec![(KeyCode::Char('/'), KeyModifiers::CONTROL, None)]
+    );
+}
+
+/// Shift alone still resolves to the character it types, as before — the
+/// shifted reading *is* the chord there, so it is folded in rather than carried
+/// alongside. Guards against the new path stealing plain shifted typing.
+#[test]
+fn shift_without_control_still_folds_the_character_in() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys_with_layout(&p.parse(b"\x1b[55:47;2u")),
+        vec![(KeyCode::Char('/'), KeyModifiers::empty(), None)]
     );
 }
 

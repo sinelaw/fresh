@@ -434,9 +434,9 @@ impl Editor {
     /// normal input handling for it and re-render. This lives on `Editor` so
     /// every event loop (the local terminal loop in `main.rs` and the daemon
     /// server loop) shares one dismissal path rather than duplicating it.
-    pub fn maybe_dismiss_wave_animation(&mut self, event: &crossterm::event::Event) -> bool {
+    pub fn maybe_dismiss_wave_animation(&mut self, event: &fresh_input_parser::Event) -> bool {
         use crate::input::is_keystroke;
-        use crossterm::event::Event;
+        use fresh_input_parser::Event;
         if !self.wave_animation_active() {
             return false;
         }
