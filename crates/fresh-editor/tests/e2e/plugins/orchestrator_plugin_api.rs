@@ -113,6 +113,35 @@ registerHandler("probe_unknown_folder", function () {
     }
 });
 
+// The archive starts empty and stays readable — a caller can ask before
+// anything has ever been archived without special-casing the answer.
+registerHandler("probe_list_archived", function () {
+    const rows = orch().listArchived();
+    report("PROBE_ARCHIVED " + rows.length);
+});
+
+// Unarchiving something that was never archived is a `false`, not a throw.
+registerHandler("probe_unarchive_missing", async function () {
+    try {
+        const ok = await orch().unarchiveWorkspace("never-archived");
+        report(ok ? "PROBE_UNARCH_TRUE" : "PROBE_UNARCH_FALSE");
+    } catch (e: any) {
+        report("PROBE_UNARCH_THREW " + e.message);
+    }
+});
+
+// An SSH create with no host is refused before anything is spawned — the
+// dialog keeps itself open on the same condition. Proves the API reaches
+// the shared spec builder's validation rather than a copy of it.
+registerHandler("probe_ssh_no_host", async function () {
+    try {
+        await orch().newWorkspace({ backend: "ssh", host: "" });
+        report("PROBE_SSH_RAN");
+    } catch (e: any) {
+        report("PROBE_SSH_REFUSED " + e.message);
+    }
+});
+
 editor.registerCommand("Probe File Under Folder", "", "probe_file_under_folder", null);
 editor.registerCommand("Probe Rename Workspace", "", "probe_rename", null);
 editor.registerCommand("Probe List Folders", "", "probe_list_folders", null);
@@ -121,6 +150,9 @@ editor.registerCommand("Probe Filter Text", "", "probe_filter_text", null);
 editor.registerCommand("Probe Stop Workspace", "", "probe_stop", null);
 editor.registerCommand("Probe Unknown Target", "", "probe_unknown_target", null);
 editor.registerCommand("Probe Unknown Folder", "", "probe_unknown_folder", null);
+editor.registerCommand("Probe List Archived", "", "probe_list_archived", null);
+editor.registerCommand("Probe Unarchive Missing", "", "probe_unarchive_missing", null);
+editor.registerCommand("Probe Ssh No Host", "", "probe_ssh_no_host", null);
 "#;
 
 /// A git project with the orchestrator plugin and the API probe installed.
@@ -363,4 +395,58 @@ fn an_unknown_folder_id_throws_instead_of_filing_at_top_level() {
         .unwrap();
     h.assert_screen_contains("PROBE_FOLDER_REFUSED");
     h.assert_screen_contains("no such folder");
+}
+
+/// `listArchived` answers on a machine that has never archived anything —
+/// it walks the per-repo manifest directory, and a missing directory is an
+/// empty archive, not a failure.
+#[test]
+fn list_archived_reports_an_empty_archive_rather_than_failing() {
+    let (_tmp, mut h) = harness();
+    open_dock(&mut h);
+
+    run_command(&mut h, "Probe List Archived");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_ARCHIVED"))
+        .unwrap();
+    h.assert_screen_contains("PROBE_ARCHIVED 0");
+}
+
+/// Unarchiving a name that is not in the archive returns `false` — the same
+/// "the thing does not exist" convention the workspace verbs follow, rather
+/// than an exception a caller has to distinguish from a real restore failure.
+#[test]
+fn unarchiving_something_not_archived_returns_false() {
+    let (_tmp, mut h) = harness();
+    open_dock(&mut h);
+
+    run_command(&mut h, "Probe Unarchive Missing");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_UNARCH_"))
+        .unwrap();
+    h.assert_screen_contains("PROBE_UNARCH_FALSE");
+}
+
+/// An SSH create with no host is refused with the dialog's own message, and
+/// nothing is spawned. The API and the form reach the same validation because
+/// they build the spec with the same function.
+#[test]
+fn an_ssh_create_without_a_host_is_refused_with_the_dialogs_message() {
+    let (_tmp, mut h) = harness();
+    open_dock(&mut h);
+
+    run_command(&mut h, "Probe Ssh No Host");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_SSH_"))
+        .unwrap();
+    h.assert_screen_contains("PROBE_SSH_REFUSED");
+    // The dialog's own localized string for the same condition.
+    h.assert_screen_contains("a host is required");
+    // No pending row appeared on the dock: the refusal happened before any
+    // connect was started.
+    let screen = h.screen_to_string();
+    assert!(
+        !dock_column(&screen).contains("ssh:"),
+        "a refused ssh create still added a dock row:\n{screen}"
+    );
 }
