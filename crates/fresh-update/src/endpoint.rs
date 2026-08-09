@@ -31,6 +31,11 @@ pub const ALLOWED_HOSTS: &[&str] = &[
     "release-assets.githubusercontent.com",
 ];
 
+/// How many releases to ask for when listing. Enough that the newest
+/// pre-release is always on the page, small enough that the document stays
+/// far below the feed size cap as releases accumulate.
+const RELEASE_PAGE: u32 = 10;
+
 /// Environment override for the release-metadata URL.
 pub const RELEASES_URL_ENV: &str = "FRESH_RELEASES_URL";
 
@@ -168,6 +173,28 @@ impl Endpoints {
         Ok(ep)
     }
 
+    /// The same repository's release list, which carries pre-releases too.
+    ///
+    /// One list, one flag per entry — `/releases/latest` is just GitHub
+    /// pre-filtering it. Opting in therefore changes the endpoint, not the
+    /// source.
+    ///
+    /// Bounded deliberately. The default page is 30 releases, which for this
+    /// project is already ~2.9 MB and grows by ~95 KB per release, so an
+    /// unbounded list would meet [`crate::net::FEED_MAX_BYTES`] after roughly
+    /// 85 releases and start failing for no reason a user could see. Only the
+    /// newest few can win the comparison anyway.
+    ///
+    /// An overridden URL is returned untouched: it may already be a tag
+    /// endpoint or a mirror's own document, and rewriting it would be guessing
+    /// at a shape we were handed.
+    pub fn list_url(&self) -> String {
+        match self.releases_url.strip_suffix("/latest") {
+            Some(base) if self.trusted => format!("{base}?per_page={RELEASE_PAGE}"),
+            _ => self.releases_url.clone(),
+        }
+    }
+
     /// The URL of a release asset, given its filename.
     pub fn asset_url(&self, version: &str, file_name: &str) -> String {
         let base = self.download_base.trim_end_matches('/');
@@ -205,6 +232,31 @@ fn env_override(key: &str) -> Option<String> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+mod endpoint_list_tests {
+    use super::*;
+
+    #[test]
+    fn the_pinned_default_yields_the_list_endpoint() {
+        let ep = Endpoints::production();
+        assert_eq!(
+            ep.list_url(),
+            format!("https://api.github.com/repos/{REPO}/releases?per_page={RELEASE_PAGE}")
+        );
+        assert!(is_trusted(&ep.list_url()));
+    }
+
+    /// An override may already be a tag endpoint or a mirror's own document;
+    /// rewriting it would guess at a shape we were handed.
+    #[test]
+    fn an_override_is_left_alone() {
+        let mut ep = Endpoints::production();
+        ep.releases_url = "https://example.invalid/feed/latest".to_string();
+        ep.trusted = false;
+        assert_eq!(ep.list_url(), "https://example.invalid/feed/latest");
+    }
 }
 
 #[cfg(test)]

@@ -179,6 +179,7 @@ struct Args {
     update_check: bool,
     update_yes: bool,
     update_allow_downgrade: bool,
+    update_pre: bool,
     update_print_command: bool,
     update_download_only: bool,
     update_force: bool,
@@ -229,6 +230,7 @@ impl From<Cli> for Args {
         let update_print_command = update && cli.cmd.iter().any(|a| a == "--print-command");
         let update_download_only = update && cli.cmd.iter().any(|a| a == "--download-only");
         let update_force = update && cli.cmd.iter().any(|a| a == "--force");
+        let update_pre = update && cli.cmd.iter().any(|a| a == "--pre");
         // Value flags: `--flag VALUE`. Point the update at a mirror of the
         // release feed — an air-gapped/enterprise mirror in production, and the
         // way the packaging containers exercise the real install flow in tests.
@@ -513,6 +515,7 @@ impl From<Cli> for Args {
             update_check,
             update_yes,
             update_allow_downgrade,
+            update_pre,
             update_print_command,
             update_download_only,
             update_force,
@@ -4815,6 +4818,7 @@ fn update_command(args: &Args) -> AnyhowResult<()> {
             check_only: args.update_check,
             yes: args.update_yes,
             allow_downgrade: args.update_allow_downgrade,
+            allow_prerelease: args.update_pre,
             // Three rungs, most automatic first. `--print-command` wins if
             // both are given: it is the one that promises to touch nothing,
             // and a promise like that should not be overridden by accident.
