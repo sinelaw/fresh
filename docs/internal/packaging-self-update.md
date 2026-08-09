@@ -547,7 +547,9 @@ Three things make that work, and all three had to be fixed together:
    process** — `archive::from_tar_gz`, no subprocess — so the host needs no
    archiver at all there. If anything gzip is cheaper: flate2's default backend
    is pure Rust, whereas `xz2` links liblzma (`ldd` on a released glibc build
-   shows `liblzma.so.5`). The cost is ~15% archive size.
+   shows `liblzma.so.5`). The cost is archive size: 13.2 MB gzip against 9.9 MB
+   xz for the same x86_64 build, so about a third larger — ~3 MB, paid once per
+   install, to drop a dependency the install path cannot assume.
 
    For one release cycle the musl job publishes **both** `.tar.gz` and
    `.tar.xz`. Binaries built before `archive_ext` existed ask for the xz name
