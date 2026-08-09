@@ -1,23 +1,23 @@
-//! Raising privilege for the one step that needs it.
+//! Rendering the `sudo` in a command we print but never run.
 //!
-//! One mechanism: `sudo`. Probing for `doas` when it happens to be installed
-//! would mean the same provenance class updated itself through a different
-//! authorization mechanism depending on the machine — different config file,
-//! different audit trail — which is precisely what the receipt exists to rule
-//! out. Two identical receipts must update the same way, so a machine without
-//! `sudo` gets a plain "command not found" naming exactly what is missing,
-//! rather than something that quietly worked differently.
+//! `fresh` does not execute other people's package managers — see the module
+//! note on [`crate::engine`] — so nothing here spawns anything. What is left is
+//! a display concern: a `.deb` install genuinely needs root, and printing
+//! `dpkg -i /path/to.deb` without the `sudo` would hand the user a command that
+//! fails.
 //!
-//! Running as root is **not** an exception to that rule, because it is not
-//! another mechanism. `sudo dpkg -i` and `dpkg -i` as root are the same
-//! privileged operation with and without a no-op escalation step; the command
-//! that actually runs is identical either way. Treating a missing `sudo` as
-//! fatal when we are already root failed in exactly the place it is most
-//! common — a minimal container running as root, which is also how the
-//! packaging tests run.
+//! One mechanism: `sudo`. Naming `doas` when it happens to be installed would
+//! mean the same provenance class printing a different command depending on the
+//! machine, which is precisely what the receipt exists to rule out. Two
+//! identical receipts must be told the same thing.
+//!
+//! Running as root is **not** an exception, because it is not another
+//! mechanism. `sudo dpkg -i` and `dpkg -i` as root are the same privileged
+//! operation with and without a no-op escalation step, so a user who is already
+//! root is shown the shorter one.
 
-/// The argv to actually execute, with the escalation step prepended when the
-/// install needs root and we do not already have it.
+/// The argv to *show* the user, with the escalation step prepended when the
+/// install needs root and they do not already have it.
 pub fn elevated(cmd: &[String], needs_privilege: bool) -> Vec<String> {
     if !needs_privilege || already_root() {
         return cmd.to_vec();

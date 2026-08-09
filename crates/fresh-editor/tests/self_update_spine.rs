@@ -52,6 +52,9 @@ const NEW_VERSION: &str = "99.9.9";
 /// executable bit survived it.
 const NEW_BINARY: &[u8] = b"#!/bin/sh\necho updated-ok\n";
 
+/// The triple this build asks the release for.
+const TRIPLE: &str = fresh_update::TARGET_TRIPLE;
+
 struct Install {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -90,8 +93,8 @@ fn install(with_receipt: bool) -> Install {
 
     let asset = format!(
         "fresh-editor-{}.{}",
-        fresh_update::TARGET_TRIPLE,
-        fresh_update::engine::archive_ext(fresh_update::TARGET_TRIPLE)
+        TRIPLE,
+        fresh_update::engine::archive_ext(TRIPLE)
     );
 
     Install {
@@ -330,6 +333,126 @@ fn a_missing_asset_fails_without_touching_the_binary() {
         !out.status.success(),
         "{}",
         report("a missing asset was treated as success", &out)
+    );
+    assert_eq!(std::fs::read(&install.exe).unwrap(), before);
+}
+
+/// Put a sentinel-writing stand-in for `name` on `PATH`. If `fresh` ever
+/// spawns it, the file it writes proves the call happened — which is the only
+/// way to assert a *negative* about execution.
+fn sabotage(install: &Install, name: &str) -> PathBuf {
+    let bin = install.root.join("fakebin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let sentinel = install.root.join(format!("{name}.was-run"));
+    let script = format!("#!/bin/sh\ntouch '{}'\nexit 0\n", sentinel.display());
+    let path = bin.join(name);
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    sentinel
+}
+
+/// Run with the sabotaged directory first on `PATH`.
+fn run_update_with_fakebin(install: &Install, base: &str, extra: &[&str]) -> Output {
+    let bin = install.root.join("fakebin");
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut cmd = Command::new(&install.exe);
+    cmd.arg("--cmd")
+        .arg("update")
+        .arg("--releases-url")
+        .arg(format!("{base}/releases/latest"))
+        .arg("--download-base")
+        .arg(format!("{base}/dl"))
+        .args(extra)
+        .env("PATH", path)
+        .env("HOME", install.root.join("home"))
+        .env("XDG_DATA_HOME", install.root.join("home"))
+        .env("XDG_CONFIG_HOME", install.root.join("home"))
+        .env_remove("FRESH_INSTALL_CHANNEL");
+    cmd.output().expect("run fresh --cmd update")
+}
+
+/// Write a receipt for an arbitrary channel, replacing whatever is there.
+fn record_channel(install: &Install, channel: &str) {
+    std::fs::write(
+        install.exe.parent().unwrap().join("install-receipt.toml"),
+        format!("schema = 1\nchannel = \"{channel}\"\npackage_name = \"fresh-editor\"\n"),
+    )
+    .unwrap();
+}
+
+/// A channel someone else owns is *named*, never run — even with `--yes`, and
+/// even though the tool is right there on `PATH`. This is the rule: `fresh`
+/// writes files it owns and nothing else.
+#[test]
+fn a_delegated_channel_prints_its_command_and_runs_nothing() {
+    let (install, base) = ready(true);
+    record_channel(&install, "homebrew");
+    let brew_ran = sabotage(&install, "brew");
+    let before = std::fs::read(&install.exe).unwrap();
+
+    let out = run_update_with_fakebin(&install, &base, &["--yes"]);
+
+    assert_eq!(
+        out.status.code(),
+        Some(fresh_update::EXIT_ACTION_REQUIRED),
+        "{}",
+        report("a delegated channel did not stop at ActionRequired", &out)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("brew upgrade"),
+        "{}",
+        report("the command the user must run was never named", &out)
+    );
+    assert!(
+        !brew_ran.exists(),
+        "{}",
+        report("fresh executed `brew` on the user's behalf", &out)
+    );
+    assert_eq!(std::fs::read(&install.exe).unwrap(), before);
+}
+
+/// A release package is still fetched and checksum-verified for the user —
+/// that is the only verification they would get — but installing it belongs to
+/// dpkg, so neither `dpkg` nor `sudo` may be spawned.
+#[test]
+fn a_release_package_is_verified_but_never_installed() {
+    let install = install(true);
+    record_channel(&install, "apt");
+
+    let spec = fresh_update::registry::package_asset(fresh_update::Channel::Apt, TRIPLE)
+        .expect("apt publishes a package for this target");
+    let deb_name = format!("fresh-editor_{NEW_VERSION}-1_{}{}", spec.arch, spec.extension);
+    let deb = b"not really a package, but the checksum will match".to_vec();
+    let line = sha256_line(&deb, &deb_name);
+    let base = serve(deb, deb_name.clone(), line);
+
+    let dpkg_ran = sabotage(&install, "dpkg");
+    let sudo_ran = sabotage(&install, "sudo");
+    let before = std::fs::read(&install.exe).unwrap();
+
+    let out = run_update_with_fakebin(&install, &base, &["--yes"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert_eq!(
+        out.status.code(),
+        Some(fresh_update::EXIT_ACTION_REQUIRED),
+        "{}",
+        report("a release package did not stop at ActionRequired", &out)
+    );
+    assert!(
+        stdout.contains("Downloaded to"),
+        "{}",
+        report("the package was not fetched, so nothing verified it", &out)
+    );
+    assert!(
+        !dpkg_ran.exists() && !sudo_ran.exists(),
+        "{}",
+        report("fresh installed a package instead of naming the command", &out)
     );
     assert_eq!(std::fs::read(&install.exe).unwrap(), before);
 }

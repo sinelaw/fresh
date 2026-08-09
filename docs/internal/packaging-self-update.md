@@ -1,6 +1,6 @@
 # Packaging & Self-Update Paradigm
 
-> Status: **Phases 1–6 landed**. This document specifies a new packaging
+> Status: **Phases 1–7 landed**. This document specifies a new packaging
 > paradigm for `fresh` whose defining property is **deterministic install
 > provenance**: every distribution channel records — at install time — exactly
 > which mechanism installed the binary, so the editor can self-update through
@@ -38,6 +38,10 @@
 >   default `install.sh` install (§7.6), it carries a `tarball` receipt, and
 >   every downloaded artifact is checked against the release attestation on
 >   `api.github.com` as well as its `.sha256` sidecar (§11).
+>
+> - **Phase 7** — `fresh` **executes nothing**. Every channel but the
+>   self-contained one prints its command and stops; release packages are still
+>   downloaded and verified first (§9, §11). The `sudo` path is deleted.
 >
 > - **Phase 6** — the path heuristic is **gone**, and with it the `Heuristic`
 >   confidence rung (§4.4). Provenance is now recorded or `Unknown`, never
@@ -620,12 +624,41 @@ For every non-SelfContained channel, `fresh update`:
 
 1. Confirms an update exists.
 2. Builds the exact command from the registry + `hints`.
-3. **Runs it**, after the user picks "Update now" — including when it needs
-   root, in which case it is prefixed with `sudo` and the password prompt
-   appears in the update terminal. "Show the command" prints it instead.
-   `--print-command` is the CLI spelling of that choice.
+3. **Prints it, and stops** — returning `ActionRequired`. For a release package
+   (`apt`/`dnf`/`zypper`) it first downloads and verifies the artifact, so the
+   printed command names a file already checked against its checksum and its
+   attestation.
 4. Never touches the binary directly — the manager does, keeping its package DB
    and signatures intact.
+
+**Nothing is executed on the user's behalf.** Not `brew upgrade`, not
+`winget upgrade`, not `cargo install`, and above all not `sudo dpkg -i`. This
+replaces the earlier graded scheme, where user-scoped managers were run
+outright, privileged ones were run under `sudo` in the update terminal, and
+which of those happened depended on the channel, on `--yes`, on whether the
+endpoint was trusted and on whether the tool needed root.
+
+Two reasons to collapse it. The first is that spawning a package installer as
+root was the most dangerous thing in the updater, and the entire
+privilege-escalation surface disappears with the call rather than being
+defended. The second is comprehensibility: a rule with no exceptions is one
+nobody has to hold in their head, and "fresh only writes files it owns" is that
+rule. `fresh` is not a package manager and should not act like a front-end for
+five of them.
+
+What it deliberately does **not** collapse is the download for repo-less
+package channels. There is no apt or dnf repository serving these; a user told
+only "go install the .deb" downloads it with no verification at all, whereas we
+fetch it, checksum it and attestation-check it. Stopping before `dpkg` costs a
+keystroke. Stopping before the download would cost them their only verification.
+
+The peer evidence points the same way: herdr's docs say `herdr update` is for
+its own installer and "Homebrew, mise, and Nix installs are updated through
+those package managers instead"; Zed ships `ZED_UPDATE_EXPLANATION` so packagers
+can replace the updater with a message; hunk has no updater at all. The
+outlier is opencode, which shells out to whichever of seven managers it can
+detect — and which also resolves provenance by pattern-matching the executable
+path, the design §4.4 removed.
 
 AUR is the one channel whose identity does *not* imply a tool: it means
 `pacman` + `makepkg`, not any particular helper. It uses exactly one command —
@@ -693,18 +726,20 @@ non-goal on silent installs.
   An overridden endpoint skips the attestation check — a local test server has
   no attestations and never could — which is the same line already drawn for
   privilege: bytes from an overridden endpoint never reach `sudo`.
-- **Privilege escalation is consented and visible, never silent.** Commands that
-  need root run as `sudo` **in the interactive update terminal**, so the
-  password prompt is the user's own shell prompt and they can see exactly what is
-  being run. We never cache credentials, never pass a password, and never
-  elevate without the user having picked "Update now" for that specific update.
-  Every popup with a privileged step says so before it is taken, and "Show the
-  command" prints it instead for anyone who would rather run it themselves.
-  This supersedes the earlier "print, never run" rule: that rule did not remove
-  the root command, it just moved it somewhere the user got no help with, and
-  the editor's own indicator then had to lie about whether an update happened.
-  Self-swap is unchanged — it only ever writes files the current user already
-  owns (precisely what `self_update=true` asserts) and is never elevated.
+- **No privilege escalation, because nothing is executed.** `fresh` spawns no
+  package manager, so there is no `sudo` to consent to and no credential path to
+  get wrong. Where root is genuinely required it appears only as the `sudo` in
+  the command we *print* (`elevate::elevated` is a rendering helper — it is the
+  only thing left of the old escalation code). The self-swap is unchanged and
+  was never elevated: it writes one file the current user already owns, which is
+  precisely what `self_update=true` asserts.
+
+  This reverses the previous rule, which ran privileged commands in an
+  interactive terminal on the grounds that printing them "did not remove the
+  root command, it just moved it somewhere the user got no help with". That was
+  true and is now outweighed: the help can be a printed command with the file
+  already downloaded and verified, and the class of bug that comes with
+  spawning an installer as root does not survive removing the spawn. See §9.
 - **Downgrade protection:** refuse to "update" to a version `<= current` unless
   `--allow-downgrade` is passed.
 - **Receipt trust:** packaged receipts are read-only, manager-owned. A
@@ -897,6 +932,21 @@ distro packages moved behind an explicit `--method` (§7.6). Every artifact the
 engine downloads is now cross-checked against the release attestation on
 `api.github.com` in addition to its `.sha256` sidecar, fail-closed, with the
 real GitHub bundle checked in as a test fixture (§11).
+
+**Phase 7 — fresh runs nothing but itself. ✅ landed.**
+`Delegated`/`Toolchain` channels now print their command and return
+`ActionRequired`; `DownloadPackage` downloads and verifies, then prints. The
+`run_install` executor and the `sudo` invocation are deleted, `elevate` survives
+only to render the `sudo` in printed text, and the popup offers "Update now"
+solely for a self-contained install. Asserted end-to-end by putting a
+sentinel-writing `brew`/`dpkg`/`sudo` on `PATH` and requiring they are never
+called (`fresh-editor/tests/self_update_spine.rs`).
+
+Also fixed there: `package()` enforced the pinned-host allowlist on the asset
+URL taken from the feed, which made `--releases-url` unusable for the
+air-gapped mirror it exists for — a mirror's feed names assets on the mirror.
+The check now applies to the production endpoint only, where the feed is not
+ours to trust.
 
 **Phase 6 — no more guessing. ✅ landed.**
 Deleted `heuristic.rs` and the `Heuristic` confidence rung; `ResolveInputs` no

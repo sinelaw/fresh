@@ -3,25 +3,42 @@
 //! Resolve provenance, fetch the release feed, then take one of four routes
 //! decided entirely by [`UpdateKind`]:
 //!
-//! * **Delegated / Toolchain** — run the owning package manager's own command.
-//! * **DownloadPackage** — fetch the release artifact and hand it to the local
-//!   package tool. Never an in-place swap: the file is owned by dpkg/rpm, and
-//!   replacing it behind the package database's back leaves the database
-//!   describing a file that no longer exists.
+//! * **Delegated / Toolchain** — print the owning package manager's own
+//!   command, for the user to run.
+//! * **DownloadPackage** — fetch the release artifact, verify it, and print the
+//!   command that installs it. Never an in-place swap: the file is owned by
+//!   dpkg/rpm, and replacing it behind the package database's back leaves the
+//!   database describing a file that no longer exists.
 //! * **SelfContained** — we own the bits, so download, verify and swap.
-//! * **Manual** — nothing we can run here; say what to run instead.
+//! * **Manual** — nothing to name here; say where to go instead.
 //!
 //! This used to live in `fresh-editor`. It is here so that the decision (which
 //! command, which artifact, which privilege) sits next to the provenance that
 //! justifies it, and so it can be tested without building an editor.
 //!
-//! # Privilege
+//! # One rule: we only write files we own
 //!
-//! A privileged install runs only when the bytes came from a trusted endpoint
-//! ([`Endpoints::trusted`]). With an override in effect we still download and
-//! verify — that is what makes the override useful for testing — but we print
-//! the command rather than running it under `sudo`, because a checksum fetched
-//! from the same origin as the payload proves nothing about who produced it.
+//! `fresh` replaces its own binary when — and only when — it owns that binary.
+//! It never runs anyone else's package manager. Not `brew upgrade`, not
+//! `winget upgrade`, not `cargo install`, and above all not `sudo dpkg -i`.
+//! For every channel but [`UpdateKind::SelfContained`] the outcome is the exact
+//! command, printed, and [`UpdateStatus::ActionRequired`].
+//!
+//! This used to be graded — user-scoped managers were run, root ones were run
+//! after a confirmation, `sudo` was prepended in the update terminal. The
+//! grading is what made it hard to reason about: whether an update *executed*
+//! depended on the channel, on `--yes`, on whether the endpoint was trusted and
+//! on whether the tool needed root, and the most dangerous path in the whole
+//! updater — spawning a package installer as root — sat at the end of that
+//! chain. Deleting the execution deletes the class of bug rather than an
+//! instance of it, and a rule with no exceptions is one nobody has to remember.
+//!
+//! What it does **not** delete is verification. Channels whose packages we host
+//! but nobody serves from a repository ([`UpdateKind::DownloadPackage`]) are
+//! still fetched, checksum-verified and attestation-checked before the command
+//! is printed, because a user who downloads a `.deb` by hand verifies nothing.
+//! Stopping before `dpkg` costs a keystroke; stopping before the download would
+//! cost the only verification those users get.
 
 #![allow(clippy::let_underscore_must_use)]
 
@@ -78,17 +95,19 @@ impl Default for UpdateOptions {
 
 /// How much of the update to actually perform.
 ///
-/// Three rungs rather than two, because for a release package the work splits
-/// at a natural seam: fetching it needs the network, installing it needs root.
-/// A user can reasonably want us to do the first and keep the second.
+/// The split that matters is fetching versus not fetching. Installing is no
+/// longer a rung: the only thing we ever install is our own binary, and that is
+/// decided by provenance rather than by this.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Execution {
-    /// Fetch, verify, install.
+    /// Do the work: swap in place for a self-contained install, fetch and
+    /// verify for a release package, print the command for everything else.
     #[default]
     Install,
     /// Fetch and verify, then stop and print the install command against the
-    /// file on disk. Only differs from [`Execution::PrintOnly`] where there is
-    /// something for *us* to fetch.
+    /// file on disk. For [`UpdateKind::DownloadPackage`] this is now what
+    /// [`Execution::Install`] does too; it stays as an explicit way to ask for
+    /// it, and as the flag the editor's popup dispatches.
     DownloadOnly,
     /// Touch nothing: no request for an artifact, nothing written to disk.
     /// Print what would happen.
@@ -116,10 +135,12 @@ impl Execution {
 pub enum UpdateStatus {
     /// Installed, or `--check` reported status. Nothing more to do.
     Done,
-    /// Not applied, and finishing it needs a step we will not take: the package
-    /// is downloaded and verified but installing it needs root, the owning
-    /// manager's command was printed rather than run, or there is no mechanism
-    /// at all.
+    /// Not applied, and finishing it is the user's step to take: the package is
+    /// downloaded and verified but installing it belongs to dpkg/rpm, the
+    /// owning manager's command was printed, or there is no mechanism at all.
+    ///
+    /// Every channel except [`UpdateKind::SelfContained`] ends here, by design
+    /// — see the module note on only writing files we own.
     ///
     /// [`run`] has already said what to do, so the caller exits
     /// [`crate::EXIT_ACTION_REQUIRED`] and prints nothing further. Reporting
@@ -192,16 +213,12 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
                 println!("An update is available. Update with: {}", plan.human);
                 return Ok(UpdateStatus::Done);
             }
-            // Nothing here is ours to download — the package manager does its
-            // own fetching — so "download only" and "show the command" are the
-            // same thing for these channels.
-            if !opts.execution.may_install() || !opts.yes {
-                // Printing a command is not performing it, so this is
-                // ActionRequired rather than Done.
-                show_command(&crate::elevate::elevated(&cmd, plan.needs_privilege));
-                return Ok(UpdateStatus::ActionRequired);
-            }
-            run_install(&cmd, plan.needs_privilege).map(|()| UpdateStatus::Done)
+            // Always printed, never run — see the note on `run` about not
+            // driving other people's package managers. Nothing here is ours to
+            // download either (the manager fetches its own), so every rung of
+            // `Execution` lands in the same place for these channels.
+            show_command(&crate::elevate::elevated(&cmd, plan.needs_privilege));
+            Ok(UpdateStatus::ActionRequired)
         }
         UpdateKind::Manual => {
             println!("A new version of Fresh is available: {current_version} → {latest}");
@@ -240,14 +257,21 @@ fn package(
     .ok_or_else(|| format!("no release package is published for {}", channel.label()))?;
 
     let asset = release.find_package(asset_spec.extension, &asset_spec.arch)?;
-    crate::endpoint::check(&asset.browser_download_url).map_err(|e| e.to_string())?;
+    // This URL comes out of the feed rather than being built from a pinned
+    // base, so on the production endpoint it gets the full host check — a feed
+    // we did not author must not be able to point the download anywhere.
+    //
+    // An overridden endpoint is the one case where that check is wrong rather
+    // than strict: a mirror's feed necessarily names assets *on the mirror*, so
+    // enforcing the GitHub allowlist there rejects every asset and makes
+    // `--releases-url` unusable for the air-gapped case it exists for. The
+    // endpoint is already marked untrusted, and nothing is installed from it.
+    if opts.endpoints.trusted {
+        crate::endpoint::check(&asset.browser_download_url).map_err(|e| e.to_string())?;
+    }
 
+    // Display only: whether the printed command needs a `sudo` in front of it.
     let needs_privilege = crate::plan(prov).needs_privilege;
-    // Downloading from an unpinned endpoint is fine; installing what came back
-    // as root is not. Degrade to staging-and-printing rather than refusing, so
-    // a test run still exercises download and verification.
-    let may_install =
-        opts.execution.may_install() && opts.yes && (opts.endpoints.trusted || !needs_privilege);
 
     if !opts.execution.may_download() {
         // "Show the command" means exactly that: no request for the artifact,
@@ -275,14 +299,10 @@ fn package(
         opts.endpoints.trusted,
     )?;
 
-    // A package the user installs by hand, later, needs a directory nothing
-    // sweeps; one we are about to install ourselves should disappear after.
-    let (dir, cleanup) = if may_install {
-        let scratch = crate::staging::ephemeral()?;
-        (scratch.path().to_path_buf(), Some(scratch))
-    } else {
-        (crate::staging::durable()?, None)
-    };
+    // The user installs this by hand, later, so it goes somewhere nothing
+    // sweeps out from under them. (This used to be an ephemeral directory when
+    // we were about to run the installer ourselves; we no longer do.)
+    let dir = crate::staging::durable()?;
     let path = dir.join(&asset.name);
     std::fs::write(&path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
     println!("Downloaded to {}", path.display());
@@ -290,24 +310,11 @@ fn package(
     let cmd = crate::registry::install_command_with(channel, &path, opts.force)
         .ok_or_else(|| format!("no install command for {}", channel.label()))?;
 
-    if !may_install {
-        if opts.execution.may_install() && opts.yes {
-            // Wanted to install, was not allowed to.
-            println!();
-            println!(
-                "The release endpoint is overridden, so this package was not \
-                 installed automatically."
-            );
-        }
-        println!();
-        show_command(&crate::elevate::elevated(&cmd, needs_privilege));
-        return Ok(UpdateStatus::ActionRequired);
-    }
-
+    // Verified, and that is where we stop: installing it belongs to the tool
+    // that owns these files, run by the person who owns the machine.
     println!();
-    let result = run_install(&cmd, needs_privilege).map(|()| UpdateStatus::Done);
-    drop(cleanup);
-    result
+    show_command(&crate::elevate::elevated(&cmd, needs_privilege));
+    Ok(UpdateStatus::ActionRequired)
 }
 
 /// Verified in-place update for a self-contained install.
@@ -483,22 +490,6 @@ fn show_command(cmd: &[String]) {
     println!("Install it with:");
     println!();
     println!("    {}", cmd.join(" "));
-}
-
-/// Run the install command, elevating it when it needs root and we are not it.
-fn run_install(cmd: &[String], needs_privilege: bool) -> Result<(), String> {
-    let argv = crate::elevate::elevated(cmd, needs_privilege);
-    println!("Running: {}", argv.join(" "));
-    let status = std::process::Command::new(&argv[0])
-        .args(&argv[1..])
-        .status()
-        .map_err(|e| format!("failed to run `{}`: {e}", argv[0]))?;
-    if status.success() {
-        println!("Update complete.");
-        Ok(())
-    } else {
-        Err(format!("`{}` exited with {status}", argv.join(" ")))
-    }
 }
 
 #[cfg(unix)]
