@@ -430,8 +430,17 @@ fn unarchiving_something_not_archived_returns_false() {
 /// An SSH create with no host is refused with the dialog's own message, and
 /// nothing is spawned. The API and the form reach the same validation because
 /// they build the spec with the same function.
+///
+/// The refusal must also leave the plugin host alive. An `async` verb that
+/// throws before its first `await` returns an already-rejected promise, and
+/// the runtime reports that as an unhandled rejection *even though the caller
+/// catches it* — the tracker fires a tick before `await` attaches a handler.
+/// Under this harness (`set_panic_on_js_errors`) that kills the plugin thread,
+/// so the last step here drives a second command through the plugin and waits
+/// for its answer: if the refusal had poisoned the host, nothing would come
+/// back.
 #[test]
-fn an_ssh_create_without_a_host_is_refused_with_the_dialogs_message() {
+fn an_ssh_create_without_a_host_is_refused_without_killing_the_plugin_host() {
     let (_tmp, mut h) = harness();
     open_dock(&mut h);
 
@@ -449,4 +458,9 @@ fn an_ssh_create_without_a_host_is_refused_with_the_dialogs_message() {
         !dock_column(&screen).contains("ssh:"),
         "a refused ssh create still added a dock row:\n{screen}"
     );
+
+    // The plugin still answers.
+    run_command(&mut h, "Probe List Archived");
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_ARCHIVED"))
+        .unwrap();
 }

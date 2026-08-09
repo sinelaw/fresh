@@ -10092,6 +10092,24 @@ function trimmed(value: string | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/// Yield once, so the caller's `await` is attached before anything below can
+/// throw.
+///
+/// An `async` function that throws before its first `await` returns an
+/// *already-rejected* promise. The runtime's rejection tracker fires the
+/// moment a promise rejects with no handler attached — which is one tick
+/// before the caller's `await` can attach one — so a validation failure the
+/// caller catches perfectly well still gets reported as an unhandled
+/// rejection, and under the plugin test harness
+/// (`set_panic_on_js_errors(true)`) that kills the plugin thread. Yielding
+/// first makes the returned promise *pending*, so the rejection lands on a
+/// promise someone is already watching.
+///
+/// Every async verb that can reject on its arguments starts with this.
+function yieldToCaller(): Promise<void> {
+  return Promise.resolve();
+}
+
 /// The per-agent options in the shape the shared spec builders take. The
 /// gating against what the resolved agent actually supports happens inside
 /// `gateAgentOptions`, so this only has to supply the caller's intent and the
@@ -10178,6 +10196,8 @@ function specForNewWorkspace(options: NewWorkspaceOptions): CreateSpec {
 async function newWorkspace(
   options: NewWorkspaceOptions = {},
 ): Promise<AgentLaunchResult> {
+  // Before `specForNewWorkspace`, which rejects a bad host / missing path.
+  await yieldToCaller();
   const spec = specForNewWorkspace(options);
   const pendingId = startPendingWorkspace(spec, { visit: options.visit ?? false });
   const outcome = await awaitCreateOutcome(pendingId);
@@ -10416,6 +10436,8 @@ async function runLifecycle(
   target: string | number,
   action: "archive" | "delete",
 ): Promise<boolean> {
+  // Before `requireEligible`, which rejects an ineligible workspace.
+  await yieldToCaller();
   const s = resolveWorkspace(target);
   if (!s) return false;
   requireEligible(s, action);
