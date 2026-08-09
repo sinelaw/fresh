@@ -509,6 +509,29 @@ jobs:
             artifacts/fresh.rb \
             2>/dev/null || true
 
+  # A release is the first time the self-update path can be exercised for real,
+  # and by then users depend on it. Nothing else covers this seam: the
+  # attestations are produced by repository configuration rather than by
+  # anything in this file, the `gh release create` above ends with
+  # `2>/dev/null || true` so a failed upload does not fail the release, and the
+  # updater's checks are fail-closed — a missing archive or attestation
+  # surfaces as a broken update on a user's machine, not here.
+  #
+  # Runs for prereleases too, which is what makes a `-rc` tag a full rehearsal.
+  verify-release:
+    needs: [plan, release]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Every self-updatable archive is present, checksummed and attested
+        run: bash scripts/verify-release-assets.sh "${{ needs.plan.outputs.tag }}"
+
   # Publish to Homebrew tap
   publish-homebrew:
     needs: [plan, release]
