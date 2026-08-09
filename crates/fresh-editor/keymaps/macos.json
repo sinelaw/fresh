@@ -317,6 +317,21 @@
       "when": "normal"
     },
     {
+      "comment": "Ctrl+G / Ctrl+Alt+G also step through matches while the search bar is open",
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "find_next",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl", "alt"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
       "key": "a",
       "modifiers": ["ctrl"],
       "action": "prompt_move_start",

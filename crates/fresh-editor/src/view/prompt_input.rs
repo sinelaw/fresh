@@ -285,6 +285,13 @@ impl InputHandler for Prompt {
                 InputResult::Consumed
             }
 
+            // The search bar is a bar, not a modal: function keys fall
+            // through to keybinding resolution instead of dying in the modal
+            // catch-all below, which is what keeps F3 / Shift+F3 (find
+            // next/previous) live while it is open (issue #2111). Other
+            // prompts stay fully modal.
+            KeyCode::F(_) if self.prompt_type.has_search_options() => InputResult::Ignored,
+
             _ => InputResult::Consumed, // Modal - consume all unhandled keys
         }
     }

@@ -3403,6 +3403,11 @@ impl Editor {
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
             ) {
                 let query = prompt.input.clone();
+                // Drop the committed matches: they were collected under the
+                // old flags, and F3/Shift+F3 now step through them while the
+                // bar is open (issue #2111). Clearing makes the next press
+                // re-run the search under the new flags.
+                self.active_window_mut().search_state = None;
                 self.update_search_highlights(&query);
             }
         } else if let Some(search_state) = &self.active_window().search_state {

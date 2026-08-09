@@ -123,6 +123,21 @@
       "when": "normal"
     },
     {
+      "comment": "Cmd+G / Cmd+Shift+G also step through matches while the search bar is open",
+      "key": "g",
+      "modifiers": ["super"],
+      "action": "find_next",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "g",
+      "modifiers": ["super", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
       "comment": "Cmd+H -> Replace (macOS standard)",
       "key": "h",
       "modifiers": ["super"],

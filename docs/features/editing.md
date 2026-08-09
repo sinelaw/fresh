@@ -171,8 +171,8 @@ Configure `trim_trailing_whitespace_on_save` and `ensure_final_newline_on_save` 
 | `Ctrl+F` | Search in buffer |
 | `Ctrl+R` | Replace in buffer |
 | `Ctrl+Alt+R` | Interactive replace (y/n/!/q for each match) |
-| `F3` | Find next match |
-| `Shift+F3` | Find previous match |
+| `F3` | Find next match (works with the search bar open, which stays open) |
+| `Shift+F3` | Find previous match (likewise) |
 | `Alt+N` / `Ctrl+F3` | Find next occurrence of selection |
 | `Alt+P` / `Ctrl+Shift+F3` | Find previous occurrence of selection |
 

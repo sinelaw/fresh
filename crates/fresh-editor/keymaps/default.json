@@ -620,6 +620,29 @@
       "when": "normal"
     },
     {
+      "comment": "Step through matches without closing the search bar (VS Code / browser find)",
+      "key": "F3",
+      "modifiers": [],
+      "action": "find_next",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "F3",
+      "modifiers": ["shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "Alternative for Shift-F3 with the search bar open (works in more terminals)",
+      "key": "n",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
       "comment": "Quick find - search for next occurrence of selection",
       "key": "F3",
       "modifiers": ["ctrl"],
@@ -1302,13 +1325,6 @@
       "comment": "Prompt context - Additional confirm bindings",
       "key": "f",
       "modifiers": ["ctrl"],
-      "action": "prompt_confirm",
-      "args": {},
-      "when": "prompt"
-    },
-    {
-      "key": "F3",
-      "modifiers": [],
       "action": "prompt_confirm",
       "args": {},
       "when": "prompt"
