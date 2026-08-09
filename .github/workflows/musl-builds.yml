@@ -70,15 +70,37 @@ jobs:
           cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" 2>/dev/null || true
           cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" 2>/dev/null || true
 
-          tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
-          sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+          # Self-update receipt. Without this a musl install resolves at
+          # Heuristic confidence, and `can_self_update` refuses to swap at
+          # anything below Embedded — so the one Linux artifact that runs
+          # everywhere would be the one artifact that cannot update itself.
+          sh scripts/write-install-receipt.sh tarball "${ARCHIVE_NAME}/install-receipt.toml" \
+            target=${{ matrix.target }} \
+            asset=fresh-editor-${{ matrix.target }}.tar.xz
 
-          ls -la "${ARCHIVE_NAME}.tar.gz"*
+          # xz, not gzip: the SelfContained engine derives the asset name from
+          # its compile-time target triple as `fresh-editor-<triple>.tar.xz`
+          # and extracts with `from_tar_xz`. A `.tar.gz` here 404s at update
+          # time. Matching the dist archives keeps that one code path.
+          tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
+          sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
+
+          ls -la "${ARCHIVE_NAME}.tar.xz"*
+
+      - name: Verify the archive carries a self-update receipt
+        run: |
+          ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
+          receipt=$(tar -xJOf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}/install-receipt.toml")
+          echo "$receipt"
+          echo "$receipt" | grep -q 'channel = "tarball"' \
+            || { echo "::error::musl archive receipt is not channel=tarball"; exit 1; }
+          echo "$receipt" | grep -q 'self_update = true' \
+            || { echo "::error::musl archive receipt is not self_update=true"; exit 1; }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
           name: artifacts-musl-${{ matrix.target }}
           path: |
-            fresh-editor-${{ matrix.target }}.tar.gz
-            fresh-editor-${{ matrix.target }}.tar.gz.sha256
+            fresh-editor-${{ matrix.target }}.tar.xz
+            fresh-editor-${{ matrix.target }}.tar.xz.sha256
