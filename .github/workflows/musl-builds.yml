@@ -76,21 +76,24 @@ jobs:
           # everywhere would be the one artifact that cannot update itself.
           sh scripts/write-install-receipt.sh tarball "${ARCHIVE_NAME}/install-receipt.toml" \
             target=${{ matrix.target }} \
-            asset=fresh-editor-${{ matrix.target }}.tar.xz
+            asset=fresh-editor-${{ matrix.target }}.tar.gz
 
-          # xz, not gzip: the SelfContained engine derives the asset name from
-          # its compile-time target triple as `fresh-editor-<triple>.tar.xz`
-          # and extracts with `from_tar_xz`. A `.tar.gz` here 404s at update
-          # time. Matching the dist archives keeps that one code path.
-          tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
-          sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
+          # gzip, deliberately, even though the dist archives use xz. This is
+          # the archive `install.sh` unpacks, and install.sh shells out to the
+          # system `tar` — where `.tar.xz` needs the xz binary (xz-utils),
+          # which minimal images and busybox routinely lack, while gzip is
+          # everywhere. The universal build has to be unpackable on a machine
+          # that has nothing, so it pays the ~15% size for the compression
+          # every system can already read.
+          tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+          sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
 
-          ls -la "${ARCHIVE_NAME}.tar.xz"*
+          ls -la "${ARCHIVE_NAME}.tar.gz"*
 
       - name: Verify the archive carries a self-update receipt
         run: |
           ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
-          receipt=$(tar -xJOf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}/install-receipt.toml")
+          receipt=$(tar -xzOf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}/install-receipt.toml")
           echo "$receipt"
           echo "$receipt" | grep -q 'channel = "tarball"' \
             || { echo "::error::musl archive receipt is not channel=tarball"; exit 1; }
@@ -102,5 +105,5 @@ jobs:
         with:
           name: artifacts-musl-${{ matrix.target }}
           path: |
-            fresh-editor-${{ matrix.target }}.tar.xz
-            fresh-editor-${{ matrix.target }}.tar.xz.sha256
+            fresh-editor-${{ matrix.target }}.tar.gz
+            fresh-editor-${{ matrix.target }}.tar.gz.sha256

@@ -325,14 +325,15 @@ fn self_contained(
     // fact, not a guess. A name recorded in the receipt describes the version
     // already installed, so it is not consulted.
     let target = crate::TARGET_TRIPLE;
-    let ext = if cfg!(windows) { "zip" } else { "tar.xz" };
-    let asset = format!("fresh-editor-{target}.{ext}");
+    let asset = format!("fresh-editor-{target}.{}", archive_ext(target));
     let url = opts.endpoints.asset_url(latest, &asset);
 
     let bin_name = if cfg!(windows) { "fresh.exe" } else { "fresh" };
     let archive = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
-    let binary = if url.ends_with(".zip") {
+    let binary = if asset.ends_with(".zip") {
         crate::archive::from_zip(&archive, bin_name)?
+    } else if asset.ends_with(".tar.gz") {
+        crate::archive::from_tar_gz(&archive, bin_name)?
     } else {
         crate::archive::from_tar_xz(&archive, bin_name)?
     };
@@ -411,6 +412,27 @@ fn file_name(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "fresh-editor".to_string())
+}
+
+/// The archive extension the release publishes for `target`.
+///
+/// A pure function of the compile-time target triple, so it stays a fact
+/// rather than a lookup: Windows ships `.zip`; the musl (universal) archive
+/// ships `.tar.gz` because `install.sh` unpacks it with the system `tar` and
+/// `.tar.xz` needs the xz binary that minimal images often lack; everything
+/// else ships `.tar.xz`, matching what the dist pipeline produces.
+///
+/// Keep in step with `.github/workflows/musl-builds.yml` and the
+/// `archive_ext` matrix in `release.yml` — a mismatch here is a 404 at update
+/// time, which is why the test below pins every target we publish.
+fn archive_ext(target: &str) -> &'static str {
+    if target.contains("-windows-") {
+        "zip"
+    } else if target.contains("-musl") {
+        "tar.gz"
+    } else {
+        "tar.xz"
+    }
 }
 
 /// Download `url` and refuse to return the bytes unless they check out.
@@ -495,6 +517,38 @@ fn make_executable(_path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::confidence::Confidence;
+
+    /// Every target the release pipeline publishes, with the extension it
+    /// actually produces. A mismatch is a 404 at update time on a channel
+    /// nobody exercises until a user tries to update, so it is pinned here
+    /// rather than discovered in the wild.
+    #[test]
+    fn archive_ext_matches_what_the_pipelines_publish() {
+        let cases = [
+            // musl-builds.yml: gzip, so `install.sh` can unpack it with a
+            // stock tar on a machine without xz-utils.
+            ("x86_64-unknown-linux-musl", "tar.gz"),
+            ("aarch64-unknown-linux-musl", "tar.gz"),
+            // release.yml `archive_ext: tar.xz`.
+            ("x86_64-unknown-linux-gnu", "tar.xz"),
+            ("aarch64-unknown-linux-gnu", "tar.xz"),
+            ("x86_64-apple-darwin", "tar.xz"),
+            ("aarch64-apple-darwin", "tar.xz"),
+            // release.yml `archive_ext: zip`.
+            ("x86_64-pc-windows-msvc", "zip"),
+            ("aarch64-pc-windows-msvc", "zip"),
+        ];
+        for (target, expected) in cases {
+            assert_eq!(archive_ext(target), expected, "archive_ext({target})");
+        }
+    }
+
+    /// Windows wins over the musl check, so a hypothetical
+    /// `*-windows-musl` cannot be handed a tarball extension.
+    #[test]
+    fn windows_takes_precedence_over_musl() {
+        assert_eq!(archive_ext("x86_64-pc-windows-musl"), "zip");
+    }
 
     /// An untrusted endpoint must never reach a privileged install, and must
     /// still be usable for everything up to that point — that is the whole
