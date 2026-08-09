@@ -1,13 +1,13 @@
 # Packaging & Self-Update Paradigm
 
-> Status: **design + Phase 1 landed**. This document specifies a new packaging
+> Status: **Phases 1–5 landed**. This document specifies a new packaging
 > paradigm for `fresh` whose defining property is **deterministic install
 > provenance**: every distribution channel records — at install time — exactly
 > which mechanism installed the binary, so the editor can self-update through
 > the *same* mechanism without ever guessing. It supersedes the path-based
 > heuristic in `services/release_checker.rs`.
 >
-> **Implemented (Phases 1–3):**
+> **Implemented:**
 > - **Phase 1** — the `fresh-update` subcrate: `Channel` registry,
 >   `install-receipt.toml` format, layered `resolve()` with confidence levels,
 >   the update-command registry, checksum verification, the atomic binary swap,
@@ -34,9 +34,15 @@
 >   `open_local_file`, so a window bound to a remote authority still shows the
 >   right machine's log.
 >
-> **Not yet done:** GitHub build-attestation verification (SHA-256 is enforced;
-> attestation is still a follow-up), and an optional `auto_update` (no-prompt)
-> mode. See §15 and §17.
+> - **Phase 5** — the unified Linux route: the static musl archive is the
+>   default `install.sh` install (§7.6), it carries a `tarball` receipt, and
+>   every downloaded artifact is checked against the release attestation on
+>   `api.github.com` as well as its `.sha256` sidecar (§11).
+>
+> **Not yet done:** full Sigstore chain verification of the attestation (the
+> digest is cross-checked at a second origin; the DSSE certificate chain is not
+> validated to a pinned root — see §11), and an optional `auto_update`
+> (no-prompt) mode. See §15 and §17.
 
 ---
 
@@ -459,6 +465,47 @@ Its AppImage branch writes `channel=appimage`, `self_update=true`,
   build-time env, so it can't embed `channel=cargo`. It relies on the path
   heuristic (`~/.cargo/bin`), which is reliable enough; a receipt isn't written.
 
+### 7.6 The unified Linux route
+
+Nineteen channels is a lot of ways to answer "how do I install this", and all
+but two of them hand the update lifecycle to something else. The default
+`install.sh` route is therefore the one channel that keeps it: the **static
+musl archive**, unpacked under `~/.local`, owned by the user, needing no root
+and self-updating in place.
+
+Three things make that work, and all three had to be fixed together:
+
+1. **One artifact that runs everywhere.** `musl-builds.yml` already produced
+   fully-featured static binaries for `x86_64` and `aarch64` (QuickJS and all).
+   Static linking is what sidesteps the glibc-version problem that makes a
+   single portable binary hard, and it is the same property that makes `fresh`
+   awkward for distro packaging in the first place — so leaning into it rather
+   than fighting it is the cheaper direction.
+2. **A receipt in the archive.** The musl archive shipped without one, so a
+   musl install resolved at `Heuristic` confidence and `can_self_update`
+   refused the swap (§4.5). The single most-portable artifact was the one
+   artifact that could not update itself. It now carries the same
+   `channel=tarball` receipt the dist archives do, and CI asserts it.
+3. **`.tar.xz`, not `.tar.gz`.** `engine::self_contained` derives the asset
+   name from its compile-time triple as `fresh-editor-<triple>.tar.xz` and
+   extracts with `from_tar_xz` — deliberately, so the download path has no
+   recorded-name-else-guess branch (§6). A `.tar.gz` would have 404'd at update
+   time. Matching the dist archives keeps that one code path.
+
+Distro packages remain fully supported and are **chosen, not defaulted to**:
+`install.sh --method=deb|rpm|aur|nix|cargo|npm|brew|appimage`, or
+`FRESH_INSTALL_METHOD`. When auto-selection picks the universal build on a
+system that has a native option, it says so and names the flag. The reasoning
+is not that packages are worse — it is that a package install needs root and
+moves updates to that package manager, which is a decision worth making
+deliberately rather than inheriting from whatever distro the script detected.
+
+`install.sh` also verifies every artifact it downloads against the published
+`.sha256` (it previously verified nothing) and stages anything destined for
+`dpkg`/`rpm` under `sudo` in a `mktemp -d` 0700 directory, so there is no
+window in which another local user can swap a payload between the checksum
+check and the privileged install.
+
 ---
 
 ## 8. The self-update engine (SelfContained channels)
@@ -474,11 +521,11 @@ their own binary. Flow implemented in `services::self_update`:
    (`fresh-editor-<triple>.tar.xz` / `.zip`, or the `.AppImage`).
 4. **Download** to a temp file *on the same filesystem* as the target
    (so the final rename is atomic), via `services::http::download_to_file`.
-5. **Verify — mandatory, fail-closed:**
-   - fetch the `<asset>.sha256` and compare;
-   - verify the GitHub build **attestation** for the asset (attestations are
-     already produced in CI). A verification failure aborts the update and
-     leaves the current binary untouched.
+5. **Verify — mandatory, fail-closed, at two origins:**
+   - fetch the `<asset>.sha256` from the release CDN and compare;
+   - confirm the artifact's digest is attested under this asset name in the
+     release attestation on `api.github.com` (§11). Either failure aborts the
+     update and leaves the current binary untouched.
 6. **Swap atomically:**
    - *Unix (tarball):* unpack, `chmod +x`, `rename()` the new binary over the
      old one (atomic on the same fs). If `EXDEV`/permission denied → this
@@ -551,8 +598,32 @@ non-goal on silent installs.
 
 - **Transport:** HTTPS only, via the existing `ureq + rustls` stack in
   `services::http`.
-- **Integrity:** SHA-256 comparison against the published `.sha256` **and**
-  GitHub artifact-attestation verification before any swap. Fail-closed.
+- **Integrity: two origins, not one.** A `.sha256` sidecar on its own proves
+  very little, because it is served from the same place as the artifact —
+  whoever can substitute the payload can substitute the digest beside it, and
+  the comparison then only shows the server can do arithmetic. So every
+  downloaded artifact is checked twice: against its sidecar, and against the
+  **release attestation fetched from `api.github.com`**, which is a separate
+  pinned origin. The attestation is the in-toto statement the release workflow
+  produced (`github-attestations = true`); GitHub indexes it by subject digest,
+  so a tampered artifact has no attestation to find, and a genuine artifact
+  swapped in under another name fails the name check. Both fail-closed.
+  `fresh_update::attestation` implements it, with the real GitHub payload
+  checked into `tests/fixtures/` as a regression test.
+
+  What this is **not** is full Sigstore verification. The bundle's DSSE
+  envelope is signed by a Fulcio-issued certificate, but verifying that
+  signature only means something once the chain is validated to a pinned root
+  — otherwise anyone who can forge the `api.github.com` response forges the
+  certificate with it. GitHub distributes that root through a TUF repository
+  whose traversal is a client in its own right, and pinning the root without
+  the TUF machinery would buy assurance at the price of a hard failure at every
+  rotation. The trust anchor today is therefore TLS to a second pinned origin;
+  chain validation slots in above it rather than replacing it.
+
+  An overridden endpoint skips the attestation check — a local test server has
+  no attestations and never could — which is the same line already drawn for
+  privilege: bytes from an overridden endpoint never reach `sudo`.
 - **Privilege escalation is consented and visible, never silent.** Commands that
   need root run as `sudo` **in the interactive update terminal**, so the
   password prompt is the user's own shell prompt and they can see exactly what is
@@ -748,8 +819,15 @@ root command behind, the body says so up front.
 Once a run has started, clicking the indicator — or the **"Open update log"**
 command (`Action::OpenUpdateLog`) — opens the log via `open_local_file`, i.e.
 from the machine `fresh` runs on, never the window's (possibly remote)
-authority. Still remaining: GitHub build-attestation verification alongside
-SHA-256, and an optional no-prompt `auto_update` mode.
+authority. Still remaining: an optional no-prompt `auto_update` mode.
+
+**Phase 5 — one unified Linux route, verified at two origins. ✅ landed.**
+The static musl archive became the default `install.sh` install and gained the
+`tarball` receipt (and the `.tar.xz` name) that lets it actually self-update;
+distro packages moved behind an explicit `--method` (§7.6). Every artifact the
+engine downloads is now cross-checked against the release attestation on
+`api.github.com` in addition to its `.sha256` sidecar, fail-closed, with the
+real GitHub bundle checked in as a test fixture (§11).
 
 ---
 
@@ -781,21 +859,29 @@ SHA-256, and an optional no-prompt `auto_update` mode.
    `tarball` receipt is *overwritten* to `cargo-binstall`, or accept that
    binstalled copies self-update as `tarball` (arguably fine, since the user has
    cargo — Toolchain would be nicer).
-3. **Attestation verification offline / air-gapped:** provide a
-   `--skip-attestation` (checksum-only) escape hatch, clearly warned.
-4. **mise/asdf** manage their own shims. The invocation is now
+3. **Attestation verification offline / air-gapped:** the check is fail-closed
+   and needs `api.github.com`, so a machine that can reach the release CDN but
+   not the API cannot update. No escape hatch exists deliberately — a
+   `--skip-attestation` flag is exactly the thing an attacker would tell the
+   user to pass — but if this bites real users the answer is probably to accept
+   a cached attestation, not to add the flag.
+4. **Sigstore chain validation** (§11) needs GitHub's Fulcio root, which is
+   distributed over TUF. Doing it properly means a TUF client; doing it
+   improperly (pinning a root that rotates) trades availability for assurance.
+   Deferred, with the digest cross-check standing in.
+5. **mise/asdf** manage their own shims. The invocation is now
    `mise upgrade github:sinelaw/fresh` (the tool ref, matching the README's
    `mise use`); a bare `fresh` matched nothing. Nothing writes a `mise` receipt
    yet, so the channel is unreachable in practice — resolved as latent, not
    fixed by observation.
-5. **Snap/Scoop/Chocolatey/zypper/pacman** have no pipeline, so nothing writes
+6. **Snap/Scoop/Chocolatey/zypper/pacman** have no pipeline, so nothing writes
    their receipts and no heuristic resolves to them — they are unreachable, and
    §6 now routes them to `Manual` rather than naming an invented command. Their
    `Channel` variants are kept because the ids are receipt wire format, so a
    receipt written by a future pipeline still parses. **Open:** whether to drop
    the variants outright once it is clear those pipelines will not ship. That is
    a wire-format change and needs a deliberate call, not a cleanup.
-6. **Two binaries, one machine** (e.g. a brew `fresh` and a cargo `fresh`): the
+7. **Two binaries, one machine** (e.g. a brew `fresh` and a cargo `fresh`): the
    receipt is resolved relative to `current_exe()`, so each updates itself
    correctly — this is a feature of anchoring on the executable path, not the
    heuristic's global guess.

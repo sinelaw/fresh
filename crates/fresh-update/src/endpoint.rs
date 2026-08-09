@@ -27,7 +27,11 @@
 //! Note what this does *not* claim. Pinning the host means an attacker needs
 //! GitHub rather than any host; it is not a substitute for signing the
 //! artifacts, because a checksum served from the same origin as the payload
-//! proves nothing about who produced either.
+//! proves nothing about who produced either. [`crate::attestation`] narrows
+//! that gap by asking a *second* pinned origin — `api.github.com` — whether the
+//! bytes we got were published under the name we expected, so the asset CDN
+//! alone is no longer enough to substitute an artifact. It is still not a
+//! signature check; that module says exactly where the line falls.
 
 /// Hosts a production build will fetch release metadata or artifacts from.
 ///

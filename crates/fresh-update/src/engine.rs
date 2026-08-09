@@ -269,7 +269,11 @@ fn package(
         return Ok(UpdateStatus::ActionRequired);
     }
 
-    let bytes = fetch_and_verify(transport, &asset.browser_download_url)?;
+    let bytes = fetch_and_verify(
+        transport,
+        &asset.browser_download_url,
+        opts.endpoints.trusted,
+    )?;
 
     // A package the user installs by hand, later, needs a directory nothing
     // sweeps; one we are about to install ourselves should disappear after.
@@ -326,7 +330,7 @@ fn self_contained(
     let url = opts.endpoints.asset_url(latest, &asset);
 
     let bin_name = if cfg!(windows) { "fresh.exe" } else { "fresh" };
-    let archive = fetch_and_verify(transport, &url)?;
+    let archive = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
     let binary = if url.ends_with(".zip") {
         crate::archive::from_zip(&archive, bin_name)?
     } else {
@@ -357,7 +361,7 @@ fn appimage(
         "AppImage install has no recorded install_root; reinstall via install.sh".to_string()
     })?;
 
-    let bytes = fetch_and_verify(transport, &url)?;
+    let bytes = fetch_and_verify(transport, &url, opts.endpoints.trusted)?;
 
     // Everything happens inside one private directory next to the install root
     // — same filesystem, so the final rename is atomic, and private so nothing
@@ -409,9 +413,20 @@ fn file_name(p: &Path) -> String {
         .unwrap_or_else(|| "fresh-editor".to_string())
 }
 
-/// Download `url` and check it against its `.sha256` sidecar. Fail-closed: a
-/// missing or unreadable sidecar aborts rather than skipping verification.
-fn fetch_and_verify(transport: &Transport, url: &str) -> Result<Vec<u8>, String> {
+/// Download `url` and refuse to return the bytes unless they check out.
+///
+/// Two checks at two origins, because one origin is not enough. The `.sha256`
+/// sidecar catches corruption but nothing else: it is served from the same
+/// place as the payload, so anyone who can substitute one can substitute the
+/// other. The attestation lookup asks `api.github.com` whether these exact
+/// bytes were published under this exact asset name, which an attacker holding
+/// only the asset CDN cannot arrange. See [`crate::attestation`] for what that
+/// does and does not prove.
+///
+/// `trusted` tracks [`Endpoints::trusted`]: a test server has no attestations
+/// and never could, so an overridden endpoint skips the second check — and the
+/// engine already refuses to elevate with bytes from one.
+fn fetch_and_verify(transport: &Transport, url: &str, trusted: bool) -> Result<Vec<u8>, String> {
     println!("Downloading {url} ...");
     let scratch = crate::staging::ephemeral()?;
     let tmp = scratch.path().join("payload");
@@ -424,6 +439,20 @@ fn fetch_and_verify(transport: &Transport, url: &str) -> Result<Vec<u8>, String>
         .get_text(&sha_url, net::SIDECAR_MAX_BYTES)
         .map_err(|e| format!("could not fetch checksum ({sha_url}): {e}"))?;
     self_update::verify_sha256(&bytes, expected.trim()).map_err(|e| e.to_string())?;
+
+    if trusted {
+        println!("Verifying release attestation ...");
+        // The digest is computed from the bytes on disk, never read from the
+        // network — otherwise the second origin would be checking the first
+        // origin's claim about itself.
+        let digest = self_update::sha256_hex(&bytes);
+        let asset = url.rsplit('/').next().unwrap_or(url);
+        crate::attestation::verify(transport, crate::endpoint::REPO, asset, &digest)
+            .map_err(|e| e.to_string())?;
+    } else {
+        println!("Release endpoint overridden — skipping the attestation check.");
+    }
+
     Ok(bytes)
 }
 

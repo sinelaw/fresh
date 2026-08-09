@@ -49,6 +49,8 @@ pub mod version;
 
 #[cfg(feature = "archive")]
 pub mod archive;
+#[cfg(feature = "net")]
+pub mod attestation;
 #[cfg(feature = "engine")]
 pub mod engine;
 #[cfg(feature = "net")]
