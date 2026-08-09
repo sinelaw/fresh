@@ -1,5 +1,26 @@
 # Release Notes
 
+## 0.4.8
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **Linux moves to a single self-updating static binary** - `install.sh` now installs a statically linked musl build under `~/.local`, no root needed, updated in place by `fresh --cmd update`. Deb, rpm, flatpak and the other channels are still built, just no longer the recommended install; pick one with `install.sh --method=...`.
+* **Scripts can manage workspaces end to end** - rename, move to folder, stop, archive, restore and delete, plus the dock's filter and density settings; New Workspace accepts SSH details too.
+
+### Bug Fixes
+
+* **`Ctrl+/` works on every terminal, not just kitty** (#2933) - including layouts where `/` needs Shift.
+* **F3 steps through matches while the search bar stays open** (#2111).
+* **Review Diff** - action confirmations no longer vanish instantly, and its status strings are translated in all locales.
+
+### Internals
+
+* Release-pipeline hardening (workflow linting, artifact and self-update verification before promotion) and e2e test stabilization.
+
 ## 0.4.7
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
@@ -27,7 +48,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Highlights taller than the window are drawn again.**
 * **Input**
   * **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
-  * **`Ctrl+/` works outside kitty again** (#2933) - toggle-comment fired under kitty but nowhere else, because the `0x1F` byte every other terminal sends for the chord was read as `Ctrl+_`. It also reaches a terminal panel's child process as `0x1F` now, instead of a literal `/`.
   * **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
 * **Settings & commands**
   * **Settings toggles actually stick**
