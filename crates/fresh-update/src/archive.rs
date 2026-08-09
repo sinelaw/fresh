@@ -247,6 +247,6 @@ mod tests {
     /// a CPU denial of service with entirely legal-looking headers.
     #[test]
     fn the_entry_count_is_capped() {
-        assert!(MAX_ENTRIES > 0 && MAX_ENTRIES < 100_000);
+        const { assert!(MAX_ENTRIES > 0 && MAX_ENTRIES < 100_000) };
     }
 }

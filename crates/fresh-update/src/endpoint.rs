@@ -1,37 +1,23 @@
-//! Where release metadata and release artifacts are allowed to come from.
+//! Where release metadata and artifacts are allowed to come from.
 //!
-//! Everything the updater downloads is eventually executed — a package handed
-//! to `apt-get`/`dnf` under `sudo`, or a binary swapped over the running
-//! executable. So the set of hosts we will fetch from is a security boundary,
-//! not a configuration convenience.
+//! Everything the updater downloads is eventually executed, so the set of
+//! hosts it will fetch from is a security boundary rather than a convenience.
+//! Two rules, enforced here instead of at each call site.
 //!
-//! Two rules, both enforced here rather than at each call site:
+//! **https only, host pinned.** Checked again after redirects by
+//! [`crate::net`], because GitHub 302s assets to a CDN and a redirect that
+//! downgraded to `http://` would otherwise be followed silently.
 //!
-//! 1. **https only, host pinned.** A production build fetches from
-//!    [`ALLOWED_HOSTS`] over TLS or not at all. This holds after redirects too
-//!    ([`crate::net`] re-checks the effective URL), because GitHub 302s release
-//!    assets to a CDN and a redirect that downgraded to `http://` would
-//!    otherwise be followed silently.
+//! **An override is never trusted.** The env overrides exist so the update
+//! path can be exercised without cutting a release. Unconstrained they would
+//! turn "can set an env var" into "can run code as root": point the base at
+//! your own server, serve a package and a matching `.sha256`, and the checksum
+//! proves only that you can do arithmetic. So an override marks the endpoints
+//! untrusted and the engine prints the command rather than elevating.
 //!
-//! 2. **An override is never trusted.** `$FRESH_RELEASES_URL` /
-//!    `$FRESH_DOWNLOAD_BASE` exist so the update path can be exercised without
-//!    cutting a release. They are also, if left unconstrained, a way to turn
-//!    "can set an env var" into "can run code as root": point the base at a
-//!    server you control, serve a package *and* the `.sha256` that matches it,
-//!    and the checksum proves only that the attacker can do arithmetic. So an
-//!    overridden endpoint sets [`Endpoints::trusted`] to `false`, and the
-//!    engine refuses to elevate for an untrusted endpoint — it prints the
-//!    command instead. The override stays useful for testing; it stops being a
-//!    path to `sudo`.
-//!
-//! Note what this does *not* claim. Pinning the host means an attacker needs
-//! GitHub rather than any host; it is not a substitute for signing the
-//! artifacts, because a checksum served from the same origin as the payload
-//! proves nothing about who produced either. [`crate::attestation`] narrows
-//! that gap by asking a *second* pinned origin — `api.github.com` — whether the
-//! bytes we got were published under the name we expected, so the asset CDN
-//! alone is no longer enough to substitute an artifact. It is still not a
-//! signature check; that module says exactly where the line falls.
+//! Pinning means an attacker needs GitHub rather than any host. It is not a
+//! substitute for signing — [`crate::attestation`] narrows that gap with a
+//! second origin, and says where the remaining line falls.
 
 /// Hosts a production build will fetch release metadata or artifacts from.
 ///

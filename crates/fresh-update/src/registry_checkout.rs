@@ -1,64 +1,76 @@
-// Is a source tree a cargo registry checkout?
-//
-// One predicate, in its own file because it is needed in two places that
-// cannot share code the usual way: `build.rs` (which decides at compile time
-// whether to stamp `FRESH_BUILD_CHANNEL=cargo`) and the library (so the
-// decision is covered by tests that actually run — a `#[cfg(test)]` module
-// inside a build script is never executed by `cargo test`). The build script
-// `include!`s this file, which is also why the header above is `//` rather
-// than `//!`: an included file cannot carry inner doc comments.
+// One predicate, in its own file because `build.rs` `include!`s it: the
+// decision is made at compile time, but a `#[cfg(test)]` module inside a build
+// script never runs under `cargo test`. An included file cannot carry inner
+// doc comments, hence `//` above.
 
 use std::path::Path;
 
-/// `true` if `path` sits under a `registry/src/` pair — the layout cargo uses
-/// for sources it unpacked from crates.io, i.e.
-/// `$CARGO_HOME/registry/src/<index>/<crate>-<version>/`.
+/// `true` if `path` is a source tree cargo unpacked from a registry `.crate` —
+/// i.e. this build is a `cargo install` from crates.io.
 ///
-/// This is how a `cargo install fresh-editor` is recognised at build time,
-/// replacing the runtime guess that used to read `~/.cargo/bin` off the
-/// executable path.
+/// Both markers are written by cargo itself, which is the point: the earlier
+/// version matched `registry/src` in the path, and any directory can be named
+/// that. `.cargo-ok` is written after cargo finishes unpacking and is not in
+/// the published tarball; `Cargo.toml.orig` is written by `cargo package` and
+/// so is absent from a git checkout. Requiring both means "unpacked by cargo,
+/// from something published" — a git or `--path` build satisfies neither.
 ///
-/// Matching the adjacent pair rather than either name alone is what keeps an
-/// unrelated directory called `registry` from qualifying.
+/// Prefer setting `FRESH_BUILD_CHANNEL` explicitly. This exists only for the
+/// one channel that cannot: crates.io builds on the user's machine, so there
+/// is no packaging step of ours to inject into.
 pub fn is_registry_checkout(path: &Path) -> bool {
-    let parts: Vec<_> = path.components().map(|c| c.as_os_str()).collect();
-    parts
-        .windows(2)
-        .any(|w| w[0] == "registry" && w[1] == "src")
+    path.join(".cargo-ok").is_file() && path.join("Cargo.toml.orig").is_file()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn tree(markers: &[&str]) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::write(root.join("Cargo.toml"), "[package]\n").unwrap();
+        for m in markers {
+            std::fs::write(root.join(m), "{\"v\":1}").unwrap();
+        }
+        (dir, root)
+    }
 
     #[test]
-    fn recognises_a_registry_checkout() {
-        assert!(is_registry_checkout(Path::new(
-            "/root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/fresh-update-0.4.7"
-        )));
-        // A relocated CARGO_HOME is still a registry checkout.
-        assert!(is_registry_checkout(Path::new(
-            "/opt/cargo-home/registry/src/index.crates.io-abc/fresh-update-0.4.7"
-        )));
+    fn recognises_an_unpacked_registry_crate() {
+        let (_d, root) = tree(&[".cargo-ok", "Cargo.toml.orig"]);
+        assert!(is_registry_checkout(&root));
     }
 
     #[test]
     fn a_workspace_or_git_build_is_not_one() {
-        assert!(!is_registry_checkout(Path::new(
-            "/home/u/src/fresh/crates/fresh-update"
-        )));
-        assert!(!is_registry_checkout(Path::new("/home/u/src/fresh")));
+        let (_d, root) = tree(&[]);
+        assert!(!is_registry_checkout(&root));
     }
 
-    /// `registry` and `src` must be adjacent and in that order, or any project
-    /// with a directory called `registry` would claim to be a cargo install.
+    /// `cargo install --git` also gets a `.cargo-ok`, but the checkout is the
+    /// repository, so `cargo package` never ran and there is no `.orig`.
+    #[test]
+    fn a_git_install_is_not_a_registry_install() {
+        let (_d, root) = tree(&[".cargo-ok"]);
+        assert!(!is_registry_checkout(&root));
+    }
+
+    /// A `.crate` untarred by hand is not something cargo is managing.
+    #[test]
+    fn an_unpacked_tarball_alone_is_not_one() {
+        let (_d, root) = tree(&["Cargo.toml.orig"]);
+        assert!(!is_registry_checkout(&root));
+    }
+
+    /// The path is no longer consulted at all — this is the case the old
+    /// name-matching version got wrong.
     #[test]
     fn a_directory_merely_named_registry_is_not_one() {
-        assert!(!is_registry_checkout(Path::new("/srv/registry/fresh")));
-        assert!(!is_registry_checkout(Path::new("/home/u/src/registry")));
-        assert!(!is_registry_checkout(Path::new("/srv/src/registry/fresh")));
-        assert!(!is_registry_checkout(Path::new(
-            "/srv/registry/vendor/src/fresh"
-        )));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("registry").join("src").join("fresh-0.1.0");
+        std::fs::create_dir_all(&root).unwrap();
+        assert!(!is_registry_checkout(&root));
     }
 }

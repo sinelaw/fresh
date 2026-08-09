@@ -1,36 +1,22 @@
 //! The one HTTP client the updater uses.
 //!
-//! Every byte the updater fetches — release metadata, the `.sha256` sidecar,
-//! and the artifact itself — goes through this module, so all three share one
-//! TLS configuration, one redirect policy, and one set of size limits.
+//! Feed, checksum sidecar and artifact all go through here so they share one
+//! TLS configuration, redirect policy and set of size limits. That sharing is
+//! the point: the previous arrangement fetched the artifact with the platform
+//! verifier and the checksum with bundled webpki roots, so behind a
+//! TLS-intercepting proxy the download succeeded and its checksum fetch
+//! failed, which — verification being fail-closed — made the updater unusable.
+//! Verifying an artifact and the statement about it against two different
+//! trust anchors is also not one coherent decision.
 //!
-//! That sharing is the point. The previous arrangement fetched the artifact
-//! with the platform certificate verifier (so it worked behind a
-//! TLS-intercepting corporate proxy) while the feed and the checksum went
-//! through a different code path with the bundled webpki roots. Behind exactly
-//! the proxy the first was configured for, the download succeeded and the
-//! checksum fetch failed — and since verification is fail-closed, the updater
-//! was unusable. Beyond the bug, verifying an artifact and the statement about
-//! that artifact against two different sets of trust anchors does not add up to
-//! one coherent trust decision.
+//! `ureq` is built with `http_status_as_error(false)`, so a 404 arrives as a
+//! successful call yielding an error page and every status is checked here.
+//! Bodies are capped: an unbounded read of a response we did not produce is
+//! TUF's *endless data* attack.
 //!
-//! # Limits
-//!
-//! `ureq` is built with `http_status_as_error(false)`, which makes a 404 a
-//! *successful* call that yields an error page — so every response's status is
-//! checked explicitly here. Bodies are capped: an unbounded read of a response
-//! we did not produce is a denial of service waiting to happen, and TUF names
-//! it (the *endless data* attack).
-//!
-//! # What this does not do
-//!
-//! `https_only` stops a redirect from downgrading to plaintext, and the initial
-//! URL is checked against the host allowlist. A redirect from one *https* host
-//! to another is still followed, because GitHub genuinely redirects release
-//! assets to a CDN and the landing host varies. The real answer to "who
-//! produced these bytes" is not a stricter transport — see the notes in
-//! [`crate::endpoint`], and [`crate::attestation`] for the second-origin check
-//! that answers part of it.
+//! A redirect between two https hosts is still followed, because GitHub's
+//! asset CDN varies. Transport strictness is not the answer to "who produced
+//! these bytes"; see [`crate::attestation`].
 
 use crate::endpoint::Endpoints;
 use std::path::Path;

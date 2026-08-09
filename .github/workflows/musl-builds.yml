@@ -7,11 +7,8 @@ name: Musl Builds
 on:
   workflow_call:
   workflow_dispatch:
-  # The musl archive is the default Linux install and the one artifact whose
-  # receipt gates self-update, so a PR that breaks it must fail the PR rather
-  # than the release. Previously this workflow only ran at release time, which
-  # meant the receipt step and its assertion were unverified until it was too
-  # late to be cheap.
+  # The default Linux install, and the one artifact whose receipt gates
+  # self-update: breaking it should fail the PR, not the release.
   pull_request:
 
 jobs:
@@ -75,37 +72,24 @@ jobs:
           cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" 2>/dev/null || true
           cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" 2>/dev/null || true
 
-          # Self-update receipt. Without this a musl install resolves at
-          # Heuristic confidence, and `can_self_update` refuses to swap at
-          # anything below Embedded — so the one Linux artifact that runs
-          # everywhere would be the one artifact that cannot update itself.
+          # Without this the archive resolves below the confidence
+          # `can_self_update` requires, so the one Linux artifact that runs
+          # everywhere would be the one that cannot update itself.
           sh scripts/write-install-receipt.sh tarball "${ARCHIVE_NAME}/install-receipt.toml" \
             target=${{ matrix.target }} \
             asset=fresh-editor-${{ matrix.target }}.tar.gz
 
-          # gzip, deliberately, even though the dist archives use xz. This is
-          # the archive `install.sh` unpacks, and install.sh shells out to the
-          # system `tar` — where `.tar.xz` needs the xz binary (xz-utils),
-          # which minimal images and busybox routinely lack, while gzip is
-          # everywhere. The universal build has to be unpackable on a machine
-          # that has nothing, so it pays the size difference for the
-          # compression every system can already read: measured on CI, 13.2 MB
-          # gzip against 9.9 MB xz — a third larger, ~3 MB, once per install.
+          # gzip, though the dist archives use xz: install.sh unpacks this
+          # with the system `tar`, and `.tar.xz` needs xz-utils, which minimal
+          # images routinely lack. Costs ~3 MB (13.2 vs 9.9 MB, measured) to
+          # drop a dependency the install path cannot assume.
           tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
 
-          # Transition shim: also publish .tar.xz.
-          #
-          # Binaries built before `engine::archive_ext` existed ask for
-          # `fresh-editor-<triple>.tar.xz` unconditionally. That used to be
-          # harmless for musl — those installs carried no receipt, so the
-          # updater refused to act at all — but install.sh now writes a receipt
-          # when the archive lacks one, which turns "no update offered" into
-          # "update offered" for a binary that will request the xz name. Ship
-          # both so that request resolves instead of 404ing.
-          #
-          # Droppable one release after the gzip switch ships, once no
-          # published binary asks for the xz name any more.
+          # Transition shim: binaries built before `archive_ext` existed ask
+          # for the xz name unconditionally, and install.sh now writes a
+          # receipt when the archive lacks one — turning "no update offered"
+          # into a 404. Droppable one release after the gzip switch ships.
           tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
 
