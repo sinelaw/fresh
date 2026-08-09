@@ -1149,9 +1149,14 @@ impl Editor {
         let channel = prov.channel.label();
         let offer = offer_for(&plan);
 
-        // The body says what "Update now" will do, end to end. `needs_privilege`
-        // no longer means "we will refuse" — the update runs in an interactive
-        // terminal, so it only changes whether a password prompt appears.
+        // The body says exactly how far Fresh will go. Only a self-contained
+        // install ends with the update applied; everywhere else Fresh stops at
+        // the command, because it does not run other package managers.
+        //
+        // `needs_privilege` no longer splits these messages. It used to decide
+        // whether to warn about a password prompt, and there is no prompt now —
+        // where root is needed it simply appears as the `sudo` in the command
+        // we print.
         let body = match offer {
             UpdateOffer::SelfContained => t!(
                 "update.body_self_contained",
@@ -1159,26 +1164,14 @@ impl Editor {
                 version = version
             )
             .to_string(),
-            UpdateOffer::DownloadPackage if plan.needs_privilege => t!(
-                "update.body_download_package_privileged",
-                channel = channel,
-                version = version
-            )
-            .to_string(),
             UpdateOffer::DownloadPackage => t!(
-                "update.body_download_package",
+                "update.body_download_package_verified",
                 channel = channel,
                 version = version
-            )
-            .to_string(),
-            UpdateOffer::RunCommand if plan.needs_privilege => t!(
-                "update.body_delegated_privileged",
-                channel = channel,
-                command = plan.human
             )
             .to_string(),
             UpdateOffer::RunCommand => t!(
-                "update.body_delegated",
+                "update.body_delegated_command",
                 channel = channel,
                 command = plan.human
             )
