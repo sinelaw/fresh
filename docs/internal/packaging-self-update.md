@@ -1,6 +1,6 @@
 # Packaging & Self-Update Paradigm
 
-> Status: **Phases 1–7 landed**. This document specifies a new packaging
+> Status: **Phases 1–8 landed**. This document specifies a new packaging
 > paradigm for `fresh` whose defining property is **deterministic install
 > provenance**: every distribution channel records — at install time — exactly
 > which mechanism installed the binary, so the editor can self-update through
@@ -48,6 +48,13 @@
 > - **Phase 7** — `fresh` **executes nothing**. Every channel but the
 >   self-contained one prints its command and stops; release packages are still
 >   downloaded and verified first (§9, §11). The `sudo` path is deleted.
+>
+> - **Phase 8** — a release **proves itself before anyone is offered it**. It is
+>   assembled as a draft, published as a pre-release, then checked two ways —
+>   every archive present/checksummed/attested, and the *previous* release
+>   actually self-updating to it against real GitHub — and only then promoted to
+>   `latest`. Registry publishes hang off the promotion. This is what `-rc` tags
+>   used to approximate (§15, Phase 8).
 >
 > **Not yet done:** full Sigstore chain verification of the attestation (the
 > digest is cross-checked at a second origin; the DSSE certificate chain is not
@@ -959,6 +966,42 @@ longer takes the executable path or the host distro, so the resolver physically
 cannot see them. `cargo` moved from a runtime path guess to a build-time fact
 (§7.5). Provenance is now recorded or `Unknown`.
 
+**Phase 8 — a release proves itself before anyone is offered it. ✅ landed.**
+`release.yml` no longer publishes and hopes. One tag push, five steps:
+
+1. **Assemble as a draft.** All assets are attached to a draft release —
+   GitHub's own guidance for immutable-release repositories, since publishing
+   freezes them. The upload used to end in `2>/dev/null || true`, which turned a
+   failed upload into a successful-looking release; errors are fatal now. (That
+   `|| true` was doing a second job — an unmatched glob reaches `gh` as a
+   literal path — so the asset list is expanded through `nullglob` instead.)
+2. **Publish it as a pre-release.** This is the pivot: assets freeze, the
+   release attestation is minted, and the bytes become downloadable.
+   `/releases/latest` still names the previous release, and `feed::select`
+   refuses a pre-release without `--pre` (§11) — so the release is reachable for
+   testing and offered to nobody.
+3. **`verify-release`** — every self-updatable archive is present, checksummed
+   and attested (`verify-release-assets.sh`).
+4. **`rehearse-update`** — the previous release actually self-updates to this
+   one (§16).
+5. **`promote`** — `--prerelease=false`, then `--latest`, then read the state
+   back. Two calls in that order because the API refuses to make a pre-release
+   latest; `=false` because these are boolean flags. The read-back is not
+   ceremony: a promotion that silently failed would leave a finished release
+   parked as a pre-release, visible to no one.
+
+Registry publishes (Homebrew, npm, AUR, crates.io, winget) hang off `promote`
+rather than off `release`, so no registry can ship a version that failed its own
+upgrade rehearsal. They previously ran in parallel with an unverified release.
+
+**This replaces `-rc` tags.** Rehearsing used to mean cutting a throwaway
+version — its own tag, its own changelog entry, a number nobody installs — and
+it never actually rehearsed the real thing: the release attestation names the
+tag it was minted for, so an rc proves the rc. Now the artifact under test is
+the artifact that ships, and the only difference between a rehearsal and a
+release is a flag that clears when it passes. `-rc` tags still work if wanted;
+`promote` skips them, so they stay pre-releases forever.
+
 ---
 
 ## 16. Testing strategy
@@ -1001,6 +1044,32 @@ cannot see them. `cargo` moved from a runtime path guess to a build-time fact
   (`tests/fixtures/github-release-attestation.json`), not a synthetic one. The
   E2E skips the attestation gate by design — an overridden endpoint is
   untrusted, and a local server has no attestations.
+
+- **The release itself** (`scripts/rehearse-self-update.sh`, run by the
+  `rehearse-update` job): the one check the hermetic tests structurally cannot
+  make. It downloads the *previously shipped* archive, installs it the way
+  `install.sh` would, and drives that binary through `fresh --cmd update`
+  against real GitHub — real feed, real bytes, real attestation, real swap.
+
+  It tests the updater users are actually running, which is the one that
+  matters: a bug in the *current* build can be fixed in the next release, while
+  a bug in the shipped one strands everybody on it. Every release is therefore
+  its own rehearsal, and nothing is promoted until it passes.
+
+  A side effect worth keeping: this job is what decides when the musl `.tar.xz`
+  transition shim can go. Binaries built before `archive_ext` existed ask for
+  the xz name unconditionally, so while any such binary is still the *previous*
+  release, dropping the shim breaks the rehearsal — which is exactly what it
+  would do to those users. The shim's lifetime stops being a note in a comment
+  and becomes a red job.
+
+  Why this cannot be done before publishing, which is what makes the ordering
+  in §15 (Phase 8) load-bearing rather than stylistic: the attestation the updater
+  checks is a *release* attestation
+  (`in-toto.io/attestation/release/v0.2`) minted by GitHub's immutable-releases
+  setting when a release is **published**. A draft has none, and a draft's
+  assets are not downloadable even with a token. There is no artifact to verify
+  and no bytes to fetch until the release is real.
 - **Windows swap:** test the rename-running-exe + deferred-delete path in a
   Windows CI runner.
 - **Negative:** forged receipt claiming `self_update=true` must still fail the
