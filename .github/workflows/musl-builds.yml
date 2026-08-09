@@ -88,7 +88,22 @@ jobs:
           tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
 
-          ls -la "${ARCHIVE_NAME}.tar.gz"*
+          # Transition shim: also publish .tar.xz.
+          #
+          # Binaries built before `engine::archive_ext` existed ask for
+          # `fresh-editor-<triple>.tar.xz` unconditionally. That used to be
+          # harmless for musl — those installs carried no receipt, so the
+          # updater refused to act at all — but install.sh now writes a receipt
+          # when the archive lacks one, which turns "no update offered" into
+          # "update offered" for a binary that will request the xz name. Ship
+          # both so that request resolves instead of 404ing.
+          #
+          # Droppable one release after the gzip switch ships, once no
+          # published binary asks for the xz name any more.
+          tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
+          sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
+
+          ls -la "${ARCHIVE_NAME}.tar."*
 
       - name: Verify the archive carries a self-update receipt
         run: |
@@ -107,3 +122,5 @@ jobs:
           path: |
             fresh-editor-${{ matrix.target }}.tar.gz
             fresh-editor-${{ matrix.target }}.tar.gz.sha256
+            fresh-editor-${{ matrix.target }}.tar.xz
+            fresh-editor-${{ matrix.target }}.tar.xz.sha256
