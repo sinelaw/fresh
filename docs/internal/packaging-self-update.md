@@ -915,10 +915,37 @@ cannot see them. `cargo` moved from a runtime path guess to a build-time fact
 - **Package install tests (CI):** extend the existing `.deb`/`.rpm`/AppImage/
   flatpak install jobs to assert the packaged receipt is present and correct
   after install, and gone after uninstall.
-- **Self-update integration:** spin up a mock release server (the pattern
-  already used in `release_checker.rs` / `update_notification.rs` tests) serving
-  a signed+checksummed fake archive; assert download → verify → atomic swap →
-  new `--version`, and that a bad checksum aborts without touching the binary.
+- **Self-update spine (E2E). ✅ `crates/fresh-update/tests/self_update_spine.rs`.**
+  Hermetic: `tiny_http` serves a fabricated feed announcing a version that does
+  not exist, a tarball built in the test, and a `.sha256` over it, with
+  `FRESH_RELEASES_URL` / `FRESH_DOWNLOAD_BASE` pointed at it. Nothing touches
+  the network and no release has to be cut — the "new version" is just a string,
+  which is what makes an upgrade testable without building a second binary.
+
+  The thing being updated has to be a real process, since the engine replaces
+  `current_exe()`, so `src/bin/update-harness.rs` is a stand-in for `fresh` that
+  runs the engine against itself. It is gated on `insecure-endpoints`, which is
+  never enabled in a published build.
+
+  Asserts: the swap happens and the result is runnable; a bad checksum aborts
+  and leaves the binary byte-identical; a missing asset fails without touching
+  it; and an install with **no receipt** refuses to swap at all (the `Unknown`
+  half of §4.4).
+
+  **What it cannot see.** It derives the asset name from `archive_ext` and then
+  builds the archive under that name, so it is self-consistent and blind to the
+  mapping being *wrong* — verified by mutation: reintroducing the musl/xz
+  mismatch left all four green. The seam is instead held by
+  `archive_ext_matches_the_release_workflows`, which reads
+  `musl-builds.yml`/`release.yml` and asserts the engine asks for what those
+  files actually publish, sidecar included. That one does fail on the mutation.
+  The lesson generalises: a test that derives its expectation from the code
+  under test cannot hold a contract with something outside it.
+
+- **Attestation:** covered against a real captured GitHub payload
+  (`tests/fixtures/github-release-attestation.json`), not a synthetic one. The
+  E2E skips the attestation gate by design — an overridden endpoint is
+  untrusted, and a local server has no attestations.
 - **Windows swap:** test the rename-running-exe + deferred-delete path in a
   Windows CI runner.
 - **Negative:** forged receipt claiming `self_update=true` must still fail the
