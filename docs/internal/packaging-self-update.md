@@ -970,12 +970,21 @@ cannot see them. `cargo` moved from a runtime path guess to a build-time fact
 **Phase 8 — a release proves itself before anyone is offered it. ✅ landed.**
 `release.yml` no longer publishes and hopes. One tag push, five steps:
 
-1. **Assemble as a draft.** All assets are attached to a draft release —
-   GitHub's own guidance for immutable-release repositories, since publishing
-   freezes them. The upload used to end in `2>/dev/null || true`, which turned a
-   failed upload into a successful-looking release; errors are fatal now. (That
-   `|| true` was doing a second job — an unmatched glob reaches `gh` as a
-   literal path — so the asset list is expanded through `nullglob` instead.)
+1. **Check, then assemble as a draft.** Publishing is irreversible — assets
+   freeze, the tag locks — so everything checkable without a published release
+   happens first: `verify-staged-artifacts.sh` asserts the self-updatable
+   archives are all present (including the musl `.tar.xz` the shim exists for)
+   and that each `.sha256` describes the bytes beside it, while there is still
+   nothing on GitHub to undo. Only then is a draft created and the assets
+   attached — GitHub's own guidance for immutable-release repositories — and the
+   attached list is diffed against the staged one, because `gh release create`
+   uploads *after* creating the release and a partial upload leaves a real
+   release missing files.
+
+   The upload used to end in `2>/dev/null || true`, which turned a failed upload
+   into a successful-looking release; errors are fatal now. (That `|| true` was
+   doing a second job — an unmatched glob reaches `gh` as a literal path — so
+   the asset list is expanded through `nullglob` instead.)
 2. **Publish it as a pre-release.** This is the pivot: assets freeze, the
    release attestation is minted, and the bytes become downloadable.
    `/releases/latest` still names the previous release, and `feed::select`
@@ -996,6 +1005,21 @@ cannot see them. `cargo` moved from a runtime path guess to a build-time fact
 Registry publishes (Homebrew, npm, AUR, crates.io, winget) hang off `promote`
 rather than off `release`, so no registry can ship a version that failed its own
 upgrade rehearsal. They previously ran in parallel with an unverified release.
+
+**When validation fails**, `mark-failed` retitles the release and prepends a
+caution to its notes pointing at the run that rejected it. It cannot be
+withdrawn — the tag is locked and the assets are frozen — so the remaining
+choice is between an unexplained pre-release at the top of the list and one that
+says what happened. It stays a pre-release either way: no updater offers it,
+`/releases/latest` still names the last good release, and the fix is forward.
+
+**Why the release is published before it is validated**, which reads backwards
+and is not: a draft cannot be validated. Its assets are not downloadable (404
+even with a token), and the release attestation is minted *at publish*, so a
+draft has none. There is nothing to fetch and nothing to verify until the
+release is real. Publishing as a pre-release is the least-exposed state GitHub
+offers in which the artifact exists at all — and `promote` is what "published"
+means to a user, since nothing offers them a release that is not `latest`.
 
 **This replaces `-rc` tags.** Rehearsing used to mean cutting a throwaway
 version — its own tag, its own changelog entry, a number nobody installs — and
