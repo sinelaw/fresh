@@ -896,16 +896,22 @@ fn test_live_diff_removed_line_not_split_per_char_at_tiny_width() {
     );
 }
 
+/// Column at which `needle` starts on row `y`, or `None` if that row doesn't
+/// contain it. Assumes single-width ASCII content (each cell is one char).
+fn find_text_cell_in_row(buf: &ratatui::buffer::Buffer, y: u16, needle: &str) -> Option<u16> {
+    let mut row = String::new();
+    for x in 0..buf.area.width {
+        row.push_str(buf[(x, y)].symbol());
+    }
+    row.find(needle).map(|idx| idx as u16)
+}
+
 /// Find the row containing `needle` and return `(y, x_of_needle_start)`.
 /// Assumes single-width ASCII content (each cell is one char).
 fn find_text_cell(buf: &ratatui::buffer::Buffer, needle: &str) -> Option<(u16, u16)> {
     for y in 0..buf.area.height {
-        let mut row = String::new();
-        for x in 0..buf.area.width {
-            row.push_str(buf[(x, y)].symbol());
-        }
-        if let Some(idx) = row.find(needle) {
-            return Some((y, idx as u16));
+        if let Some(x) = find_text_cell_in_row(buf, y, needle) {
+            return Some((y, x));
         }
     }
     None
@@ -963,14 +969,25 @@ fn test_live_diff_word_highlight_on_low_similarity_removed_added_pair() {
     enable_live_diff_globally(&mut harness);
     open_file(&mut harness, &repo.path, "note.txt");
 
-    // Deletion virtual line (old content) + added line (new content)
-    // both on screen.
+    // Wait for the *added* line's word emphasis specifically, not merely for
+    // the two lines' text to be on screen. `NEW_ADDED_REPLACEMENT_QQQQ` is
+    // real buffer content — it renders before live-diff has done anything —
+    // and the `-` glyph plus the old text both come from the deletion virtual
+    // line, which `renderDecorations` emits *before* the added line's
+    // overlays. Since the editor drains plugin commands against a per-frame
+    // deadline and defers the tail, a "both texts visible" wait is satisfied
+    // by a frame carrying the deletion line's emphasis but not yet the added
+    // line's, and every assertion below then samples a half-applied pass.
+    //
+    // The added line's word overlay is the last decoration the pass emits, so
+    // waiting on it implies the deletion line and its emphasis already landed
+    // — one condition that makes all four assertions below read a coherent
+    // frame.
     harness
         .wait_until(|h| {
-            let s = h.screen_to_string();
-            has_glyph(&s, '-')
-                && has_text(&s, "OLD_REMOVED_WORD_PAYLOAD_ZZZZ")
-                && has_text(&s, "NEW_ADDED_REPLACEMENT_QQQQ")
+            let buf = h.buffer();
+            find_text_cell(buf, "NEW_ADDED_REPLACEMENT_QQQQ")
+                .is_some_and(|(y, x)| is_word_diff_emphasized(buf, x, y))
         })
         .unwrap();
 
@@ -1007,10 +1024,16 @@ fn test_live_diff_word_highlight_on_low_similarity_removed_added_pair() {
         "added word on the new line (row {new_y}, col {new_x}) should be \
          bold + underlined",
     );
+    // Locate the shared token on the added row itself rather than reusing the
+    // deletion line's column: the two rows are not guaranteed to be aligned
+    // (the virtual line carries its own gutter), and sampling an unrelated —
+    // possibly blank — cell would let this assertion pass vacuously.
+    let new_head_x = find_text_cell_in_row(buf, new_y, "SHARED_HEAD_TOKEN")
+        .expect("shared head token not found on the added line");
     assert!(
-        !is_word_diff_emphasized(buf, head_x, new_y),
-        "shared token on the added line (row {new_y}, col {head_x}) should \
-         NOT be bold + underlined",
+        !is_word_diff_emphasized(buf, new_head_x, new_y),
+        "shared token on the added line (row {new_y}, col {new_head_x}) \
+         should NOT be bold + underlined",
     );
 }
 
