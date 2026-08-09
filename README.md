@@ -59,14 +59,32 @@ See more feature demos: [Editing](https://getfresh.dev/docs/blog/editing) (searc
 
 ## Installation
 
-Quick install (autodetect best method):
+Quick install:
 
 `curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh`
+
+On Linux this installs the **universal build**: one statically linked binary
+that runs on every distro, unpacked under `~/.local`, owned by you. It needs no
+root, and it updates itself — `fresh --cmd update`, or the update prompt in the
+editor. On macOS it uses Homebrew.
+
+Prefer your distro's package manager? Ask for it explicitly:
+
+```bash
+curl -sL .../install.sh | sh -s -- --method=deb    # also: rpm, aur, nix, cargo, npm, brew, appimage
+```
+
+Packages are fully supported — they are opt-in rather than the default because
+installing one needs root and hands updates to that package manager. `fresh`
+records how it was installed either way, and updates through that same
+mechanism. `--method=auto` restores the old autodetecting behaviour, and
+`install.sh --help` lists everything.
 
 Or, pick your preferred method:
 
 | Platform | Method |
 |----------|--------|
+| Linux (any distro) | [universal build](#universal-build-linux) — self-updating, no root |
 | macOS | [brew](#brew) |
 | Bazzite/Bluefin/Aurora Linux | [brew](#brew) |
 | Windows | [winget](#windows-winget) |
@@ -76,13 +94,33 @@ Or, pick your preferred method:
 | OpenSUSE | [.rpm](#opensuse-rpm) |
 | FreeBSD | [ports / pkg](https://www.freshports.org/editors/fresh) |
 | Gentoo | [GURU](#gentoo-guru) |
-| Linux (any distro) | [AppImage](#appimage), [Flatpak](#flatpak) |
+| Linux (sandboxed / portable) | [AppImage](#appimage), [Flatpak](#flatpak) |
 | All platforms | [Pre-built binaries](#pre-built-binaries) |
 | npm | [npm / npx](#npm) |
 | Rust users (Fast) | [cargo-binstall](#using-cargo-binstall) |
 | Rust users | [crates.io](#from-cratesio) |
 | Nix | [Nix flakes](#nix-flakes) |
 | Developers | [From source](#from-source) |
+
+### Universal build (Linux)
+
+```bash
+curl -sL https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh
+```
+
+A single static (musl) binary for `x86_64` and `aarch64` with every feature
+compiled in, including plugins. It unpacks to `~/.local/share/fresh-editor` and
+symlinks `~/.local/bin/fresh`; set `FRESH_INSTALL_DIR` / `FRESH_BIN_DIR` to put
+them elsewhere. Ensure `~/.local/bin` is in your `PATH`.
+
+Because nothing else owns these files, this is the one Linux install that can
+replace itself: `fresh --cmd update` downloads the next release, verifies it
+against both its published checksum and GitHub's release attestation, and swaps
+the binary in place.
+
+Downloading the archive by hand from the [releases
+page](https://github.com/sinelaw/fresh/releases) works the same way — it ships
+the same install receipt, so a hand-unpacked copy self-updates too.
 
 ### Brew
 
@@ -172,6 +210,11 @@ emerge --ask app-editors/fresh
 
 ### AppImage
 
+> On most systems the [universal build](#universal-build-linux) is the better
+> choice: same "runs anywhere" property, no FUSE dependency, and no mount
+> overhead on each launch. `install.sh` no longer selects AppImage
+> automatically — pass `--method=appimage` if you specifically want it.
+
 Download the `.AppImage` file from the [releases page](https://github.com/sinelaw/fresh/releases) and run:
 
 ```bash
@@ -204,6 +247,10 @@ See [flatpak/README.md](flatpak/README.md) for building from source.
 ### Pre-built binaries
 
 Download the latest release for your platform from the [releases page](https://github.com/sinelaw/fresh/releases).
+
+On Linux, prefer the `-unknown-linux-musl` archives: they are statically linked,
+so they run on any distro regardless of its glibc version. Every archive carries
+an install receipt, so an unpacked copy knows how to update itself.
 
 ### Using mise
 
