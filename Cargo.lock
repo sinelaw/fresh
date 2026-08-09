@@ -1596,6 +1596,7 @@ dependencies = [
 name = "fresh-update"
 version = "0.4.7"
 dependencies = [
+ "flate2",
  "libc",
  "serde",
  "serde_json",

@@ -35,7 +35,24 @@ pub const MAX_ENTRIES: usize = 4096;
 
 /// Extract the file named `name` from a `.tar.xz` held in memory.
 pub fn from_tar_xz(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
-    let decoder = xz2::read::XzDecoder::new(bytes);
+    from_tar(xz2::read::XzDecoder::new(bytes), name)
+}
+
+/// Extract the file named `name` from a `.tar.gz` held in memory.
+///
+/// The universal (musl) archive is gzip rather than xz, because `install.sh`
+/// unpacks it with the system `tar` and `.tar.xz` needs the xz binary that
+/// minimal images often lack. Decoding it here costs nothing extra — flate2's
+/// default backend is pure Rust, where `xz2` links liblzma.
+pub fn from_tar_gz(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    from_tar(flate2::read::GzDecoder::new(bytes), name)
+}
+
+/// Walk a decompressed tar for one entry, by file name only.
+///
+/// The bound is applied to the *decompressed* stream, so it holds whichever
+/// codec produced it.
+fn from_tar<R: Read>(decoder: R, name: &str) -> Result<Vec<u8>, String> {
     let mut archive = tar::Archive::new(decoder.take(MAX_UNCOMPRESSED));
     let entries = archive.entries().map_err(|e| format!("read tar: {e}"))?;
     for (seen, entry) in entries.enumerate() {
@@ -143,6 +160,53 @@ mod tests {
     fn a_missing_entry_is_an_error() {
         let archive = make_tar_xz(b"x");
         assert!(from_tar_xz(&archive, "nope").is_err());
+    }
+
+    fn make_tar_gz(bin: &[u8]) -> Vec<u8> {
+        let mut tar_bytes = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bin.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "fresh-editor-x/fresh", bin)
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let mut gz = Vec::new();
+        {
+            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            enc.write_all(&tar_bytes).unwrap();
+            enc.finish().unwrap();
+        }
+        gz
+    }
+
+    /// The universal (musl) archive is gzip, so this is the path a
+    /// `fresh --cmd update` takes on the install `install.sh` produces.
+    #[test]
+    fn tar_gz_yields_the_named_binary() {
+        let archive = make_tar_gz(b"#!/bin/sh\necho fresh\n");
+        assert_eq!(
+            from_tar_gz(&archive, "fresh").unwrap(),
+            b"#!/bin/sh\necho fresh\n"
+        );
+    }
+
+    #[test]
+    fn a_missing_entry_in_a_gz_is_an_error() {
+        let archive = make_tar_gz(b"x");
+        assert!(from_tar_gz(&archive, "nope").is_err());
+    }
+
+    /// The codecs must not be interchangeable by accident: handing gzip bytes
+    /// to the xz reader has to fail rather than half-succeed.
+    #[test]
+    fn the_wrong_codec_is_rejected() {
+        assert!(from_tar_xz(&make_tar_gz(b"x"), "fresh").is_err());
+        assert!(from_tar_gz(&make_tar_xz(b"x"), "fresh").is_err());
     }
 
     #[test]

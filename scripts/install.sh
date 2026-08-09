@@ -234,7 +234,11 @@ do_install_tarball() {
         return 1
     }
 
-    ASSET="${BIN_NAME}-${TARGET}.tar.xz"
+    # gzip, not xz: this script unpacks with the system `tar`, and `.tar.xz`
+    # needs the xz binary, which minimal images often do not ship. Every system
+    # can already read gzip. (The dist archives are xz; those are unpacked by
+    # wrapper installers that bring their own tooling.)
+    ASSET="${BIN_NAME}-${TARGET}.tar.gz"
     URL=$(asset_url_exact "$ASSET")
     if [ -z "$URL" ]; then
         log_warn "The latest release has no $ASSET."
@@ -249,9 +253,8 @@ do_install_tarball() {
 
     EXTRACT="$WORKDIR/extract"
     mkdir -p "$EXTRACT"
-    if ! tar -xJf "$ARCHIVE" -C "$EXTRACT" 2>/dev/null; then
-        log_error "could not unpack $ASSET (xz support missing? install xz-utils and retry)."
-    fi
+    tar -xzf "$ARCHIVE" -C "$EXTRACT" 2>/dev/null \
+        || log_error "could not unpack $ASSET."
 
     STAGED="$EXTRACT/${BIN_NAME}-${TARGET}"
     [ -x "$STAGED/fresh" ] || log_error "the archive did not contain a 'fresh' binary."

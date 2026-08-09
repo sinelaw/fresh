@@ -249,8 +249,9 @@ See [flatpak/README.md](flatpak/README.md) for building from source.
 Download the latest release for your platform from the [releases page](https://github.com/sinelaw/fresh/releases).
 
 On Linux, prefer the `-unknown-linux-musl` archives: they are statically linked,
-so they run on any distro regardless of its glibc version. Every archive carries
-an install receipt, so an unpacked copy knows how to update itself.
+so they run on any distro regardless of its glibc version, and they are gzipped
+so a stock `tar` can unpack them without `xz-utils`. Every archive carries an
+install receipt, so an unpacked copy knows how to update itself.
 
 ### Using mise
 

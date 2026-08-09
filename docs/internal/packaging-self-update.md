@@ -531,11 +531,25 @@ Three things make that work, and all three had to be fixed together:
    version and timestamp the installer would have to invent. The result is that
    provenance for this channel is recorded rather than inferred *today*, not
    from the next release onward.
-3. **`.tar.xz`, not `.tar.gz`.** `engine::self_contained` derives the asset
-   name from its compile-time triple as `fresh-editor-<triple>.tar.xz` and
-   extracts with `from_tar_xz` — deliberately, so the download path has no
-   recorded-name-else-guess branch (§6). A `.tar.gz` would have 404'd at update
-   time. Matching the dist archives keeps that one code path.
+3. **gzip, not xz — the most portable compression wins.** The dist archives
+   are `.tar.xz`, and matching them would have kept the engine's single
+   extraction path. But this is the archive `install.sh` unpacks, and
+   `install.sh` shells out to the *system* `tar`: `.tar.xz` needs the `xz`
+   binary (`xz-utils`), which minimal images and busybox routinely lack, while
+   gzip is universal. An artifact whose entire claim is "runs anywhere" cannot
+   require a package to unpack.
+
+   Nothing is lost on the update side, because **fresh decompresses in its own
+   process** — `archive::from_tar_gz`, no subprocess — so the host needs no
+   archiver at all there. If anything gzip is cheaper: flate2's default backend
+   is pure Rust, whereas `xz2` links liblzma (`ldd` on a released glibc build
+   shows `liblzma.so.5`). The cost is ~15% archive size.
+
+   `engine::archive_ext` maps the compile-time target triple to its extension
+   (windows → `zip`, musl → `tar.gz`, else `tar.xz`). That stays a fact derived
+   from a compile-time value rather than a lookup, so §6's no-guessing rule
+   holds; a test pins every published target, since a mismatch here is a 404 at
+   update time on a path nobody exercises until a user tries to update.
 
 Distro packages remain fully supported and are **chosen, not defaulted to**:
 `install.sh --method=deb|rpm|aur|nix|cargo|npm|brew|appimage`, or
@@ -563,7 +577,8 @@ their own binary. Flow implemented in `services::self_update`:
 2. **Check** latest version via the existing `release_checker`
    (GitHub releases API, daily-debounced logic reused).
 3. **Select asset** for `FRESH_TARGET_TRIPLE` using the `asset` hint
-   (`fresh-editor-<triple>.tar.xz` / `.zip`, or the `.AppImage`).
+   (`fresh-editor-<triple>.{tar.xz,tar.gz,zip}` per `archive_ext`, or the
+   `.AppImage`).
 4. **Download** to a temp file *on the same filesystem* as the target
    (so the final rename is atomic), via `services::http::download_to_file`.
 5. **Verify — mandatory, fail-closed, at two origins:**
@@ -754,7 +769,7 @@ crates/fresh-editor/src/services/
 Dependencies are deliberately minimal (`serde`, `toml`, `sha2`, `tracing`) so
 the crate builds fast and offline. **Extraction and network I/O stay out of the
 crate**: the caller (the editor, which already has a `ureq`/`rustls` stack in
-`services::http`) fetches the release asset and, for `.tar.xz`/`.zip`, extracts
+`services::http`) fetches the release asset and, for `.tar.xz`/`.tar.gz`/`.zip`, extracts
 the inner binary, then hands the verified executable bytes to
 `self_update::atomic_replace`. AppImages need no extraction, so the flow is
 usable end-to-end for them today.
@@ -808,7 +823,7 @@ with the right `channel` (and, for deb/rpm, that nothing else leaked under
 **Phase 3 — `fresh update`. ✅ landed.**
 `services/updater.rs` (feature `self-update`, in `default`). Delegated +
 Toolchain paths run/print the known command; the SelfContained engine
-downloads, verifies the SHA-256 sidecar (fail-closed), extracts (tar.xz/zip)
+downloads, verifies the SHA-256 sidecar (fail-closed), extracts (tar.xz/tar.gz/zip)
 or `--appimage-extract`s, and atomically swaps — gated on
 `confidence >= Embedded` via `self_update::can_self_update`. `config paths`
 prints provenance. Covered by extraction unit tests and a mock-server
@@ -867,7 +882,8 @@ authority. Still remaining: an optional no-prompt `auto_update` mode.
 
 **Phase 5 — one unified Linux route, verified at two origins. ✅ landed.**
 The static musl archive became the default `install.sh` install and gained the
-`tarball` receipt (and the `.tar.xz` name) that lets it actually self-update;
+`tarball` receipt that lets it actually self-update (and stayed `.tar.gz`, the
+compression any stock `tar` can read);
 distro packages moved behind an explicit `--method` (§7.6). Every artifact the
 engine downloads is now cross-checked against the release attestation on
 `api.github.com` in addition to its `.sha256` sidecar, fail-closed, with the

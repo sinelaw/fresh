@@ -21,7 +21,7 @@ default = []
 # needs provenance resolution stays dependency-light.
 net = ["dep:ureq"]
 # Archive extraction for the self-contained channels (tarball / AppImage).
-archive = ["dep:tar", "dep:xz2", "dep:zip"]
+archive = ["dep:tar", "dep:xz2", "dep:flate2", "dep:zip"]
 # The full `fresh --cmd update` engine: resolve provenance, fetch the feed,
 # download + verify, then delegate / install / swap.
 engine = ["net", "archive"]
@@ -44,6 +44,9 @@ ureq = { version = "3.1.4", default-features = false, features = [
 ], optional = true }
 tar = { version = "0.4", optional = true }
 xz2 = { version = "0.1", optional = true }
+# gzip for the universal (musl) archive. Default backend is miniz_oxide —
+# pure Rust, unlike xz2 which links liblzma.
+flate2 = { version = "1", optional = true }
 zip = { version = "2", default-features = false, features = [
     "deflate",
 ], optional = true }
