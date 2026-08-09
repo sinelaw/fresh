@@ -115,7 +115,26 @@ echo 'return editor.getPluginApi("orchestrator").newWorkspace({ agent: "claude",
 {"workspaceId":"ws-18c8fc1278905b84-6","windowId":7,"root":"…/orchestrator/fresh-2"}
 ```
 
-That is a git worktree, a window, and an agent running in it — one line, and it resolves once the workspace is actually up. Plugins publish their surfaces this way, so anything the editor's own dialogs can do is reachable from a script.
+That is a git worktree, a window, and an agent running in it — one line, and it resolves once the workspace is actually up.
+
+### Tidy up after yourself
+
+Creating a workspace is the interesting half; what you do with it afterwards is the other. The dock's own menus are published too, so a script can name a workspace, file it, and eventually clear it away:
+
+```sh
+echo '
+  const orch = editor.getPluginApi("orchestrator");
+  const reviews = orch.listFolders().find(f => f.name === "Reviews")?.folderId
+    ?? orch.createFolder("Reviews");
+  const ws = orch.listWorkspaces().find(w => w.active);
+  orch.renameWorkspace(ws.workspaceId, "flaky-test #4192");
+  orch.moveWorkspace(ws.workspaceId, reviews);
+' | fresh --cmd script run
+```
+
+`renameWorkspace`, `moveWorkspace`, the four folder verbs (`listFolders`, `createFolder`, `renameFolder`, `deleteFolder`), the lifecycle three (`stopWorkspace`, `archiveWorkspace`, `deleteWorkspace`) and the dock's own view controls (`setDockView`, `setDockFilter`) are all the headless twins of controls on the dock — same code path, same rules. A verb returns `false` when the thing it was pointed at does not exist, and throws when it exists but the operation was refused, so an agent that finished with a workspace can archive it and know whether it worked.
+
+The one part of the dock that is not published is creating a workspace on a remote backend — SSH and Kubernetes need connection details that deserve their own verb, so `newWorkspace` is local-only.
 
 ## Finding your way around
 
