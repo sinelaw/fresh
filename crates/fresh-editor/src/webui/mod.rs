@@ -97,9 +97,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+// The browser sends a chord, never a keyboard layout's shifted codepoint, so
+// the web path builds plain key presses (`Event::key`) with no layout char.
+use fresh_input_parser::Event;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Position, Rect};
@@ -2134,7 +2135,7 @@ fn apply_key(editor: &mut Editor, v: &Value) {
     // the daemon server loop): ANY key press dismisses the interactive wave
     // and is CONSUMED — it only stops the show, it doesn't also act on the
     // editor. `KeyEvent::new` sets kind=Press, which the dismissal requires.
-    if editor.maybe_dismiss_wave_animation(&Event::Key(KeyEvent::new(code, mods))) {
+    if editor.maybe_dismiss_wave_animation(&Event::key(KeyEvent::new(code, mods))) {
         return;
     }
     if let Err(e) = editor.handle_key(code, mods) {
