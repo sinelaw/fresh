@@ -28,8 +28,9 @@
 //! URL is checked against the host allowlist. A redirect from one *https* host
 //! to another is still followed, because GitHub genuinely redirects release
 //! assets to a CDN and the landing host varies. The real answer to "who
-//! produced these bytes" is a signature over the artifact, not a stricter
-//! transport — see the notes in [`crate::endpoint`].
+//! produced these bytes" is not a stricter transport — see the notes in
+//! [`crate::endpoint`], and [`crate::attestation`] for the second-origin check
+//! that answers part of it.
 
 use crate::endpoint::Endpoints;
 use std::path::Path;
@@ -116,19 +117,47 @@ impl Transport {
         Ok(())
     }
 
-    fn call(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
-        let response = self
-            .agent
-            .get(url)
-            .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/vnd.github.v3+json")
-            .call()
-            .map_err(|e| format!("fetching {url}: {e}"))?;
+    /// GET `url` and return the body as text, treating a 404 as `Ok(None)`
+    /// rather than an error.
+    ///
+    /// Only for endpoints where "absent" is a real answer the caller must act
+    /// on rather than a failure to report — the attestation lookup, where a
+    /// 404 means GitHub holds no attestation for that digest and the caller
+    /// turns it into a specific, actionable refusal.
+    pub fn get_text_optional(&self, url: &str, limit: u64) -> Result<Option<String>, String> {
+        let response = self.send(url)?;
+        let status = response.status().as_u16();
+        if status == 404 {
+            return Ok(None);
+        }
+        if !(200..300).contains(&status) {
+            return Err(format!("HTTP {status} fetching {url}"));
+        }
+        response
+            .into_body()
+            .into_with_config()
+            .limit(limit)
+            .read_to_string()
+            .map(Some)
+            .map_err(|e| format!("reading {url}: {e}"))
+    }
 
+    fn call(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
+        let response = self.send(url)?;
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             return Err(format!("HTTP {status} fetching {url}"));
         }
         Ok(response)
+    }
+
+    /// The request itself, with no opinion about the status code.
+    fn send(&self, url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
+        self.agent
+            .get(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/vnd.github.v3+json")
+            .call()
+            .map_err(|e| format!("fetching {url}: {e}"))
     }
 }
