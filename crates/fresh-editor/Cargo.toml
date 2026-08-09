@@ -273,6 +273,10 @@ vt100 = { version = "0.16", optional = true }
 fresh-gui = { workspace = true, optional = true }
 
 [dev-dependencies]
+# Also a normal dependency; declared here so integration tests can reach
+# TARGET_TRIPLE / archive_ext when driving the built binary against a fake
+# release (tests/self_update_spine.rs).
+fresh-update.workspace = true
 proptest = "1.9"
 tempfile = "3.25"
 insta = { version = "1.46", features = ["yaml"] }

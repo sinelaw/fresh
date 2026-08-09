@@ -14,14 +14,6 @@ categories = ["command-line-utilities", "config"]
 name = "fresh_update"
 path = "src/lib.rs"
 
-# Test-only stand-in for `fresh`, used by tests/self_update_spine.rs to drive
-# the real engine end to end. `insecure-endpoints` is never on in a published
-# build, so this binary is never built for users.
-[[bin]]
-name = "update-harness"
-path = "src/bin/update-harness.rs"
-required-features = ["engine", "insecure-endpoints"]
-
 [features]
 default = []
 # HTTP transport for the release feed and release assets. Pulls in the TLS
