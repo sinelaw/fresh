@@ -132,9 +132,39 @@ echo '
 ' | fresh --cmd script run
 ```
 
-`renameWorkspace`, `moveWorkspace`, the four folder verbs (`listFolders`, `createFolder`, `renameFolder`, `deleteFolder`), the lifecycle three (`stopWorkspace`, `archiveWorkspace`, `deleteWorkspace`) and the dock's own view controls (`setDockView`, `setDockFilter`) are all the headless twins of controls on the dock — same code path, same rules. A verb returns `false` when the thing it was pointed at does not exist, and throws when it exists but the operation was refused, so an agent that finished with a workspace can archive it and know whether it worked.
+`renameWorkspace`, `moveWorkspace`, the four folder verbs (`listFolders`, `createFolder`, `renameFolder`, `deleteFolder`), the lifecycle three (`stopWorkspace`, `archiveWorkspace`, `deleteWorkspace`) and the dock's own view controls (`setDockView`, `setDockFilter`) are all the headless twins of controls on the dock. Not lookalikes — the menu item and the script call run the same function, so a rule about what may be archived, or a fix to how a folder is deleted, lands in both at once. A verb returns `false` when the thing it was pointed at does not exist, and throws when it exists but the operation was refused, so an agent that finished with a workspace can archive it and know whether it worked.
 
-The one part of the dock that is not published is creating a workspace on a remote backend — SSH and Kubernetes need connection details that deserve their own verb, so `newWorkspace` is local-only.
+### Bring one back
+
+Archiving a workspace does not destroy it: the worktree moves to a graveyard and the entry is recorded, so it can come back later — on this machine or another one.
+
+```sh
+echo '
+  const orch = editor.getPluginApi("orchestrator");
+  return orch.listArchived().map(a => `${a.name}  ${a.branch}  ${a.archivedAt}`);
+' | fresh --cmd script run
+```
+
+`unarchiveWorkspace(name)` puts one back where it came from. It returns as an unopened worktree on the dock rather than a running session — the inverse of Archive, not "restore and launch" — so follow it with `focusWorkspace` when you want it open. It refuses rather than overwrites if something has since taken the path it wants back.
+
+### Start a workspace on another machine
+
+`newWorkspace` takes the same backend switch the dialog does:
+
+```sh
+echo '
+  return editor.getPluginApi("orchestrator").newWorkspace({
+    backend: "ssh",
+    host: "build@ci-01:2222",
+    path: "/srv/checkout",
+    identity: "~/.ssh/ci",
+    sshOptions: "-J bastion",
+    agent: "claude",
+  })
+' | fresh --cmd script run
+```
+
+Every field mirrors the dialog's SSH form. Kubernetes is the one backend still dialog-only.
 
 ## Finding your way around
 
