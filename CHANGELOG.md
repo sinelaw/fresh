@@ -9,9 +9,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Features
 
 * **Linux moves to a single self-updating static binary** - `install.sh` now installs a statically linked musl build under `~/.local`, no root needed, updated in place by `fresh --cmd update`. Deb, rpm, flatpak and the other channels are still built, just no longer the recommended install; pick one with `install.sh --method=...`.
-  * Updates verify each download against GitHub's build attestation, on top of the checksum.
-  * `--pre` opts into release candidates; stable installs never get one.
-  * On package-manager installs, `fresh --cmd update` shows the channel's update command.
 * **Scripts can manage workspaces end to end** - rename, move to folder, stop, archive, restore and delete, plus the dock's filter and density settings; New Workspace accepts SSH details too.
 
 ### Bug Fixes
