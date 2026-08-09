@@ -436,6 +436,12 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      # Before anything exists on GitHub. Publishing is irreversible — assets
+      # freeze and the tag locks — so every check that does not require a
+      # published release runs while there is still nothing to undo.
+      - name: Staged artifacts are complete and match their checksums
+        run: bash scripts/verify-staged-artifacts.sh artifacts
+
       - name: Create source tarball
         run: |
           # Create a stable source tarball (GitHub's auto-generated archives are not stable)
@@ -503,6 +509,7 @@ jobs:
           )
           [ "${#assets[@]}" -gt 0 ] || { echo "no artifacts to upload"; exit 1; }
           printf 'uploading %d assets\n' "${#assets[@]}"
+          printf '%s\n' "${assets[@]}" > /tmp/intended-assets
 
           gh release create "$TAG" \
             --draft \
@@ -511,6 +518,19 @@ jobs:
             --title "fresh-editor ${VERSION}" \
             --notes-file release_notes.md \
             "${assets[@]}"
+
+      # Every asset actually made it. `gh release create` uploads after creating
+      # the release, so a partial upload leaves a real release missing files —
+      # and once published those cannot be added.
+      - name: Everything intended is attached
+        run: |
+          gh release view "$TAG" --json assets -q '.assets[].name' | sort > /tmp/attached
+          sed 's|.*/||' /tmp/intended-assets | sort > /tmp/intended
+          if ! diff -u /tmp/intended /tmp/attached; then
+            echo "the draft does not carry the assets that were staged"
+            exit 1
+          fi
+          echo "all $(wc -l < /tmp/attached) assets attached"
 
       # Publishing is the pivot: it mints the release attestation the updater
       # checks, freezes the assets, and makes the bytes downloadable. It stays
@@ -621,6 +641,45 @@ jobs:
             exit 1
           }
           echo "$TAG is now the latest release."
+
+  # A release that fails validation cannot be withdrawn: immutable releases lock
+  # the tag and freeze the assets, so there is nothing to delete and nothing to
+  # fix in place. What is left is to say so, on the release itself, rather than
+  # leave an unexplained pre-release sitting at the top of the list while
+  # someone works out whether it is safe to install.
+  #
+  # It stays a pre-release, so no updater offers it and /releases/latest still
+  # names the last good one. The fix is forward: another patch version.
+  mark-failed:
+    needs: [plan, release, verify-release, rehearse-update, verify-shipped-updater]
+    if: >-
+      ${{ always() && needs.release.result == 'success'
+          && (needs.verify-release.result == 'failure'
+              || needs.rehearse-update.result == 'failure'
+              || needs.verify-shipped-updater.result == 'failure') }}
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Say on the release that it failed validation
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh release view "$TAG" --json body -q .body > body.md
+          {
+            echo "> [!CAUTION]"
+            echo "> **This release failed its own validation and must not be installed.**"
+            echo "> It remains a pre-release: \`fresh\` will not offer it, and the latest"
+            echo "> release is unchanged. See [the run that rejected it]($run_url)."
+            echo
+            cat body.md
+          } > annotated.md
+          gh release edit "$TAG" \
+            --title "fresh-editor ${VERSION} — FAILED VALIDATION, do not install" \
+            --notes-file annotated.md
 
   # Publish to Homebrew tap
   publish-homebrew:
