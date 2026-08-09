@@ -575,9 +575,12 @@ mod tests {
     /// avoid, so no channel that anything can actually resolve to may do it.
     #[test]
     fn every_reachable_channel_has_a_same_channel_continuation() {
-        // Everything a receipt, an embedded channel or the path heuristic can
-        // produce. `Unknown` is excluded: it is the one honest "we have no idea"
-        // and has nothing to continue.
+        // Everything a receipt or an embedded channel can produce. `Unknown` is
+        // excluded: it is the one honest "we have no idea" and has nothing to
+        // continue. Since the path heuristic was removed it is also the only
+        // way to reach the releases-page fallback, which is the point — a
+        // dead end should mean nothing recorded the install, not that a guess
+        // came up empty.
         let reachable = [
             Channel::Homebrew,
             Channel::Npm,

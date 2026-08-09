@@ -1,6 +1,6 @@
 # Packaging & Self-Update Paradigm
 
-> Status: **Phases 1–5 landed**. This document specifies a new packaging
+> Status: **Phases 1–6 landed**. This document specifies a new packaging
 > paradigm for `fresh` whose defining property is **deterministic install
 > provenance**: every distribution channel records — at install time — exactly
 > which mechanism installed the binary, so the editor can self-update through
@@ -39,6 +39,12 @@
 >   every downloaded artifact is checked against the release attestation on
 >   `api.github.com` as well as its `.sha256` sidecar (§11).
 >
+> - **Phase 6** — the path heuristic is **gone**, and with it the `Heuristic`
+>   confidence rung (§4.4). Provenance is now recorded or `Unknown`, never
+>   inferred from where the binary happens to sit. `cargo` — the one channel
+>   that genuinely depended on the guess — detects itself at build time from
+>   the registry checkout it is compiled from (§7.5).
+>
 > **Not yet done:** full Sigstore chain verification of the attestation (the
 > digest is cross-checked at a second origin; the DSSE certificate chain is not
 > validated to a pinned root — see §11), and an optional `auto_update`
@@ -55,7 +61,7 @@ question at runtime:
 > *"How was **this** copy of `fresh` installed, and therefore how should it be
 > updated?"*
 
-Today `services/release_checker.rs` answers that by **inspecting
+Before this design, `services/release_checker.rs` answered that by **inspecting
 `current_exe()` and pattern-matching the path** (`/opt/homebrew/…` → Homebrew,
 `/.cargo/bin/…` → Cargo, `/usr/bin/…` + Arch → AUR, …). That is a guess, and
 it is wrong or blind in many real cases:
@@ -104,9 +110,10 @@ The only way to *know for sure* is to stop inferring and start **recording**.
    GitHub build attestation) before it is trusted.
 7. **Privacy preserved.** Reuse the existing daily-debounced, opt-out check
    (`--no-upgrade-check`, `check_for_updates`); introduce no new phone-home.
-8. **Graceful degradation.** If no receipt exists (old installs, exotic
-   channels), fall back to the current heuristic but *label it low-confidence*
-   and refuse destructive actions.
+8. **Honest degradation.** If nothing recorded the install, say so and route to
+   the releases page. Do not guess from the executable path — an unknown
+   install is a better answer than a plausible wrong one, and it never triggers
+   a destructive action.
 
 **Non-goals**
 
@@ -222,26 +229,42 @@ it to their id: crates.io → `cargo`, AUR-source → `aur`, Nix → `nix`, the
 
 Confidence = `Embedded`.
 
-### 4.4 Layer D — path heuristic (last resort)
+### 4.4 There is no Layer D
 
-The existing `detect_install_method_from_path` logic, retained but demoted. It
-only runs when A–C produce nothing. Confidence = `Heuristic`. Results at this
-confidence are shown to the user as a *suggestion* and **never** trigger an
-automatic binary swap.
+There used to be one: `detect_install_method_from_path`, kept but demoted —
+`~/.cargo/bin` meant cargo, `/opt/homebrew` meant brew, `/usr/bin` on Arch
+meant the AUR. It has been **removed**, and with it the `Heuristic` confidence
+rung.
+
+The layers above all record something at the moment it is true: the installer
+writes the receipt as it installs, the build stamps the channel as it builds. A
+path is read long afterwards and describes only where a file currently sits.
+Copy the binary somewhere else and the guess changes although the install did
+not; the guess could never separate apt from dnf from a file someone dropped in
+`/usr/bin`; and a *nearly* right answer is worse than no answer, because it
+produces a confident sentence about an update route that may not exist.
+
+Removing it costs nothing real, because the one channel that depended on it now
+records itself. See §7.6 for `cargo`.
+
+An install that recorded nothing resolves to `Unknown`, which routes to the
+releases page and says so. That is worse UX than a lucky guess and better
+behaviour than a confident wrong one: the failure is visible instead of being a
+command that quietly updates nothing.
 
 ### 4.5 Resolution & confidence
 
 ```
-Overridden  > Authoritative > Embedded > Heuristic > Unknown
+Overridden  > Authoritative > Embedded > Unknown
 ```
 
-`confidence` gates behaviour:
+Every rung except `Unknown` is something that was recorded. `confidence` gates
+behaviour:
 
 | Confidence | Notify of update? | Show exact command? | Auto self-swap allowed? |
 |---|---|---|---|
 | Overridden / Authoritative | yes | yes | yes, if channel is self-managed |
 | Embedded | yes | yes | yes, if channel is self-managed |
-| Heuristic | yes | yes (with "detected" caveat) | **no** |
 | Unknown | yes | generic (link to releases) | no |
 
 ---
@@ -462,8 +485,22 @@ Its AppImage branch writes `channel=appimage`, `self_update=true`,
   `managed` needs a wrapper installer type; tracked for later. Scoop/Chocolatey
   manifests *can* write a receipt, but those channels don't ship yet.
 - **cargo (crates.io).** A user's `cargo install` build doesn't see any
-  build-time env, so it can't embed `channel=cargo`. It relies on the path
-  heuristic (`~/.cargo/bin`), which is reliable enough; a receipt isn't written.
+  build-time env we set, so nothing can hand it `channel=cargo` and no receipt
+  is written. It used to lean on the path heuristic (`~/.cargo/bin`). It now
+  detects itself instead: `build.rs` checks whether it is being compiled from a
+  cargo *registry checkout* — `$CARGO_HOME/registry/src/<index>/<crate>-<ver>/`,
+  the layout cargo unpacks crates.io sources into — and stamps
+  `FRESH_BUILD_CHANNEL=cargo` when it is. An explicit env var always wins, so
+  packagers are never second-guessed.
+
+  This is a fact rather than a guess, and the difference matters: it is about
+  where the *source* came from, established at the only moment it is knowable,
+  and moving or copying the resulting binary cannot invalidate it. A workspace
+  build, a `--path` install and a git checkout are all correctly not registry
+  checkouts. The predicate lives in `src/registry_checkout.rs` (which `build.rs`
+  `include!`s) rather than inside the build script, because `#[cfg(test)]`
+  modules in a build script are never run by `cargo test` — so keeping it there
+  would have meant tests that only looked like coverage.
 
 ### 7.6 The unified Linux route
 
@@ -482,7 +519,7 @@ Three things make that work, and all three had to be fixed together:
    awkward for distro packaging in the first place — so leaning into it rather
    than fighting it is the cheaper direction.
 2. **A receipt, unconditionally.** The musl archive shipped without one, so a
-   musl install resolved at `Heuristic` confidence and `can_self_update`
+   musl install resolved at `Unknown` confidence and `can_self_update`
    refused the swap (§4.5). The single most-portable artifact was the one
    artifact that could not update itself. It now carries the same
    `channel=tarball` receipt the dist archives do, and CI asserts it.
@@ -592,7 +629,7 @@ convention (`daemon`, `config`, `grammar`, `init`):
 
 Background notification (unchanged in spirit): the daily check still surfaces
 the status-bar `Update: vX.Y.Z` indicator. Clicking / `Ctrl+P → "Update fresh"`
-runs the same flow. For `Heuristic`/`Unknown` confidence the notification links
+runs the same flow. For `Unknown` confidence the notification links
 to instructions rather than offering a one-key update.
 
 Config (`config.rs`): keep `check_for_updates` and `--no-upgrade-check`. Add
@@ -700,19 +737,18 @@ crates/fresh-update/
   src/
     lib.rs        // re-exports + TARGET_TRIPLE + embedded_channel()
     channel.rs    // Channel enum <-> stable string ids (+ aliases)
-    confidence.rs // Confidence ladder (Unknown<Heuristic<Embedded<Authoritative<Overridden)
+    confidence.rs // Confidence ladder (Unknown<Embedded<Authoritative<Overridden)
     receipt.rs    // InstallReceipt + Hints (serde/toml), candidate_paths(), find()
+    registry_checkout.rs // is this a crates.io source build? (shared with build.rs)
     registry.rs   // Channel -> UpdateKind + UpdatePlan command templating
     provenance.rs // Provenance + resolve_from() (pure) + resolve() (env/fs)
-    heuristic.rs  // the demoted path-based detection (Layer D)
     self_update.rs// verify_sha256 + atomic_replace (+ Windows deferred delete)
     version.rs    // is_newer() + parse_tag_name()
 
 crates/fresh-editor/src/services/
   release_checker.rs  // keeps version-check + notification; its
-                      // detect_install_method() now delegates to
-                      // fresh_update::resolve(), falling back to the legacy
-                      // path heuristic only when provenance is Unknown.
+                      // detect_provenance() delegates entirely to
+                      // fresh_update::resolve() — there is no fallback.
 ```
 
 Dependencies are deliberately minimal (`serde`, `toml`, `sha2`, `tracing`) so
@@ -728,7 +764,7 @@ Key types:
 Key types:
 
 ```rust
-pub enum Confidence { Overridden, Authoritative, Embedded, Heuristic, Unknown }
+pub enum Confidence { Overridden, Authoritative, Embedded, Unknown }
 
 pub struct Provenance {
     pub channel: Channel,          // enum over the §3 ids
@@ -746,7 +782,7 @@ pub fn update_command(p: &Provenance) -> UpdatePlan;
 `registry` so there is exactly one table of update commands. The existing
 `release_checker` public API (used by `main.rs` and the e2e tests) stays
 source-compatible; internally it calls `provenance::resolve()` instead of the
-path heuristic.
+path heuristic, which no longer exists (§4.4).
 
 ---
 
@@ -754,12 +790,12 @@ path heuristic.
 
 **Phase 1 — provenance plumbing (no behaviour change). ✅ landed.**
 Added the `fresh-update` subcrate: receipt schema, layered resolver, registry,
-confidence, the demoted heuristic, checksum verify + atomic swap, and version
-compare — all unit-tested. `build.rs` embeds the target triple and reruns on
-`FRESH_BUILD_CHANNEL`; `release_checker::detect_install_method()` delegates to
-`fresh_update::resolve()` and only falls back to the legacy path heuristic when
-provenance is Unknown. Even with zero receipts written yet, this is already
-strictly better (embedded channel + honest confidence).
+confidence, a (then still present) demoted path heuristic, checksum verify +
+atomic swap, and version compare — all unit-tested. `build.rs` embeds the target
+triple and reruns on `FRESH_BUILD_CHANNEL`; `release_checker` delegates to
+`fresh_update::resolve()`. Even with zero receipts written yet, this was already
+strictly better (embedded channel + honest confidence). The heuristic layer was
+removed in Phase 6 once every channel recorded itself.
 
 **Phase 2 — receipts everywhere. ✅ landed.**
 Each packaging pipeline (§7) writes its receipt via
@@ -837,6 +873,12 @@ engine downloads is now cross-checked against the release attestation on
 `api.github.com` in addition to its `.sha256` sidecar, fail-closed, with the
 real GitHub bundle checked in as a test fixture (§11).
 
+**Phase 6 — no more guessing. ✅ landed.**
+Deleted `heuristic.rs` and the `Heuristic` confidence rung; `ResolveInputs` no
+longer takes the executable path or the host distro, so the resolver physically
+cannot see them. `cargo` moved from a runtime path guess to a build-time fact
+(§7.5). Provenance is now recorded or `Unknown`.
+
 ---
 
 ## 16. Testing strategy
@@ -883,7 +925,7 @@ real GitHub bundle checked in as a test fixture (§11).
    yet, so the channel is unreachable in practice — resolved as latent, not
    fixed by observation.
 6. **Snap/Scoop/Chocolatey/zypper/pacman** have no pipeline, so nothing writes
-   their receipts and no heuristic resolves to them — they are unreachable, and
+   their receipts and nothing else resolves to them — they are unreachable, and
    §6 now routes them to `Manual` rather than naming an invented command. Their
    `Channel` variants are kept because the ids are receipt wire format, so a
    receipt written by a future pipeline still parses. **Open:** whether to drop
@@ -891,5 +933,5 @@ real GitHub bundle checked in as a test fixture (§11).
    a wire-format change and needs a deliberate call, not a cleanup.
 7. **Two binaries, one machine** (e.g. a brew `fresh` and a cargo `fresh`): the
    receipt is resolved relative to `current_exe()`, so each updates itself
-   correctly — this is a feature of anchoring on the executable path, not the
-   heuristic's global guess.
+   correctly — anchoring the *search* on the executable is what makes that work,
+   which is not the same as inferring the channel from the path.

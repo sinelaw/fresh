@@ -381,8 +381,9 @@ mod tests {
         let ok = Provenance::for_channel(Channel::Tarball, Confidence::Authoritative);
         assert!(can_self_update(&ok));
 
-        // Tarball but only heuristic confidence: no.
-        let low = Provenance::for_channel(Channel::Tarball, Confidence::Heuristic);
+        // Tarball, but nothing recorded that: no. A binary that merely looks
+        // like a tarball install must never be overwritten on that basis.
+        let low = Provenance::for_channel(Channel::Tarball, Confidence::Unknown);
         assert!(!can_self_update(&low));
 
         // Homebrew (managed) at any confidence: no.

@@ -315,8 +315,9 @@ pub fn is_newer_version(current: &str, latest: &str) -> bool {
 
 /// Detect how this copy of `fresh` was installed.
 ///
-/// Delegates entirely to `fresh_update::resolve()` (receipt → embedded channel
-/// → path heuristic). See `docs/internal/packaging-self-update.md`.
+/// Delegates entirely to `fresh_update::resolve()` (override → receipt →
+/// embedded channel; no path guessing, so an install that recorded nothing
+/// resolves to Unknown). See `docs/internal/packaging-self-update.md`.
 pub fn detect_provenance() -> Provenance {
     fresh_update::resolve()
 }
@@ -380,9 +381,10 @@ mod tests {
         }
     }
 
-    // Install-method detection now lives in `fresh_update::heuristic` and
-    // `fresh_update::provenance` (see that crate's tests). release_checker only
-    // delegates, so there is nothing path-specific to test here.
+    // Install-method detection lives in `fresh_update::provenance` (see that
+    // crate's tests). release_checker only delegates, so there is nothing to
+    // test here — and nothing path-specific anywhere, since provenance is read
+    // from what the installer recorded rather than inferred from the exe path.
 
     #[test]
     fn test_parse_version_from_json() {

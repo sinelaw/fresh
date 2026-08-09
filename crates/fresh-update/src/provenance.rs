@@ -6,7 +6,25 @@
 //!   A. `FRESH_INSTALL_CHANNEL` runtime override   → [`Confidence::Overridden`]
 //!   B. an install receipt written by the installer → [`Confidence::Authoritative`]
 //!   C. the compile-time `FRESH_BUILD_CHANNEL`       → [`Confidence::Embedded`]
-//!   D. the executable-path heuristic                → [`Confidence::Heuristic`]
+//!
+//! …and nothing else. If none of the three says anything, the answer is
+//! [`Channel::Unknown`], not a guess.
+//!
+//! There was a fourth layer: pattern-matching the executable's path
+//! (`~/.cargo/bin` → cargo, `/opt/homebrew` → brew, `/usr/bin` on Arch → AUR).
+//! It is gone. Every layer above records something at the moment it is true —
+//! the installer writes the receipt, the build stamps the channel — whereas a
+//! path is read long afterwards and says only where a file currently sits.
+//! Copy the binary elsewhere and the guess changes; it never could separate
+//! apt from dnf from a hand-dropped file. The one channel that genuinely
+//! relied on it, crates.io, is now recorded at build time instead: `build.rs`
+//! detects a cargo registry checkout and stamps `cargo`, which is a fact about
+//! the source and survives the binary being moved.
+//!
+//! What is left over resolves to Unknown, which routes to the releases page
+//! and says plainly that it does not know. That is worse UX than a lucky guess
+//! and better behaviour than a confident wrong one, because the failure is
+//! visible instead of being a command that quietly updates nothing.
 //!
 //! The pure core is [`resolve_from`] (takes all inputs explicitly, no
 //! environment or filesystem access) so it is fully unit-testable. [`resolve`]
@@ -14,7 +32,6 @@
 
 use crate::channel::Channel;
 use crate::confidence::Confidence;
-use crate::heuristic;
 use crate::receipt::{self, Hints, InstallReceipt};
 use crate::registry;
 use std::path::PathBuf;
@@ -34,8 +51,8 @@ pub struct Provenance {
     pub package_name: Option<String>,
     /// Channel-specific update hints.
     pub hints: Hints,
-    /// Human-readable note on *why* we resolved this (receipt path, "embedded",
-    /// `heuristic:<exe path>`), for `config paths` / debugging.
+    /// Human-readable note on *why* we resolved this (receipt path,
+    /// "embedded", the override), for `config paths` / debugging.
     pub detail: Option<String>,
 }
 
@@ -75,10 +92,6 @@ pub struct ResolveInputs<'a> {
     pub receipt: Option<InstallReceipt>,
     /// `FRESH_BUILD_CHANNEL` compile-time value, if set.
     pub embedded_channel: Option<&'a str>,
-    /// Path to the running executable, for the heuristic fallback.
-    pub exe_path: Option<PathBuf>,
-    /// Whether the host is Arch Linux (only consulted by the heuristic).
-    pub is_arch_linux: bool,
 }
 
 /// The pure resolution core. Deterministic in its inputs.
@@ -112,8 +125,11 @@ pub fn resolve_from(inputs: ResolveInputs<'_>) -> Provenance {
         };
     }
 
-    // Layer C — compile-time embedded channel. "prebuilt"/empty means "no
-    // specific embedded channel"; fall through to the heuristic in that case.
+    // Layer C — compile-time embedded channel. "prebuilt"/empty means "the
+    // shared release archive", which is not itself a channel: such a build
+    // could have been unpacked by any of the wrapper installers, and the one
+    // that did will have left a receipt. With no receipt it is genuinely
+    // unknown.
     if let Some(raw) = inputs.embedded_channel {
         if !raw.is_empty() && raw != "prebuilt" {
             if let Some(channel) = Channel::from_id(raw) {
@@ -122,16 +138,6 @@ pub fn resolve_from(inputs: ResolveInputs<'_>) -> Provenance {
                 return p;
             }
             tracing::warn!(value = %raw, "ignoring unrecognised FRESH_BUILD_CHANNEL");
-        }
-    }
-
-    // Layer D — executable-path heuristic (low confidence).
-    if let Some(exe) = inputs.exe_path.as_deref() {
-        let channel = heuristic::detect_from_path(exe, inputs.is_arch_linux);
-        if channel != Channel::Unknown {
-            let mut p = Provenance::for_channel(channel, Confidence::Heuristic);
-            p.detail = Some(format!("heuristic:{}", exe.display()));
-            return p;
         }
     }
 
@@ -153,8 +159,6 @@ pub fn resolve() -> Provenance {
         override_channel,
         receipt,
         embedded_channel: embedded_channel(),
-        exe_path,
-        is_arch_linux: heuristic::host_is_arch_linux(),
     })
 }
 
@@ -198,21 +202,17 @@ mod tests {
             override_channel: Some("flatpak".to_string()),
             receipt: Some(r),
             embedded_channel: Some("cargo"),
-            exe_path: Some(PathBuf::from("/home/u/.cargo/bin/fresh")),
-            is_arch_linux: false,
         });
         assert_eq!(p.channel, Channel::Flatpak);
         assert_eq!(p.confidence, Confidence::Overridden);
     }
 
     #[test]
-    fn receipt_beats_embedded_and_heuristic() {
+    fn receipt_beats_embedded() {
         let p = resolve_from(ResolveInputs {
             override_channel: None,
             receipt: Some(InstallReceipt::new("winget")),
             embedded_channel: Some("cargo"),
-            exe_path: Some(PathBuf::from("/home/u/.cargo/bin/fresh")),
-            is_arch_linux: false,
         });
         assert_eq!(p.channel, Channel::Winget);
         assert_eq!(p.confidence, Confidence::Authoritative);
@@ -236,35 +236,26 @@ mod tests {
     }
 
     #[test]
-    fn embedded_beats_heuristic() {
+    fn embedded_is_used_when_there_is_no_receipt() {
         let p = resolve_from(ResolveInputs {
             embedded_channel: Some("cargo"),
-            exe_path: Some(PathBuf::from("/opt/homebrew/bin/fresh")),
             ..Default::default()
         });
         assert_eq!(p.channel, Channel::Cargo);
         assert_eq!(p.confidence, Confidence::Embedded);
     }
 
+    /// `prebuilt` names the shared release archive, not a channel. Any wrapper
+    /// could have unpacked it, and whichever did left a receipt — so with no
+    /// receipt this is unknown rather than an invitation to guess.
     #[test]
-    fn prebuilt_embedded_falls_through_to_heuristic() {
+    fn prebuilt_embedded_is_not_a_channel() {
         let p = resolve_from(ResolveInputs {
             embedded_channel: Some("prebuilt"),
-            exe_path: Some(PathBuf::from("/opt/homebrew/bin/fresh")),
             ..Default::default()
         });
-        assert_eq!(p.channel, Channel::Homebrew);
-        assert_eq!(p.confidence, Confidence::Heuristic);
-    }
-
-    #[test]
-    fn heuristic_last_resort() {
-        let p = resolve_from(ResolveInputs {
-            exe_path: Some(PathBuf::from("/home/u/.cargo/bin/fresh")),
-            ..Default::default()
-        });
-        assert_eq!(p.channel, Channel::Cargo);
-        assert_eq!(p.confidence, Confidence::Heuristic);
+        assert_eq!(p.channel, Channel::Unknown);
+        assert_eq!(p.confidence, Confidence::Unknown);
     }
 
     #[test]
@@ -274,12 +265,44 @@ mod tests {
         assert_eq!(p.confidence, Confidence::Unknown);
     }
 
+    /// Provenance is recorded, never inferred. Nothing about the machine —
+    /// where the binary sits, which distro is underneath — may influence the
+    /// answer, because those are properties of the host at read time rather
+    /// than facts about the install. The old path heuristic read exactly those
+    /// and is gone; this pins that it stays gone.
+    #[test]
+    fn resolution_depends_only_on_recorded_inputs() {
+        // Paths that the retired heuristic would each have claimed as a
+        // different channel. The resolver cannot see them at all now.
+        for _ in [
+            "/home/u/.cargo/bin/fresh",
+            "/opt/homebrew/bin/fresh",
+            "/usr/bin/fresh",
+            "/usr/local/lib/node_modules/fresh-editor/bin/fresh",
+        ] {
+            let p = resolve_from(ResolveInputs::default());
+            assert_eq!(p.channel, Channel::Unknown);
+            assert_eq!(p.confidence, Confidence::Unknown);
+        }
+    }
+
+    /// An unknown install must still say something useful, and must never be
+    /// talked into overwriting the binary.
+    #[test]
+    fn unknown_is_manual_and_never_self_swaps() {
+        let p = resolve_from(ResolveInputs::default());
+        assert!(!p.confidence.allows_self_swap());
+        assert!(!crate::self_update::can_self_update(&p));
+        assert_eq!(p.update_plan().kind, registry::UpdateKind::Manual);
+    }
+
     /// The whole point of the receipt, over the layout a real `.deb`/`.rpm`
     /// install produces: `/usr/bin/fresh` plus
     /// `/usr/share/fresh-editor/install-receipt.toml`. This resolved to
-    /// `Unknown`/`Manual` while the search order only covered `share/fresh/` —
-    /// layer B missed the file, layer C is unset for these packages, and layer
-    /// D declines to guess for `/usr/bin` off Arch.
+    /// `Unknown`/`Manual` while the search order only covered `share/fresh/`:
+    /// layer B missed the file and layer C is unset for these packages. There
+    /// is no layer below to rescue it — which is the point. Locating the
+    /// receipt is the whole mechanism.
     #[test]
     fn packaged_deb_layout_resolves_authoritatively() {
         let dir = tempfile::tempdir().unwrap();
@@ -301,9 +324,6 @@ mod tests {
 
         let p = resolve_from(ResolveInputs {
             receipt: found,
-            exe_path: Some(exe),
-            // Deliberately not Arch: layer D must not rescue this.
-            is_arch_linux: false,
             ..Default::default()
         });
         assert_eq!(p.channel, Channel::Apt);
