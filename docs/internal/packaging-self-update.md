@@ -39,15 +39,15 @@
 >   every downloaded artifact is checked against the release attestation on
 >   `api.github.com` as well as its `.sha256` sidecar (§11).
 >
-> - **Phase 7** — `fresh` **executes nothing**. Every channel but the
->   self-contained one prints its command and stops; release packages are still
->   downloaded and verified first (§9, §11). The `sudo` path is deleted.
->
 > - **Phase 6** — the path heuristic is **gone**, and with it the `Heuristic`
 >   confidence rung (§4.4). Provenance is now recorded or `Unknown`, never
 >   inferred from where the binary happens to sit. `cargo` — the one channel
 >   that genuinely depended on the guess — detects itself at build time from
 >   the registry checkout it is compiled from (§7.5).
+>
+> - **Phase 7** — `fresh` **executes nothing**. Every channel but the
+>   self-contained one prints its command and stops; release packages are still
+>   downloaded and verified first (§9, §11). The `sudo` path is deleted.
 >
 > **Not yet done:** full Sigstore chain verification of the attestation (the
 > digest is cross-checked at a second origin; the DSSE certificate chain is not
