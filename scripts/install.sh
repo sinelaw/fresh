@@ -256,12 +256,32 @@ do_install_tarball() {
     STAGED="$EXTRACT/${BIN_NAME}-${TARGET}"
     [ -x "$STAGED/fresh" ] || log_error "the archive did not contain a 'fresh' binary."
 
-    # The archive ships install-receipt.toml next to the binary, so the editor
-    # resolves channel=tarball authoritatively and can swap itself in place.
-    # Without it a copy installed here would fall back to the path heuristic,
-    # which is not trusted enough to permit a self-update.
-    [ -f "$STAGED/install-receipt.toml" ] \
-        || log_warn "archive has no install receipt; self-update will be disabled for this copy."
+    # Provenance must be recorded, never inferred. The editor reads
+    # install-receipt.toml next to the binary to resolve channel=tarball
+    # authoritatively; with no receipt it falls back to the path heuristic,
+    # which is deliberately not trusted enough to permit a self-update.
+    #
+    # Release archives carry their own receipt (written at build time, with the
+    # exact version and target), so that one wins. Archives published before
+    # that landed do not, and this script knows perfectly well what it just did
+    # — so it writes the receipt itself rather than leaving the install to be
+    # guessed at.
+    if [ -f "$STAGED/install-receipt.toml" ]; then
+        log_info "Archive carries an install receipt; keeping it."
+    else
+        log_info "Archive predates build-time receipts; recording provenance here."
+        cat > "$STAGED/install-receipt.toml" <<EOF
+schema = 1
+channel = "tarball"
+package_name = "fresh-editor"
+managed = false
+self_update = true
+
+[hints]
+target = "$TARGET"
+asset = "$ASSET"
+EOF
+    fi
 
     case "$INSTALL_DIR" in
         ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;

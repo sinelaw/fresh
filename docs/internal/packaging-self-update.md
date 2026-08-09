@@ -481,11 +481,19 @@ Three things make that work, and all three had to be fixed together:
    single portable binary hard, and it is the same property that makes `fresh`
    awkward for distro packaging in the first place — so leaning into it rather
    than fighting it is the cheaper direction.
-2. **A receipt in the archive.** The musl archive shipped without one, so a
+2. **A receipt, unconditionally.** The musl archive shipped without one, so a
    musl install resolved at `Heuristic` confidence and `can_self_update`
    refused the swap (§4.5). The single most-portable artifact was the one
    artifact that could not update itself. It now carries the same
    `channel=tarball` receipt the dist archives do, and CI asserts it.
+
+   `install.sh` does not *depend* on that, though. It knows exactly what it
+   just did, so if the archive has no receipt — every archive published before
+   this landed — it writes one itself, exactly as the AppImage branch always
+   has. The build-time receipt wins when present, because it carries the
+   version and timestamp the installer would have to invent. The result is that
+   provenance for this channel is recorded rather than inferred *today*, not
+   from the next release onward.
 3. **`.tar.xz`, not `.tar.gz`.** `engine::self_contained` derives the asset
    name from its compile-time triple as `fresh-editor-<triple>.tar.xz` and
    extracts with `from_tar_xz` — deliberately, so the download path has no
