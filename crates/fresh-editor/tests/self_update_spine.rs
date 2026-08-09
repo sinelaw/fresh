@@ -68,7 +68,14 @@ struct Install {
 /// resolve as a self-updating tarball install — byte-for-byte what `install.sh`
 /// writes and what the musl archive ships.
 fn install(with_receipt: bool) -> Install {
-    let dir = tempfile::tempdir().expect("tempdir");
+    // Inside `target/`, not `/tmp`: each case needs its own copy of the binary,
+    // and `place_binary` hard-links to avoid the bytes — which only works within
+    // one filesystem. `CARGO_TARGET_TMPDIR` is guaranteed to sit beside the
+    // build output, so the link succeeds instead of falling back to a copy.
+    let dir = tempfile::Builder::new()
+        .prefix("self-update-spine-")
+        .tempdir_in(env!("CARGO_TARGET_TMPDIR"))
+        .expect("tempdir");
     let root = dir.path().to_path_buf();
     let install_dir = root.join("install");
     std::fs::create_dir_all(&install_dir).unwrap();
@@ -76,7 +83,7 @@ fn install(with_receipt: bool) -> Install {
     std::fs::create_dir_all(root.join("served")).unwrap();
 
     let exe = install_dir.join("fresh");
-    place_binary(Path::new(env!("CARGO_BIN_EXE_fresh")), &exe);
+    place_binary(&exe);
     std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     if with_receipt {
@@ -105,16 +112,56 @@ fn install(with_receipt: bool) -> Install {
     }
 }
 
-/// Hard-link the binary if we can, copy if we cannot.
+/// Put a runnable `fresh` at `to`, as cheaply as possible.
 ///
-/// A debug `fresh` is large and each test needs its own copy. Linking is safe
-/// because the swap is a rename over the path, not a write through the inode,
-/// so the build output cannot be clobbered — but `/tmp` is often a different
-/// filesystem, hence the fallback.
-fn place_binary(from: &Path, to: &Path) {
-    if std::fs::hard_link(from, to).is_err() {
-        std::fs::copy(from, to).expect("copy fresh binary");
+/// A debug `fresh` is around 500 MB, almost all of it debug symbols this test
+/// never reads, and every case needs its own copy to overwrite. So the binary
+/// is stripped **once** into a cache beside the build output (~90 MB), and each
+/// case hard-links that.
+///
+/// Linking is safe because the swap is a rename over the path, not a write
+/// through the inode: the shared file keeps its contents no matter how many
+/// cases replace their own entry. Stripping is why the cache is needed at all —
+/// stripping a hard link would strip the *build output*, since they are the
+/// same inode.
+fn place_binary(to: &Path) {
+    let source = stripped_binary();
+    if std::fs::hard_link(&source, to).is_err() {
+        std::fs::copy(&source, to).expect("copy fresh binary");
     }
+}
+
+/// The stripped `fresh`, produced on first use and reused afterwards.
+///
+/// nextest runs each case in its own process, so several may arrive here at
+/// once: each strips to a private name and renames into place, which is atomic
+/// and idempotent — the losers of the race simply overwrite identical content,
+/// and a reader that linked the previous inode holds a complete file either way.
+///
+/// Falls back to the unstripped binary if `strip` is missing or refuses; the
+/// test is about behaviour, not size.
+fn stripped_binary() -> PathBuf {
+    let original = PathBuf::from(env!("CARGO_BIN_EXE_fresh"));
+    let cache_dir = Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let cached = cache_dir.join("fresh-stripped");
+    if cached.is_file() {
+        return cached;
+    }
+
+    let staging = cache_dir.join(format!("fresh-stripped.{}", std::process::id()));
+    let stripped = Command::new("strip")
+        .arg("-o")
+        .arg(&staging)
+        .arg(&original)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if stripped && staging.is_file() && std::fs::rename(&staging, &cached).is_ok() {
+        return cached;
+    }
+    let _ = std::fs::remove_file(&staging);
+    original
 }
 
 /// Build the release archive in whichever format this target publishes, using
@@ -426,7 +473,10 @@ fn a_release_package_is_verified_but_never_installed() {
 
     let spec = fresh_update::registry::package_asset(fresh_update::Channel::Apt, TRIPLE)
         .expect("apt publishes a package for this target");
-    let deb_name = format!("fresh-editor_{NEW_VERSION}-1_{}{}", spec.arch, spec.extension);
+    let deb_name = format!(
+        "fresh-editor_{NEW_VERSION}-1_{}{}",
+        spec.arch, spec.extension
+    );
     let deb = b"not really a package, but the checksum will match".to_vec();
     let line = sha256_line(&deb, &deb_name);
     let base = serve(deb, deb_name.clone(), line);
@@ -452,7 +502,10 @@ fn a_release_package_is_verified_but_never_installed() {
     assert!(
         !dpkg_ran.exists() && !sudo_ran.exists(),
         "{}",
-        report("fresh installed a package instead of naming the command", &out)
+        report(
+            "fresh installed a package instead of naming the command",
+            &out
+        )
     );
     assert_eq!(std::fs::read(&install.exe).unwrap(), before);
 }

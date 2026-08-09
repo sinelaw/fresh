@@ -7,6 +7,10 @@
 //! self-consistent, and blind to that function being wrong. A test can only
 //! hold this seam by reading the other side of it.
 
+// `archive_ext` lives behind the engine feature; without this the file fails to
+// compile under a plain `cargo test -p fresh-update`.
+#![cfg(feature = "engine")]
+
 use std::path::{Path, PathBuf};
 
 /// Does [`archive_ext`] agree with what the release workflows *actually publish*?
