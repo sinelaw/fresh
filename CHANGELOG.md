@@ -1,5 +1,30 @@
 # Release Notes
 
+## 0.4.8
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **Fresh stops running your package manager for you** - Homebrew, apt/dnf/zypper, cargo, npm, winget, mise, nix, the AUR and FreeBSD's `pkg` now print the exact update command instead of running it (including the `sudo dpkg -i` it used to run on your behalf); only the self-contained install still updates itself in place.
+* **`fresh --cmd update --pre`** opts into release candidates - without it, a stable install never installs one, even through a mirror or `--releases-url` override.
+* **Downloaded release archives are checked against GitHub's build attestation**, not just a checksum served from the same host as the file.
+* **Linux installs default to a self-updating, root-free build under `~/.local`** - `install.sh --method=deb|rpm|aur|nix|cargo|npm|brew|appimage` (or `FRESH_INSTALL_METHOD`) picks a specific channel instead of autodetecting one.
+* **Scripting can manage a workspace end to end** - rename, move to folder, stop, archive and delete are now reachable from a script, along with the dock's filter and density settings. New Workspace also accepts SSH connection details (remote path, identity file, extra args), and archived workspaces can be listed and restored from a script too.
+
+### Bug Fixes
+
+* **`Ctrl+/` works on every terminal, not just kitty** (#2933) - toggle-comment fired only under the kitty keyboard protocol; xterm, iTerm2, GNOME Terminal and Terminal.app now resolve the same chord. Non-US layouts where `/` needs Shift (German, French, Spanish, ...) also stop landing on `set_bookmark` instead.
+* **F3 steps through search matches without closing the search bar** (#2111) - matches VS Code, Sublime Text and browser find behavior; Shift+F3 and the emacs aliases work the same way.
+* **Review Diff's stage/unstage/discard confirmation no longer vanishes instantly** - it was overwritten within the same frame by the automatic refresh that follows every action.
+* **Review Diff's status and comment strings show up translated** - twelve keys had shipped as literal English text in every non-English locale.
+
+### Internals
+
+* Release pipeline hardening (workflow linting, staged-artifact and self-update verification before a release is promoted) and test-flakiness fixes across search, live diff and the orchestrator plugin API.
+
 ## 0.4.7
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
@@ -27,7 +52,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Highlights taller than the window are drawn again.**
 * **Input**
   * **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
-  * **`Ctrl+/` works outside kitty again** (#2933) - toggle-comment fired under kitty but nowhere else, because the `0x1F` byte every other terminal sends for the chord was read as `Ctrl+_`. It also reaches a terminal panel's child process as `0x1F` now, instead of a literal `/`.
   * **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
 * **Settings & commands**
   * **Settings toggles actually stick**
