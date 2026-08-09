@@ -7,18 +7,23 @@ name: Musl Builds
 on:
   workflow_call:
   workflow_dispatch:
+  # The musl archive is the default Linux install and the one artifact whose
+  # receipt gates self-update, so a PR that breaks it must fail the PR rather
+  # than the release. Previously this workflow only ran at release time, which
+  # meant the receipt step and its assertion were unverified until it was too
+  # late to be cheap.
+  pull_request:
 
 jobs:
   build-musl:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-22.04
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-22.04
-    runs-on: ${{ matrix.runner }}
+        # aarch64 cross-compiles by building `cross` from git, which dominates
+        # the job. PRs get the native target — enough to prove the archive,
+        # receipt and assertions are sound — and releases get both.
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["x86_64-unknown-linux-musl"]' || '["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]') }}
+    runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:

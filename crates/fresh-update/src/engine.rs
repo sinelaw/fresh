@@ -425,7 +425,7 @@ fn file_name(p: &Path) -> String {
 /// Keep in step with `.github/workflows/musl-builds.yml` and the
 /// `archive_ext` matrix in `release.yml` — a mismatch here is a 404 at update
 /// time, which is why the test below pins every target we publish.
-fn archive_ext(target: &str) -> &'static str {
+pub fn archive_ext(target: &str) -> &'static str {
     if target.contains("-windows-") {
         "zip"
     } else if target.contains("-musl") {
