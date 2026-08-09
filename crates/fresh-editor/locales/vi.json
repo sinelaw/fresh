@@ -1654,6 +1654,8 @@
   "update.action_required_title": "Bản cập nhật cần thêm một bước",
   "update.body_action_required": "Bản cập nhật chưa được cài đặt. Để hoàn tất cần một lệnh do bạn tự chạy — lệnh đang chờ trong kết quả cập nhật.",
   "update.body_self_contained": "Được cài đặt dưới dạng %{channel}. Fresh sẽ tải v%{version}, xác minh và tự thay thế. Khởi động lại để hoàn tất.",
+  "update.body_download_package_verified": "Được cài đặt dưới dạng %{channel}. Fresh sẽ tải v%{version} từ bản phát hành và xác minh, sau đó hiển thị lệnh để cài đặt — những tệp đó thuộc về trình quản lý gói của bạn, nên Fresh không cài đặt thay bạn.",
+  "update.body_delegated_command": "Được cài đặt dưới dạng %{channel}, nơi quản lý các bản cập nhật. Fresh không chạy trình quản lý gói khác, nên sẽ hiển thị lệnh cần chạy: %{command}",
   "update.body_manual": "Fresh không thể cập nhật bản sao này tại chỗ. Hãy tải v%{version} từ https://github.com/sinelaw/fresh/releases, hoặc xem các bước chính xác trong kết quả cập nhật.",
   "update.choice_download_only": "Tải xuống, sau đó hiện lệnh cài đặt",
   "update.choice_show_command": "Hiển thị lệnh cập nhật",

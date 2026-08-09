@@ -1654,6 +1654,8 @@
   "update.action_required_title": "更新还需一步",
   "update.body_action_required": "更新尚未安装。完成它需要一条由你自己执行的命令，该命令正等在更新输出中。",
   "update.body_self_contained": "以 %{channel} 方式安装。Fresh 将下载 v%{version}、校验并替换自身。重启后生效。",
+  "update.body_download_package_verified": "以 %{channel} 方式安装。Fresh 将从发布页下载 v%{version} 并校验，然后显示安装它的命令——这些文件由你的包管理器管理，因此 Fresh 不会替你安装。",
+  "update.body_delegated_command": "以 %{channel} 方式安装，由它管理更新。Fresh 不会运行其他包管理器，因此会显示需要你执行的命令：%{command}",
   "update.body_manual": "Fresh 无法就地更新此副本。请从 https://github.com/sinelaw/fresh/releases 下载 v%{version}，或在更新输出中查看确切步骤。",
   "update.choice_download_only": "下载后显示安装命令",
   "update.choice_show_command": "显示更新命令",

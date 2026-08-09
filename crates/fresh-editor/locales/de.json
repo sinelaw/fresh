@@ -1654,6 +1654,8 @@
   "update.action_required_title": "Update braucht noch einen Schritt",
   "update.body_action_required": "Das Update wurde nicht installiert. Zum Abschluss ist ein Befehl nötig, den Sie selbst ausführen — er wartet in der Update-Ausgabe.",
   "update.body_self_contained": "Installiert als %{channel}. Fresh lädt v%{version} herunter, prüft es und ersetzt sich selbst. Zum Abschluss neu starten.",
+  "update.body_download_package_verified": "Installiert als %{channel}. Fresh lädt v%{version} aus dem Release herunter und prüft es und zeigt Ihnen dann den Befehl zur Installation — diese Dateien gehören Ihrer Paketverwaltung, daher installiert Fresh sie nicht für Sie.",
+  "update.body_delegated_command": "Installiert als %{channel}, das die Updates verwaltet. Fresh führt keine fremden Paketverwaltungen aus und zeigt Ihnen daher den auszuführenden Befehl: %{command}",
   "update.body_manual": "Fresh kann diese Kopie nicht an Ort und Stelle aktualisieren. Laden Sie v%{version} von https://github.com/sinelaw/fresh/releases herunter, oder sehen Sie die genauen Schritte in der Update-Ausgabe.",
   "update.choice_download_only": "Herunterladen, dann den Installationsbefehl anzeigen",
   "update.choice_show_command": "Update-Befehl anzeigen",

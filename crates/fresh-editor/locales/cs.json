@@ -1654,6 +1654,8 @@
   "update.action_required_title": "Aktualizace vyžaduje ještě jeden krok",
   "update.body_action_required": "Aktualizace se nenainstalovala. K dokončení je potřeba příkaz, který musíte spustit sami — čeká ve výstupu aktualizace.",
   "update.body_self_contained": "Nainstalováno jako %{channel}. Fresh stáhne verzi v%{version}, ověří ji a nahradí sám sebe. Dokončete restartem.",
+  "update.body_download_package_verified": "Nainstalováno jako %{channel}. Fresh stáhne verzi v%{version} z vydání a ověří ji, poté zobrazí příkaz, který ji nainstaluje — tyto soubory patří vašemu správci balíčků, takže je Fresh neinstaluje za vás.",
+  "update.body_delegated_command": "Nainstalováno jako %{channel}, který spravuje aktualizace. Fresh nespouští cizí správce balíčků, proto zobrazí příkaz ke spuštění: %{command}",
   "update.body_manual": "Fresh nemá jak tuto kopii aktualizovat na místě. Stáhněte v%{version} z https://github.com/sinelaw/fresh/releases, nebo si přesné kroky přečtěte ve výstupu aktualizace.",
   "update.choice_download_only": "Stáhnout a poté zobrazit instalační příkaz",
   "update.choice_show_command": "Zobrazit příkaz aktualizace",
