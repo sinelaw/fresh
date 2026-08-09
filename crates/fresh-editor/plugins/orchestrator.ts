@@ -9568,10 +9568,29 @@ export type NewWorkspaceOptions = RunAgentOptions & {
 
 /// One workspace, as `listWorkspaces()` reports it.
 export type WorkspaceSummary = {
-  /** Durable identity — survives editor restarts. Record this one. */
+  /** What kind of row this is — the dock lists three, and they are not
+   *  interchangeable:
+   *   * `"live"` — a real workspace with an editor window behind it. The
+   *     only kind with a usable `workspaceId` and a positive `windowId`.
+   *   * `"discovered"` — a worktree found on disk that has never been
+   *     opened. No window yet, so `workspaceId` is `""` and `windowId` is a
+   *     synthetic *negative* placeholder. `focusWorkspace` opens it.
+   *   * `"pending"` — a placeholder for a workspace still being created (or
+   *     one whose create failed and is waiting for a retry). Same synthetic
+   *     ids, and it cannot be renamed, filed, or acted on until it lands.
+   *  Branch on this rather than on the sign of `windowId`. */
+  kind: "live" | "discovered" | "pending";
+  /** Durable identity — survives editor restarts. Record this one. Empty
+   *  for a `discovered` / `pending` row, which has no window yet. */
   workspaceId: string;
-  /** Per-process window id; valid only for this editor run. */
+  /** Per-process window id; valid only for this editor run. Negative for a
+   *  `discovered` / `pending` row (see `kind`). */
   windowId: number;
+  /** `true` for the one workspace the editor is focused on right now. */
+  active: boolean;
+  /** Dock folder this workspace is filed under (`listFolders()` reports the
+   *  set), or `null` when it sits at the top level. */
+  folderId: string | null;
   /** Display name shown on the dock. */
   name: string;
   /** Filesystem root (the worktree, for a worktree workspace). */
@@ -9593,8 +9612,46 @@ export type WorkspaceSummary = {
   backend?: string;
 };
 
+/// One dock folder, as `listFolders()` reports it.
+export type FolderSummary = {
+  /** Stable folder id — what `moveWorkspace` / `createFolder` take. */
+  folderId: string;
+  /** Display name shown on the dock. */
+  name: string;
+  /** Parent folder, or `null` for a top-level one. */
+  parent: string | null;
+  /** Nesting level, 0 for a top-level folder. Reported so a caller can
+   *  render the tree without re-deriving it from `parent`. */
+  depth: number;
+};
+
+/// What the dock is filtering by. Every field is optional; an omitted one is
+/// left as it is, so a caller can flip one control without disturbing the
+/// rest.
+export type DockFilterOptions = {
+  /** The dock's search box. `""` clears it. */
+  text?: string;
+  /** Restrict the dock to one project (a `projectPath` from
+   *  `listWorkspaces()`), or `null` for every project. Not validated — a
+   *  project with no workspaces just lists nothing. */
+  project?: string | null;
+  /** Show on-disk worktrees that have no open workspace (the "all
+   *  worktrees" checkbox). */
+  worktrees?: boolean;
+  /** Show workspaces with no edited files (the "show empty" checkbox). */
+  showEmpty?: boolean;
+};
+
 /// Public surface of the bundled `orchestrator` plugin, reachable through
 /// `editor.getPluginApi("orchestrator")`.
+///
+/// One convention runs through the whole surface: a verb returns `false`
+/// when the thing it was pointed at does not exist (no workspace with that
+/// id, no folder with that id) and *throws* when it does exist but the
+/// operation was refused or failed. So a caller that trusts its ids can
+/// ignore the return value and let a real failure surface as a rejected
+/// promise / thrown error, and a caller that is guessing can branch on the
+/// boolean without wrapping everything in try/catch.
 export type OrchestratorApi = {
   /** Launch a coding agent in THIS workspace — the headless twin of the
    *  "Run Agent…" dialog. Resolves once the agent's terminal is up. */
@@ -9625,6 +9682,73 @@ export type OrchestratorApi = {
    *  Resolves `true` once the workspace is active, `false` if no workspace
    *  matches. */
   focusWorkspace(target: string | number): Promise<boolean>;
+
+  // ── organising the dock ────────────────────────────────────────────────
+  // The headless twins of the dock's row context menu and its "New Task… ▾"
+  // / "Move…" dropdowns. `target` is a `workspaceId` or a `windowId`, the
+  // same pair `focusWorkspace` accepts.
+
+  /** Rename a workspace — the dock's "Rename…". Omit `name` (or pass an
+   *  empty one) to clear the manual name and let the auto-name (the
+   *  terminal's title) or the host label take back over.
+   *
+   *  Throws for a workspace still being created — it has no durable
+   *  identity to hang a name on yet. */
+  renameWorkspace(target: string | number, name?: string): boolean;
+  /** File a workspace under a dock folder — the dock's "Move to Folder…".
+   *  `null` moves it back to the top level.
+   *
+   *  Throws on an unknown `folderId`, and for a workspace still being
+   *  created. */
+  moveWorkspace(target: string | number, folderId: string | null): boolean;
+
+  /** Every dock folder, parents before children, siblings in the order the
+   *  dock shows them. */
+  listFolders(): FolderSummary[];
+  /** Create a dock folder and return its new id. `parent` nests it under an
+   *  existing folder; omitted (or `null`) puts it at the top level.
+   *
+   *  Throws on an empty name or an unknown `parent`. */
+  createFolder(name: string, parent?: string | null): string;
+  /** Rename a dock folder. Throws on an empty name. */
+  renameFolder(folderId: string, name: string): boolean;
+  /** Delete a dock folder. Nothing inside is lost: its child folders and
+   *  member workspaces reparent to its own parent, exactly as the dock's
+   *  "Delete Folder" does. */
+  deleteFolder(folderId: string): boolean;
+
+  // ── lifecycle ──────────────────────────────────────────────────────────
+  // The headless twins of the picker's Stop / Archive / Delete, each with
+  // the same eligibility rules the buttons enforce — an ineligible target
+  // throws rather than quietly doing nothing.
+
+  /** Signal the workspace's agent process group (SIGTERM, then SIGKILL for
+   *  an agent that ignores it) and leave the workspace in place.
+   *
+   *  Throws for a workspace with no agent terminal to signal. */
+  stopWorkspace(target: string | number): boolean;
+  /** Stop the workspace and move its worktree to the archive, recording it
+   *  in the archive manifest so it can be recovered later. Resolves once the
+   *  move has finished.
+   *
+   *  Throws if the workspace cannot be archived, or if the archive fails. */
+  archiveWorkspace(target: string | number): Promise<boolean>;
+  /** Forget the workspace, removing its worktree when it owns one outright.
+   *  Resolves once the removal has finished.
+   *
+   *  Throws if the workspace cannot be deleted, or if the delete fails. */
+  deleteWorkspace(target: string | number): Promise<boolean>;
+
+  // ── dock view state ────────────────────────────────────────────────────
+  // Both apply to the dock whether or not it is open: with the dock closed
+  // they set what it will show the next time it opens, which is the same
+  // thing the in-dock controls do for the rest of the session.
+
+  /** Dock row density: `"card"` (the multi-line pill) or `"compact"` (one
+   *  line per workspace) — the dock's "view" button. */
+  setDockView(view: "card" | "compact"): void;
+  /** Set any of the dock's filter controls. See `DockFilterOptions`. */
+  setDockFilter(options?: DockFilterOptions): void;
 };
 
 declare global {
@@ -9722,12 +9846,22 @@ function listWorkspaces(): WorkspaceSummary[] {
   // folded in, and a caller listing right after creating should see it.
   reconcileSessions();
   const windows = editor.listWindows();
+  const activeId = editor.activeWindow();
   return [...orchestratorSessions.values()].map((session) => {
     const win = windows.find((w) => w.id === session.id);
     const git = session.git?.info;
     return {
+      // The three row kinds the dock lists. A caller used to have to infer
+      // this from a negative `windowId` — a sentinel the type never named.
+      kind: session.pending
+        ? "pending" as const
+        : session.discovered
+          ? "discovered" as const
+          : "live" as const,
       workspaceId: win?.stable_id ?? "",
       windowId: session.id,
+      active: session.id === activeId,
+      folderId: folderOfSession(session.id),
       name: session.label,
       root: session.root,
       projectPath: session.projectPath,
@@ -9758,17 +9892,7 @@ function listWorkspaces(): WorkspaceSummary[] {
 /// there isn't one. That is what `attachToWorktree` does, and doing it behind
 /// one verb means a caller never has to learn the distinction.
 async function focusWorkspace(target: string | number): Promise<boolean> {
-  reconcileSessions();
-  const windows = editor.listWindows();
-
-  // Match on either identity. `workspaceId` (the host's `stable_id`) is the
-  // one worth recording; `windowId` is accepted because it is right there in
-  // the same summary and a caller reaching for it is not wrong to.
-  const match = [...orchestratorSessions.values()].find((session) => {
-    if (typeof target === "number") return session.id === target;
-    const stable = windows.find((w) => w.id === session.id)?.stable_id;
-    return !!target && stable === target;
-  });
+  const match = resolveWorkspace(target);
   if (!match) return false;
 
   if (match.discovered) {
@@ -9789,11 +9913,237 @@ async function focusWorkspace(target: string | number): Promise<boolean> {
   return true;
 }
 
+/// Resolve the `workspaceId | windowId` pair every workspace verb takes to a
+/// live session, or `null` when nothing matches.
+///
+/// Reconciles first for the same reason `listWorkspaces` does: a workspace
+/// created moments ago is only in the model once the host's window list has
+/// been folded in, and a caller acting on an id it was just handed should not
+/// have to sleep first.
+function resolveWorkspace(target: string | number): AgentSession | null {
+  reconcileSessions();
+  // Match on either identity. `workspaceId` (the host's `stable_id`) is the
+  // one worth recording; `windowId` is accepted because it is right there in
+  // the same summary and a caller reaching for it is not wrong to.
+  if (typeof target === "number") return orchestratorSessions.get(target) ?? null;
+  if (!target) return null;
+  const windows = editor.listWindows();
+  for (const session of orchestratorSessions.values()) {
+    const stable = windows.find((w) => w.id === session.id)?.stable_id;
+    if (stable === target) return session;
+  }
+  return null;
+}
+
+/// A workspace still being created has no durable identity and no worktree
+/// yet — the dock offers it Retry / Dismiss and nothing else, so the verbs
+/// that organise a *real* workspace refuse it here rather than writing a name
+/// or a folder assignment against a placeholder key that is about to vanish.
+function rejectPending(s: AgentSession, verb: string): void {
+  if (s.pending) {
+    throw new Error(`workspace is still being created and cannot be ${verb}`);
+  }
+}
+
+/// Push folder-tree changes into an open dock. The tree's expansion set is
+/// host-owned state seeded from the plugin's persisted set, so a folder
+/// created or deleted behind the dock's back has to be re-seeded before the
+/// re-render — the same two steps `submitCreateFolder` runs.
+function refreshDockTree(): void {
+  if (openPanel && dockMode) {
+    openPanel.setExpandedKeys("sessions", Array.from(loadExpanded()));
+  }
+  refreshOpenDialog();
+}
+
+function apiRenameWorkspace(target: string | number, name?: string): boolean {
+  const s = resolveWorkspace(target);
+  if (!s) return false;
+  rejectPending(s, "renamed");
+  // An omitted / empty name clears the manual rename, exactly as submitting
+  // the dialog's emptied-out field does.
+  renameWorkspace(s, typeof name === "string" ? name : "");
+  refreshOpenDialog();
+  return true;
+}
+
+function apiMoveWorkspace(
+  target: string | number,
+  folderId: string | null,
+): boolean {
+  const s = resolveWorkspace(target);
+  if (!s) return false;
+  rejectPending(s, "filed");
+  // An unknown folder id throws rather than silently filing at the top
+  // level: `assignSessionToFolder` would happily record it, and the row
+  // would then read as unfiled because `folderOfSession` drops assignments
+  // to folders that don't exist — a move that reports success and does
+  // nothing is the worst of both.
+  if (folderId !== null && !folderById(folderId)) {
+    throw new Error(`no such folder: ${folderId}`);
+  }
+  assignSessionToFolder(s.id, folderId);
+  refreshDockTree();
+  return true;
+}
+
+function apiListFolders(): FolderSummary[] {
+  const out: FolderSummary[] = [];
+  // Depth-first from the top level, so parents precede their children and
+  // siblings come out in the order `childFoldersOf` gives the dock.
+  const walk = (parent: string | null, depth: number): void => {
+    for (const f of childFoldersOf(parent)) {
+      out.push({ folderId: f.id, name: f.name, parent: f.parent ?? null, depth });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out;
+}
+
+function apiCreateFolder(name: string, parent?: string | null): string {
+  const clean = trimmed(name);
+  // The dialog falls back to "New Folder" on an empty submit because a human
+  // who typed nothing meant "just make me one". A caller passing an empty
+  // string meant something else — most likely a variable that didn't hold
+  // what they thought — so it is an error rather than a silent default.
+  if (!clean) throw new Error("folder name must not be empty");
+  const parentId = parent ?? null;
+  if (parentId !== null && !folderById(parentId)) {
+    throw new Error(`no such folder: ${parentId}`);
+  }
+  const id = createFolder(clean, parentId);
+  refreshDockTree();
+  return id;
+}
+
+function apiRenameFolder(folderId: string, name: string): boolean {
+  if (!folderById(folderId)) return false;
+  const clean = trimmed(name);
+  if (!clean) throw new Error("folder name must not be empty");
+  renameFolder(folderId, clean);
+  refreshOpenDialog();
+  return true;
+}
+
+function apiDeleteFolder(folderId: string): boolean {
+  if (!folderById(folderId)) return false;
+  // `deleteFolder` reparents the subtree one level up, so nothing inside is
+  // lost — same as the dock's "Delete Folder".
+  deleteFolder(folderId);
+  refreshDockTree();
+  return true;
+}
+
+/// Shared guard for the three lifecycle verbs: the picker disables a button
+/// it cannot honour, and a caller deserves the reason rather than a no-op.
+function requireEligible(s: AgentSession, action: BulkAction): void {
+  if (bulkEligible(action, s.id)) return;
+  if (action === "stop") {
+    throw new Error("workspace has no agent process to stop");
+  }
+  throw new Error(`workspace cannot be ${action === "archive" ? "archived" : "deleted"}`);
+}
+
+function apiStopWorkspace(target: string | number): boolean {
+  const s = resolveWorkspace(target);
+  if (!s) return false;
+  requireEligible(s, "stop");
+  if (!stopOne(s.id)) throw new Error("stop failed");
+  refreshOpenDialog();
+  return true;
+}
+
+/// Archive / delete share everything but which `*One` they call: both check
+/// eligibility, both await the result, both throw on failure, and both fire
+/// the cross-machine manifest sync the picker's confirmed action fires.
+async function runLifecycle(
+  target: string | number,
+  action: "archive" | "delete",
+): Promise<boolean> {
+  const s = resolveWorkspace(target);
+  if (!s) return false;
+  requireEligible(s, action);
+  const res = action === "archive" ? await archiveOne(s.id) : await deleteOne(s.id);
+  if (!res.ok) {
+    throw new Error(res.err || `${action} failed`);
+  }
+  // The manifest changed, so the same background push the confirmed action
+  // triggers has to run here too — otherwise a scripted archive is invisible
+  // on the user's other machines.
+  if (res.repoRoot) triggerSyncAsync(res.repoRoot);
+  refreshOpenDialog();
+  return true;
+}
+
+function apiSetDockView(view: "card" | "compact"): void {
+  if (view !== "card" && view !== "compact") {
+    throw new Error(`unknown dock view: ${view}`);
+  }
+  dockView = view;
+  // Pin it for the rest of the session, exactly as the toolbar's "view"
+  // button does — the `defaultView` setting only decides where the dock
+  // *starts*, so without the override a later re-open would undo this.
+  dockViewOverride = view;
+  refreshOpenDialog();
+}
+
+function apiSetDockFilter(options: DockFilterOptions = {}): void {
+  // Each control is written to its remembered module value *and* to the open
+  // dialog's live state. The remembered value is what makes this work with
+  // the dock closed: the next open seeds from it, so setting a filter ahead
+  // of opening the dock does what a caller expects instead of nothing.
+  if (typeof options.text === "string") {
+    const value = options.text;
+    if (openDialog) {
+      openDialog.filter.value = value;
+      openDialog.filter.cursor = utf8Len(value);
+      // The filter box is a controlled widget with its own buffer: updating
+      // our state only changes what we filter *by*, so the typed text has to
+      // be pushed back explicitly or the list and the box disagree.
+      openPanel?.setValue("filter", value, utf8Len(value));
+    }
+  }
+  if (options.project !== undefined) {
+    const key = options.project ?? "";
+    lastDockProjectFilter = key === "" ? null : key;
+    // `pickProject` re-filters, closes any open dropdown and re-renders; it
+    // is a no-op with the dialog closed, which the remembered value covers.
+    if (openDialog) pickProject(key);
+  }
+  if (typeof options.worktrees === "boolean") {
+    lastShowWorktrees = options.worktrees;
+    if (openDialog) openDialog.showWorktrees = options.worktrees;
+  }
+  if (typeof options.showEmpty === "boolean") {
+    // The stored flag is the inverse of the user-facing checkbox.
+    lastHideTrivial = !options.showEmpty;
+    if (openDialog) openDialog.hideTrivial = !options.showEmpty;
+  }
+  refreshOpenDialog();
+  // A search force-opens every folder so matches aren't buried, and restores
+  // the user's expansion set when it clears — the same reconciliation the
+  // typed-into filter box runs. `refreshOpenDialog` just rebuilt the tree, so
+  // `dockKeys` is current.
+  if (dockMode) applyDockExpansion();
+}
+
 editor.exportPluginApi("orchestrator", {
   runAgent,
   newWorkspace,
   listWorkspaces,
   focusWorkspace,
+  renameWorkspace: apiRenameWorkspace,
+  moveWorkspace: apiMoveWorkspace,
+  listFolders: apiListFolders,
+  createFolder: apiCreateFolder,
+  renameFolder: apiRenameFolder,
+  deleteFolder: apiDeleteFolder,
+  stopWorkspace: apiStopWorkspace,
+  archiveWorkspace: (target: string | number) => runLifecycle(target, "archive"),
+  deleteWorkspace: (target: string | number) => runLifecycle(target, "delete"),
+  setDockView: apiSetDockView,
+  setDockFilter: apiSetDockFilter,
 });
 
 // Form key bindings — each delegates to smart-key dispatch on the
