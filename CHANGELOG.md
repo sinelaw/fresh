@@ -8,22 +8,21 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Fresh stops running your package manager for you** - Homebrew, apt/dnf/zypper, cargo, npm, winget, mise, nix, the AUR and FreeBSD's `pkg` now print the exact update command instead of running it (including the `sudo dpkg -i` it used to run on your behalf); only the self-contained install still updates itself in place.
-* **`fresh --cmd update --pre`** opts into release candidates - without it, a stable install never installs one, even through a mirror or `--releases-url` override.
-* **Downloaded release archives are checked against GitHub's build attestation**, not just a checksum served from the same host as the file.
-* **Linux installs default to a self-updating, root-free build under `~/.local`** - `install.sh --method=deb|rpm|aur|nix|cargo|npm|brew|appimage` (or `FRESH_INSTALL_METHOD`) picks a specific channel instead of autodetecting one.
-* **Scripting can manage a workspace end to end** - rename, move to folder, stop, archive and delete are now reachable from a script, along with the dock's filter and density settings. New Workspace also accepts SSH connection details (remote path, identity file, extra args), and archived workspaces can be listed and restored from a script too.
+* **Linux moves to a single self-updating static binary** - `install.sh` now installs a statically linked musl build under `~/.local`, no root needed, updated in place by `fresh --cmd update`. Deb, rpm, flatpak and the other channels are still built, just no longer the recommended install; pick one with `install.sh --method=...`.
+  * Updates verify each download against GitHub's build attestation, on top of the checksum.
+  * `--pre` opts into release candidates; stable installs never get one.
+  * On package-manager installs, `fresh --cmd update` shows the channel's update command.
+* **Scripts can manage workspaces end to end** - rename, move to folder, stop, archive, restore and delete, plus the dock's filter and density settings; New Workspace accepts SSH details too.
 
 ### Bug Fixes
 
-* **`Ctrl+/` works on every terminal, not just kitty** (#2933) - toggle-comment fired only under the kitty keyboard protocol; xterm, iTerm2, GNOME Terminal and Terminal.app now resolve the same chord. Non-US layouts where `/` needs Shift (German, French, Spanish, ...) also stop landing on `set_bookmark` instead.
-* **F3 steps through search matches without closing the search bar** (#2111) - matches VS Code, Sublime Text and browser find behavior; Shift+F3 and the emacs aliases work the same way.
-* **Review Diff's stage/unstage/discard confirmation no longer vanishes instantly** - it was overwritten within the same frame by the automatic refresh that follows every action.
-* **Review Diff's status and comment strings show up translated** - twelve keys had shipped as literal English text in every non-English locale.
+* **`Ctrl+/` works on every terminal, not just kitty** (#2933) - including layouts where `/` needs Shift.
+* **F3 steps through matches while the search bar stays open** (#2111).
+* **Review Diff** - action confirmations no longer vanish instantly, and its status strings are translated in all locales.
 
 ### Internals
 
-* Release pipeline hardening (workflow linting, staged-artifact and self-update verification before a release is promoted) and test-flakiness fixes across search, live diff and the orchestrator plugin API.
+* Release-pipeline hardening (workflow linting, artifact and self-update verification before promotion) and e2e test stabilization.
 
 ## 0.4.7
 
