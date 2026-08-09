@@ -1654,6 +1654,8 @@
   "update.action_required_title": "การอัปเดตต้องการอีกหนึ่งขั้นตอน",
   "update.body_action_required": "การอัปเดตยังไม่ได้ติดตั้ง การทำให้เสร็จต้องใช้คำสั่งที่คุณต้องรันเอง โดยรออยู่ในผลลัพธ์ของการอัปเดต",
   "update.body_self_contained": "ติดตั้งแบบ %{channel} Fresh จะดาวน์โหลด v%{version} ตรวจสอบความถูกต้อง แล้วแทนที่ตัวเอง รีสตาร์ทเพื่อให้เสร็จสมบูรณ์",
+  "update.body_download_package_verified": "ติดตั้งแบบ %{channel} Fresh จะดาวน์โหลด v%{version} จากรีลีสและตรวจสอบความถูกต้อง จากนั้นจะแสดงคำสั่งสำหรับติดตั้ง — ไฟล์เหล่านั้นเป็นของตัวจัดการแพ็กเกจของคุณ Fresh จึงไม่ติดตั้งให้แทน",
+  "update.body_delegated_command": "ติดตั้งแบบ %{channel} ซึ่งดูแลการอัปเดต Fresh ไม่รันตัวจัดการแพ็กเกจอื่น จึงจะแสดงคำสั่งที่ต้องรัน: %{command}",
   "update.body_manual": "Fresh ไม่สามารถอัปเดตสำเนานี้ในที่เดิมได้ ดาวน์โหลด v%{version} จาก https://github.com/sinelaw/fresh/releases หรือดูขั้นตอนที่แน่ชัดในผลลัพธ์ของการอัปเดต",
   "update.choice_download_only": "ดาวน์โหลด แล้วแสดงคำสั่งติดตั้ง",
   "update.choice_show_command": "แสดงคำสั่งอัปเดต",

@@ -1654,6 +1654,8 @@
   "update.action_required_title": "La mise à jour requiert une étape de plus",
   "update.body_action_required": "La mise à jour n'a pas été installée. Pour la terminer, il faut une commande que vous exécutez vous-même — elle attend dans la sortie de la mise à jour.",
   "update.body_self_contained": "Installé en tant que %{channel}. Fresh téléchargera la v%{version}, la vérifiera et se remplacera lui-même. Redémarrez pour terminer.",
+  "update.body_download_package_verified": "Installé en tant que %{channel}. Fresh téléchargera la v%{version} depuis la publication et la vérifiera, puis vous montrera la commande qui l'installe — ces fichiers appartiennent à votre gestionnaire de paquets, Fresh ne les installe donc pas à votre place.",
+  "update.body_delegated_command": "Installé en tant que %{channel}, qui gère les mises à jour. Fresh n'exécute pas les gestionnaires de paquets tiers ; il vous montrera donc la commande à exécuter : %{command}",
   "update.body_manual": "Fresh ne peut pas mettre à jour cette copie sur place. Téléchargez la v%{version} depuis https://github.com/sinelaw/fresh/releases, ou consultez les étapes exactes dans la sortie de la mise à jour.",
   "update.choice_download_only": "Le télécharger, puis afficher la commande d'installation",
   "update.choice_show_command": "Afficher la commande de mise à jour",

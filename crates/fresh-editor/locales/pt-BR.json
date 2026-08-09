@@ -1654,6 +1654,8 @@
   "update.action_required_title": "A atualização precisa de mais um passo",
   "update.body_action_required": "A atualização não foi instalada. Para concluí-la é preciso um comando que você mesmo executa — ele está aguardando na saída da atualização.",
   "update.body_self_contained": "Instalado como %{channel}. O Fresh vai baixar a v%{version}, verificá-la e substituir a si mesmo. Reinicie para concluir.",
+  "update.body_download_package_verified": "Instalado como %{channel}. O Fresh vai baixar a v%{version} da versão publicada e verificá-la, e então mostrar o comando que a instala — esses arquivos pertencem ao seu gerenciador de pacotes, então o Fresh não os instala por você.",
+  "update.body_delegated_command": "Instalado como %{channel}, que gerencia as atualizações. O Fresh não executa outros gerenciadores de pacotes, então vai mostrar o comando a executar: %{command}",
   "update.body_manual": "O Fresh não tem como atualizar esta cópia no lugar. Baixe a v%{version} em https://github.com/sinelaw/fresh/releases, ou veja os passos exatos na saída da atualização.",
   "update.choice_download_only": "Baixar e depois mostrar o comando de instalação",
   "update.choice_show_command": "Mostrar o comando de atualização",
