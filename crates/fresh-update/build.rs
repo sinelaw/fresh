@@ -39,21 +39,14 @@ fn main() {
     println!("cargo:rerun-if-env-changed=TARGET");
 }
 
-/// Whether this crate is being compiled from a cargo *registry checkout* —
-/// i.e. sources cargo unpacked from crates.io, at
-/// `$CARGO_HOME/registry/src/<index>/<crate>-<version>/`.
+/// Whether cargo unpacked these sources from crates.io.
 ///
-/// This exists because `cargo install fresh-editor` is otherwise invisible.
-/// Nothing sets `FRESH_BUILD_CHANNEL` for it (the user runs cargo, not our
-/// release pipeline), so provenance used to fall through to a runtime guess
-/// at the executable path: `~/.cargo/bin` therefore cargo. That guess was
-/// wrong the moment anyone moved, copied or symlinked the binary, and it could
-/// not tell a cargo install from a file someone happened to put there.
-///
-/// Where the *source* came from is a fact rather than a guess, it is known at
-/// the only time it is knowable, and moving the resulting binary cannot
-/// invalidate it. A workspace or `--path` build is not a registry checkout and
-/// correctly does not match; a git checkout does not either.
+/// `cargo install fresh-editor` is otherwise invisible: the user runs cargo,
+/// not our release pipeline, so nothing sets `FRESH_BUILD_CHANNEL` and there is
+/// no packaging step to write a receipt. Provenance used to fall back to a
+/// runtime guess at the executable path, which any move or copy invalidated.
+/// Where the source came from is instead a fact, fixed at the only moment it
+/// is knowable.
 fn built_from_registry() -> bool {
     let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") else {
         return false;

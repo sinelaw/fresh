@@ -491,10 +491,13 @@ Its AppImage branch writes `channel=appimage`, `self_update=true`,
 - **cargo (crates.io).** A user's `cargo install` build doesn't see any
   build-time env we set, so nothing can hand it `channel=cargo` and no receipt
   is written. It used to lean on the path heuristic (`~/.cargo/bin`). It now
-  detects itself instead: `build.rs` checks whether it is being compiled from a
-  cargo *registry checkout* — `$CARGO_HOME/registry/src/<index>/<crate>-<ver>/`,
-  the layout cargo unpacks crates.io sources into — and stamps
-  `FRESH_BUILD_CHANNEL=cargo` when it is. An explicit env var always wins, so
+  detects itself instead: `build.rs` stamps `FRESH_BUILD_CHANNEL=cargo` when
+  the source tree carries both markers cargo writes when it unpacks a `.crate`
+  — `.cargo-ok` (written after extraction, never shipped inside the tarball)
+  and `Cargo.toml.orig` (written by `cargo package`, so absent from a git
+  checkout). Deliberately not the `registry/src` path shape: that is the same
+  guessing this design removed elsewhere, and it would also accept a
+  `cargo install --git`. An explicit env var always wins, so
   packagers are never second-guessed.
 
   This is a fact rather than a guess, and the difference matters: it is about
