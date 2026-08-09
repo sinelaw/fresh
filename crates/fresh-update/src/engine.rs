@@ -59,6 +59,11 @@ pub struct UpdateOptions {
     pub yes: bool,
     /// Permit "updating" to the same or an older version.
     pub allow_downgrade: bool,
+    /// Consider releases GitHub marks as pre-releases.
+    ///
+    /// Off by default, and the refusal is enforced in [`crate::feed::select`]
+    /// rather than left to the endpoint: see the note there.
+    pub allow_prerelease: bool,
     /// Run the install path even when already on the latest version.
     ///
     /// Distinct from `allow_downgrade`, which is about *which* versions are
@@ -79,6 +84,7 @@ impl Default for UpdateOptions {
             check_only: false,
             yes: false,
             allow_downgrade: false,
+            allow_prerelease: false,
             force: false,
             execution: Execution::Install,
             // An out-of-policy override is refused outright in a release build,
@@ -159,8 +165,15 @@ pub fn run(current_version: &str, opts: &UpdateOptions) -> Result<UpdateStatus, 
     );
 
     let transport = Transport::new(&opts.endpoints);
-    let body = transport.get_text(&opts.endpoints.releases_url, net::FEED_MAX_BYTES)?;
-    let release = Release::parse(&body)?;
+    // Pre-releases are absent from `/releases/latest`, so opting in means
+    // asking the list endpoint; without the flag this is the pinned default.
+    let feed_url = if opts.allow_prerelease {
+        opts.endpoints.list_url()
+    } else {
+        opts.endpoints.releases_url.clone()
+    };
+    let body = transport.get_text(&feed_url, net::FEED_MAX_BYTES)?;
+    let release = crate::feed::select(&body, opts.allow_prerelease)?;
     let latest = release.version().to_string();
 
     println!("Current version: {current_version}");

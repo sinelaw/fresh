@@ -41,12 +41,32 @@ pub struct Release {
     /// Published artifacts. Absent in a minimal fixture, hence `default`.
     #[serde(default)]
     pub assets: Vec<Asset>,
+    /// GitHub's prerelease flag. Defaulting to `false` is the safe direction:
+    /// a feed that omits it is treated as a normal release, which is what a
+    /// mirror serving a plain document means.
+    #[serde(default)]
+    pub prerelease: bool,
+    /// Drafts are never installable — their assets are not publicly served.
+    #[serde(default)]
+    pub draft: bool,
 }
 
 impl Release {
     /// Parse a release-metadata document.
     pub fn parse(json: &str) -> Result<Self, String> {
         serde_json::from_str(json).map_err(|e| format!("could not read the release feed: {e}"))
+    }
+
+    /// Parse a document that is either one release or a list of them.
+    ///
+    /// `/releases/latest` and a tag endpoint return one object; `/releases`
+    /// returns an array. Accepting both means the caller picks an endpoint
+    /// without the parser needing to be told which.
+    pub fn parse_any(json: &str) -> Result<Vec<Self>, String> {
+        if let Ok(list) = serde_json::from_str::<Vec<Self>>(json) {
+            return Ok(list);
+        }
+        Self::parse(json).map(|r| vec![r])
     }
 
     /// The version, with any leading `v` stripped.
@@ -88,6 +108,59 @@ impl Release {
             ));
         }
         Ok(first)
+    }
+}
+
+/// Choose the release to offer, or say why there is none.
+///
+/// Drafts are never offered. A prerelease is offered only when explicitly
+/// asked for: stable installs are protected today only because
+/// `/releases/latest` omits prereleases, which is GitHub's behaviour rather
+/// than a decision this code makes — so a mirror, a tag endpoint or a change
+/// at GitHub would silently start handing users release candidates. Refusing
+/// here makes it ours.
+///
+/// The refusal names the version and the flag, because "no update available"
+/// when a release plainly exists is the kind of answer people debug for an
+/// hour.
+pub fn select(json: &str, allow_prerelease: bool) -> Result<Release, String> {
+    let all = Release::parse_any(json)?;
+    if all.is_empty() {
+        return Err("the release feed lists no releases".to_string());
+    }
+
+    let mut best: Option<Release> = None;
+    let mut skipped_pre: Option<String> = None;
+    for release in all {
+        if release.draft {
+            continue;
+        }
+        if release.prerelease && !allow_prerelease {
+            let version = release.version().to_string();
+            // Report the newest one skipped, so the hint names what the user
+            // can actually see on the releases page.
+            if skipped_pre
+                .as_deref()
+                .is_none_or(|s| crate::version::is_newer(s, &version))
+            {
+                skipped_pre = Some(version);
+            }
+            continue;
+        }
+        let better = best
+            .as_ref()
+            .is_none_or(|b| crate::version::is_newer(b.version(), release.version()));
+        if better {
+            best = Some(release);
+        }
+    }
+
+    match (best, skipped_pre) {
+        (Some(r), _) => Ok(r),
+        (None, Some(pre)) => Err(format!(
+            "the newest release is {pre}, a pre-release; pass --pre to install it"
+        )),
+        (None, None) => Err("the release feed lists no installable releases".to_string()),
     }
 }
 
@@ -214,6 +287,68 @@ mod tests {
             .find_package(".deb", "amd64")
             .unwrap_err();
         assert!(err.contains("more than one"), "got: {err}");
+    }
+
+    /// The guard this exists for: a stable install must refuse an rc even when
+    /// one is served, because `/releases/latest` omitting them is GitHub's
+    /// behaviour and not something this code controls.
+    #[test]
+    fn a_prerelease_is_refused_unless_asked_for() {
+        let feed = r#"{"tag_name":"v0.4.8-rc.1","prerelease":true}"#;
+        let err = select(feed, false).unwrap_err();
+        assert!(err.contains("0.4.8-rc.1"), "got: {err}");
+        assert!(
+            err.contains("--pre"),
+            "the refusal must name the flag: {err}"
+        );
+        assert_eq!(select(feed, true).unwrap().version(), "0.4.8-rc.1");
+    }
+
+    #[test]
+    fn a_list_picks_the_newest_and_skips_prereleases_by_default() {
+        let feed = r#"[
+            {"tag_name":"v0.4.8-rc.2","prerelease":true},
+            {"tag_name":"v0.4.7","prerelease":false},
+            {"tag_name":"v0.4.6","prerelease":false}
+        ]"#;
+        assert_eq!(select(feed, false).unwrap().version(), "0.4.7");
+        assert_eq!(select(feed, true).unwrap().version(), "0.4.8-rc.2");
+    }
+
+    /// GitHub returns releases newest-first, but nothing promises that, and a
+    /// mirror need not. Order must come from precedence, not position.
+    #[test]
+    fn selection_does_not_trust_feed_order() {
+        let feed = r#"[
+            {"tag_name":"v0.4.6"},
+            {"tag_name":"v0.4.9"},
+            {"tag_name":"v0.4.7"}
+        ]"#;
+        assert_eq!(select(feed, false).unwrap().version(), "0.4.9");
+    }
+
+    /// Drafts are listed by the API but their assets are not publicly served,
+    /// so offering one produces a download that 404s.
+    #[test]
+    fn drafts_are_never_offered() {
+        let feed = r#"[
+            {"tag_name":"v0.5.0","draft":true},
+            {"tag_name":"v0.4.7"}
+        ]"#;
+        assert_eq!(select(feed, false).unwrap().version(), "0.4.7");
+        assert_eq!(select(feed, true).unwrap().version(), "0.4.7");
+    }
+
+    /// A mirror serving a plain document omits the flag entirely; that must
+    /// read as a normal release rather than defaulting to "pre-release".
+    #[test]
+    fn a_document_without_the_flag_is_a_normal_release() {
+        let r = Release::parse(r#"{"tag_name":"v1.2.3"}"#).unwrap();
+        assert!(!r.prerelease && !r.draft);
+        assert_eq!(
+            select(r#"{"tag_name":"v1.2.3"}"#, false).unwrap().version(),
+            "1.2.3"
+        );
     }
 
     #[test]
