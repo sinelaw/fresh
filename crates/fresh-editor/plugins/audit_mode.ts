@@ -2834,8 +2834,8 @@ async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
         discard: "discarded",
     };
     const past = pastTense[action];
-    editor.setStatus(editor.t(`status.lines_${past}`) || `Lines ${past}`);
     await refreshMagitData();
+    setReviewConfirmation(editor.t(`status.lines_${past}`) || `Lines ${past}`);
 }
 
 function review_collapse_all() {
@@ -3155,8 +3155,8 @@ async function stageHunk(hunk: Hunk | null) {
         const ok = await applyHunkPatch(patch, ["--cached"]);
         if (!ok) return;
     }
-    editor.setStatus(editor.t("status.hunk_staged") || "Hunk staged");
     await refreshMagitData();
+    setReviewConfirmation(editor.t("status.hunk_staged") || "Hunk staged");
 }
 
 async function unstageHunk(hunk: Hunk | null) {
@@ -3168,8 +3168,8 @@ async function unstageHunk(hunk: Hunk | null) {
     const patch = buildHunkPatch(hunk.file, hunk);
     const ok = await applyHunkPatch(patch, ["--cached", "--reverse"]);
     if (!ok) return;
-    editor.setStatus(editor.t("status.hunk_unstaged") || "Hunk unstaged");
     await refreshMagitData();
+    setReviewConfirmation(editor.t("status.hunk_unstaged") || "Hunk unstaged");
 }
 
 /**
@@ -3248,9 +3248,40 @@ registerHandler("review_discard_file", review_discard_file);
 
 
 /**
+ * A confirmation the status bar holds until the user moves on ("Lines
+ * discarded", "Hunk staged", …).
+ *
+ * Every stage/unstage/discard used to emit its confirmation and then `await
+ * refreshMagitData()`, whose tail calls `updateReviewStatus()` — so the
+ * summary overwrote the confirmation within the same burst and the user saw
+ * it for at most a frame, or not at all (#2420). Holding it here instead of
+ * racing the refresh means `updateReviewStatus` re-renders the confirmation
+ * rather than clobbering it, and there is exactly one place that decides when
+ * it expires.
+ *
+ * `row` anchors the confirmation to the diff row it was issued on. The cursor
+ * restore inside the refresh emits its own `cursor_moved` *after* the
+ * confirmation is set; that echo carries the same row, so it doesn't count as
+ * the user moving on. A real navigation keystroke carries a different row and
+ * clears it.
+ */
+let reviewConfirmation: { text: string; row: number } | null = null;
+
+/** Emit a confirmation and hold it. Call *after* the refresh that follows the
+ * action, so the rebuild's own status update can't land on top of it. */
+function setReviewConfirmation(text: string): void {
+    reviewConfirmation = { text, row: state.diffCursorRow };
+    editor.setStatus(text);
+}
+
+/**
  * Refresh file list and diffs using the new git status approach, then re-render.
  */
 async function refreshMagitData() {
+    // A rebuild supersedes whatever the last action confirmed: `r` and the
+    // watch-driven refreshes should land on the summary, not on a stale
+    // "Lines discarded" from several actions ago.
+    reviewConfirmation = null;
     if (state.mode === 'range' && state.range) {
         const { hunks, files } = await fetchRangeDiff(state.range);
         state.hunks = hunks;
@@ -4430,6 +4461,12 @@ function currentGlobalHunkIndex(): number | null {
  */
 function updateReviewStatus(): void {
     if (state.groupId === null) return;
+    // A held confirmation outranks the summary until the user moves off the
+    // row it was issued on — see `reviewConfirmation`.
+    if (reviewConfirmation !== null) {
+        editor.setStatus(reviewConfirmation.text);
+        return;
+    }
     const total = state.hunkHeaderRows.length;
     const current = currentGlobalHunkIndex();
     // Range reviews fundamentally don't include working-tree edits; the
@@ -5138,8 +5175,8 @@ editor.on("prompt_confirmed", async (args) => {
             const patch = buildHunkPatch(hunk.file, hunk);
             const ok = await applyHunkPatch(patch, ["--reverse"]);
             if (ok) {
-                editor.setStatus(editor.t("status.hunk_discarded") || "Hunk discarded");
                 await refreshMagitData();
+                setReviewConfirmation(editor.t("status.hunk_discarded") || "Hunk discarded");
             }
         }
     } else {
@@ -5778,6 +5815,12 @@ function on_review_cursor_moved(data: {
     // Diff panel: track cursor row + repaint the cursor-line overlay.
     if (data.buffer_id === state.panelBuffers["diff"]) {
         const prevHighlight = state.commentsHighlightId;
+        // Moving to a different row is the user moving on from the last
+        // action's confirmation. Same-row events are the echo of our own
+        // post-action cursor restore, which must not expire it.
+        if (reviewConfirmation !== null && data.line !== reviewConfirmation.row) {
+            reviewConfirmation = null;
+        }
         state.diffCursorRow = data.line;
         applyCursorLineOverlay('diff');
         // Use the cursor row as a sticky-header anchor too — viewport_changed
