@@ -545,6 +545,15 @@ Three things make that work, and all three had to be fixed together:
    is pure Rust, whereas `xz2` links liblzma (`ldd` on a released glibc build
    shows `liblzma.so.5`). The cost is ~15% archive size.
 
+   For one release cycle the musl job publishes **both** `.tar.gz` and
+   `.tar.xz`. Binaries built before `archive_ext` existed ask for the xz name
+   unconditionally, and that became reachable the moment `install.sh` started
+   writing a receipt for archives that lack one: those installs previously had
+   no receipt and the updater declined to act, so "no update offered" turned
+   into "update offered" for a binary requesting a name that would not exist.
+   Shipping both makes that request resolve. Droppable once no published
+   binary asks for the xz name.
+
    `engine::archive_ext` maps the compile-time target triple to its extension
    (windows → `zip`, musl → `tar.gz`, else `tar.xz`). That stays a fact derived
    from a compile-time value rather than a lookup, so §6's no-guessing rule
