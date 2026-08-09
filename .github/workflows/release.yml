@@ -563,6 +563,28 @@ jobs:
       - name: The last release can self-update to this one
         run: bash scripts/rehearse-self-update.sh "${{ needs.plan.outputs.tag }}"
 
+  # The other end of the same seam. `rehearse-update` can only exercise what the
+  # *previous* release was capable of — on the first run of this flow, a binary
+  # with no `--pre` and no attestation check — so on its own it would leave the
+  # code being shipped untested until the release after next.
+  #
+  # This drives the archive just published: the pre-release is invisible to a
+  # stable client and visible with `--pre`, the guard refuses one when a feed
+  # offers it, and a real download verifies checksum *and* attestation before
+  # swapping. It cannot update to this release (it is already that version), so
+  # the swap runs downwards, which exercises the same path.
+  verify-shipped-updater:
+    needs: [plan, release]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: The updater in this release works against the real feed
+        run: bash scripts/verify-shipped-updater.sh "${{ needs.plan.outputs.tag }}"
+
   # The single moment the release becomes visible to everyone.
   #
   # Two calls, in this order: the API rejects marking a release latest while it
@@ -575,7 +597,7 @@ jobs:
   # visible to no one, which is exactly the failure this ordering exists to
   # prevent.
   promote:
-    needs: [plan, release, verify-release, rehearse-update]
+    needs: [plan, release, verify-release, rehearse-update, verify-shipped-updater]
     if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
     runs-on: ubuntu-22.04
     env:

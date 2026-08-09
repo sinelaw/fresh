@@ -51,8 +51,9 @@
 >
 > - **Phase 8** — a release **proves itself before anyone is offered it**. It is
 >   assembled as a draft, published as a pre-release, then checked two ways —
->   every archive present/checksummed/attested, and the *previous* release
->   actually self-updating to it against real GitHub — and only then promoted to
+>   every archive present/checksummed/attested, and the updater exercised from
+>   both ends (the previous release updating to it, and the binary it ships
+>   working against the real feed) — and only then promoted to
 >   `latest`. Registry publishes hang off the promotion. This is what `-rc` tags
 >   used to approximate (§15, Phase 8).
 >
@@ -982,8 +983,10 @@ cannot see them. `cargo` moved from a runtime path guess to a build-time fact
    testing and offered to nobody.
 3. **`verify-release`** — every self-updatable archive is present, checksummed
    and attested (`verify-release-assets.sh`).
-4. **`rehearse-update`** — the previous release actually self-updates to this
-   one (§16).
+4. **`rehearse-update`** and **`verify-shipped-updater`** — the updater is
+   exercised from both ends: the previous release actually self-updates to this
+   one, and the binary in this release discovers, gates, verifies and swaps
+   correctly against the real feed (§16).
 5. **`promote`** — `--prerelease=false`, then `--latest`, then read the state
    back. Two calls in that order because the API refuses to make a pre-release
    latest; `=false` because these are boolean flags. The read-back is not
@@ -1062,6 +1065,34 @@ release is a flag that clears when it passes. `-rc` tags still work if wanted;
   release, dropping the shim breaks the rehearsal — which is exactly what it
   would do to those users. The shim's lifetime stops being a note in a comment
   and becomes a red job.
+
+- **The updater being shipped** (`scripts/verify-shipped-updater.sh`, run by the
+  `verify-shipped-updater` job): the same seam from the other end, and the
+  reason the rehearsal alone is not enough. A rehearsal driven by the last
+  release can only exercise what the last release could already do — for the
+  first run of this flow, a binary with neither `--pre` nor an attestation
+  check — so on its own it would leave the code being shipped untested until
+  the release after next.
+
+  This drives the archive just published (not a rebuild of the same commit:
+  same code, and it also proves the artifact users download is sound), during
+  the window where the release is public but not yet latest — the only moment
+  these four questions have observable answers:
+
+  1. a stable client is *not* offered it (`Latest version` is the previous one)
+  2. `--pre` *is* offered it, through the real list endpoint
+  3. the guard refuses a pre-release when a feed actually offers one — which
+     `/releases/latest` never does, so this needs the tag endpoint; without it a
+     build with the guard removed would still pass 1 and 2
+  4. a real download verifies checksum **and** attestation, then swaps
+
+  It cannot update *to* this release — it is already that version — so (4) runs
+  downwards. The direction changes nothing: the same feed, download, checksum,
+  attestation and swap execute. The endpoint override keeps it on an allowlisted
+  host so the endpoint stays trusted and the attestation check stays on, and the
+  engine's own "Verifying release attestation" line is asserted rather than the
+  absence of the skip notice — a build that quietly stopped attesting would pass
+  the negative test.
 
   Why this cannot be done before publishing, which is what makes the ordering
   in §15 (Phase 8) load-bearing rather than stylistic: the attestation the updater
