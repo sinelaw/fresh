@@ -1,6 +1,17 @@
 #!/bin/sh
 # Fresh Editor Universal Installer
-# Usage: curl -sL https://example.com/install.sh | sh
+#
+# Usage:
+#   curl -sL .../install.sh | sh
+#   curl -sL .../install.sh | sh -s -- --method=deb
+#   FRESH_INSTALL_METHOD=rpm sh install.sh
+#
+# The default is the universal build: a statically linked (musl) binary
+# unpacked under ~/.local, owned by you, needing no root and able to update
+# itself in place via `fresh --cmd update`. Distro packages are still fully
+# supported — they are just chosen deliberately with --method rather than
+# picked for you, because a package-manager install hands the update lifecycle
+# to that package manager and requires root to apply.
 
 set -e
 
@@ -10,10 +21,10 @@ set -e
 # ==============================================================================
 
 # 1. Fallback Priority Order
-#    If the native OS method (apt, dnf, pacman, brew) fails or is unavailable,
-#    the script will try these universal methods in the order listed below.
-#    Valid options: "nix" "cargo" "npm" "appimage"
-FALLBACK_PRIORITY="nix cargo npm appimage"
+#    Tried in order when the selected method is unavailable (for example an
+#    architecture we publish no prebuilt binary for).
+#    Valid options: "tarball" "nix" "cargo" "npm" "appimage"
+FALLBACK_PRIORITY="tarball nix cargo npm"
 
 # 2. Arch Linux: AUR Helper Priority
 #    The script will check for these helpers in order.
@@ -28,6 +39,10 @@ PREFER_CARGO_BINSTALL=1
 REPO_OWNER="sinelaw"
 REPO_NAME="fresh"
 BIN_NAME="fresh-editor"
+
+# 5. Where the universal build lands. Both are user-owned; no root involved.
+INSTALL_DIR="${FRESH_INSTALL_DIR:-${HOME}/.local/share/fresh-editor}"
+BIN_DIR="${FRESH_BIN_DIR:-${HOME}/.local/bin}"
 
 # ==============================================================================
 #   END CONFIGURATION
@@ -47,16 +62,58 @@ log_error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; exit 1; }
 
 check_cmd() { command -v "$1" >/dev/null 2>&1; }
 
+usage() {
+    cat <<EOF
+Fresh Editor installer
+
+Usage: install.sh [--method=METHOD]
+
+Methods:
+  auto      (default) universal build on Linux, Homebrew on macOS, Nix on NixOS
+  tarball   universal static build under ~/.local — self-updating, no root
+  deb       Debian/Ubuntu .deb from the latest release (needs root)
+  rpm       Fedora/RHEL/openSUSE .rpm from the latest release (needs root)
+  aur       Arch Linux, via the AUR
+  brew      Homebrew
+  nix       Nix profile
+  cargo     cargo install / cargo binstall
+  npm       npm install -g
+  appimage  AppImage, extracted under ~/.local
+
+Environment:
+  FRESH_INSTALL_METHOD   same as --method
+  FRESH_INSTALL_DIR      where the universal build unpacks (default ~/.local/share/fresh-editor)
+  FRESH_BIN_DIR          where the 'fresh' symlink goes (default ~/.local/bin)
+
+Notes:
+  The universal build updates itself with 'fresh --cmd update'. Distro packages
+  delegate updates to the package manager that installed them, which is why
+  they are opt-in rather than the default.
+EOF
+}
+
+# --- Argument parsing ---
+
+METHOD="${FRESH_INSTALL_METHOD:-auto}"
+
+for arg in "$@"; do
+    case "$arg" in
+        --method=*) METHOD="${arg#--method=}" ;;
+        --method)   log_error "--method needs a value, e.g. --method=deb" ;;
+        -h|--help)  usage; exit 0 ;;
+        *)          log_error "unknown argument: $arg (try --help)" ;;
+    esac
+done
+
+# --- Privilege, staging, and verification ---
+
 # Run a command with elevated privileges if needed
 run_privileged() {
     if [ "$(id -u)" -eq 0 ]; then
         # Already root
         "$@"
-    elif check_cmd sudo && sudo -n true 2>/dev/null; then
-        # sudo available and works without password (or cached)
-        sudo "$@"
     elif check_cmd sudo; then
-        # sudo available, may prompt for password
+        # sudo available; may or may not prompt depending on cached credentials
         sudo "$@"
     else
         # No sudo, try direct execution (will fail if privileges needed)
@@ -64,11 +121,179 @@ run_privileged() {
     fi
 }
 
-# --- Specialized Installers ---
+WORKDIR=""
+
+# Methods already attempted this run. Dispatch falls back on failure, and the
+# fallback list contains the universal build too, so without this an explicit
+# --method=tarball that finds no asset would download the release metadata and
+# fail a second time before moving on.
+TRIED=""
+already_tried() { case " $TRIED " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+mark_tried()    { TRIED="$TRIED $1"; }
+
+# A private staging directory. Downloads that are later handed to dpkg/rpm
+# under sudo must not sit anywhere another user can write: between the checksum
+# check and the install, a world-writable path lets an unprivileged process
+# swap the payload and get its own package installed as root. mktemp -d creates
+# the directory atomically with 0700.
+make_workdir() {
+    [ -n "$WORKDIR" ] && return 0
+    WORKDIR=$(mktemp -d 2>/dev/null) || log_error "could not create a temporary directory."
+    chmod 700 "$WORKDIR"
+    trap 'rm -rf "$WORKDIR"' EXIT
+    trap 'rm -rf "$WORKDIR"; exit 130' INT
+    trap 'rm -rf "$WORKDIR"; exit 143' TERM
+    return 0
+}
+
+sha256_of() {
+    if check_cmd sha256sum; then
+        sha256sum "$1" | awk '{print $1}'
+    elif check_cmd shasum; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+# Fail closed: an artifact we cannot verify is not installed. Every release
+# asset is published with a .sha256 sidecar, so a missing one means either the
+# wrong URL or a response that did not come from the release.
+download_verified() {
+    # $1 = url, $2 = destination path
+    log_info "Downloading $(basename "$1")..."
+    curl -fSL "$1" -o "$2" || log_error "download failed: $1"
+
+    sums=$(curl -fsSL "$1.sha256" 2>/dev/null || true)
+    [ -n "$sums" ] || log_error "no .sha256 published for $(basename "$1"); refusing to install unverified bytes."
+
+    expected=$(printf '%s\n' "$sums" | awk 'NR==1 {print $1}')
+    actual=$(sha256_of "$2") || log_error "need sha256sum or shasum to verify the download; install coreutils and retry."
+
+    if [ "$expected" != "$actual" ]; then
+        log_error "checksum mismatch for $(basename "$1") (expected $expected, got $actual)."
+    fi
+    log_info "Checksum verified."
+}
+
+# --- Release metadata ---
+
+RELEASE_JSON=""
+
+fetch_release_json() {
+    [ -n "$RELEASE_JSON" ] && return 0
+    check_cmd curl || log_error "curl is required."
+    make_workdir
+    RELEASE_JSON="$WORKDIR/release.json"
+    curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" \
+        -o "$RELEASE_JSON" || log_error "could not fetch the latest release metadata."
+    return 0
+}
+
+# URL of the asset whose filename is exactly $1.
+asset_url_exact() {
+    fetch_release_json
+    tr ',' '\n' < "$RELEASE_JSON" \
+        | grep '"browser_download_url"' \
+        | cut -d'"' -f4 \
+        | awk -v want="$1" '{ n = split($0, p, "/"); if (p[n] == want) print }' \
+        | head -n 1
+}
+
+# URL of the first asset containing $2 and ending in $1 (for versioned names).
+asset_url_match() {
+    # $1 = suffix (e.g. .deb), $2 = arch token
+    fetch_release_json
+    tr ',' '\n' < "$RELEASE_JSON" \
+        | grep '"browser_download_url"' \
+        | cut -d'"' -f4 \
+        | grep -- "$2" \
+        | grep -- "$1\$" \
+        | head -n 1
+}
+
+# --- The universal build ---
+
+musl_target() {
+    case "$(uname -m)" in
+        x86_64|amd64)  echo "x86_64-unknown-linux-musl" ;;
+        aarch64|arm64) echo "aarch64-unknown-linux-musl" ;;
+        *)             return 1 ;;
+    esac
+}
+
+do_install_tarball() {
+    mark_tried tarball
+    if [ "$(uname -s)" != "Linux" ]; then
+        log_warn "The universal build is Linux-only."
+        return 1
+    fi
+
+    TARGET=$(musl_target) || {
+        log_warn "No prebuilt binary for architecture: $(uname -m)."
+        return 1
+    }
+
+    ASSET="${BIN_NAME}-${TARGET}.tar.xz"
+    URL=$(asset_url_exact "$ASSET")
+    if [ -z "$URL" ]; then
+        log_warn "The latest release has no $ASSET."
+        return 1
+    fi
+
+    log_info "Installing the universal build ($TARGET)..."
+    make_workdir
+
+    ARCHIVE="$WORKDIR/$ASSET"
+    download_verified "$URL" "$ARCHIVE"
+
+    EXTRACT="$WORKDIR/extract"
+    mkdir -p "$EXTRACT"
+    if ! tar -xJf "$ARCHIVE" -C "$EXTRACT" 2>/dev/null; then
+        log_error "could not unpack $ASSET (xz support missing? install xz-utils and retry)."
+    fi
+
+    STAGED="$EXTRACT/${BIN_NAME}-${TARGET}"
+    [ -x "$STAGED/fresh" ] || log_error "the archive did not contain a 'fresh' binary."
+
+    # The archive ships install-receipt.toml next to the binary, so the editor
+    # resolves channel=tarball authoritatively and can swap itself in place.
+    # Without it a copy installed here would fall back to the path heuristic,
+    # which is not trusted enough to permit a self-update.
+    [ -f "$STAGED/install-receipt.toml" ] \
+        || log_warn "archive has no install receipt; self-update will be disabled for this copy."
+
+    case "$INSTALL_DIR" in
+        ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;
+    esac
+
+    log_info "Finalizing installation..."
+    mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
+    rm -rf "$INSTALL_DIR"
+    mv "$STAGED" "$INSTALL_DIR" || log_error "failed to move files to $INSTALL_DIR."
+
+    ln -sf "$INSTALL_DIR/fresh" "$BIN_DIR/fresh"
+
+    case ":$PATH:" in
+        *":${BIN_DIR}:"*) ;;
+        *)
+            log_warn "${BIN_DIR} is not in your PATH."
+            log_info "Add this to your shell profile:"
+            log_info "  export PATH=\"${BIN_DIR}:\$PATH\""
+            ;;
+    esac
+
+    log_success "Installed to $INSTALL_DIR"
+    log_success "Symlink created at $BIN_DIR/fresh"
+    log_info "Update later with: fresh --cmd update"
+    return 0
+}
+
+# --- Distro packages ---
 
 install_macos() {
     if check_cmd brew; then
-        log_info "macOS detected. Installing via Homebrew..."
+        log_info "Installing via Homebrew..."
         brew install "${BIN_NAME}"
     else
         log_warn "Homebrew not found."
@@ -77,154 +302,133 @@ install_macos() {
 }
 
 install_arch() {
-    log_info "Arch Linux detected."
-    
+    log_info "Installing from the AUR..."
+
     # Try configured AUR helpers in order
     for helper in $AUR_HELPER_PRIORITY; do
         if check_cmd "$helper"; then
             log_info "Found AUR helper '$helper'. Installing ${BIN_NAME}-bin..."
             "$helper" -S --noconfirm "${BIN_NAME}-bin"
-            return
+            return 0
         fi
     done
 
     # Fallback to manual AUR build
     log_info "No AUR helper found. Building '${BIN_NAME}-bin' manually..."
-    
+
     if ! check_cmd git || ! check_cmd makepkg; then
          log_error "git and makepkg are required for manual AUR installation."
     fi
 
-    BUILD_DIR=$(mktemp -d)
+    make_workdir
     cur_dir=$(pwd)
-    
-    cd "$BUILD_DIR"
+
+    cd "$WORKDIR"
     git clone "https://aur.archlinux.org/${BIN_NAME}-bin.git"
     cd "${BIN_NAME}-bin"
-    
+
     log_info "Running makepkg (you may be asked for sudo password)..."
     makepkg --syncdeps --install --noconfirm
-    
-    cd "$cur_dir"
-    rm -rf "$BUILD_DIR"
-}
 
-get_release_url() {
-    # $1 = pattern (e.g., .deb or .rpm)
-    # $2 = arch
-    url=$(curl -s "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" | grep "browser_download_url.*$2.*${1%$}" | cut -d '"' -f 4 | head -n 1)
-    echo "$url"
+    cd "$cur_dir"
+    return 0
 }
 
 install_debian() {
-    log_info "Debian/Ubuntu detected. Looking for .deb..."
-    if ! check_cmd curl; then log_error "curl is required."; fi
+    log_info "Looking for a .deb..."
+    check_cmd curl || log_error "curl is required."
+    check_cmd dpkg || log_error "dpkg not found; this does not look like a Debian-based system."
 
     ARCH=$(dpkg --print-architecture)
-    URL=$(get_release_url "\.deb" "$ARCH")
+    URL=$(asset_url_match "\.deb" "$ARCH")
 
     if [ -z "$URL" ]; then
-        log_warn "No .deb package found for $ARCH. Trying fallbacks..."
-        run_fallbacks
-        return
+        log_warn "No .deb package found for $ARCH."
+        return 1
     fi
 
-    TEMP_DEB=$(mktemp --suffix=.deb)
-    log_info "Downloading $URL..."
-    if ! curl -fSL "$URL" -o "$TEMP_DEB"; then
-        rm -f "$TEMP_DEB"
-        log_error "Failed to download .deb package."
-    fi
-    log_info "Installing via dpkg..."
+    make_workdir
+    TEMP_DEB="$WORKDIR/${BIN_NAME}.deb"
+    download_verified "$URL" "$TEMP_DEB"
+
+    log_info "Installing via dpkg (you may be asked for your password)..."
     run_privileged dpkg -i "$TEMP_DEB"
-    rm -f "$TEMP_DEB"
+    log_info "Update later with your package manager, or: fresh --cmd update"
+    return 0
 }
 
 install_fedora() {
-    log_info "Fedora/RHEL detected. Looking for .rpm..."
-    if ! check_cmd curl; then log_error "curl is required."; fi
+    log_info "Looking for an .rpm..."
+    check_cmd curl || log_error "curl is required."
 
     ARCH=$(uname -m)
-    URL=$(get_release_url "\.rpm" "$ARCH")
+    URL=$(asset_url_match "\.rpm" "$ARCH")
 
     if [ -z "$URL" ]; then
-        log_warn "No .rpm package found for $ARCH. Trying fallbacks..."
-        run_fallbacks
-        return
+        log_warn "No .rpm package found for $ARCH."
+        return 1
     fi
 
-    TEMP_RPM=$(mktemp --suffix=.rpm)
-    log_info "Downloading $URL..."
-    if ! curl -fSL "$URL" -o "$TEMP_RPM"; then
-        rm -f "$TEMP_RPM"
-        log_error "Failed to download .rpm package."
+    make_workdir
+    TEMP_RPM="$WORKDIR/${BIN_NAME}.rpm"
+    download_verified "$URL" "$TEMP_RPM"
+
+    log_info "Installing via rpm (you may be asked for your password)..."
+    if check_cmd zypper; then
+        run_privileged zypper --no-refresh install --allow-unsigned-rpm -y "$TEMP_RPM"
+    else
+        run_privileged rpm -U "$TEMP_RPM"
     fi
-    log_info "Installing via rpm..."
-    run_privileged rpm -U "$TEMP_RPM"
-    rm -f "$TEMP_RPM"
+    log_info "Update later with your package manager, or: fresh --cmd update"
+    return 0
 }
 
-# --- Universal Installers (Called by priority list) ---
+# --- Other universal installers ---
 
 do_install_appimage() {
+    mark_tried appimage
     log_info "Attempting AppImage install..."
-    if ! check_cmd curl; then log_error "curl is required."; return 1; fi
+    check_cmd curl || log_error "curl is required."
 
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64)  APPIMAGE_ARCH="x86_64" ;;
+    case "$(uname -m)" in
+        x86_64)        APPIMAGE_ARCH="x86_64" ;;
         aarch64|arm64) APPIMAGE_ARCH="aarch64" ;;
-        *)       log_warn "AppImage not available for architecture: $ARCH"; return 1 ;;
+        *) log_warn "AppImage not available for architecture: $(uname -m)"; return 1 ;;
     esac
 
-    URL=$(get_release_url "\.AppImage$" "$APPIMAGE_ARCH")
+    URL=$(asset_url_match "\.AppImage" "$APPIMAGE_ARCH")
     if [ -z "$URL" ]; then
         log_warn "No AppImage found for $APPIMAGE_ARCH."
         return 1
     fi
 
-    INSTALL_DIR="${HOME}/.local/share/fresh-editor"
-    BIN_DIR="${HOME}/.local/bin"
-    SYMLINK_PATH="${BIN_DIR}/fresh"
-
-    # Create workspace with fallback if /tmp is restricted
-    BASE_TEMP=$(mktemp -d 2>/dev/null || echo "$HOME/.cache/fresh-work-$(date +%s)")
-    mkdir -p "$BASE_TEMP"
-    
-    # Ensure cleanup on exit or interruption
-    trap 'rm -rf "$BASE_TEMP"' EXIT
-
-    TEMP_APPIMAGE="$BASE_TEMP/fresh.AppImage"
-    TEMP_EXTRACT="$BASE_TEMP/extract"
+    make_workdir
+    TEMP_APPIMAGE="$WORKDIR/fresh.AppImage"
+    TEMP_EXTRACT="$WORKDIR/appimage-extract"
     mkdir -p "$TEMP_EXTRACT"
 
-    log_info "Downloading AppImage..."
-    if ! curl -sL "$URL" -o "$TEMP_APPIMAGE"; then
-        log_error "Download failed."
-        return 1
-    fi
+    download_verified "$URL" "$TEMP_APPIMAGE"
     chmod +x "$TEMP_APPIMAGE"
 
     log_info "Extracting AppImage..."
     if ! (cd "$TEMP_EXTRACT" && "$TEMP_APPIMAGE" --appimage-extract > /dev/null 2>&1); then
         log_error "Extraction failed (Check disk space or binary compatibility)."
-        return 1
     fi
 
-    # Verify extraction success before modifying host system
     if [ ! -d "$TEMP_EXTRACT/squashfs-root" ]; then
         log_error "Extraction completed but source files are missing."
-        return 1
     fi
 
-    log_info "Finalizing installation..."
-    mkdir -p "$INSTALL_DIR" "$BIN_DIR"
-    
-    # Atomic update of the installation directory
-    rm -rf "$INSTALL_DIR"
-    mv "$TEMP_EXTRACT/squashfs-root" "$INSTALL_DIR" || { log_error "Failed to move files to $INSTALL_DIR"; return 1; }
+    case "$INSTALL_DIR" in
+        ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;
+    esac
 
-    ln -sf "$INSTALL_DIR/usr/bin/fresh" "$SYMLINK_PATH"
+    log_info "Finalizing installation..."
+    mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
+    rm -rf "$INSTALL_DIR"
+    mv "$TEMP_EXTRACT/squashfs-root" "$INSTALL_DIR" || log_error "Failed to move files to $INSTALL_DIR"
+
+    ln -sf "$INSTALL_DIR/usr/bin/fresh" "$BIN_DIR/fresh"
 
     # Provenance receipt next to the extracted binary so the editor knows it
     # was installed as an AppImage by this script and can self-update the same
@@ -240,18 +444,18 @@ self_update = true
 install_root = "$INSTALL_DIR"
 EOF
 
-    # Verify PATH
     case ":$PATH:" in
         *":${BIN_DIR}:"*) ;;
         *)
             log_warn "${BIN_DIR} is not in your PATH."
             log_info "Add this to your shell profile:"
-            log_info "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+            log_info "  export PATH=\"${BIN_DIR}:\$PATH\""
             ;;
     esac
 
     log_success "Installed to $INSTALL_DIR"
-    log_success "Symlink created at $SYMLINK_PATH"
+    log_success "Symlink created at $BIN_DIR/fresh"
+    return 0
 }
 
 do_install_nix() {
@@ -284,70 +488,100 @@ do_install_npm() {
 # --- Fallback Manager ---
 
 run_fallbacks() {
-    log_info "Checking universal fallback methods in order: $FALLBACK_PRIORITY"
+    log_info "Checking fallback methods in order: $FALLBACK_PRIORITY"
 
     for method in $FALLBACK_PRIORITY; do
         case "$method" in
+            tarball)
+                if [ "$(uname -s)" = "Linux" ] && ! already_tried tarball; then
+                    if do_install_tarball; then return 0; fi
+                fi
+                ;;
             appimage)
-                # AppImage works on most Linux distros (only requires FUSE)
-                if [ "$(uname -s)" = "Linux" ]; then
-                    if do_install_appimage; then return; fi
+                if [ "$(uname -s)" = "Linux" ] && ! already_tried appimage; then
+                    if do_install_appimage; then return 0; fi
                 fi
                 ;;
             nix)
-                if check_cmd nix; then do_install_nix; return; fi
+                if check_cmd nix; then do_install_nix; return 0; fi
                 ;;
             cargo)
-                if check_cmd cargo; then do_install_cargo; return; fi
+                if check_cmd cargo; then do_install_cargo; return 0; fi
                 ;;
             npm)
-                if check_cmd npm; then do_install_npm; return; fi
+                if check_cmd npm; then do_install_npm; return 0; fi
                 ;;
         esac
     done
 
-    log_error "Installation failed. No supported native package manager or fallback (appimage/nix/cargo/npm) found."
+    log_error "Installation failed. No usable install method found (tried: $FALLBACK_PRIORITY)."
 }
 
-# --- Main Detection ---
+# --- Method selection ---
 
-OS="$(uname -s)"
-case "${OS}" in
-    Linux*)
-        if [ -f /etc/os-release ]; then
-            . /etc/os-release
-            # Handle standard Distros
-            case "$ID" in
-                ubuntu|debian|linuxmint|pop|kali)
-                    install_debian ;;
-                fedora|rhel|centos|opensuse*|suse)
-                    install_fedora ;;
-                arch|manjaro|endeavouros)
-                    install_arch ;;
-                nixos)
-                    do_install_nix ;;
-                *)
-                    # Handle derivatives
-                    if echo "$ID_LIKE" | grep -q "arch"; then install_arch
-                    elif echo "$ID_LIKE" | grep -q "debian"; then install_debian
-                    elif echo "$ID_LIKE" | grep -q "fedora"; then install_fedora
-                    else
-                        log_warn "Unknown Linux distro: $ID"
-                        run_fallbacks
-                    fi
-                    ;;
-            esac
-        else
-            run_fallbacks
+# The distro-native method a user on this system might prefer, if any. Used
+# only to point it out — it is never selected automatically, because a package
+# install needs root and moves updates to the distro's package manager.
+native_method_for_distro() {
+    [ -f /etc/os-release ] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "$ID" in
+        ubuntu|debian|linuxmint|pop|kali)  echo deb; return 0 ;;
+        fedora|rhel|centos)                echo rpm; return 0 ;;
+        opensuse*|suse)                    echo rpm; return 0 ;;
+        arch|manjaro|endeavouros)          echo aur; return 0 ;;
+    esac
+    case "$ID_LIKE" in
+        *debian*)        echo deb; return 0 ;;
+        *fedora*|*suse*) echo rpm; return 0 ;;
+        *arch*)          echo aur; return 0 ;;
+    esac
+    return 1
+}
+
+is_nixos() {
+    [ -f /etc/os-release ] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    [ "$ID" = "nixos" ]
+}
+
+resolve_auto_method() {
+    case "$(uname -s)" in
+        Darwin*) echo brew ;;
+        Linux*)
+            # NixOS has no writable ~/.local story worth fighting; its own
+            # package manager is already the right answer there.
+            if is_nixos; then echo nix; else echo tarball; fi
+            ;;
+        *) echo tarball ;;
+    esac
+}
+
+if [ "$METHOD" = "auto" ]; then
+    METHOD=$(resolve_auto_method)
+    if [ "$METHOD" = "tarball" ]; then
+        log_info "Installing the universal build: self-updating, user-owned, no root."
+        if native=$(native_method_for_distro); then
+            log_info "Prefer your distro's package manager? Re-run with --method=$native"
         fi
-        ;;
-    Darwin*)
-        install_macos
-        ;;
-    *)
-        log_warn "Unknown OS: $OS"
-        run_fallbacks
-        ;;
+    fi
+fi
+
+# --- Dispatch ---
+
+case "$METHOD" in
+    tarball)  do_install_tarball || run_fallbacks ;;
+    deb)      install_debian     || run_fallbacks ;;
+    rpm)      install_fedora     || run_fallbacks ;;
+    aur)      install_arch ;;
+    brew)     install_macos ;;
+    nix)      do_install_nix ;;
+    cargo)    do_install_cargo ;;
+    npm)      do_install_npm ;;
+    appimage) do_install_appimage || run_fallbacks ;;
+    *)        log_error "unknown method: $METHOD (try --help)" ;;
 esac
 
 log_success "Installation completed!"
