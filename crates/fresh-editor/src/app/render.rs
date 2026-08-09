@@ -132,10 +132,18 @@ impl Editor {
             )
         });
         if is_search_prompt_active {
-            if let Some(ref search_state) = self.active_window().search_state {
-                let query = search_state.query.clone();
-                self.update_search_highlights(&query);
-            }
+            // Highlight what the bar currently holds, not the committed
+            // query: F3/Shift+F3 keep the bar open (issue #2111), so the user
+            // can edit the query after jumping, and history navigation swaps
+            // the input without re-highlighting. An empty bar highlights
+            // nothing.
+            let query = self
+                .active_window()
+                .prompt
+                .as_ref()
+                .map(|p| p.input.clone())
+                .unwrap_or_default();
+            self.update_search_highlights(&query);
         }
 
         // Determine if we need to show search options bar.
