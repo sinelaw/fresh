@@ -136,12 +136,18 @@ jobs:
 
       - name: Build release binary
         shell: bash
+        # TARGET comes through the environment rather than being interpolated
+        # into the script: a `${{ }}` substitution inside a `[[ ]]` glob is
+        # opaque to shellcheck, which then reads the comparison as one that can
+        # never match (SC2193).
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          if [ "${{ matrix.cross }}" = "true" ] && [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+          if [ "${{ matrix.cross }}" = "true" ] && [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           fi
           # Static link the C runtime on Windows MSVC to avoid vcruntime DLL dependency
-          if [[ "${{ matrix.target }}" == *-pc-windows-msvc ]]; then
+          if [[ "$TARGET" == *-pc-windows-msvc ]]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           # Default features include embed-plugins; plugins (and themes via build.rs)
@@ -150,6 +156,8 @@ jobs:
 
       - name: Create archive (Unix)
         if: runner.os != 'Windows'
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
           mkdir -p "${ARCHIVE_NAME}"
@@ -158,8 +166,9 @@ jobs:
           # Plugins and themes are compiled into the binary via embed-plugins
           # and build.rs BUILTIN_THEMES, so we ship just the binary + docs.
 
-          # Include icons and desktop file for Linux targets
-          if [[ "${{ matrix.target }}" == *-linux-* ]]; then
+          # Include icons and desktop file for Linux targets. $TARGET rather
+          # than an inline expression, so shellcheck can read the glob (SC2193).
+          if [[ "$TARGET" == *-linux-* ]]; then
             cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons"
             cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop"
           fi

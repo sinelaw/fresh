@@ -1,0 +1,9 @@
+# Runner labels actionlint does not know about.
+#
+# `windows-11-arm` is a real GitHub-hosted runner; actionlint validates against
+# a list baked into its release, so labels newer than the pinned version read as
+# typos. Declaring it here keeps the unknown-label check on for everything else
+# rather than turning the rule off.
+self-hosted-runner:
+  labels:
+    - windows-11-arm

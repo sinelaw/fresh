@@ -125,3 +125,31 @@ jobs:
       - name: Run tests
         if: runner.os != 'Linux'
         run: cargo nextest run -j=4 --no-fail-fast --locked --all-features --all-targets
+
+  # The release pipeline gets one shot per tag: a typo in a workflow expression
+  # or a `run:` block surfaces when a release is already half-published, where
+  # immutability means it cannot be fixed in place. This is the check that keeps
+  # that class of mistake in a pull request instead.
+  #
+  # Pinned and checksummed rather than piped from a URL, for the same reason the
+  # updater checksums what it downloads. shellcheck is preinstalled on the
+  # runner; it lints every `run:` block, restricted to warnings and above so the
+  # pre-existing style findings do not drown the real ones.
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install actionlint
+        env:
+          VERSION: 1.7.7
+          SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+        run: |
+          url="https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o actionlint.tar.gz "$url"
+          echo "${SHA256}  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+      - name: Lint workflows
+        env:
+          SHELLCHECK_OPTS: -S warning
+        run: ./actionlint -no-color -oneline -shellcheck shellcheck
