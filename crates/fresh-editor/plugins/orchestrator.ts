@@ -4725,9 +4725,10 @@ function runDockMenuOption(optKey: string): void {
       openCreateFolderDialog(null, sessionId);
       return;
     }
-    assignSessionToFolder(sessionId, target === "root" ? null : target);
+    // Through the published verb, so the menu and a script file a workspace
+    // the same way (and both refuse a placeholder that is still being created).
+    apiMoveWorkspace(sessionId, target === "root" ? null : target);
     closeDockMenu();
-    refreshOpenDialog();
     return;
   }
   closeDockMenu();
@@ -4926,38 +4927,38 @@ function buildCreateFolderSpec(): WidgetSpec {
 // Commit the dialog: create the folder and (when the checkbox is on)
 // file the target session under it. No-op on an empty name, so the
 // dialog stays open for the user to type one.
+// Every branch below goes through a published API verb rather than calling
+// the folder/name stores directly, so the dialog and a script share one
+// implementation of each operation — including the guards (a workspace still
+// being created cannot be renamed or filed) and the dock refresh.
 function submitCreateFolder(): void {
   const d = createFolderDialog;
   if (!d) return;
   if (d.renameSessionId !== null) {
     // Workspace rename: an empty name clears the manual name and lets the
     // auto-name / host label take back over.
-    const s = orchestratorSessions.get(d.renameSessionId);
-    if (s) renameWorkspace(s, d.name.value);
+    apiRenameWorkspace(d.renameSessionId, d.name.value);
     closeCreateFolderDialog();
-    if (openPanel && dockMode) refreshOpenDialog();
     return;
   }
   if (d.renameId !== null) {
     // Rename mode: an emptied-out name keeps the current one (renaming
-    // to nothing is never what the user meant).
+    // to nothing is never what the user meant), so the verb — which rejects
+    // an empty name — is only called when there is one.
     const trimmed = d.name.value.trim();
-    if (trimmed) renameFolder(d.renameId, trimmed);
+    if (trimmed) apiRenameFolder(d.renameId, trimmed);
     closeCreateFolderDialog();
-    if (openPanel && dockMode) refreshOpenDialog();
     return;
   }
-  // Empty name ⇒ the default ("New Folder"), matching the placeholder.
+  // Empty name ⇒ the default ("New Folder"), matching the placeholder. The
+  // verb rejects an empty name, so the dialog's own default is applied here
+  // rather than inside it — a script passing "" meant something else.
   const name = d.name.value.trim() || editor.t("dock.new_folder_default");
-  const id = createFolder(name, d.parent);
+  const id = apiCreateFolder(name, d.parent);
   if (d.organizeCurrent && d.sessionId != null) {
-    assignSessionToFolder(d.sessionId, id);
+    apiMoveWorkspace(d.sessionId, id);
   }
   closeCreateFolderDialog();
-  if (openPanel && dockMode) {
-    openPanel.setExpandedKeys("sessions", Array.from(loadExpanded()));
-    refreshOpenDialog();
-  }
 }
 
 // Tear down the dialog and hand keyboard focus back to the dock.
@@ -5400,8 +5401,10 @@ function stopOne(id: number): boolean {
 // ---------------------------------------------------------------------
 // Archive manifest — `<XDG>/orchestrator/<repo-slug>/archived.json`.
 // Records sessions that have been archived (stopped + worktree moved
-// to `.archived/`). Used today by the Archive action; Unarchive and
-// "Show archived" surface in a follow-up phase.
+// to `.archived/`). Written by the Archive action, read back by
+// `listArchived` / `unarchiveWorkspace` on the plugin API. No dock UI
+// surfaces archived rows yet; when one does it reads the same two
+// functions rather than re-walking the manifests.
 // ---------------------------------------------------------------------
 
 interface ArchivedSession {
@@ -5414,6 +5417,15 @@ interface ArchivedSession {
   branch: string;
   /** ISO 8601 timestamp of when the session was archived. */
   archived_at: string;
+  /**
+   * Repo the entry belongs to. The manifest lives under a *slug* of this
+   * path, and slugging is one-way, so without it a reader that found the
+   * file by scanning the data directory cannot name the repo the entry
+   * came from — which `git worktree move` needs to put it back. Absent in
+   * manifests written before this field existed; `archivedRepoRoot`
+   * recovers it from the archived worktree itself in that case.
+   */
+  repo_root?: string;
 }
 
 interface ArchiveManifest {
@@ -5454,6 +5466,113 @@ function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
   const dir = editor.pathDirname(path);
   if (!editor.createDir(editor.localPath(dir))) return false;
   return editor.writeFile(editor.localPath(path), JSON.stringify(m, null, 2));
+}
+
+/// Every archive manifest on this machine, paired with the entries it holds.
+///
+/// The manifests are keyed by a *slug* of the repo root, and slugging is
+/// one-way, so the scan cannot name the repo from the directory name. Newer
+/// entries carry `repo_root`; for older ones the repo is recovered from the
+/// archived worktree itself (`archivedRepoRoot`) at the point it is needed,
+/// which is the one place that needs it.
+function scanArchiveManifests(): { slug: string; manifest: ArchiveManifest }[] {
+  const base = editor.pathJoin(editor.getDataDir(), "orchestrator");
+  const out: { slug: string; manifest: ArchiveManifest }[] = [];
+  let entries: DirEntry[];
+  try {
+    entries = editor.readDir(editor.localPath(base));
+  } catch (_) {
+    return out;
+  }
+  // A machine that has never archived anything has no directory here at all;
+  // both shapes of "nothing to read" have to be tolerated (see
+  // `scanSessionContent`, which reads its directory the same way).
+  if (!entries) return out;
+  for (const e of entries) {
+    // `.archived` and `.sync-workspace` are the graveyard and the sync
+    // worktree, not per-repo state directories.
+    if (!e.is_dir || e.name.startsWith(".")) continue;
+    const path = editor.pathJoin(base, e.name, "archived.json");
+    const raw = editor.readFile(editor.localPath(path));
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.sessions)) {
+        out.push({ slug: e.name, manifest: parsed as ArchiveManifest });
+      }
+    } catch (_) {
+      // A corrupt manifest hides its own repo's archive rather than
+      // failing the whole listing — same tolerance as `loadArchiveManifest`.
+    }
+  }
+  return out;
+}
+
+/// The repo an archived entry belongs to: the recorded `repo_root` when the
+/// entry has one, else resolved from the archived worktree on disk (a linked
+/// worktree still points at its main checkout, even from the graveyard).
+/// `null` when neither is available — a manifest entry whose directory is
+/// gone, which unarchive cannot act on anyway.
+async function archivedRepoRoot(e: ArchivedSession): Promise<string | null> {
+  if (e.repo_root) return e.repo_root;
+  if (!editor.fileExists(editor.localPath(e.root))) return null;
+  return await resolveCanonicalRepoRoot(e.root);
+}
+
+/// Move an archived worktree back to where it came from and drop its manifest
+/// entry. Reverses `archiveOne`'s graveyard move; an entry archived in place
+/// (`original_root === root`, no move happened) just leaves the manifest, and
+/// the directory is already where it belongs.
+///
+/// Does NOT trigger sync — the caller batches that, matching the other
+/// lifecycle cores.
+async function unarchiveOne(e: ArchivedSession): Promise<LifecycleResult> {
+  const repoRoot = await archivedRepoRoot(e);
+  if (!repoRoot) return { ok: false, err: editor.t("err.not_git_repo") };
+
+  const moved = e.original_root !== e.root;
+  if (moved) {
+    if (!editor.fileExists(editor.localPath(e.root))) {
+      return { ok: false, err: `archived worktree is gone: ${e.root}`, repoRoot };
+    }
+    // Refuse rather than clobber: something else already occupies the path
+    // this worktree wants back, and `git worktree move` would fail anyway —
+    // with a message about a destination the user never named.
+    if (editor.fileExists(editor.localPath(e.original_root))) {
+      return {
+        ok: false,
+        err: `something already exists at ${e.original_root}`,
+        repoRoot,
+      };
+    }
+    const parent = editor.pathDirname(e.original_root);
+    if (!editor.createDir(editor.localPath(parent))) {
+      return { ok: false, err: editor.t("err.could_not_create", { path: parent }), repoRoot };
+    }
+    const res = await spawnCollect(
+      "git",
+      ["-C", repoRoot, "worktree", "move", e.root, e.original_root],
+      repoRoot,
+    );
+    if (res.exit_code !== 0) {
+      return {
+        ok: false,
+        err: lastNonEmptyLine(res.stderr) || editor.t("err.worktree_move_failed"),
+        repoRoot,
+      };
+    }
+  }
+
+  const manifest = loadArchiveManifest(repoRoot);
+  manifest.sessions = manifest.sessions.filter((x) => x.root !== e.root);
+  saveArchiveManifest(repoRoot, manifest);
+  // Nothing re-adds the row to the model here: the worktree is back on disk,
+  // so the discovered-worktree scan picks it up as an unopened row the next
+  // time it runs (and `focusWorkspace` / Enter opens it). Forcing a window
+  // open would make unarchive mean "restore *and* launch", which is not what
+  // the archive action's inverse should do.
+  void refreshDiscoveredWorktrees();
+  return { ok: true, repoRoot };
 }
 
 // Pick a session id to make active so that `excludeId` can be
@@ -5630,6 +5749,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
       original_root: s.root,
       branch: s.branch || s.label,
       archived_at: new Date().toISOString(),
+      repo_root: repoRoot,
     });
     saveArchiveManifest(repoRoot, manifest);
     // A discovered row has no window_closed hook to drop it — remove it
@@ -5658,6 +5778,7 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
     original_root: s.root,
     branch: s.branch || s.label,
     archived_at: new Date().toISOString(),
+    repo_root: repoRoot,
   });
   saveArchiveManifest(repoRoot, manifest);
   orchestratorSessions.delete(id);
@@ -5952,12 +6073,66 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   return { ok: true, repoRoot };
 }
 
+/// Outcome of a lifecycle batch: how many targets the action ran on
+/// successfully, and the last failure reason when some did not.
+interface LifecycleBatchResult {
+  ran: number;
+  ok: number;
+  lastErr: string;
+}
+
+/// Run Archive / Delete over `targets`, batching one sync per touched repo.
+///
+/// This is the single execution path for the destructive lifecycle actions:
+/// the picker's confirmed action calls it with its whole selection, and the
+/// plugin API's `archiveWorkspace` / `deleteWorkspace` call it with one id.
+/// `onProgress` is how the picker drives its "Archiving 2/3…" markers without
+/// this core knowing anything about the dialog — a headless caller passes
+/// nothing.
+///
+/// Targets are NOT re-filtered here: both callers check eligibility first (the
+/// picker to report "nothing eligible", the API to throw the reason), and
+/// silently dropping an ineligible id would turn the API's refusal into a
+/// success.
+async function runLifecycleBatch(
+  action: "archive" | "delete",
+  targets: number[],
+  onProgress?: (doneIndex: number, id: number) => void,
+): Promise<LifecycleBatchResult> {
+  const touchedRepos = new Set<string>();
+  let okCount = 0;
+  let lastErr = "";
+  for (let i = 0; i < targets.length; i++) {
+    const id = targets[i];
+    const res = action === "archive" ? await archiveOne(id) : await deleteOne(id);
+    if (res.ok) {
+      okCount += 1;
+      if (res.repoRoot) touchedRepos.add(res.repoRoot);
+    } else {
+      lastErr = res.err ?? editor.t("err.failed");
+    }
+    onProgress?.(i, id);
+  }
+  // The cores deliberately skip this so a batch pushes once per repo rather
+  // than once per workspace.
+  for (const repo of touchedRepos) triggerSyncAsync(repo);
+  return { ran: targets.length, ok: okCount, lastErr };
+}
+
+/// Signal the agent process groups of `targets`. Shared by the picker's
+/// confirmed Stop and the API's `stopWorkspace`; returns how many were
+/// signalled.
+function runStopBatch(targets: number[]): number {
+  let n = 0;
+  for (const id of targets) if (stopOne(id)) n += 1;
+  return n;
+}
+
 // Unified runner for a confirmed Stop / Archive / Delete over one or
 // many ids. Re-filters to eligible targets at execution time (the
 // selection or single row may have gone stale between confirm and
-// run), drives the in-flight progress markers, runs the per-id cores
-// sequentially, prunes acted-on ids from the selection, and triggers
-// one sync per touched repo at the end.
+// run), drives the in-flight progress markers, runs the shared batch
+// cores, and prunes acted-on ids from the selection.
 async function runConfirmedAction(
   action: BulkAction,
   ids: number[],
@@ -5971,8 +6146,7 @@ async function runConfirmedAction(
   }
 
   if (action === "stop") {
-    let n = 0;
-    for (const id of targets) if (stopOne(id)) n += 1;
+    const n = runStopBatch(targets);
     editor.setStatus(editor.t("status.stop_sent", { count: String(n) }));
     // Stop leaves sessions in place; drop them from the selection so
     // the bulk bar reflects that the action ran.
@@ -5989,22 +6163,15 @@ async function runConfirmedAction(
   }
   refreshOpenDialog();
 
-  const touchedRepos = new Set<string>();
-  let okCount = 0;
-  let lastErr = "";
-  for (let i = 0; i < targets.length; i++) {
-    const id = targets[i];
-    const res = action === "archive" ? await archiveOne(id) : await deleteOne(id);
-    if (res.ok) {
-      okCount += 1;
-      if (res.repoRoot) touchedRepos.add(res.repoRoot);
-    } else {
-      lastErr = res.err ?? editor.t("err.failed");
-    }
-    openDialog?.selectedIds.delete(id);
-    if (openDialog?.bulkInFlight) openDialog.bulkInFlight.done = i + 1;
-    refreshOpenDialog();
-  }
+  const { ok: okCount, lastErr } = await runLifecycleBatch(
+    action,
+    targets,
+    (i, id) => {
+      openDialog?.selectedIds.delete(id);
+      if (openDialog?.bulkInFlight) openDialog.bulkInFlight.done = i + 1;
+      refreshOpenDialog();
+    },
+  );
   if (openDialog) {
     openDialog.inFlight = null;
     openDialog.bulkInFlight = null;
@@ -6018,7 +6185,6 @@ async function runConfirmedAction(
   } else {
     editor.setStatus(editor.t("status.bulk_done", { verb, count: String(okCount) }));
   }
-  for (const repo of touchedRepos) triggerSyncAsync(repo);
   refreshOpenDialog();
   // The batch emptied the selection, so the pane is back in
   // single-preview mode — restore focus to Visit (the bulk buttons
@@ -6162,79 +6328,34 @@ function toggleSelectCurrent(): void {
 }
 registerHandler("orchestrator_toggle_select", toggleSelectCurrent);
 
+// Flip the picker between "this project" and "all projects". Through the
+// published verb, which remembers the choice for the next open and keeps the
+// highlighted session selected across the flip. The filter value is untouched
+// — toggling scope with an active filter just widens/narrows the search base.
 function toggleScope(): void {
   if (!openDialog) return;
-  openDialog.scope = openDialog.scope === "current" ? "all" : "current";
-  // Remember the choice for the next time the picker opens.
-  lastOpenScope = openDialog.scope;
-  // Keep the highlighted session selected across the scope flip
-  // when it survives into the new list; otherwise fall back to the
-  // top. The filter value is untouched — toggling scope with an
-  // active filter just widens/narrows the global-search base.
-  const prevId = openDialog.filteredIds[openDialog.selectedIndex];
-  openDialog.filteredIds = filterSessions(openDialog.filter.value);
-  const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
-  openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
-  refreshOpenDialog();
+  apiSetDockFilter({ scope: openDialog.scope === "current" ? "all" : "current" });
 }
 
 registerHandler("orchestrator_toggle_scope", toggleScope);
 
-// Flip "Show all worktrees" — reveal/hide the discovered on-disk
-// worktree rows. Preserves the highlighted row across the re-filter
-// where possible; drops now-hidden discovered rows from the bulk
-// selection. Shared by the Alt+T chord and the checkbox click.
+// Flip "Show all worktrees" — reveal/hide the discovered on-disk worktree
+// rows. Shared by the Alt+T chord and the checkbox click, and both go
+// through the published `setDockFilter`, which owns writing the flag,
+// re-filtering, preserving the highlighted row and pruning the selection.
 function toggleShowWorktrees(): void {
   if (!openDialog) return;
-  openDialog.showWorktrees = !openDialog.showWorktrees;
-  lastShowWorktrees = openDialog.showWorktrees;
-  // Hiding worktrees shouldn't leave them lingering in the selection.
-  if (!openDialog.showWorktrees) {
-    for (const id of [...openDialog.selectedIds]) {
-      if (orchestratorSessions.get(id)?.discovered) {
-        openDialog.selectedIds.delete(id);
-      }
-    }
-  }
-  const prevId = openDialog.filteredIds[openDialog.selectedIndex];
-  openDialog.filteredIds = filterSessions(openDialog.filter.value);
-  const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
-  openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
-  refreshOpenDialog();
-  // Turning "Show all worktrees" ON re-scans *now* so the rows reflect every
-  // project's on-disk worktrees at this moment — not just whatever the single
-  // scan at dialog-open time happened to catch. Discovery walks every known
-  // project (each open/persisted session's repo, plus the cwd repo), so a
-  // fresh scan here is what makes the toggle show worktrees across all
-  // projects rather than a stale subset. Async; `refreshDiscoveredWorktrees`
-  // re-renders the dialog when the scan lands.
-  if (openDialog.showWorktrees) {
-    void refreshDiscoveredWorktrees();
-  }
+  apiSetDockFilter({ worktrees: !openDialog.showWorktrees });
 }
 
 registerHandler("orchestrator_toggle_worktrees", toggleShowWorktrees);
 
 // Flip "Show empty/1-file sessions" — reveal/hide the trivial restored
-// shells. Preserves the highlighted row across the re-filter where
-// possible; drops now-hidden rows from the bulk selection. Shared by the
-// Alt+I chord and the checkbox click.
+// shells. `showEmpty` is the inverse of the stored `hideTrivial`, so
+// flipping the flag means passing the *current* `hideTrivial` through.
 function toggleHideTrivial(): void {
   if (!openDialog) return;
-  openDialog.hideTrivial = !openDialog.hideTrivial;
-  lastHideTrivial = openDialog.hideTrivial;
-  const prevId = openDialog.filteredIds[openDialog.selectedIndex];
-  openDialog.filteredIds = filterSessions(openDialog.filter.value);
-  // Hiding trivial rows shouldn't leave them lingering in the selection.
-  if (openDialog.hideTrivial) {
-    const visible = new Set(openDialog.filteredIds);
-    for (const id of [...openDialog.selectedIds]) {
-      if (!visible.has(id)) openDialog.selectedIds.delete(id);
-    }
-  }
-  const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
-  openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
-  refreshOpenDialog();
+  apiSetDockFilter({ showEmpty: openDialog.hideTrivial });
 }
 
 registerHandler("orchestrator_toggle_trivial", toggleHideTrivial);
@@ -8503,13 +8624,187 @@ function cancelForm(): void {
 
 type CaptureResult = { ok: true; spec: CreateSpec } | { ok: false; error: string };
 
+// ---------------------------------------------------------------------
+// Spec builders — plain values in, a `CreateSpec` out.
+//
+// These are the single construction path for a workspace create. The
+// dialog reaches them through `captureCreateSpec` (which does nothing but
+// read its fields), and the plugin API's `newWorkspace` reaches them
+// directly with the caller's options. Neither side builds a spec of its
+// own, so a new agent flag or a changed default lands in both at once —
+// the API used to assemble the local spec inline and had already drifted
+// into being a second, near-copy of the local branch below.
+// ---------------------------------------------------------------------
+
+/// Per-agent launch options, gated on what the resolved agent supports.
+/// Shared by every backend so a bare terminal (or a command that isn't a
+/// known agent) never gets stray flags or a prompt appended.
+interface AgentOptionInputs {
+  auto: boolean;
+  prompt: string;
+  teach: boolean;
+}
+
+function gateAgentOptions(
+  cmd: string,
+  o: AgentOptionInputs,
+): { auto: boolean; startPrompt: string; teachFreshCli: boolean } {
+  const entry = agentEntryForCmd(cmd);
+  return {
+    auto: !!entry?.auto && o.auto,
+    startPrompt: entry?.prompt ? o.prompt : "",
+    teachFreshCli: !!entry?.systemPrompt && o.teach,
+  };
+}
+
+interface LocalSpecInputs extends AgentOptionInputs {
+  projectPath: string;
+  /// Explicit workspace name; "" ⇒ auto-generated at create time.
+  name: string;
+  cmd: string;
+  branch: string;
+  newBranch: string;
+  createWorktree: boolean;
+  /// Row label to show while the create runs. "" ⇒ derived from the name /
+  /// the project's basename, which is what the dialog's placeholder shows.
+  displayLabel?: string;
+}
+
+function buildLocalSpec(o: LocalSpecInputs): CreateSpec {
+  return {
+    backend: "local",
+    projectPath: o.projectPath,
+    name: o.name,
+    cmd: o.cmd,
+    ...gateAgentOptions(o.cmd, o),
+    branch: o.branch,
+    newBranch: o.newBranch,
+    createWorktree: o.createWorktree,
+    displayLabel: o.displayLabel ||
+      o.name ||
+      editor.pathBasename(o.projectPath) ||
+      editor.t("dock.pending_default_name"),
+    displayProject: o.projectPath,
+  };
+}
+
+interface SshSpecInputs extends AgentOptionInputs {
+  /// `[user@]host[:port]`, or a pasted `ssh://…`.
+  host: string;
+  name: string;
+  cmd: string;
+  /// Remote directory to root the session at.
+  remotePath: string;
+  /// Identity file passed to ssh.
+  identity: string;
+  /// Extra ssh arguments, already split into argv.
+  extraArgs: string[];
+}
+
+function buildSshSpec(o: SshSpecInputs): CaptureResult {
+  // Parse `[user@]host[:port]` (also tolerates a pasted `ssh://…`). The user
+  // is optional — a bare `host` lets ssh resolve it from its own config.
+  const raw = o.host.trim().replace(/^ssh:\/\//, "");
+  const portMatch = raw.match(/^(.+):(\d+)$/);
+  const port = portMatch ? parseInt(portMatch[2], 10) : null;
+  const hostPart = portMatch ? portMatch[1] : raw;
+  const at = hostPart.indexOf("@");
+  const user = at > 0 ? hostPart.slice(0, at) : undefined;
+  const host = at >= 0 ? hostPart.slice(at + 1) : hostPart;
+  if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
+  const agentArgv = splitAgentCmd(o.cmd);
+  const target = user ? `${user}@${host}` : host;
+  const label = o.name || `ssh:${target}`;
+  const spec: RemoteAgentSpec = {
+    transport: {
+      kind: "ssh",
+      ...(user ? { user } : {}),
+      host,
+      port,
+      identity_file: o.identity || null,
+      remote_path: o.remotePath || null,
+      ...(o.extraArgs.length > 0 ? { extra_args: o.extraArgs } : {}),
+    },
+    base_env: [],
+    window: true,
+    label,
+    command: agentArgv.length > 0 ? agentArgv : undefined,
+  };
+  return {
+    ok: true,
+    spec: {
+      backend: "ssh",
+      spec,
+      facet: { kind: "ssh", detail: target, state: "starting" },
+      displayLabel: label,
+      displayProject: target,
+      persistCmd: o.cmd,
+    },
+  };
+}
+
+interface K8sSpecInputs {
+  /// Named target from `.fresh/k8s.json`; when set, `pod` is still required.
+  target: string;
+  context: string;
+  namespace: string;
+  pod: string;
+  workspace: string;
+  name: string;
+  cmd: string;
+}
+
+function buildK8sSpec(o: K8sSpecInputs): CaptureResult {
+  if (o.target && !o.pod) return { ok: false, error: editor.t("err.k8s_named_target") };
+  if (!o.namespace || !o.pod) {
+    return { ok: false, error: editor.t("err.k8s_ns_pod_required") };
+  }
+  const agentArgv = splitAgentCmd(o.cmd);
+  const detail = `${o.namespace}/${o.pod}`;
+  const label = o.name || `k8s:${detail}`;
+  const spec: RemoteAgentSpec = {
+    transport: {
+      kind: "kubectl-exec",
+      context: o.context || null,
+      namespace: o.namespace,
+      pod: o.pod,
+      container: null,
+      workspace: o.workspace || null,
+    },
+    base_env: [],
+    // Born-attached: a new window beside the local ones (not a global
+    // restart). Core records nothing about us — the orchestrator tracks the
+    // session via the `window_created` hook once the connect succeeds.
+    window: true,
+    label,
+    command: agentArgv.length > 0 ? agentArgv : undefined,
+  };
+  return {
+    ok: true,
+    spec: {
+      backend: "kubernetes",
+      spec,
+      facet: { kind: "kubernetes", detail, state: "starting" },
+      displayLabel: label,
+      displayProject: detail,
+      persistCmd: "",
+    },
+  };
+}
+
 // Resolve the (about-to-close) form into a `CreateSpec`, or return the
 // validation error that keeps the form open. Reads field values only — no
 // async work, no side effects — so the background worker never touches form
-// state that no longer exists.
+// state that no longer exists. The spec itself is built by the shared
+// builders above, which the plugin API calls with the same shapes.
 function captureCreateSpec(f: NewSessionForm): CaptureResult {
   const cmd = f.cmd.value.trim();
   const sessionName = f.name.value.trim();
+  const agentOptions: AgentOptionInputs = {
+    auto: f.autoMode,
+    prompt: f.startPrompt.value.trim(),
+    teach: f.teachFreshCli,
+  };
 
   if (f.backend === "local") {
     // Project Path: typed value wins; otherwise the resolved canonical-root
@@ -8519,115 +8814,46 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
     const projectPath = f.projectPath.value.trim() ||
       f.defaultProjectPath ||
       localProjectDefault();
-    const displayLabel = sessionName ||
-      f.defaultSessionName ||
-      editor.pathBasename(projectPath) ||
-      editor.t("dock.pending_default_name");
     return {
       ok: true,
-      spec: {
-        backend: "local",
+      spec: buildLocalSpec({
+        ...agentOptions,
         projectPath,
         name: sessionName,
         cmd,
-        // Only carry agent options for a command that resolves to an agent
-        // that supports them, so a bare terminal / custom command never gets
-        // stray flags or a prompt appended.
-        auto: !!agentEntryForCmd(cmd)?.auto && f.autoMode,
-        startPrompt: agentEntryForCmd(cmd)?.prompt ? f.startPrompt.value.trim() : "",
-        teachFreshCli: !!agentEntryForCmd(cmd)?.systemPrompt && f.teachFreshCli,
         branch: f.branch.value.trim(),
         newBranch: f.newBranch.value.trim(),
         createWorktree: f.createWorktree,
-        displayLabel,
-        displayProject: projectPath,
-      },
+        // The form has a third fallback the API has no equivalent for: the
+        // auto-generated `<project>-N` shown as the Name field's placeholder.
+        displayLabel: sessionName || f.defaultSessionName,
+      }),
     };
   }
 
   if (f.backend === "kubernetes") {
-    const target = f.k8sTarget.value.trim();
-    const namespace = f.k8sNamespace.value.trim();
-    const pod = f.k8sPod.value.trim();
-    if (target && !pod) return { ok: false, error: editor.t("err.k8s_named_target") };
-    if (!namespace || !pod) return { ok: false, error: editor.t("err.k8s_ns_pod_required") };
-    const agentArgv = splitAgentCmd(cmd);
-    const detail = `${namespace}/${pod}`;
-    const label = sessionName || `k8s:${namespace}/${pod}`;
-    const spec: RemoteAgentSpec = {
-      transport: {
-        kind: "kubectl-exec",
-        context: f.k8sContext.value.trim() || null,
-        namespace,
-        pod,
-        container: null,
-        workspace: f.k8sWorkspace.value.trim() || null,
-      },
-      base_env: [],
-      // Born-attached: a new window beside the local ones (not a global
-      // restart). Core records nothing about us — the orchestrator tracks the
-      // session via the `window_created` hook once the connect succeeds.
-      window: true,
-      label,
-      command: agentArgv.length > 0 ? agentArgv : undefined,
-    };
-    return {
-      ok: true,
-      spec: {
-        backend: "kubernetes",
-        spec,
-        facet: { kind: "kubernetes", detail, state: "starting" },
-        displayLabel: label,
-        displayProject: detail,
-        persistCmd: "",
-      },
-    };
+    return buildK8sSpec({
+      target: f.k8sTarget.value.trim(),
+      context: f.k8sContext.value.trim(),
+      namespace: f.k8sNamespace.value.trim(),
+      pod: f.k8sPod.value.trim(),
+      workspace: f.k8sWorkspace.value.trim(),
+      name: sessionName,
+      cmd,
+    });
   }
 
   if (f.backend === "ssh") {
-    // Parse `[user@]host[:port]` (also tolerates a pasted `ssh://…`). The user
-    // is optional — a bare `host` lets ssh resolve it from its own config.
-    const raw = f.sshHost.value.trim().replace(/^ssh:\/\//, "");
-    const portMatch = raw.match(/^(.+):(\d+)$/);
-    const port = portMatch ? parseInt(portMatch[2], 10) : null;
-    const hostPart = portMatch ? portMatch[1] : raw;
-    const at = hostPart.indexOf("@");
-    const user = at > 0 ? hostPart.slice(0, at) : undefined;
-    const host = at >= 0 ? hostPart.slice(at + 1) : hostPart;
-    if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
-    const identity = f.sshIdentity.value.trim();
-    const remotePath = f.sshPath.value.trim();
-    const extraArgs = f.sshOptions.value.trim()
-      ? f.sshOptions.value.trim().split(/\s+/)
-      : [];
-    const agentArgv = splitAgentCmd(cmd);
-    const target = user ? `${user}@${host}` : host;
-    const spec: RemoteAgentSpec = {
-      transport: {
-        kind: "ssh",
-        ...(user ? { user } : {}),
-        host,
-        port,
-        identity_file: identity || null,
-        remote_path: remotePath || null,
-        ...(extraArgs.length > 0 ? { extra_args: extraArgs } : {}),
-      },
-      base_env: [],
-      window: true,
-      label: sessionName || `ssh:${target}`,
-      command: agentArgv.length > 0 ? agentArgv : undefined,
-    };
-    return {
-      ok: true,
-      spec: {
-        backend: "ssh",
-        spec,
-        facet: { kind: "ssh", detail: target, state: "starting" },
-        displayLabel: sessionName || `ssh:${target}`,
-        displayProject: target,
-        persistCmd: cmd,
-      },
-    };
+    const options = f.sshOptions.value.trim();
+    return buildSshSpec({
+      ...agentOptions,
+      host: f.sshHost.value.trim(),
+      name: sessionName,
+      cmd,
+      remotePath: f.sshPath.value.trim(),
+      identity: f.sshIdentity.value.trim(),
+      extraArgs: options ? options.split(/\s+/) : [],
+    });
   }
 
   // devcontainer — no runtime plugin-to-plugin attach yet.
@@ -9236,6 +9462,19 @@ async function runRemoteCreate(id: number): Promise<void> {
     // hook adopted the facet). Drop the placeholder.
     orchestratorSessions.delete(id);
     savePendingSpecs();
+    // Hand a waiting caller its ids. The attach dove into the born window, so
+    // it is the active one right now — before the `restoreActiveWindow` below
+    // puts focus back. Without this a caller awaiting a remote create waited
+    // forever: the local worker settles its outcome and this one never did,
+    // which went unnoticed while `newWorkspace` was local-only.
+    const bornId = editor.activeWindow();
+    const born = editor.listWindows().find((w) => w.id === bornId);
+    settleCreateOutcome(id, {
+      ok: true,
+      windowId: bornId,
+      workspaceId: born?.stable_id,
+      root: born?.root,
+    });
     if (spec.persistCmd) editor.setGlobalState("orchestrator.last_cmd", spec.persistCmd);
     if (visit) {
       // Create & Visit: the attach already made the born window active; hand
@@ -9547,12 +9786,23 @@ export type RunAgentOptions = {
   teach?: boolean;
 };
 
-export type NewWorkspaceOptions = RunAgentOptions & {
+/// Options shared by every `newWorkspace` backend.
+export type NewWorkspaceCommon = RunAgentOptions & {
+  /** Workspace name. Default: the next auto-generated `<project>-N` locally,
+   *  or `ssh:<target>` for a remote one. */
+  name?: string;
+  /** Move focus into the new workspace once it is up. Default false — an agent
+   *  asking for a workspace should not yank the human's focus into it. */
+  visit?: boolean;
+};
+
+/// A workspace on this machine: the dialog's "Local" backend.
+export type LocalWorkspaceOptions = NewWorkspaceCommon & {
+  /** Omit (or `"local"`) for a workspace on this machine. */
+  backend?: "local";
   /** Project directory the workspace roots at. Default: this workspace's
    *  project. Must exist. */
   path?: string;
-  /** Workspace name. Default: the next auto-generated `<project>-N`. */
-  name?: string;
   /** Existing branch to check out in the new worktree. Default: the repo's
    *  default branch. */
   branch?: string;
@@ -9561,10 +9811,27 @@ export type NewWorkspaceOptions = RunAgentOptions & {
   /** Create a git worktree for the workspace. Default true; ignored for a
    *  non-git path. */
   worktree?: boolean;
-  /** Move focus into the new workspace once it is up. Default false — an agent
-   *  asking for a workspace should not yank the human's focus into it. */
-  visit?: boolean;
 };
+
+/// A workspace on a remote host over SSH: the dialog's "SSH" backend, whose
+/// fields these mirror one-for-one.
+export type SshWorkspaceOptions = NewWorkspaceCommon & {
+  backend: "ssh";
+  /** `host`, `user@host`, `user@host:port`, or a pasted `ssh://…`. The user
+   *  is optional — a bare host lets ssh resolve it from its own config.
+   *  Required. */
+  host: string;
+  /** Remote directory to root the session at. Default: ssh's landing
+   *  directory on the host. */
+  path?: string;
+  /** Identity file to authenticate with (ssh's `-i`). */
+  identity?: string;
+  /** Extra ssh arguments, e.g. `"-J jump"` or `["-o", "ProxyCommand=…"]`.
+   *  A string is split on whitespace, like the dialog's field. */
+  sshOptions?: string | string[];
+};
+
+export type NewWorkspaceOptions = LocalWorkspaceOptions | SshWorkspaceOptions;
 
 /// One workspace, as `listWorkspaces()` reports it.
 export type WorkspaceSummary = {
@@ -9612,6 +9879,29 @@ export type WorkspaceSummary = {
   backend?: string;
 };
 
+/// One archived workspace, as `listArchived()` reports it. An archived
+/// workspace has no window and no dock row — its worktree has been moved out
+/// to the graveyard — so it is identified by path, not by `workspaceId`.
+export type ArchivedWorkspace = {
+  /** Current path of the archived worktree. This is the identity
+   *  `unarchiveWorkspace` takes. */
+  archivedRoot: string;
+  /** Where the worktree lived before it was archived, and where
+   *  `unarchiveWorkspace` puts it back. Equal to `archivedRoot` for a
+   *  workspace that was archived in place (nothing was moved). */
+  originalRoot: string;
+  /** Display name it had on the dock. */
+  name: string;
+  /** Branch the worktree was on. */
+  branch: string;
+  /** ISO 8601 timestamp of when it was archived. */
+  archivedAt: string;
+  /** Repo it belongs to, when known. Manifests written by older versions
+   *  did not record it; it is recovered from the worktree on demand, so an
+   *  empty value here does not prevent `unarchiveWorkspace` from working. */
+  projectPath: string;
+};
+
 /// One dock folder, as `listFolders()` reports it.
 export type FolderSummary = {
   /** Stable folder id — what `moveWorkspace` / `createFolder` take. */
@@ -9640,6 +9930,10 @@ export type DockFilterOptions = {
   worktrees?: boolean;
   /** Show workspaces with no edited files (the "show empty" checkbox). */
   showEmpty?: boolean;
+  /** The modal picker's scope control: `"current"` foregrounds the active
+   *  window's project, `"all"` lists every project. The dock uses `project`
+   *  instead, so this only shows up when the picker is open. */
+  scope?: "current" | "all";
 };
 
 /// Public surface of the bundled `orchestrator` plugin, reachable through
@@ -9656,8 +9950,13 @@ export type OrchestratorApi = {
   /** Launch a coding agent in THIS workspace — the headless twin of the
    *  "Run Agent…" dialog. Resolves once the agent's terminal is up. */
   runAgent(options?: RunAgentOptions): Promise<AgentLaunchResult>;
-  /** Create a workspace (a git worktree by default) and launch a coding agent
-   *  in it — the headless twin of the "New Workspace" dialog.
+  /** Create a workspace and launch a coding agent in it — the headless twin
+   *  of the "New Workspace" dialog, including its backend switch.
+   *
+   *  Omit `backend` (or pass `"local"`) for a workspace on this machine: a
+   *  git worktree by default. Pass `backend: "ssh"` with a `host` for one on
+   *  a remote host, which mirrors the dialog's SSH fields — remote path,
+   *  identity file, and extra ssh arguments.
    *
    *  Unlike the dialog, which returns to the user immediately and reports
    *  progress on the dock, this waits for the create to finish: a caller has no
@@ -9739,6 +10038,27 @@ export type OrchestratorApi = {
    *  Throws if the workspace cannot be deleted, or if the delete fails. */
   deleteWorkspace(target: string | number): Promise<boolean>;
 
+  // ── the archive ────────────────────────────────────────────────────────
+  // Archived workspaces are off the dock entirely: no window, no row, their
+  // worktree moved out to the graveyard. These two are how a caller sees
+  // them and brings one back.
+
+  /** Every archived workspace on this machine, across every repo, newest
+   *  first. */
+  listArchived(): ArchivedWorkspace[];
+  /** Put an archived workspace back where it came from: its worktree returns
+   *  to `originalRoot` and its archive entry is dropped. `target` is the
+   *  `archivedRoot` (or the `name`) that `listArchived()` reports.
+   *
+   *  The workspace comes back as an unopened worktree on the dock rather
+   *  than a running session — the inverse of Archive, not "restore and
+   *  launch". Call `focusWorkspace` after it to open one.
+   *
+   *  Resolves `false` when nothing matches; throws when the restore itself
+   *  fails — most usefully when something already occupies `originalRoot`,
+   *  which it refuses to overwrite. */
+  unarchiveWorkspace(target: string): Promise<boolean>;
+
   // ── dock view state ────────────────────────────────────────────────────
   // Both apply to the dock whether or not it is open: with the dock closed
   // they set what it will show the next time it opens, which is the same
@@ -9772,30 +10092,67 @@ function trimmed(value: string | undefined): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
+/// The per-agent options in the shape the shared spec builders take. The
+/// gating against what the resolved agent actually supports happens inside
+/// `gateAgentOptions`, so this only has to supply the caller's intent and the
+/// API's defaults (teach on, auto off — the dialog's defaults too).
+function agentOptionsFrom(options: RunAgentOptions): AgentOptionInputs {
+  return {
+    auto: options.auto ?? false,
+    prompt: trimmed(options.prompt),
+    teach: options.teach ?? true,
+  };
+}
+
 async function runAgent(options: RunAgentOptions = {}): Promise<AgentLaunchResult> {
   const cmd = trimmed(options.agent);
-  const entry = agentEntryForCmd(cmd);
-  // Mirror `submitForm`'s current-workspace branch: the per-agent options are
-  // only honoured for an agent whose registry entry supports each, so a bare
-  // terminal never gets stray flags appended.
+  // Same gating and the same launch function as `submitForm`'s
+  // current-workspace branch, so a bare terminal never gets stray flags.
+  const gated = gateAgentOptions(cmd, agentOptionsFrom(options));
   await launchAgentInCurrentWorkspace(cmd, {
-    auto: !!entry?.auto && (options.auto ?? false),
-    prompt: entry?.prompt ? trimmed(options.prompt) : "",
-    teachFreshCli: !!entry?.systemPrompt && (options.teach ?? true),
+    auto: gated.auto,
+    prompt: gated.startPrompt,
+    teachFreshCli: gated.teachFreshCli,
   });
   // The agent runs in the workspace the caller is already in; returning its ids
   // means a caller never has to correlate "which workspace did that land in".
   return currentWorkspaceIds();
 }
 
-async function newWorkspace(
-  options: NewWorkspaceOptions = {},
-): Promise<AgentLaunchResult> {
+/// Build the caller's options into the same `CreateSpec` the dialog submits.
+/// Every field goes through the shared builders — this function only supplies
+/// the API's defaults and the validation the dialog gets from its own widgets
+/// (a path field that completes against the filesystem, a host field that
+/// refuses to submit empty).
+function specForNewWorkspace(options: NewWorkspaceOptions): CreateSpec {
   const cmd = trimmed(options.agent);
-  const entry = agentEntryForCmd(cmd);
+  const name = trimmed(options.name);
+  const agentOptions = agentOptionsFrom(options);
+
+  if (options.backend === "ssh") {
+    const raw = options.sshOptions;
+    const extraArgs = Array.isArray(raw)
+      ? raw.map((a) => String(a).trim()).filter((a) => a !== "")
+      : trimmed(raw)
+        ? trimmed(raw).split(/\s+/)
+        : [];
+    const built = buildSshSpec({
+      ...agentOptions,
+      host: trimmed(options.host),
+      name,
+      cmd,
+      remotePath: trimmed(options.path),
+      identity: trimmed(options.identity),
+      extraArgs,
+    });
+    // The dialog keeps itself open on a bad host and shows the message; a
+    // caller gets the same message as a thrown error.
+    if (!built.ok) throw new Error(built.error);
+    return built.spec;
+  }
+
   const requestedPath = trimmed(options.path);
   const projectPath = requestedPath || localProjectDefault();
-  const name = trimmed(options.name);
   // A path the caller passed has to exist. The dialog's field completes against
   // the filesystem, so a human sees a wrong path immediately; a caller passing
   // `path` by hand does not, and the create would otherwise "succeed" into a
@@ -9803,28 +10160,25 @@ async function newWorkspace(
   if (requestedPath && !editor.fileExists(editor.localPath(requestedPath))) {
     throw new Error(`project path does not exist: ${requestedPath}`);
   }
-  // Local backend only: ssh/kubernetes workspaces need connection details that
-  // deserve their own verb (and their own validation), and a caller asking for
-  // a sibling workspace wants the local case.
-  const spec: CreateSpec = {
-    backend: "local",
+  return buildLocalSpec({
+    ...agentOptions,
     projectPath,
     // "" ⇒ `runLocalCreate` allocates the next `<project>-N` name, the same
     // default the dialog's placeholder shows.
     name,
     cmd,
-    auto: !!entry?.auto && (options.auto ?? false),
-    startPrompt: entry?.prompt ? trimmed(options.prompt) : "",
-    teachFreshCli: !!entry?.systemPrompt && (options.teach ?? true),
     branch: trimmed(options.branch),
     newBranch: trimmed(options.newBranch),
     // Worktree by default (the dialog's default too); `runLocalCreate` demotes
     // it to false on its own when the path isn't a git tree.
     createWorktree: options.worktree ?? true,
-    displayLabel: name || editor.pathBasename(projectPath) ||
-      editor.t("dock.pending_default_name"),
-    displayProject: projectPath,
-  };
+  });
+}
+
+async function newWorkspace(
+  options: NewWorkspaceOptions = {},
+): Promise<AgentLaunchResult> {
+  const spec = specForNewWorkspace(options);
   const pendingId = startPendingWorkspace(spec, { visit: options.visit ?? false });
   const outcome = await awaitCreateOutcome(pendingId);
   if (!outcome.ok) {
@@ -10049,14 +10403,15 @@ function apiStopWorkspace(target: string | number): boolean {
   const s = resolveWorkspace(target);
   if (!s) return false;
   requireEligible(s, "stop");
-  if (!stopOne(s.id)) throw new Error("stop failed");
+  // Same batch runner as the picker's confirmed Stop, over one id.
+  if (runStopBatch([s.id]) === 0) throw new Error("stop failed");
   refreshOpenDialog();
   return true;
 }
 
-/// Archive / delete share everything but which `*One` they call: both check
-/// eligibility, both await the result, both throw on failure, and both fire
-/// the cross-machine manifest sync the picker's confirmed action fires.
+/// Archive / delete over a single workspace, through the same batch runner
+/// the picker's confirmed action uses — so the cross-machine manifest sync,
+/// and anything added to that path later, applies to a scripted archive too.
 async function runLifecycle(
   target: string | number,
   action: "archive" | "delete",
@@ -10064,13 +10419,57 @@ async function runLifecycle(
   const s = resolveWorkspace(target);
   if (!s) return false;
   requireEligible(s, action);
-  const res = action === "archive" ? await archiveOne(s.id) : await deleteOne(s.id);
-  if (!res.ok) {
-    throw new Error(res.err || `${action} failed`);
+  const res = await runLifecycleBatch(action, [s.id]);
+  if (res.ok === 0) {
+    throw new Error(res.lastErr || `${action} failed`);
   }
-  // The manifest changed, so the same background push the confirmed action
-  // triggers has to run here too — otherwise a scripted archive is invisible
-  // on the user's other machines.
+  refreshOpenDialog();
+  return true;
+}
+
+function apiListArchived(): ArchivedWorkspace[] {
+  const out: ArchivedWorkspace[] = [];
+  for (const { manifest } of scanArchiveManifests()) {
+    for (const e of manifest.sessions) {
+      out.push({
+        archivedRoot: e.root,
+        originalRoot: e.original_root,
+        name: e.label,
+        branch: e.branch,
+        archivedAt: e.archived_at,
+        projectPath: e.repo_root ?? "",
+      });
+    }
+  }
+  // Newest first: the one a caller is most likely to want back is the one it
+  // just archived.
+  out.sort((a, b) => (a.archivedAt < b.archivedAt ? 1 : a.archivedAt > b.archivedAt ? -1 : 0));
+  return out;
+}
+
+async function apiUnarchiveWorkspace(target: string): Promise<boolean> {
+  const want = trimmed(target);
+  if (!want) return false;
+  // Match on the archived path first (unique), then the display name, which
+  // is what a human reads off the listing. A name shared by two archived
+  // workspaces resolves to the newest, matching the listing's own order.
+  let match: ArchivedSession | null = null;
+  for (const { manifest } of scanArchiveManifests()) {
+    for (const e of manifest.sessions) {
+      if (e.root === want) {
+        match = e;
+        break;
+      }
+      if (e.label === want && (!match || e.archived_at > match.archived_at)) {
+        match = e;
+      }
+    }
+    if (match && match.root === want) break;
+  }
+  if (!match) return false;
+  const res = await unarchiveOne(match);
+  if (!res.ok) throw new Error(res.err || "unarchive failed");
+  // The manifest changed, so push it the same way the archive path does.
   if (res.repoRoot) triggerSyncAsync(res.repoRoot);
   refreshOpenDialog();
   return true;
@@ -10088,7 +10487,18 @@ function apiSetDockView(view: "card" | "compact"): void {
   refreshOpenDialog();
 }
 
-function apiSetDockFilter(options: DockFilterOptions = {}): void {
+function apiSetDockFilter(
+  options: DockFilterOptions = {},
+  // Internal, and deliberately absent from the published signature: set when
+  // the call comes from the filter box's own `change` event. The box already
+  // holds the text and owns the caret, so the value must not be pushed back
+  // (that would move the caret to the end and make mid-string editing jump).
+  fromWidget?: { cursorByte?: number },
+): void {
+  // The row the user is looking at, so it can be kept highlighted across the
+  // re-filter below. Captured before anything changes.
+  const prevId = openDialog?.filteredIds[openDialog.selectedIndex];
+
   // Each control is written to its remembered module value *and* to the open
   // dialog's live state. The remembered value is what makes this work with
   // the dock closed: the next open seeds from it, so setting a filter ahead
@@ -10097,11 +10507,12 @@ function apiSetDockFilter(options: DockFilterOptions = {}): void {
     const value = options.text;
     if (openDialog) {
       openDialog.filter.value = value;
-      openDialog.filter.cursor = utf8Len(value);
+      openDialog.filter.cursor = fromWidget?.cursorByte ?? utf8Len(value);
       // The filter box is a controlled widget with its own buffer: updating
       // our state only changes what we filter *by*, so the typed text has to
-      // be pushed back explicitly or the list and the box disagree.
-      openPanel?.setValue("filter", value, utf8Len(value));
+      // be pushed back explicitly or the list and the box disagree. Not when
+      // the box is where the value came from — see `fromWidget`.
+      if (!fromWidget) openPanel?.setValue("filter", value, utf8Len(value));
     }
   }
   if (options.project !== undefined) {
@@ -10120,12 +10531,43 @@ function apiSetDockFilter(options: DockFilterOptions = {}): void {
     lastHideTrivial = !options.showEmpty;
     if (openDialog) openDialog.hideTrivial = !options.showEmpty;
   }
+  if (options.scope === "current" || options.scope === "all") {
+    lastOpenScope = options.scope;
+    if (openDialog) openDialog.scope = options.scope;
+  }
+
+  if (openDialog) {
+    openDialog.filteredIds = filterSessions(openDialog.filter.value);
+    // Pruning is deliberately limited to the two *visibility* checkboxes.
+    // A row hidden by the search box or the project menu stays checked on
+    // purpose — `selectedSessions()` counts checked-but-filtered-out rows, so
+    // a bulk action survives narrowing the list to find the next member. A
+    // row hidden by "all worktrees" / "show empty" is a different matter: the
+    // user just said they do not want that class of row at all.
+    if (options.worktrees === false || options.showEmpty === false) {
+      const visible = new Set(openDialog.filteredIds);
+      for (const id of [...openDialog.selectedIds]) {
+        if (!visible.has(id)) openDialog.selectedIds.delete(id);
+      }
+    }
+    // Keep the highlight on the same row when it survived the narrowing.
+    const nextIdx = prevId !== undefined ? openDialog.filteredIds.indexOf(prevId) : -1;
+    openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
+  }
   refreshOpenDialog();
   // A search force-opens every folder so matches aren't buried, and restores
   // the user's expansion set when it clears — the same reconciliation the
   // typed-into filter box runs. `refreshOpenDialog` just rebuilt the tree, so
   // `dockKeys` is current.
   if (dockMode) applyDockExpansion();
+  // Turning "all worktrees" ON re-scans *now* so the rows reflect every
+  // project's on-disk worktrees at this moment — not just whatever the single
+  // scan at dialog-open time happened to catch. Discovery walks every known
+  // project (each open/persisted session's repo, plus the cwd repo), so a
+  // fresh scan here is what makes the toggle show worktrees across all
+  // projects rather than a stale subset. Async; `refreshDiscoveredWorktrees`
+  // re-renders the dialog when the scan lands.
+  if (options.worktrees === true) void refreshDiscoveredWorktrees();
 }
 
 editor.exportPluginApi("orchestrator", {
@@ -10142,6 +10584,8 @@ editor.exportPluginApi("orchestrator", {
   stopWorkspace: apiStopWorkspace,
   archiveWorkspace: (target: string | number) => runLifecycle(target, "archive"),
   deleteWorkspace: (target: string | number) => runLifecycle(target, "delete"),
+  listArchived: apiListArchived,
+  unarchiveWorkspace: apiUnarchiveWorkspace,
   setDockView: apiSetDockView,
   setDockFilter: apiSetDockFilter,
 });
@@ -10547,7 +10991,7 @@ editor.on("widget_event", (e) => {
           return;
         }
         if (e.widget_key === "ctx-delete-folder") {
-          deleteFolder(target.id);
+          apiDeleteFolder(target.id);
           closeDockContextMenuAndRestoreDock();
           return;
         }
@@ -10902,20 +11346,17 @@ editor.on("widget_event", (e) => {
         // search without retyping it. Esc/editor-click still clear, so
         // the one-key escape from a stale filter is unchanged.
         if (!wasDive && openDialog.filter.value !== "") {
-          openDialog.filter.value = "";
-          openDialog.filter.cursor = 0;
           dockFocus = "list";
-          const activeId = editor.activeWindow();
-          const all = filterSessions("");
-          openDialog.filteredIds = all;
-          const activeIdx = all.indexOf(activeId);
+          // Clearing goes through the shared path, which also pushes the
+          // empty value back into the (controlled) text box — without that
+          // the list would show every session while the box still read
+          // "gamma".
+          apiSetDockFilter({ text: "" });
+          // Then override the highlight: leaving the dock lands on the
+          // *active* session, not on whatever row the abandoned search had
+          // highlighted.
+          const activeIdx = openDialog.filteredIds.indexOf(editor.activeWindow());
           openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-          // The filter input is a controlled widget: clearing our
-          // local state only changes what we *filter by*. The text
-          // box keeps its own buffer until we push the empty value
-          // back, so reset it explicitly — otherwise the list shows
-          // every session while the box still reads "gamma".
-          openPanel?.setValue("filter", "", 0);
           refreshOpenDialog();
         } else {
           // Re-render so the keyboard hints drop off the blurred dock.
@@ -11071,26 +11512,18 @@ editor.on("widget_event", (e) => {
       const value = payload.value;
       const cursor = payload.cursorByte;
       if (typeof value !== "string") return;
-      openDialog.filter.value = value;
-      if (typeof cursor === "number") openDialog.filter.cursor = cursor;
       // Filter change implies the user has moved on from any
       // previous error — clear the banner so it doesn't shadow
-      // the typing experience.
+      // the typing experience. Before the re-render below.
       clearDialogError();
-      // Preserve highlighted session across the filter narrowing
-      // when possible — if the previously selected id is still in
-      // the new filtered set, keep it; otherwise reset to 0.
-      const prevId = openDialog.filteredIds[openDialog.selectedIndex];
-      const next = filterSessions(value);
-      openDialog.filteredIds = next;
-      const nextIdx = prevId !== undefined ? next.indexOf(prevId) : -1;
-      openDialog.selectedIndex = nextIdx >= 0 ? nextIdx : 0;
-      refreshOpenDialog();
-      // The tree force-opens every folder while a search is active (so
-      // matches aren't buried) and restores the user's expansion set when
-      // the search clears. `refreshOpenDialog` just rebuilt the tree, so
-      // `dockKeys` is current.
-      if (dockMode) applyDockExpansion();
+      // Same path a script's `setDockFilter({ text })` takes: it re-filters,
+      // preserves the highlighted session where it survives, re-renders and
+      // reconciles the tree's expansion. `fromWidget` keeps the caret where
+      // the user put it instead of snapping it to the end.
+      apiSetDockFilter(
+        { text: value },
+        { cursorByte: typeof cursor === "number" ? cursor : undefined },
+      );
       return;
     }
     // Right-click on a tree node → open its context menu. Only the dock
@@ -11311,13 +11744,11 @@ editor.on("widget_event", (e) => {
       openMoveToFolderForCurrent();
       return;
     }
-    // Dock "view" button → flip card ⇄ compact density and re-render.
+    // Dock "view" button → flip card ⇄ compact density. Routed through the
+    // published verb so the button and a script take the same path (which
+    // also pins the override, so a later re-open doesn't undo the flip).
     if (e.event_type === "activate" && e.widget_key === "view-toggle") {
-      dockView = dockView === "card" ? "compact" : "card";
-      // Pin it for the rest of the session — the configured default only
-      // decides where the dock *starts*.
-      dockViewOverride = dockView;
-      if (openPanel) openPanel.update(buildDockSpec());
+      apiSetDockView(dockView === "card" ? "compact" : "card");
       return;
     }
     // Dock project dropdown: the toolbar button toggles the menu open,
