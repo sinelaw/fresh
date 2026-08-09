@@ -184,6 +184,16 @@ parser exists to prevent — each is covered by a test that fails without the fi
   byte and merely gain the sub-parameter. Decoding it for CSI-u alone left every
   arrow keypress moving the cursor twice and every Delete removing two characters
   (#2796) while typing was unaffected — the asymmetry that hid the gap.
+- **`0x1F` reports as `Ctrl+/`, matching the kitty form.** A terminal without
+  the kitty keyboard protocol has one byte for that chord and sends it for
+  Ctrl+/, Ctrl+7 and Ctrl+_ alike, so the parser has to pick one spelling. It
+  picks `/`: the key people actually press for it (no Shift needed), and the
+  key a kitty terminal reports for the same chord via `CSI 47;5u`. Deriving the
+  whole `0x1C..=0x1F` range arithmetically instead gave `Ctrl+_`, which no
+  keymap binds — so `ctrl+/` (toggle-comment in the default keymap, undo in the
+  emacs one) fired under kitty and nowhere else (#2933). `0x1C`/`0x1D`/`0x1E`
+  keep `\`, `]`, `^`: those *are* the keys bound to them, and `ctrl+]` and
+  `ctrl+\` are live bindings.
 - **Modifier decoding is complete.** Shift/Alt/Ctrl/Super/Hyper/Meta are all
   mapped, and the modifier field is parsed as `u16` so its maximum legal value
   (256) no longer overflows and fails closed. Caps Lock / Num Lock have no

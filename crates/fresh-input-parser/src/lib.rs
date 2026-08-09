@@ -1168,7 +1168,16 @@ fn byte_to_keycode(byte: u8) -> KeyCode {
         10 | 13 => KeyCode::Enter,                          // LF or CR
         1..=26 => KeyCode::Char((b'a' + byte - 1) as char), // Ctrl+A..Ctrl+Z
         27 => KeyCode::Esc,
-        28..=31 => KeyCode::Char((b'\\' + byte - 28) as char),
+        28..=30 => KeyCode::Char((b'\\' + byte - 28) as char), // Ctrl+\, Ctrl+], Ctrl+^
+        // `US`. A legacy terminal sends 0x1F for Ctrl+/, Ctrl+7 and Ctrl+_
+        // alike, so the parser has to pick one spelling for the chord. It picks
+        // `/` because that is the key people actually press for it (no Shift
+        // needed) and because it is what the same chord reports under the kitty
+        // protocol (`CSI 47;5u`), so both kinds of terminal resolve to one
+        // binding. Deriving this arithmetically with 0x1C–0x1E gave `Ctrl+_`,
+        // which no keymap binds, so `ctrl+/` fired on kitty and nowhere else
+        // (sinelaw/fresh#2933).
+        31 => KeyCode::Char('/'),
         32 => KeyCode::Char(' '),
         127 => KeyCode::Backspace,
         b if (32..127).contains(&b) => KeyCode::Char(b as char),

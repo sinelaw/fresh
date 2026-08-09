@@ -133,7 +133,11 @@ fn control_byte(c: char) -> Option<u8> {
         '\\' | '4' => 0x1c,
         ']' | '5' => 0x1d,
         '^' | '6' => 0x1e,
-        '_' | '7' => 0x1f,
+        // Ctrl+/ is the same `US` byte as Ctrl+_ and Ctrl+7. Without the '/'
+        // arm the chord fell through to the plain-character path and the child
+        // saw a literal `/` — which is what a kitty-protocol terminal, where
+        // the chord arrives as Ctrl+/ rather than Ctrl+_, hit.
+        '_' | '7' | '/' => 0x1f,
         '@' | '2' => 0x00, // NUL
         ' ' => 0x00,       // Ctrl+Space = NUL
         '?' => 0x7f,       // DEL
@@ -371,6 +375,33 @@ mod tests {
         assert_eq!(seq(KeyCode::Up, ctrl), "\x1b[1;5A");
         assert_eq!(seq(KeyCode::Up, shift), "\x1b[1;2A");
         assert_eq!(seq(KeyCode::Up, alt), "\x1b[1;3A");
+    }
+
+    /// Every spelling of the `US` chord has to reach the child as 0x1F. `/` was
+    /// missing from the table, so Ctrl+/ — the way the chord arrives from a
+    /// kitty-protocol terminal, and now from the legacy path too — fell through
+    /// to the plain-character branch and the child saw a bare `/`.
+    #[test]
+    fn ctrl_slash_reaches_the_child_as_us() {
+        let ctrl = KeyModifiers::CONTROL;
+
+        for key in ['/', '_', '7'] {
+            assert_eq!(
+                key_to_pty_bytes(KeyCode::Char(key), ctrl, false),
+                Some(vec![0x1f]),
+                "Ctrl+{key} should send 0x1F"
+            );
+        }
+
+        // Ctrl+Alt is deliberately not asserted: it is the one part of this
+        // encoding that varies by platform, since Windows reports AltGr as
+        // Ctrl+Alt and routes it to the plain-character path instead.
+
+        // Without Ctrl it is still an ordinary slash.
+        assert_eq!(
+            key_to_pty_bytes(KeyCode::Char('/'), KeyModifiers::empty(), false),
+            Some(vec![b'/'])
+        );
     }
 
     /// Home/End/PageUp/PageDown/Insert accepted only Ctrl (or nothing at all),
