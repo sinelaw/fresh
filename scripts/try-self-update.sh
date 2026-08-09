@@ -55,6 +55,27 @@ fi
   exit 1
 }
 
+# A stale target/ binary is the easiest way to draw a wrong conclusion here: an
+# older `fresh` has no --releases-url (so it silently ignores the override and
+# updates from /latest) and no attestation check (so the run looks clean while
+# testing nothing). Both failures are quiet. Refuse unless told otherwise.
+check_binary_is_current() {
+  local want have
+  want="$(sed -n 's/^version = "\(.*\)"/\1/p' "$REPO_ROOT/Cargo.toml" | head -1)"
+  have="$("$1" --version 2>/dev/null | awk '{print $2}')"
+  if [ -n "$want" ] && [ -n "$have" ] && [ "$want" != "$have" ]; then
+    echo "refusing to use a stale binary." >&2
+    echo "    $1" >&2
+    echo "    reports $have, but this checkout is $want" >&2
+    echo >&2
+    echo "  An older fresh ignores --releases-url and has no attestation check," >&2
+    echo "  so the run would look fine while proving nothing. Rebuild:" >&2
+    echo "      cargo build -p fresh-editor --bin fresh --release" >&2
+    echo "  (or set ALLOW_STALE=1 to override)" >&2
+    [ "${ALLOW_STALE:-}" = "1" ] || exit 1
+  fi
+}
+
 TRIPLE="${TRIPLE:-$(rustc -vV | sed -n 's/^host: //p')}"
 case "$TRIPLE" in
   *-windows-*) EXT=zip ;;
@@ -102,6 +123,7 @@ for r in json.load(sys.stdin):
   fi
   [ -n "$TAG" ] || { echo "could not pick a release tag" >&2; exit 1; }
 
+  check_binary_is_current "$FRESH_BIN"
   setup_sandbox
   echo "binary   : $FRESH_BIN"
   echo "target   : $TRIPLE  ->  $ASSET"
@@ -115,17 +137,37 @@ for r in json.load(sys.stdin):
   # Only the feed URL is overridden, and only to another path on
   # api.github.com. The asset still comes from the default download base, and
   # the endpoint stays trusted, so the attestation check runs for real.
+  log="$SANDBOX/update.log"
   set +e
   "$SANDBOX/install/fresh" --cmd update \
     --releases-url "https://api.github.com/repos/$GH_REPO/releases/tags/$TAG" \
     --allow-downgrade \
-    --yes
-  status=$?
+    --yes 2>&1 | tee "$log"
+  status="${PIPESTATUS[0]}"
   set -e
   echo "(exit $status)"
 
   banner "after"
   "$SANDBOX/install/fresh" --version
+
+  # The whole point of remote mode, stated rather than left to be eyeballed.
+  # fetch_and_verify prints exactly one of these two lines every time, so their
+  # joint absence means the binary has no attestation check at all.
+  banner "attestation"
+  if grep -q 'Verifying release attestation' "$log"; then
+    if [ "$status" -eq 0 ]; then
+      echo "VERIFIED — the digest was cross-checked against api.github.com."
+      echo "  (fail-closed: a missing or mismatched attestation aborts the update)"
+    else
+      echo "RAN, but the update failed — see the error above."
+    fi
+  elif grep -q 'skipping the attestation check' "$log"; then
+    echo "SKIPPED — endpoint was untrusted. Expected in local mode, not here:"
+    echo "  --releases-url must stay https on an allowlisted host to stay trusted."
+  else
+    echo "ABSENT — this binary has no attestation check. It predates the feature;"
+    echo "  rebuild from this branch."
+  fi
   ;;
 
 local)
