@@ -108,10 +108,12 @@ fn screen_row_of(harness: &EditorTestHarness, needle: &str) -> Option<usize> {
 /// one corrective step, never strand the cursor. `send_key` moves the caret
 /// synchronously and renders, so no per-step `wait_until` is needed.
 ///
-/// The loop is bounded so a needle that never lines up (e.g. a genuine mapping
-/// regression) fails fast with the screen for triage, instead of hanging an
-/// indefinite wait until nextest's external 180s timeout (CONTRIBUTING.md §3
-/// semantic waiting, §16 don't hide a wrong state behind an unbounded wait).
+/// The loop bounds *keystrokes*, not time: a needle that never lines up (e.g.
+/// a genuine mapping regression) fails fast with the screen for triage. Frames
+/// where the needle or the `Ln` indicator hasn't rendered yet are waited out
+/// indefinitely instead of consuming steps — otherwise the step cap would be a
+/// disguised in-test timeout, which CONTRIBUTING.md §3 rules out (nextest
+/// bounds the wait externally).
 ///
 /// Replaces the old down-only `move_cursor_to_line`, which pressed Down forever
 /// — hanging to the external timeout — whenever the target was mis-derived
@@ -121,21 +123,25 @@ fn move_cursor_onto(harness: &mut EditorTestHarness, needle: &str) {
     // reached on genuine failure. Each step is one synchronous key + render.
     const MAX_STEPS: usize = 300;
     for _ in 0..MAX_STEPS {
-        match (status_line_number(harness), screen_row_of(harness, needle)) {
-            (Some(current), Some(target)) if current == target => return,
-            (Some(current), Some(target)) => {
-                let key = if current < target {
-                    KeyCode::Down
-                } else {
-                    KeyCode::Up
-                };
-                harness.send_key(key, KeyModifiers::NONE).unwrap();
-            }
-            // Needle not visible yet, or no `Ln` indicator this frame (the focus
-            // repaint is still settling). Pump one tick and re-read without
-            // moving, so we don't chase a target that hasn't rendered.
-            _ => harness.tick_and_render().unwrap(),
+        // Re-establish a frame that renders both the caret line and the needle.
+        // The async focus repaint is multi-phase, so a mid-reflow frame can
+        // show neither; waiting is free, stepping on a half-drawn frame is not.
+        harness
+            .wait_until(|h| status_line_number(h).is_some() && screen_row_of(h, needle).is_some())
+            .unwrap();
+        // Both reads come from that same settled frame — which is what lets the
+        // walk converge instead of chasing a target derived from another paint.
+        let current = status_line_number(harness).expect("caret line readable");
+        let target = screen_row_of(harness, needle).expect("needle visible");
+        if current == target {
+            return;
         }
+        let key = if current < target {
+            KeyCode::Down
+        } else {
+            KeyCode::Up
+        };
+        harness.send_key(key, KeyModifiers::NONE).unwrap();
     }
     panic!(
         "could not land the diff cursor on a row rendering {:?} within {} steps \
@@ -300,52 +306,42 @@ fn test_review_visual_discard_status_is_localized() {
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
 
-    // The confirmation is shown transiently: applyLineSelection sets it,
-    // then refreshMagitData's updateReviewStatus overwrites it with the
-    // hunk-count summary. Poll every tick and record what the status bar
-    // ever showed, so we deterministically catch the frame regardless of
-    // timing. (This is exactly the window the bug report screenshotted.)
-    let mut saw_localized = false;
-    let mut saw_raw_key = false;
-    let mut reverted = false;
-    for _ in 0..120 {
-        harness.tick_and_render().unwrap();
-        let s = harness.screen_to_string();
-        if s.contains("Lines discarded") {
-            saw_localized = true;
-        }
-        // The buggy emitter leaked `status.lines_discardd` verbatim; guard
-        // against any untranslated `status.lines_*` key reaching the screen.
-        if s.contains("status.lines_") {
-            saw_raw_key = true;
-        }
-        let content = fs::read_to_string(repo.path.join("README.md")).unwrap_or_default();
-        if !content.contains("extra line") {
-            reverted = true;
-        }
-        // Stop once the discard landed *and* we observed its confirmation.
-        if reverted && saw_localized {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        harness.advance_time(std::time::Duration::from_millis(20));
-    }
+    // The plugin holds the confirmation until the user moves off the row it
+    // was issued on, so this is a stable frame rather than the one-frame
+    // window the bug report screenshotted — an indefinite semantic wait
+    // catches it without polling on a timer.
+    //
+    // Waiting on "a lines_* confirmation, localized *or* raw" rather than on
+    // the localized text alone is deliberate: a regression that reinstates
+    // the raw key still satisfies this wait, so the asserts below fail with
+    // the offending screen instead of hanging to nextest's external timeout.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Lines discarded") || s.contains("status.lines_")
+        })
+        .unwrap();
 
+    let screen = harness.screen_to_string();
+    // The buggy emitter leaked `status.lines_discardd` verbatim; guard
+    // against any untranslated `status.lines_*` key reaching the screen.
     assert!(
-        reverted,
-        "line-level discard never reverted the working tree"
-    );
-    assert!(
-        !saw_raw_key,
+        !screen.contains("status.lines_"),
         "line-level discard must not leak a raw i18n key (e.g. \
-         `status.lines_discardd`) into the status bar; last screen:\n{}",
-        harness.screen_to_string()
+         `status.lines_discardd`) into the status bar; screen:\n{screen}"
     );
     assert!(
-        saw_localized,
+        screen.contains("Lines discarded"),
         "line-level discard should show the localized confirmation \
-         \"Lines discarded\"; last screen:\n{}",
-        harness.screen_to_string()
+         \"Lines discarded\"; screen:\n{screen}"
+    );
+
+    // The confirmation is only emitted after the patch applied, so reaching
+    // it means the revert landed; assert the worktree agrees.
+    let content = fs::read_to_string(repo.path.join("README.md")).unwrap();
+    assert!(
+        !content.contains("extra line"),
+        "line-level discard never reverted the working tree; README.md:\n{content}"
     );
 }
 
