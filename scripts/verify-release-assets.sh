@@ -4,20 +4,18 @@
 #
 #   scripts/verify-release-assets.sh v0.4.7
 #
-# The update path cannot be exercised until a release exists, and by then users
-# depend on it. Three things have to hold for every archive the updater can
-# install, and none of them is checked anywhere else:
+# Three things must hold for every archive the updater can install, and nothing
+# else checks any of them:
 #
-#   1. The archive is present. `gh release create` in release.yml ends with
+#   1. It is published. `gh release create` in release.yml ends with
 #      `2>/dev/null || true`, so a failed upload does not fail the release.
-#   2. Its `.sha256` sidecar matches the bytes actually served.
-#   3. GitHub holds a build attestation for that digest. Attestations are
-#      produced by repository configuration, not by anything in this repo, so
-#      nothing here would notice them going away.
+#   2. Its `.sha256` matches the bytes GitHub serves.
+#   3. GitHub holds an attestation for that digest. Attestations come from
+#      repository configuration, not from anything in this repo, so nothing
+#      here would notice them stopping.
 #
-# Each failure is silent until a user runs `fresh --cmd update`, where the
-# checks are fail-closed: a missing attestation aborts the update. This turns
-# that into a red release job instead.
+# All three fail closed at update time, on a user's machine, long after the
+# release. This makes them a red release job instead.
 #
 # Bytes are hashed as they stream; nothing is written to disk.
 set -euo pipefail

@@ -2,38 +2,20 @@
 #
 # Exercise `fresh --cmd update` by hand, without waiting for a release.
 #
-# Two modes, because they prove different halves of the path:
+#   scripts/try-self-update.sh remote [tag]   real published release; attestation runs
+#   scripts/try-self-update.sh local          fabricated release on 127.0.0.1; no network
 #
-#   remote  Install a *real* published release from GitHub. The download, the
-#           checksum sidecar and the cross-origin attestation check are all the
-#           production ones. This is the only way to exercise attestation —
-#           see "why not local" below. Works with a release build.
+# Neither touches your real install — both update a throwaway one under
+# target/try-update/.
 #
-#   local   Fabricate a release and serve it from 127.0.0.1. Nothing touches
-#           the network. Attestation is *skipped*, because a local server has
-#           no attestations and never could. Needs a debug build.
+# Remote mode points --releases-url at one release's tag endpoint and passes
+# --allow-downgrade, so it needs no unreleased version to chase. That is not a
+# downgrade in trust: an override stays trusted while it is https on an
+# allowlisted host, so the attestation check stays on.
 #
-# Neither mode touches your real install: both lay out a throwaway one under
-# target/try-update/ and update that.
-#
-#   scripts/try-self-update.sh remote          # default
-#   scripts/try-self-update.sh remote v0.4.5
-#   scripts/try-self-update.sh local
-#
-# Why remote mode can downgrade at all: the engine takes the release feed URL
-# from --releases-url, and endpoint.rs keeps an override *trusted* as long as
-# it stays https on an allowlisted host. api.github.com is on that list, so
-# pointing at one release's tag endpoint instead of /latest is not a downgrade
-# in trust — attestation stays switched on. --allow-downgrade then permits
-# installing a version older than the running one, which is what makes this
-# work with no unreleased version to chase.
-#
-# Why local mode cannot test attestation: an out-of-policy endpoint (plain
-# http://, 127.0.0.1) sets Endpoints::trusted = false, and the engine skips the
-# attestation check for untrusted endpoints — deliberately, since a test server
-# has no attestations. It also refuses to elevate with those bytes. That same
-# policy is why local mode needs a debug build: a release build *refuses* an
-# out-of-policy override outright rather than downgrading to untrusted.
+# Local mode needs a debug build. An out-of-policy endpoint marks the run
+# untrusted, which skips attestation (a local server has none) — and a release
+# build refuses such an endpoint outright rather than downgrading to untrusted.
 set -euo pipefail
 
 MODE="${1:-remote}"

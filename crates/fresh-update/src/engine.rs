@@ -442,19 +442,15 @@ pub fn archive_ext(target: &str) -> &'static str {
     }
 }
 
-/// Download `url` and refuse to return the bytes unless they check out.
+/// Download `url`, returning the bytes only if they check out at both origins.
 ///
-/// Two checks at two origins, because one origin is not enough. The `.sha256`
-/// sidecar catches corruption but nothing else: it is served from the same
-/// place as the payload, so anyone who can substitute one can substitute the
-/// other. The attestation lookup asks `api.github.com` whether these exact
-/// bytes were published under this exact asset name, which an attacker holding
-/// only the asset CDN cannot arrange. See [`crate::attestation`] for what that
-/// does and does not prove.
+/// The sidecar shares an origin with the payload, so it catches corruption and
+/// nothing else; the attestation lookup asks a second, separately pinned origin
+/// whether these bytes were published under this name. See
+/// [`crate::attestation`] for what that does and does not prove.
 ///
-/// `trusted` tracks [`Endpoints::trusted`]: a test server has no attestations
-/// and never could, so an overridden endpoint skips the second check — and the
-/// engine already refuses to elevate with bytes from one.
+/// `trusted` tracks [`Endpoints::trusted`] — an overridden endpoint has no
+/// attestations to find, so the second check is skipped.
 fn fetch_and_verify(transport: &Transport, url: &str, trusted: bool) -> Result<Vec<u8>, String> {
     println!("Downloading {url} ...");
     let scratch = crate::staging::ephemeral()?;
@@ -556,7 +552,7 @@ mod tests {
             let needs_privilege = crate::plan(&prov).needs_privilege;
             assert!(needs_privilege, "{channel} should need root");
             assert!(
-                !(untrusted.trusted || !needs_privilege),
+                !untrusted.trusted && needs_privilege,
                 "{channel} would install unpinned bytes as root"
             );
         }

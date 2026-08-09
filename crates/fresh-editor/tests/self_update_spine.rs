@@ -1,40 +1,21 @@
-//! The self-update spine, driven against the **real `fresh` binary**.
+//! The self-update spine, driven against the real `fresh` binary.
 //!
-//! # Why the real binary
+//! An earlier version drove a purpose-built stand-in that called the engine
+//! directly. That proved the engine worked, not that `fresh` did: flag
+//! parsing, endpoint overrides, the feature gate and the exit-code mapping the
+//! update indicator keys off were all untested, and a stand-in duplicating the
+//! caller is free to drift from the one that ships.
 //!
-//! An earlier version of this test drove a purpose-built stand-in that called
-//! the engine directly. It proved the engine worked and could not prove that
-//! `fresh` did: everything between the command line and the engine — flag
-//! parsing, the endpoint overrides, the feature gate, the exit-code mapping the
-//! editor's update indicator keys off — was untested, and a stand-in that
-//! duplicates the caller is a second implementation free to drift from the one
-//! that ships. So this spawns `CARGO_BIN_EXE_fresh` and drives it exactly as a
-//! user would.
+//! No test-only surface. `--releases-url` / `--download-base` already ship for
+//! air-gapped mirrors, and pointing them anywhere marks the endpoints
+//! untrusted — which is what makes this safe. The *version* is faked with no
+//! override at all: the fabricated feed announces something far above anything
+//! real, so the upgrade path is entered for the real reason, with no build at
+//! a second version and no affordance that could leak into a release.
 //!
-//! # No test-only surface
-//!
-//! Nothing here needs a flag that exists for testing. `--releases-url` /
-//! `--download-base` already ship, for air-gapped and enterprise mirrors, and
-//! pointing them anywhere marks the endpoints untrusted — which is what makes
-//! this safe: an untrusted endpoint never reaches `sudo`, and the attestation
-//! check is skipped because a local server has no attestations and never could.
-//!
-//! The *version* is faked without any override at all: the fabricated feed
-//! announces something far above anything real, so the binary's own
-//! `CURRENT_VERSION` is genuinely older and the upgrade path is entered for the
-//! real reason. That is the whole trick — no build at a second version, and no
-//! way for a test affordance to leak into a release.
-//!
-//! # Hermetic
-//!
-//! `tiny_http` serves a feed, an archive built here, and a `.sha256` over it.
-//! Nothing reaches the network, and `HOME` / `XDG_*` point into the temp dir so
-//! a developer's real config and receipts cannot influence the result.
-//!
-//! Not covered here: the attestation gate (skipped for an overridden endpoint —
-//! it is tested against a real captured GitHub payload in `fresh-update`), and
-//! whether the engine asks for the extension the pipelines publish (held by
-//! `fresh-update`'s `release_contract` test, which reads the workflow YAML).
+//! Not covered here: the attestation gate (skipped for an overridden endpoint;
+//! tested against a captured GitHub payload in `fresh-update`) and whether the
+//! engine asks for the extension the pipelines publish (`release_contract`).
 
 #![cfg(all(unix, feature = "self-update"))]
 
@@ -46,10 +27,9 @@ use std::process::{Command, Output};
 /// comparison against the binary's own version can only go one way.
 const NEW_VERSION: &str = "99.9.9";
 
-/// Payload published as the "new binary". A script rather than an ELF: the
-/// engine extracts the entry by name and writes the bytes without inspecting
-/// them, so this proves the swap landed *and* stays runnable, which proves the
-/// executable bit survived it.
+/// A script rather than an ELF: the engine writes the entry without
+/// inspecting it, so running the result proves both the swap and that the
+/// executable bit survived.
 const NEW_BINARY: &[u8] = b"#!/bin/sh\necho updated-ok\n";
 
 /// The triple this build asks the release for.
@@ -112,18 +92,12 @@ fn install(with_receipt: bool) -> Install {
     }
 }
 
-/// Put a runnable `fresh` at `to`, as cheaply as possible.
+/// A debug `fresh` is ~500 MB and every case needs its own copy to overwrite,
+/// so it is stripped once into a cache (~90 MB) that cases hard-link.
 ///
-/// A debug `fresh` is around 500 MB, almost all of it debug symbols this test
-/// never reads, and every case needs its own copy to overwrite. So the binary
-/// is stripped **once** into a cache beside the build output (~90 MB), and each
-/// case hard-links that.
-///
-/// Linking is safe because the swap is a rename over the path, not a write
-/// through the inode: the shared file keeps its contents no matter how many
-/// cases replace their own entry. Stripping is why the cache is needed at all —
-/// stripping a hard link would strip the *build output*, since they are the
-/// same inode.
+/// Linking is safe because the swap renames over the path rather than writing
+/// through the inode. The cache exists because stripping a hard link would
+/// strip the build output itself.
 fn place_binary(to: &Path) {
     let source = stripped_binary();
     if std::fs::hard_link(&source, to).is_err() {
@@ -131,15 +105,11 @@ fn place_binary(to: &Path) {
     }
 }
 
-/// The stripped `fresh`, produced on first use and reused afterwards.
+/// nextest gives each case its own process, so several may strip at once: each
+/// writes a private name and renames into place, so the losers of the race
+/// overwrite identical content and any reader holds a complete file.
 ///
-/// nextest runs each case in its own process, so several may arrive here at
-/// once: each strips to a private name and renames into place, which is atomic
-/// and idempotent — the losers of the race simply overwrite identical content,
-/// and a reader that linked the previous inode holds a complete file either way.
-///
-/// Falls back to the unstripped binary if `strip` is missing or refuses; the
-/// test is about behaviour, not size.
+/// Falls back to the unstripped binary if `strip` is unavailable.
 fn stripped_binary() -> PathBuf {
     let original = PathBuf::from(env!("CARGO_BIN_EXE_fresh"));
     let cache_dir = Path::new(env!("CARGO_TARGET_TMPDIR"));

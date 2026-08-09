@@ -19,7 +19,7 @@ default = []
 # HTTP transport for the release feed and release assets. Pulls in the TLS
 # stack (ureq + rustls + ring + webpki); off by default so a build that only
 # needs provenance resolution stays dependency-light.
-net = ["dep:ureq"]
+net = ["dep:ureq", "dep:base64"]
 # Archive extraction for the self-contained channels (tarball / AppImage).
 archive = ["dep:tar", "dep:xz2", "dep:flate2", "dep:zip"]
 # The full `fresh --cmd update` engine: resolve provenance, fetch the feed,
@@ -36,6 +36,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "0.8"
 sha2 = "0.10"
+# DSSE payloads are base64; the workspace already builds this crate.
+base64 = { version = "0.22", optional = true }
 tracing = { workspace = true }
 
 ureq = { version = "3.1.4", default-features = false, features = [

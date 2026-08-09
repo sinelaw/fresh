@@ -1,67 +1,31 @@
-//! Cross-origin verification: does GitHub attest to the bytes we just
-//! downloaded?
+//! Cross-origin verification: does GitHub attest to the bytes we downloaded?
 //!
-//! # The hole this closes
+//! The `.sha256` sidecar comes from the same origin as the artifact, so
+//! whoever can substitute one can substitute the other — it catches
+//! corruption, nothing else. The release pipeline also publishes build
+//! attestations: in-toto statements naming each asset and its digest, served
+//! from `api.github.com`, an origin pinned separately. Asking there whether
+//! this digest is published under this name means both origins have to fall
+//! rather than one. GitHub indexes by digest, so a tampered artifact has no
+//! attestation to find.
 //!
-//! [`crate::endpoint`] is explicit that host pinning is not a substitute for
-//! signing, "because a checksum served from the same origin as the payload
-//! proves nothing about who produced either". That is precisely the situation
-//! the `.sha256` sidecar leaves us in: the artifact comes from the release CDN
-//! and its checksum comes from the release CDN, so whoever can serve one can
-//! serve the other, and the comparison only proves the server can do
-//! arithmetic.
+//! This is deliberately not full Sigstore. The bundle's DSSE envelope is
+//! signed by a Fulcio certificate, but checking that signature buys nothing
+//! without validating the chain to a pinned root: whoever can forge the
+//! `api.github.com` response forges the certificate with it. GitHub ships that
+//! root over TUF, whose traversal is a client in its own right, and pinning it
+//! without that machinery trades an outage at every root rotation for the
+//! assurance gained. The anchor here is TLS to a second origin, shaped so
+//! chain validation can slot in above it later. Two origins, not a signature.
 //!
-//! The release pipeline already publishes GitHub build attestations
-//! (`github-attestations = true` in `dist-workspace.toml`). An attestation is
-//! an in-toto statement, produced by the workflow that built the release,
-//! listing every published asset by name and SHA-256. It is served from
-//! `api.github.com` — a *different* origin from the asset CDN, and one this
-//! crate pins separately.
-//!
-//! So after the sidecar check we ask a second question at a second origin:
-//! **is this exact digest, under this exact asset name, in the attestation for
-//! this repository?** GitHub indexes attestations by subject digest, so a
-//! tampered artifact simply has no attestation to find — the lookup 404s.
-//! Substituting a genuine-but-different artifact fails too, because the name
-//! recorded next to the digest will not be the asset we asked for.
-//!
-//! # What this proves, and what it does not
-//!
-//! It proves that the bytes are ones GitHub's attestation service holds a
-//! release attestation for, under the name we expected, in this repository —
-//! and that an attacker who controls only the asset CDN cannot manufacture
-//! that. Both origins now have to fall, not one.
-//!
-//! It is **not** full Sigstore verification. The bundle carries a DSSE
-//! envelope signed by a Fulcio-issued certificate, and verifying that
-//! signature is only worth anything if the certificate chain is validated to a
-//! pinned root — otherwise an attacker who can forge the `api.github.com`
-//! response forges the certificate alongside it, and the signature check adds
-//! nothing it did not already control. GitHub distributes that root through a
-//! TUF repository whose traversal (timestamp → snapshot → targets, with root
-//! rotation) is a client in its own right, and the research this design
-//! follows is explicit that full TUF is usually too much for a standalone
-//! binary. Pinning the root without the TUF machinery would trade a hard
-//! availability failure at every rotation for the assurance gained.
-//!
-//! So the trust anchor here is TLS to a pinned second origin, and the code is
-//! shaped so that chain validation slots in above it later rather than
-//! replacing it. The honest summary is: two origins instead of one, not a
-//! signature.
-//!
-//! # Fail-closed, except against a test endpoint
-//!
-//! A production run treats a missing or non-matching attestation as fatal —
-//! every asset type the engine downloads (`.deb`, `.rpm`, `.flatpak`,
-//! `.tar.xz`, `.zip`, `.AppImage`) is attested by the release workflow, so its
-//! absence means something is wrong rather than something is old.
-//!
-//! A run against an overridden endpoint skips the check, because a local test
-//! server has no attestations and never could. That is the same line
-//! [`crate::endpoint`] already draws: an overridden endpoint is marked
-//! untrusted, and the engine refuses to elevate with what it fetched.
+//! Fail-closed: every asset the engine downloads is attested, so a missing
+//! attestation means something is wrong, not something is old. An overridden
+//! endpoint skips the check — a test server has no attestations and never
+//! could — and the engine already refuses to elevate with bytes from one.
 
 use crate::net::Transport;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 
 /// Cap on the attestation document. Bundles run to a few tens of KB — one DSSE
 /// envelope listing every asset in the release — so this is far above real
@@ -173,8 +137,9 @@ pub fn attests(body: &str, asset: &str, digest: &str) -> Result<bool, Attestatio
         let Some(payload_b64) = payload_b64 else {
             continue;
         };
-        let raw = decode_base64(payload_b64)
-            .ok_or_else(|| AttestationError::Malformed("DSSE payload is not base64".to_string()))?;
+        let raw = BASE64
+            .decode(payload_b64)
+            .map_err(|e| AttestationError::Malformed(format!("DSSE payload is not base64: {e}")))?;
         let statement: serde_json::Value = serde_json::from_slice(&raw)
             .map_err(|e| AttestationError::Malformed(format!("DSSE payload: {e}")))?;
 
@@ -198,46 +163,6 @@ pub fn attests(body: &str, asset: &str, digest: &str) -> Result<bool, Attestatio
     Ok(false)
 }
 
-/// Standard-alphabet base64 with optional padding.
-///
-/// Hand-rolled rather than pulled in: the crate's dependency list is
-/// deliberately short, and this decodes one field of one document.
-fn decode_base64(input: &str) -> Option<Vec<u8>> {
-    fn value(b: u8) -> Option<u32> {
-        match b {
-            b'A'..=b'Z' => Some(u32::from(b - b'A')),
-            b'a'..=b'z' => Some(u32::from(b - b'a') + 26),
-            b'0'..=b'9' => Some(u32::from(b - b'0') + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-
-    let mut out = Vec::with_capacity(input.len() / 4 * 3);
-    let mut acc: u32 = 0;
-    let mut bits = 0u32;
-    for &byte in input.as_bytes() {
-        if byte.is_ascii_whitespace() {
-            continue;
-        }
-        if byte == b'=' {
-            break;
-        }
-        acc = (acc << 6) | value(byte)?;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(u8::try_from((acc >> bits) & 0xff).ok()?);
-        }
-    }
-    // Leftover bits must be zero padding, never a partial byte we dropped.
-    if bits >= 6 || (acc & ((1 << bits) - 1)) != 0 {
-        return None;
-    }
-    Some(out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,7 +180,7 @@ mod tests {
                  ]}}"#,
             other = "b".repeat(64),
         );
-        let payload = encode_base64(statement.as_bytes());
+        let payload = BASE64.encode(statement.as_bytes());
         format!(
             r#"{{"attestations":[{{"bundle":{{
                  "mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json",
@@ -263,45 +188,6 @@ mod tests {
                                   "payload":"{payload}",
                                   "signatures":[{{"sig":"MEUCIQ=="}}]}}}}}}]}}"#
         )
-    }
-
-    fn encode_base64(bytes: &[u8]) -> String {
-        const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::new();
-        for chunk in bytes.chunks(3) {
-            let b = [
-                chunk[0],
-                *chunk.get(1).unwrap_or(&0),
-                *chunk.get(2).unwrap_or(&0),
-            ];
-            let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-            let idx = [(n >> 18) & 63, (n >> 12) & 63, (n >> 6) & 63, n & 63];
-            for (i, id) in idx.iter().enumerate() {
-                if i <= chunk.len() {
-                    out.push(char::from(ALPHABET[*id as usize]));
-                } else {
-                    out.push('=');
-                }
-            }
-        }
-        out
-    }
-
-    #[test]
-    fn base64_round_trips() {
-        for sample in ["", "a", "ab", "abc", "abcd", "hello world", "{\"a\":1}"] {
-            let encoded = encode_base64(sample.as_bytes());
-            assert_eq!(
-                decode_base64(&encoded).as_deref(),
-                Some(sample.as_bytes()),
-                "round trip failed for {sample:?} (encoded {encoded})"
-            );
-        }
-    }
-
-    #[test]
-    fn base64_rejects_junk() {
-        assert_eq!(decode_base64("!!!!"), None);
     }
 
     /// The real thing: an unedited response from
@@ -343,7 +229,7 @@ mod tests {
                 .and_then(|p| p.as_str())
                 .unwrap();
             let statement: serde_json::Value =
-                serde_json::from_slice(&decode_base64(payload).unwrap()).unwrap();
+                serde_json::from_slice(&BASE64.decode(payload).unwrap()).unwrap();
             let named = statement["subject"]
                 .as_array()
                 .unwrap()
