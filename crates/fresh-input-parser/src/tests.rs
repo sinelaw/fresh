@@ -48,6 +48,45 @@ fn control_characters_have_ctrl_modifier() {
     assert_eq!(keys(&ev), vec![(KeyCode::Char('c'), KeyModifiers::CONTROL)]);
 }
 
+/// 0x1F is the byte a legacy terminal sends for Ctrl+/ — the chord users
+/// actually press — and it must report as Ctrl+/ so a `ctrl+/` binding fires on
+/// xterm/iTerm and not only under the kitty protocol. Reporting it as Ctrl+_
+/// left `ctrl+/` dead on every terminal without CSI-u.
+#[test]
+fn us_byte_is_ctrl_slash() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(&[0x1f])),
+        vec![(KeyCode::Char('/'), KeyModifiers::CONTROL)]
+    );
+}
+
+/// The kitty encoding of the same chord agrees with the legacy byte, so a
+/// binding resolves identically on both kinds of terminal.
+#[test]
+fn ctrl_slash_agrees_across_protocols() {
+    let mut p = InputParser::new();
+    assert_eq!(keys(&p.parse(&[0x1f])), keys(&p.parse(b"\x1b[47;5u")));
+}
+
+/// Characterization test (passes before and after the Ctrl+/ fix): pins the
+/// neighbouring separators so re-canonicalising 0x1F does not drag them along.
+/// Ctrl+\ (0x1C, SIGQUIT), Ctrl+] (0x1D, the telnet/readline escape) and
+/// Ctrl+^ (0x1E) are the keys people press for those bytes, and `ctrl+]` /
+/// `ctrl+\` are live bindings in the default and macOS keymaps.
+#[test]
+fn other_separator_bytes_keep_their_keys() {
+    let mut p = InputParser::new();
+    assert_eq!(
+        keys(&p.parse(&[0x1c, 0x1d, 0x1e])),
+        vec![
+            (KeyCode::Char('\\'), KeyModifiers::CONTROL),
+            (KeyCode::Char(']'), KeyModifiers::CONTROL),
+            (KeyCode::Char('^'), KeyModifiers::CONTROL),
+        ]
+    );
+}
+
 #[test]
 fn enter_key_cr_and_lf() {
     let mut p = InputParser::new();

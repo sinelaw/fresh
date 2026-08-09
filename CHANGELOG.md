@@ -27,6 +27,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
   * **Highlights taller than the window are drawn again.**
 * **Input**
   * **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
+  * **`Ctrl+/` works outside kitty again** (#2933) - toggle-comment fired under kitty but nowhere else, because the `0x1F` byte every other terminal sends for the chord was read as `Ctrl+_`. It also reaches a terminal panel's child process as `0x1F` now, instead of a literal `/`.
   * **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
 * **Settings & commands**
   * **Settings toggles actually stick**
