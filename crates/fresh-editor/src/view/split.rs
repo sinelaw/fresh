@@ -1489,6 +1489,11 @@ impl SplitManager {
                     self.active_split = first_leaf;
                 }
             }
+
+            // A collapse can leave a role-tagged leaf (the Utility Dock) as
+            // the sole root leaf; it is now an ordinary editor pane and must
+            // shed the role (issue #2415).
+            self.clear_root_leaf_role();
         }
 
         result
@@ -1546,7 +1551,13 @@ impl SplitManager {
         if self.root.id() == target_id {
             return Err("Cannot remove root Grouped node".to_string());
         }
-        Self::remove_child_static(&mut self.root, target_id)
+        let result = Self::remove_child_static(&mut self.root, target_id);
+        if result.is_ok() {
+            // Same invariant as `close_split`: a collapse must not leave a
+            // role-tagged leaf as the sole root leaf (issue #2415).
+            self.clear_root_leaf_role();
+        }
+        result
     }
 
     /// Adjust the split ratio of a container
@@ -1903,6 +1914,31 @@ impl SplitManager {
         Some(leaf)
     }
 
+    /// Enforce the invariant that the root leaf never carries a role tag.
+    ///
+    /// A role-tagged leaf (the Utility Dock) only makes sense as a panel
+    /// *beside* editor splits. When a collapse (closing the last editor
+    /// split) leaves the dock leaf as the sole root leaf, it becomes the
+    /// window's ordinary editor pane — regular file buffers land in it —
+    /// but a stale `UtilityDock` tag makes every later panel open route
+    /// into it as a full-window tab, and workspace persistence then makes
+    /// that state permanent (issue #2415). Called after tree collapses and
+    /// after workspace restore (which heals already-poisoned workspace
+    /// files). Returns true if a role tag was cleared.
+    pub fn clear_root_leaf_role(&mut self) -> bool {
+        if let SplitNode::Leaf { role, .. } = &mut self.root {
+            if role.is_some() {
+                tracing::info!(
+                    "Clearing role {:?} from sole root leaf (a root leaf cannot be a dock)",
+                    role
+                );
+                *role = None;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Find the first leaf split with the given label
     pub fn find_split_by_label(&self, label: &str) -> Option<LeafId> {
         self.root
@@ -2003,6 +2039,62 @@ mod tests {
 
         let result = manager.close_split(manager.active_split());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_close_split_clears_role_stranded_on_root_leaf() {
+        // Regression for #2415: editor leaf + role-tagged dock leaf; closing
+        // the editor leaf collapses the tree to just the dock leaf. The
+        // surviving root leaf must NOT keep the UtilityDock role — it is now
+        // the window's only (editor) pane, and a stale role makes every later
+        // dock-routed open land in it as a full-window tab.
+        let editor_buffer = BufferId(0);
+        let dock_buffer = BufferId(1);
+
+        let mut manager = SplitManager::new(editor_buffer);
+        let editor_leaf = manager.active_split();
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, dock_buffer, 0.7, false)
+            .unwrap();
+        manager.set_leaf_role(dock_leaf, Some(SplitRole::UtilityDock));
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            Some(dock_leaf)
+        );
+
+        manager.close_split(editor_leaf).unwrap();
+
+        assert_eq!(manager.root().count_leaves(), 1);
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            None,
+            "a sole root leaf must not keep the UtilityDock role"
+        );
+        assert_eq!(manager.leaf_role(dock_leaf), None);
+    }
+
+    #[test]
+    fn test_close_split_keeps_dock_role_when_editor_leaves_remain() {
+        // Two editor leaves + a dock: closing ONE editor leaf must not touch
+        // the dock's role — the dock is still a panel beside an editor pane.
+        let mut manager = SplitManager::new(BufferId(0));
+        let editor_a = manager.active_split();
+        let editor_b = manager
+            .split_active(SplitDirection::Vertical, BufferId(1), 0.5)
+            .unwrap();
+        let dock_leaf = manager
+            .split_root_positioned(SplitDirection::Horizontal, BufferId(2), 0.7, false)
+            .unwrap();
+        manager.set_leaf_role(dock_leaf, Some(SplitRole::UtilityDock));
+
+        manager.close_split(editor_b).unwrap();
+
+        assert!(manager.root().leaf_split_ids().contains(&editor_a));
+        assert_eq!(
+            manager.find_leaf_by_role(SplitRole::UtilityDock),
+            Some(dock_leaf),
+            "the dock role must survive while another editor leaf exists"
+        );
     }
 
     #[test]

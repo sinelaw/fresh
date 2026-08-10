@@ -92,6 +92,7 @@ pub mod issue_2357_shebang_interpreter;
 pub mod issue_2362_replace_toolbar_theme;
 pub mod issue_2373_buffer_switcher_virtual;
 pub mod issue_2405_brackets_in_comments;
+pub mod issue_2415_dock_role_stuck;
 pub mod issue_2449_scrollback_wrapped_ansi_color;
 pub mod issue_2566_env_detector_labels;
 pub mod issue_2572_hover_through_panel;

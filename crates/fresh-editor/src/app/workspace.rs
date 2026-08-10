@@ -2478,6 +2478,17 @@ impl crate::app::window::Window {
                 .set_active_split(LeafId(new_active_split));
         }
 
+        // Sanitize: a workspace written by a pre-fix build can carry a
+        // `UtilityDock` role on its sole (root) leaf — the bug where closing
+        // the last editor split left the dock's role tag behind (issue
+        // #2415). Restoring that tag verbatim makes every later panel open
+        // land as a full-window tab, permanently. Clearing it here heals
+        // existing poisoned workspace files on load.
+        self.buffers
+            .split_manager_mut()
+            .expect("window must have a populated split layout")
+            .clear_root_leaf_role();
+
         self.restore_bookmarks_from_workspace(&workspace.bookmarks, &path_to_buffer);
         self.clean_orphaned_buffers();
         self.log_restore_summary(session_name);
