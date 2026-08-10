@@ -249,6 +249,11 @@ fn clear_interval_stops_the_timer() {
         const editor = getEditor();
         globalThis.tick_count = 0;
 
+        // Deliberately synchronous: `start_action` calls a handler directly
+        // rather than queueing it, so a sync body has already sent its
+        // setStatus by the time the plugin thread takes its next request.
+        // Making this `async` would let its setStatus land *after* the
+        // barrier below resolves and would reintroduce the race.
         globalThis.counting_tick = function () {
             globalThis.tick_count += 1;
             editor.setStatus("TICKS=" + globalThis.tick_count);
@@ -256,13 +261,22 @@ fn clear_interval_stops_the_timer() {
 
         globalThis.stop_ticking = async function () {
             editor.clearInterval(globalThis.the_timer);
-            // Any awaited host call is a barrier here. The host handles this
-            // plugin's commands in order, so it has already cancelled the
-            // timer when it answers; and the answer travels back over the
-            // same channel as handler invocations, so every tick that was
-            // already in flight has run by the time we resume. Whatever the
-            // status says after this line, no *scheduled* tick can still
-            // overwrite it.
+            // Any awaited host call is a barrier here, and both halves of it
+            // are ordered by a FIFO channel:
+            //
+            //  * `clearInterval` and this `listCommands` are two sends on the
+            //    plugin's one PluginCommand channel, and the host dispatches
+            //    that channel in arrival order (deferring a budget overrun
+            //    without reordering it). So the host has already dropped the
+            //    timer from its table — and can therefore never dispatch it
+            //    again — before it answers.
+            //  * The answer goes back as a PluginRequest on the same channel
+            //    that carries handler invocations, so any tick the host had
+            //    already dispatched sits ahead of it and has run to
+            //    completion before we resume here.
+            //
+            // Whatever the status says after this line, no tick — in flight
+            // or scheduled — can still overwrite it.
             await editor.listCommands();
             editor.setStatus("STOPPED_AFTER=" + globalThis.tick_count);
         };
