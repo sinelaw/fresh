@@ -687,9 +687,29 @@ pub(crate) fn lsp_items_to_popup_items(
                 _ => None,
             };
 
+            // Prefer `labelDetails` for the dimmed text next to the label:
+            // we advertise `labelDetailsSupport`, so servers put the
+            // import path of an auto-import candidate there (rust-analyzer:
+            // "(use std::collections::HashMap)") while the label stays the
+            // bare identifier the accept path inserts. Fall back to `detail`
+            // when a server doesn't use labelDetails.
+            let detail = item
+                .label_details
+                .as_ref()
+                .and_then(|ld| {
+                    let text = match (&ld.detail, &ld.description) {
+                        (Some(d), Some(desc)) => format!("{} {}", d.trim_start(), desc),
+                        (Some(d), None) => d.trim_start().to_string(),
+                        (None, Some(desc)) => desc.clone(),
+                        (None, None) => return None,
+                    };
+                    Some(text)
+                })
+                .or_else(|| item.detail.clone());
+
             PopupListItemData {
                 text: item.label.clone(),
-                detail: item.detail.clone(),
+                detail,
                 icon,
                 data: item
                     .insert_text
@@ -698,4 +718,47 @@ pub(crate) fn lsp_items_to_popup_items(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Auto-import candidates carry their import path in `labelDetails`
+    /// (we advertise `labelDetailsSupport`, sinelaw/fresh#2603). The popup
+    /// item must show that path as the dimmed detail while keeping the
+    /// bare identifier as both the visible label and the inserted text.
+    #[test]
+    fn lsp_items_to_popup_items_renders_label_details() {
+        let item = lsp_types::CompletionItem {
+            label: "HashMap".to_string(),
+            label_details: Some(lsp_types::CompletionItemLabelDetails {
+                detail: Some(" (use std::collections::HashMap)".to_string()),
+                description: None,
+            }),
+            kind: Some(lsp_types::CompletionItemKind::STRUCT),
+            ..Default::default()
+        };
+        let popup_items = lsp_items_to_popup_items(&[&item]);
+        assert_eq!(popup_items.len(), 1);
+        assert_eq!(popup_items[0].text, "HashMap");
+        assert_eq!(
+            popup_items[0].detail.as_deref(),
+            Some("(use std::collections::HashMap)")
+        );
+        // The accepted insert text must stay the bare identifier.
+        assert_eq!(popup_items[0].data.as_deref(), Some("HashMap"));
+    }
+
+    /// Servers that don't use `labelDetails` keep their `detail` rendering.
+    #[test]
+    fn lsp_items_to_popup_items_falls_back_to_detail() {
+        let item = lsp_types::CompletionItem {
+            label: "test_function".to_string(),
+            detail: Some("fn test_function()".to_string()),
+            ..Default::default()
+        };
+        let popup_items = lsp_items_to_popup_items(&[&item]);
+        assert_eq!(popup_items[0].detail.as_deref(), Some("fn test_function()"));
+    }
 }

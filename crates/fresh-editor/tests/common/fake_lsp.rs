@@ -1335,6 +1335,149 @@ done
         dir.join("fake_lsp_server_logging.sh")
     }
 
+    /// Spawn a fake LSP server that mimics rust-analyzer's "flyimport"
+    /// gating (sinelaw/fresh#2603), as observed against rust-analyzer 1.94.1:
+    ///
+    /// - The auto-import completion candidate (`HashMap`, carrying its
+    ///   import path in `labelDetails` and delivering the `use` line lazily
+    ///   through `completionItem/resolve`) is only offered when the client's
+    ///   `initialize` capabilities declare
+    ///   `completionItem.resolveSupport.properties` containing
+    ///   `"additionalTextEdits"`. Otherwise the completion list is empty.
+    /// - `completionProvider.resolveProvider` is only advertised as `true`
+    ///   when the client can also resolve `"documentation"` lazily — even
+    ///   though the import edit is still deferred to resolve. A client that
+    ///   declares only `additionalTextEdits` therefore never resolves (it
+    ///   respects `resolveProvider: false`) and silently loses the import.
+    ///
+    /// Like the logging server, it takes a log-file path as its first
+    /// argument and appends every received method name to it, so tests can
+    /// wait for `textDocument/didOpen` before requesting completion.
+    pub fn spawn_flyimport(dir: &std::path::Path) -> anyhow::Result<Self> {
+        let (stop_tx, stop_rx) = mpsc::channel();
+
+        let script = r#"#!/bin/bash
+
+# Log file path (passed as first argument, or default)
+LOG_FILE="${1:-/tmp/fake_lsp_flyimport_log.txt}"
+> "$LOG_FILE"
+
+# Function to read a message
+read_message() {
+    local content_length=0
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [ -z "$line" ]; then
+            break
+        fi
+        case "$line" in
+            Content-Length:*)
+                content_length="${line#Content-Length:}"
+                content_length="${content_length// /}"
+                ;;
+        esac
+    done
+
+    if [ "$content_length" -gt 0 ] 2>/dev/null; then
+        dd bs=1 count="$content_length" 2>/dev/null
+    fi
+}
+
+# Function to send a message
+send_message() {
+    local message="$1"
+    local length=${#message}
+    printf "Content-Length: %d\r\n\r\n%s" "$length" "$message"
+}
+
+# Whether the client can lazily resolve additionalTextEdits
+# (rust-analyzer gates flyimport candidates on this).
+RESOLVE_ADDITIONAL_EDITS=0
+
+# Main loop
+while true; do
+    msg=$(read_message)
+
+    if [ -z "$msg" ]; then
+        break
+    fi
+
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+
+    if [ -n "$method" ]; then
+        echo "$method" >> "$LOG_FILE"
+    fi
+
+case "$method" in
+    "initialize")
+        if echo "$msg" | grep -q '"additionalTextEdits"'; then
+            RESOLVE_ADDITIONAL_EDITS=1
+        fi
+        # Like rust-analyzer: resolveProvider is only advertised when the
+        # client can lazily resolve documentation, even though the import
+        # edit itself is deferred to resolve. Match "documentation" inside a
+        # resolveSupport "properties" array specifically — the capability
+        # payload also contains "documentation" as a semantic-token modifier.
+        if echo "$msg" | grep -Eq '"properties":[^]]*"documentation"'; then
+            RESOLVE_PROVIDER=true
+        else
+            RESOLVE_PROVIDER=false
+        fi
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"completionProvider":{"resolveProvider":'$RESOLVE_PROVIDER',"triggerCharacters":["."]},"textDocumentSync":1}}}'
+        ;;
+    "textDocument/completion")
+        if [ "$RESOLVE_ADDITIONAL_EDITS" = "1" ]; then
+            # The flyimport candidate: bare label, import path in
+            # labelDetails, additionalTextEdits deferred to resolve.
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use std::collections::HashMap)"}}]}}'
+        else
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"isIncomplete":false,"items":[]}}'
+        fi
+        ;;
+    "completionItem/resolve")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"label":"HashMap","kind":22,"insertText":"HashMap","labelDetails":{"detail":" (use std::collections::HashMap)"},"additionalTextEdits":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"use std::collections::HashMap;\n"}]}}'
+        ;;
+    "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave"|"textDocument/didClose"|"initialized"|"$/cancelRequest")
+        # Notifications - no response needed
+        ;;
+    "shutdown")
+        send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        break
+        ;;
+    *)
+        # Respond to any unhandled requests to prevent pending request buildup
+        if [ -n "$msg_id" ]; then
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+        fi
+        ;;
+esac
+done
+"#;
+
+        let script_path = Self::flyimport_script_path(dir);
+        std::fs::write(&script_path, script)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&script_path)?.permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&script_path, perms)?;
+        }
+
+        let handle = Some(thread::spawn(move || {
+            let _ = stop_rx.recv();
+        }));
+
+        Ok(Self { handle, stop_tx })
+    }
+
+    /// Get the path to the flyimport fake LSP server script
+    pub fn flyimport_script_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("fake_lsp_server_flyimport.sh")
+    }
+
     /// Get the default log file path used by the logging server
     pub fn default_log_path() -> std::path::PathBuf {
         std::path::PathBuf::from("/tmp/fake_lsp_log.txt")

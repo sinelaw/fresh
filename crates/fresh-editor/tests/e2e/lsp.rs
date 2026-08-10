@@ -10152,3 +10152,100 @@ fn lsp_spawn_failure_writes_stub_log_for_view_log_popup() -> anyhow::Result<()> 
 
     Ok(())
 }
+
+/// Reproducer for sinelaw/fresh#2603: completions never offered unimported
+/// symbols because the client didn't advertise
+/// `completionItem.resolveSupport.properties: ["additionalTextEdits"]`, and
+/// rust-analyzer gates its auto-import ("flyimport") candidates on exactly
+/// that capability.
+///
+/// The fake server replicates the gating: it only returns the `HashMap`
+/// auto-import candidate when the `initialize` capabilities contain
+/// `"additionalTextEdits"`, carries the import path in `labelDetails`, and
+/// delivers the `use` line lazily via `completionItem/resolve`.
+///
+/// Without the capability fix this test times out waiting for the candidate:
+/// the server (like rust-analyzer) never offers it.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_completion_offers_unimported_symbol_and_applies_auto_import() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+
+    let _fake_server = FakeLspServer::spawn_flyimport(temp_dir.path())?;
+
+    let log_file = temp_dir.path().join("flyimport_test_log.txt");
+    let test_file = temp_dir.path().join("main.rs");
+    std::fs::write(&test_file, "fn main() {\n    let m = HashMa\n}\n")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::flyimport_script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: Some(vec![log_file.to_string_lossy().to_string()]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    // Wait for the server to be initialized and the document opened.
+    harness.wait_until(|_| {
+        std::fs::read_to_string(&log_file)
+            .unwrap_or_default()
+            .contains("textDocument/didOpen")
+    })?;
+
+    // Put the cursor at the end of "    let m = HashMa" and request
+    // completion explicitly.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+
+    // The unimported symbol must be offered, tagged with its import path
+    // (labelDetails rendered next to the label).
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .contains("HashMap (use std::collections::HashMap)")
+    })?;
+
+    // Accept the candidate: the identifier replaces the typed prefix, and
+    // the auto-import `use` line arrives through completionItem/resolve.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .contains("use std::collections::HashMap;")
+    })?;
+
+    let buffer = harness.get_buffer_content().unwrap();
+    assert_eq!(
+        buffer, "use std::collections::HashMap;\nfn main() {\n    let m = HashMap\n}\n",
+        "accepting the auto-import completion must insert both the identifier \
+         and the use line"
+    );
+
+    Ok(())
+}
