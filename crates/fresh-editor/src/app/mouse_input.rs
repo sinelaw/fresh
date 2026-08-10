@@ -1060,279 +1060,142 @@ impl Editor {
     // `self.active_window().split_at_position(col, row)`.
 
     /// Compute what hover target is at the given position
+    /// The UI target under `(col, row)`.
+    ///
+    /// The ladder itself — which layer wins where they overlap — is
+    /// [`super::hit_test::hover_target`], a pure function over the layout
+    /// the last render recorded. This shell only gathers that layout and
+    /// resolves the one probe the pure layer cannot do (the explorer
+    /// status indicator, whose column depends on the theme and the
+    /// explorer renderer's slot layout).
     fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        self.hover_target_in_floating_overlays(col, row)
-            .or_else(|| self.hover_target_in_chrome(col, row))
+        let file_browser = self.is_file_open_active().then(|| {
+            self.active_window()
+                .file_browser_layout
+                .as_ref()
+                .map(|layout| super::hit_test::FileBrowserHit {
+                    layout,
+                    scroll_offset: self
+                        .active_window()
+                        .file_open_state
+                        .as_ref()
+                        .map(|s| s.scroll_offset)
+                        .unwrap_or(0),
+                    entry_count: self
+                        .active_window()
+                        .file_open_state
+                        .as_ref()
+                        .map(|s| s.entries.len())
+                        .unwrap_or(0),
+                })
+        });
+        let layout = self.active_layout();
+        let chrome = self.active_chrome();
+        let menu_layout = chrome.menu_layout.as_ref();
+        let view = super::hit_test::HoverHitView {
+            context_menu: self.active_window().context_menu_core().map(|core| {
+                (
+                    core,
+                    super::hit_test::FrameSize {
+                        width: chrome.last_frame.width,
+                        height: chrome.last_frame.height,
+                    },
+                )
+            }),
+            suggestions: chrome.suggestions_area,
+            popups: &chrome.popup_areas,
+            file_browser: file_browser.flatten(),
+            menu_bar: self
+                .active_window()
+                .menu_bar_visible
+                .then_some(menu_layout)
+                .flatten(),
+            open_menu: self.menu_state.active_menu.zip(menu_layout),
+            file_explorer_area: layout.file_explorer_area,
+            explorer_status_indicator: self.explorer_status_indicator_at(col, row),
+            separators: &layout.separator_areas,
+            close_split_buttons: &layout.close_split_areas,
+            maximize_split_buttons: &layout.maximize_split_areas,
+            tabs: &layout.tab_layouts,
+            split_scrollbars: &layout.split_areas,
+            status_bar_row: chrome.status_bar.area.map(|(row, _, _)| row),
+            status_bar_clickable: &chrome.status_bar.clickable,
+            search_options: chrome.search_options_layout.as_ref(),
+        };
+        super::hit_test::hover_target(&view, col, row)
     }
 
-    /// Hit-test floating overlay layers: context menus, command palette,
-    /// popup lists, and the file-browser dialog. These always render on
-    /// top of the chrome and must be checked first.
-    fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        // The native context menus (tab / "+" new-tab / file-explorer) all
-        // render on top and share one geometry core, so a single hit-test
-        // over the open menu covers all three. An interior (item) row yields
-        // a hover target; border rows and outside positions fall through to
-        // the chrome below.
-        if let Some(core) = self.active_window().context_menu_core() {
-            if let super::types::ContextMenuHit::Item(item_idx) = core.hit(
-                col,
-                row,
-                self.active_chrome().last_frame.width,
-                self.active_chrome().last_frame.height,
-            ) {
-                return Some(HoverTarget::ContextMenuItem(item_idx));
-            }
+    /// The file-explorer status-indicator slot under `(col, row)`, if any.
+    ///
+    /// Kept on `Editor` because it is the one hit-test that is not pure
+    /// geometry over recorded layout: the indicator's screen columns come
+    /// from the explorer renderer's slot resolution, which reads the
+    /// theme, the plugin decoration/slot caches and the tree-indicator
+    /// config. `hit_test::chrome_target` calls the result at the right
+    /// point in the ladder.
+    fn explorer_status_indicator_at(&self, col: u16, row: u16) -> Option<HoverTarget> {
+        let explorer_area = self.active_layout().file_explorer_area?;
+        let content_start_y = explorer_area.y + 1; // +1 for title bar
+        let content_end_y = explorer_area.y + explorer_area.height.saturating_sub(1);
+        let content_width = explorer_area.width.saturating_sub(3) as usize;
+        if row < content_start_y || row >= content_end_y {
+            return None;
         }
-
-        // Check suggestions area first (command palette, autocomplete)
-        if let Some((inner_rect, start_idx, _visible_count, total_count)) =
-            &self.active_chrome().suggestions_area
+        let explorer = self.file_explorer();
+        let explorer = explorer.as_ref()?;
+        let relative_row = row.saturating_sub(content_start_y) as usize;
+        let (node_id, indent) = explorer.get_display_node_at_viewport_row(relative_row)?;
+        let node = explorer.tree().get_node(node_id)?;
+        let theme = self.theme.read().unwrap();
+        let neutral_fg = if node
+            .entry
+            .metadata
+            .as_ref()
+            .map(|m| m.is_hidden)
+            .unwrap_or(false)
         {
-            if in_rect(col, row, *inner_rect) {
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = start_idx + relative_row;
-
-                if item_idx < *total_count {
-                    return Some(HoverTarget::SuggestionItem(item_idx));
-                }
-            }
-        }
-
-        // Check popups (they're rendered on top)
-        // Check from top to bottom (reverse order since last popup is on top)
-        for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
-            self.active_chrome().popup_areas.iter().rev()
-        {
-            if in_rect(col, row, *inner_rect) && *num_items > 0 {
-                // Calculate which item is being hovered
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = scroll_offset + relative_row;
-
-                if item_idx < *num_items {
-                    return Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
-                }
-            }
-        }
-
-        // Check file browser popup
-        if self.is_file_open_active() {
-            if let Some(hover) = self.compute_file_browser_hover(col, row) {
-                return Some(hover);
-            }
-        }
-
-        None
-    }
-
-    /// Hit-test the permanent chrome: menu bar, file explorer panel,
-    /// split separators, tabs, scrollbars, status bar, and search
-    /// options. Called only after floating overlays have been ruled out.
-    fn hover_target_in_chrome(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        // Check menu bar (row 0, only when visible)
-        // Check menu bar using cached layout from previous render
-        if self.active_window().menu_bar_visible {
-            if let Some(ref menu_layout) = self.active_chrome().menu_layout {
-                if let Some(menu_idx) = menu_layout.menu_at(col, row) {
-                    return Some(HoverTarget::MenuBarItem(menu_idx));
-                }
-            }
-        }
-
-        // Check menu dropdown items if a menu is open (including submenus)
-        if let Some(active_idx) = self.menu_state.active_menu {
-            if let Some(hover) = self.compute_menu_dropdown_hover(col, row, active_idx) {
-                return Some(hover);
-            }
-        }
-
-        // Check file explorer close button and border (for resize)
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
-            // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
-            let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
-            if row == explorer_area.y
-                && col >= close_button_x
-                && col < explorer_area.x + explorer_area.width
-            {
-                return Some(HoverTarget::FileExplorerCloseButton);
-            }
-
-            // Check if hovering over a status indicator in the file explorer content area
-            let content_start_y = explorer_area.y + 1; // +1 for title bar
-            let content_end_y = explorer_area.y + explorer_area.height.saturating_sub(1); // -1 for bottom border
-            let content_width = explorer_area.width.saturating_sub(3) as usize;
-
-            if row >= content_start_y && row < content_end_y {
-                // Determine which item is at this row
-                if let Some(explorer) = self.file_explorer().as_ref() {
-                    let relative_row = row.saturating_sub(content_start_y) as usize;
-                    if let Some((node_id, indent)) =
-                        explorer.get_display_node_at_viewport_row(relative_row)
-                    {
-                        if let Some(node) = explorer.tree().get_node(node_id) {
-                            let theme = self.theme.read().unwrap();
-                            let neutral_fg = if node
-                                .entry
-                                .metadata
-                                .as_ref()
-                                .map(|m| m.is_hidden)
-                                .unwrap_or(false)
-                            {
-                                theme.line_number_fg
-                            } else if node.entry.is_symlink() {
-                                theme.syntax_type
-                            } else if node.is_dir() {
-                                theme.syntax_keyword
-                            } else {
-                                theme.editor_fg
-                            };
-                            let slot_resolver = self.file_explorer_slot_resolver();
-                            let slot_context = crate::view::file_tree::ExplorerSlotContext {
-                                path: &node.entry.path,
-                                is_dir: node.is_dir(),
-                                has_unsaved: self.file_explorer_node_has_unsaved_changes(
-                                    &node.entry.path,
-                                    node.is_dir(),
-                                ),
-                                is_symlink: node.entry.is_symlink(),
-                                is_hidden: node
-                                    .entry
-                                    .metadata
-                                    .as_ref()
-                                    .map(|m| m.is_hidden)
-                                    .unwrap_or(false),
-                                decorations: &self.active_window().file_explorer_decoration_cache,
-                                slot_overrides: &self
-                                    .active_window()
-                                    .file_explorer_slot_override_cache,
-                                theme: &theme,
-                                neutral_fg,
-                            };
-                            let slot_resolution = slot_resolver.resolve(&slot_context);
-                            if let Some((slot_start, slot_end)) = crate::view::ui::file_explorer::FileExplorerRenderer::trailing_slot_screen_bounds(
-                                crate::view::ui::file_explorer::TrailingSlotBoundsCtx {
-                                    view: explorer,
-                                    node_id,
-                                    indent,
-                                    content_width,
-                                    slot_resolution: &slot_resolution,
-                                    tree_indicator_collapsed: &self.config.file_explorer.tree_indicator_collapsed,
-                                    tree_indicator_expanded: &self.config.file_explorer.tree_indicator_expanded,
-                                    explorer_area,
-                                },
-                            ) {
-                                if col >= slot_start && col < slot_end {
-                                    return Some(HoverTarget::FileExplorerStatusIndicator(
-                                        node.entry.path.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // The border is at the rightmost column of the file explorer area
-            // (the drawn border character), not one past it.
-            let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
-            if col == border_x
-                && row >= explorer_area.y
-                && row < explorer_area.y + explorer_area.height
-            {
-                return Some(HoverTarget::FileExplorerBorder);
-            }
-        }
-
-        // Check split separators
-        for (split_id, direction, sep_x, sep_y, sep_length) in &self.active_layout().separator_areas
-        {
-            let is_on_separator = match direction {
-                SplitDirection::Horizontal => {
-                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                }
-                SplitDirection::Vertical => {
-                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                }
-            };
-
-            if is_on_separator {
-                return Some(HoverTarget::SplitSeparator(*split_id, *direction));
-            }
-        }
-
-        // Check tab areas using cached hit regions (computed during rendering)
-        // Check split control buttons first (they're on top of the tab row)
-        for (split_id, btn_row, start_col, end_col) in &self.active_layout().close_split_areas {
-            if row == *btn_row && col >= *start_col && col < *end_col {
-                return Some(HoverTarget::CloseSplitButton(*split_id));
-            }
-        }
-
-        for (split_id, btn_row, start_col, end_col) in &self.active_layout().maximize_split_areas {
-            if row == *btn_row && col >= *start_col && col < *end_col {
-                return Some(HoverTarget::MaximizeSplitButton(*split_id));
-            }
-        }
-
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            match tab_layout.hit_test(col, row) {
-                Some(TabHit::CloseButton(target)) => {
-                    return Some(HoverTarget::TabCloseButton(target, *split_id));
-                }
-                Some(TabHit::TabName(target)) => {
-                    return Some(HoverTarget::TabName(target, *split_id));
-                }
-                Some(TabHit::ScrollLeft)
-                | Some(TabHit::ScrollRight)
-                | Some(TabHit::BarBackground)
-                | Some(TabHit::NewTabButton)
-                | None => {}
-            }
-        }
-
-        // Check scrollbars
-        for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-            &self.active_layout().split_areas
-        {
-            if in_rect(col, row, *scrollbar_rect) {
-                let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-
-                if is_on_thumb {
-                    return Some(HoverTarget::ScrollbarThumb(*split_id));
-                } else {
-                    return Some(HoverTarget::ScrollbarTrack(*split_id, relative_row as u16));
-                }
-            }
-        }
-
-        // Check status bar indicators — one generic hit-test over every
-        // clickable segment recorded last frame (encoding, LSP, remote, …).
-        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar.area {
-            if row == status_row {
-                for (id, indicator_row, start, end) in &self.active_chrome().status_bar.clickable {
-                    if row == *indicator_row && col >= *start && col < *end {
-                        return Some(HoverTarget::StatusBarClickable(*id));
-                    }
-                }
-            }
-        }
-
-        // Check search options bar checkboxes
-        if let Some(ref layout) = self.active_chrome().search_options_layout {
-            use crate::view::ui::status_bar::SearchOptionsHover;
-            if let Some(hover) = layout.checkbox_at(col, row) {
-                return Some(match hover {
-                    SearchOptionsHover::CaseSensitive => HoverTarget::SearchOptionCaseSensitive,
-                    SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
-                    SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
-                    SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
-                    SearchOptionsHover::None => return None,
-                });
-            }
-        }
-
-        None
+            theme.line_number_fg
+        } else if node.entry.is_symlink() {
+            theme.syntax_type
+        } else if node.is_dir() {
+            theme.syntax_keyword
+        } else {
+            theme.editor_fg
+        };
+        let slot_resolver = self.file_explorer_slot_resolver();
+        let slot_context = crate::view::file_tree::ExplorerSlotContext {
+            path: &node.entry.path,
+            is_dir: node.is_dir(),
+            has_unsaved: self
+                .file_explorer_node_has_unsaved_changes(&node.entry.path, node.is_dir()),
+            is_symlink: node.entry.is_symlink(),
+            is_hidden: node
+                .entry
+                .metadata
+                .as_ref()
+                .map(|m| m.is_hidden)
+                .unwrap_or(false),
+            decorations: &self.active_window().file_explorer_decoration_cache,
+            slot_overrides: &self.active_window().file_explorer_slot_override_cache,
+            theme: &theme,
+            neutral_fg,
+        };
+        let slot_resolution = slot_resolver.resolve(&slot_context);
+        let (slot_start, slot_end) =
+            crate::view::ui::file_explorer::FileExplorerRenderer::trailing_slot_screen_bounds(
+                crate::view::ui::file_explorer::TrailingSlotBoundsCtx {
+                    view: explorer,
+                    node_id,
+                    indent,
+                    content_width,
+                    slot_resolution: &slot_resolution,
+                    tree_indicator_collapsed: &self.config.file_explorer.tree_indicator_collapsed,
+                    tree_indicator_expanded: &self.config.file_explorer.tree_indicator_expanded,
+                    explorer_area,
+                },
+            )?;
+        (col >= slot_start && col < slot_end)
+            .then(|| HoverTarget::FileExplorerStatusIndicator(node.entry.path.clone()))
     }
 
     /// Handle mouse double click (down event)

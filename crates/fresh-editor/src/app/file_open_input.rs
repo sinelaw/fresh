@@ -855,62 +855,19 @@ impl Editor {
 
     /// Compute hover target for file browser
     pub fn compute_file_browser_hover(&self, x: u16, y: u16) -> Option<super::types::HoverTarget> {
-        use super::types::HoverTarget;
-
+        // The ladder lives in the pure hit-test layer; this shell supplies
+        // the layout plus the list state (scroll offset, entry count) that
+        // the row probe needs.
         let layout = self.active_window().file_browser_layout.as_ref()?;
-
-        // Check "Show Hidden" checkbox first (priority over navigation shortcuts)
-        if layout.is_on_show_hidden_checkbox(x, y) {
-            return Some(HoverTarget::FileBrowserShowHiddenCheckbox);
-        }
-
-        // Check "Detect Encoding" checkbox
-        if layout.is_on_detect_encoding_checkbox(x, y) {
-            return Some(HoverTarget::FileBrowserDetectEncodingCheckbox);
-        }
-
-        // Check navigation shortcuts
-        if layout.is_in_nav(x, y) {
-            if let Some(idx) = layout.nav_shortcut_at(x, y) {
-                return Some(HoverTarget::FileBrowserNavShortcut(idx));
-            }
-        }
-
-        // Check column headers
-        if layout.is_in_header(x, y) {
-            if let Some(mode) = layout.header_column_at(x) {
-                return Some(HoverTarget::FileBrowserHeader(mode));
-            }
-        }
-
-        // Check file list entries
-        if layout.is_in_list(x, y) {
-            let scroll_offset = self
-                .active_window()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.scroll_offset)
-                .unwrap_or(0);
-
-            if let Some(idx) = layout.click_to_index(y, scroll_offset) {
-                let total_entries = self
-                    .active_window()
-                    .file_open_state
-                    .as_ref()
-                    .map(|s| s.entries.len())
-                    .unwrap_or(0);
-
-                if idx < total_entries {
-                    return Some(HoverTarget::FileBrowserEntry(idx));
-                }
-            }
-        }
-
-        // Check scrollbar
-        if layout.is_in_scrollbar(x, y) {
-            return Some(HoverTarget::FileBrowserScrollbar);
-        }
-
-        None
+        let state = self.active_window().file_open_state.as_ref();
+        crate::app::hit_test::file_browser_target(
+            &crate::app::hit_test::FileBrowserHit {
+                layout,
+                scroll_offset: state.map(|s| s.scroll_offset).unwrap_or(0),
+                entry_count: state.map(|s| s.entries.len()).unwrap_or(0),
+            },
+            x,
+            y,
+        )
     }
 }
