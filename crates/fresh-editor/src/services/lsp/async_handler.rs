@@ -357,7 +357,8 @@ impl LspClientState {
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        CompletionClientCapabilities, CompletionItemCapability,
+        CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
         DiagnosticWorkspaceClientCapabilities, DocumentFormattingClientCapabilities,
         DocumentHighlightClientCapabilities, DocumentRangeFormattingClientCapabilities,
         DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
@@ -432,6 +433,45 @@ fn create_client_capabilities() -> ClientCapabilities {
             // entitled to never register the provider. See sinelaw/fresh#2195.
             completion: Some(CompletionClientCapabilities {
                 dynamic_registration: Some(true),
+                completion_item: Some(CompletionItemCapability {
+                    // Declare that `additionalTextEdits` may be filled in
+                    // lazily via `completionItem/resolve`: on accept we apply
+                    // eager edits directly and otherwise send a resolve
+                    // request whose response is applied in
+                    // `handle_completion_resolved` (auto-imports). Servers
+                    // gate features on this — rust-analyzer only offers
+                    // unimported symbols ("flyimport") when the client can
+                    // resolve `additionalTextEdits` (sinelaw/fresh#2603).
+                    //
+                    // `documentation` is listed because rust-analyzer only
+                    // advertises `resolveProvider` when the client can also
+                    // resolve documentation lazily (verified against
+                    // rust-analyzer 1.94.1: with `additionalTextEdits` alone
+                    // it still defers the import edit to resolve but reports
+                    // `resolveProvider: false`, so a spec-compliant client
+                    // never resolves and the import is lost). Deferring
+                    // documentation costs nothing here: the completion popup
+                    // renders label/detail only, never `documentation`.
+                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                        properties: vec![
+                            "documentation".to_string(),
+                            "additionalTextEdits".to_string(),
+                        ],
+                    }),
+                    // We render `labelDetails` next to the label in the
+                    // completion popup (`lsp_items_to_popup_items`). Without
+                    // this flag rust-analyzer folds the import path into the
+                    // label itself ("HashMap (use std::collections::HashMap)"),
+                    // which the accept path would then insert literally into
+                    // the buffer.
+                    label_details_support: Some(true),
+                    // `snippetSupport` is deliberately NOT advertised: the
+                    // accept path only detects snippet syntax heuristically
+                    // (`is_snippet`) and does not track `insertTextFormat`,
+                    // so inviting servers to switch every insertion to
+                    // snippet format is not safe yet.
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
@@ -5248,6 +5288,62 @@ mod tests {
     /// A `workspace/configuration` request item asking for `section`.
     fn config_item(section: &str) -> Value {
         serde_json::json!({ "section": section })
+    }
+
+    /// Reproducer for sinelaw/fresh#2603: rust-analyzer only offers
+    /// unimported symbols ("flyimport") when the client declares it can
+    /// resolve `additionalTextEdits` lazily via `completionItem/resolve`.
+    /// The client applies those edits (`handle_completion_resolved`), so the
+    /// initialize capabilities must advertise it.
+    #[test]
+    fn client_capabilities_advertise_completion_resolve_additional_text_edits() {
+        let caps = create_client_capabilities();
+        let completion_item = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .expect("completion.completionItem capabilities must be advertised");
+        let resolve = completion_item
+            .resolve_support
+            .as_ref()
+            .expect("completionItem.resolveSupport must be advertised");
+        assert!(
+            resolve
+                .properties
+                .iter()
+                .any(|p| p == "additionalTextEdits"),
+            "resolveSupport.properties must contain additionalTextEdits, got {:?}",
+            resolve.properties
+        );
+        // rust-analyzer only advertises `resolveProvider` when documentation
+        // is lazily resolvable too; without it the deferred import edit is
+        // unreachable (see create_client_capabilities).
+        assert!(
+            resolve.properties.iter().any(|p| p == "documentation"),
+            "resolveSupport.properties must contain documentation, got {:?}",
+            resolve.properties
+        );
+    }
+
+    /// The completion popup renders `labelDetails` (import path of an
+    /// auto-import candidate) next to the label, so the client must
+    /// advertise `labelDetailsSupport`. Without it rust-analyzer folds
+    /// "(use …)" into the label itself, which the accept path would insert
+    /// literally into the buffer.
+    #[test]
+    fn client_capabilities_advertise_completion_label_details() {
+        let caps = create_client_capabilities();
+        let completion_item = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .expect("completion.completionItem capabilities must be advertised");
+        assert_eq!(completion_item.label_details_support, Some(true));
+        // Snippet support is intentionally not advertised until the accept
+        // path tracks `insertTextFormat` (see create_client_capabilities).
+        assert_eq!(completion_item.snippet_support, None);
     }
 
     #[test]
