@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Завершити демон",
   "cli.cmd.session_open_file": "Відкрити файли в демоні (--wait блокує до завершення)",
   "cli.file_syntax.line": "Відкрити на рядку 10",
+  "cli.file_syntax.plus_line": "Відкрити на рядку 10 (у стилі vim)",
   "cli.file_syntax.line_col": "Відкрити на рядку 10, стовпчик 5",
   "cli.file_syntax.range": "Вибрати рядки з 10 по 20",
   "cli.file_syntax.range_col": "Вибрати з рядка 10 стовпчика 5 до рядка 20 стовпчика 1",

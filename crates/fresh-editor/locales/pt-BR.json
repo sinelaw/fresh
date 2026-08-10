@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Encerra um daemon",
   "cli.cmd.session_open_file": "Abre arquivos em um daemon (--wait bloqueia até concluir)",
   "cli.file_syntax.line": "Abre na linha 10",
+  "cli.file_syntax.plus_line": "Abre na linha 10 (estilo vim)",
   "cli.file_syntax.line_col": "Abre na linha 10, coluna 5",
   "cli.file_syntax.range": "Seleciona da linha 10 à 20",
   "cli.file_syntax.range_col": "Seleciona da linha 10 coluna 5 até a linha 20 coluna 1",

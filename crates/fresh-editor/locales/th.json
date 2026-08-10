@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "ปิดเดมอน",
   "cli.cmd.session_open_file": "เปิดไฟล์ในเดมอน (--wait จะค้างไว้จนกว่าจะเสร็จ)",
   "cli.file_syntax.line": "เปิดที่บรรทัด 10",
+  "cli.file_syntax.plus_line": "เปิดที่บรรทัด 10 (แบบ vim)",
   "cli.file_syntax.line_col": "เปิดที่บรรทัด 10 คอลัมน์ 5",
   "cli.file_syntax.range": "เลือกบรรทัด 10 ถึง 20",
   "cli.file_syntax.range_col": "เลือกจากบรรทัด 10 คอลัมน์ 5 ถึงบรรทัด 20 คอลัมน์ 1",

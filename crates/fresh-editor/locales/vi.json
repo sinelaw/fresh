@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Kết thúc một daemon",
   "cli.cmd.session_open_file": "Mở các tệp trong một daemon (--wait sẽ chặn cho đến khi hoàn tất)",
   "cli.file_syntax.line": "Mở tại dòng 10",
+  "cli.file_syntax.plus_line": "Mở tại dòng 10 (kiểu vim)",
   "cli.file_syntax.line_col": "Mở tại dòng 10, cột 5",
   "cli.file_syntax.range": "Chọn dòng 10 đến 20",
   "cli.file_syntax.range_col": "Chọn từ dòng 10 cột 5 tới dòng 20 cột 1",

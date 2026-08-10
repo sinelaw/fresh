@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Завершить демон",
   "cli.cmd.session_open_file": "Открыть файлы в демоне (--wait блокирует до завершения)",
   "cli.file_syntax.line": "Открыть на строке 10",
+  "cli.file_syntax.plus_line": "Открыть на строке 10 (в стиле vim)",
   "cli.file_syntax.line_col": "Открыть на строке 10, столбце 5",
   "cli.file_syntax.range": "Выделить строки с 10 по 20",
   "cli.file_syntax.range_col": "Выделить со строки 10 столбца 5 по строку 20 столбец 1",

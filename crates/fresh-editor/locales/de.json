@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Einen Daemon beenden",
   "cli.cmd.session_open_file": "Dateien in einem Daemon öffnen (--wait blockiert bis zum Abschluss)",
   "cli.file_syntax.line": "In Zeile 10 öffnen",
+  "cli.file_syntax.plus_line": "In Zeile 10 öffnen (vim-Stil)",
   "cli.file_syntax.line_col": "In Zeile 10, Spalte 5 öffnen",
   "cli.file_syntax.range": "Zeilen 10 bis 20 auswählen",
   "cli.file_syntax.range_col": "Von Zeile 10, Spalte 5 bis Zeile 20, Spalte 1 auswählen",

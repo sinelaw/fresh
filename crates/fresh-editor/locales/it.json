@@ -44,6 +44,7 @@
   "cli.cmd.session_kill": "Termina un demone",
   "cli.cmd.session_open_file": "Apre i file in un demone (--wait blocca finché non termina)",
   "cli.file_syntax.line": "Apre alla riga 10",
+  "cli.file_syntax.plus_line": "Apre alla riga 10 (stile vim)",
   "cli.file_syntax.line_col": "Apre alla riga 10, colonna 5",
   "cli.file_syntax.range": "Seleziona le righe da 10 a 20",
   "cli.file_syntax.range_col": "Seleziona dalla riga 10 colonna 5 alla riga 20 colonna 1",

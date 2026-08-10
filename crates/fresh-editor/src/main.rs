@@ -1049,6 +1049,73 @@ fn build_file_requests(
     requests
 }
 
+/// Recognise a vim-style `+N` CLI argument.  Returns the line number
+/// for `+<digits>` (saturating at `usize::MAX` — the jump clamps to
+/// the buffer end anyway, matching `file:huge`), `None` for anything
+/// else.  A bare `+` is NOT claimed: it stays an ordinary filename
+/// (vim's "+ = last line" has no `file:line` equivalent).
+fn parse_plus_line_arg(arg: &str) -> Option<usize> {
+    let digits = arg.strip_prefix('+')?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits.parse::<usize>().unwrap_or(usize::MAX))
+}
+
+/// Fold vim-style `+N` arguments into the file list, so
+/// `fresh +50 file.txt` behaves exactly like `fresh file.txt:50`
+/// (#1926).  Previously `+50` was opened as a literal (empty) file
+/// named `+50`, and in trailing position that stray buffer also stole
+/// focus from the real file.
+///
+/// Vim-like, the line applies to the first file argument; an explicit
+/// `file:line` location on that file wins over the `+N`.  The stdin
+/// marker `-` is skipped when picking the target.  A file literally
+/// named `+50` can still be opened as `./+50` (same escape hatch vim
+/// uses).
+fn apply_plus_line_args(files: Vec<String>) -> AnyhowResult<Vec<String>> {
+    let mut line: Option<usize> = None;
+    let mut plus_count = 0usize;
+    let mut rest: Vec<String> = Vec::with_capacity(files.len());
+    for f in files {
+        match parse_plus_line_arg(&f) {
+            Some(n) => {
+                plus_count += 1;
+                line = Some(n);
+            }
+            None => rest.push(f),
+        }
+    }
+    let Some(line) = line else {
+        return Ok(rest);
+    };
+    if plus_count > 1 {
+        anyhow::bail!("Too many '+<line>' arguments (at most one is allowed)");
+    }
+    match rest.iter_mut().find(|f| f.as_str() != "-") {
+        Some(target) => {
+            // Only annotate a file that carries no explicit location
+            // yet — `fresh +50 file.txt:10` keeps the explicit 10.
+            // Remote specs (`user@host:path`, `ssh://…`) take the
+            // same `:line` suffix, so they work too.  A malformed
+            // `ssh://` target is left alone; it errors downstream.
+            let has_line = match parse_location(target) {
+                Ok(ParsedLocation::Local(fl)) => fl.line.is_some(),
+                Ok(ParsedLocation::Remote(rl)) => rl.line.is_some(),
+                Err(_) => true,
+            };
+            if !has_line {
+                target.push_str(&format!(":{}", line));
+            }
+            Ok(rest)
+        }
+        None => anyhow::bail!(
+            "'+{line}' requires a file argument (e.g. 'fresh +{line} file.txt', \
+             which is equivalent to 'fresh file.txt:{line}')"
+        ),
+    }
+}
+
 fn parse_file_location(input: &str) -> FileLocation {
     use std::path::{Component, Path};
 
@@ -5140,6 +5207,10 @@ fn build_localized_after_help() -> String {
         t("cli.file_syntax.line")
     ));
     out.push_str(&format!(
+        "  +10 file.txt                 {}\n",
+        t("cli.file_syntax.plus_line")
+    ));
+    out.push_str(&format!(
         "  file.txt:10:5                {}\n",
         t("cli.file_syntax.line_col")
     ));
@@ -5323,7 +5394,13 @@ fn real_main() -> AnyhowResult<()> {
     }
 
     // Convert to legacy Args format for compatibility
-    let args: Args = cli.into();
+    let mut args: Args = cli.into();
+
+    // Fold vim-style `+N` line arguments into the file list before any
+    // consumer (TUI, GUI, web, attach, nested forward) sees it, so
+    // `fresh +50 file.txt` == `fresh file.txt:50` everywhere (#1926).
+    args.files = apply_plus_line_args(std::mem::take(&mut args.files))?;
+    let args = args;
 
     // Expose `FRESH_INTERACTIVE=1` on the editor's process env when Fresh
     // is launched as a human-interactive editor (stdin is a TTY, not a
@@ -6764,6 +6841,106 @@ mod tests {
                 ParsedLocation::Remote(_) => panic!("Expected local for {input:?}"),
             }
         }
+    }
+
+    // Tests for vim-style `+N` CLI line arguments (#1926).  Without
+    // the fold, `+50` used to open as a literal empty buffer named
+    // `+50` (and, trailing, steal focus from the real file).
+
+    fn plus_args(args: &[&str]) -> AnyhowResult<Vec<String>> {
+        apply_plus_line_args(args.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn test_plus_line_arg_before_file() {
+        assert_eq!(
+            plus_args(&["+50", "file.txt"]).unwrap(),
+            vec!["file.txt:50"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_after_file() {
+        // Trailing position used to be the worst case: the stray `+50`
+        // buffer stole focus from file.txt.
+        assert_eq!(
+            plus_args(&["file.txt", "+50"]).unwrap(),
+            vec!["file.txt:50"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_applies_to_first_file() {
+        // Vim-like: the line goes to the first file argument.
+        assert_eq!(
+            plus_args(&["a.txt", "+7", "b.txt"]).unwrap(),
+            vec!["a.txt:7", "b.txt"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_zero_and_huge() {
+        // `+0` is passed through; the jump clamps to line 1 downstream,
+        // same as `file:0`.
+        assert_eq!(plus_args(&["+0", "f"]).unwrap(), vec!["f:0"]);
+        // A line number beyond usize::MAX saturates instead of turning
+        // back into a filename; the jump clamps to the buffer end.
+        assert_eq!(
+            plus_args(&["+99999999999999999999999999", "f"]).unwrap(),
+            vec![format!("f:{}", usize::MAX)]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_explicit_location_wins() {
+        // An explicit file:line on the target beats the `+N`.
+        assert_eq!(
+            plus_args(&["+50", "file.txt:10"]).unwrap(),
+            vec!["file.txt:10"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_remote_specs() {
+        // Remote specs take the same `:line` suffix.
+        assert_eq!(
+            plus_args(&["+9", "user@host:/etc/hosts"]).unwrap(),
+            vec!["user@host:/etc/hosts:9"]
+        );
+        assert_eq!(
+            plus_args(&["+9", "ssh://alice@host/etc/hosts"]).unwrap(),
+            vec!["ssh://alice@host/etc/hosts:9"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_skips_stdin_marker() {
+        assert_eq!(
+            plus_args(&["-", "+3", "file.txt"]).unwrap(),
+            vec!["-", "file.txt:3"]
+        );
+    }
+
+    #[test]
+    fn test_plus_line_arg_non_matching_args_untouched() {
+        // Bare `+`, `./+50`, and `+abc` are ordinary filenames, not
+        // line arguments.
+        for name in ["+", "./+50", "+abc", "+5x"] {
+            assert_eq!(plus_args(&[name, "f"]).unwrap(), vec![name, "f"]);
+        }
+        // And with no `+N` at all the list is passed through as-is.
+        assert_eq!(plus_args(&["a", "b"]).unwrap(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_plus_line_arg_without_file_is_error() {
+        assert!(plus_args(&["+50"]).is_err());
+        assert!(plus_args(&["-", "+50"]).is_err());
+    }
+
+    #[test]
+    fn test_plus_line_arg_multiple_is_error() {
+        assert!(plus_args(&["+1", "+2", "file.txt"]).is_err());
     }
 
     // Tests for the client→daemon plumbing: a remote spec on the
