@@ -233,12 +233,15 @@ const editor = getEditor();
 
 /// `tsconfig.json` for the user's init.ts. Matches the plugin-dev
 /// workspace (no DOM, no ambient types) so LSP behaviour is consistent
-/// with plugins.
+/// with plugins. `moduleResolution` must be `bundler` (matching
+/// `plugins/tsconfig.json` and `check-types.sh`): TypeScript 7 removed
+/// the old `node` (node10) resolution mode, so a tsserver reading this
+/// file would fail with TS5108 (#2872).
 const INIT_TSCONFIG: &str = r#"{
   "compilerOptions": {
     "target": "ES2020",
     "module": "ES2020",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -680,6 +683,20 @@ mod tests {
     fn init_ts_path_is_under_config_dir() {
         let p = init_ts_path(Path::new("/tmp/fresh"));
         assert_eq!(p, PathBuf::from("/tmp/fresh/init.ts"));
+    }
+
+    /// TypeScript 7 removed `moduleResolution: node` (node10); a tsserver
+    /// reading a generated tsconfig that still uses it fails with TS5108.
+    /// The generated config must use `bundler`, matching
+    /// `plugins/tsconfig.json` and `check-types.sh` (#2872).
+    #[test]
+    fn generated_tsconfig_does_not_use_removed_module_resolution() {
+        let parsed: serde_json::Value = serde_json::from_str(INIT_TSCONFIG)
+            .expect("generated tsconfig.json must be valid JSON");
+        assert_eq!(
+            parsed["compilerOptions"]["moduleResolution"], "bundler",
+            "moduleResolution must be `bundler`; `node` (node10) was removed in TypeScript 7"
+        );
     }
 
     #[test]
