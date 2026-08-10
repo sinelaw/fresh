@@ -1,159 +1,85 @@
 //! Regression coverage for issue #2415: closing the editor split collapses
-//! the tree onto the Utility Dock leaf, which used to keep its role tag and
-//! route every later dock open into itself as a full-window tab — permanently,
-//! once workspace persistence saved it.
+//! the tree onto the Utility Dock leaf, which used to keep its role tag.
+//! Every later dock-routed open then landed in that leaf as another tab
+//! instead of its own pane — and workspace persistence made it permanent.
 //!
-//! Like `issue_2283_dock_last_tab_close.rs`, these assert on the split-tree
-//! model directly: the role tag is not visible on screen.
+//! The screen is what tells the two apart: a real dock is a second pane
+//! with its own tab bar, the stuck state is one tab bar carrying both. The
+//! role tag itself is model state and is covered by the `SplitManager`
+//! unit tests in `src/view/split.rs`.
 
 use crate::common::harness::EditorTestHarness;
-use fresh::input::keybindings::Action;
-use fresh::view::split::SplitRole;
 use std::fs;
 
-/// Open a dock terminal, then close the editor split so the dock leaf is
-/// left as the sole root leaf.
-fn collapse_editor_split_onto_dock(harness: &mut EditorTestHarness) {
-    let editor_leaf = harness.editor().split_manager_for_tests().active_split();
-
-    harness
-        .editor_mut()
-        .dispatch_action_for_tests(Action::OpenTerminalInDock);
-    let dock_leaf = harness
-        .editor()
-        .split_manager_for_tests()
-        .find_leaf_by_role(SplitRole::UtilityDock)
-        .expect("OpenTerminalInDock must create a dock leaf");
-    assert_ne!(editor_leaf, dock_leaf);
-
-    // The same collapse the mouse × / Close Split command performs.
-    harness
-        .editor_mut()
-        .active_window_mut()
-        .split_manager_mut()
-        .expect("active window must have a populated split layout")
-        .set_active_split(editor_leaf);
-    harness.editor_mut().close_active_split();
-
-    assert_eq!(
-        harness
-            .editor()
-            .split_manager_for_tests()
-            .root()
-            .count_leaves(),
-        1,
-        "closing the editor split must leave the dock leaf as the sole leaf"
-    );
+/// Screen row of the line containing `needle`, or panic with the screen.
+fn row_of(harness: &EditorTestHarness, needle: &str) -> usize {
+    let screen = harness.screen_to_string();
+    screen
+        .lines()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| panic!("expected screen to contain {needle:?}\nScreen:\n{screen}"))
 }
 
-#[test]
-fn test_dock_role_cleared_when_editor_split_closes() {
-    let temp = tempfile::TempDir::new().unwrap();
-    let file = temp.path().join("main.txt");
-    fs::write(&file, "hello world\n").unwrap();
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
-    harness.open_file(&file).unwrap();
-
-    collapse_editor_split_onto_dock(&mut harness);
-
-    assert_eq!(
-        harness
-            .editor()
-            .split_manager_for_tests()
-            .find_leaf_by_role(SplitRole::UtilityDock),
-        None,
-        "the sole root leaf must not keep the UtilityDock role after the collapse"
-    );
-}
-
-#[test]
-fn test_dock_reopens_as_split_after_editor_split_closed() {
-    let temp = tempfile::TempDir::new().unwrap();
-    let file = temp.path().join("main.txt");
-    fs::write(&file, "hello world\n").unwrap();
-
-    let mut harness = EditorTestHarness::new(120, 40).unwrap();
-    harness.open_file(&file).unwrap();
-
-    collapse_editor_split_onto_dock(&mut harness);
-    let root_leaf = harness.editor().split_manager_for_tests().active_split();
-
-    // Must create a NEW dock split, not attach as a full-window tab in the
-    // sole leaf (the stuck state from the issue).
+/// Open a terminal in the Utility Dock and wait for its tab to render.
+fn open_dock_terminal(harness: &mut EditorTestHarness, label: &str) {
     harness
-        .editor_mut()
-        .dispatch_action_for_tests(Action::OpenTerminalInDock);
-
-    let sm = harness.editor().split_manager_for_tests();
-    assert_eq!(
-        sm.root().count_leaves(),
-        2,
-        "the dock must reopen as its own split, not as a tab in the sole leaf"
-    );
-    let new_dock = sm
-        .find_leaf_by_role(SplitRole::UtilityDock)
-        .expect("the reopened dock must carry the UtilityDock role");
-    assert_ne!(
-        new_dock, root_leaf,
-        "the dock role must be on the new split, not the former root leaf"
-    );
+        .run_palette_command("Open Terminal in Utility Dock")
+        .unwrap();
+    harness.wait_for_screen_contains(label).unwrap();
 }
 
-/// A pre-fix build could persist `"role": "UtilityDock"` on the sole leaf;
-/// restore must heal it rather than re-apply it forever.
+/// Reopening the dock after the collapse must give the panel its own pane
+/// again, rather than adding a tab to the leaf that outlived the split.
 #[test]
-fn test_restore_heals_workspace_with_role_on_sole_leaf() {
+fn test_dock_reopens_as_its_own_pane_after_editor_split_closed() {
     let temp = tempfile::TempDir::new().unwrap();
     let project_dir = temp.path().join("project");
     fs::create_dir(&project_dir).unwrap();
-    let file = project_dir.join("main.txt");
-    fs::write(&file, "hello world\n").unwrap();
+    fs::write(project_dir.join("main.txt"), "hello world\n").unwrap();
 
-    // Session 1: persist the poisoned state (sole leaf tagged UtilityDock
-    // while holding a regular file).
-    {
-        let mut harness = EditorTestHarness::with_config_and_working_dir(
-            80,
-            24,
-            fresh::config::Config::default(),
-            project_dir.clone(),
-        )
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Default::default(),
+        project_dir.clone(),
+    )
+    .unwrap();
+    harness.open_file(&project_dir.join("main.txt")).unwrap();
+    harness.render().unwrap();
+
+    // Dock open: the editor and the dock are two panes, so their tab bars
+    // are on different rows.
+    open_dock_terminal(&mut harness, "*Terminal 0*");
+    assert_ne!(
+        row_of(&harness, "main.txt"),
+        row_of(&harness, "*Terminal 0*"),
+        "precondition: the dock is its own pane\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Close the editor split: click into the editor pane to focus it, then
+    // run Close Split. The dock leaf is all that survives, and the editor's
+    // tab moves onto its tab bar — one pane, one tab bar, both tabs.
+    let editor_row = row_of(&harness, "hello world") as u16;
+    harness.mouse_click(20, editor_row).unwrap();
+    harness.run_palette_command("Close Split").unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.contains("*Terminal 0*") && l.contains("main.txt"))
+        })
         .unwrap();
-        harness.open_file(&file).unwrap();
 
-        let sole_leaf = harness.editor().split_manager_for_tests().active_split();
-        harness
-            .editor_mut()
-            .active_window_mut()
-            .split_manager_mut()
-            .expect("active window must have a populated split layout")
-            .set_leaf_role(sole_leaf, Some(SplitRole::UtilityDock));
-
-        harness.editor_mut().save_workspace().unwrap();
-    }
-
-    // Session 2: the layout comes back, the stranded role does not.
-    {
-        let mut harness = EditorTestHarness::with_config_and_working_dir(
-            80,
-            24,
-            fresh::config::Config::default(),
-            project_dir.clone(),
-        )
-        .unwrap();
-        let restored = harness.editor_mut().try_restore_workspace().unwrap();
-        assert!(restored, "workspace should have been restored");
-        harness.render().unwrap();
-        harness.assert_screen_contains("main.txt");
-
-        assert_eq!(
-            harness
-                .editor()
-                .split_manager_for_tests()
-                .find_leaf_by_role(SplitRole::UtilityDock),
-            None,
-            "restore must not re-apply a UtilityDock role to the sole root leaf"
-        );
-    }
+    // Reopen the dock. With the role stranded on the surviving leaf, the new
+    // terminal joins it as a second tab on the same tab bar; it must get its
+    // own pane instead.
+    open_dock_terminal(&mut harness, "*Terminal 1*");
+    assert_ne!(
+        row_of(&harness, "*Terminal 0*"),
+        row_of(&harness, "*Terminal 1*"),
+        "the reopened dock shares a tab bar with the former dock leaf instead of \
+         opening as its own pane\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 }

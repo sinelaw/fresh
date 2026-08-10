@@ -1,15 +1,16 @@
 //! Regression coverage for issue #2761: with fresh as git's editor, the
 //! cursor offset persisted for one `.git/COMMIT_EDITMSG` was restored into
-//! the next one's regenerated content, landing inside git's comment block.
+//! the next one's regenerated content, so the commit opened with the cursor
+//! parked inside git's comment block and typing corrupted it.
 //!
-//! Covers both stores such state lives in: the global per-file store
-//! (`file_states/`, applied on open) and the per-project workspace
-//! `file_states` map (applied on session restore).
+//! Observed the way the user does — the status bar's `Ln`/`Col` readout and
+//! where a typed character lands on screen. The on-disk half (what the
+//! workspace file is allowed to contain) is in
+//! `tests/workspace_persistence_gates.rs`.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
-use fresh::workspace::{is_ephemeral_file, SerializedTabRef, Workspace};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -24,7 +25,7 @@ fn write_commit_editmsg(project_dir: &Path, content: &str) -> PathBuf {
 
 fn project_harness(project_dir: &Path) -> EditorTestHarness {
     EditorTestHarness::with_config_and_working_dir(
-        80,
+        100,
         24,
         Config::default(),
         project_dir.to_path_buf(),
@@ -32,7 +33,13 @@ fn project_harness(project_dir: &Path) -> EditorTestHarness {
     .unwrap()
 }
 
-/// The core repro: the second open starts at the beginning of the file.
+/// The commit message git regenerates for the next commit: an empty first
+/// line to type into, then git's comment block.
+const REGENERATED: &str = "\n# Please enter the commit message for your changes. Lines starting\n\
+     # with '#' will be ignored, and an empty message aborts the commit.\n";
+
+/// The core repro: the second `git commit` must open at the top of the new
+/// message, and the character the user types must land there.
 #[test]
 fn test_commit_editmsg_reopens_at_start_after_regeneration() {
     let temp = TempDir::new().unwrap();
@@ -40,77 +47,58 @@ fn test_commit_editmsg_reopens_at_start_after_regeneration() {
     fs::create_dir(&project_dir).unwrap();
     let msg = write_commit_editmsg(&project_dir, "First message\nsecond line\nthird line\n");
 
-    // Session 1: move the cursor away from the start, then flush per-file
-    // state the way the quit path does.
+    // Session 1: move the cursor off the first line, then quit the way the
+    // editor does — flushing per-file state.
     {
         let mut harness = project_harness(&project_dir);
         harness.open_file(&msg).unwrap();
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        assert!(
-            harness.cursor_position() > 0,
-            "precondition: the cursor moved away from the start"
-        );
+        harness.render().unwrap();
+        harness.assert_screen_contains("Ln 3,");
         harness.editor_mut().save_workspace().unwrap();
     }
 
-    // Git regenerates the file for the next commit.
-    write_commit_editmsg(
-        &project_dir,
-        "\n# Please enter the commit message for your changes. Lines starting\n# with '#' will be ignored, and an empty message aborts the commit.\n",
-    );
+    write_commit_editmsg(&project_dir, REGENERATED);
 
     // Session 2: the stale offset must not be applied to the new content.
     {
         let mut harness = project_harness(&project_dir);
         harness.open_file(&msg).unwrap();
-        assert_eq!(
-            harness.cursor_position(),
-            0,
-            "reopening a regenerated .git/COMMIT_EDITMSG must start at the beginning"
+        harness.render().unwrap();
+        assert!(
+            harness.get_status_bar().contains("Ln 1,"),
+            "a regenerated .git/COMMIT_EDITMSG must open at line 1, status bar was: {:?}\nScreen:\n{}",
+            harness.get_status_bar(),
+            harness.screen_to_string()
+        );
+
+        // And typing goes into the message, not into git's comment block.
+        harness.type_text("subject").unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        let subject_row = screen
+            .lines()
+            .position(|l| l.contains("subject"))
+            .unwrap_or_else(|| panic!("typed text is not on screen\nScreen:\n{screen}"));
+        let comment_row = screen
+            .lines()
+            .position(|l| l.contains("# Please enter"))
+            .unwrap_or_else(|| panic!("comment block is not on screen\nScreen:\n{screen}"));
+        assert!(
+            subject_row < comment_row,
+            "typed text landed inside git's comment block\nScreen:\n{screen}"
         );
     }
 }
 
-/// The workspace file must not accumulate `file_states` for `.git/` files.
-#[test]
-fn test_workspace_file_states_exclude_git_internal_files() {
-    let temp = TempDir::new().unwrap();
-    let project_dir = temp.path().join("repo");
-    fs::create_dir(&project_dir).unwrap();
-    let msg = write_commit_editmsg(&project_dir, "message line one\nline two\n");
-    let regular = project_dir.join("notes.txt");
-    fs::write(&regular, "regular file\n").unwrap();
-
-    let mut harness = project_harness(&project_dir);
-    harness.open_file(&regular).unwrap();
-    harness.open_file(&msg).unwrap();
-    harness.editor_mut().save_workspace().unwrap();
-
-    let ws = Workspace::load(&project_dir)
-        .unwrap()
-        .expect("workspace was just saved");
-    let all_keys: Vec<_> = ws
-        .split_states
-        .values()
-        .flat_map(|s| s.file_states.keys().cloned())
-        .collect();
-    assert!(
-        all_keys.iter().any(|k| k.ends_with("notes.txt")),
-        "sanity: the regular file's state is persisted, got {all_keys:?}"
-    );
-    assert!(
-        !all_keys
-            .iter()
-            .any(|k| is_ephemeral_file(k, &Config::default().editor.ephemeral_file_patterns)),
-        "no .git-internal file may appear in workspace file_states, got {all_keys:?}"
-    );
-}
-
-/// A pre-fix build's workspace can still carry a `.git/COMMIT_EDITMSG`
-/// entry; restore must open the tab without applying its cursor state.
+/// A workspace written before the gate existed can still carry a
+/// `.git/COMMIT_EDITMSG` entry; restoring it must reopen the tab without
+/// applying the stale position.
 #[test]
 fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
+    use fresh::workspace::{SerializedTabRef, Workspace};
+
     let temp = TempDir::new().unwrap();
     let project_dir = temp.path().join("repo");
     fs::create_dir(&project_dir).unwrap();
@@ -124,7 +112,6 @@ fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
     }
 
     // Inject the entry a pre-fix build would have written.
-    let stale_offset = 15;
     let mut ws = Workspace::load(&project_dir)
         .unwrap()
         .expect("workspace was just saved");
@@ -145,16 +132,13 @@ fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
             .next()
             .expect("saved workspace has a file state to clone")
             .clone();
-        poisoned.cursor.position = stale_offset;
+        poisoned.cursor.position = 40;
         poisoned.cursor.anchor = None;
         split_state.file_states.insert(rel, poisoned);
     }
     ws.save().unwrap();
 
-    write_commit_editmsg(
-        &project_dir,
-        "\n# Please enter the commit message for your changes.\n",
-    );
+    write_commit_editmsg(&project_dir, REGENERATED);
 
     {
         let mut harness = project_harness(&project_dir);
@@ -162,10 +146,12 @@ fn test_restore_ignores_poisoned_git_file_state_in_workspace() {
         assert!(restored, "workspace should have been restored");
         harness.render().unwrap();
         harness.assert_screen_contains("COMMIT_EDITMSG");
-        assert_eq!(
-            harness.cursor_position(),
-            0,
-            "restore must not apply persisted cursor state to a .git-internal file"
+        assert!(
+            harness.get_status_bar().contains("Ln 1,"),
+            "restore must not apply persisted cursor state to a .git-internal file, \
+             status bar was: {:?}\nScreen:\n{}",
+            harness.get_status_bar(),
+            harness.screen_to_string()
         );
     }
 }
