@@ -1651,9 +1651,18 @@ impl Editor {
             .cursors
     }
 
-    /// Set completion items for type-to-filter (for testing)
+    /// Set completion items for type-to-filter (for testing).
+    ///
+    /// The items come from no server, so nothing can be resolved against
+    /// one: a `completionItem/resolve` needs the server that minted the
+    /// item's opaque `data`.
     pub fn set_completion_items(&mut self, items: Vec<lsp_types::CompletionItem>) {
-        self.active_window_mut().completion_items = Some(items);
+        self.active_window_mut().completion_items = Some(
+            items
+                .into_iter()
+                .map(crate::app::window::LspCompletionCandidate::unattributed)
+                .collect(),
+        );
     }
 
     /// Get the viewport for the active split

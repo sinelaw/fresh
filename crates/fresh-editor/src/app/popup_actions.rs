@@ -3,6 +3,7 @@
 //! This module contains handlers for popup-related actions like confirmation and cancellation.
 
 use super::Editor;
+use crate::app::window::LspCompletionCandidate;
 use crate::model::event::Event;
 use crate::primitives::snippet::{expand_snippet, is_snippet};
 use crate::primitives::word_navigation::find_completion_word_start;
@@ -323,13 +324,14 @@ impl Editor {
     /// candidate the row was built from. Rows past the end of that mapping
     /// are buffer-word candidates and carry no LSP edits.
     fn apply_completion_additional_edits(&mut self, popup_row: usize) {
-        let item = self
+        let candidate = self
             .active_window()
             .completion_popup_lsp_items
             .get(popup_row)
             .cloned();
 
-        let Some(item) = item else { return };
+        let Some(candidate) = candidate else { return };
+        let item = &candidate.item;
         let label = item.label.clone();
 
         if let Some(edits) = &item.additional_text_edits {
@@ -347,14 +349,15 @@ impl Editor {
             }
         }
 
-        // No additional_text_edits present — try resolve if server supports it
-        if self.active_window().server_supports_completion_resolve() {
-            tracing::info!(
-                "Completion '{}' has no additional_text_edits, sending completionItem/resolve",
-                label
-            );
-            self.active_window_mut().send_completion_resolve(item);
-        }
+        // No additional_text_edits present — ask the server that offered
+        // this candidate to fill them in. `send_completion_resolve` gates
+        // on *that* server's capability; a sibling server for the same
+        // language advertising resolve is not an answer.
+        tracing::info!(
+            "Completion '{}' has no additional_text_edits, sending completionItem/resolve",
+            label
+        );
+        self.active_window_mut().send_completion_resolve(&candidate);
     }
 
     /// Handle PopupCancel action.
@@ -587,16 +590,17 @@ impl Editor {
     ) -> Vec<crate::model::event::PopupListItemData> {
         let prefix = self.completion_word_prefix();
 
-        let matching: Vec<lsp_types::CompletionItem> = self
+        let matching: Vec<LspCompletionCandidate> = self
             .active_window()
             .completion_items
             .iter()
             .flatten()
-            .filter(|item| completion_matches_prefix(item, &prefix))
+            .filter(|candidate| completion_matches_prefix(&candidate.item, &prefix))
             .cloned()
             .collect();
 
-        let mut rows = lsp_items_to_popup_items(&matching.iter().collect::<Vec<_>>());
+        let mut rows =
+            lsp_items_to_popup_items(&matching.iter().map(|c| &c.item).collect::<Vec<_>>());
         self.active_window_mut().completion_popup_lsp_items = matching;
 
         // Buffer-word candidates go below, minus anything the server
@@ -731,9 +735,9 @@ pub(crate) fn build_completion_popup_from_items(
 /// the same candidate rather than on the first row that happens to share
 /// its label.
 enum SelectedCompletionRow {
-    /// An LSP candidate, identified by the item itself. Boxed because a
-    /// `CompletionItem` is large next to the other variant.
-    Lsp(Box<lsp_types::CompletionItem>),
+    /// An LSP candidate, identified by the candidate itself. Boxed because
+    /// a `CompletionItem` is large next to the other variant.
+    Lsp(Box<LspCompletionCandidate>),
     /// A buffer-word row, identified by its text (it has no other payload).
     BufferWord(String),
 }

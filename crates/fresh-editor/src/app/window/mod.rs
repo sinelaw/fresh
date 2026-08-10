@@ -247,6 +247,33 @@ impl TerminalBuffer {
     }
 }
 
+/// An LSP completion candidate together with the server that offered it.
+///
+/// A language can be served by several servers at once and their results
+/// are merged into one popup, so a candidate on its own is not enough to
+/// act on: `CompletionItem::data` is an opaque handle that only its own
+/// server can interpret, and `completionItem/resolve` — the request that
+/// supplies auto-imports for servers that defer them — is meaningless when
+/// sent anywhere else. Keeping the origin next to the item makes "which
+/// server does this belong to?" answerable wherever the candidate travels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LspCompletionCandidate {
+    /// The candidate as the server sent it.
+    pub item: lsp_types::CompletionItem,
+
+    /// `LspHandle::id()` of the server that offered `item`, or `None` for
+    /// candidates that came from no server (injected directly in tests).
+    pub server: Option<u64>,
+}
+
+impl LspCompletionCandidate {
+    /// A candidate with no server behind it — nothing can be resolved
+    /// against a server that doesn't exist.
+    pub fn unattributed(item: lsp_types::CompletionItem) -> Self {
+        Self { item, server: None }
+    }
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -373,16 +400,20 @@ pub struct Window {
     /// namespace needed. Starts at 0 per window.
     pub next_lsp_request_id: u64,
 
-    /// Pending LSP completion request ids (multi-server).
-    pub pending_completion_requests: std::collections::HashSet<u64>,
+    /// In-flight LSP completion requests, each mapped to the server it was
+    /// sent to (`LspHandle::id()`). A language can be served by several
+    /// servers at once and every one of them gets its own request, so the
+    /// map is what tells a response which server produced it — the
+    /// candidates it carries are only resolvable against that server.
+    pub pending_completion_requests: std::collections::HashMap<u64, u64>,
 
-    /// Original LSP completion items (for type-to-filter).
-    pub completion_items: Option<Vec<lsp_types::CompletionItem>>,
+    /// Original LSP completion candidates (for type-to-filter), merged
+    /// from every server that answered.
+    pub completion_items: Option<Vec<LspCompletionCandidate>>,
 
-    /// The LSP `CompletionItem` behind each *LSP row* of the completion
-    /// popup currently on screen, in row order. Rows past the end of this
-    /// vector are buffer-word candidates, which have no LSP item behind
-    /// them.
+    /// The candidate behind each *LSP row* of the completion popup
+    /// currently on screen, in row order. Rows past the end of this vector
+    /// are buffer-word candidates, which have no LSP item behind them.
     ///
     /// Written only by `Editor::build_completion_popup_rows`, from the same
     /// filtered list it converts into popup rows — so "popup row N" and
@@ -391,7 +422,13 @@ pub struct Window {
     /// unique: with auto-import candidates advertised (#2603) a server
     /// offers one `HashMap` row per crate exporting one, each with a
     /// different `use` line.
-    pub completion_popup_lsp_items: Vec<lsp_types::CompletionItem>,
+    pub completion_popup_lsp_items: Vec<LspCompletionCandidate>,
+
+    /// Id of the in-flight `completionItem/resolve` request, if any. Only
+    /// the answer to *that* request may edit the buffer: a late reply to a
+    /// resolve the user has already moved past would apply an import for a
+    /// candidate that is no longer the accepted one.
+    pub pending_completion_resolve_request: Option<u64>,
 
     /// Scheduled completion-trigger time (debounced quick-suggestions).
     pub scheduled_completion_trigger: Option<std::time::Instant>,
@@ -1364,7 +1401,11 @@ impl Window {
     pub(crate) fn cancel_pending_lsp_requests(&mut self) {
         self.scheduled_completion_trigger = None;
         if !self.pending_completion_requests.is_empty() {
-            let ids: Vec<u64> = self.pending_completion_requests.drain().collect();
+            let ids: Vec<u64> = self
+                .pending_completion_requests
+                .drain()
+                .map(|(request_id, _server)| request_id)
+                .collect();
             for request_id in ids {
                 tracing::debug!("Canceling pending LSP completion request {}", request_id);
                 self.send_lsp_cancel_request(request_id);
@@ -1535,27 +1576,6 @@ impl Window {
     }
 
     /// True iff at least one LSP server attached to the active buffer's
-    /// language advertises `completionItem/resolve`.
-    pub(crate) fn server_supports_completion_resolve(&self) -> bool {
-        let Some(language) = self
-            .buffers
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-        else {
-            return false;
-        };
-        {
-            let lsp = &self.lsp;
-            for sh in lsp.get_handles(&language) {
-                if sh.capabilities.completion_resolve {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// True iff at least one LSP server attached to the active buffer's
     /// language advertises `textDocument/rename` (and therefore the
     /// `prepareRename` request, which the editor surfaces only through
     /// the rename feature flag).
@@ -1619,11 +1639,23 @@ impl Window {
         }
     }
 
-    /// Send `completionItem/resolve` for `item` to the first LSP server
-    /// (in language order) that advertises `completion_resolve` for the
-    /// active buffer's language. No-op if no server is running or no
-    /// server supports the resolve.
-    pub(crate) fn send_completion_resolve(&mut self, item: lsp_types::CompletionItem) {
+    /// Send `completionItem/resolve` for `candidate` to **the server that
+    /// offered it**, if that server advertises `completion_resolve`.
+    ///
+    /// Asking any other server is wrong by construction: the item's `data`
+    /// is a private handle minted by its own server, so a different one
+    /// answers with an error or with edits for something else entirely —
+    /// and resolve is where auto-imports come from, so that lands as a
+    /// wrong `use` line in the user's file. The capability question has
+    /// the same shape: "some server for this language resolves" says
+    /// nothing about the one that produced this candidate.
+    ///
+    /// No-op for candidates with no server behind them, or when that
+    /// server is gone or can't resolve.
+    pub(crate) fn send_completion_resolve(&mut self, candidate: &LspCompletionCandidate) {
+        let Some(server) = candidate.server else {
+            return;
+        };
         let Some(language) = self
             .buffers
             .get(&self.active_buffer())
@@ -1634,19 +1666,34 @@ impl Window {
         let request_id = self.alloc_lsp_request_id();
         {
             let lsp = &mut self.lsp;
-            for sh in lsp.get_handles_mut(&language) {
-                if sh.capabilities.completion_resolve {
-                    if let Err(e) = sh.handle.completion_resolve(request_id, item.clone()) {
-                        tracing::warn!(
-                            "Failed to send completionItem/resolve to '{}': {}",
-                            sh.name,
-                            e
-                        );
-                    }
-                    return;
-                }
+            let Some(sh) = lsp
+                .get_handles_mut(&language)
+                .into_iter()
+                .find(|sh| sh.handle.id() == server)
+            else {
+                tracing::debug!("Completion's server is no longer running; not resolving");
+                return;
+            };
+            if !sh.capabilities.completion_resolve {
+                tracing::debug!(
+                    "Server '{}' offered the completion but does not support resolve",
+                    sh.name
+                );
+                return;
+            }
+            if let Err(e) = sh
+                .handle
+                .completion_resolve(request_id, candidate.item.clone())
+            {
+                tracing::warn!(
+                    "Failed to send completionItem/resolve to '{}': {}",
+                    sh.name,
+                    e
+                );
+                return;
             }
         }
+        self.pending_completion_resolve_request = Some(request_id);
     }
 
     /// Apply an event to a buffer + the cursors of a split inside this
@@ -2191,9 +2238,10 @@ impl Window {
             prompt: None,
             bridge,
             next_lsp_request_id: 0,
-            pending_completion_requests: std::collections::HashSet::new(),
+            pending_completion_requests: std::collections::HashMap::new(),
             completion_items: None,
             completion_popup_lsp_items: Vec::new(),
+            pending_completion_resolve_request: None,
             scheduled_completion_trigger: None,
             dabbrev_state: None,
             pending_goto_definition_request: None,

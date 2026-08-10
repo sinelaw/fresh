@@ -269,12 +269,9 @@ impl Editor {
                 } => {
                     self.handle_lsp_code_action_resolved(action);
                 }
-                AsyncMessage::LspCompletionResolved {
-                    request_id: _,
-                    item,
-                } => {
+                AsyncMessage::LspCompletionResolved { request_id, item } => {
                     if let Ok(resolved) = item {
-                        self.handle_completion_resolved(resolved);
+                        self.handle_completion_resolved(request_id, resolved);
                     }
                 }
                 AsyncMessage::LspFormatting {

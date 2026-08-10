@@ -19,6 +19,13 @@
 //! inserted `use oxc_allocator::HashMap` instead, both for candidates that
 //! ship their edits eagerly and (rust-analyzer's real behaviour) for
 //! candidates whose edits arrive through `completionItem/resolve`.
+//!
+//! The same "which candidate is this, really?" question has three answers
+//! to get right, one test each here: accepting a row, keeping the
+//! highlight on it while typing narrows the list, and — when a language is
+//! served by several servers at once — sending its `completionItem/resolve`
+//! to the server that offered it rather than to whichever server happens
+//! to advertise resolve first.
 
 use crate::common::fake_lsp::FakeLspServer;
 use crate::common::harness::EditorTestHarness;
@@ -261,6 +268,123 @@ fn test_resolve_deferred_import_follows_the_selected_candidate() -> anyhow::Resu
             && !screen.contains("use wrong_crate::HashMap;"),
         "the resolve request must carry the candidate the user selected, so \
          the resolved import is std::collections::HashMap; screen was:\n{screen}"
+    );
+
+    Ok(())
+}
+
+/// Open the completion popup against **two** servers for one language,
+/// each offering a `HashMap` candidate whose import only that server can
+/// produce.
+fn open_two_server_popup(temp_dir: &tempfile::TempDir) -> anyhow::Result<EditorTestHarness> {
+    let script = FakeLspServer::write_per_server_import_script(temp_dir.path())?;
+    let test_file = temp_dir.path().join("main.rs");
+    std::fs::write(&test_file, "fn main() {\n    let m = HashMa\n}\n")?;
+
+    let server = |name: &str| fresh::services::lsp::LspServerConfig {
+        command: script.to_string_lossy().to_string(),
+        args: Some(vec![
+            temp_dir
+                .path()
+                .join(format!("{name}_log.txt"))
+                .to_string_lossy()
+                .to_string(),
+            name.to_string(),
+        ]),
+        enabled: true,
+        auto_start: true,
+        process_limits: fresh::services::process_limits::ProcessLimits::default(),
+        initialization_options: None,
+        env: Default::default(),
+        language_id_overrides: Default::default(),
+        root_markers: Default::default(),
+        name: Some(name.to_string()),
+        only_features: None,
+        except_features: None,
+    };
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        // `alpha` is first, so it is also the first server advertising
+        // completion-resolve support — the server the resolve request used
+        // to go to no matter which candidate was accepted.
+        fresh::types::LspLanguageConfig::Multi(vec![server("alpha"), server("beta")]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.send_key(KeyCode::End, KeyModifiers::NONE)?;
+    harness.render()?;
+    harness.send_key(KeyCode::Char(' '), KeyModifiers::CONTROL)?;
+
+    // Both servers' candidates on screen means both have answered, so the
+    // merged list is complete — no timer involved.
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("HashMap (use alpha::HashMap)")
+            && screen.contains("HashMap (use beta::HashMap)")
+    })?;
+
+    Ok(harness)
+}
+
+/// With several servers behind one language, `completionItem/resolve` must
+/// go to the server that offered the accepted candidate.
+///
+/// `CompletionItem::data` is an opaque, server-private handle, so a sibling
+/// server cannot answer for it — and resolve is where auto-imports come
+/// from, so asking the wrong one lands the wrong `use` line. The client
+/// used to send the resolve to the first server advertising resolve
+/// support for the language, which is only ever right by luck.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_resolve_goes_to_the_server_that_offered_the_candidate() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let mut harness = open_two_server_popup(&temp_dir)?;
+
+    // Select `beta`'s candidate — the two servers answer independently, so
+    // which row it landed on is whichever the screen shows.
+    let beta_row = row_showing(&harness, "beta::HashMap");
+    if !row_is_highlighted(&harness, beta_row) {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+        harness.render()?;
+    }
+    let beta_row = row_showing(&harness, "beta::HashMap");
+    assert!(
+        row_is_highlighted(&harness, beta_row),
+        "precondition: beta's candidate is selected; screen was:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+
+    // Whichever server was asked answers with its own import, so either
+    // one landing ends the wait and the assertion below decides which was
+    // correct — a wrong resolve fails instead of hanging.
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("use beta::HashMap;") || screen.contains("use alpha::HashMap;")
+    })?;
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("use beta::HashMap;") && !screen.contains("use alpha::HashMap;"),
+        "the resolve must be sent to beta — the server that offered the \
+         accepted candidate — so beta's import is the one that lands; \
+         screen was:\n{screen}"
     );
 
     Ok(())
