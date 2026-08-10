@@ -1172,7 +1172,41 @@ pub(crate) fn build_window_lsp(
     lsp
 }
 
+/// Outcome of [`Window::claim_next_key`].
+pub(crate) enum NextKeyClaim {
+    /// A plugin callback was pending: resolve it with this payload.
+    Resolve(
+        fresh_core::api::JsCallbackId,
+        fresh_core::api::KeyEventPayload,
+    ),
+    /// Key capture is active but no callback armed yet — the payload was
+    /// queued for the next `AwaitNextKey`.
+    Buffered,
+    /// No plugin wants the key.
+    NotClaimed,
+}
+
 impl Window {
+    /// Claim a key for the plugin `getNextKey()` machinery, if it wants
+    /// one. Pops the front-most pending callback (the caller resolves it
+    /// with the payload), or buffers the payload when key capture is
+    /// active but no callback is armed yet — closing the race between
+    /// fast typing/paste and the plugin re-arming `getNextKey` between
+    /// iterations. `NotClaimed` leaves the key to the normal pipeline.
+    pub(crate) fn claim_next_key(
+        &mut self,
+        payload: fresh_core::api::KeyEventPayload,
+    ) -> NextKeyClaim {
+        if let Some(callback_id) = self.pending_next_key_callbacks.pop_front() {
+            return NextKeyClaim::Resolve(callback_id, payload);
+        }
+        if self.key_capture_active {
+            self.pending_key_capture_buffer.push_back(payload);
+            return NextKeyClaim::Buffered;
+        }
+        NextKeyClaim::NotClaimed
+    }
+
     /// The currently-open native context menu's shared geometry core, if
     /// any, together with a discriminant identifying which concrete menu it
     /// belongs to.
