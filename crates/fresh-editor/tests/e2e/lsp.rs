@@ -5658,6 +5658,27 @@ fn test_completion_backspace_refilters() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Screen row showing the completion entry whose label is `label`, and
+/// whether the selection background is painted across that label — the way
+/// the user tells which row is highlighted.
+fn completion_row_is_highlighted(harness: &EditorTestHarness, label: &str) -> bool {
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .position(|line| line.contains(label))
+        .unwrap_or_else(|| panic!("no popup row for '{label}'; screen was:\n{screen}"))
+        as u16;
+    let column = harness
+        .screen_row_text(row)
+        .find(label)
+        .expect("label located on this row") as u16;
+    let selection_bg = harness.editor().theme().popup_selection_bg;
+    harness
+        .get_cell_style(column, row)
+        .and_then(|style| style.bg)
+        == Some(selection_bg)
+}
+
 /// Test type-to-filter preserves selection when possible
 #[test]
 fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
@@ -5739,17 +5760,10 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     harness.render()?;
 
     // Verify test_beta is selected
-    let selected = harness
-        .editor()
-        .active_state()
-        .popups
-        .top()
-        .and_then(|p| p.selected_item())
-        .map(|item| item.text.clone());
-    assert_eq!(
-        selected,
-        Some("test_beta".to_string()),
-        "test_beta should be selected"
+    assert!(
+        completion_row_is_highlighted(&harness, "test_beta"),
+        "precondition: test_beta should be the highlighted row; screen was:\n{}",
+        harness.screen_to_string()
     );
 
     // Type 's' to filter (all items still match "tes")
@@ -5757,17 +5771,18 @@ fn test_completion_type_to_filter_preserves_selection() -> anyhow::Result<()> {
     harness.render()?;
 
     // Verify selection is preserved
-    let selected_after = harness
-        .editor()
-        .active_state()
-        .popups
-        .top()
-        .and_then(|p| p.selected_item())
-        .map(|item| item.text.clone());
-    assert_eq!(
-        selected_after,
-        Some("test_beta".to_string()),
-        "Selection should be preserved after filtering"
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("test_alpha") && screen.contains("test_beta"),
+        "all three candidates still match the narrower prefix; screen was:\n{screen}"
+    );
+    assert!(
+        completion_row_is_highlighted(&harness, "test_beta"),
+        "the highlight must stay on the row the user picked; screen was:\n{screen}"
+    );
+    assert!(
+        !completion_row_is_highlighted(&harness, "test_alpha"),
+        "only one row may be highlighted; screen was:\n{screen}"
     );
 
     Ok(())
