@@ -1470,6 +1470,14 @@ impl crate::app::window::Window {
 
                 // Restore cursor, scroll, view_mode, and compose_width for ALL buffers in file_states
                 for (rel_path, file_state) in &split_state.file_states {
+                    // Never re-apply persisted state to git-internal files
+                    // (COMMIT_EDITMSG etc.): git regenerates them, so the
+                    // saved byte offsets point into content that no longer
+                    // exists. Also heals workspace files written by older
+                    // builds that still carry such entries (#2761).
+                    if crate::workspace::is_git_internal_path(rel_path) {
+                        continue;
+                    }
                     // Look up buffer by path, or by unnamed recovery ID
                     let rel_str = rel_path.to_string_lossy();
                     let buffer_id = if let Some(recovery_id) = rel_str.strip_prefix("__unnamed__") {
@@ -3139,6 +3147,13 @@ fn serialize_split_view_state(
         let Some(abs_path) = meta.file_path() else {
             continue;
         };
+
+        // Git-internal files (COMMIT_EDITMSG, MERGE_MSG, …) are regenerated
+        // with fresh content on every git operation — persisted cursor/scroll
+        // state for them is always stale (#2761).
+        if crate::workspace::is_git_internal_path(abs_path) {
+            continue;
+        }
 
         // Determine the key for this buffer's state
         let state_key = if abs_path.as_os_str().is_empty() {
