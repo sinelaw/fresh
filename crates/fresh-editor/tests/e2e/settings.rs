@@ -1105,17 +1105,19 @@ fn test_settings_search_result_click_after_wheel_scroll() {
         .find_text_on_screen("▸ ")
         .expect("selected search result marker visible");
     let name_col = marker_col + 2;
-    // Extract the top slot's result name from its row text. Anchor on the
-    // "▸" marker char itself (char indices in `screen_row_text` can drift
-    // from screen columns), and cut at the first double-space run.
+    // Extract the top slot's result name from its row text. Char indices in
+    // `screen_row_text` can drift from screen columns, so cut the row on the
+    // panel borders instead of counting: the results column is the third
+    // `│`-delimited segment. Drop the 2-cell selection indicator (either
+    // "▸ " or blanks — the wheel does not move the selection, so the top row
+    // is usually *not* the selected one) and cut at the first double space.
     let name_of_top_slot = |harness: &EditorTestHarness| -> String {
         let row_text = harness.screen_row_text(top_row);
-        let idx = match row_text.find('▸') {
-            Some(i) => i + '▸'.len_utf8(),
-            None => return String::new(),
+        let Some(segment) = row_text.split('│').nth(2) else {
+            return String::new();
         };
-        row_text[idx..]
-            .trim_start()
+        segment
+            .trim_start_matches([' ', '▸'])
             .split("  ")
             .next()
             .unwrap_or("")
@@ -1152,13 +1154,47 @@ fn test_settings_search_result_click_after_wheel_scroll() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Reproducer for issue #2860 (wheel cannot select the last result): at the
-/// end of the list further wheel-downs were no-ops while the selection was
-/// pinned to the first visible row, so the last result was unreachable by
-/// mouse. Wheel-downs past the end must keep advancing the selection until
-/// the bottom-most visible row is the selected one (matching keyboard).
+/// Parse the search header's `(first-last of total)` position readout off
+/// the rendered screen. Picks the first line whose parenthesised group parses
+/// as three numbers, so a description containing " of " can't fool it.
+fn search_result_range(harness: &EditorTestHarness) -> (usize, usize, usize) {
+    let screen = harness.screen_to_string();
+    for line in screen.lines() {
+        let Some(mid) = line.find(" of ") else {
+            continue;
+        };
+        let Some(open) = line[..mid].rfind('(') else {
+            continue;
+        };
+        let Some(close) = line[mid..].find(')').map(|i| i + mid) else {
+            continue;
+        };
+        let inner = &line[open + 1..close];
+        let Some((range, total)) = inner.split_once(" of ") else {
+            continue;
+        };
+        let Some((first, last)) = range.split_once('-') else {
+            continue;
+        };
+        if let (Ok(f), Ok(l), Ok(t)) = (
+            first.trim().parse::<usize>(),
+            last.trim().parse::<usize>(),
+            total.trim().parse::<usize>(),
+        ) {
+            return (f, l, t);
+        }
+    }
+    panic!("search header position readout not on screen:\n{screen}");
+}
+
+/// The mouse wheel scrolls the VIEW ONLY in the settings search results — it
+/// must never move the selection (this revises the wheel-moves-selection
+/// behaviour that had been added for the second half of #2860). Wheeling to
+/// the bottom must still bring the *last* result on screen (the symptom
+/// #2860 reported), while the selection marker stays on the entry the user
+/// left it on and simply scrolls out of sight and back.
 #[test]
-fn test_settings_search_wheel_selects_last_result() {
+fn test_settings_search_wheel_scrolls_view_without_moving_selection() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     harness.open_settings().unwrap();
 
@@ -1172,35 +1208,91 @@ fn test_settings_search_wheel_selects_last_result() {
     }
     harness.render().unwrap();
 
+    // The selected result carries the "▸ " marker; initially that is the
+    // first result, at the top of the list.
     let (marker_col, top_row) = harness
         .find_text_on_screen("▸ ")
         .expect("selected search result marker visible");
+    // Name of the entry the "▸ " marker sits on in `row`, or "" when that
+    // row is not the selected one. Char indices in `screen_row_text` can
+    // drift from screen columns, so cut the row on the panel borders (the
+    // results column is the third `│`-delimited segment) rather than
+    // counting columns, then cut the name at the first double space.
+    let selected_entry_in_row = |harness: &EditorTestHarness, row: u16| -> String {
+        let row_text = harness.screen_row_text(row);
+        let Some(segment) = row_text.split('│').nth(2) else {
+            return String::new();
+        };
+        let Some(idx) = segment.find('▸') else {
+            return String::new();
+        };
+        segment[idx + '▸'.len_utf8()..]
+            .split("  ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let selected_entry = selected_entry_in_row(&harness, top_row);
+    assert!(!selected_entry.is_empty());
 
-    // Wheel down until the screen stops changing (bottom of the list plus
-    // the selection walk to the last item). Bounded by twice the notch count
-    // any realistic result list needs, and exits early once stable.
-    let mut prev_screen = harness.screen_to_string();
+    let (first, _, total) = search_result_range(&harness);
+    assert_eq!(first, 1, "list starts at the top");
+    assert!(total > 1, "need a scrollable result list, got {total}");
+
+    let wheel_col = marker_col + 5;
+    let wheel_row = top_row + 4;
+
+    // Wheel down until the view stops moving.
+    let mut prev = harness.screen_to_string();
     for _ in 0..300 {
-        harness
-            .mouse_scroll_down(marker_col + 5, top_row + 4)
-            .unwrap();
+        harness.mouse_scroll_down(wheel_col, wheel_row).unwrap();
         harness.render().unwrap();
         let screen = harness.screen_to_string();
-        if screen == prev_screen {
+        if screen == prev {
             break;
         }
-        prev_screen = screen;
+        prev = screen;
     }
 
-    // The selection marker must have walked below the first visible row —
-    // onto the last result — instead of staying pinned to the viewport top.
-    let (_, marker_row_after) = harness
-        .find_text_on_screen("▸ ")
-        .expect("selected search result marker still visible");
+    // The view reached the very end: the last result is on screen.
+    let (_, last_visible, total_after) = search_result_range(&harness);
+    assert_eq!(total_after, total);
+    assert_eq!(
+        last_visible, total,
+        "wheeling down must scroll the view far enough to show the last result"
+    );
+
+    // ...and the selection did not come along for the ride: it is still on
+    // the first result, which is now scrolled off the top of the viewport,
+    // so no row on screen carries the selection marker.
+    let screen = harness.screen_to_string();
     assert!(
-        marker_row_after >= top_row + 3,
-        "selection must reach past the first visible row at the end of the \
-         list (marker at row {marker_row_after}, results start at {top_row})"
+        !screen.contains('▸'),
+        "the wheel must not move the selection onto a visible row; screen:\n{screen}"
+    );
+
+    // Wheel back up: the same entry is selected as before any scrolling.
+    let mut prev = harness.screen_to_string();
+    for _ in 0..300 {
+        harness.mouse_scroll_up(wheel_col, wheel_row).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen == prev {
+            break;
+        }
+        prev = screen;
+    }
+
+    let (first_again, _, _) = search_result_range(&harness);
+    assert_eq!(first_again, 1, "wheeling up returns the view to the top");
+    let (_, marker_row_back) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selection marker back in view at the top of the list");
+    assert_eq!(
+        selected_entry_in_row(&harness, marker_row_back),
+        selected_entry,
+        "the wheel must leave the selection on the entry it started on"
     );
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
