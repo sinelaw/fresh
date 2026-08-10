@@ -1562,8 +1562,18 @@ impl SettingsState {
 
     /// Scroll search results up by delta items
     pub fn search_scroll_up(&mut self, delta: usize) -> bool {
-        if self.search_results.is_empty() || self.search_scroll_offset == 0 {
+        if self.search_results.is_empty() {
             return false;
+        }
+        if self.search_scroll_offset == 0 {
+            // Viewport already at the top: keep walking the selection up so
+            // the wheel can reach (and select) the first result, matching
+            // keyboard navigation (#2860).
+            if self.selected_search_result == 0 {
+                return false;
+            }
+            self.selected_search_result = self.selected_search_result.saturating_sub(delta);
+            return true;
         }
         self.search_scroll_offset = self.search_scroll_offset.saturating_sub(delta);
         // Keep selection visible
@@ -1583,7 +1593,15 @@ impl SettingsState {
             .len()
             .saturating_sub(self.search_max_visible);
         if self.search_scroll_offset >= max_offset {
-            return false;
+            // Viewport already at the bottom: keep walking the selection down
+            // so the wheel can reach (and select) the last result, matching
+            // keyboard navigation (#2860).
+            let last = self.search_results.len() - 1;
+            if self.selected_search_result >= last {
+                return false;
+            }
+            self.selected_search_result = (self.selected_search_result + delta).min(last);
+            return true;
         }
         self.search_scroll_offset = (self.search_scroll_offset + delta).min(max_offset);
         // Keep selection visible
@@ -4235,5 +4253,89 @@ mod tests {
         assert_eq!(state.search_cursor(), "ที่".len());
         state.search_delete();
         assert_eq!(state.search_query(), "ที่");
+    }
+
+    /// Schema with enough same-prefix settings that a search for "opt" has
+    /// more results than a small viewport can show — used to exercise the
+    /// mouse-wheel scroll clamping of the search-result list.
+    const TEST_SCHEMA_MANY_OPTS: &str = r#"
+{
+  "type": "object",
+  "properties": {
+    "opt_a": { "type": "boolean", "default": true },
+    "opt_b": { "type": "boolean", "default": true },
+    "opt_c": { "type": "boolean", "default": true },
+    "opt_d": { "type": "boolean", "default": true },
+    "opt_e": { "type": "boolean", "default": true },
+    "opt_f": { "type": "boolean", "default": true }
+  },
+  "$defs": {}
+}
+"#;
+
+    fn search_scroll_state() -> SettingsState {
+        let config = test_config();
+        let mut state = SettingsState::new(TEST_SCHEMA_MANY_OPTS, &config).unwrap();
+        state.show();
+        state.search_active = true;
+        for c in "opt".chars() {
+            state.search_push_char(c);
+        }
+        assert!(
+            state.search_results.len() >= 6,
+            "expected all opt_* settings to match, got {}",
+            state.search_results.len()
+        );
+        // Small viewport: 2 visible rows, so the list scrolls.
+        state.search_max_visible = 2;
+        state
+    }
+
+    /// Reproducer for issue #2860 (wheel can't reach the last result):
+    /// wheel-down used to clamp the scroll offset at `len - max_visible` and
+    /// pin the selection to the viewport top, so the selection could never
+    /// land on the last result. Once the viewport is at the bottom, further
+    /// wheel-downs must keep advancing the selection — matching keyboard
+    /// navigation, which reaches the last item fine.
+    #[test]
+    fn test_search_wheel_down_reaches_last_result() {
+        let mut state = search_scroll_state();
+        let last = state.search_results.len() - 1;
+
+        // Wheel down more than enough notches to pass the end of the list.
+        for _ in 0..(2 * state.search_results.len()) {
+            state.search_scroll_down(1);
+        }
+
+        assert_eq!(
+            state.selected_search_result, last,
+            "wheel-down must be able to select the last search result"
+        );
+        // One more wheel-down at the very end is a no-op.
+        assert!(!state.search_scroll_down(1));
+        assert_eq!(state.selected_search_result, last);
+    }
+
+    /// Symmetric to `test_search_wheel_down_reaches_last_result`: once the
+    /// viewport is back at the top, further wheel-ups keep moving the
+    /// selection until it reaches the first result.
+    #[test]
+    fn test_search_wheel_up_reaches_first_result() {
+        let mut state = search_scroll_state();
+
+        // Go all the way down first, then all the way back up.
+        for _ in 0..(2 * state.search_results.len()) {
+            state.search_scroll_down(1);
+        }
+        for _ in 0..(2 * state.search_results.len()) {
+            state.search_scroll_up(1);
+        }
+
+        assert_eq!(state.search_scroll_offset, 0);
+        assert_eq!(
+            state.selected_search_result, 0,
+            "wheel-up must be able to select the first search result"
+        );
+        assert!(!state.search_scroll_up(1));
     }
 }
