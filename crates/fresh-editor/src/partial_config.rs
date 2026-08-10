@@ -182,6 +182,7 @@ pub struct PartialEditorConfig {
     pub confirm_quit: Option<bool>,
     pub restore_previous_session: Option<bool>,
     pub skip_session_restore_when_files_passed: Option<bool>,
+    pub ephemeral_file_patterns: Option<Vec<String>>,
     pub auto_create_empty_buffer_on_last_buffer_close: Option<bool>,
     pub highlight_context_bytes: Option<usize>,
     pub mouse_hover_enabled: Option<bool>,
@@ -279,6 +280,8 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.restore_previous_session);
         self.skip_session_restore_when_files_passed
             .merge_from(&other.skip_session_restore_when_files_passed);
+        self.ephemeral_file_patterns
+            .merge_from(&other.ephemeral_file_patterns);
         self.auto_create_empty_buffer_on_last_buffer_close
             .merge_from(&other.auto_create_empty_buffer_on_last_buffer_close);
         self.highlight_context_bytes
@@ -632,6 +635,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             skip_session_restore_when_files_passed: Some(
                 cfg.skip_session_restore_when_files_passed,
             ),
+            ephemeral_file_patterns: Some(cfg.ephemeral_file_patterns.clone()),
             auto_create_empty_buffer_on_last_buffer_close: Some(
                 cfg.auto_create_empty_buffer_on_last_buffer_close,
             ),
@@ -761,6 +765,9 @@ impl PartialEditorConfig {
             skip_session_restore_when_files_passed: self
                 .skip_session_restore_when_files_passed
                 .unwrap_or(defaults.skip_session_restore_when_files_passed),
+            ephemeral_file_patterns: self
+                .ephemeral_file_patterns
+                .unwrap_or_else(|| defaults.ephemeral_file_patterns.clone()),
             auto_create_empty_buffer_on_last_buffer_close: self
                 .auto_create_empty_buffer_on_last_buffer_close
                 .unwrap_or(defaults.auto_create_empty_buffer_on_last_buffer_close),

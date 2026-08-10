@@ -98,8 +98,9 @@ impl Editor {
         // (canonicalize + create_dir_all + temp file + rename) is disk I/O
         // that has no business inside a close that may run mid-frame.
         if let Some((path, file_state)) = self.active_window().file_state_on_close_snapshot(id) {
+            let ephemeral = self.config().editor.ephemeral_file_patterns.clone();
             self.spawn_off_loop_effect("file_state_on_close", move || {
-                crate::workspace::PersistedFileWorkspace::save(&path, file_state);
+                crate::workspace::PersistedFileWorkspace::save(&path, file_state, &ephemeral);
                 tracing::debug!("Saved file state on close for {:?}", path);
             });
         }

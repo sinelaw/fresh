@@ -127,6 +127,9 @@
         "confirm_quit": false,
         "restore_previous_session": true,
         "skip_session_restore_when_files_passed": true,
+        "ephemeral_file_patterns": [
+          "**/.git/**"
+        ],
         "auto_create_empty_buffer_on_last_buffer_close": true,
         "recovery_enabled": true,
         "auto_recovery_save_interval_secs": 2,
@@ -850,6 +853,17 @@
           "description": "When Fresh is launched with one or more file arguments (e.g.\n`fresh src/main.rs README.md`), skip the workspace session restore\nand open only the files passed on the command line. Hot-exit\ncontent (unsaved modified files and unnamed `[No Name]` buffers\nwith content) is still restored so in-progress work is never lost.\nPure-directory invocations (`fresh some/dir`) and bare invocations\n(`fresh` with no args) still restore the previous session normally.\nDisable this option to keep the legacy behavior of always\nrestoring the previous session even when files are passed.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Startup"
+        },
+        "ephemeral_file_patterns": {
+          "description": "Files whose per-file state (cursor, scroll, folds, …) is never saved\nand never restored, because something outside the editor rewrites\nthem: a persisted byte offset would land the cursor at an arbitrary\npoint in content that has since been replaced. The default covers\ngit's scratch files (`COMMIT_EDITMSG`, `MERGE_MSG`, `TAG_EDITMSG`,\nrebase todo lists), which git regenerates for every operation.\n\nEntries use the same dialect as `languages.*.filenames`: a literal\nentry matches the file name exactly, an entry with `*`/`?` is a glob\nmatched against the whole path if it names directories (`**/.git/**`)\nand against the file name otherwise (`*.tmp`).\nDefault: `[\"**/.git/**\"]`",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.git/**"
+          ],
           "x-section": "Startup"
         },
         "auto_create_empty_buffer_on_last_buffer_close": {

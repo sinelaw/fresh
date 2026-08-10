@@ -634,15 +634,14 @@ impl PersistedFileState {
     }
 }
 
-/// True for paths inside a `.git` directory (`COMMIT_EDITMSG`, `MERGE_MSG`,
-/// rebase todo lists, …). Git regenerates these with new content every
-/// operation, so a persisted byte offset lands the cursor somewhere
-/// arbitrary in the next one (#2761) — they are excluded from per-file
-/// state on save *and* on load, the latter so state written by older
-/// builds is ignored rather than applied. Matching on a path component
-/// also covers linked worktrees under `<main>/.git/worktrees/<name>/`.
-pub fn is_git_internal_path(path: &Path) -> bool {
-    path.components().any(|c| c.as_os_str() == ".git")
+/// True when `path` matches one of the `editor.ephemeral_file_patterns`
+/// entries — files rewritten behind the editor's back, git's scratch files
+/// (`.git/COMMIT_EDITMSG`, `MERGE_MSG`, …) by default. Their persisted byte
+/// offsets are stale by the time they would be restored (#2761), so such
+/// files are skipped on save *and* on load; the load side also neutralizes
+/// state written before this gate existed.
+pub fn is_ephemeral_file(path: &Path, patterns: &[String]) -> bool {
+    crate::primitives::glob_match::matches_any_entry(patterns, path)
 }
 
 /// Per-file workspace storage for scroll/cursor positions
@@ -673,10 +672,11 @@ impl PersistedFileWorkspace {
         Ok(Self::states_dir()?.join(filename))
     }
 
-    /// Load the state for a file by its absolute path (from disk)
-    pub fn load(path: &Path) -> Option<SerializedFileState> {
+    /// Load the state for a file by its absolute path (from disk).
+    /// `ephemeral_patterns` is `editor.ephemeral_file_patterns`.
+    pub fn load(path: &Path, ephemeral_patterns: &[String]) -> Option<SerializedFileState> {
         // Never restore state an older build may have persisted (#2761).
-        if is_git_internal_path(path) {
+        if is_ephemeral_file(path, ephemeral_patterns) {
             return None;
         }
         let state_path = match Self::state_file_path(path) {
@@ -706,9 +706,10 @@ impl PersistedFileWorkspace {
         Some(persisted.state)
     }
 
-    /// Save the state for a file by its absolute path (to disk, atomic write)
-    pub fn save(path: &Path, state: SerializedFileState) {
-        if is_git_internal_path(path) {
+    /// Save the state for a file by its absolute path (to disk, atomic write).
+    /// `ephemeral_patterns` is `editor.ephemeral_file_patterns`.
+    pub fn save(path: &Path, state: SerializedFileState, ephemeral_patterns: &[String]) {
+        if is_ephemeral_file(path, ephemeral_patterns) {
             return;
         }
         let state_path = match Self::state_file_path(path) {
@@ -1801,26 +1802,69 @@ mod tests {
         assert_eq!(restored.width, crate::config::ExplorerWidth::Percent(30));
     }
 
+    /// The shipped default must cover everything under a `.git` directory
+    /// (linked worktrees included) and nothing that merely looks like it.
     #[test]
-    fn test_is_git_internal_path() {
-        assert!(is_git_internal_path(Path::new("/repo/.git/COMMIT_EDITMSG")));
-        assert!(is_git_internal_path(Path::new(".git/MERGE_MSG")));
-        assert!(is_git_internal_path(Path::new(
-            "/main/.git/worktrees/wt/rebase-merge/git-rebase-todo"
-        )));
+    fn test_default_ephemeral_patterns_match_git_internals_only() {
+        let defaults = crate::config::default_ephemeral_file_patterns();
+        let matches = |p: &str| is_ephemeral_file(Path::new(p), &defaults);
 
-        // Regular files — including ones merely *named* like git internals.
-        assert!(!is_git_internal_path(Path::new("/repo/src/main.rs")));
-        assert!(!is_git_internal_path(Path::new("COMMIT_EDITMSG")));
-        assert!(!is_git_internal_path(Path::new(
-            "/repo/.github/workflows/ci.yml"
-        )));
-        assert!(!is_git_internal_path(Path::new("/repo/notes/.gitignore")));
+        assert!(matches("/repo/.git/COMMIT_EDITMSG"));
+        assert!(matches(".git/MERGE_MSG"));
+        assert!(matches("/repo/.git/TAG_EDITMSG"));
+        assert!(matches(
+            "/main/.git/worktrees/wt/rebase-merge/git-rebase-todo"
+        ));
+        // Windows separators (CONTRIBUTING §Cross-Platform).
+        assert!(matches("C:\\repo\\.git\\COMMIT_EDITMSG"));
+
+        assert!(!matches("/repo/src/main.rs"));
+        assert!(!matches("COMMIT_EDITMSG"));
+        assert!(!matches("/repo/.github/workflows/ci.yml"));
+        assert!(!matches("/repo/notes/.gitignore"));
+        assert!(!matches("C:\\repo\\.github\\workflows\\ci.yml"));
     }
 
-    /// Regression for #2761.
+    /// The list is data, not a hard-coded git rule: a custom entry excludes
+    /// a non-git file, and replacing the defaults stops excluding git's.
     #[test]
-    fn test_persisted_file_workspace_skips_git_internal_files() {
+    fn test_ephemeral_patterns_are_configurable() {
+        let custom = vec!["*.generated.rs".to_string(), "build/**".to_string()];
+
+        assert!(is_ephemeral_file(
+            Path::new("/repo/src/schema.generated.rs"),
+            &custom
+        ));
+        assert!(is_ephemeral_file(Path::new("build/out/app.js"), &custom));
+        assert!(!is_ephemeral_file(Path::new("/repo/src/main.rs"), &custom));
+        assert!(!is_ephemeral_file(
+            Path::new("/repo/.git/COMMIT_EDITMSG"),
+            &custom
+        ));
+
+        // A literal entry matches the file name exactly, anywhere.
+        let literal = vec!["COMMIT_EDITMSG".to_string()];
+        assert!(is_ephemeral_file(Path::new("COMMIT_EDITMSG"), &literal));
+        assert!(is_ephemeral_file(
+            Path::new("/anywhere/COMMIT_EDITMSG"),
+            &literal
+        ));
+        assert!(!is_ephemeral_file(
+            Path::new("/x/COMMIT_EDITMSG.bak"),
+            &literal
+        ));
+
+        // An empty list disables the exclusion entirely.
+        assert!(!is_ephemeral_file(
+            Path::new("/repo/.git/COMMIT_EDITMSG"),
+            &[]
+        ));
+    }
+
+    /// Regression for #2761: the global per-file store must neither persist
+    /// nor restore state for a path matching the ephemeral patterns.
+    #[test]
+    fn test_persisted_file_workspace_skips_ephemeral_files() {
         let temp = tempfile::TempDir::new().unwrap();
         let git_dir = temp.path().join("repo").join(".git");
         std::fs::create_dir_all(&git_dir).unwrap();
@@ -1855,10 +1899,21 @@ mod tests {
             folds: Vec::new(),
         };
 
-        PersistedFileWorkspace::save(&msg_path, state);
+        let patterns = crate::config::default_ephemeral_file_patterns();
+        PersistedFileWorkspace::save(&msg_path, state.clone(), &patterns);
         assert!(
-            PersistedFileWorkspace::load(&msg_path).is_none(),
+            PersistedFileWorkspace::load(&msg_path, &patterns).is_none(),
             "state saved for a .git-internal file must never be restored"
+        );
+
+        // Same store, a non-git file, excluded purely by configuration.
+        let scratch = temp.path().join("codegen.tmp");
+        std::fs::write(&scratch, "generated\n").unwrap();
+        let custom = vec!["*.tmp".to_string()];
+        PersistedFileWorkspace::save(&scratch, state, &custom);
+        assert!(
+            PersistedFileWorkspace::load(&scratch, &custom).is_none(),
+            "a configured pattern must exclude a non-git file from the store"
         );
     }
 }
