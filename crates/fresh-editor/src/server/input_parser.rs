@@ -89,3 +89,49 @@ impl Default for ClientInputParser {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    /// #2930, session-client path: a legacy terminal's Alt+] arrives as
+    /// `ESC ]` — identical to the OSC introducer. With no continuation inside
+    /// the grace window it must resolve to Alt+], not swallow all further
+    /// input as OSC content. (Alt+[ / `ESC [` is the CSI-introducer twin.)
+    #[test]
+    fn lone_osc_and_csi_introducers_resolve_to_alt_brackets_after_grace() {
+        for (bytes, chr) in [(&b"\x1b]"[..], ']'), (&b"\x1b["[..], '[')] {
+            let mut p = ClientInputParser::new();
+            let before = Instant::now();
+            assert!(p.parse(bytes).is_empty());
+            // Same tick (grace not elapsed): still ambiguous, nothing emitted.
+            assert!(p.flush_idle(before).is_empty());
+            // Grace elapsed with no continuation: the legacy Alt chord.
+            let events = p.flush_idle(Instant::now() + ESC_GRACE);
+            assert!(
+                matches!(
+                    events.as_slice(),
+                    [Event::Key(k)]
+                        if k.code == KeyCode::Char(chr) && k.modifiers == KeyModifiers::ALT,
+                ),
+                "expected Alt+{chr}, got {events:?}",
+            );
+            // Spent: nothing further to flush.
+            assert!(p.flush_idle(Instant::now() + ESC_GRACE).is_empty());
+        }
+    }
+
+    /// The guard: an OSC reply whose payload arrives (even on a later parse
+    /// call) before the stream goes idle is committed as a string sequence —
+    /// no amount of idling may tear it into keystrokes.
+    #[test]
+    fn osc_reply_split_across_parses_stays_swallowed() {
+        let mut p = ClientInputParser::new();
+        assert!(p.parse(b"\x1b]").is_empty());
+        assert!(p.parse(b"52;c;SGVsbG8=").is_empty());
+        assert!(p.flush_idle(Instant::now() + ESC_GRACE).is_empty());
+        assert!(p.parse(b"\x1b\\").is_empty());
+        assert!(p.flush_idle(Instant::now() + ESC_GRACE).is_empty());
+    }
+}

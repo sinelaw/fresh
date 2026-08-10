@@ -372,4 +372,67 @@ mod tests {
             events[0],
         );
     }
+
+    /// #2930: a legacy terminal transmits Alt+] as `ESC ]` and Alt+[ as
+    /// `ESC [` — byte-identical to the OSC/CSI introducers. With nothing
+    /// following, the idle flush must resolve them to the Alt chords instead
+    /// of swallowing all further input (OSC) or misreading the next key as a
+    /// CSI final byte.
+    #[test]
+    fn lone_osc_and_csi_introducers_resolve_to_alt_brackets_on_idle() {
+        use crossterm::event::KeyModifiers;
+        for (bytes, chr) in [(&b"\x1b]"[..], ']'), (&b"\x1b["[..], '[')] {
+            let pipe = Pipe::new();
+            let mut reader = TtyReader::for_test(pipe.0);
+
+            pipe.write(bytes);
+            reader.drain_stdin();
+            assert!(
+                drain_events(&mut reader).is_empty(),
+                "introducer must stay buffered while a payload could follow",
+            );
+
+            // Stream went idle: the introducer is a legacy Alt chord.
+            reader.flush_pending_escape();
+            let events = drain_events(&mut reader);
+            assert!(
+                matches!(
+                    events.as_slice(),
+                    [InputEvent::Key(k)]
+                        if k.code == KeyCode::Char(chr) && k.modifiers == KeyModifiers::ALT,
+                ),
+                "expected Alt+{chr}, got {events:?}",
+            );
+
+            // Typing afterwards works normally (nothing is swallowed).
+            pipe.write(b"x");
+            reader.drain_stdin();
+            let events = drain_events(&mut reader);
+            assert!(
+                matches!(
+                    events.as_slice(),
+                    [InputEvent::Key(k)] if k.code == KeyCode::Char('x'),
+                ),
+                "expected literal 'x', got {events:?}",
+            );
+        }
+    }
+
+    /// The counterpart guard: an OSC reply whose payload arrives on a later
+    /// read (no idle in between) is still swallowed whole, never emitted.
+    #[test]
+    fn osc_reply_split_across_reads_is_still_swallowed() {
+        let pipe = Pipe::new();
+        let mut reader = TtyReader::for_test(pipe.0);
+
+        pipe.write(b"\x1b]");
+        // The payload is already in the pipe when drain_stdin polls, so the
+        // grace-window read pulls it in and the reply is consumed whole.
+        pipe.write(b"11;rgb:2e2e/3434/3636\x07");
+        reader.drain_stdin();
+        assert!(
+            drain_events(&mut reader).is_empty(),
+            "OSC reply must be swallowed, not emitted",
+        );
+    }
 }

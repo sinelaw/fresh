@@ -626,6 +626,128 @@ fn flush_never_breaks_up_a_partial_sequence() {
     }
 }
 
+// ---- Lone escape prefixes vs. legacy Alt chords (sinelaw/fresh#2930) ----
+//
+// A terminal without the kitty keyboard protocol transmits Alt+] as `ESC ]`
+// and Alt+[ as `ESC [` — byte-identical to the OSC and CSI introducers. A
+// genuine control sequence always has its payload right behind the introducer
+// (same write burst), while a human Alt chord arrives alone, so a bare
+// introducer with nothing following resolves to the Alt chord on idle flush —
+// exactly the rule that already resolved a bare `ESC` to the Escape key.
+
+#[test]
+fn lone_esc_rbracket_flushes_to_alt_rbracket() {
+    let mut p = InputParser::new();
+    // Legacy Alt+]: `ESC ]` with no continuation.
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.escape_pending(), "bare OSC introducer must be flushable");
+    assert_eq!(
+        keys(&p.flush()),
+        vec![(KeyCode::Char(']'), KeyModifiers::ALT)]
+    );
+    // Back at ground: flush is spent and typing works normally.
+    assert!(!p.escape_pending());
+    assert!(p.flush().is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn lone_esc_lbracket_flushes_to_alt_lbracket() {
+    let mut p = InputParser::new();
+    // Legacy Alt+[: `ESC [` with no continuation.
+    assert!(p.parse(b"\x1b[").is_empty());
+    assert!(p.escape_pending(), "bare CSI introducer must be flushable");
+    assert_eq!(
+        keys(&p.flush()),
+        vec![(KeyCode::Char('['), KeyModifiers::ALT)]
+    );
+    // The next typed key stands alone — it must NOT be misread as a CSI
+    // final byte (`A` after a swallowed `ESC [` used to become the Up key).
+    assert!(!p.escape_pending());
+    assert_eq!(
+        keys(&p.parse(b"A")),
+        vec![(KeyCode::Char('A'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn lone_string_introducers_flush_to_alt_chords() {
+    // The other legacy Alt chords that collide with string introducers:
+    // Alt+Shift+P (`ESC P` = DCS), Alt+_ (APC), Alt+^ (PM), Alt+Shift+X (SOS).
+    for (introducer, chr) in [(b'P', 'P'), (b'_', '_'), (b'^', '^'), (b'X', 'X')] {
+        let mut p = InputParser::new();
+        assert!(p.parse(&[0x1b, introducer]).is_empty());
+        assert!(p.escape_pending(), "bare `ESC {chr}` must be flushable");
+        assert_eq!(
+            keys(&p.flush()),
+            vec![(KeyCode::Char(chr), KeyModifiers::ALT)],
+            "flush of `ESC {chr}`"
+        );
+    }
+}
+
+#[test]
+fn osc_with_payload_in_same_burst_is_not_flushable() {
+    // A genuine OSC reply whose terminator hasn't arrived yet: the payload
+    // bytes commit it as a string sequence, so it must keep swallowing —
+    // never resolve to Alt+] plus leaked text.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b]52;c;SGVs").is_empty());
+    assert!(!p.escape_pending(), "committed OSC must not be flushable");
+    assert!(p.flush().is_empty());
+    // The rest of the reply arrives on a later read and is swallowed whole.
+    assert!(p.parse(b"bG8=\x07").is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn osc_split_right_after_introducer_still_swallowed_when_payload_follows() {
+    // Read boundary lands exactly after `ESC ]` but the payload follows before
+    // the stream goes idle (so the caller never invokes `flush`): the reply
+    // must still be swallowed whole. This is the split the idle-flush rule
+    // must not break: flushing is the caller's idle-time decision, and mere
+    // parsing of the two prefix bytes must not emit anything by itself.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.parse(b"11;rgb:2e2e/3434/3636\x07").is_empty());
+    assert_eq!(
+        keys(&p.parse(b"a")),
+        vec![(KeyCode::Char('a'), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn csi_with_params_pending_is_not_flushable() {
+    // `ESC [ 1` could still become F5 (`ESC [ 15 ~`) etc. — a parameter byte
+    // commits the CSI, so flush must stay silent and the sequence completes.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b[1").is_empty());
+    assert!(!p.escape_pending(), "committed CSI must not be flushable");
+    assert!(p.flush().is_empty());
+    assert_eq!(
+        keys(&p.parse(b"5~")),
+        vec![(KeyCode::F(5), KeyModifiers::empty())]
+    );
+}
+
+#[test]
+fn empty_osc_terminated_in_later_chunk_is_swallowed() {
+    // `ESC ]` then a lone BEL in the next read: a (degenerate but genuine)
+    // empty OSC. As long as no flush happened in between, it is swallowed.
+    let mut p = InputParser::new();
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.parse(b"\x07").is_empty());
+    // Same for the ST-terminated form.
+    assert!(p.parse(b"\x1b]").is_empty());
+    assert!(p.parse(b"\x1b\\").is_empty());
+}
+
 #[test]
 fn esc_then_mouse_same_chunk() {
     let mut p = InputParser::new();
