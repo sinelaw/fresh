@@ -71,9 +71,14 @@ pub(crate) struct HoverHitView<'a> {
     pub open_menu: Option<(usize, &'a MenuLayout)>,
     /// The file-explorer panel's area.
     pub file_explorer_area: Option<Rect>,
-    /// Pre-resolved file-explorer status-indicator hit (see module docs):
-    /// `Some` only when the pointer is actually on an indicator slot.
-    pub explorer_status_indicator: Option<HoverTarget>,
+    /// Resolves the file-explorer status-indicator hit (see module docs).
+    ///
+    /// A closure, not a value: it scans the window's buffers for unsaved
+    /// changes, takes the theme lock and runs the explorer's slot layout,
+    /// and `hover_target` runs on every mouse-move event. The ladder calls
+    /// it only if it actually reaches that rung — so a hover that a popup
+    /// or the menu bar claims first never pays for it.
+    pub explorer_status_indicator: &'a dyn Fn() -> Option<HoverTarget>,
     /// `(container, direction, x, y, length)` per split separator.
     pub separators: &'a [(ContainerId, SplitDirection, u16, u16, u16)],
     /// `(split, row, start_col, end_col)` per close-split button.
@@ -193,9 +198,10 @@ pub(crate) fn chrome_target(view: &HoverHitView<'_>, col: u16, row: u16) -> Opti
         }
 
         // Renderer/theme-dependent probe, resolved by the shell — see the
-        // module docs. It sits here so the *ordering* (after the close
-        // button, before the border) stays in this ladder.
-        if let Some(indicator) = view.explorer_status_indicator.clone() {
+        // module docs. Called here and only here, so it keeps both its
+        // place in the ladder (after the close button, before the border)
+        // and its cost off every other hover.
+        if let Some(indicator) = (view.explorer_status_indicator)() {
             return Some(indicator);
         }
 
@@ -412,7 +418,7 @@ mod tests {
                 menu_bar: None,
                 open_menu: None,
                 file_explorer_area: None,
-                explorer_status_indicator: None,
+                explorer_status_indicator: &|| None,
                 separators: &self.separators,
                 close_split_buttons: &self.close_split_buttons,
                 maximize_split_buttons: &self.maximize_split_buttons,
@@ -516,9 +522,10 @@ mod tests {
     fn explorer_status_indicator_ranks_between_close_button_and_border() {
         let fx = Fixture::empty();
         let indicator = HoverTarget::FileExplorerStatusIndicator("/x".into());
+        let resolve = || Some(HoverTarget::FileExplorerStatusIndicator("/x".into()));
         let mut v = fx.view();
         v.file_explorer_area = Some(rect(0, 0, 30, 10));
-        v.explorer_status_indicator = Some(indicator.clone());
+        v.explorer_status_indicator = &resolve;
 
         // It beats the border…
         assert_eq!(hover_target(&v, 29, 5), Some(indicator));
@@ -633,5 +640,53 @@ mod tests {
     fn empty_layout_claims_nothing() {
         let fx = Fixture::empty();
         assert_eq!(hover_target(&fx.view(), 5, 5), None);
+    }
+
+    /// The status-indicator probe is expensive (it scans buffers for
+    /// unsaved changes and takes the theme lock) and `hover_target` runs
+    /// on every mouse move — so it must not be consulted unless the
+    /// ladder actually reaches that rung.
+    #[test]
+    fn status_indicator_probe_is_not_consulted_unless_reached() {
+        use std::cell::Cell;
+
+        let calls = Cell::new(0usize);
+        let resolve = || {
+            calls.set(calls.get() + 1);
+            None
+        };
+
+        let mut fx = Fixture::empty();
+        let area = rect(0, 0, 20, 4);
+        fx.popups.push((0, area, area, 0, 4, None, 0));
+
+        let mut v = fx.view();
+        v.file_explorer_area = Some(rect(0, 0, 30, 10));
+        v.explorer_status_indicator = &resolve;
+
+        // A popup claims the cell first, so the probe is never run.
+        assert_eq!(
+            hover_target(&v, 3, 2),
+            Some(HoverTarget::PopupListItem(0, 2))
+        );
+        assert_eq!(calls.get(), 0, "an overlay hit must not pay for the probe");
+
+        // The close button also short-circuits ahead of it.
+        assert_eq!(
+            hover_target(&v, 28, 0),
+            Some(HoverTarget::FileExplorerCloseButton)
+        );
+        assert_eq!(
+            calls.get(),
+            0,
+            "the close button must not pay for it either"
+        );
+
+        // Reaching the explorer body does consult it (once).
+        assert_eq!(
+            hover_target(&v, 29, 5),
+            Some(HoverTarget::FileExplorerBorder)
+        );
+        assert_eq!(calls.get(), 1);
     }
 }

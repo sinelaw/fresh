@@ -1112,7 +1112,7 @@ impl Editor {
                 .flatten(),
             open_menu: self.menu_state.active_menu.zip(menu_layout),
             file_explorer_area: layout.file_explorer_area,
-            explorer_status_indicator: self.explorer_status_indicator_at(col, row),
+            explorer_status_indicator: &|| self.explorer_status_indicator_at(col, row),
             separators: &layout.separator_areas,
             close_split_buttons: &layout.close_split_areas,
             maximize_split_buttons: &layout.maximize_split_areas,
