@@ -123,6 +123,11 @@ pub enum PopupResolver {
     /// segment). Confirm dispatches the selected row's `data`
     /// ("toggle_read_only" / "cancel") through `handle_read_only_menu_action`.
     ReadOnly,
+    /// Update-available menu (anchored to the status bar's `{update}` segment).
+    /// Confirm dispatches the selected row's `data` ("update" / "cancel_popup")
+    /// through `handle_update_menu_action`; "update" opens a local terminal that
+    /// runs the update.
+    Update,
     /// "Couldn't save settings" error popup. Acknowledging it (confirm or
     /// cancel) opens the offending config file for `layer` in a buffer so the
     /// user can fix the syntax error that blocked the save.

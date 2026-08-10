@@ -51,6 +51,55 @@ pub fn git_command(path: &Path) -> Command {
     cmd
 }
 
+/// Run a repository-mutating git command, tolerating transient
+/// `.git/index.lock` contention.
+///
+/// Why this is needed: the editor under test polls `git status --porcelain`
+/// in the same repo (the `git_explorer` / `git_gutter` plugins refresh file
+/// decorations on a timer). `git status` refreshes the on-disk index and, to
+/// do so, briefly takes `.git/index.lock`. When a test's *own* external
+/// `git add` / `git commit` — simulating a user running git in another
+/// terminal — lands inside that window, git aborts with:
+///
+///   fatal: Unable to create '.../.git/index.lock': File exists.
+///   Another git process seems to be running in this repository ...
+///
+/// That is not a real error: it is transient lock contention between two
+/// legitimate git processes. A user would simply re-run the command, and so
+/// do we. On *that specific* failure we wait (semantically, by watching the
+/// lock file) for the competing process to release the lock, then retry — no
+/// wall-clock timeout, matching CONTRIBUTING's "wait indefinitely / semantic
+/// waiting" rule. Any *other* failure panics immediately, so a genuine git
+/// error is never masked (narrow recovery path).
+fn run_git_mutation(path: &Path, args: &[&str], what: &str) {
+    let lock_path = path.join(".git").join("index.lock");
+    loop {
+        let output = git_command(path)
+            .args(args)
+            .output()
+            .unwrap_or_else(|e| panic!("Failed to run git {what}: {e}"));
+
+        if output.status.success() {
+            return;
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // Narrow: only the index.lock contention error is retryable.
+        let lock_contention = stderr.contains("index.lock")
+            && (stderr.contains("File exists") || stderr.contains("Another git process"));
+        if !lock_contention {
+            panic!("git {what} failed: {stderr}");
+        }
+
+        // Semantic wait: spin (yielding) until the competing git process
+        // releases the lock, then retry. The poll-driven `git status` is
+        // short-lived, so this resolves almost immediately.
+        while lock_path.exists() {
+            std::thread::yield_now();
+        }
+    }
+}
+
 /// A hermetic git repository for testing
 pub struct GitTestRepo {
     /// Temporary directory containing the git repository
@@ -63,6 +112,18 @@ impl GitTestRepo {
     /// Create a new git test repository with test files
     pub fn new() -> Self {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        // Deliberately *not* canonicalized. On macOS a tempdir is
+        // `/var/folders/...`, a symlink to `/private/var/...`, and the editor
+        // stores the resolved form on the buffer while `repo.path` keeps the
+        // unresolved one — which is a real hazard for anything comparing the
+        // two, and why `tests/e2e/code_tour_dock.rs` canonicalizes its own
+        // fixture. Resolving it *here* is not the fix, though: on Windows
+        // `fs::canonicalize` returns an extended-length `\\?\D:\...` path,
+        // which git and the plugins that shell out to it do not accept, and
+        // that broke `plugins::package_manager` (which uses a repo path as a
+        // git remote). Per-fixture canonicalization where a test actually
+        // needs it stays correct; doing it for every git-backed test at once
+        // does not.
         let path = temp_dir.path().to_path_buf();
 
         // Initialize git repository. The test's own git invocations are
@@ -105,48 +166,18 @@ impl GitTestRepo {
     /// Add files to git staging area
     pub fn git_add(&self, paths: &[&str]) {
         for path in paths {
-            let output = git_command(&self.path)
-                .args(["add", path])
-                .output()
-                .expect("Failed to run git add");
-
-            if !output.status.success() {
-                panic!(
-                    "git add failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            }
+            run_git_mutation(&self.path, &["add", path], "add");
         }
     }
 
     /// Add all files to git
     pub fn git_add_all(&self) {
-        let output = git_command(&self.path)
-            .args(["add", "."])
-            .output()
-            .expect("Failed to run git add .");
-
-        if !output.status.success() {
-            panic!(
-                "git add . failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        run_git_mutation(&self.path, &["add", "."], "add .");
     }
 
     /// Commit staged changes
     pub fn git_commit(&self, message: &str) {
-        let output = git_command(&self.path)
-            .args(["commit", "-m", message])
-            .output()
-            .expect("Failed to run git commit");
-
-        if !output.status.success() {
-            panic!(
-                "git commit failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
+        run_git_mutation(&self.path, &["commit", "-m", message], "commit");
     }
 
     /// Set up a typical project structure for testing
@@ -330,6 +361,41 @@ A sample project for testing.
         copy_plugin(&plugins_dir, "git_gutter");
     }
 
+    /// Configure local stand-ins for the `difft` external diff tool and the
+    /// `delta` pager. The fake difft intentionally emits side-by-side output
+    /// instead of a unified diff, matching the configuration from issue #2721
+    /// without requiring either tool to be installed on the test machine.
+    #[cfg(unix)]
+    pub fn setup_external_diff_and_pager(&self) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let difft = self.create_file(
+            "difft",
+            "#!/bin/sh\nprintf '%s\\n' 'src/main.rs --- Rust' '1 fn main() | 1 fn main()'\n",
+        );
+        let delta = self.create_file("delta", "#!/bin/sh\ncat\n");
+
+        for tool in [&difft, &delta] {
+            fs::set_permissions(tool, fs::Permissions::from_mode(0o755))
+                .expect("Failed to make fake diff tool executable");
+        }
+
+        for (key, value) in [
+            ("diff.external", difft.to_string_lossy()),
+            ("core.pager", delta.to_string_lossy()),
+        ] {
+            let output = git_command(&self.path)
+                .args(["config", "--local", key, value.as_ref()])
+                .output()
+                .expect("Failed to configure fake diff tool");
+            assert!(
+                output.status.success(),
+                "git config {key} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
     /// Set up live diff plugin for live-diff e2e tests
     pub fn setup_live_diff_plugin(&self) {
         let plugins_dir = self.path.join("plugins");
@@ -370,6 +436,57 @@ A sample project for testing.
     /// Stage a file's changes
     pub fn stage_file(&self, relative_path: &str) {
         self.git_add(&[relative_path]);
+    }
+
+    /// Reset a file's index and working-tree state to `refspec`, the way an
+    /// external tool would (`git checkout <ref> -- <path>` in another
+    /// terminal while the editor has the file open).
+    pub fn git_checkout_file(&self, refspec: &str, relative_path: &str) {
+        run_git_mutation(
+            &self.path,
+            &["checkout", refspec, "--", relative_path],
+            "checkout",
+        );
+    }
+
+    /// The file's current on-disk modification time.
+    pub fn mtime(&self, relative_path: &str) -> std::time::SystemTime {
+        fs::metadata(self.path.join(relative_path))
+            .and_then(|m| m.modified())
+            .expect("file should exist and expose an mtime")
+    }
+
+    /// Block until `relative_path`'s on-disk mtime is strictly newer than
+    /// `floor`, rewriting its (unchanged) bytes until the filesystem's clock
+    /// ticks past its own granularity.
+    ///
+    /// Auto-revert notices an external write by comparing mtimes, so a test
+    /// that rewrites a file the editor already opened has to guarantee the
+    /// new mtime is distinguishable from the recorded one. On a filesystem
+    /// with 1 s mtime granularity (HFS+, some CI volumes) a fast test does
+    /// the whole open-then-rewrite sequence inside a single tick, and the
+    /// reload never fires.
+    ///
+    /// The obvious fix — sleep past the granularity — is a fixed timer, and
+    /// the one this replaced was worse than that: it used `harness.sleep`,
+    /// which advances *logical* time only and so waited no real time at all,
+    /// leaving the hazard it was written to prevent fully live. Rewriting
+    /// until the observed mtime actually moves is semantic waiting on the
+    /// real condition (CONTRIBUTING.md Testing §3): it costs nothing on a
+    /// nanosecond-resolution filesystem and exactly one granularity tick on
+    /// a coarse one, and it cannot silently not-work.
+    pub fn touch_until_mtime_after(&self, relative_path: &str, floor: std::time::SystemTime) {
+        let full = self.path.join(relative_path);
+        let content = fs::read(&full).expect("file should exist");
+        loop {
+            if self.mtime(relative_path) > floor {
+                return;
+            }
+            // Same bytes back: this is a pure mtime bump, not a content edit,
+            // so it can't perturb what the test is actually asserting on.
+            fs::write(&full, &content).expect("failed to rewrite file for mtime bump");
+            std::thread::yield_now();
+        }
     }
 }
 

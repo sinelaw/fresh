@@ -271,6 +271,8 @@ fn new_local_session_is_born_with_its_own_local_authority() -> anyhow::Result<()
             Some("agent".into()),
             born_authority,
             None,
+            None,
+            false,
         )
         .map_err(anyhow::Error::msg)?;
 

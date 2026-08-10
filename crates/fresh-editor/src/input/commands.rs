@@ -1,4 +1,46 @@
 //! Command palette system for executing editor actions by name
+//!
+//! # Naming convention for settings toggles
+//!
+//! A toggle's *scope* must be readable from its name alone — the palette is a
+//! flat list, and "Toggle Line Wrap" sitting next to "Toggle Line Wrap (Current
+//! Buffer)" is only unambiguous if the suffix is used consistently. Two forms,
+//! no third:
+//!
+//! * **`Toggle X`** — changes the editor-wide default and **saves it to the
+//!   config layer that defines it** (project config if the project overrides
+//!   the key, the user config otherwise) via `Editor::persist_config_change`,
+//!   so it survives a restart. Every unsuffixed toggle must persist; one that only mutates the
+//!   in-memory `Arc<Config>` (or a `Window` flag) silently forgets the user's
+//!   choice on the next launch. `Config::config_mut` does *not* persist on its
+//!   own — it is only `Arc::make_mut`. `persist_config_change` accepts only a
+//!   [`SettingKey`](crate::config_keys::SettingKey) constant — never a raw
+//!   JSON-pointer string — and every constant carries a generated CI test
+//!   pinning it to serde's actual spelling and value type.
+//! * **`Toggle X (Current Buffer)`** — changes only the active buffer and
+//!   leaves the global default and every other buffer alone. The override is
+//!   recorded on `BufferSettings` (or `BufferViewState`) as an explicit
+//!   `*_override: Option<_>` field, and persisted in the per-file workspace
+//!   state (`SerializedFileState`) so it too survives a restart.
+//!
+//! An `Option<_>` override rather than a bare bool matters: `None` keeps the
+//! buffer following the global default, so a later config edit still reaches
+//! buffers the user never pinned, and `BufferSettings::apply_config` knows
+//! which fields it must not re-stamp.
+//!
+//! Two per-buffer toggles are deliberately session-scoped because they drive
+//! process lifecycle rather than display — `Toggle Auto-Revert (Current
+//! Buffer)` (file watching) and `Toggle LSP for Current Buffer` (server
+//! lifecycle). They still name their scope, which is what matters;
+//! resurrecting "LSP off for this file" across restarts is a separate decision.
+//!
+//! `Toggle LSP for Current Buffer` is also the one command that states its
+//! scope in prose rather than with the parenthetical suffix, and must stay that
+//! way. It is *disabled* for any language with no server configured, and the
+//! palette sorts disabled commands last — so in the suffixed form every enabled
+//! `(Current Buffer)` sibling that fuzzy-matches "toggle…lsp" outranks it
+//! ("Toggle **V**irtua**l** **S**pace" matches, among others) and the user
+//! cannot type their way to it. The prose form keeps it reachable.
 
 use crate::input::keybindings::{Action, KeyContext};
 use crate::types::context_keys;
@@ -188,18 +230,31 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[],
         custom_contexts: &[],
     },
+    // Saving is application-wide, which is why `is_application_wide_action`
+    // lets Ctrl+S through from the file explorer. Focusing the tree doesn't
+    // change which buffer is active, so the save lands on the last focused
+    // buffer — the palette offers it there for the same reason the keybinding
+    // works there. Not in a terminal: Ctrl+S goes to the PTY, and the active
+    // buffer in that context is the terminal itself.
     CommandDef {
         name_key: "cmd.save_file",
         desc_key: "cmd.save_file_desc",
         action: || Action::Save,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.save_file_as",
         desc_key: "cmd.save_file_as_desc",
         action: || Action::SaveAs,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.save_all",
+        desc_key: "cmd.save_all_desc",
+        action: || Action::SaveAll,
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -213,14 +268,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.close_buffer",
         desc_key: "cmd.close_buffer_desc",
         action: || Action::Close,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.close_tab",
         desc_key: "cmd.close_tab_desc",
         action: || Action::CloseTab,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -512,28 +567,28 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.next_buffer",
         desc_key: "cmd.next_buffer_desc",
         action: || Action::NextBuffer,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.previous_buffer",
         desc_key: "cmd.previous_buffer_desc",
         action: || Action::PrevBuffer,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.switch_to_previous_tab",
         desc_key: "cmd.switch_to_previous_tab_desc",
         action: || Action::SwitchToPreviousTab,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.switch_to_tab_by_name",
         desc_key: "cmd.switch_to_tab_by_name_desc",
         action: || Action::SwitchToTabByName,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // Split operations
@@ -541,35 +596,35 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.split_horizontal",
         desc_key: "cmd.split_horizontal_desc",
         action: || Action::SplitHorizontal,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.split_vertical",
         desc_key: "cmd.split_vertical_desc",
         action: || Action::SplitVertical,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.close_split",
         desc_key: "cmd.close_split_desc",
         action: || Action::CloseSplit,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.next_split",
         desc_key: "cmd.next_split_desc",
         action: || Action::NextSplit,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.previous_split",
         desc_key: "cmd.previous_split_desc",
         action: || Action::PrevSplit,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -587,38 +642,47 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.extract_tab_to_new_workspace",
+        desc_key: "cmd.extract_tab_to_new_workspace_desc",
+        action: || Action::ExtractTabToNewWorkspace,
+        // Terminal too: extracting a terminal tab (rooted at the shell's
+        // cwd) is reached from terminal mode via the palette.
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.next_pane",
         desc_key: "cmd.next_pane_desc",
         action: || Action::NextPane,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.previous_pane",
         desc_key: "cmd.previous_pane_desc",
         action: || Action::PrevPane,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.increase_split_size",
         desc_key: "cmd.increase_split_size_desc",
         action: || Action::IncreaseSplitSize,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.decrease_split_size",
         desc_key: "cmd.decrease_split_size_desc",
         action: || Action::DecreaseSplitSize,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.toggle_maximize_split",
         desc_key: "cmd.toggle_maximize_split_desc",
         action: || Action::ToggleMaximizeSplit,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // View toggles
@@ -651,17 +715,45 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.toggle_indentation_guide_current_buffer",
+        desc_key: "cmd.toggle_indentation_guide_current_buffer_desc",
+        action: || Action::ToggleIndentationGuideCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_fold_indicators_current_buffer",
+        desc_key: "cmd.toggle_fold_indicators_current_buffer_desc",
+        action: || Action::ToggleFoldIndicatorsCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_current_line_highlight_current_buffer",
+        desc_key: "cmd.toggle_current_line_highlight_current_buffer_desc",
+        action: || Action::ToggleCurrentLineHighlightCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_occurrence_highlight_current_buffer",
+        desc_key: "cmd.toggle_occurrence_highlight_current_buffer_desc",
+        action: || Action::ToggleOccurrenceHighlightCurrentBuffer,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.wave_animation",
         desc_key: "cmd.wave_animation_desc",
         action: || Action::TriggerWaveAnimation,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.toggle_scroll_sync",
         desc_key: "cmd.toggle_scroll_sync_desc",
         action: || Action::ToggleScrollSync,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -675,6 +767,9 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.debug_toggle_highlight",
         desc_key: "cmd.debug_toggle_highlight_desc",
         action: || Action::ToggleDebugHighlights,
+        // Per-buffer, not editor-wide: `Window::toggle_debug_highlights` flips
+        // `debug_highlight_mode` on the *active buffer*, so it belongs with the
+        // other buffer-scoped settings and stays out of the explorer/terminal.
         contexts: &[Normal],
         custom_contexts: &[],
     },
@@ -775,21 +870,21 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.scroll_tabs_left",
         desc_key: "cmd.scroll_tabs_left_desc",
         action: || Action::ScrollTabsLeft,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.scroll_tabs_right",
         desc_key: "cmd.scroll_tabs_right_desc",
         action: || Action::ScrollTabsRight,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.toggle_mouse_support",
         desc_key: "cmd.toggle_mouse_support_desc",
         action: || Action::ToggleMouseCapture,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // File explorer
@@ -853,7 +948,7 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.focus_file_explorer",
         desc_key: "cmd.focus_file_explorer_desc",
         action: || Action::FocusFileExplorer,
-        contexts: &[Normal, Terminal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -924,21 +1019,21 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.toggle_line_wrap",
         desc_key: "cmd.toggle_line_wrap_desc",
         action: || Action::ToggleLineWrap,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.toggle_current_line_highlight",
         desc_key: "cmd.toggle_current_line_highlight_desc",
         action: || Action::ToggleCurrentLineHighlight,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.toggle_occurrence_highlight",
         desc_key: "cmd.toggle_occurrence_highlight_desc",
         action: || Action::ToggleOccurrenceHighlight,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -966,14 +1061,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.set_background",
         desc_key: "cmd.set_background_desc",
         action: || Action::SetBackground,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.set_background_blend",
         desc_key: "cmd.set_background_blend_desc",
         action: || Action::SetBackgroundBlend,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // Search and replace
@@ -1143,14 +1238,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.navigate_back",
         desc_key: "cmd.navigate_back_desc",
         action: || Action::NavigateBack,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.navigate_forward",
         desc_key: "cmd.navigate_forward_desc",
         action: || Action::NavigateForward,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // Smart editing
@@ -1203,14 +1298,14 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.list_bookmarks",
         desc_key: "cmd.list_bookmarks_desc",
         action: || Action::ListBookmarks,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.list_macros",
         desc_key: "cmd.list_macros_desc",
         action: || Action::ListMacros,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -1266,7 +1361,7 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.jump_to_bookmark",
         desc_key: "cmd.jump_to_bookmark_desc",
         action: || Action::PromptJumpToBookmark,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // Help
@@ -1295,6 +1390,20 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.show_lsp_status",
         desc_key: "cmd.show_lsp_status_desc",
         action: || Action::ShowLspStatus,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.update_fresh",
+        desc_key: "cmd.update_fresh_desc",
+        action: || Action::UpdateFresh,
+        contexts: &[],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.open_update_log",
+        desc_key: "cmd.open_update_log_desc",
+        action: || Action::OpenUpdateLog,
         contexts: &[],
         custom_contexts: &[],
     },
@@ -1331,7 +1440,7 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.toggle_inlay_hints",
         desc_key: "cmd.toggle_inlay_hints_desc",
         action: || Action::ToggleInlayHints,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // Theme selection
@@ -1424,7 +1533,18 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.focus_terminal",
         desc_key: "cmd.focus_terminal_desc",
         action: || Action::FocusTerminal,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    // A terminal whose process quit has already dropped out of Terminal
+    // context into read-only scrollback — the `Normal` entry is what covers
+    // that state, which is exactly the one this command acts on. The other two
+    // are for reaching it from a sibling live terminal or the explorer.
+    CommandDef {
+        name_key: "cmd.restart_terminal",
+        desc_key: "cmd.restart_terminal_desc",
+        action: || Action::RestartTerminal,
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
@@ -1492,21 +1612,21 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.init_reload",
         desc_key: "cmd.init_reload_desc",
         action: || Action::InitReload,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.init_edit",
         desc_key: "cmd.init_edit_desc",
         action: || Action::InitEdit,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     CommandDef {
         name_key: "cmd.init_check",
         desc_key: "cmd.init_check_desc",
         action: || Action::InitCheck,
-        contexts: &[Normal],
+        contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
     // Live Grep (issue #1796) — `cmd.live_grep` itself is registered

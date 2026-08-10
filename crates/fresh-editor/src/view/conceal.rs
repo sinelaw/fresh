@@ -272,7 +272,7 @@ impl ConcealManager {
     ///
     /// `cursors` are the rendering split's cursor byte positions, used to
     /// evaluate cursor-dependent activation rules. Pass `&[]` for
-    /// cursor-blind consumers (scroll math, `VisualRowIndex`) — they see
+    /// cursor-blind consumers (scroll math, `WrapIndex`) — they see
     /// the canonical "no cursor anywhere" rendering.
     pub fn query_viewport(
         &self,
@@ -282,6 +282,34 @@ impl ConcealManager {
         cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
         self.query_viewport_excluding(start, end, marker_list, None, cursors)
+    }
+
+    /// Earliest conceal in `start..end` whose cursor-dependent activation
+    /// currently differs from the canonical (cursor-less) evaluation.
+    ///
+    /// The wrap index is canonical, so rows at and after this byte can wrap
+    /// differently on screen than the index says. An anchored build whose
+    /// anchor sits past this byte must re-anchor here — the model's
+    /// `_stable_anchor` — or the frame draws rows the placement never meant.
+    pub fn earliest_cursor_divergence(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        cursors: &[usize],
+    ) -> Option<usize> {
+        self.ranges
+            .iter()
+            .filter_map(|r| {
+                let a = r.activation.as_ref()?;
+                let range = r.range(marker_list);
+                if range.start < start || range.start >= end {
+                    return None;
+                }
+                (a.is_active(range.start, cursors) != a.is_active(range.start, &[]))
+                    .then_some(range.start)
+            })
+            .min()
     }
 
     /// Like [`query_viewport`](Self::query_viewport), but skips ranges whose

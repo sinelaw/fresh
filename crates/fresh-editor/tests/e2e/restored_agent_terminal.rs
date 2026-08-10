@@ -55,6 +55,7 @@ fn spawn_agent_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) 
             persistent: false, // ephemeral — exactly the Orchestrator agent case
             command: Some(argv.clone()),
             title: None,
+            env: std::collections::HashMap::new(),
         })
         .expect("agent terminal should spawn");
     // create_window_with_terminal records this marker; mirror it here so the
@@ -81,6 +82,7 @@ fn spawn_resumable_agent_terminal(
             persistent: false,
             command: Some(launch.clone()),
             title: None,
+            env: std::collections::HashMap::new(),
         })
         .expect("agent terminal should spawn");
     window.terminal_commands.insert(terminal_id, launch);

@@ -37,6 +37,8 @@ pub mod overlay;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod scroll_sync;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod scrollbar_marker;
+#[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod soft_break;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod ui;
@@ -44,8 +46,12 @@ pub mod ui;
 pub mod viewport;
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod virtual_text;
-#[cfg(any(feature = "runtime", feature = "wasm"))]
-pub mod visual_row_index;
+
+/// Byte <-> visual row, repaired rather than invalidated.
+pub mod wrap_index;
+
+/// The single wrap rule — see the module docs.
+pub mod wrap_machine;
 
 // Settings module has internal gating (schema is WASM-compatible)
 #[cfg(any(feature = "runtime", feature = "wasm"))]

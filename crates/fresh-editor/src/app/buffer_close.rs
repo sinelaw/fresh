@@ -44,17 +44,35 @@ impl Editor {
                 return Err(anyhow::anyhow!("Buffer has unsaved changes"));
             }
         }
-        self.close_buffer_internal(id)
+        self.close_buffer_internal(id, false)
     }
 
     /// Force close the given buffer without checking for unsaved changes
     /// Use this when the user has already confirmed they want to discard changes
     pub fn force_close_buffer(&mut self, id: BufferId) -> anyhow::Result<()> {
-        self.close_buffer_internal(id)
+        self.close_buffer_internal(id, false)
+    }
+
+    /// Close the last editor tab while a Utility Dock is present, keeping the
+    /// editor leaf alive but empty (issue #2283). The editor leaf we intend to
+    /// keep is made the active split so the synthesized placeholder buffer
+    /// lands there rather than in the dock, then the closing buffer is torn
+    /// down with `force_empty_placeholder` so no dock terminal gets adopted.
+    pub(crate) fn close_tab_keeping_editor_leaf_empty(
+        &mut self,
+        id: BufferId,
+        split_id: LeafId,
+    ) -> anyhow::Result<()> {
+        self.split_manager_mut().set_active_split(split_id);
+        self.close_buffer_internal(id, true)
     }
 
     /// Internal helper to close a buffer (shared by close_buffer and force_close_buffer)
-    fn close_buffer_internal(&mut self, id: BufferId) -> anyhow::Result<()> {
+    fn close_buffer_internal(
+        &mut self,
+        id: BufferId,
+        force_empty_placeholder: bool,
+    ) -> anyhow::Result<()> {
         // Discard any async pastes whose anchors live in this buffer:
         // when the result arrives the buffer state will be gone, and
         // there's no useful place to land the text without it. Done
@@ -75,8 +93,16 @@ impl Editor {
             self.active_window_mut().completed_waits.push(wait_id);
         }
 
-        // Save file state before closing (for per-file session persistence)
-        self.active_window().save_file_state_on_close(id);
+        // Save file state before closing (for per-file session persistence).
+        // Snapshot on this thread, write on the runtime: the state file write
+        // (canonicalize + create_dir_all + temp file + rename) is disk I/O
+        // that has no business inside a close that may run mid-frame.
+        if let Some((path, file_state)) = self.active_window().file_state_on_close_snapshot(id) {
+            self.spawn_off_loop_effect("file_state_on_close", move || {
+                crate::workspace::PersistedFileWorkspace::save(&path, file_state);
+                tracing::debug!("Saved file state on close for {:?}", path);
+            });
+        }
 
         // Delete recovery data for explicitly closed buffers (including unnamed)
         if let Err(e) = self.delete_buffer_recovery(id) {
@@ -107,7 +133,7 @@ impl Editor {
             buffer: replacement_buffer,
             created_empty: created_empty_buffer,
             return_to_group,
-        } = self.resolve_close_replacement(id, active_split);
+        } = self.resolve_close_replacement(id, active_split, force_empty_placeholder);
 
         // Switch to replacement buffer BEFORE updating splits.
         // Only needed when the closing buffer is the one the user is
@@ -173,6 +199,11 @@ impl Editor {
             }
         }
 
+        // Drop any diff baselines registered against this buffer; their
+        // lifecycle follows the buffer's, like composite source panes.
+        #[cfg(feature = "plugins")]
+        self.diff_baselines.drop_for_buffer(id);
+
         // Notify plugins so they can reset any state tied to this buffer
         // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
         // when the group is closed via the tab's close button rather than
@@ -209,24 +240,33 @@ impl Editor {
         // Rename rather than leave in place: backing files are named
         // by terminal id, which restarts per session, so a future
         // same-id terminal would otherwise clobber this log.
+        //
+        // The rename, the raw-log delete, and above all the retained-file
+        // GC (a directory scan plus up to hundreds of deletes) are disk
+        // I/O — run on the runtime, not inside a close that may run
+        // mid-frame. Only the map removals need this thread.
         let backing_file = self
             .active_window_mut()
             .terminal_backing_files
             .remove(&terminal_id);
-        if let Some(ref path) = backing_file {
-            self.retain_closed_terminal_backing(path);
-        }
-        // Clean up raw log file
-        if let Some(log_file) = self
+        let log_file = self
             .active_window_mut()
             .terminal_log_files
-            .remove(&terminal_id)
-        {
-            if backing_file.as_ref() != Some(&log_file) {
-                // Best-effort cleanup of temporary terminal files.
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
-            }
+            .remove(&terminal_id);
+        if backing_file.is_some() || log_file.is_some() {
+            let backing = backing_file.clone();
+            self.spawn_off_loop_effect("terminal_backing_cleanup", move || {
+                if let Some(ref path) = backing {
+                    Self::retain_closed_terminal_backing(path);
+                }
+                if let Some(log_file) = log_file {
+                    if backing.as_ref() != Some(&log_file) {
+                        // Best-effort cleanup of temporary terminal files.
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
+                    }
+                }
+            });
         }
 
         // The buffer's remembered mode was dropped when its `terminal_buffers`
@@ -251,7 +291,28 @@ impl Editor {
         &mut self,
         id: BufferId,
         active_split: LeafId,
+        force_empty_placeholder: bool,
     ) -> CloseReplacement {
+        // Forced empty state (issue #2283): the caller closed the last editor
+        // tab while a Utility Dock is present and wants the editor leaf kept
+        // alive but blank — NOT re-populated with an arbitrary remaining
+        // buffer. Crucially, the normal fallbacks below would happily adopt a
+        // dock TERMINAL buffer (terminals aren't `hidden_from_tabs`), ejecting
+        // it into the editor. So synthesize a placeholder unconditionally and
+        // short-circuit before any buffer-adoption logic runs.
+        if force_empty_placeholder {
+            let new_id = self.new_buffer();
+            if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
+                meta.hidden_from_tabs = true;
+                meta.synthetic_placeholder = true;
+            }
+            return CloseReplacement {
+                buffer: new_id,
+                created_empty: true,
+                return_to_group: None,
+            };
+        }
+
         let replacement_target: Option<crate::view::split::TabTarget> = self
             .windows
             .get(&self.active_window)
@@ -444,8 +505,8 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .values_mut()
         {
+            // `remove_buffer` drops the tab and its focus-history entry.
             view_state.remove_buffer(id);
-            view_state.remove_from_history(id);
         }
     }
 
@@ -588,22 +649,33 @@ impl Editor {
                     return false;
                 }
             }
-            // If this is the only tab in this split AND there are other
-            // splits, close the split rather than swap it to a fallback
+            // If this is the only tab in this split AND there is another
+            // EDITOR split, close the split rather than swap it to a fallback
             // buffer.  Mirrors `close_tab()` so mouse-click close and
             // Close Buffer/Close Tab commands behave the same — without
             // this, the × button leaves a leftover split showing some
             // unrelated buffer (observed with the Search/Replace panel).
-            let has_other_splits = self
+            //
+            // The Utility Dock is a role-tagged leaf, NOT an editor split, so
+            // it must be excluded from this count (issue #2283). Counting it
+            // took the "close the whole split" path when the sole editor tab
+            // was closed, collapsing the editor leaf and promoting the dock's
+            // terminals into the main tab bar. See `LayoutRoles` below.
+            let (has_other_editor_splits, dock_present, this_is_dock) = self
                 .windows
                 .get(&self.active_window)
                 .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .root()
-                .count_leaves()
-                > 1;
-            if split_tabs.len() <= 1 && has_other_splits {
+                .map(|(mgr, _)| {
+                    use crate::view::split::SplitRole;
+                    let has_other_editor_splits = mgr.root().leaf_split_ids().iter().any(|&lid| {
+                        lid != split_id && mgr.leaf_role(lid) != Some(SplitRole::UtilityDock)
+                    });
+                    let dock_present = mgr.find_leaf_by_role(SplitRole::UtilityDock).is_some();
+                    let this_is_dock = mgr.leaf_role(split_id) == Some(SplitRole::UtilityDock);
+                    (has_other_editor_splits, dock_present, this_is_dock)
+                })
+                .expect("active window must have a populated split layout");
+            if split_tabs.len() <= 1 && has_other_editor_splits {
                 self.handle_close_split(split_id.into());
                 // handle_close_split also disposes the buffer-less split;
                 // buffer lifetime cleanup happens via its own path.
@@ -619,6 +691,23 @@ impl Editor {
                 // teardown can't clobber the restore (issue #2485).
                 self.sync_terminal_mode_to_active_buffer();
                 self.set_status_message(t!("buffer.tab_closed").to_string());
+                return true;
+            }
+            // Sole editor tab, a Utility Dock is the only other leaf: keep the
+            // editor leaf alive but EMPTY (placeholder empty-state) instead of
+            // collapsing it into the dock or adopting a dock terminal buffer
+            // (issue #2283).
+            if split_tabs.len() <= 1 && dock_present && !this_is_dock {
+                if let Err(e) = self.close_tab_keeping_editor_leaf_empty(buffer_id, split_id) {
+                    self.set_status_message(
+                        t!("file.cannot_close", error = e.to_string()).to_string(),
+                    );
+                } else {
+                    // Active buffer is now the hidden placeholder (non-terminal);
+                    // drop any lingering Terminal key context.
+                    self.sync_terminal_mode_to_active_buffer();
+                    self.set_status_message(t!("buffer.tab_closed").to_string());
+                }
                 return true;
             }
             if let Err(e) = self.close_buffer(buffer_id) {
@@ -880,7 +969,7 @@ impl Editor {
         else {
             return;
         };
-        let tabs_width = self.active_window().effective_tabs_width();
+        let tabs_width = self.active_window().split_tabs_width(split_id);
         self.active_window_mut()
             .ensure_active_tab_visible(split_id, active_buffer, tabs_width);
     }
@@ -945,6 +1034,33 @@ impl Editor {
                     // Skip modified buffers - don't close them
                     return false;
                 }
+            }
+            // Batch close mirror of the interactive guard (issue #2283): if
+            // this is the sole editor tab in this leaf and the only other leaf
+            // is a Utility Dock, keep the editor leaf alive but empty rather
+            // than letting `close_buffer`'s fallback adopt a dock terminal
+            // buffer into it (which would re-introduce the eject during
+            // Close All / Close Others).
+            let (has_other_editor_splits, dock_present, this_is_dock) = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| {
+                    use crate::view::split::SplitRole;
+                    let has_other_editor_splits = mgr.root().leaf_split_ids().iter().any(|&lid| {
+                        lid != split_id && mgr.leaf_role(lid) != Some(SplitRole::UtilityDock)
+                    });
+                    let dock_present = mgr.find_leaf_by_role(SplitRole::UtilityDock).is_some();
+                    let this_is_dock = mgr.leaf_role(split_id) == Some(SplitRole::UtilityDock);
+                    (has_other_editor_splits, dock_present, this_is_dock)
+                })
+                .expect("active window must have a populated split layout");
+            if split_tabs.len() <= 1 && !has_other_editor_splits && dock_present && !this_is_dock {
+                if let Err(e) = self.close_tab_keeping_editor_leaf_empty(buffer_id, split_id) {
+                    tracing::warn!("Failed to close buffer: {}", e);
+                    return false;
+                }
+                return true;
             }
             if let Err(e) = self.close_buffer(buffer_id) {
                 tracing::warn!("Failed to close buffer: {}", e);
@@ -1226,7 +1342,7 @@ impl Editor {
     /// a unique `<stem>-closed-<epoch_ms>.txt` so a future terminal that
     /// reuses the same id can't clobber it, then bounds the retained set.
     /// Best-effort throughout — a failure just means that log isn't kept.
-    fn retain_closed_terminal_backing(&self, path: &std::path::Path) {
+    fn retain_closed_terminal_backing(path: &std::path::Path) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             return;
@@ -1241,14 +1357,14 @@ impl Editor {
         let retained = parent.join(format!("{stem}-closed-{epoch_ms}.txt"));
         #[allow(clippy::let_underscore_must_use)]
         let _ = crate::app::terminal::terminal_backing_fs().rename(path, &retained);
-        self.gc_retained_terminal_backings(parent);
+        Self::gc_retained_terminal_backings(parent);
     }
 
     /// Prune the oldest retained (`-closed-`) terminal backing files in a
     /// directory so they don't grow without bound. Ordering uses the epoch
     /// embedded in the filename, so it needs no filesystem metadata. Live
     /// backing files (no `-closed-` marker) are never touched.
-    fn gc_retained_terminal_backings(&self, dir: &std::path::Path) {
+    fn gc_retained_terminal_backings(dir: &std::path::Path) {
         const MAX_RETAINED: usize = 200;
         let Ok(entries) = crate::app::terminal::terminal_backing_fs().read_dir(dir) else {
             return;

@@ -1006,7 +1006,8 @@ mod tests {
                     "x-enum-from": "/languages"
                 },
                 "theme": {
-                    "type": "string"
+                    "type": "string",
+                    "x-enum-from": "$themes"
                 }
             }
         }"##;
@@ -1026,13 +1027,22 @@ mod tests {
         );
         assert!(default_lang.nullable, "should be nullable");
 
-        // theme should not have enum_from
+        // theme now carries the dynamic `$themes` source (registry-backed
+        // dropdown) rather than being a frozen enum (#2738).
         let theme = general
             .settings
             .iter()
             .find(|s| s.name == "Theme")
             .expect("should have Theme setting");
-        assert!(theme.enum_from.is_none());
+        assert_eq!(
+            theme.enum_from.as_deref(),
+            Some("$themes"),
+            "theme should carry the `$themes` dynamic-source hint"
+        );
+        assert!(
+            matches!(theme.setting_type, SettingType::String),
+            "theme is a validated string, not a frozen enum"
+        );
     }
 
     #[test]

@@ -24,6 +24,10 @@ use fresh_plugin_runtime::PluginThreadHandle;
 pub struct PluginManager {
     #[cfg(feature = "plugins")]
     inner: Option<PluginThreadHandle>,
+    /// Per-window filesystem registry, kept so the editor can rebuild it from
+    /// its windows whenever it refreshes the plugin state snapshot.
+    #[cfg(feature = "plugins")]
+    window_registry: Option<Arc<super::bridge::WindowFsRegistry>>,
     #[cfg(not(feature = "plugins"))]
     _phantom: std::marker::PhantomData<()>,
     /// Test-only side channel: commands pushed via
@@ -45,19 +49,34 @@ impl PluginManager {
         command_registry: Arc<RwLock<CommandRegistry>>,
         dir_context: DirectoryContext,
         theme_cache: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+        authority_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
+        local_filesystem: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>,
     ) -> Self {
         #[cfg(feature = "plugins")]
         {
             if enable {
+                // Per-window authority registry: seeded with the boot backend
+                // and rebuilt from the editor's windows on each snapshot
+                // refresh. Backs bare-string paths (active window) and
+                // `WindowPath` values (a specific window).
+                let window_registry =
+                    Arc::new(super::bridge::WindowFsRegistry::new(authority_filesystem));
+                // Local-host filesystem: fixed, never retargeted, so `LocalPath`
+                // values always resolve on the editor host.
+                let local_plugin_fs: Arc<dyn fresh_core::services::PluginFilesystem> =
+                    Arc::new(super::bridge::RoutedFilesystem::fixed(local_filesystem));
                 let services = Arc::new(EditorServiceBridge {
                     command_registry: command_registry.clone(),
                     dir_context,
                     theme_cache,
+                    local_plugin_fs,
+                    window_registry: Arc::clone(&window_registry),
                 });
                 match PluginThreadHandle::spawn(services) {
                     Ok(handle) => {
                         return Self {
                             inner: Some(handle),
+                            window_registry: Some(window_registry),
                             pending_injected_commands: Vec::new(),
                         }
                     }
@@ -72,6 +91,7 @@ impl PluginManager {
             }
             Self {
                 inner: None,
+                window_registry: None,
                 pending_injected_commands: Vec::new(),
             }
         }
@@ -81,6 +101,8 @@ impl PluginManager {
             let _ = command_registry; // Suppress unused warning
             let _ = dir_context; // Suppress unused warning
             let _ = theme_cache; // Suppress unused warning
+            let _ = authority_filesystem; // Suppress unused warning
+            let _ = local_filesystem; // Suppress unused warning
             if enable {
                 tracing::warn!("Plugins requested but compiled without plugin support");
             }
@@ -89,6 +111,16 @@ impl PluginManager {
                 pending_injected_commands: Vec::new(),
             }
         }
+    }
+
+    /// The per-window filesystem registry, if plugins are active.
+    ///
+    /// The editor calls [`WindowFsRegistry::rebuild`](super::bridge::WindowFsRegistry::rebuild)
+    /// on it whenever it refreshes the plugin state snapshot, so plugin file I/O
+    /// resolves against the correct window's authority (or the active one).
+    #[cfg(feature = "plugins")]
+    pub fn window_fs_registry(&self) -> Option<Arc<super::bridge::WindowFsRegistry>> {
+        self.window_registry.clone()
     }
 
     /// Inject a [`PluginCommand`](super::api::PluginCommand) into the
@@ -347,16 +379,23 @@ impl PluginManager {
         None
     }
 
-    /// Execute a plugin action asynchronously.
+    /// Execute a plugin action asynchronously. `args_json`, when set, is a JSON
+    /// object handed to the handler as its single argument (the agent command
+    /// channel's `RunCommand.args`); `None` calls it with no arguments, which
+    /// is what a keybinding or palette invocation does. `request_id`, when set,
+    /// asks the runtime to report the handler's return value back under that id
+    /// once it settles — how a `cmd run` gets an answer to print.
     #[cfg(feature = "plugins")]
     pub fn execute_action_async(
         &self,
         action_name: &str,
+        args_json: Option<String>,
+        request_id: Option<u64>,
     ) -> Option<anyhow::Result<fresh_plugin_runtime::thread::oneshot::Receiver<anyhow::Result<()>>>>
     {
         self.inner
             .as_ref()
-            .map(|m| m.execute_action_async(action_name))
+            .map(|m| m.execute_action_async(action_name, args_json, request_id))
     }
 
     /// List all loaded plugins.

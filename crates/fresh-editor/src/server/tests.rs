@@ -611,6 +611,9 @@ mod integration_tests {
                 crate::services::env_provider::EnvProvider::inactive(),
             ),
             session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -785,6 +788,9 @@ mod integration_tests {
                 crate::services::env_provider::EnvProvider::inactive(),
             ),
             session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -966,6 +972,9 @@ mod integration_tests {
                 crate::services::env_provider::EnvProvider::inactive(),
             ),
             session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
 
         let (paths_tx, paths_rx) = mpsc::channel();
@@ -1319,6 +1328,9 @@ mod integration_tests {
                 crate::services::env_provider::EnvProvider::inactive(),
             ),
             session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
 
         // `Editor` isn't `Send`, so construction + rebuild must happen
@@ -1457,6 +1469,9 @@ mod integration_tests {
                 crate::services::env_provider::EnvProvider::inactive(),
             ),
             session_keepalive: None,
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
 
         let dir_b_clone = dir_b.clone();
@@ -1577,6 +1592,9 @@ mod integration_tests {
                 crate::services::env_provider::EnvProvider::inactive(),
             ),
             session_keepalive: Some(keepalive),
+            startup_files: Vec::new(),
+            #[cfg(feature = "web")]
+            web_addr: None,
         };
 
         let dropped_for_thread = dropped.clone();
@@ -1619,5 +1637,204 @@ mod integration_tests {
         let result = handle.join().expect("startup-auth thread panicked");
         std::fs::remove_dir_all(&temp_dir).ok();
         result.expect("startup-auth test failed");
+    }
+
+    /// `fresh --web` hosts the web bridge INSIDE the session daemon, so a
+    /// browser and a `fresh -a` terminal drive one editor. This is the whole
+    /// contract in one test:
+    ///
+    ///   1. a daemon with `web_addr` set boots its editor eagerly (a browser
+    ///      can't be waited for the way a first IPC client can);
+    ///   2. an attaching terminal's viewport becomes the shared grid the
+    ///      browser is served at;
+    ///   3. input over the browser transport reaches the attached terminal;
+    ///   4. input over the terminal transport reaches the browser's scene.
+    #[cfg(feature = "web")]
+    #[test]
+    fn test_web_bridge_and_tui_client_share_one_editor() {
+        use crate::config::Config;
+        use crate::config_io::DirectoryContext;
+        use crate::server::editor_server::{EditorServer, EditorServerConfig};
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::mpsc;
+
+        /// One HTTP exchange against the bridge, returning the response body —
+        /// or `None` while the listener isn't bound yet (the daemon builds its
+        /// editor before it binds, so early callers retry). No `Origin` header:
+        /// the same posture as curl or the Playwright request API, which the
+        /// bridge's CSRF guard deliberately allows.
+        fn try_http(port: u16, method: &str, path: &str, body: &str) -> Option<String> {
+            let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
+                return None;
+            };
+            let req = format!(
+                "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: \
+                 application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(req.as_bytes()).ok()?;
+            let mut raw = String::new();
+            drop(stream.read_to_string(&mut raw));
+            Some(
+                raw.split_once("\r\n\r\n")
+                    .map(|(_, b)| b.to_string())
+                    .unwrap_or_default(),
+            )
+        }
+
+        fn http(port: u16, method: &str, path: &str, body: &str) -> String {
+            try_http(port, method, path, body).expect("bridge should answer")
+        }
+
+        /// Poll `/state` until `f` accepts it. No timeout — the test runner
+        /// provides one, and a hang here is a real regression.
+        fn state_until(port: u16, f: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+            loop {
+                if let Some(body) = try_http(port, "GET", "/state", "") {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
+                        if f(&v) {
+                            return v;
+                        }
+                    }
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        /// The joined text of the first pane's cells — what the browser draws
+        /// as buffer interior (chrome is a separate semantic region).
+        fn pane_text(state: &serde_json::Value) -> String {
+            let mut out = String::new();
+            let Some(rows) = state["regions"]["panes"][0]["cells"].as_array() else {
+                return out;
+            };
+            for row in rows {
+                for cell in row.as_array().into_iter().flatten() {
+                    out.push_str(cell["t"].as_str().unwrap_or(" "));
+                }
+                out.push('\n');
+            }
+            out
+        }
+
+        // Grab a free port by binding and releasing it. A racing bind would
+        // surface as a clean error from `EditorServer::run`, not a flaky pass.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .expect("reserve port")
+            .local_addr()
+            .expect("local addr")
+            .port();
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("fresh-web-share-{}-{}", std::process::id(), port));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let dir_context = DirectoryContext::for_testing(&temp_dir);
+        let session_name = unique_session_name("web-share");
+
+        let server_config = EditorServerConfig {
+            working_dir: temp_dir.clone(),
+            session_name: Some(session_name.clone()),
+            idle_timeout: Some(Duration::from_secs(30)),
+            editor_config: Config::default(),
+            dir_context,
+            plugins_enabled: false,
+            init_enabled: false,
+            startup_authority: None,
+            workspace_trust: std::sync::Arc::new(
+                crate::services::workspace_trust::WorkspaceTrust::permissive(),
+            ),
+            env_provider: std::sync::Arc::new(
+                crate::services::env_provider::EnvProvider::inactive(),
+            ),
+            session_keepalive: None,
+            startup_files: Vec::new(),
+            web_addr: Some(format!("127.0.0.1:{port}")),
+        };
+
+        let (paths_tx, paths_rx) = mpsc::channel();
+        let (shutdown_tx, shutdown_rx) = mpsc::channel();
+        // Editor is not `Send`, so the server is built inside its own thread.
+        let server_handle = thread::spawn(move || {
+            let mut server = EditorServer::new(server_config).unwrap();
+            paths_tx.send(server.socket_paths().clone()).unwrap();
+            shutdown_tx.send(server.shutdown_handle()).unwrap();
+            server.run()
+        });
+        let socket_paths = paths_rx.recv().unwrap();
+        let shutdown_handle = shutdown_rx.recv().unwrap();
+
+        // (1) The bridge answers before any terminal has ever attached — the
+        //     editor was built for the browser's sake, at the bridge's default
+        //     grid.
+        let booted = state_until(port, |v| v["w"].as_u64().is_some());
+        assert_eq!(
+            (
+                booted["w"].as_u64().unwrap() as u16,
+                booted["h"].as_u64().unwrap() as u16
+            ),
+            crate::webui::DEFAULT_SIZE,
+            "a web-enabled daemon should boot its editor at the bridge's default grid"
+        );
+
+        // (2) A terminal attaches at 80x24; the shared grid refits to it, so
+        //     the browser is served the size the terminal can display.
+        let conn = ClientConnection::connect(&socket_paths).expect("connect terminal client");
+        let hello = ClientHello::new(TermSize::new(80, 24));
+        conn.write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        let response = conn.read_control().unwrap().unwrap();
+        match serde_json::from_str::<ServerControl>(&response).unwrap() {
+            ServerControl::Hello(h) => assert_eq!(h.protocol_version, PROTOCOL_VERSION),
+            other => panic!("expected Hello, got {other:?}"),
+        }
+        let fitted = state_until(port, |v| v["w"] == 80 && v["h"] == 24);
+        assert_eq!(fitted["h"], 24);
+
+        // (3) Browser input reaches the attached terminal's rendered frames.
+        let from_browser = http(port, "POST", "/paste", r#"{"text":"typed-in-the-browser"}"#);
+        assert!(
+            !from_browser.is_empty(),
+            "the /paste route should answer with the post-tick scene"
+        );
+        let mut term_output = Vec::new();
+        read_until_contains(&conn, &mut term_output, "typed-in-the-browser");
+
+        // (4) Terminal input reaches the browser's scene.
+        conn.write_data(b"typed-in-the-terminal").unwrap();
+        let shared = state_until(port, |v| pane_text(v).contains("typed-in-the-terminal"));
+        assert!(
+            pane_text(&shared).contains("typed-in-the-browser"),
+            "both transports write to the same buffer"
+        );
+
+        // (5) The primary terminal sizes the session, so when it goes away the
+        //     next client inherits that role and the grid refits to IT. Without
+        //     the refit on disconnect the survivor keeps being rendered at the
+        //     dead client's size and shows a clipped screen until it happens to
+        //     send a resize of its own.
+        let second = ClientConnection::connect(&socket_paths).expect("connect second terminal");
+        let hello = ClientHello::new(TermSize::new(60, 18));
+        second
+            .write_control(&serde_json::to_string(&ClientControl::Hello(hello)).unwrap())
+            .unwrap();
+        drop(second.read_control().unwrap());
+        // A second client is not the primary — it must not resize the session.
+        thread::sleep(Duration::from_millis(300));
+        let still = state_until(port, |v| v["w"].as_u64().is_some());
+        assert_eq!(
+            (still["w"].clone(), still["h"].clone()),
+            (serde_json::json!(80), serde_json::json!(24)),
+            "a non-primary terminal must not resize the shared grid"
+        );
+        // Drop the primary; the survivor's 60x18 becomes the fit.
+        drop(conn);
+        let refitted = state_until(port, |v| v["w"] == 60 && v["h"] == 18);
+        assert_eq!(refitted["h"], 18);
+
+        shutdown_handle.store(true, Ordering::SeqCst);
+        drop(server_handle.join());
+        drop(socket_paths.cleanup());
+        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }

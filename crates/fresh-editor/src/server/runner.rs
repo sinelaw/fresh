@@ -13,12 +13,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::server::capture_backend::{terminal_setup_sequences, terminal_teardown_sequences};
-use crate::server::input_parser::InputParser;
+use crate::server::input_parser::ClientInputParser;
 use crate::server::ipc::{ServerConnection, ServerListener, SocketPaths};
 use crate::server::protocol::{
     ClientControl, ServerControl, ServerHello, TermSize, VersionMismatch, PROTOCOL_VERSION,
 };
-use crossterm::event::Event;
+use fresh_input_parser::Event;
 
 /// Server configuration
 #[derive(Debug, Clone)]
@@ -56,7 +56,7 @@ pub struct ConnectedClient {
     /// Client ID for logging
     id: u64,
     /// Input parser for converting raw bytes to events
-    input_parser: InputParser,
+    input_parser: ClientInputParser,
 }
 
 impl Server {
@@ -231,7 +231,7 @@ impl Server {
             term_size: hello.term_size,
             env: hello.env,
             id: client_id,
-            input_parser: InputParser::new(),
+            input_parser: ClientInputParser::new(),
         })
     }
 
@@ -278,6 +278,15 @@ impl Server {
                     disconnected.push(idx);
                     continue;
                 }
+            }
+
+            // Resolve a buffered lone `ESC` as the Escape key once the socket
+            // has gone quiet: the read above is non-blocking, so without this
+            // the escape waits for the next keypress and is swallowed into an
+            // Alt chord with it (sinelaw/fresh#2810).
+            let flushed = client.input_parser.flush_idle(Instant::now());
+            if !flushed.is_empty() {
+                input_events.push((client.id, flushed));
             }
 
             // Try to read a control message (non-blocking)
@@ -384,6 +393,16 @@ impl Server {
                     "Client {} sent OpenWindow but no editor is running",
                     client.id
                 );
+            }
+            ClientControl::RunScript { .. } => {
+                // No editor here, so nothing to evaluate against.
+                let reply = serde_json::to_string(&ServerControl::ScriptResult {
+                    ok: false,
+                    error: Some("no editor is running".to_string()),
+                    output: None,
+                })
+                .map_err(|e| io::Error::other(e.to_string()))?;
+                client.conn.write_control(&reply)?;
             }
         }
         Ok(())

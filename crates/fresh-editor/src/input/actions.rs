@@ -952,6 +952,39 @@ struct InsertCursorData {
     virtual_gap: String,
 }
 
+/// Find the start of the line containing `pos`, and report whether everything
+/// between it and `pos` is a space or a tab (the auto-dedent precondition).
+///
+/// Reads in blocks rather than a byte at a time. Each `slice_bytes` call is a
+/// piece-tree range query plus a heap allocation, so walking back one byte per
+/// iteration costs one of each per column — the dominant cost of a keystroke
+/// on a long line, and one that grows the further right the cursor sits.
+/// Materialising the whole prefix to test it for whitespace has the same
+/// problem: on a single-line file that prefix can be megabytes.
+fn line_start_and_blank_prefix(state: &EditorState, pos: usize) -> (usize, bool) {
+    const CHUNK: usize = 4096;
+    let mut end = pos;
+    let mut only_spaces = true;
+    while end > 0 {
+        let start = end.saturating_sub(CHUNK);
+        let bytes = state.buffer.slice_bytes(start..end);
+        if let Some(i) = bytes.iter().rposition(|&b| b == b'\n') {
+            if only_spaces {
+                only_spaces = bytes[i + 1..].iter().all(|&b| b == b' ' || b == b'\t');
+            }
+            return (start + i + 1, only_spaces);
+        }
+        // Once a non-blank byte is seen the answer is settled, but the scan
+        // still has to reach the line start — `line_start` is returned either
+        // way.
+        if only_spaces {
+            only_spaces = bytes.iter().all(|&b| b == b' ' || b == b'\t');
+        }
+        end = start;
+    }
+    (0, only_spaces)
+}
+
 /// Collect cursor data needed for character insertion.
 fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec<InsertCursorData> {
     // Collect cursors and sort by the effective insert position (reverse order)
@@ -963,7 +996,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
 
     // Collect cursor IDs and positions
     let vs_mode = state.buffer_settings.virtual_space;
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let cursor_info: Vec<_> = cursor_vec
         .iter()
         .map(|(cursor_id, cursor)| {
@@ -989,17 +1022,7 @@ fn collect_insert_cursor_data(state: &mut EditorState, cursors: &Cursors) -> Vec
         .into_iter()
         .map(|(cursor_id, selection, insert_position, virtual_gap)| {
             // Calculate line start for auto-dedent
-            let mut line_start = insert_position;
-            while line_start > 0 {
-                let prev = line_start - 1;
-                if state.buffer.slice_bytes(prev..prev + 1).first() == Some(&b'\n') {
-                    break;
-                }
-                line_start = prev;
-            }
-
-            let line_before_cursor = state.buffer.slice_bytes(line_start..insert_position);
-            let only_spaces = line_before_cursor.iter().all(|&b| b == b' ' || b == b'\t');
+            let (line_start, only_spaces) = line_start_and_blank_prefix(state, insert_position);
 
             let check_pos = selection.as_ref().map(|r| r.end).unwrap_or(insert_position);
             let char_after = if check_pos < state.buffer.len() {
@@ -1283,7 +1306,7 @@ fn handle_insert_newline(
     }
 
     // Now process insertions
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     for (cursor_id, indent_position) in indent_positions {
         // Calculate indent for new line
         let mut text = line_ending.to_string();
@@ -1626,7 +1649,7 @@ fn handle_insert_tab(
 
         // Insert tabs (materializing any virtual-space gap first)
         let vs_mode = state.buffer_settings.virtual_space;
-        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending = state.buffer.line_ending().insertion_str();
         for (cursor_id, cursor) in cursor_vec {
             let gap = crate::model::virtual_space::virtual_gap_text(
                 vs_mode,
@@ -2202,7 +2225,7 @@ fn handle_transpose_chars(state: &mut EditorState, cursors: &Cursors, events: &m
 /// `MoveCursor` cancels the advance `apply_insert` would otherwise make,
 /// which is what distinguishes OpenLine from Enter.
 fn handle_open_line(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let len = line_ending.len();
     for (cursor_id, cursor) in cursors.iter() {
         events.push(Event::Insert {
@@ -2394,7 +2417,7 @@ fn handle_toggle_case(state: &mut EditorState, cursors: &Cursors, events: &mut V
 fn handle_sort_lines(state: &mut EditorState, cursors: &Cursors, events: &mut Vec<Event>) {
     // Sort selected lines alphabetically
     // Process cursors in reverse order to avoid position shifts
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let mut selections: Vec<_> = cursors
         .iter()
         .filter_map(|(cursor_id, cursor)| cursor.selection_range().map(|range| (cursor_id, range)))
@@ -2476,7 +2499,7 @@ fn handle_duplicate_line(
 
     for (cursor_id, line_start, line_end) in cursor_data {
         let line_text = state.get_text_range(line_start, line_end);
-        let line_ending = state.buffer.line_ending().as_str();
+        let line_ending = state.buffer.line_ending().insertion_str();
         // If the line doesn't end with a newline, prepend one
         let has_trailing_newline = line_text.ends_with('\n') || line_text.ends_with("\r\n");
         let insert_text = if has_trailing_newline {
@@ -3131,6 +3154,7 @@ pub fn action_to_events(
         | Action::Detach
         | Action::Save
         | Action::SaveAs
+        | Action::SaveAll
         | Action::Open
         | Action::SwitchProject
         | Action::New
@@ -3153,6 +3177,7 @@ pub fn action_to_events(
         | Action::PrevPane
         | Action::NextWindow
         | Action::PrevWindow
+        | Action::ExtractTabToNewWorkspace
         | Action::Copy
         | Action::CopyWithTheme(_)
         | Action::CopyFilePath
@@ -3320,6 +3345,10 @@ pub fn action_to_events(
         | Action::ToggleLineNumbersCurrentBuffer
         | Action::ToggleLineWrapCurrentBuffer
         | Action::ToggleVirtualSpaceCurrentBuffer
+        | Action::ToggleIndentationGuideCurrentBuffer
+        | Action::ToggleFoldIndicatorsCurrentBuffer
+        | Action::ToggleCurrentLineHighlightCurrentBuffer
+        | Action::ToggleOccurrenceHighlightCurrentBuffer
         | Action::TriggerWaveAnimation
         | Action::ToggleScrollSync
         | Action::ToggleMouseCapture
@@ -3354,6 +3383,8 @@ pub fn action_to_events(
         | Action::SelectLocale
         | Action::Revert
         | Action::ToggleAutoRevert
+        | Action::UpdateFresh
+        | Action::OpenUpdateLog
         | Action::FormatBuffer
         | Action::TrimTrailingWhitespace
         | Action::EnsureFinalNewline
@@ -3361,6 +3392,7 @@ pub fn action_to_events(
         | Action::OpenTerminalRight
         | Action::OpenTerminalBelow
         | Action::CloseTerminal
+        | Action::RestartTerminal
         | Action::FocusTerminal
         | Action::TerminalEscape
         | Action::ToggleKeyboardCapture
@@ -6229,6 +6261,75 @@ mod tests {
         }
 
         assert_eq!(state.buffer.to_string().unwrap(), "(bc)");
+    }
+
+    fn state_with(text: &str) -> EditorState {
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        state.apply(
+            &mut cursors,
+            &Event::Insert {
+                position: 0,
+                text: text.to_string(),
+                cursor_id: CursorId(0),
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn blank_prefix_finds_line_start_after_newline() {
+        let state = state_with("abc\n    ");
+        assert_eq!(line_start_and_blank_prefix(&state, 8), (4, true));
+    }
+
+    #[test]
+    fn blank_prefix_is_false_with_text_before_cursor() {
+        let state = state_with("abc\nfoo ");
+        assert_eq!(line_start_and_blank_prefix(&state, 8), (4, false));
+    }
+
+    #[test]
+    fn blank_prefix_at_buffer_start() {
+        let state = state_with("hello");
+        assert_eq!(line_start_and_blank_prefix(&state, 0), (0, true));
+        assert_eq!(line_start_and_blank_prefix(&state, 5), (0, false));
+    }
+
+    /// The scan reads in blocks, so a line longer than one block has to keep
+    /// walking back — and has to carry the "blank so far" answer across the
+    /// block boundary rather than resetting it.
+    #[test]
+    fn blank_prefix_spans_multiple_scan_blocks() {
+        let indent = " ".repeat(10_000);
+        let state = state_with(&format!("first\n{indent}"));
+        assert_eq!(
+            line_start_and_blank_prefix(&state, 6 + indent.len()),
+            (6, true)
+        );
+
+        let mut long_line = " ".repeat(10_000);
+        long_line.push('x');
+        long_line.push_str(&" ".repeat(10_000));
+        let state = state_with(&format!("first\n{long_line}"));
+        assert_eq!(
+            line_start_and_blank_prefix(&state, 6 + long_line.len()),
+            (6, false)
+        );
+    }
+
+    /// A file that is one enormous line: the line start is byte 0 no matter
+    /// how far right the cursor sits.
+    #[test]
+    fn blank_prefix_on_single_line_file() {
+        let text = "x".repeat(200_000);
+        let state = state_with(&text);
+        assert_eq!(line_start_and_blank_prefix(&state, text.len()), (0, false));
     }
 }
 

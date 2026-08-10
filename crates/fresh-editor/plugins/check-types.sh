@@ -24,7 +24,8 @@ for file in "${FILES[@]}"; do
     --noEmit \
     --strict \
     --target esnext \
-    --moduleResolution node \
+    --module esnext \
+    --moduleResolution bundler \
     --lib esnext,dom \
     --skipLibCheck \
     --allowImportingTsExtensions \

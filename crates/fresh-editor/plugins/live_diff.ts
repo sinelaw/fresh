@@ -31,6 +31,7 @@ const editor = getEditor();
 const NS_GUTTER = "live-diff";
 const NS_VLINE = "live-diff-vlines";
 const NS_OVERLAY = "live-diff-overlay";
+const NS_SCROLL = "live-diff-scroll";
 
 // Lower priority than git_gutter (10) so live-diff loses if both are active
 // on the same line — but in practice users will run one or the other.
@@ -70,16 +71,29 @@ const SYMBOLS = {
 // recompute. Token-bumped delay loop, mirrors git_log.ts's CURSOR_DEBOUNCE_MS.
 const DEBOUNCE_MS = 75;
 
-// Skip virtual-line rendering when either side is huge — line-by-line
-// LCS would be too slow. Gutter glyphs still render via a degraded path.
-// In practice the DP only runs over the diff's *middle* (common prefix
-// and suffix are stripped first), so this cap rarely bites for typical
-// "small edit to a large file" cases.
-const MAX_DIFF_LINES = 100_000;
-// Soft cap on the LCS DP table; past this we stop computing virtual
-// lines. Applies to the post-prefix/suffix-stripped middle, not the
-// whole file.
-const MAX_DP_CELLS = 16_000_000;
+// The line diff itself runs natively in the host (`diffAgainstBaseline`
+// against a registered baseline — a patience diff that never refuses an
+// input), so no size cap guards the *diff*. The caps below guard
+// *rendering* cost only, and each one degrades detail locally instead
+// of clearing the view:
+//
+//   full      — everything: virtual deletion lines, word-level
+//               refinement, per-line backgrounds, gutter, scrollbar.
+//   no-vlines — skip virtual deletion lines + word refinement;
+//               backgrounds, gutter and scrollbar still render.
+//   outline   — gutter indicators and scrollbar markers only.
+type DetailLevel = "full" | "no-vlines" | "outline";
+
+// Skip virtual deletion lines (and word refinement) when the diff would
+// need more than this many of them.
+const MAX_VIRTUAL_LINES = 2_000;
+// Skip per-line background overlays too when more new-side lines than
+// this changed; gutter + scrollbar only.
+const MAX_OVERLAY_LINES = 20_000;
+// Global budget for `refineHunks`' per-pair char/word LCS work in a
+// single recompute, measured in DP cells (~oldLen*newLen per pair).
+// Pairs past the budget keep plain modified rendering.
+const MAX_REFINE_CELLS = 10_000_000;
 
 // Similarity (Sørensen–Dice over character LCS) above which a 1:1
 // modified pair is rendered as "modified" (bg-only highlight on the
@@ -141,14 +155,33 @@ interface BufferDiffState {
   bufferId: number;
   filePath: string;
   mode: DiffMode;
-  /** Reference text. `null` while loading or when no reference is available. */
-  oldText: string | null;
-  /** Pre-split cached lines from `oldText` to skip resplit on every keystroke. */
-  oldLines: string[];
+  /**
+   * Host-side baseline id for the current mode (`registerDiffBaseline`).
+   * `null` before the first successful registration and after a mode
+   * change. The reference content lives host-side; this plugin only
+   * ever fetches the old-side lines it renders.
+   */
+  baselineId: number | null;
   /** Most recent hunks, published to view state for diff_nav.ts. */
   hunks: Hunk[];
   /** True while a recompute is in flight. */
   updating: boolean;
+  /**
+   * Set when a recompute is requested while one is already in flight for
+   * this buffer. The running pass re-runs once more when it finishes so the
+   * request isn't lost (a dropped post-commit refresh left a stale diff on
+   * screen forever — the #2503 `focus_gained`/reflog path).
+   */
+  rerunRequested: boolean;
+  /**
+   * Request to refresh the host-side baseline on the next recompute pass
+   * (a HEAD move: commit, checkout, reset, merge — or a save in disk
+   * mode). Consumed *inside* the recompute mutex so a concurrent pass
+   * never observes a half-refreshed reference — refreshing directly from
+   * an event handler would race an in-flight recompute the same way the
+   * old in-plugin reference cache did.
+   */
+  reloadRef: boolean;
   /** Token bumped on every scheduleRecompute; mismatched tokens are stale. */
   pendingToken: number;
   /**
@@ -171,6 +204,12 @@ interface BufferDiffState {
    * change (e.g., the user typed inside an already-modified line).
    */
   lastHunksKey: string;
+  /**
+   * Detail level of the previous render. The "simplified view" status
+   * is emitted only on a transition into a degraded level, so typing
+   * inside a huge diff doesn't re-announce it on every recompute.
+   */
+  lastDetail: DetailLevel;
 }
 
 const states: Map<number, BufferDiffState> = new Map();
@@ -238,38 +277,45 @@ function fileDir(filePath: string): string {
   return lastSlash > 0 ? filePath.substring(0, lastSlash) : ".";
 }
 
-async function repoRelativePath(filePath: string): Promise<string | null> {
-  const cwd = fileDir(filePath);
-  const result = await editor.spawnProcess(
-    "git", ["ls-files", "--full-name", "--", filePath], cwd,
-  );
-  if (result.exit_code !== 0) return null;
-  const path = result.stdout.split("\n")[0]?.trim();
-  return path && path.length > 0 ? path : null;
+/** Baseline registration parameters for a diff mode. */
+function baselineParams(mode: DiffMode): { kind: string; gitRef: string | null } {
+  switch (mode.kind) {
+    case "head":
+      return { kind: "gitRef", gitRef: "HEAD" };
+    case "disk":
+      return { kind: "disk", gitRef: null };
+    case "branch":
+      return { kind: "gitRef", gitRef: mode.ref };
+  }
 }
 
-async function loadHeadRef(filePath: string): Promise<string | null> {
-  const repoPath = await repoRelativePath(filePath);
-  if (!repoPath) return null;
-  const cwd = fileDir(filePath);
-  const result = await editor.spawnProcess(
-    "git", ["show", `HEAD:${repoPath}`], cwd,
-  );
-  return result.exit_code === 0 ? result.stdout : null;
+/**
+ * Ensure a host-side baseline is registered for the buffer's current
+ * mode. Returns the baseline id, or `null` when no reference exists
+ * (file untracked, no repo, no file path) — the same cases the old
+ * in-plugin `git show` loader reported as `null`.
+ */
+async function ensureBaseline(state: BufferDiffState): Promise<number | null> {
+  if (state.baselineId !== null) return state.baselineId;
+  const params = baselineParams(state.mode);
+  try {
+    state.baselineId = await editor.registerDiffBaseline(
+      state.bufferId,
+      params.kind,
+      params.gitRef,
+    );
+  } catch (_e) {
+    state.baselineId = null;
+  }
+  return state.baselineId;
 }
 
-async function loadBranchRef(filePath: string, ref: string): Promise<string | null> {
-  const repoPath = await repoRelativePath(filePath);
-  if (!repoPath) return null;
-  const cwd = fileDir(filePath);
-  const result = await editor.spawnProcess(
-    "git", ["show", `${ref}:${repoPath}`], cwd,
-  );
-  return result.exit_code === 0 ? result.stdout : null;
-}
-
-function loadDiskRef(filePath: string): string | null {
-  return editor.readFile(filePath);
+/** Release the buffer's baseline (mode change, save-as). */
+function releaseBaseline(state: BufferDiffState): void {
+  if (state.baselineId !== null) {
+    editor.releaseDiffBaseline(state.baselineId);
+    state.baselineId = null;
+  }
 }
 
 async function resolveDefaultBranch(filePath: string): Promise<string> {
@@ -289,29 +335,9 @@ async function resolveDefaultBranch(filePath: string): Promise<string> {
   return "master";
 }
 
-async function loadReference(state: BufferDiffState): Promise<string | null> {
-  switch (state.mode.kind) {
-    case "head":
-      return await loadHeadRef(state.filePath);
-    case "disk":
-      return loadDiskRef(state.filePath);
-    case "branch":
-      return await loadBranchRef(state.filePath, state.mode.ref);
-  }
-}
-
 // =============================================================================
-// Line diff (LCS, with prefix/suffix stripping for speed)
+// Line diff (native, host-side via diffAgainstBaseline)
 // =============================================================================
-
-interface DiffOp {
-  /** "=" equal, "-" delete (old only), "+" insert (new only). */
-  op: "=" | "-" | "+";
-  /** 0-indexed line in the old file (for "=" and "-"). */
-  oldLine: number;
-  /** 0-indexed line in the new file (for "=" and "+"). */
-  newLine: number;
-}
 
 function splitLines(text: string): string[] {
   // Preserve empty trailing line semantics: "foo\n" -> ["foo"], "" -> [].
@@ -324,154 +350,30 @@ function splitLines(text: string): string[] {
 }
 
 /**
- * Line-level LCS diff. Returns ops in old/new order. Bails (returns null)
- * when the DP table would exceed MAX_DP_CELLS — caller falls back to a
- * coarser representation.
+ * Map the host's line-range hunks onto this plugin's `Hunk` shape.
+ * `oldGroups` holds the old-side line contents for hunks with
+ * `oldCount > 0`, in hunk order — fetched in one batched
+ * `getBaselineLines` call at full detail, or empty when degraded
+ * rendering skips old-side text entirely.
  */
-function lineDiff(oldLines: string[], newLines: string[]): DiffOp[] | null {
-  let prefix = 0;
-  const minLen = Math.min(oldLines.length, newLines.length);
-  while (prefix < minLen && oldLines[prefix] === newLines[prefix]) prefix++;
-
-  let oldEnd = oldLines.length;
-  let newEnd = newLines.length;
-  while (oldEnd > prefix && newEnd > prefix && oldLines[oldEnd - 1] === newLines[newEnd - 1]) {
-    oldEnd--;
-    newEnd--;
-  }
-
-  const ops: DiffOp[] = [];
-  for (let i = 0; i < prefix; i++) {
-    ops.push({ op: "=", oldLine: i, newLine: i });
-  }
-
-  const m = oldEnd - prefix;
-  const n = newEnd - prefix;
-
-  if (m === 0 && n === 0) {
-    // Pure prefix; tail equal-block follows below.
-  } else if (m === 0) {
-    for (let j = 0; j < n; j++) {
-      ops.push({ op: "+", oldLine: prefix, newLine: prefix + j });
-    }
-  } else if (n === 0) {
-    for (let i = 0; i < m; i++) {
-      ops.push({ op: "-", oldLine: prefix + i, newLine: prefix });
-    }
-  } else {
-    if ((m + 1) * (n + 1) > MAX_DP_CELLS) return null;
-
-    // dp[(i)*(n+1) + j] = LCS length of oldMid[0..i] vs newMid[0..j].
-    // Plain Array — QuickJS doesn't expose typed arrays in this runtime.
-    const stride = n + 1;
-    const dp: number[] = new Array((m + 1) * stride).fill(0);
-    for (let i = 1; i <= m; i++) {
-      const oi = oldLines[prefix + i - 1];
-      for (let j = 1; j <= n; j++) {
-        if (oi === newLines[prefix + j - 1]) {
-          dp[i * stride + j] = dp[(i - 1) * stride + (j - 1)] + 1;
-        } else {
-          const a = dp[(i - 1) * stride + j];
-          const b = dp[i * stride + (j - 1)];
-          dp[i * stride + j] = a >= b ? a : b;
-        }
-      }
-    }
-
-    // Backtrack — push ops in reverse, then reverse at the end of this block.
-    const middle: DiffOp[] = [];
-    let i = m;
-    let j = n;
-    while (i > 0 && j > 0) {
-      if (oldLines[prefix + i - 1] === newLines[prefix + j - 1]) {
-        middle.push({ op: "=", oldLine: prefix + i - 1, newLine: prefix + j - 1 });
-        i--;
-        j--;
-      } else if (dp[(i - 1) * stride + j] >= dp[i * stride + (j - 1)]) {
-        middle.push({ op: "-", oldLine: prefix + i - 1, newLine: prefix + j });
-        i--;
-      } else {
-        middle.push({ op: "+", oldLine: prefix + i, newLine: prefix + j - 1 });
-        j--;
-      }
-    }
-    while (i > 0) {
-      middle.push({ op: "-", oldLine: prefix + i - 1, newLine: prefix });
-      i--;
-    }
-    while (j > 0) {
-      middle.push({ op: "+", oldLine: prefix + i, newLine: prefix + j - 1 });
-      j--;
-    }
-    middle.reverse();
-    for (const m of middle) ops.push(m);
-  }
-
-  for (let i = 0; i < oldLines.length - oldEnd; i++) {
-    ops.push({ op: "=", oldLine: oldEnd + i, newLine: newEnd + i });
-  }
-
-  return ops;
-}
-
-/**
- * Group a diff-op stream into hunks. Adjacent `-` and `+` runs collapse into
- * a single `modified` hunk so the old line renders directly above the new one.
- */
-function opsToHunks(ops: DiffOp[]): Hunk[] {
+function hostHunksToHunks(raw: LineDiffHunk[], oldGroups: string[][]): Hunk[] {
   const hunks: Hunk[] = [];
-  let i = 0;
-  while (i < ops.length) {
-    if (ops[i].op === "=") {
-      i++;
-      continue;
-    }
-    let dels = 0;
-    let ins = 0;
-    const oldLines: string[] = [];
-    let firstNew = ops[i].newLine;
-    while (i < ops.length && ops[i].op !== "=") {
-      if (ops[i].op === "-") {
-        dels++;
-      } else {
-        ins++;
-      }
-      i++;
-    }
-    // Walk back over the run we just consumed to capture old-side text and
-    // the first new-side line, since op order may interleave.
-    const start = i - (dels + ins);
-    firstNew = ops[start].newLine;
-    for (let k = start; k < i; k++) {
-      const o = ops[k];
-      if (o.op === "+") firstNew = Math.min(firstNew, o.newLine);
-    }
-    // We don't carry old-side text on DiffOp (memory), so look it up later.
-    // Stash indices for now; the caller resolves text from `oldLines[]`.
-    const kind: HunkKind = dels > 0 && ins > 0 ? "modified" : ins > 0 ? "added" : "removed";
+  let group = 0;
+  for (const h of raw) {
+    const kind: HunkKind =
+      h.oldCount > 0 && h.newCount > 0
+        ? "modified"
+        : h.newCount > 0
+          ? "added"
+          : "removed";
     hunks.push({
       kind,
-      newStart: firstNew,
-      newCount: ins,
-      // oldLines populated by the caller from the source array; placeholder:
-      oldLines: [],
+      newStart: h.newStart,
+      newCount: h.newCount,
+      oldLines: h.oldCount > 0 ? (oldGroups[group++] ?? []) : [],
     });
-    // Save indices so we can fill oldLines outside.
-    (hunks[hunks.length - 1] as Hunk & { _oldStart?: number; _oldEnd?: number })._oldStart = ops[start].oldLine;
-    (hunks[hunks.length - 1] as Hunk & { _oldStart?: number; _oldEnd?: number })._oldEnd = ops[start].oldLine + dels;
   }
   return hunks;
-}
-
-function fillOldLines(hunks: Hunk[], oldLines: string[]): void {
-  for (const h of hunks) {
-    const meta = h as Hunk & { _oldStart?: number; _oldEnd?: number };
-    const s = meta._oldStart ?? 0;
-    const e = meta._oldEnd ?? 0;
-    h.oldLines = oldLines.slice(s, e);
-    delete meta._oldStart;
-    delete meta._oldEnd;
-  }
 }
 
 // =============================================================================
@@ -529,6 +431,37 @@ function lineSimilarity(a: string, b: string): number {
   return (2 * (equal + middleLcs)) / (a.length + b.length);
 }
 
+/**
+ * UTF-8 byte length of a JS (UTF-16) string, computed locally.
+ * Equivalent to `editor.utf8ByteLength`, but without an FFI hop — the
+ * render path calls this once per buffer line and once per token, so
+ * at file scale the bridge crossings dominated the render.
+ */
+function utf8Len(s: string): number {
+  let bytes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) {
+      bytes += 1;
+    } else if (c < 0x800) {
+      bytes += 2;
+    } else if (c >= 0xd800 && c < 0xdc00 && i + 1 < s.length) {
+      const next = s.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next < 0xe000) {
+        // Surrogate pair: one astral code point, 4 bytes.
+        bytes += 4;
+        i++;
+      } else {
+        // Unpaired high surrogate encodes as a 3-byte replacement.
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
 /** A run of word, whitespace, or punctuation characters, with the
  * UTF-8 byte offsets it occupies inside its source string. */
 interface Token {
@@ -542,8 +475,8 @@ const WHITESPACE_CHAR = /\s/;
 
 /** Tokenize into word runs (`\w+`), whitespace runs (`\s+`), and
  * single non-word non-whitespace characters. Byte offsets are
- * computed once per run via `editor.utf8ByteLength` so downstream
- * overlays can index without re-scanning the string. */
+ * computed once per run so downstream overlays can index without
+ * re-scanning the string. */
 function tokenize(s: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
@@ -559,7 +492,7 @@ function tokenize(s: string): Token[] {
       j = i + 1;
     }
     const text = s.slice(i, j);
-    const byteLen = editor.utf8ByteLength(text);
+    const byteLen = utf8Len(text);
     tokens.push({ text, byteStart: bytePos, byteEnd: bytePos + byteLen });
     bytePos += byteLen;
     i = j;
@@ -686,7 +619,7 @@ function collapseRanges(tokens: Token[]): WordRange[] {
 }
 
 /**
- * Post-process `opsToHunks` output: split low-similarity 1:1
+ * Post-process `hostHunksToHunks` output: split low-similarity 1:1
  * `modified` hunks into separate `removed` (virtual deletion line) +
  * `added` (bg-highlighted) hunks. High-similarity pairs stay as
  * `modified` and gain a `wordRanges` entry that drives the bold +
@@ -703,14 +636,33 @@ function collapseRanges(tokens: Token[]): WordRange[] {
  * new lines) keep their original shape — the pairing is ambiguous,
  * and forcing a rewrite-style split would just create misleading
  * "removed" lines.
+ *
+ * Total char-LCS work across all pairs is bounded by MAX_REFINE_CELLS
+ * per call: a large drift can hold hundreds of 1:1 pairs, and at up to
+ * ~4M DP cells per pair the refinement — not the line diff — would
+ * become the slow part. Hunks past the budget pass through unrefined
+ * (plain `modified` rendering, no word underlines).
  */
 function refineHunks(hunks: Hunk[], newLines: string[]): Hunk[] {
   const out: Hunk[] = [];
+  let cellBudget = MAX_REFINE_CELLS;
   for (const h of hunks) {
     if (h.kind !== "modified" || h.oldLines.length !== h.newCount) {
       out.push(h);
       continue;
     }
+    // Upper bound on this hunk's similarity + word-diff DP work.
+    let hunkCost = 0;
+    for (let i = 0; i < h.newCount; i++) {
+      const oldLen = h.oldLines[i].length;
+      const newLen = (newLines[h.newStart + i] ?? "").length;
+      hunkCost += oldLen * newLen + 1;
+    }
+    if (hunkCost > cellBudget) {
+      out.push(h);
+      continue;
+    }
+    cellBudget -= hunkCost;
     for (let i = 0; i < h.newCount; i++) {
       const oldLine = h.oldLines[i];
       const newLine = newLines[h.newStart + i] ?? "";
@@ -775,6 +727,7 @@ function clearDecorations(bufferId: number): void {
   editor.clearLineIndicators(bufferId, NS_GUTTER);
   editor.clearVirtualTextNamespace(bufferId, NS_VLINE);
   editor.clearNamespace(bufferId, NS_OVERLAY);
+  editor.clearScrollbarMarkers(bufferId, NS_SCROLL);
 }
 
 /**
@@ -789,25 +742,23 @@ function clearDecorations(bufferId: number): void {
  * line at a time. Computing locally from the buffer text keeps the
  * whole render in a single JS turn → instant repaint.
  *
- * Uses `editor.utf8ByteLength` once per *whole* line (the
- * `fresh.d.ts`-documented helper for converting JS UTF-16 string
- * lengths to UTF-8 byte counts). Calling it per character would be
- * incorrect because `text[i]` splits a surrogate pair into invalid
- * half-code-units; passing whole lines is safe — `splitLines` always
- * returns valid Unicode strings.
+ * Uses the local `utf8Len` once per *whole* line. Computing it per
+ * character would be incorrect because `text[i]` splits a surrogate
+ * pair into invalid half-code-units; passing whole lines is safe —
+ * `splitLines` always returns valid Unicode strings.
  */
 function computeLineByteStarts(lines: string[]): number[] {
   const starts: number[] = new Array(lines.length + 1);
   let pos = 0;
   starts[0] = 0;
   for (let i = 0; i < lines.length; i++) {
-    pos += editor.utf8ByteLength(lines[i]) + 1; // +1 for the trailing newline
+    pos += utf8Len(lines[i]) + 1; // +1 for the trailing newline
     starts[i + 1] = pos;
   }
   return starts;
 }
 
-function renderHunks(state: BufferDiffState, newLines: string[]): void {
+function renderHunks(state: BufferDiffState, newLines: string[], detail: DetailLevel): void {
   const bid = state.bufferId;
   clearDecorations(bid);
 
@@ -853,7 +804,48 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
     );
   }
 
-  // Background highlights and virtual lines, all sync now.
+  // Scrollbar marks, one per hunk — so unsaved changes elsewhere in the file
+  // are visible without scrolling to find them.
+  //
+  // Whole-namespace replace (not the range-scoped form) is right here: unlike
+  // a `lines_changed` producer, this pass recomputes the diff for the *entire*
+  // buffer every time, so the hunk list it holds is complete and authoritative.
+  // Sending it in one command also means the marks swap atomically.
+  //
+  // Added/modified hunks span their new-side lines, so they carry an `end` and
+  // paint a proportional streak. A removed hunk has no new-side line of its
+  // own (`newCount === 0`) — its content is gone — so it marks the seam where
+  // the deletion happened, matching where the virtual deletion line renders.
+  // Colours reuse the gutter palette deliberately: a hunk's gutter glyph and
+  // its scrollbar mark are then the same colour.
+  const scrollMarkers = [];
+  for (const h of state.hunks) {
+    if (h.newStart >= lineCount) continue;
+    const color = h.kind === "added"
+      ? GUTTER_COLORS.added
+      : h.kind === "modified"
+        ? GUTTER_COLORS.modified
+        : GUTTER_COLORS.removed;
+    const start = lineStarts[h.newStart];
+    // Byte offsets, not line numbers: exact at any file size, and the editor
+    // anchors them so marks ride subsequent edits until the next recompute.
+    const marker: { position: number; end?: number; color: [number, number, number]; priority: number } = {
+      position: start,
+      color,
+      priority: PRIORITY,
+    };
+    if (h.newCount > 0) {
+      const lastLine = Math.min(h.newStart + h.newCount - 1, lineCount - 1);
+      marker.end = lineEndExclusive(lastLine);
+    }
+    scrollMarkers.push(marker);
+  }
+  editor.setScrollbarMarkers(bid, NS_SCROLL, scrollMarkers);
+
+  // Background highlights and virtual lines, all sync now. At
+  // "outline" detail both are skipped — the gutter indicators and
+  // scrollbar markers above already put the change on screen.
+  if (detail === "outline") return;
   for (const h of state.hunks) {
     if (h.kind === "added" || h.kind === "modified") {
       const bg = h.kind === "added" ? THEME.addedBg : THEME.modifiedBg;
@@ -893,7 +885,7 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
       // `wordRanges` is set only by `refineHunks` and uses byte
       // offsets relative to each new-side line's start, so we add the
       // line's own start byte before passing to `addOverlay`.
-      if (h.wordRanges) {
+      if (h.wordRanges && detail === "full") {
         for (let i = 0; i < h.newCount; i++) {
           const line = h.newStart + i;
           if (line >= lineCount) break;
@@ -919,7 +911,7 @@ function renderHunks(state: BufferDiffState, newLines: string[]): void {
       }
     }
 
-    if (h.oldLines.length === 0) continue;
+    if (h.oldLines.length === 0 || detail !== "full") continue;
 
     // Anchor: line that follows the deletion on the new side. If past
     // EOF, anchor on the last real line and place "below".
@@ -974,21 +966,58 @@ async function recompute(bufferId: number): Promise<void> {
   const state = states.get(bufferId);
   if (!state) return;
   if (!isEnabledForBuffer(state)) return;
-  if (state.updating) return;
+  // Serialize recomputes per buffer. A recompute suspends at its `await`
+  // points (baseline registration, buffer-text fetch, host diff). A second
+  // trigger that arrives meanwhile must neither start a concurrent pass
+  // (it would race on the shared baseline state and render a bogus
+  // "everything added" diff) nor be silently dropped (a dropped post-commit refresh left
+  // the stale diff on screen until the external test timeout — #2503's
+  // `focus_gained`/reflog path). Coalesce: mark that another pass is needed
+  // and let the in-flight one run it before it releases the mutex.
+  if (state.updating) {
+    state.rerunRequested = true;
+    return;
+  }
 
   state.updating = true;
   try {
-    if (state.oldText === null) {
-      const ref = await loadReference(state);
-      if (ref === null) {
-        // Reference fetch failed (file untracked, no repo, etc.).
-        clearDecorations(bufferId);
-        state.hunks = [];
-        editor.setViewState(bufferId, "live_diff_hunks", null);
-        return;
+    do {
+      state.rerunRequested = false;
+      // Consume a reference-reload request *inside* the mutex so no other
+      // pass can observe a half-refreshed reference. Event handlers that
+      // need the baseline re-fetched (a HEAD move, a save in disk mode)
+      // set `reloadRef` rather than touching the baseline directly.
+      // `lastHunksKey` is intentionally kept so an unchanged diff still
+      // suppresses a no-op repaint (no flicker on every window focus).
+      if (state.reloadRef) {
+        state.reloadRef = false;
+        state.lastBufferText = null;
+        if (state.baselineId !== null) {
+          try {
+            await editor.refreshDiffBaseline(state.baselineId);
+          } catch (_e) {
+            // Refresh failed (e.g. the file left the repo). Drop the
+            // baseline; the pass below re-registers or clears.
+            releaseBaseline(state);
+          }
+        }
       }
-      state.oldText = ref;
-      state.oldLines = splitLines(ref);
+      await onePass();
+    } while (state.rerunRequested);
+  } finally {
+    state.updating = false;
+  }
+
+  // A single diff pass. Early `return`s end this pass only; the wrapper's
+  // `do…while` still honors any `rerunRequested` recorded meanwhile.
+  async function onePass(): Promise<void> {
+    const baselineId = await ensureBaseline(state);
+    if (baselineId === null) {
+      // No reference exists (file untracked, no repo, etc.).
+      clearDecorations(bufferId);
+      state.hunks = [];
+      editor.setViewState(bufferId, "live_diff_hunks", null);
+      return;
     }
 
     const length = editor.getBufferLength(bufferId);
@@ -1018,40 +1047,80 @@ async function recompute(bufferId: number): Promise<void> {
 
     const newLines = splitLines(newText);
 
-    if (state.oldLines.length > MAX_DIFF_LINES || newLines.length > MAX_DIFF_LINES) {
-      // Files too large for line-level diff. Don't render anything; surface
-      // a status so the user knows why the gutter is empty.
+    // Host-side diff: hunks come back, file contents don't cross the
+    // bridge in either direction. The host never refuses an input; a
+    // non-"exact" fidelity means the buffer's line index isn't
+    // available yet (large file before its line-feed scan) and there
+    // are no line hunks to render.
+    let result: DiffBaselineResult;
+    try {
+      result = await editor.diffAgainstBaseline(bufferId, baselineId);
+    } catch (e) {
+      if (!states.has(bufferId)) return;
+      throw e;
+    }
+    if (result.fidelity !== "exact") {
       clearDecorations(bufferId);
       state.hunks = [];
       state.lastHunksKey = "";
       editor.setViewState(bufferId, "live_diff_hunks", null);
-      editor.setStatus(editor.t("status.too_large"));
+      if (state.lastDetail === "full") {
+        editor.setStatus(editor.t("status.simplified"));
+      }
+      state.lastDetail = "outline";
       return;
     }
+    const raw = result.hunks;
 
-    const ops = lineDiff(state.oldLines, newLines);
-    if (ops === null) {
-      clearDecorations(bufferId);
-      state.hunks = [];
-      state.lastHunksKey = "";
-      editor.setViewState(bufferId, "live_diff_hunks", null);
-      editor.setStatus(editor.t("status.too_large"));
-      return;
+    let totalVirtual = 0;
+    let totalChanged = 0;
+    for (const h of raw) {
+      totalVirtual += h.oldCount;
+      totalChanged += h.newCount;
     }
+    const detail: DetailLevel =
+      totalChanged > MAX_OVERLAY_LINES
+        ? "outline"
+        : totalVirtual > MAX_VIRTUAL_LINES
+          ? "no-vlines"
+          : "full";
 
-    const rawHunks = opsToHunks(ops);
-    fillOldLines(rawHunks, state.oldLines);
-    // Decide per-line whether each `modified` pair is a similar
-    // in-place edit (keep as `modified`, drop the virtual deletion
-    // line, mark changed words) or a low-similarity rewrite (split
-    // into separate `removed` + `added` hunks).
-    const hunks = refineHunks(rawHunks, newLines);
+    // Old-side text is fetched only at full detail, and only the lines
+    // the diff actually names — one batched call, traffic proportional
+    // to the change, not the file. Degraded levels never render
+    // old-side text, so they carry none.
+    let oldGroups: string[][] = [];
+    if (detail === "full") {
+      const ranges = raw
+        .filter((h) => h.oldCount > 0)
+        .map((h) => [h.oldStart, h.oldCount]);
+      if (ranges.length > 0) {
+        try {
+          oldGroups = await editor.getBaselineLines(baselineId, ranges);
+        } catch (e) {
+          if (!states.has(bufferId)) return;
+          throw e;
+        }
+      }
+    }
+    const rawHunks = hostHunksToHunks(raw, oldGroups);
+    const hunks =
+      detail === "full"
+        ? refineHunks(rawHunks, newLines)
+        : rawHunks.map((h) => ({
+            kind: h.kind,
+            newStart: h.newStart,
+            newCount: h.newCount,
+            oldLines: [],
+          }));
 
     // Skip 2: same hunks as last render. The user can edit inside an
     // already-flagged region without changing line counts (e.g., typing
     // mid-word on a modified line). Without this guard we still
-    // clear+repaint each keystroke, producing visible flicker.
-    const hunksKey = JSON.stringify(hunks);
+    // clear+repaint each keystroke, producing visible flicker. The
+    // detail level is part of the key: the same hunks at a different
+    // level must repaint.
+    const hunksKey = detail + "|" + JSON.stringify(hunks);
     if (hunksKey === state.lastHunksKey) {
       state.hunks = hunks;
       return;
@@ -1059,11 +1128,16 @@ async function recompute(bufferId: number): Promise<void> {
     state.hunks = hunks;
     state.lastHunksKey = hunksKey;
 
-    renderHunks(state, newLines);
+    renderHunks(state, newLines, detail);
 
     editor.setViewState(bufferId, "live_diff_hunks", hunks);
-  } finally {
-    state.updating = false;
+
+    // Announce degraded rendering once, on the transition into it —
+    // not on every recompute while the user types inside a huge diff.
+    if (detail !== "full" && state.lastDetail === "full") {
+      editor.setStatus(editor.t("status.simplified"));
+    }
+    state.lastDetail = detail;
   }
 }
 
@@ -1094,22 +1168,23 @@ function ensureState(bufferId: number): BufferDiffState | null {
     bufferId,
     filePath: info.path,
     mode,
-    oldText: null,
-    oldLines: [],
+    baselineId: null,
     hunks: [],
     updating: false,
+    rerunRequested: false,
+    reloadRef: false,
     pendingToken: 0,
     override: getStoredOverride(bufferId),
     lastBufferText: null,
     lastHunksKey: "",
+    lastDetail: "full",
   };
   states.set(bufferId, state);
   return state;
 }
 
 function dropReference(state: BufferDiffState): void {
-  state.oldText = null;
-  state.oldLines = [];
+  releaseBaseline(state);
   // Force the next recompute to repaint even if the buffer itself
   // hasn't changed (mode swap rebuilds against a new reference).
   state.lastBufferText = null;
@@ -1147,6 +1222,7 @@ function syncBufferToEnabledState(state: BufferDiffState): void {
     state.hunks = [];
     state.lastBufferText = null;
     state.lastHunksKey = "";
+    state.lastDetail = "full";
     editor.setViewState(state.bufferId, "live_diff_hunks", null);
   }
 }
@@ -1337,15 +1413,14 @@ function refreshGitReferences(): void {
   for (const state of states.values()) {
     if (state.mode.kind === "disk") continue;
     if (!isEnabledForBuffer(state)) continue;
-    // Re-fetch the reference (HEAD may have moved) but keep `lastHunksKey`:
-    // this path fires on every window focus, so when the diff is in fact
-    // unchanged the recompute's hunk-equality guard suppresses the repaint
-    // and there's no flicker. `lastBufferText` must still be cleared so the
-    // "same buffer text" early-return doesn't skip recomputing against the
-    // new reference.
-    state.oldText = null;
-    state.oldLines = [];
-    state.lastBufferText = null;
+    // Request a baseline refresh (HEAD may have moved) via the flag the
+    // recompute consumes under its mutex — NOT by refreshing here, which
+    // would race an in-flight recompute for this buffer the same way the
+    // old in-plugin reference cache did (every line shown as added, and
+    // never cleared). `reloadRef` keeps `lastHunksKey`, so when the diff
+    // is in fact unchanged the recompute's hunk-equality guard still
+    // suppresses the repaint and there's no flicker on every window focus.
+    state.reloadRef = true;
     recompute(state.bufferId).catch((e) => editor.error(`live-diff: ${e}`));
   }
 }
@@ -1383,7 +1458,7 @@ editor.on("buffer_activated", (args) => {
   if (!state) return true;
   // Indicators stick around across activations; only repaint if we never
   // ran a first pass (e.g. plugin loaded after the buffer opened).
-  if (state.hunks.length === 0 && state.oldText === null) {
+  if (state.hunks.length === 0 && state.baselineId === null) {
     recompute(args.buffer_id).catch((e) => editor.error(`live-diff: ${e}`));
   }
   return true;
@@ -1414,7 +1489,27 @@ editor.on("lines_changed", (args) => {
 editor.on("after_file_save", (args) => {
   const state = states.get(args.buffer_id);
   if (!state) return true;
-  // Save changes the file path (save-as) and invalidates the disk-mode reference.
+  if (state.filePath !== args.path) {
+    // Save-as: the registered baseline is bound to the old path; drop it
+    // so the next recompute registers against the new one.
+    state.filePath = args.path;
+    dropReference(state);
+  } else if (state.mode.kind === "disk") {
+    // A plain save rewrites the disk reference: refresh it under the
+    // recompute mutex.
+    state.reloadRef = true;
+  }
+  recompute(args.buffer_id).catch((e) => editor.error(`live-diff: ${e}`));
+  return true;
+});
+
+editor.on("after_file_revert", (args) => {
+  const state = states.get(args.buffer_id);
+  if (!state) return true;
+  // The buffer was reloaded from disk (auto-revert after an external change,
+  // or an explicit revert). The disk-mode reference *is* the file on disk,
+  // so it is stale now; every mode needs a recompute against the reloaded
+  // content — the edit hooks don't fire for a wholesale buffer replacement.
   state.filePath = args.path;
   if (state.mode.kind === "disk") {
     dropReference(state);

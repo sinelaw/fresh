@@ -3,6 +3,8 @@
 name: GLSL
 file_extensions:
   - glsl
+  - glslf
+  - glslv
   - vert
   - frag
   - geom

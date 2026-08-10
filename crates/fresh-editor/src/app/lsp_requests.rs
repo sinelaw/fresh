@@ -897,11 +897,20 @@ impl Editor {
         }
 
         let buffer_id = self.active_buffer();
-        let request_id = self.active_window_mut().next_lsp_request_id;
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+        // Fan out to every capable server so non-null hovers can be merged
+        // (a first server returning null must not hide a second server's
+        // hover — sinelaw/fresh#2635). Pre-allocate ids and advance the
+        // counter past all of them.
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
+
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Hover,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
                 let result = handle.hover(
                     request_id,
                     uri.as_uri().clone(),
@@ -910,21 +919,27 @@ impl Editor {
                 );
                 if result.is_ok() {
                     tracing::info!(
-                        "Requested hover at {}:{}:{} (byte_pos={})",
+                        "Requested hover at {}:{}:{} (request_id={}, byte_pos={})",
                         uri.as_str(),
                         line,
                         character,
+                        request_id,
                         cursor_pos
                     );
                 }
-                result.is_ok()
-            })
-            .unwrap_or(false);
+                (request_id, result.is_ok())
+            },
+        );
 
-        if sent {
-            self.active_window_mut().next_lsp_request_id += 1;
-            self.active_window_mut().hover.record_request(
-                request_id,
+        let sent_ids: Vec<u64> = results
+            .iter()
+            .filter_map(|(id, ok)| ok.then_some(*id))
+            .collect();
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.active_window_mut().hover.record_requests(
+                &sent_ids,
                 line as u32,
                 character as u32,
             );
@@ -937,9 +952,20 @@ impl Editor {
     /// Used for mouse-triggered hover
     /// Returns `Ok(true)` if the request was dispatched, `Ok(false)` if no
     /// eligible server was available (e.g. not yet initialized).
-    pub(crate) fn request_hover_at_position(&mut self, byte_pos: usize) -> AnyhowResult<bool> {
-        // Get the current buffer
-        let state = self.active_state();
+    pub(crate) fn request_hover_at_position(
+        &mut self,
+        byte_pos: usize,
+        buffer_id: BufferId,
+    ) -> AnyhowResult<bool> {
+        // Resolve against the buffer the pointer is over — not necessarily the
+        // active one. Hovering a non-active split (or a virtual UI buffer with
+        // no language server, like the Search/Replace panel) must query that
+        // buffer, so the hover card never leaks in from the active buffer
+        // (#2572). A virtual buffer has no `file_uri`, so `with_lsp_for_buffer`
+        // below returns `None` and nothing pops up.
+        let Some(state) = self.buffers().get(&buffer_id) else {
+            return Ok(false);
+        };
 
         // Convert byte position to LSP position (line, UTF-16 code units)
         let (line, character) = state.buffer.position_to_lsp_position(byte_pos);
@@ -955,12 +981,20 @@ impl Editor {
             );
         }
 
-        let buffer_id = self.active_buffer();
-        let request_id = self.active_window_mut().next_lsp_request_id;
+        // Fan out to every capable server (see `request_hover`). Query the
+        // buffer the pointer is over (the `buffer_id` argument), not the active
+        // buffer, so the hover card never leaks in from another buffer (#2572).
+        // (Reassigning `buffer_id` to `self.active_buffer()` here was the source
+        // of that leak.)
+        let base_request_id = self.active_window_mut().next_lsp_request_id;
+        let counter = std::sync::atomic::AtomicU64::new(0);
 
-        // Use helper to ensure didOpen is sent before the request
-        let sent = self
-            .with_lsp_for_buffer(buffer_id, LspFeature::Hover, |handle, uri, _language| {
+        let results = self.with_all_lsp_for_buffer_feature(
+            buffer_id,
+            LspFeature::Hover,
+            |handle, uri, _language| {
+                let idx = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let request_id = base_request_id + idx;
                 let result = handle.hover(
                     request_id,
                     uri.as_uri().clone(),
@@ -969,27 +1003,33 @@ impl Editor {
                 );
                 if result.is_ok() {
                     tracing::trace!(
-                        "Mouse hover requested at {}:{}:{} (byte_pos={})",
+                        "Mouse hover requested at {}:{}:{} (request_id={}, byte_pos={})",
                         uri.as_str(),
                         line,
                         character,
+                        request_id,
                         byte_pos
                     );
                 }
-                result.is_ok()
-            })
-            .unwrap_or(false);
+                (request_id, result.is_ok())
+            },
+        );
 
-        if sent {
-            self.active_window_mut().next_lsp_request_id += 1;
-            self.active_window_mut().hover.record_request(
-                request_id,
+        let sent_ids: Vec<u64> = results
+            .iter()
+            .filter_map(|(id, ok)| ok.then_some(*id))
+            .collect();
+        self.active_window_mut().next_lsp_request_id = base_request_id + results.len() as u64;
+
+        if !sent_ids.is_empty() {
+            self.active_window_mut().hover.record_requests(
+                &sent_ids,
                 line as u32,
                 character as u32,
             );
         }
 
-        Ok(sent)
+        Ok(!sent_ids.is_empty())
     }
 
     /// Handle hover response from LSP
@@ -1000,9 +1040,11 @@ impl Editor {
         is_markdown: bool,
         range: Option<((u32, u32), (u32, u32))>,
     ) {
-        // Check if this response is for the current pending request.
-        // `claim_pending` also drains the stored LSP position, which we keep
-        // around for diagnostic correlation below.
+        // Check if this response belongs to the current in-flight batch.
+        // Hover fans out to every capable server, so several responses may
+        // arrive for one batch; `claim_pending` returns the batch position
+        // (kept until the last response is claimed) for diagnostic
+        // correlation, and `None` for stale responses.
         let Some(position) = self.active_window_mut().hover.claim_pending(request_id) else {
             tracing::debug!("Ignoring stale hover response: {}", request_id);
             return;
@@ -1015,31 +1057,65 @@ impl Editor {
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
-        let hover_lsp_position = Some(position);
+
+        // Accumulate this server's non-null contribution. Null / empty hovers
+        // (already normalized in `parse_hover_response`) are dropped here so a
+        // server that returns null cannot suppress another server's hover
+        // (sinelaw/fresh#2635).
+        if !contents.is_empty() {
+            tracing::debug!(
+                "LSP hover content (markdown={}, request_id={}):\n{}",
+                is_markdown,
+                request_id,
+                contents
+            );
+            self.active_window_mut()
+                .hover
+                .push_payload(crate::app::hover::HoverPayload {
+                    contents,
+                    is_markdown,
+                    range,
+                    server_name: None,
+                });
+        }
+
+        let all_in = self.active_window().hover.pending_is_empty();
+        let accumulated_empty = self.active_window().hover.accumulated().is_empty();
 
         // Gather any diagnostics whose range overlaps the hover position so
         // they can be fused into the top of the hover card. Without this the
         // user has to leave hover and go chase the error elsewhere in the UI
         // even though the cursor is already on the offending symbol.
-        let diagnostic_lines = hover_lsp_position
-            .map(|pos| self.compose_hover_diagnostic_lines(pos))
-            .unwrap_or_default();
+        let diagnostic_lines = self.compose_hover_diagnostic_lines(position);
 
-        if contents.is_empty() && diagnostic_lines.is_empty() {
+        if all_in && accumulated_empty && diagnostic_lines.is_empty() {
+            // Every capable server answered and none returned a hover, and
+            // there are no overlapping diagnostics — report "no hover" exactly
+            // once (only fires on the final response of the batch).
             self.set_status_message(t!("lsp.no_hover").to_string());
             self.active_window_mut().hover.set_symbol_range(None);
             return;
         }
 
-        // Debug: log raw hover content to diagnose formatting issues
-        tracing::debug!(
-            "LSP hover content (markdown={}):\n{}",
-            is_markdown,
-            contents
-        );
+        if accumulated_empty && !all_in {
+            // No hover content yet and more servers are still outstanding —
+            // wait for them rather than flashing a diagnostics-only or empty
+            // popup that a later non-null hover would immediately replace.
+            return;
+        }
 
-        // Convert LSP range to byte offsets for highlighting
-        if let Some(((start_line, start_char), (end_line, end_char))) = range {
+        // Rebuild the popup from ALL accumulated payloads. This runs on every
+        // response that has (or follows) content, so the card grows as
+        // additional servers answer.
+        let payloads: Vec<crate::app::hover::HoverPayload> =
+            self.active_window().hover.accumulated().to_vec();
+
+        // Symbol range/overlay: use the FIRST payload that carries a range.
+        // Because we always scan the whole accumulator, a range set by an
+        // earlier server is never clobbered by a later rangeless server's
+        // word-boundary fallback.
+        let first_range = payloads.iter().find_map(|p| p.range);
+        if let Some(((start_line, start_char), (end_line, end_char))) = first_range {
             let state = self.active_state();
             let start_byte = state
                 .buffer
@@ -1085,10 +1161,16 @@ impl Editor {
         } else {
             // No range provided by LSP - compute word boundaries at hover position
             // This prevents the popup from following the mouse within the same word
-            let computed_range = if let Some((hover_byte_pos, _, _, _)) =
+            let computed_range = if let Some((hover_byte_pos, _, _, _, hover_buf)) =
                 self.active_window_mut().mouse_state.lsp_hover_state
             {
-                let state = self.active_state();
+                // Compute word boundaries in the buffer the pointer is over —
+                // the same buffer the hover request targeted — not the active
+                // one (#2572).
+                let state = self
+                    .buffers()
+                    .get(&hover_buf)
+                    .unwrap_or(self.active_state());
                 let start_byte = find_word_start(&state.buffer, hover_byte_pos);
                 let end_byte = find_word_end(&state.buffer, hover_byte_pos);
                 if start_byte < end_byte {
@@ -1109,7 +1191,7 @@ impl Editor {
                 .set_symbol_range(computed_range);
         }
 
-        // Create a popup with the hover contents.
+        // Create a popup with the merged hover contents.
         //
         // When a diagnostic overlaps the hover position, we pre-style its
         // lines (severity-colored header + plain message) and concatenate
@@ -1119,48 +1201,71 @@ impl Editor {
         // input — which rendered as uncolored bold text + a thick 40-cell
         // divider with blank-line padding, wasting vertical space and
         // losing the "this is an error" visual signal.
+        //
+        // Multiple servers' hover bodies are joined with the same one-row
+        // separator used between diagnostics and hover.
         use crate::view::markdown::{parse_markdown, StyledLine};
         use crate::view::popup::{Popup, PopupContent, PopupPosition};
         use ratatui::style::Style;
         use unicode_width::UnicodeWidthStr;
 
-        let hover_lines: Vec<StyledLine> = if contents.is_empty() {
-            Vec::new()
-        } else if is_markdown {
-            parse_markdown(
-                &contents,
-                &self.theme.read().unwrap(),
-                Some(&self.grammar_registry),
-            )
-        } else {
-            contents
-                .lines()
-                .map(|s| {
-                    let mut sl = StyledLine::new();
-                    sl.push(
-                        s.to_string(),
-                        Style::default().fg(self.theme.read().unwrap().popup_text_fg),
-                    );
-                    sl
-                })
-                .collect()
-        };
+        let is_markdown = payloads.iter().any(|p| p.is_markdown);
 
-        let has_diagnostic = !diagnostic_lines.is_empty();
-        let mut all_lines: Vec<StyledLine> = Vec::new();
-        all_lines.extend(diagnostic_lines);
-        if has_diagnostic && !hover_lines.is_empty() {
-            // Compact single-line separator — no blank padding, no 40-cell
-            // dash run. One row of dashes the width of the content, in the
-            // popup border color so it reads as "same card, new section."
+        // Build one styled block per non-empty payload.
+        let mut bodies: Vec<Vec<StyledLine>> = Vec::new();
+        for payload in &payloads {
+            if payload.contents.is_empty() {
+                continue;
+            }
+            let lines: Vec<StyledLine> = if payload.is_markdown {
+                parse_markdown(
+                    &payload.contents,
+                    &self.theme.read().unwrap(),
+                    Some(&self.grammar_registry),
+                )
+            } else {
+                payload
+                    .contents
+                    .lines()
+                    .map(|s| {
+                        let mut sl = StyledLine::new();
+                        sl.push(
+                            s.to_string(),
+                            Style::default().fg(self.theme.read().unwrap().popup_text_fg),
+                        );
+                        sl
+                    })
+                    .collect()
+            };
+            if !lines.is_empty() {
+                bodies.push(lines);
+            }
+        }
+
+        // One-row separator between sections (diagnostics ↔ hover, and hover ↔
+        // hover when more than one server answered). Compact — no blank
+        // padding, no 40-cell dash run; popup border color so it reads as
+        // "same card, new section."
+        let make_separator = || {
             let mut sep = StyledLine::new();
             sep.push(
                 "─".repeat(12),
                 Style::default().fg(self.theme.read().unwrap().popup_border_fg),
             );
-            all_lines.push(sep);
+            sep
+        };
+
+        let has_diagnostic = !diagnostic_lines.is_empty();
+        let mut all_lines: Vec<StyledLine> = Vec::new();
+        all_lines.extend(diagnostic_lines);
+        let mut need_separator = has_diagnostic;
+        for body in bodies {
+            if need_separator {
+                all_lines.push(make_separator());
+            }
+            all_lines.extend(body);
+            need_separator = true;
         }
-        all_lines.extend(hover_lines);
 
         // Drop trailing empty lines that some markdown payloads carry.
         while all_lines
@@ -3045,16 +3150,24 @@ impl Editor {
                         if ins_len > del_len {
                             state.marker_list.adjust_for_insert(pos, ins_len - del_len);
                             state.margins.adjust_for_insert(pos, ins_len - del_len);
+                            state
+                                .scrollbar_markers
+                                .adjust_for_insert(pos, ins_len - del_len);
                         } else if del_len > ins_len {
                             state.marker_list.adjust_for_delete(pos, del_len - ins_len);
                             state.margins.adjust_for_delete(pos, del_len - ins_len);
+                            state
+                                .scrollbar_markers
+                                .adjust_for_delete(pos, del_len - ins_len);
                         }
                     } else if del_len > 0 {
                         state.marker_list.adjust_for_delete(pos, del_len);
                         state.margins.adjust_for_delete(pos, del_len);
+                        state.scrollbar_markers.adjust_for_delete(pos, del_len);
                     } else if ins_len > 0 {
                         state.marker_list.adjust_for_insert(pos, ins_len);
                         state.margins.adjust_for_insert(pos, ins_len);
+                        state.scrollbar_markers.adjust_for_insert(pos, ins_len);
                     }
                 }
 
@@ -3306,6 +3419,27 @@ impl Editor {
                 .pending_inlay_hints_requests
                 .insert(request_id, super::InlayHintsRequest { buffer_id, version });
         }
+    }
+
+    /// If a per-edit inlay-hints debounce has fired, send a fresh
+    /// `textDocument/inlayHint` request for the scheduled buffer. Mirrors
+    /// [`Window::check_diagnostic_pull_timer`]: the edit path writes the
+    /// debounce slot but nothing consumed it, so hints never refreshed after
+    /// an edit (sinelaw/fresh#2744). The response arrives asynchronously and
+    /// its handler is version-guarded, so no redraw is triggered here.
+    pub(crate) fn check_inlay_hints_timer(&mut self) {
+        let Some((buffer_id, trigger_time)) = self.active_window().scheduled_inlay_hints_request
+        else {
+            return;
+        };
+
+        if std::time::Instant::now() < trigger_time {
+            return;
+        }
+
+        self.active_window_mut().scheduled_inlay_hints_request = None;
+
+        self.request_inlay_hints_for_buffer(buffer_id);
     }
 
     /// Issue a debounced folding range request if the timer has elapsed.
@@ -4207,5 +4341,70 @@ mod tests {
         let input = "Just a single line of docs.";
         let result = space_doc_paragraphs(input);
         assert_eq!(result, "Just a single line of docs.");
+    }
+
+    fn timer_test_editor() -> Editor {
+        use crate::config::Config;
+        use crate::config_io::DirectoryContext;
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        let mut config = Config::default();
+        config.editor.enable_inlay_hints = true;
+        Editor::for_test(
+            config,
+            80,
+            24,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(StdFileSystem),
+            None,
+            None,
+            false,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_check_inlay_hints_timer_fires_and_clears_slot_after_deadline() {
+        // With the debounce slot's deadline already in the past, the consumer
+        // must clear the slot (the request is dispatched, but arrives async).
+        let mut editor = timer_test_editor();
+        let buffer_id = editor.active_buffer();
+        editor.active_window_mut().scheduled_inlay_hints_request = Some((
+            buffer_id,
+            std::time::Instant::now() - std::time::Duration::from_millis(1),
+        ));
+
+        editor.check_inlay_hints_timer();
+
+        assert!(
+            editor
+                .active_window()
+                .scheduled_inlay_hints_request
+                .is_none(),
+            "consumer should clear the debounce slot after the deadline passes"
+        );
+    }
+
+    #[test]
+    fn test_check_inlay_hints_timer_noop_before_deadline() {
+        // A future deadline must be left untouched so the debounce actually
+        // debounces instead of firing on the first idle tick.
+        let mut editor = timer_test_editor();
+        let buffer_id = editor.active_buffer();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        editor.active_window_mut().scheduled_inlay_hints_request = Some((buffer_id, deadline));
+
+        editor.check_inlay_hints_timer();
+
+        assert_eq!(
+            editor.active_window().scheduled_inlay_hints_request,
+            Some((buffer_id, deadline)),
+            "consumer must be a no-op while the deadline is still in the future"
+        );
     }
 }

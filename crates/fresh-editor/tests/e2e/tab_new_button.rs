@@ -87,6 +87,59 @@ fn plus_button_pins_to_right_edge_on_overflow() {
     harness.assert_screen_contains("New File");
 }
 
+/// Near the right edge the popup clamps left so it fits on screen — and its
+/// click hit-test must clamp identically, or a click on the *drawn* item lands
+/// outside the menu's (unclamped) region and is treated as an outside-click.
+/// Regression: render clamped `menu.position` while the hit-tests used the raw
+/// position, so clicking a visible item near the edge silently dismissed the
+/// menu instead of activating it.
+#[test]
+fn plus_button_menu_near_right_edge_clicks_land_on_drawn_items() {
+    // Narrow bar + overflow pins the "+" (and thus the popup anchor) hard
+    // against the right edge, where `NEW_TAB_MENU_WIDTH` (18) overflows and
+    // forces the clamp.
+    let width: u16 = 50;
+    let mut harness = EditorTestHarness::new(width, 24).unwrap();
+    for _ in 0..8 {
+        harness.new_buffer().unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let plus_col = col_of_char_on_row(&screen, 1, '+').unwrap_or_else(|| {
+        panic!("expected a pinned '+' button on the tab row. Screen:\n{screen}")
+    });
+    assert!(
+        plus_col >= width - 3,
+        "precondition: '+' pinned near the right edge, got {plus_col}. Screen:\n{screen}"
+    );
+
+    harness.mouse_click(plus_col, 1).unwrap();
+    harness.assert_screen_contains("New File");
+
+    let buffers_before = harness.editor().active_window().buffers.len();
+
+    // Click "New File" where it is actually drawn (its clamped position). With
+    // the raw-position hit-test this click fell outside the menu → dismissed it
+    // with no new buffer; with the shared clamp it activates the item.
+    let screen = harness.screen_to_string();
+    let (nf_col, nf_row) = pos_of_substr(&screen, "New File")
+        .unwrap_or_else(|| panic!("expected 'New File' item in popup. Screen:\n{screen}"));
+    harness.mouse_click(nf_col + 1, nf_row).unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("New Terminal"),
+        "popup should be dismissed after selecting an item. Screen:\n{screen}"
+    );
+    assert_eq!(
+        harness.editor().active_window().buffers.len(),
+        buffers_before + 1,
+        "clicking the drawn 'New File' near the edge must create a buffer, \
+         not miss the item. Screen:\n{screen}"
+    );
+}
+
 #[test]
 fn plus_button_menu_captures_keyboard_and_filters_keys() {
     let mut harness = EditorTestHarness::new(120, 30).unwrap();

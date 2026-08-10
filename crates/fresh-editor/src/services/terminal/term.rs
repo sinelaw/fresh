@@ -24,6 +24,15 @@
 //! backing file. When `grid.history_size() > synced_history_lines`, new lines need
 //! to be flushed.
 //!
+//! That pointer counts rows from the *oldest surviving* history row, so it only
+//! stays meaningful while that row does. The emulator must therefore never evict
+//! history on its own: its grid is sized `SCROLLBACK_LINES + SCROLLBACK_DRAIN_MARGIN`
+//! and `flush_new_scrollback` trims history back to `SCROLLBACK_LINES` itself,
+//! dropping only already-written rows and decrementing the pointer in step. Letting
+//! the emulator saturate instead pins `history_size()` at the cap, which makes the
+//! `history <= synced_history_lines` guard permanently true and stops streaming for
+//! the rest of the session (fresh#2820).
+//!
 //! `backing_file_history_end` tracks the byte offset where scrollback ends in the
 //! backing file, used for truncation when re-entering terminal mode.
 
@@ -39,6 +48,20 @@ use std::sync::{Arc, Mutex};
 
 // Keep a generous scrollback so sync-to-buffer can include deep history.
 const SCROLLBACK_LINES: usize = 200_000;
+
+/// Rows of grid history kept *above* the retained window as staging space.
+///
+/// `flush_new_scrollback` indexes history rows relative to the oldest surviving
+/// row, so a row the emulator evicts on its own shifts that origin and
+/// invalidates the sync pointer. To keep the origin stable we never let the
+/// emulator evict: the grid's cap is `scrollback_lines + SCROLLBACK_DRAIN_MARGIN`
+/// and the flush trims history back down to `scrollback_lines` itself, dropping
+/// only rows it has already written (see `trim_synced_history`).
+///
+/// The margin therefore has to cover the rows one flush cycle can scroll in.
+/// The PTY reader flushes after every read and reads at most 4 KiB, so at most
+/// 4096 rows can scroll between flushes; 8192 is 2x that.
+const SCROLLBACK_DRAIN_MARGIN: usize = 8192;
 
 /// Event listener that captures PtyWrite events for sending back to the PTY.
 ///
@@ -185,6 +208,140 @@ impl Osc7Scanner {
     }
 }
 
+/// Introducer for any OSC sequence: `ESC ]`.
+const OSC_INTRO: [u8; 2] = [0x1b, b']'];
+/// Cap on an activity OSC payload. The sequences we recognise (OSC 133
+/// command markers, OSC 9;4 progress) are short; a longer payload is a
+/// different OSC (title, clipboard, …) we don't track, so abandon it rather
+/// than buffer unboundedly.
+const OSC_ACTIVITY_MAX_PAYLOAD: usize = 64;
+
+/// Sniffs the out-of-band "activity" signals a program emits so the editor
+/// can tell a workspace is *working* even while it prints nothing (an agent
+/// thinking between commands, a long build). Two conventions are recognised,
+/// both dropped by the embedded emulator (`vte` surfaces no hook for them),
+/// so they're scanned from the raw PTY byte stream — the same technique
+/// [`Osc7Scanner`] uses for cwd reports:
+///
+///   * **OSC 133** shell-integration command markers (FinalTerm / iTerm2):
+///     `133;C` — a command's output began (running); `133;D[;exit]` — the
+///     command finished; `133;A` — a fresh prompt (idle / ready).
+///   * **OSC 9;4** progress (ConEmu / Windows Terminal): `9;4;1|3` sets an
+///     active / indeterminate progress (running); `9;4;0|2` clears it.
+///
+/// A program that emits neither leaves [`Self::activity`] at `None`, and the
+/// caller keeps its output-timing heuristic unchanged.
+#[derive(Debug, Default)]
+struct OscActivityScanner {
+    /// How many bytes of the `ESC ]` introducer have matched (0..2).
+    intro_match: usize,
+    /// True once the introducer matched and we're accumulating the payload.
+    collecting: bool,
+    /// True when the previous collected byte was `ESC` (possible `ST`).
+    saw_esc: bool,
+    /// Accumulated payload bytes (between the introducer and the terminator).
+    buf: Vec<u8>,
+    /// Any recognised signal seen so far — until then `activity()` is `None`.
+    seen: bool,
+    /// Whether the most recent signal says a command / task is running.
+    running: bool,
+}
+
+impl OscActivityScanner {
+    /// Feed one chunk of PTY output, updating `seen` / `running` for every
+    /// recognised sequence that completes within it.
+    fn feed(&mut self, data: &[u8]) {
+        for &byte in data {
+            if self.collecting {
+                if self.saw_esc {
+                    self.saw_esc = false;
+                    if byte == b'\\' {
+                        self.finish();
+                    } else {
+                        self.reset();
+                    }
+                } else if byte == 0x07 {
+                    self.finish();
+                } else if byte == 0x1b {
+                    self.saw_esc = true;
+                } else if self.buf.len() >= OSC_ACTIVITY_MAX_PAYLOAD {
+                    self.reset();
+                } else {
+                    self.buf.push(byte);
+                }
+            } else if byte == OSC_INTRO[self.intro_match] {
+                self.intro_match += 1;
+                if self.intro_match == OSC_INTRO.len() {
+                    self.collecting = true;
+                    self.intro_match = 0;
+                    self.buf.clear();
+                }
+            } else {
+                // Restart the introducer match; its only repeated prefix byte
+                // is ESC, so a one-byte re-check suffices.
+                self.intro_match = usize::from(byte == OSC_INTRO[0]);
+            }
+        }
+    }
+
+    /// Classify a completed OSC payload (the text between `ESC ]` and its
+    /// terminator) and reset to searching. Unrecognised payloads are ignored.
+    fn finish(&mut self) {
+        if let Ok(s) = std::str::from_utf8(&self.buf) {
+            if let Some(rest) = s.strip_prefix("133;") {
+                match rest.as_bytes().first().copied() {
+                    // Command output started → running.
+                    Some(b'C') => {
+                        self.seen = true;
+                        self.running = true;
+                    }
+                    // Command finished, or a fresh prompt → idle / ready.
+                    Some(b'D') | Some(b'A') => {
+                        self.seen = true;
+                        self.running = false;
+                    }
+                    // 'B' (command line entered, pre-exec) and anything else
+                    // aren't a running/idle edge on their own.
+                    _ => {}
+                }
+            } else if let Some(rest) = s.strip_prefix("9;4;") {
+                match rest.as_bytes().first().copied() {
+                    // Progress set (normal) / indeterminate → running.
+                    Some(b'1') | Some(b'3') => {
+                        self.seen = true;
+                        self.running = true;
+                    }
+                    // Progress cleared / error → not running.
+                    Some(b'0') | Some(b'2') => {
+                        self.seen = true;
+                        self.running = false;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        self.reset();
+    }
+
+    fn reset(&mut self) {
+        self.collecting = false;
+        self.saw_esc = false;
+        self.intro_match = 0;
+        self.buf.clear();
+    }
+
+    /// `Some(true)` = a command / task is running, `Some(false)` = idle /
+    /// done, `None` = no activity signal has ever been seen (caller keeps its
+    /// own heuristic).
+    fn activity(&self) -> Option<bool> {
+        if self.seen {
+            Some(self.running)
+        } else {
+            None
+        }
+    }
+}
+
 /// Parse the payload of an OSC 7 sequence into a working-directory path.
 ///
 /// The conventional payload is a `file://host/path` URI (the host is usually
@@ -283,7 +440,21 @@ pub struct TerminalState {
     /// `WRAPLINE`), so the file always ends on a logical-line boundary. Flush
     /// only ever advances this past lines it *wrote*, so nothing is skipped —
     /// scrollback is never lost (a grow may re-write a bounded few lines instead).
+    ///
+    /// Counted from the *oldest surviving history row*, so it is only meaningful
+    /// while that row stays put. `trim_synced_history` is what keeps it so: it
+    /// evicts old rows itself (decrementing this pointer in step) instead of
+    /// letting the emulator drop them silently underneath the pointer.
     synced_history_lines: usize,
+    /// Rows of scrollback the emulator's grid retains. History past this is
+    /// trimmed by `trim_synced_history` once streamed to the backing file, which
+    /// holds the full scrollback. The grid's own cap sits `SCROLLBACK_DRAIN_MARGIN`
+    /// rows higher so the emulator never evicts before the flush has run.
+    scrollback_lines: usize,
+    /// The emulator evicted history rows before they could be streamed — the
+    /// flush pointer's origin moved by an unknown amount. Cleared by the next
+    /// flush, which restarts the epoch rather than trusting the stale pointer.
+    history_overrun: bool,
     /// Count of complete logical lines streamed this epoch. Invariant under
     /// width reflow (a logical line keeps its identity when re-wrapped), so it's
     /// the anchor used to rebuild `synced_history_lines` after a resize re-wraps
@@ -306,14 +477,42 @@ pub struct TerminalState {
     cwd: Option<PathBuf>,
     /// Resumable scanner that extracts OSC 7 payloads from the raw PTY stream.
     osc7: Osc7Scanner,
+    /// Resumable scanner for out-of-band activity markers (OSC 133 command
+    /// lifecycle, OSC 9;4 progress) — the emulator drops these, so we sniff
+    /// them from the raw stream too. Drives the workspace working/idle dot.
+    osc_activity: OscActivityScanner,
+}
+
+/// What `append_visible_screen` re-attached ahead of the first visible
+/// logical line: the in-history wrapped rows (and their byte length in the
+/// emitted stream) of a line taller than the pane that is still in
+/// progress (fresh#2649). `rows` lets the scroll-back viewport start at
+/// the live grid's row 0 (`top_view_line_offset`), `bytes` locates that
+/// row's first cell in the backing file (cursor anchor).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PrependedHead {
+    pub rows: usize,
+    pub bytes: usize,
 }
 
 impl TerminalState {
     /// Create a new terminal state
     pub fn new(cols: u16, rows: u16) -> Self {
+        Self::with_scrollback(cols, rows, SCROLLBACK_LINES)
+    }
+
+    /// Create a terminal state retaining `scrollback_lines` rows of grid history.
+    ///
+    /// The full scrollback lives in the backing file; this only sizes the
+    /// emulator's in-memory window (what the live viewport can scroll over
+    /// without reading the file back).
+    pub fn with_scrollback(cols: u16, rows: u16, scrollback_lines: usize) -> Self {
         let size = TermSize::new(cols as usize, rows as usize);
         let config = TermConfig {
-            scrolling_history: SCROLLBACK_LINES,
+            // Staging space above the retained window: the flush trims history
+            // down to `scrollback_lines` itself so the emulator never evicts a
+            // row out from under the sync pointer. See SCROLLBACK_DRAIN_MARGIN.
+            scrolling_history: scrollback_lines.saturating_add(SCROLLBACK_DRAIN_MARGIN),
             ..Default::default()
         };
         let listener = PtyWriteListener::new();
@@ -330,12 +529,15 @@ impl TerminalState {
             terminal_title: String::new(),
             synced_history_lines: 0,
             synced_logical_lines: 0,
+            scrollback_lines,
+            history_overrun: false,
             pending_reflow_resync: false,
             backing_file_history_end: 0,
             pty_write_queue,
             pending_title,
             cwd: None,
             osc7: Osc7Scanner::default(),
+            osc_activity: OscActivityScanner::default(),
         }
     }
 
@@ -344,6 +546,15 @@ impl TerminalState {
     /// configured to emit OSC 7); `None` otherwise.
     pub fn cwd(&self) -> Option<&std::path::Path> {
         self.cwd.as_deref()
+    }
+
+    /// The program's most recent out-of-band activity signal, if any:
+    /// `Some(true)` while a command / task is running (OSC 133 `C`..`D`, or
+    /// an active OSC 9;4 progress), `Some(false)` when it has finished, and
+    /// `None` when the program has never emitted such a marker (the caller
+    /// then falls back to output-timing). See [`OscActivityScanner`].
+    pub fn osc_activity(&self) -> Option<bool> {
+        self.osc_activity.activity()
     }
 
     /// Drain any pending data that needs to be written back to the PTY.
@@ -373,6 +584,10 @@ impl TerminalState {
         if let Some(path) = osc7_payloads.iter().rev().find_map(|p| parse_osc7_path(p)) {
             self.cwd = Some(path);
         }
+
+        // Sniff activity markers (OSC 133 / OSC 9;4) out of the same raw
+        // stream — the emulator discards them too.
+        self.osc_activity.feed(data);
 
         self.parser.advance(&mut self.term, data);
         // The parser may have emitted OSC title events (0/1/2) into the
@@ -405,6 +620,15 @@ impl TerminalState {
             if history_after < history_before {
                 self.synced_history_lines = 0;
                 self.synced_logical_lines = 0;
+            }
+            // History reached the grid's hard cap, so the emulator started
+            // evicting its own oldest rows — the origin `synced_history_lines`
+            // counts from has moved by an unknown amount. Normally
+            // `trim_synced_history` keeps history a full `SCROLLBACK_DRAIN_MARGIN`
+            // below the cap, so this needs more rows to scroll in one read than
+            // the margin covers (e.g. `CSI Ps S` with a huge parameter).
+            if history_after >= self.grid_history_cap() {
+                self.history_overrun = true;
             }
         }
 
@@ -740,8 +964,26 @@ impl TerminalState {
     pub fn flush_new_scrollback<W: Write>(&mut self, writer: &mut W) -> io::Result<usize> {
         use alacritty_terminal::grid::Dimensions;
 
+        if self.history_overrun {
+            // The emulator dropped rows before we streamed them, so the pointer
+            // no longer refers to the rows it was set against. Restart the epoch:
+            // re-emit everything still in history (bounded duplication) rather
+            // than skip past it (unbounded loss).
+            tracing::warn!(
+                "Terminal scrollback overran the grid's {}-row cap; re-streaming \
+                 the surviving history (some lines may be duplicated or lost)",
+                self.grid_history_cap()
+            );
+            self.synced_history_lines = 0;
+            self.synced_logical_lines = 0;
+            self.history_overrun = false;
+        }
+
         let history = self.term.grid().history_size();
         if history <= self.synced_history_lines {
+            // Nothing new — but history may still sit above the retained window
+            // (an in-progress wrapped line can block a trim), so still try.
+            self.trim_synced_history();
             return Ok(0);
         }
 
@@ -771,10 +1013,52 @@ impl TerminalState {
         }
         // Any rows past `synced_history_lines` form an incomplete logical line
         // (its final row wraps into the visible screen); leave them uncommitted.
+        self.trim_synced_history();
         Ok(written)
     }
 
-    /// Append the visible screen content to the writer as logical lines.
+    /// The grid's hard history cap — the retained window plus staging margin.
+    fn grid_history_cap(&self) -> usize {
+        self.scrollback_lines
+            .saturating_add(SCROLLBACK_DRAIN_MARGIN)
+    }
+
+    /// Drop history rows past the retained window, keeping `synced_history_lines`
+    /// anchored to the oldest surviving row.
+    ///
+    /// This is what makes streaming survive a saturated emulator. The flush
+    /// pointer counts rows from the oldest surviving row, so an eviction the
+    /// emulator performs on its own silently shifts every index — and since
+    /// `history_size()` is pinned at the cap once saturated, the
+    /// `history <= synced_history_lines` guard would then be true forever and
+    /// streaming would stop for the rest of the session (fresh#2820). Evicting
+    /// here instead keeps the two in step: we drop `n` rows and subtract `n`, so
+    /// the pointer keeps pointing at the same row and the guard keeps releasing
+    /// newly scrolled lines.
+    ///
+    /// Only rows already written to the backing file are dropped, so trimming
+    /// can never discard unstreamed scrollback.
+    fn trim_synced_history(&mut self) {
+        use alacritty_terminal::grid::Dimensions;
+
+        let history = self.term.grid().history_size();
+        let excess = history.saturating_sub(self.scrollback_lines);
+        let drop = excess.min(self.synced_history_lines);
+        if drop == 0 {
+            return;
+        }
+
+        // `update_history` shrinks from the oldest end and also sets the cap, so
+        // restore the cap afterwards to keep the staging margin available.
+        let cap = self.grid_history_cap();
+        self.term.grid_mut().update_history(history - drop);
+        self.term.grid_mut().update_history(cap);
+        self.synced_history_lines -= drop;
+    }
+
+    /// Append the visible screen content to the writer as logical lines,
+    /// returning the number of in-history rows that were *prepended* to the
+    /// first visible logical line (see below).
     ///
     /// Call this when exiting terminal mode (or saving a session) to add the
     /// current screen to the backing file. Wrapped rows are joined like
@@ -783,22 +1067,71 @@ impl TerminalState {
     /// anchor to the start of this block and line up with the live PTY frame.
     /// The block is temporary — re-entering terminal mode truncates the file
     /// back to `backing_file_history_end`.
-    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    ///
+    /// # Complete capture of an in-progress wrapped line (fresh#2649)
+    ///
+    /// When a single logical line is taller than the pane, its earlier wrapped
+    /// rows scroll into grid history while its terminator is still on screen.
+    /// `flush_new_scrollback` deliberately leaves such an *in-progress* line
+    /// uncommitted (the file must end on a logical-line boundary), so those
+    /// in-history rows are captured by NEITHER path and are lost — the leading
+    /// characters of the line become unreachable at any scroll position and
+    /// vanish on session save.
+    ///
+    /// To fix this, when the first visible row continues a logical line whose
+    /// head is in grid history (`row_wraps(Line(-1))`), we walk backward
+    /// through history to the logical-line start and *prepend* those rows to
+    /// the first emitted logical line, so the FULL line reaches the backing
+    /// file. The returned count lets the caller offset the scroll-back anchor
+    /// past the prepended rows so the exit frame still lands on the live grid's
+    /// row 0.
+    pub fn append_visible_screen<W: Write>(&self, writer: &mut W) -> io::Result<PrependedHead> {
+        use alacritty_terminal::grid::Dimensions;
+
         let rows = self.rows as i32;
+
+        // Detect an in-progress logical line whose head is in grid history.
+        // `row_wraps(Line(-1))` means the last history row continues into
+        // visible row 0, i.e. row 0 is a continuation of a still-in-progress
+        // line. Walk upward while each further-back row also wraps into the
+        // one below it (and still exists in history) to find the line start.
+        let history = self.term.grid().history_size();
+        let mut prefix_rows = 0usize;
+        if rows > 0 && history > 0 && self.row_wraps(Line(-1)) {
+            prefix_rows = 1;
+            while prefix_rows < history && self.row_wraps(Line(-((prefix_rows + 1) as i32))) {
+                prefix_rows += 1;
+            }
+        }
+
         let mut start = 0i32;
         let mut row = 0i32;
+        let mut first_logical = true;
+        let mut prefix_bytes = 0usize;
         while row < rows {
             if self.row_wraps(Line(row)) && row + 1 < rows {
                 row += 1;
                 continue;
             }
-            // `write_logical_line` indexes via the history convention, so pass
-            // visible rows through directly (offset 0 == oldest here is just row).
-            self.write_visible_logical_line(writer, start, row)?;
+            if first_logical && prefix_rows > 0 {
+                // The first visible logical line continues a line whose head
+                // rows are in history; prepend them so the full line is stored.
+                prefix_bytes =
+                    self.write_prefixed_visible_logical_line(writer, prefix_rows, start, row)?;
+            } else {
+                // `write_logical_line` indexes via the history convention, so
+                // pass visible rows through directly (offset 0 == oldest here
+                // is just row).
+                self.write_visible_logical_line(writer, start, row)?;
+            }
+            first_logical = false;
             row += 1;
             start = row;
         }
-        Ok(())
+        Ok(PrependedHead {
+            rows: prefix_rows,
+            bytes: prefix_bytes,
+        })
     }
 
     /// True if the last cell of `line` carries the `WRAPLINE` flag, i.e. the row
@@ -849,6 +1182,37 @@ impl TerminalState {
         }
         Self::finish_logical_line(&mut out, &sgr);
         writeln!(writer, "{}", out)
+    }
+
+    /// Write one logical line made of `prefix_rows` history rows (the head of
+    /// an in-progress wrapped line, oldest first: `Line(-prefix_rows)` ..=
+    /// `Line(-1)`) joined with visible rows `vis_start..=vis_end`. Used by
+    /// `append_visible_screen` to capture a line taller than the pane in full.
+    fn write_prefixed_visible_logical_line<W: Write>(
+        &self,
+        writer: &mut W,
+        prefix_rows: usize,
+        vis_start: i32,
+        vis_end: i32,
+    ) -> io::Result<usize> {
+        let mut sgr = SgrState::default();
+        let mut out = String::with_capacity(
+            (prefix_rows + (vis_end - vis_start) as usize + 1) * self.cols as usize * 2,
+        );
+        // History rows from oldest (`-prefix_rows`) to newest (`-1`).
+        for j in (1..=prefix_rows).rev() {
+            self.append_row_cells(Line(-(j as i32)), &mut sgr, &mut out);
+        }
+        // Everything before this offset is prepended in-history content;
+        // the byte at `prefix_bytes` (relative to the line start in the
+        // backing file) is the first cell of the live grid's row 0.
+        let prefix_bytes = out.len();
+        for row in vis_start..=vis_end {
+            self.append_row_cells(Line(row), &mut sgr, &mut out);
+        }
+        Self::finish_logical_line(&mut out, &sgr);
+        writeln!(writer, "{}", out)?;
+        Ok(prefix_bytes)
     }
 
     /// Close out an in-progress logical line: emit a final SGR reset if any
@@ -1118,6 +1482,50 @@ mod tests {
         state.process_output(b"Hello, World!");
         let content = state.content_string();
         assert!(content.contains("Hello, World!"));
+    }
+
+    #[test]
+    fn osc_activity_none_until_a_marker_is_seen() {
+        let mut state = TerminalState::new(80, 24);
+        assert_eq!(state.osc_activity(), None);
+        // Plain output (even with an unrelated OSC title) is not a marker.
+        state.process_output(b"ls -la\r\n\x1b]0;bash\x07done\r\n");
+        assert_eq!(state.osc_activity(), None);
+    }
+
+    #[test]
+    fn osc_133_command_markers_drive_running_state() {
+        let mut state = TerminalState::new(80, 24);
+        // Command output begins → running.
+        state.process_output(b"\x1b]133;C\x07");
+        assert_eq!(state.osc_activity(), Some(true));
+        // Command finishes (with an exit code) → idle, even though more
+        // output (the prompt) follows.
+        state.process_output(b"build ok\r\n\x1b]133;D;0\x07\x1b]133;A\x07$ ");
+        assert_eq!(state.osc_activity(), Some(false));
+        // A fresh command starts again → running.
+        state.process_output(b"\x1b]133;C\x07");
+        assert_eq!(state.osc_activity(), Some(true));
+    }
+
+    #[test]
+    fn osc_133_marker_split_across_reads_is_reassembled() {
+        let mut state = TerminalState::new(80, 24);
+        // The sequence straddles two PTY reads — the scanner is resumable.
+        state.process_output(b"\x1b]13");
+        state.process_output(b"3;C\x07");
+        assert_eq!(state.osc_activity(), Some(true));
+    }
+
+    #[test]
+    fn osc_9_4_progress_drives_running_state() {
+        let mut state = TerminalState::new(80, 24);
+        // ST-terminated (ESC \) instead of BEL, active progress → running.
+        state.process_output(b"\x1b]9;4;1;40\x1b\\");
+        assert_eq!(state.osc_activity(), Some(true));
+        // Progress removed → idle.
+        state.process_output(b"\x1b]9;4;0\x1b\\");
+        assert_eq!(state.osc_activity(), Some(false));
     }
 
     #[test]
@@ -1432,6 +1840,134 @@ mod tests {
         assert_eq!(state.last_visible_line(), "");
     }
 
+    /// Collect the distinct `Line <n>` markers that reached the sink.
+    fn persisted_line_numbers(sink: &[u8], upto: usize) -> Vec<usize> {
+        let out = String::from_utf8_lossy(sink);
+        let seen: std::collections::HashSet<&str> =
+            out.lines().map(|l| l.trim_end_matches(' ')).collect();
+        (1..=upto)
+            .filter(|i| seen.contains(format!("Line {}", i).as_str()))
+            .collect()
+    }
+
+    /// fresh#2820: once the emulator's grid history saturates, every row that
+    /// scrolls in evicts the oldest one, so `history_size()` is pinned at the
+    /// cap. `synced_history_lines` counts rows from the *oldest surviving row*,
+    /// so those evictions used to shift the origin out from under it and leave
+    /// the `history <= synced_history_lines` guard permanently true — streaming
+    /// to the backing file stopped for the rest of the session.
+    ///
+    /// Without the fix this persists only the first `scrollback` lines and then
+    /// nothing, forever.
+    #[test]
+    fn test_flush_streams_past_history_saturation() {
+        let scrollback = 50;
+        let mut state = TerminalState::with_scrollback(80, 10, scrollback);
+        let mut sink: Vec<u8> = Vec::new();
+
+        // Well past saturation, flushing after every line like the PTY reader.
+        for i in 1..=400 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+
+        // Everything that has fully scrolled off the 10-row screen must be in
+        // the file. Each line ends in a newline, so the last one sits above a
+        // blank cursor row and only lines 392..=400 stay visible.
+        let persisted = persisted_line_numbers(&sink, 400);
+        assert_eq!(
+            persisted,
+            (1..=391).collect::<Vec<_>>(),
+            "every scrolled-off line must reach the backing file across saturation"
+        );
+
+        // And the emulator's retained window stays bounded by what we asked for.
+        assert!(
+            state.history_size() <= scrollback,
+            "history {} should be trimmed to the retained window {}",
+            state.history_size(),
+            scrollback
+        );
+    }
+
+    /// The same failure at the shipped default: streaming must not stop once a
+    /// long-running terminal has emitted `SCROLLBACK_LINES` rows. Guards against
+    /// the bug being "fixed" by simply enlarging the window again.
+    #[test]
+    fn test_flush_streams_past_default_scrollback_window() {
+        let mut state = TerminalState::with_scrollback(80, 10, SCROLLBACK_LINES);
+        let mut sink: Vec<u8> = Vec::new();
+        let total = SCROLLBACK_LINES + 500;
+
+        for i in 1..=total {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+
+        let scrolled_off = total - 10;
+        let out = String::from_utf8_lossy(&sink);
+        let seen: std::collections::HashSet<&str> =
+            out.lines().map(|l| l.trim_end_matches(' ')).collect();
+        for i in [1, SCROLLBACK_LINES - 1, SCROLLBACK_LINES + 1, scrolled_off] {
+            assert!(
+                seen.contains(format!("Line {}", i).as_str()),
+                "line {} (of {} scrolled off) missing from the backing file",
+                i,
+                scrolled_off
+            );
+        }
+    }
+
+    /// Trimming must never drop a row that hasn't been written yet: with no
+    /// writer draining it, history is allowed to fill the staging margin rather
+    /// than silently discarding unstreamed scrollback.
+    #[test]
+    fn test_trim_never_drops_unstreamed_rows() {
+        let scrollback = 50;
+        let mut state = TerminalState::with_scrollback(80, 10, scrollback);
+        for i in 1..=200 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+        }
+        // Never flushed, so nothing is safe to trim: history holds every
+        // scrolled-off row even though that is far past the retained window.
+        assert_eq!(state.synced_history_lines(), 0);
+        assert_eq!(state.history_size(), 191);
+
+        // The first flush still sees — and writes — all 191 scrolled-off lines.
+        let mut sink: Vec<u8> = Vec::new();
+        state.flush_new_scrollback(&mut sink).unwrap();
+        assert_eq!(
+            persisted_line_numbers(&sink, 200),
+            (1..=191).collect::<Vec<_>>()
+        );
+    }
+
+    /// A width resize re-anchors the pointer by walking history; that walk must
+    /// not resurrect the saturation stall.
+    #[test]
+    fn test_flush_streams_past_saturation_across_resize() {
+        let mut state = TerminalState::with_scrollback(80, 10, 50);
+        let mut sink: Vec<u8> = Vec::new();
+        for i in 1..=200 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+        state.resize(100, 10);
+        for i in 201..=300 {
+            state.process_output(format!("Line {}\r\n", i).as_bytes());
+            state.flush_new_scrollback(&mut sink).unwrap();
+        }
+        let persisted = persisted_line_numbers(&sink, 300);
+        for i in [250, 289, 290] {
+            assert!(
+                persisted.contains(&i),
+                "line {} missing after resize; got up to {:?}",
+                i,
+                persisted.last()
+            );
+        }
+    }
+
     #[test]
     fn test_flush_new_scrollback_no_history() {
         // When there's no scrollback history, flush should return 0
@@ -1497,6 +2033,77 @@ mod tests {
             output.contains("Line C"),
             "Visible screen should contain Line C"
         );
+    }
+
+    /// fresh#2649: a single logical line taller than the pane leaves its
+    /// leading rows in grid history while its cursor row is still on screen.
+    /// `flush_new_scrollback` won't commit an in-progress line, so those
+    /// in-history rows must be re-attached by `append_visible_screen` — the
+    /// FULL line (leading `X`s included) has to reach the sink, and the
+    /// returned prepended-row count must equal the in-history wrapped rows.
+    #[test]
+    fn test_append_visible_screen_reattaches_in_progress_line_head() {
+        // 20 cols × 5 rows. Print 8 'X' + 200 'A' = 208 chars with NO newline,
+        // so the line is still in progress (cursor mid-line). 208 / 20 = 11
+        // physical rows; 5 are visible, so 6 rows sit in grid history.
+        let mut state = TerminalState::new(20, 5);
+        state.process_output(b"XXXXXXXX");
+        state.process_output(&[b'A'; 200]);
+
+        let history_rows = state.history_size();
+        assert_eq!(history_rows, 6, "6 wrapped rows should be in history");
+
+        let mut sink: Vec<u8> = Vec::new();
+        // The line is in progress, so nothing is committed as scrollback yet.
+        assert_eq!(state.flush_new_scrollback(&mut sink).unwrap(), 0);
+        assert!(
+            sink.is_empty(),
+            "in-progress line must not be committed yet"
+        );
+
+        // Appending the visible screen must re-attach the in-history head.
+        let prepended = state.append_visible_screen(&mut sink).unwrap();
+        assert_eq!(
+            prepended.rows, history_rows,
+            "prepended rows must equal the in-history wrapped rows"
+        );
+        // The prepended head is plain uncolored text here, so its byte
+        // length is exactly the prepended cell count: `rows` full-width
+        // rows of 20 columns each.
+        assert_eq!(
+            prepended.bytes,
+            history_rows * 20,
+            "prepended byte length must cover exactly the in-history rows"
+        );
+
+        let text = String::from_utf8_lossy(&sink);
+        let line = text
+            .lines()
+            .find(|l| l.contains("XXXXXXXX"))
+            .expect("the leading XXXXXXXX must be captured, not just the A tail");
+        assert_eq!(
+            line.chars().filter(|&c| c == 'X').count(),
+            8,
+            "all 8 leading X's must be present"
+        );
+        assert_eq!(
+            line.chars().filter(|&c| c == 'A').count(),
+            200,
+            "the full 200-char A tail must be present in the SAME logical line"
+        );
+    }
+
+    /// The re-attachment must not fire for a normal visible line whose head is
+    /// NOT in history (no data loss risk): the returned count is 0 and the
+    /// existing per-line capture is unchanged.
+    #[test]
+    fn test_append_visible_screen_no_prepend_when_head_on_screen() {
+        let mut state = TerminalState::new(80, 5);
+        state.process_output(b"Line A\r\nLine B\r\nLine C\r\n");
+        let mut sink: Vec<u8> = Vec::new();
+        let prepended = state.append_visible_screen(&mut sink).unwrap();
+        assert_eq!(prepended.rows, 0, "no in-history head to re-attach");
+        assert_eq!(prepended.bytes, 0, "no in-history bytes to re-attach");
     }
 
     #[test]

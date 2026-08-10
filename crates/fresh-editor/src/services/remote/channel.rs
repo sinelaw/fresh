@@ -411,8 +411,7 @@ impl AgentChannel {
         R: AsyncBufRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        self.runtime_handle
-            .block_on(self.replace_transport(reader, writer));
+        self.block_on_request(self.replace_transport(reader, writer));
 
         // Yield until the read task has processed the new reader.
         // This is typically immediate since the channel send above wakes
@@ -505,15 +504,46 @@ impl AgentChannel {
         Ok((data_rx, result_rx))
     }
 
-    /// Send a request synchronously (blocking)
+    /// Block on `fut` using the channel's runtime, safe to call whether or
+    /// not the caller is already inside a Tokio runtime.
     ///
-    /// This can be called from outside the Tokio runtime context.
+    /// The blocking wrappers (`request_blocking`, …) are reached from the
+    /// plugin thread, which drives its own `current_thread` runtime while
+    /// servicing a synchronous plugin call (e.g. a remote `read_dir` from the
+    /// Orchestrator dock). A plain `Handle::block_on` there panics with
+    /// "Cannot start a runtime from within a runtime" — the crash reported
+    /// when arrowing onto an unreachable SSH workspace. When an ambient
+    /// runtime is detected, drive the future on a scratch OS thread that
+    /// carries no runtime context of its own; the channel's runtime (where
+    /// the read/write tasks live) still services the I/O, and the caller's
+    /// thread simply waits on the join. Outside any runtime, block directly.
+    fn block_on_request<F, T>(&self, fut: F) -> T
+    where
+        F: std::future::Future<Output = T> + Send,
+        T: Send,
+    {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| self.runtime_handle.block_on(fut))
+                    .join()
+                    .expect("remote channel block_on scratch thread panicked")
+            })
+        } else {
+            self.runtime_handle.block_on(fut)
+        }
+    }
+
+    /// Send a request synchronously (blocking).
+    ///
+    /// Safe to call from within or outside a Tokio runtime (see
+    /// [`Self::block_on_request`]).
     pub fn request_blocking(
         &self,
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, ChannelError> {
-        self.runtime_handle.block_on(self.request(method, params))
+        self.block_on_request(self.request(method, params))
     }
 
     /// Send a request and collect all streaming data along with the final result
@@ -577,16 +607,16 @@ impl AgentChannel {
         }
     }
 
-    /// Send a request with streaming data, synchronously (blocking)
+    /// Send a request with streaming data, synchronously (blocking).
     ///
-    /// This can be called from outside the Tokio runtime context.
+    /// Safe to call from within or outside a Tokio runtime (see
+    /// [`Self::block_on_request`]).
     pub fn request_with_data_blocking(
         &self,
         method: &str,
         params: serde_json::Value,
     ) -> Result<(Vec<serde_json::Value>, serde_json::Value), ChannelError> {
-        self.runtime_handle
-            .block_on(self.request_with_data(method, params))
+        self.block_on_request(self.request_with_data(method, params))
     }
 
     /// Send a streaming request synchronously, returning receivers for
@@ -610,8 +640,7 @@ impl AgentChannel {
         ),
         ChannelError,
     > {
-        self.runtime_handle
-            .block_on(self.request_streaming(method, params))
+        self.block_on_request(self.request_streaming(method, params))
     }
 
     /// Cancel a request

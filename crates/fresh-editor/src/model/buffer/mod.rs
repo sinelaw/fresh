@@ -194,6 +194,52 @@ pub struct BufferSnapshot {
     pub next_buffer_id: usize,
 }
 
+/// Whether `content` is a genuine Classic-Mac (CR) *text* document that
+/// should be normalized to the `\n`-based line model, as opposed to
+/// content that merely happens to contain `\r` bytes and must be
+/// preserved byte-for-byte.
+///
+/// The distinguishing property is an **interior** CR: a `\r` that has more
+/// content after it, i.e. a real line break *between two lines*. A file
+/// whose only `\r` is a lone trailing (or single) CR is a one-line
+/// document with a stray terminator — normalizing it would rewrite a `\r`
+/// the caller expects back verbatim (binary blobs, mixed-ending content,
+/// and the shadow-model / persistence round-trip invariants all rely on
+/// this). Multi-line Classic-Mac files (`"Line 1\rLine 2..."`) always have
+/// an interior CR, so they still split into rows and round-trip via
+/// reconstruct-on-save (issue #2736).
+///
+/// This heuristic is the deliberate "safe gating" for the normalize-on-
+/// load / reconstruct-on-save approach: it cannot tell a two-line CR file
+/// apart from two random bytes joined by a `\r`, but it guarantees a lone
+/// stray CR is never mutated, which is the case the content-preservation
+/// tests exercise.
+fn is_cr_delimited_text(content: &[u8]) -> bool {
+    // Some `\r` appears before the final byte => at least two CR lines.
+    content.len() >= 2 && content[..content.len() - 1].contains(&b'\r')
+}
+
+/// Normalize loaded content for the internal `\n`-based line model.
+///
+/// The buffer splits lines on `\n`. A genuine Classic-Mac (CR) file uses
+/// `\r` as the separator and contains no `\n`, so without this it loads as
+/// a single line with literal `<0D>` glyphs (issue #2736). When the
+/// detected ending is CR *and* the content is genuinely CR-delimited (see
+/// [`is_cr_delimited_text`]), rewrite every `\r` (and any stray `\r\n`) to
+/// `\n`; the CR ending is preserved in `BufferFormat` and reconstructed on
+/// save. Everything else — LF, CRLF, and content with only a stray/trailing
+/// `\r` — is returned untouched so its raw bytes round-trip exactly.
+///
+/// Returns `(content, normalized)` where `normalized` records whether the
+/// bytes were rewritten (used to gate reconstruct-on-save).
+fn normalize_for_line_ending(content: Vec<u8>, line_ending: LineEnding) -> (Vec<u8>, bool) {
+    if line_ending == LineEnding::CR && is_cr_delimited_text(&content) {
+        (format::normalize_line_endings(content), true)
+    } else {
+        (content, false)
+    }
+}
+
 impl TextBuffer {
     /// Create a new text buffer with the given filesystem implementation.
     /// Note: large_file_threshold is ignored in the new implementation
@@ -224,6 +270,13 @@ impl TextBuffer {
         let mut buffer = Self::new(large_file_threshold, fs);
         buffer.persistence.set_file_path(path);
         buffer
+    }
+
+    /// Associate this buffer with `path` (title, dedup, save target). Used when
+    /// building a buffer from in-memory bytes that logically belongs to a file
+    /// — e.g. filling a restored remote placeholder with content read off-loop.
+    pub fn set_file_path(&mut self, path: PathBuf) {
+        self.persistence.set_file_path(path);
     }
 
     /// Current buffer version (monotonic, wraps on overflow)
@@ -285,37 +338,28 @@ impl TextBuffer {
     }
 
     /// Create a text buffer from initial content with the given filesystem.
+    ///
+    /// A genuinely CR-delimited Classic-Mac file is normalized to `\n` so
+    /// the line model can split it into rows (issue #2736); the CR ending
+    /// is reconstructed on save. This is the in-memory / new-buffer
+    /// constructor and the editor's "open for editing" path — use
+    /// [`load_from_file`](Self::load_from_file) for a byte-preserving load.
     pub fn from_bytes(content: Vec<u8>, fs: Arc<dyn FileSystem + Send + Sync>) -> Self {
+        Self::from_bytes_normalizing(content, fs, true)
+    }
+
+    /// Like [`from_bytes`](Self::from_bytes) but `normalize_cr` chooses
+    /// whether a CR-delimited file is normalized to `\n` (true, splits into
+    /// rows) or preserved byte-for-byte (false). Disk loads that must
+    /// round-trip exactly pass `false`.
+    fn from_bytes_normalizing(
+        content: Vec<u8>,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        normalize_cr: bool,
+    ) -> Self {
         // Auto-detect encoding and convert to UTF-8 if needed
         let (encoding, utf8_content) = format::detect_and_convert_encoding(&content);
-
-        let bytes = utf8_content.len();
-
-        // Auto-detect line ending format from content
-        let line_ending = format::detect_line_ending(&utf8_content);
-
-        // Create initial StringBuffer with ID 0
-        let buffer = StringBuffer::new(0, utf8_content);
-        let line_feed_cnt = buffer.line_feed_count();
-
-        let piece_tree = if bytes > 0 {
-            PieceTree::new(BufferLocation::Stored(0), 0, bytes, line_feed_cnt)
-        } else {
-            PieceTree::empty()
-        };
-
-        let saved_root = piece_tree.root();
-
-        TextBuffer {
-            piece_tree,
-            buffers: vec![buffer],
-            next_buffer_id: 1,
-            persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
-            file_kind: BufferFileKind::new(false, false),
-            format: BufferFormat::new(line_ending, encoding),
-            version: 0,
-            config: BufferConfig::default(),
-        }
+        Self::from_utf8_detected(utf8_content, encoding, fs, normalize_cr)
     }
 
     /// Create a text buffer from bytes with a specific encoding (no auto-detection).
@@ -324,13 +368,47 @@ impl TextBuffer {
         encoding: Encoding,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> Self {
+        Self::from_bytes_with_encoding_normalizing(content, encoding, fs, true)
+    }
+
+    /// Like [`from_bytes_with_encoding`](Self::from_bytes_with_encoding) but
+    /// `normalize_cr` gates CR-delimited normalization (see
+    /// [`from_bytes_normalizing`](Self::from_bytes_normalizing)).
+    fn from_bytes_with_encoding_normalizing(
+        content: Vec<u8>,
+        encoding: Encoding,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        normalize_cr: bool,
+    ) -> Self {
         // Convert from specified encoding to UTF-8
         let utf8_content = encoding::convert_to_utf8(&content, encoding);
+        Self::from_utf8_detected(utf8_content, encoding, fs, normalize_cr)
+    }
 
-        let bytes = utf8_content.len();
-
+    /// Build a text buffer from already-UTF-8 content, detecting the line
+    /// ending and optionally normalizing a genuinely CR-delimited file to
+    /// `\n` (issue #2736). Shared by the `from_bytes*` constructors and the
+    /// small-file load path.
+    fn from_utf8_detected(
+        utf8_content: Vec<u8>,
+        encoding: Encoding,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+        normalize_cr: bool,
+    ) -> Self {
         // Auto-detect line ending format from content
         let line_ending = format::detect_line_ending(&utf8_content);
+
+        // Only normalize CR -> `\n` when this is an "open for editing" load
+        // (`normalize_cr`) AND the content is genuinely CR-delimited. A
+        // byte-preserving load, binary content, or a lone stray `\r` is
+        // returned untouched so it round-trips exactly.
+        let (utf8_content, normalized) = if normalize_cr {
+            normalize_for_line_ending(utf8_content, line_ending)
+        } else {
+            (utf8_content, false)
+        };
+
+        let bytes = utf8_content.len();
 
         // Create initial StringBuffer with ID 0
         let buffer = StringBuffer::new(0, utf8_content);
@@ -350,7 +428,7 @@ impl TextBuffer {
             next_buffer_id: 1,
             persistence: Persistence::new(fs, None, saved_root, Some(bytes)),
             file_kind: BufferFileKind::new(false, false),
-            format: BufferFormat::new(line_ending, encoding),
+            format: BufferFormat::with_normalization(line_ending, encoding, normalized),
             version: 0,
             config: BufferConfig::default(),
         }
@@ -384,12 +462,34 @@ impl TextBuffer {
     }
 
     /// Load a text buffer from a file using the given filesystem.
+    ///
+    /// This is the **byte-preserving** load: content is never rewritten, so
+    /// a file containing `\r` (binary, mixed endings, or a Classic-Mac CR
+    /// file) round-trips exactly. Use
+    /// [`load_from_file_for_editing`](Self::load_from_file_for_editing) to
+    /// get CR files split into rows in the editor (issue #2736).
     pub fn load_from_file<P: AsRef<Path>>(
         path: P,
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
-        Self::load_from_file_internal(path, large_file_threshold, fs, false)
+        Self::load_from_file_internal(path, large_file_threshold, fs, false, false)
+    }
+
+    /// Load a text buffer for interactive editing.
+    ///
+    /// Identical to [`load_from_file`](Self::load_from_file) except a
+    /// genuinely CR-delimited Classic-Mac file is normalized to `\n` so it
+    /// splits into rows; the CR ending is reconstructed on save (issue
+    /// #2736). This is the path the editor's file-open orchestrator uses.
+    /// Tests that assert byte-for-byte round-trips use the plain
+    /// `load_from_file` instead.
+    pub fn load_from_file_for_editing<P: AsRef<Path>>(
+        path: P,
+        large_file_threshold: usize,
+        fs: Arc<dyn FileSystem + Send + Sync>,
+    ) -> anyhow::Result<Self> {
+        Self::load_from_file_internal(path, large_file_threshold, fs, false, true)
     }
 
     /// Load a text buffer from a file, forcing it to be treated as text.
@@ -405,7 +505,7 @@ impl TextBuffer {
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
     ) -> anyhow::Result<Self> {
-        Self::load_from_file_internal(path, large_file_threshold, fs, true)
+        Self::load_from_file_internal(path, large_file_threshold, fs, true, false)
     }
 
     fn load_from_file_internal<P: AsRef<Path>>(
@@ -413,6 +513,7 @@ impl TextBuffer {
         large_file_threshold: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_text: bool,
+        normalize_cr: bool,
     ) -> anyhow::Result<Self> {
         let path = path.as_ref();
 
@@ -424,9 +525,9 @@ impl TextBuffer {
         // is the resolved `editor.large_file_threshold_bytes` setting, passed
         // in by the caller — the single source of truth, no local default.
         if file_size >= large_file_threshold {
-            Self::load_large_file_internal(path, file_size, fs, false, force_text)
+            Self::load_large_file_internal(path, file_size, fs, false, force_text, normalize_cr)
         } else {
-            Self::load_small_file(path, fs, force_text)
+            Self::load_small_file(path, fs, force_text, normalize_cr)
         }
     }
 
@@ -455,6 +556,7 @@ impl TextBuffer {
         path: &Path,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_text: bool,
+        normalize_cr: bool,
     ) -> anyhow::Result<Self> {
         let contents = fs.read_file(path)?;
 
@@ -462,12 +564,14 @@ impl TextBuffer {
         let (encoding, detected_binary) = format::detect_encoding_or_binary(&contents, false);
         let is_binary = detected_binary && !force_text;
 
-        // For binary files, skip encoding conversion to preserve raw bytes
+        // For binary files, skip encoding conversion to preserve raw bytes.
+        // For text files, `normalize_cr` decides whether a CR-delimited
+        // Classic-Mac file is split into rows (editing open) or preserved
+        // byte-for-byte (the default byte-preserving load).
         let mut buffer = if is_binary {
             Self::from_bytes_raw(contents, fs)
         } else {
-            // from_bytes handles encoding detection/conversion and line ending detection
-            Self::from_bytes(contents, fs)
+            Self::from_bytes_normalizing(contents, fs, normalize_cr)
         };
         buffer.persistence.set_file_path(path.to_path_buf());
         buffer.persistence.clear_modified();
@@ -492,19 +596,22 @@ impl TextBuffer {
         let path = path.as_ref();
         let metadata = fs.metadata(path)?;
         let file_size = metadata.size as usize;
-        Self::load_large_file_internal(path, file_size, fs, true, false)
+        Self::load_large_file_internal(path, file_size, fs, true, false, true)
     }
 
     /// Internal implementation for loading large files.
     ///
     /// When `force_text` is true, binary detection is ignored and the file is
     /// always loaded through the text path (see `load_from_file_force_text`).
+    /// `normalize_cr` gates Classic-Mac CR normalization for the non-UTF-8
+    /// full-load branch (the lazy UTF-8 branch always preserves raw bytes).
     fn load_large_file_internal(
         path: &Path,
         file_size: usize,
         fs: Arc<dyn FileSystem + Send + Sync>,
         force_full_load: bool,
         force_text: bool,
+        normalize_cr: bool,
     ) -> anyhow::Result<Self> {
         use crate::model::piece_tree::{BufferData, BufferLocation};
 
@@ -550,7 +657,7 @@ impl TextBuffer {
                 encoding
             );
             let contents = fs.read_file(path)?;
-            let mut buffer = Self::from_bytes(contents, fs);
+            let mut buffer = Self::from_bytes_normalizing(contents, fs, normalize_cr);
             buffer.persistence.set_file_path(path.to_path_buf());
             buffer.persistence.clear_modified();
             buffer.file_kind.set_large_file(true); // Still mark as large file for UI purposes
@@ -560,6 +667,18 @@ impl TextBuffer {
 
         // UTF-8/ASCII files can use lazy loading
         let line_ending = format::detect_line_ending(&sample);
+
+        // NOTE: unlike the small-file text path, lazy loading deliberately
+        // does NOT normalize CR (`\r`) separators to `\n`. The large-file
+        // path preserves raw on-disk bytes so that content which merely
+        // *contains* `\r` — binary, mixed line endings, or content that
+        // must round-trip byte-for-byte — is never rewritten. `line_ending`
+        // is still reported as CR for the status bar, but the buffer is left
+        // un-normalized (`line_endings_normalized` stays false), so save
+        // copies the bytes verbatim instead of reconstructing `\r` (issue
+        // #2736 vs. content-preservation invariants). A genuine Classic-Mac
+        // text file small enough to load eagerly still splits into rows via
+        // the small-file path.
 
         // Create an unloaded buffer that references the entire file
         let buffer = StringBuffer {
@@ -851,6 +970,15 @@ impl TextBuffer {
     /// Diff the current piece tree against the last saved snapshot.
     ///
     /// See `Persistence::diff_since_saved` for the algorithm.
+    /// Version of the state [`Self::diff_since_saved`] compares against.
+    ///
+    /// Changes on save, reload, and the first edit after either. A cache that
+    /// keys only on [`Self::version`] would miss a save, which replaces the
+    /// saved snapshot while leaving the content untouched.
+    pub fn save_state_version(&self) -> u64 {
+        self.persistence.save_state_version()
+    }
+
     pub fn diff_since_saved(&self) -> PieceTreeDiff {
         let _span = tracing::info_span!(
             "diff_since_saved",
@@ -861,7 +989,19 @@ impl TextBuffer {
         .entered();
 
         self.persistence
-            .diff_since_saved(&self.piece_tree, &self.buffers)
+            .diff_since_saved(&self.piece_tree, &self.buffers, self.version)
+    }
+
+    /// Total bytes of the saved snapshot (the diff baseline's old side).
+    pub fn saved_total_bytes(&self) -> usize {
+        self.persistence.saved_total_bytes()
+    }
+
+    /// Read a byte range out of the saved snapshot. `None` when any piece
+    /// in the range is unreadable (unloaded chunk data).
+    pub fn extract_saved_range(&self, start: usize, end: usize) -> Option<Vec<u8>> {
+        self.persistence
+            .extract_saved_range(start, end, &self.buffers)
     }
 
     /// Convert a byte offset to a line/column position
@@ -1199,7 +1339,10 @@ impl TextBuffer {
     /// NOTE: Currently loads entire buffers on-demand. Future optimization would split
     /// large pieces and load only LOAD_CHUNK_SIZE chunks at a time.
     pub fn get_text_range_mut(&mut self, offset: usize, bytes: usize) -> Result<Vec<u8>> {
-        let _span = tracing::info_span!("get_text_range_mut", offset, bytes).entered();
+        // `trace`, not `info`: this fires once per chunk of every line read, so
+        // on a long-line file an enabled span formats its fields thousands of
+        // times per frame — enough to show up as several percent of total CPU.
+        let _span = tracing::trace_span!("get_text_range_mut", offset, bytes).entered();
         if bytes == 0 {
             return Ok(Vec::new());
         }
@@ -1605,6 +1748,13 @@ impl TextBuffer {
             line_feed_cnt,
             &self.buffers,
         );
+
+        // Content changed: layout caches (line-wrap cache, visual-row
+        // index) key on the version and would otherwise serve
+        // pre-append state.  Deliberately not `mark_content_modified`
+        // — the buffer still matches the on-disk stream, so it isn't
+        // dirty.
+        self.bump_version();
     }
 
     /// Check if the buffer has been modified since last save
@@ -2501,6 +2651,70 @@ impl TextBuffer {
         }
     }
 
+    /// Find every non-overlapping occurrence of `pattern` within a byte range,
+    /// in a single streaming pass, stopping after `limit` matches.
+    ///
+    /// Calling [`find_next_in_range`](Self::find_next_in_range) once per match
+    /// re-reads a whole chunk from the piece tree per call, so collecting every
+    /// match of a common word in a multi-megabyte file spent most of its time
+    /// re-reading the same bytes (issue #2893). This walks the chunks once.
+    pub fn find_all_in_range(
+        &self,
+        pattern: &str,
+        range: Range<usize>,
+        limit: usize,
+    ) -> Vec<usize> {
+        let mut matches = Vec::new();
+        let pattern_bytes = pattern.as_bytes();
+        if pattern_bytes.is_empty() || limit == 0 {
+            return matches;
+        }
+
+        let start = range.start;
+        let end = range.end.min(self.len());
+        if start >= end {
+            return matches;
+        }
+
+        const CHUNK_SIZE: usize = 65536; // 64KB chunks, as in find_pattern
+        let overlap = pattern_bytes.len().saturating_sub(1).max(1);
+
+        // Matches must not overlap each other, and a match straddling a chunk
+        // boundary is reported by exactly one chunk — the one whose valid zone
+        // it ends in, mirroring `find_pattern`.
+        let mut next_allowed = start;
+
+        for chunk in OverlappingChunks::new(self, start, end, CHUNK_SIZE, overlap) {
+            let mut search_from = 0;
+            while let Some(offset) =
+                Self::find_in_bytes(&chunk.buffer[search_from..], pattern_bytes)
+            {
+                let pos = search_from + offset;
+                let absolute_pos = chunk.absolute_pos + pos;
+                let match_end = pos + pattern_bytes.len();
+
+                if match_end <= chunk.valid_start
+                    || absolute_pos < next_allowed
+                    || absolute_pos + pattern_bytes.len() > end
+                {
+                    // Already reported, overlapping a previous match, or past
+                    // the range: resume just after this candidate's start.
+                    search_from = pos + 1;
+                    continue;
+                }
+
+                matches.push(absolute_pos);
+                if matches.len() >= limit {
+                    return matches;
+                }
+                next_allowed = absolute_pos + pattern_bytes.len();
+                search_from = match_end;
+            }
+        }
+
+        matches
+    }
+
     /// Find pattern in a byte range using overlapping chunks
     fn find_pattern(&self, start: usize, end: usize, pattern: &[u8]) -> Option<usize> {
         if pattern.is_empty() || start >= end {
@@ -2741,16 +2955,14 @@ impl TextBuffer {
             .map(|pos| (pos.line, pos.column))
             .unwrap_or_else(|| (byte_pos / 80, 0)); // Estimate if metadata unavailable
 
-        // Get the line content
-        if let Some(line_bytes) = self.get_line(line) {
-            // Convert byte offset to UTF-16 code units
-            let text_before = &line_bytes[..column_bytes.min(line_bytes.len())];
-            let text_str = String::from_utf8_lossy(text_before);
-            let utf16_offset = text_str.encode_utf16().count();
-            (line, utf16_offset)
-        } else {
-            (line, 0)
-        }
+        // Read only the prefix, not the whole line. `get_line` copies the
+        // entire line before the slice below discards everything past the
+        // cursor — on a file that is one enormous line that is a full copy per
+        // call, and this runs on every hover-timer tick.
+        let line_start = byte_pos.saturating_sub(column_bytes);
+        let prefix = self.slice_bytes(line_start..byte_pos);
+        let utf16_offset = String::from_utf8_lossy(&prefix).encode_utf16().count();
+        (line, utf16_offset)
     }
 
     /// Convert LSP position (line, UTF-16 code units) to byte position
@@ -3086,6 +3298,18 @@ impl TextBuffer {
         LineIterator::new(self, byte_pos, estimated_line_length)
     }
 
+    /// Iterate forward from exactly `byte_pos`, with no backward scan.
+    ///
+    /// See [`LineIterator::from_mid_line`]: the caller must have obtained
+    /// `byte_pos` from the wrap index, so it is known to be a visual-row start.
+    pub fn line_iterator_from_mid_line(
+        &mut self,
+        byte_pos: usize,
+        estimated_line_length: usize,
+    ) -> LineIterator<'_> {
+        LineIterator::from_mid_line(self, byte_pos, estimated_line_length)
+    }
+
     /// Iterate over lines starting from a given byte offset, with line numbers
     ///
     /// This is a more efficient alternative to using line_iterator() + offset_to_position()
@@ -3198,6 +3422,12 @@ impl TextBuffer {
     }
 
     // Test helper methods
+
+    /// Test-only access to persistence internals (diff-memo assertions).
+    #[cfg(test)]
+    pub(crate) fn persistence_for_test(&self) -> &Persistence {
+        &self.persistence
+    }
 
     /// Create a buffer from a string for testing
     #[cfg(test)]

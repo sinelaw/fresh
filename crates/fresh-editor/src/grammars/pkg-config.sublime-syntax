@@ -1,0 +1,48 @@
+%YAML 1.2
+---
+name: pkg-config
+file_extensions:
+  - pc
+scope: source.pkg-config
+
+contexts:
+  main:
+    - include: comments
+    - include: variables
+    - include: fields
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.pkg-config
+
+  variables:
+    - match: '^\s*([A-Za-z_][A-Za-z0-9_.-]*)(=)'
+      captures:
+        1: variable.other.key.pkg-config
+        2: keyword.operator.assignment.pkg-config
+      push:
+        - include: values
+        - match: '$'
+          pop: true
+
+  fields:
+    - match: '^\s*(Name|Description|URL|Version|Requires(?:\.private)?|Conflicts|Libs(?:\.private)?|Cflags)(:)'
+      captures:
+        1: support.type.property-name.pkg-config
+        2: punctuation.separator.key-value.pkg-config
+      push:
+        - include: values
+        - match: '$'
+          pop: true
+
+  values:
+    - match: '\$\{[A-Za-z_][A-Za-z0-9_.-]*\}'
+      scope: variable.other.pkg-config
+    - match: '(?<!\S)-[ILlD][^\s]+'
+      scope: constant.other.compiler-flag.pkg-config
+    - match: '(?<!\S)-(?:isystem|idirafter|framework|pthread)\b'
+      scope: constant.other.compiler-flag.pkg-config
+    - match: '(?:<=|>=|!=|=|<|>)'
+      scope: keyword.operator.comparison.pkg-config
+    - match: '\b\d+(?:\.\d+)+(?:[-+~.A-Za-z0-9]*)?\b'
+      scope: constant.numeric.version.pkg-config

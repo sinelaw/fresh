@@ -6,7 +6,19 @@
     <title>Fresh - The Terminal IDE</title>
     <meta name="description" content="Fresh is a terminal IDE. One static binary, instant startup, broad LSP coverage, magit-style diff review, project-wide search, huge-file editing, SSH remote editing, and TypeScript plugins.">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='12' y='70' font-family='monospace' font-size='60' font-weight='bold' fill='%23222'%3E%3E_%3C/text%3E%3C/svg%3E">
-    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css">
+    <!-- The version badge fetch fires while the page is still parsing, so
+         warming this connection early pays off. No preconnect for the
+         analytics beacon on purpose: it is deliberately held back until after
+         load, and an early connection would only compete with the assets that
+         actually matter. -->
+    <link rel="preconnect" href="https://api.github.com" crossorigin>
+    <!-- The player's stylesheet only ever styles the hero demo, which JS
+         builds after the page is up. Loading it as print media keeps it off
+         the critical path; the onload handler promotes it once it arrives.
+         No <noscript> counterpart on purpose — without JS there is no player
+         to style, just the fallback PNG. -->
+    <link rel="stylesheet" href="public/vendor/asciinema-player/asciinema-player.css"
+          media="print" onload="this.media='all'; this.onload=null;">
     <style>
         :root {
             --bg-dark: #0a0a0a;
@@ -31,6 +43,16 @@
 
         html {
             scroll-behavior: smooth;
+            /* The nav is fixed and 60px tall, so an #anchor would otherwise
+               land with its heading tucked underneath it. Reset below 980px,
+               where the nav goes back to being part of the flow. */
+            scroll-padding-top: 76px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            html {
+                scroll-behavior: auto;
+            }
         }
 
         /* Three-size typography system:
@@ -59,6 +81,39 @@
 
         a:hover {
             color: var(--text-light);
+        }
+
+        /* Every section and sub-section heading carries a permalink, so any
+           part of the page can be linked to directly. It stays invisible
+           until you hover the heading (or tab onto the link itself) so it
+           never competes with the heading text — but it always occupies its
+           space, so revealing it shifts nothing. */
+        .anchor-link {
+            font-weight: 400;
+            margin-left: 8px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        /* These two headings are flex containers with their own gap, which
+           already supplies the separation. */
+        .feature-content h2 > .anchor-link,
+        .install-card h3 > .anchor-link {
+            margin-left: 0;
+        }
+
+        h2:hover > .anchor-link,
+        h3:hover > .anchor-link,
+        .anchor-link:hover,
+        .anchor-link:focus-visible {
+            opacity: 1;
+        }
+
+        /* Nothing to hover with, so keep them permanently but faintly on. */
+        @media (hover: none) {
+            .anchor-link {
+                opacity: 0.5;
+            }
         }
 
         /* Navigation */
@@ -175,8 +230,11 @@
             z-index: 99;
         }
 
+        /* Tall enough for any number of entries — a fixed max-height silently
+           cut off the last links, since .mobile-menu sets overflow: hidden. */
         .mobile-menu.active {
-            max-height: 400px;
+            max-height: calc(100vh - 60px);
+            overflow-y: auto;
         }
 
         .mobile-menu-content {
@@ -628,6 +686,7 @@
 
         .screenshot-wrapper img {
             width: 100%;
+            height: auto;
             display: block;
             cursor: zoom-in;
         }
@@ -652,6 +711,7 @@
         }
         .asciinema-host img {
             width: 100%;
+            height: auto;
             display: block;
         }
 
@@ -821,6 +881,7 @@
 
         .feature-visual img {
             width: 100%;
+            height: auto;
             display: block;
             cursor: zoom-in;
         }
@@ -828,6 +889,9 @@
         .feature-code {
             padding: 24px;
             line-height: 1.7;
+            /* Command lines are single unbreakable tokens; scroll them rather
+               than letting them push the page wider than the viewport. */
+            overflow-x: auto;
         }
 
         .code-line {
@@ -869,7 +933,7 @@
 
         .install-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
             gap: 20px;
         }
 
@@ -1016,7 +1080,7 @@
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));
             gap: 24px;
         }
 
@@ -1077,7 +1141,7 @@
 
         .testimonials-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
             gap: 24px;
         }
 
@@ -1086,12 +1150,53 @@
             border: 1px solid var(--border-color);
             border-radius: 8px;
             padding: 24px;
+            display: flex;
+            flex-direction: column;
         }
 
         .testimonial-quote {
             color: var(--text-light);
             line-height: 1.7;
             font-style: italic;
+        }
+
+        .testimonial-source {
+            color: var(--text-muted);
+            margin-top: auto;
+            padding-top: 16px;
+        }
+
+        /* Only the first rows show until the reader asks for the rest. The
+           markup carries every quote either way — see the <noscript> block. */
+        .testimonial.extra {
+            display: none;
+        }
+
+        .testimonials-grid.expanded .testimonial.extra {
+            display: flex;
+        }
+
+        .testimonials-toggle-row {
+            display: flex;
+            justify-content: center;
+            margin-top: 32px;
+        }
+
+        .testimonials-toggle {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: inherit;
+            padding: 10px 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .testimonials-toggle:hover {
+            color: var(--text-light);
+            border-color: #333;
         }
 
         .testimonial-quote::before {
@@ -1109,21 +1214,18 @@
         }
 
         /* Responsive */
-        @media (max-width: 768px) {
+
+        /* The full nav row needs ~980px to fit. Below that it overruns the
+           viewport, and because body sets overflow-x: hidden the trailing
+           buttons are clipped silently rather than scrolled to. Collapse to
+           the hamburger menu instead. */
+        @media (max-width: 980px) {
+            html {
+                scroll-padding-top: 0;
+            }
+
             nav {
                 position: relative;
-            }
-
-            .nav-container {
-                height: 60px;
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-                padding: 0 16px;
-            }
-
-            .nav-logo {
-                width: auto;
             }
 
             .nav-links {
@@ -1138,6 +1240,20 @@
                 display: block;
                 position: absolute;
                 top: 60px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .nav-container {
+                height: 60px;
+                flex-direction: row;
+                align-items: center;
+                justify-content: space-between;
+                padding: 0 16px;
+            }
+
+            .nav-logo {
+                width: auto;
             }
 
             #version-badge {
@@ -1214,21 +1330,33 @@
             animation: fadeInUp 0.8s ease-out 0.2s both;
         }
     </style>
+    <noscript>
+        <style>
+            .testimonial.extra {
+                display: flex;
+            }
+
+            .testimonials-toggle-row {
+                display: none;
+            }
+        </style>
+    </noscript>
 </head>
 <body>
     <!-- Navigation -->
     <nav>
         <div class="nav-container">
-            <a href="#" class="nav-logo">
+            <a href="#top" class="nav-logo">
                 >_ Fresh <span id="version-badge"></span>
             </a>
-            <button class="hamburger" onclick="toggleMobileMenu()" aria-label="Menu">
+            <button class="hamburger" onclick="toggleMobileMenu()" aria-label="Menu" aria-controls="mobile-menu" aria-expanded="false">
                 <span></span>
                 <span></span>
                 <span></span>
             </button>
             <div class="nav-links">
                 <a href="#features">Features</a>
+                <a href="#testimonials">Testimonials</a>
                 <a href="#install">Install</a>
                 <a href="docs/">Docs</a>
                 <a href="docs/blog/">Blog</a>
@@ -1249,6 +1377,7 @@
     <div class="mobile-menu" id="mobile-menu">
         <div class="mobile-menu-content">
             <a href="#features" onclick="toggleMobileMenu()">Features</a>
+            <a href="#testimonials" onclick="toggleMobileMenu()">Testimonials</a>
             <a href="#install" onclick="toggleMobileMenu()">Install</a>
             <a href="docs/">Docs</a>
             <a href="docs/blog/">Blog</a>
@@ -1259,7 +1388,7 @@
     </div>
 
     <!-- Hero Section -->
-    <section class="hero">
+    <section class="hero" id="top">
         <div class="hero-content">
             <h1>Fresh</h1>
             <p class="hero-claim">A powerful terminal text editor and IDE.</p>
@@ -1268,9 +1397,10 @@
                 <li>Intuitive keys &amp; mouse</li>
                 <li>Fast &amp; light</li>
                 <li>Huge files</li>
-                <li>Themes</li>
+                <li>Agents &amp; worktrees</li>
                 <li>TypeScript plugins</li>
                 <li>Open source</li>
+                <li>Themes</li>
                 <li>Multi-cursor</li>
                 <li>Keyboard macros</li>
                 <li>LSP</li>
@@ -1294,7 +1424,7 @@
                         <div class="install-pill primary" id="install-pill" onclick="copyInstallPill(this)">
                             <code id="install-cmd">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                             <button class="copy-btn" onclick="event.stopPropagation(); copyInstallPill(document.getElementById('install-pill'))" aria-label="Copy install command">
-                                <img src="public/copy-icon.svg" alt="">
+                                <img src="public/copy-icon.svg" alt="" width="16" height="16">
                             </button>
                             <span class="copied-popup">Copied</span>
                         </div>
@@ -1312,7 +1442,7 @@
                     </div>
                 </div>
                 <div id="demo-player" class="asciinema-host">
-                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback"></a>
+                    <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor showing file explorer, syntax-highlighted code, and integrated terminal" id="demo-fallback" width="1402" height="900" fetchpriority="high" decoding="async"></a>
                 </div>
                 <div class="screenshot-glow"></div>
             </div>
@@ -1321,9 +1451,9 @@
 
     <!-- Feature Sections -->
     <section class="features" id="features">
-        <div class="feature-section">
+        <div class="feature-section" id="fast-and-light">
             <div class="feature-content">
-                <h2>Fast &amp; light</h2>
+                <h2>Fast &amp; light<a class="anchor-link" href="#fast-and-light" aria-label="Permalink to Fast &amp; light">#</a></h2>
                 <p>Instant startup. Text appears as you type. Small memory footprint. Stays responsive on multi-GB files and remote editing over SSH.</p>
                 <ul class="feature-list">
                     <li>Instant startup, low-latency input</li>
@@ -1337,13 +1467,33 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/multicursor.png" target="_blank"><img src="public/assets/multicursor.png" alt="Multi-cursor editing in a large file"></a>
+                <a href="public/assets/multicursor.png" target="_blank"><img src="public/assets/multicursor.png" alt="Multi-cursor editing in a large file" width="1202" height="807" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="orchestrator">
             <div class="feature-content">
-                <h2>Git review &amp; diff</h2>
+                <h2>Multitask with the Orchestrator<a class="anchor-link" href="#orchestrator" aria-label="Permalink to Multitask with the Orchestrator">#</a></h2>
+                <p>Start each task in its own worktree, hop between them with an arrow key, and leave the rest running.</p>
+                <ul class="feature-list">
+                    <li>Add a workspace and Fresh cuts the worktree and branch</li>
+                    <li>Set <code style="color: var(--accent-green);">claude</code>, <code style="color: var(--accent-green);">codex</code>, <code style="color: var(--accent-green);">opencode</code> or <code style="color: var(--accent-green);">aider</code> loose in any of them</li>
+                    <li>Check branch, diff and PR status from the dock</li>
+                    <li>Restart and pick the agent sessions back up</li>
+                    <li>Reach a remote box from the same list</li>
+                </ul>
+            </div>
+            <div class="feature-visual">
+                <div class="feature-visual-dots">
+                    <span></span><span></span><span></span>
+                </div>
+                <a href="public/assets/orchestrator.gif" target="_blank"><img src="public/assets/orchestrator.gif" alt="Switching between three git worktrees from the Orchestrator dock, each workspace with its own tabs and a coding agent running beside the code" width="1800" height="864" loading="lazy" decoding="async"></a>
+            </div>
+        </div>
+
+        <div class="feature-section" id="git-review">
+            <div class="feature-content">
+                <h2>Git review &amp; diff<a class="anchor-link" href="#git-review" aria-label="Permalink to Git review &amp; diff">#</a></h2>
                 <p>Split-panel review with staged / unstaged / untracked files on the left and the selected diff on the right. Stage, unstage or discard individual hunks; leave line comments and review notes; export to Markdown. Side-by-side diff view for file comparisons.</p>
                 <ul class="feature-list">
                     <li>Hunk-level stage / unstage / discard</li>
@@ -1356,13 +1506,13 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/gitlog.png" target="_blank"><img src="public/assets/gitlog.png" alt="Git log view in Fresh"></a>
+                <a href="public/assets/gitlog.png" target="_blank"><img src="public/assets/gitlog.png" alt="Git log view in Fresh" width="1202" height="900" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="lsp">
             <div class="feature-content">
-                <h2>Language Server Protocol</h2>
+                <h2>Language Server Protocol<a class="anchor-link" href="#lsp" aria-label="Permalink to Language Server Protocol">#</a></h2>
                 <p>Run multiple LSP servers per language (for example pylsp + pyright) with feature routing and merged completions. Per-project workspace roots detected from configurable markers like <code style="color: var(--accent-green);">Cargo.toml</code> or <code style="color: var(--accent-green);">package.json</code>.</p>
                 <ul class="feature-list">
                     <li>Configs shipped for Python, TypeScript, Rust, Go, Java, C/C++, Ruby, PHP, Bash, Vue, Svelte, Terraform, Haskell, OCaml, Elixir and many more</li>
@@ -1374,13 +1524,13 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/fresh-lsp-hover.png" target="_blank"><img src="public/assets/fresh-lsp-hover.png" alt="LSP hover documentation"></a>
+                <a href="public/assets/fresh-lsp-hover.png" target="_blank"><img src="public/assets/fresh-lsp-hover.png" alt="LSP hover documentation" width="1895" height="1117" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="daemon">
             <div class="feature-content">
-                <h2>Detachable daemon</h2>
+                <h2>Detachable daemon<a class="anchor-link" href="#daemon" aria-label="Permalink to Detachable daemon">#</a></h2>
                 <p>Start a named daemon, detach and reattach across terminal disconnects. The <code style="color: var(--accent-green);">--wait</code> flag blocks until the buffer is closed, which lets Fresh serve as <code style="color: var(--accent-green);">git core.editor</code> or <code style="color: var(--accent-green);">$EDITOR</code>. Hot Exit persists every buffer across restarts and crashes.</p>
                 <ul class="feature-list">
                     <li>Named and directory-based daemons (<code style="color: var(--accent-green);">fresh -a myproject</code>)</li>
@@ -1405,9 +1555,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="ssh">
             <div class="feature-content">
-                <h2>SSH remote editing</h2>
+                <h2>SSH remote editing<a class="anchor-link" href="#ssh" aria-label="Permalink to SSH remote editing">#</a></h2>
                 <p>Open files on an SSH host with <code style="color: var(--accent-green);">fresh user@host:path</code>. Connections reconnect in the background if they drop. Saves to large files transfer only the patch, not the whole file.</p>
                 <ul class="feature-list">
                     <li>Password and key authentication, sudo save</li>
@@ -1430,9 +1580,9 @@
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="plugins">
             <div class="feature-content">
-                <h2>TypeScript plugins</h2>
+                <h2>TypeScript plugins<a class="anchor-link" href="#plugins" aria-label="Permalink to TypeScript plugins">#</a></h2>
                 <p>Plugins are compiled with OXC and run in an embedded QuickJS VM, sandboxed and shipped inside the same binary. No <code style="color: var(--accent-green);">node_modules</code> on disk. Packages are installed from the official registry; language packs bundle a grammar, settings and LSP config together.</p>
                 <ul class="feature-list">
                     <li>Plugin API for buffers, splits, cursors, processes, virtual buffers and overlays</li>
@@ -1444,13 +1594,13 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/palette.png" target="_blank"><img src="public/assets/palette.png" alt="Command palette"></a>
+                <a href="public/assets/palette.png" target="_blank"><img src="public/assets/palette.png" alt="Command palette" width="1202" height="807" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="themes">
             <div class="feature-content">
-                <h2>Themes, status bar &amp; i18n</h2>
+                <h2>Themes, status bar &amp; i18n<a class="anchor-link" href="#themes" aria-label="Permalink to Themes, status bar &amp; i18n">#</a></h2>
                 <p>Both sides of the status bar are configurable via a visual picker, with reorderable elements including a <code style="color: var(--accent-green);">{clock}</code>, git branch and LSP status. Themes are edited live. The interface is translated into several languages including Japanese, Korean, Chinese and Vietnamese.</p>
                 <ul class="feature-list">
                     <li>Live theme editor with "Inspect Theme at Cursor"</li>
@@ -1463,13 +1613,13 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/fresh-i18nlight.png" target="_blank"><img src="public/assets/fresh-i18nlight.png" alt="Fresh with Japanese UI and light theme"></a>
+                <a href="public/assets/fresh-i18nlight.png" target="_blank"><img src="public/assets/fresh-i18nlight.png" alt="Fresh with Japanese UI and light theme" width="1895" height="1114" loading="lazy" decoding="async"></a>
             </div>
         </div>
 
-        <div class="feature-section">
+        <div class="feature-section" id="keyboard">
             <div class="feature-content">
-                <h2>Keyboard &amp; editing</h2>
+                <h2>Keyboard &amp; editing<a class="anchor-link" href="#keyboard" aria-label="Permalink to Keyboard &amp; editing">#</a></h2>
                 <p>Command palette with prefix routing (<code style="color: var(--accent-green);">&gt;</code> commands, <code style="color: var(--accent-green);">#</code> buffers, <code style="color: var(--accent-green);">:</code> lines). Keybinding editor with conflict detection and per-context bindings. Full mouse support.</p>
                 <ul class="feature-list">
                     <li>Vim mode with operators, motions, text objects and colon commands</li>
@@ -1482,7 +1632,7 @@
                 <div class="feature-visual-dots">
                     <span></span><span></span><span></span>
                 </div>
-                <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor with file explorer and integrated terminal"></a>
+                <a href="public/assets/hero.png" target="_blank"><img src="public/assets/hero.png" alt="Fresh editor with file explorer and integrated terminal" width="1402" height="900"></a>
             </div>
         </div>
     </section>
@@ -1490,58 +1640,58 @@
     <!-- Installation Section -->
     <section class="install-section" id="install">
         <div class="install-container">
-            <h2>Installation <a href="https://github.com/sinelaw/fresh?tab=readme-ov-file#installation" target="_blank" class="install-even-more">even more options →</a></h2>
+            <h2>Installation<a class="anchor-link" href="#install" aria-label="Permalink to Installation">#</a> <a href="https://github.com/sinelaw/fresh?tab=readme-ov-file#installation" target="_blank" class="install-even-more">even more options →</a></h2>
             <div class="install-grid">
-                <div class="install-card">
-                    <h3>Linux / macOS (quick install)</h3>
+                <div class="install-card" id="install-quick">
+                    <h3>Linux / macOS (quick install)<a class="anchor-link" href="#install-quick" aria-label="Permalink to Linux / macOS (quick install)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-curl">curl https://raw.githubusercontent.com/sinelaw/fresh/refs/heads/master/scripts/install.sh | sh</code>
                         <button class="copy-btn" onclick="copyCode('cmd-curl', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">One-line install. No toolchain required.</p>
                 </div>
 
-                <div class="install-card">
-                    <h3>macOS (Homebrew)</h3>
+                <div class="install-card" id="install-homebrew">
+                    <h3>macOS (Homebrew)<a class="anchor-link" href="#install-homebrew" aria-label="Permalink to macOS (Homebrew)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-brew">brew install fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-brew', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                 </div>
 
-                <div class="install-card">
-                    <h3>Windows (winget)</h3>
+                <div class="install-card" id="install-winget">
+                    <h3>Windows (winget)<a class="anchor-link" href="#install-winget" aria-label="Permalink to Windows (winget)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-winget">winget install fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-winget', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                 </div>
 
-                <div class="install-card">
-                    <h3>Debian / Ubuntu</h3>
+                <div class="install-card" id="install-debian">
+                    <h3>Debian / Ubuntu<a class="anchor-link" href="#install-debian" aria-label="Permalink to Debian / Ubuntu">#</a></h3>
                     <p class="install-card-note" style="margin-top: 0;">
                         <a href="https://github.com/sinelaw/fresh/releases" target="_blank">Grab the <code style="color: var(--accent-green);">.deb</code> from Releases</a>, then:
                     </p>
                     <div class="copyable">
                         <code id="cmd-deb">sudo dpkg -i fresh-editor_*.deb</code>
                         <button class="copy-btn" onclick="copyCode('cmd-deb', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                 </div>
 
-                <div class="install-card">
-                    <h3>Arch Linux (AUR)</h3>
+                <div class="install-card" id="install-aur">
+                    <h3>Arch Linux (AUR)<a class="anchor-link" href="#install-aur" aria-label="Permalink to Arch Linux (AUR)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-aur">yay -S fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-aur', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">
@@ -1549,12 +1699,12 @@
                     </p>
                 </div>
 
-                <div class="install-card">
-                    <h3>npm / npx (no install)</h3>
+                <div class="install-card" id="install-npm">
+                    <h3>npm / npx (no install)<a class="anchor-link" href="#install-npm" aria-label="Permalink to npm / npx (no install)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-npx">npx @fresh-editor/fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-npx', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">
@@ -1562,20 +1712,20 @@
                     </p>
                 </div>
 
-                <div class="install-card">
-                    <h3>Pre-built Binaries</h3>
+                <div class="install-card" id="install-binaries">
+                    <h3>Pre-built Binaries<a class="anchor-link" href="#install-binaries" aria-label="Permalink to Pre-built Binaries">#</a></h3>
                     <p class="install-card-note" style="margin-top: 0;">
                         Linux, macOS, Windows, FreeBSD binaries on
                         <a href="https://github.com/sinelaw/fresh/releases" target="_blank">GitHub Releases</a>. Drop anywhere on <code style="color: var(--accent-green);">$PATH</code>.
                     </p>
                 </div>
 
-                <div class="install-card">
-                    <h3>From source (Cargo)</h3>
+                <div class="install-card" id="install-cargo">
+                    <h3>From source (Cargo)<a class="anchor-link" href="#install-cargo" aria-label="Permalink to From source (Cargo)">#</a></h3>
                     <div class="copyable">
                         <code id="cmd-cargo">cargo install --locked fresh-editor</code>
                         <button class="copy-btn" onclick="copyCode('cmd-cargo', this)">
-                            <img src="public/copy-icon.svg" alt="Copy">
+                            <img src="public/copy-icon.svg" alt="Copy" width="16" height="16">
                         </button>
                     </div>
                     <p class="install-card-note">If you already have a Rust toolchain.</p>
@@ -1586,7 +1736,7 @@
 
     <!-- Full feature list -->
     <section class="feature-list-section" id="full-features">
-        <h2>Full feature list</h2>
+        <h2>Full feature list<a class="anchor-link" href="#full-features" aria-label="Permalink to Full feature list">#</a></h2>
         <ul class="full-feature-list">
             <li>Multi-GB file support</li>
             <li>Intuitive out of the box</li>
@@ -1599,6 +1749,9 @@
             <li>Project-wide search &amp; replace</li>
             <li>File explorer with git status</li>
             <li>Tabs and split panes</li>
+            <li>Orchestrator dock: one workspace per git worktree</li>
+            <li>Coding agents per workspace (claude, codex, opencode, aider)</li>
+            <li>Agent sessions that resume after a restart</li>
             <li>Side-by-side diff view</li>
             <li>Markdown preview (compose mode)</li>
             <li>Multi-cursor &amp; block selection</li>
@@ -1641,27 +1794,185 @@
     </section>
 
     <!-- Testimonials -->
-    <section class="testimonials">
-        <h2>User feedback</h2>
-        <div class="testimonials-grid">
+    <section class="testimonials" id="testimonials">
+        <h2>Testimonials<a class="anchor-link" href="#testimonials" aria-label="Permalink to Testimonials">#</a></h2>
+        <div class="testimonials-grid" id="testimonials-grid">
             <div class="testimonial">
-                <p class="testimonial-quote">Out of the box this is the best new TUI editor I've tried, probably ever.</p>
+                <p class="testimonial-quote">how come nobody is talking about [Fresh] … by far the best terminal-based ADE/orchestration tool i've used so far 🔥🔥🔥</p>
+                <p class="testimonial-source">— <a href="https://x.com/paulbettner/status/2080210336381292995" target="_blank">Paul Bettner (@paulbettner)</a>, X</p>
             </div>
             <div class="testimonial">
-                <p class="testimonial-quote">I had given up hope on ever finding an editor like this. WOW.</p>
+                <p class="testimonial-quote">FINALLY A TERMINAL EDITOR THAT WORKS AND LOOKS GOOD AND IT WORKS LIKE EDIT.COM BUT LIKE VSCODE AND IT'S NOT A HOTKEY GALORE WHERE YOU NEED A SEPARATE BRAIN TO LEARN HOW TO USE IT OH MY GOD I WAS ABLE TO COPY AND PASTE LIKE A NORMAL PERSON</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/o4at40e/" target="_blank">u/darkguy2008</a>, r/CLI</p>
             </div>
             <div class="testimonial">
-                <p class="testimonial-quote">The multi-cursor experience is the smoothest I've seen in a terminal based editor.</p>
+                <p class="testimonial-quote">A new code editor, and it looks good! It's called Fresh and it's an alternative to Vim and Nano. 100% in the terminal. Built in Rust, so it flies.</p>
+                <p class="testimonial-source">— <a href="https://x.com/midudev/status/2009262485598056646" target="_blank">Miguel Ángel Durán (@midudev)</a>, X — translated from Spanish</p>
             </div>
             <div class="testimonial">
-                <p class="testimonial-quote">I REALLY love this thing, especially the efficiency and speed. Gonna start using it daily.</p>
+                <p class="testimonial-quote">Out of the box this is the best new TUI editor I've tried, probably ever. … you really nailed the discoverability / accessibility — basically everything works intuitively and needs very little explanation.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46140845" target="_blank">20after4</a>, Hacker News</p>
             </div>
             <div class="testimonial">
-                <p class="testimonial-quote">I really enjoy the command palette, the open file menu and the multi cursor. It's well thought, really intuitive.</p>
+                <p class="testimonial-quote">So this absolutely the most amazing terminal IDE I have ever seen or used! I'm really amazed that it's not heavy on key bindings so you don't have to be an expert in Vim or Emacs to get around the application. It works just like a GUI application with mouse integration. Wow totally impressed!</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/o3nxyh7/" target="_blank">u/Salemx27x</a>, r/CLI</p>
             </div>
             <div class="testimonial">
-                <p class="testimonial-quote">Everybody loves fast and responsive software. I have to say... I really like it.</p>
+                <p class="testimonial-quote">I used to work with Micro, Nice Editor, or Tilde, but now Fresh is the best text editor i have ever seen!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/953" target="_blank">marco-trovato</a>, GitHub</p>
             </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">It's fast, cross-platform and, unlike Vim or Emacs, you don't need to learn complicated commands. It's intuitive like VS Code… it even recognises the mouse, and I installed it with a single npm command. 🤯</p>
+                <p class="testimonial-source">— <a href="https://x.com/FaztTech/status/2004736734840455650" target="_blank">Fazt (@FaztTech)</a>, X — translated from Spanish</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Omg I am using your ide for like 1.5+ months atp! Such an amazing cli code editor! I was looking for a cli alternative to vscode and this is honestly great.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/o3jzm1o/" target="_blank">u/colmehurze</a>, r/CLI</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">It has actually replaced both Sublime and VSCode as my IDE of choice on my laptop. I got tired of the fan running full speed when I wanted to work on a project.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1162" target="_blank">rkram5424</a>, GitHub</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">I'm really impressed with Fresh, a terminal text editor that you can just use.</p>
+                <p class="testimonial-source">— <a href="https://www.youtube.com/watch?v=dspEVA8eoUg" target="_blank">DistroTube</a>, YouTube</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">This is incredible and really fills a niche: an editor that feels and works like a GUI, but works in terminal. It's so nice to be able to switch from GUI to terminal and be able to retain the same mechanics and intuition. … for everyone who mostly lives in the GUI (which is most people now), this is a godsend.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nvc686u/" target="_blank">u/JumpingJack79</a>, r/commandline</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">I had given up hope on ever finding an editor like this. Just did a little bit of browsing in a current project and WOW.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46141462" target="_blank">rglover</a>, Hacker News</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">There haven't really been any [new text editors] that made me go, “Yeah, I want to switch to that,” in a long time. I think fresh might be the one that I would really think about switching to.</p>
+                <p class="testimonial-source">— <a href="https://www.youtube.com/watch?v=6IfDLQuuyxk" target="_blank">Awesome Open Source</a>, YouTube</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">The thing is sick! First editor ever to make me actually switch from nano.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/o9b0wc5/" target="_blank">u/diacid</a>, r/CLI</p>
+            </div>
+            <div class="testimonial">
+                <p class="testimonial-quote">Thank you for a amazing terminal editor. Something that I felt was truly lacking in the modern age. Even though its unintended it's the perfect editor if you have mobility issues or are missing a limb. No need for weird vim/emacs bindings all over the keyboard making it hard to use.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1734" target="_blank">EliteAMDGamer</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">man... i'm blown away, this project is so insane i had to personally congratulate you guys for it, it's simply fantastic</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/1162" target="_blank">eusebioleite</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Ive tried maybe every terminal editor attempting it to works like simple IDE, no luck :) so thank you pretty much for delivering this great stuff 🔥🔥🔥</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/odjhqv4/" target="_blank">u/kisdmitri</a>, r/CLI</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">The multi-cursor experience is the smoothest I've seen in a terminal based editor. Congrats!</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46141073" target="_blank">yoavm</a>, Hacker News</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Thank goodness for a terminal editor that behaves like a proper editor should. No silly mode, no weird key bindings, function keys even behave as expected and the mouse works if you have one.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/483" target="_blank">shartrec</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">This is insane, love this project so much! Is now my main</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nz5kmz5/" target="_blank">u/Ok_Trifle3308</a>, r/commandline</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">i REALLY love this thing, especially the efficiency and speed (phenomenal!). gonna start using it daily.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46145940" target="_blank">winterrdog</a>, Hacker News</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I love this editor. I'm looking to wean myself off vscode. Also the text based animations are *chefs-kiss*. Makes using the computer feel like the good old days.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/okgdg5r/" target="_blank">u/Virtual-Spring-5884</a>, r/CLI</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I really enjoy the command palette, the open file menu and the multi cursor. It's well thought, really intuitive so far and I definitively will use it regularly.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46140106" target="_blank">az09mugen</a>, Hacker News</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I've been using it for over a month. It's getting better at each update. I've made an alias to replace nano with fresh</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/o3ky4cr/" target="_blank">u/not-them</a>, r/CLI</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Thanks for the great project, I've been waiting for a fully-featured and modern terminal text editor, and I've really, really enjoyed using fresh so far.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/1157" target="_blank">long-live-yossarian</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">i have been searching for something like this for weeks. thanks a lot for developing this. … can't wait to see this becoming more popular and even contributing to it where i can. kudos to you!</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nxqqxcp/" target="_blank">u/Ropl</a>, r/commandline</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I have to say... I really like it. I was settled on NVim and VSCode … Everybody loves fast and responsive software, what can I say.</p>
+                <p class="testimonial-source">— <a href="https://news.ycombinator.com/item?id=46141604" target="_blank">desireco42</a>, Hacker News</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">It works like a GUI editor but runs in your terminal.</p>
+                <p class="testimonial-source">— Sourav Rudra, <a href="https://itsfoss.com/fresh-terminal-text-editor/" target="_blank">It's FOSS</a></p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Been using fresh to edit some scripts across multiple VM's in my homelab the past few weeks and loving it so far! Been able to get hours and hours of usage with no hiccups. Hotkeys for fresh also feel pretty intuitive!</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/CLI/comments/1qvpo99/comment/oskucjd/" target="_blank">u/Thebareassbear</a>, r/CLI</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I'm very impressed by the Fresh editor. I have a feeling this will very quickly become my favorite command line text editor!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/464" target="_blank">TobberH</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Fresh is well suited for you if you want modern editor conveniences and features like file explorers, split views, and LSP support without switching to a GUI editor. Give Fresh a try.</p>
+                <p class="testimonial-source">— Haroon Javed, <a href="https://www.maketecheasier.com/fresh-text-editor-linux-terminal/" target="_blank">Make Tech Easier</a></p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I just used this piece of software and I loved it. Good work sinelaw. It has real good potential esp. for people who want to shift towards working with TUI as their primary interface than say using a GUI.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/nut6or5/" target="_blank">u/let_us_reddit</a>, r/commandline</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">It is really awsome. Never imagine I would be able to use vscode inside a terminal 😆</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/761" target="_blank">goutou1994</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">What sets it apart from similar applications is that it targets developers who want IDE-style functionality while remaining entirely inside the terminal.</p>
+                <p class="testimonial-source">— Bobby Borisov, <a href="https://linuxiac.com/fresh-launches-as-a-new-terminal-first-text-editor/" target="_blank">Linuxiac</a></p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Iam using your IDE on a daily basis for fun personal projects and learning. I love it. … I was looking for something efficient and not too heavy on the system + with some style.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/oasn8cv/" target="_blank">u/Classic-Weakness-788</a>, r/commandline</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Wow, the console editor I have been looking for for SO long, thank you!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/2100" target="_blank">jetpax</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">This has to be one of the best text editors that probably saved me for my upcoming semesters.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/788" target="_blank">VA-Valtorious</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Great work! This should have been made years ago.</p>
+                <p class="testimonial-source">— <a href="https://www.reddit.com/r/commandline/comments/1po3m0i/comment/o2biqn9/" target="_blank">u/Suspicious_Selfy</a>, r/commandline</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">This was the last blocker to making fresh my daily driver!</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/2201" target="_blank">steve-price-immybot</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I really like your code editor, because I wanted something that works out of the box and is also in the terminal (since I use it a lot).</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/898" target="_blank">X3NON-11</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Really nice project! I very dislike modal editors, but I'm forced to use them since they are the only available editors in terminal.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/issues/218" target="_blank">hkalbasi</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">Just started using fresh and i love it, keep up the good work.</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/761" target="_blank">Fegsav</a>, GitHub</p>
+            </div>
+            <div class="testimonial extra">
+                <p class="testimonial-quote">I wanted a list of all the cool things people are doing with Fresh (LOVE this editor).</p>
+                <p class="testimonial-source">— <a href="https://github.com/sinelaw/fresh/discussions/785" target="_blank">sottey</a>, GitHub</p>
+            </div>
+        </div>
+        <div class="testimonials-toggle-row">
+            <button class="testimonials-toggle" onclick="toggleTestimonials()"
+                    aria-controls="testimonials-grid" aria-expanded="false">Show all testimonials</button>
         </div>
     </section>
 
@@ -1682,11 +1993,32 @@
     </footer>
 
     <script>
+        function toggleTestimonials() {
+            const grid = document.getElementById('testimonials-grid');
+            const btn = document.querySelector('.testimonials-toggle');
+            const expanded = grid.classList.toggle('expanded');
+            btn.setAttribute('aria-expanded', expanded);
+            btn.textContent = expanded ? 'Show fewer' : btn.dataset.moreLabel;
+            if (!expanded) {
+                document.getElementById('testimonials').scrollIntoView();
+            }
+        }
+
+        // Label the button with the real count so it cannot drift from the markup.
+        (function () {
+            const btn = document.querySelector('.testimonials-toggle');
+            if (!btn) return;
+            const total = document.querySelectorAll('#testimonials-grid .testimonial').length;
+            btn.dataset.moreLabel = 'Show all ' + total + ' testimonials';
+            btn.textContent = btn.dataset.moreLabel;
+        })();
+
         function toggleMobileMenu() {
             const menu = document.getElementById('mobile-menu');
             const hamburger = document.querySelector('.hamburger');
             menu.classList.toggle('active');
             hamburger.classList.toggle('active');
+            hamburger.setAttribute('aria-expanded', hamburger.classList.contains('active'));
         }
 
         function copyCode(elementId, btn) {
@@ -1738,16 +2070,12 @@
             });
         }
 
-        // Smooth scroll for anchor links
-        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-            anchor.addEventListener('click', function (e) {
-                e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
-                if (target) {
-                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-            });
-        });
+        // In-page links are left to the browser on purpose. A click handler
+        // here used to preventDefault() and scrollIntoView() instead, which
+        // scrolled correctly but never put the fragment in the address bar —
+        // so there was no link to copy, and Back skipped over the jump.
+        // `scroll-behavior: smooth` on <html> already makes the native
+        // navigation smooth, and it honours prefers-reduced-motion.
 
         // Fetch latest version from GitHub releases
         fetch('https://api.github.com/repos/sinelaw/fresh/releases/latest')
@@ -1768,11 +2096,15 @@
             });
     </script>
 
-    <!-- Asciinema player: recorded demo of Fresh. Loads async; keeps the
-         static hero PNG if the bundle or cast fail to load. -->
-    <script src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
+    <!-- Asciinema player: recorded demo of Fresh. Keeps the static hero PNG if
+         the bundle or cast fail to load.
+
+         The bundle is deferred so its ~176KB never blocks the parser. Deferred
+         scripts run before DOMContentLoaded, so by the time the listener below
+         fires, AsciinemaPlayer is defined. -->
+    <script defer src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
     <script>
-        (function () {
+        document.addEventListener('DOMContentLoaded', function () {
             if (typeof AsciinemaPlayer === 'undefined') return;
             const host = document.getElementById('demo-player');
             if (!host) return;
@@ -1794,12 +2126,36 @@
             } catch (err) {
                 if (fallback) host.appendChild(fallback);
             }
-        })();
+        });
     </script>
 
-    <!-- Cloudflare Web Analytics (sinelaw.github.io/fresh) -->
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "0858f4857c744e418bce27f9577ea9d2"}'></script>
-    <!-- Cloudflare Web Analytics (getfresh.dev) -->
-    <script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "f624a28f02c14086b6963415fb57c550"}'></script>
+    <!-- Cloudflare Web Analytics, one token per domain the site is served from.
+         Injected after the load event instead of shipped as a <script> tag:
+         `defer` runs before DOMContentLoaded and `async` still holds the load
+         event, so either way an unreachable beacon host stalls the page — it
+         cost 12.9s to DOMContentLoaded here when it could not connect. Nothing
+         on the page depends on analytics, so it goes last and blocks nothing. -->
+    <script>
+        (function () {
+            const TOKENS = [
+                '0858f4857c744e418bce27f9577ea9d2', // sinelaw.github.io/fresh
+                'f624a28f02c14086b6963415fb57c550'  // getfresh.dev
+            ];
+            function loadBeacons() {
+                for (const token of TOKENS) {
+                    const s = document.createElement('script');
+                    s.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+                    s.defer = true;
+                    // The beacon reads its token off its own element, which
+                    // document.currentScript still resolves for an injected tag.
+                    s.setAttribute('data-cf-beacon', JSON.stringify({ token: token }));
+                    document.head.appendChild(s);
+                }
+            }
+            const start = () => setTimeout(loadBeacons, 0);
+            if (document.readyState === 'complete') start();
+            else window.addEventListener('load', start);
+        })();
+    </script>
 </body>
 </html>

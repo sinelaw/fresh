@@ -52,6 +52,12 @@ interface AfterFileOpenData {
 // Track which directories we've already restored to avoid repeated restores
 const restoredDirectories = new Set<string>();
 
+// Projects whose restore we *wanted* to run but skipped because the workspace
+// wasn't trusted yet. Drained by the `trust_changed` hook once the user
+// trusts the folder, so the one "Trust" decision both grants trust and runs
+// the deferred restore — mirroring env-manager's activate-on-trust flow.
+const pendingRestores = new Set<string>();
+
 // Track which project roots we've already set for LSP
 const configuredProjectRoots = new Set<string>();
 
@@ -65,6 +71,15 @@ let csharpLspError: { serverCommand: string; message: string } | null = null;
 const INSTALL_COMMAND = "dotnet tool install --global csharp-ls";
 
 // ==================== Utility Functions ====================
+
+/**
+ * Whether the active workspace is trusted (see Workspace Trust). Anything
+ * other than `"trusted"` means "do not run repo-controlled code" — the
+ * contract every plugin that executes project content follows.
+ */
+function isTrusted(): boolean {
+  return editor.workspaceTrustLevel() === "trusted";
+}
 
 /**
  * Check if dotnet CLI is available
@@ -107,7 +122,7 @@ function findProjectRoot(startPath: string): string | null {
   while (depth < maxDepth) {
     // Check if this directory contains a .csproj or .sln file
     try {
-      const entries = editor.readDir(currentDir);
+      const entries = editor.readDir(editor.authorityPath(currentDir));
       for (const entry of entries) {
         if (entry.is_file) {
           if (entry.name.endsWith(".csproj") || entry.name.endsWith(".sln")) {
@@ -137,9 +152,29 @@ function findProjectRoot(startPath: string): string | null {
 }
 
 /**
- * Run dotnet restore for a project
+ * Run dotnet restore for a project.
+ *
+ * Workspace Trust gate: `dotnet restore` evaluates the project's MSBuild
+ * targets, which can run arbitrary commands from an attacker-controlled
+ * `.csproj`/`.sln` (issue #2063 — opening a `.cs` file must not execute code).
+ * That is repo-controlled execution, so it may not run until the user trusts
+ * the folder. Core's spawn gate can't catch it on its own: `dotnet` is a
+ * trusted system binary on `$PATH`, and the danger lives in the *argument*
+ * (the project path), which the path-based gate never inspects. So the plugin
+ * that initiates the side effect enforces the policy — exactly as env-manager
+ * gates activation. When the workspace isn't trusted we record the project in
+ * `pendingRestores` and return; the `trust_changed` hook re-drives it once the
+ * user trusts the folder.
  */
 async function restoreProject(projectPath: string): Promise<void> {
+  if (!isTrusted()) {
+    pendingRestores.add(projectPath);
+    editor.debug(
+      `csharp_support: workspace not trusted, deferring dotnet restore for ${projectPath}`
+    );
+    return;
+  }
+
   if (!(await isDotnetAvailable())) {
     return;
   }
@@ -208,6 +243,28 @@ editor.on("after_file_open", async (data) => {
       editor.debug(`csharp_support: No project found, running dotnet restore in ${dir}`);
       await restoreProject(dir);
     }
+  }
+});
+
+/**
+ * Trust is granted elsewhere — the core trust modal, the status-bar trust
+ * pill, or a palette command — all of which fire `trust_changed`. That is our
+ * cue to run any restore we deferred while the folder was untrusted, so the
+ * user's single "Trust" decision both elevates trust and restores the C#
+ * projects they opened. Mirrors env-manager's activate-on-trust handler.
+ */
+editor.on("trust_changed", (data) => {
+  if (data.level !== "trusted" || pendingRestores.size === 0) {
+    return;
+  }
+  const targets = Array.from(pendingRestores);
+  pendingRestores.clear();
+  editor.debug(
+    `csharp_support: workspace now trusted, running ${targets.length} deferred restore(s)`
+  );
+  for (const target of targets) {
+    // Fire-and-forget, matching the LSP-request restore path below.
+    restoreProject(target);
   }
 });
 

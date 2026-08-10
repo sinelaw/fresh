@@ -187,4 +187,12 @@ pub struct WindowResources {
     /// and is shared by every window — per-window restore and auto-save
     /// reach it directly (no active-window flip).
     pub recovery_service: Arc<std::sync::Mutex<crate::services::recovery::RecoveryService>>,
+
+    /// Live terminal mouse-capture state, mirrored from `Editor.mouse_capture`.
+    /// Mouse capture is a single global terminal property, so every window
+    /// shares the *same* `Arc<AtomicBool>` — the **View → Mouse Support**
+    /// checkbox stays consistent no matter which window is active, and a
+    /// freshly created window reflects the live state instead of a stale
+    /// default (#2504).
+    pub mouse_capture: Arc<std::sync::atomic::AtomicBool>,
 }

@@ -57,6 +57,23 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 - On Windows, User config is at `%APPDATA%\fresh\config.json`
 - Project config is found by searching up from the current directory for `.fresh/config.json`
 
+### Per-Buffer Overrides
+
+Below the config layers sits one more scope: an individual buffer. Command-palette toggles say which scope they act on, so you never have to guess:
+
+| Command form | Scope | Where it is saved |
+|---|---|---|
+| **Toggle X** | Editor-wide default | User config layer (`config.json`) |
+| **Toggle X (Current Buffer)** | The active buffer only | Per-file workspace state |
+
+An unsuffixed toggle changes the default and writes it to your user config immediately, the same as changing it in the Settings UI. It applies to every buffer that hasn't been pinned; the buffer you run it in adopts the new default (its own pin is cleared — you just expressed a global intent on it), while every *other* pinned buffer keeps its choice. A `(Current Buffer)` toggle pins just that file and leaves the default and every other buffer alone. Pins live in your session: they survive a restart for files the session restores, but closing a file's tab drops its pins.
+
+The write lands in the most specific config layer that already defines the setting: if a project config (`.fresh/config.json`) sets the key, the toggle updates the project file — so the change stays in effect in that project — and otherwise it updates your user config. If a write fails, the toggle still applies for the session and the status-bar warning indicator lights up with the reason in the warning log.
+
+Commands with the `(Current Buffer)` suffix: Line Numbers, Line Wrap, Virtual Space, Indentation Guides, Folding Indicators, Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Current Line Highlight, Occurrence Highlight, Read-Only Mode, and Auto-Revert. **Toggle LSP for Current Buffer** says it in prose instead, so that it stays easy to find in the palette for languages with no server configured. Auto-Revert and LSP apply for the current session only — they control file watching and language-server lifecycle rather than display.
+
+Some settings also have a per-language layer in the config file (`languages.<id>.<setting>`), which sits between the editor-wide default and a per-buffer pin.
+
 ## How Layers Are Merged
 
 Fresh merges all layers. Merge behavior depends on the setting type:
@@ -378,7 +395,7 @@ In the Settings UI, each setting shows where its current value comes from:
 
 ## Status Bar
 
-The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, palette hint, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
+The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, palette hint, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, a clickable `{terminal_restart}` indicator that appears when the active terminal buffer's process has quit (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)), and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
 
 The `{remote}` indicator is clickable — activate it to open a context-aware menu for the current authority (detach, show container logs, retry attach, etc.). It also reflects connection state: `Connecting`, `Connected`, or `FailedAttach`.
 

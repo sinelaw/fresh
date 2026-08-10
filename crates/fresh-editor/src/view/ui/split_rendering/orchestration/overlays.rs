@@ -8,11 +8,12 @@ use super::super::style::inline_diagnostic_style;
 use super::contexts::{DecorationContext, SelectionContext};
 use crate::model::cursor::{Cursors, SelectionMode};
 use crate::state::{EditorState, ViewMode};
+use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::ViewLine;
 use ratatui::style::Style;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 /// Build the [`SelectionContext`] for the current set of cursors.
@@ -138,7 +139,9 @@ pub(crate) fn decoration_context(
     highlight_context_bytes: usize,
     view_mode: &ViewMode,
     diagnostics_inline_text: bool,
+    bracket_highlight: BracketHighlightSettings,
     view_lines: &[ViewLine],
+    fold_indicators_visible: bool,
 ) -> DecorationContext {
     use crate::view::folding::indent_folding;
 
@@ -177,26 +180,36 @@ pub(crate) fn decoration_context(
     // punctuation, so they must be excluded from bracket matching and rainbow
     // colorization (issue #2405). The highlighter already classifies these
     // spans; collect their ranges (already sorted by start) to pass down.
+    // Skipped entirely when both bracket toggles are off — the update call
+    // below then only has stale overlays to retract.
     use fresh_languages::HighlightCategory;
-    let mut bracket_skip_ranges: Vec<std::ops::Range<usize>> = highlight_spans
-        .iter()
-        .filter(|span| {
-            matches!(
-                span.category,
-                Some(HighlightCategory::Comment) | Some(HighlightCategory::String)
-            )
-        })
-        .map(|span| span.range.clone())
-        .collect();
+    let mut bracket_skip_ranges: Vec<std::ops::Range<usize>> =
+        if bracket_highlight.matching || bracket_highlight.rainbow {
+            highlight_spans
+                .iter()
+                .filter(|span| {
+                    matches!(
+                        span.category,
+                        Some(HighlightCategory::Comment) | Some(HighlightCategory::String)
+                    )
+                })
+                .map(|span| span.range.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
     // `pos_in_ranges` binary-searches, so the ranges must be sorted by start.
     bracket_skip_ranges.sort_by_key(|range| range.start);
 
-    // Update bracket highlight overlays.
+    // Update bracket highlight overlays. Both toggles are re-read from the
+    // config every frame, so flipping one in the settings UI takes effect on
+    // the next render for every buffer.
     state.bracket_highlight_overlay.update(
         &state.buffer,
         &mut state.overlays,
         &mut state.marker_list,
         theme,
+        bracket_highlight,
         primary_cursor_position,
         viewport_start,
         viewport_end,
@@ -304,7 +317,14 @@ pub(crate) fn decoration_context(
         line_indicators.entry(key).or_insert(diff_ind);
     }
 
-    let fold_indicators = fold_indicators_for_viewport(state, folds, view_lines);
+    // "Toggle Folding Indicators (Current Buffer)" only hides the gutter
+    // arrows: existing folds stay folded and keep rendering their placeholder,
+    // so skipping the scan here costs nothing but the indicators themselves.
+    let fold_indicators = if fold_indicators_visible {
+        fold_indicators_for_viewport(state, folds, view_lines)
+    } else {
+        BTreeMap::new()
+    };
 
     DecorationContext {
         highlight_spans,

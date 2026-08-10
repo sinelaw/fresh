@@ -77,6 +77,7 @@ pub struct PartialConfig {
     pub theme: Option<ThemeName>,
     pub locale: Option<String>,
     pub check_for_updates: Option<bool>,
+    pub self_update: Option<bool>,
     pub editor: Option<PartialEditorConfig>,
     pub file_explorer: Option<PartialFileExplorerConfig>,
     pub file_browser: Option<PartialFileBrowserConfig>,
@@ -104,6 +105,7 @@ impl Merge for PartialConfig {
         self.theme.merge_from(&other.theme);
         self.locale.merge_from(&other.locale);
         self.check_for_updates.merge_from(&other.check_for_updates);
+        self.self_update.merge_from(&other.self_update);
 
         // Nested structs: merge recursively
         merge_partial(&mut self.editor, &other.editor);
@@ -166,7 +168,6 @@ pub struct PartialEditorConfig {
     pub wrap_indent: Option<bool>,
     pub wrap_column: Option<Option<usize>>,
     pub page_width: Option<Option<usize>>,
-    pub highlight_timeout_ms: Option<u64>,
     pub snapshot_interval: Option<usize>,
     pub large_file_threshold_bytes: Option<u64>,
     pub estimated_line_length: Option<usize>,
@@ -230,6 +231,8 @@ pub struct PartialEditorConfig {
     pub whitespace_tabs_leading: Option<bool>,
     pub whitespace_tabs_inner: Option<bool>,
     pub whitespace_tabs_trailing: Option<bool>,
+    pub whitespace_newlines: Option<bool>,
+    pub whitespace_carriage_returns: Option<bool>,
 }
 
 impl Merge for PartialEditorConfig {
@@ -253,8 +256,6 @@ impl Merge for PartialEditorConfig {
         self.wrap_indent.merge_from(&other.wrap_indent);
         self.wrap_column.merge_from(&other.wrap_column);
         self.page_width.merge_from(&other.page_width);
-        self.highlight_timeout_ms
-            .merge_from(&other.highlight_timeout_ms);
         self.snapshot_interval.merge_from(&other.snapshot_interval);
         self.large_file_threshold_bytes
             .merge_from(&other.large_file_threshold_bytes);
@@ -361,6 +362,10 @@ impl Merge for PartialEditorConfig {
             .merge_from(&other.whitespace_tabs_inner);
         self.whitespace_tabs_trailing
             .merge_from(&other.whitespace_tabs_trailing);
+        self.whitespace_newlines
+            .merge_from(&other.whitespace_newlines);
+        self.whitespace_carriage_returns
+            .merge_from(&other.whitespace_carriage_returns);
     }
 }
 
@@ -611,7 +616,6 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             wrap_indent: Some(cfg.wrap_indent),
             wrap_column: Some(cfg.wrap_column),
             page_width: Some(cfg.page_width),
-            highlight_timeout_ms: Some(cfg.highlight_timeout_ms),
             snapshot_interval: Some(cfg.snapshot_interval),
             large_file_threshold_bytes: Some(cfg.large_file_threshold_bytes),
             estimated_line_length: Some(cfg.estimated_line_length),
@@ -681,6 +685,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             whitespace_tabs_leading: Some(cfg.whitespace_tabs_leading),
             whitespace_tabs_inner: Some(cfg.whitespace_tabs_inner),
             whitespace_tabs_trailing: Some(cfg.whitespace_tabs_trailing),
+            whitespace_newlines: Some(cfg.whitespace_newlines),
+            whitespace_carriage_returns: Some(cfg.whitespace_carriage_returns),
         }
     }
 }
@@ -723,9 +729,6 @@ impl PartialEditorConfig {
             wrap_indent: self.wrap_indent.unwrap_or(defaults.wrap_indent),
             wrap_column: self.wrap_column.unwrap_or(defaults.wrap_column),
             page_width: self.page_width.unwrap_or(defaults.page_width),
-            highlight_timeout_ms: self
-                .highlight_timeout_ms
-                .unwrap_or(defaults.highlight_timeout_ms),
             snapshot_interval: self.snapshot_interval.unwrap_or(defaults.snapshot_interval),
             large_file_threshold_bytes: self
                 .large_file_threshold_bytes
@@ -874,6 +877,12 @@ impl PartialEditorConfig {
             whitespace_tabs_trailing: self
                 .whitespace_tabs_trailing
                 .unwrap_or(defaults.whitespace_tabs_trailing),
+            whitespace_newlines: self
+                .whitespace_newlines
+                .unwrap_or(defaults.whitespace_newlines),
+            whitespace_carriage_returns: self
+                .whitespace_carriage_returns
+                .unwrap_or(defaults.whitespace_carriage_returns),
         }
     }
 }
@@ -1130,6 +1139,7 @@ impl From<&crate::config::Config> for PartialConfig {
             theme: Some(cfg.theme.clone()),
             locale: cfg.locale.0.clone(),
             check_for_updates: Some(cfg.check_for_updates),
+            self_update: Some(cfg.self_update),
             editor: Some(PartialEditorConfig::from(&cfg.editor)),
             file_explorer: Some(PartialFileExplorerConfig::from(&cfg.file_explorer)),
             file_browser: Some(PartialFileBrowserConfig::from(&cfg.file_browser)),
@@ -1325,6 +1335,7 @@ impl PartialConfig {
                 self.locale.or_else(|| defaults.locale.0.clone()),
             ),
             check_for_updates: self.check_for_updates.unwrap_or(defaults.check_for_updates),
+            self_update: self.self_update.unwrap_or(defaults.self_update),
             editor: self
                 .editor
                 .map(|e| e.resolve(&defaults.editor))

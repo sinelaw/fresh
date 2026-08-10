@@ -55,6 +55,10 @@ pub enum TerminalMouseEventKind {
     ScrollUp,
     /// Scroll down
     ScrollDown,
+    /// Horizontal scroll left (xterm button 6)
+    ScrollLeft,
+    /// Horizontal scroll right (xterm button 7)
+    ScrollRight,
 }
 
 /// Mouse buttons for terminal forwarding.

@@ -65,6 +65,20 @@ impl AnsiParser {
         }
     }
 
+    /// Whether the parser is part-way through an escape sequence.
+    ///
+    /// Carried across visual row boundaries by
+    /// [`crate::view::wrap_machine::RowCarry`]: a sequence split by a wrap must
+    /// not become visible when a run resumes at that row.
+    pub fn in_escape(&self) -> bool {
+        self.in_escape
+    }
+
+    /// Restore the mid-escape flag when resuming a run (see [`Self::in_escape`]).
+    pub fn set_in_escape(&mut self, in_escape: bool) {
+        self.in_escape = in_escape;
+    }
+
     /// Get the current style accumulated from parsed escape sequences
     pub fn current_style(&self) -> Style {
         self.current_style

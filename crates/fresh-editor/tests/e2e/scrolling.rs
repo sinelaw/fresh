@@ -179,6 +179,45 @@ fn test_cursor_advances_beyond_viewport_width() {
     assert_eq!(harness.cursor_position(), 100);
 }
 
+/// An extra horizontal wheel step at the right bound must not paint a blank frame.
+#[test]
+fn test_extra_horizontal_scroll_at_right_bound_does_not_paint_blank_frame() {
+    use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+    use fresh::config::Config;
+
+    let mut config = Config::default();
+    config.editor.line_wrap = false;
+    config.editor.show_horizontal_scrollbar = true;
+    let line: String = (0..160)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .collect();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    let _fixture = harness.load_buffer_from_text(&line).unwrap();
+
+    let scroll_right = || MouseEvent {
+        kind: MouseEventKind::ScrollRight,
+        column: 10,
+        row: 2,
+        modifiers: KeyModifiers::NONE,
+    };
+
+    // More wheel steps than source cells guarantees that the existing
+    // viewport-local bound has been discovered and exceeded.
+    for _ in 0..line.len() {
+        harness.send_mouse(scroll_right()).unwrap();
+        harness.render().unwrap();
+    }
+
+    // Settle the frame after the final overshoot, then observe only rendered
+    // output when one more wheel event arrives at the same bound.
+    harness.render().unwrap();
+    let settled_frame = harness.screen_to_string();
+    harness.send_mouse(scroll_right()).unwrap();
+    harness.render().unwrap();
+
+    assert_eq!(harness.screen_to_string(), settled_frame);
+}
+
 /// Test horizontal scrolling when cursor moves beyond visible width
 /// The viewport should scroll horizontally to keep the cursor visible
 #[test]
@@ -607,7 +646,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
 
     // Start with viewport at top
     let viewport = &harness.editor().active_viewport();
-    assert_eq!(viewport.top_byte, 0, "Should start at top");
+    assert_eq!(viewport.top_byte(), 0, "Should start at top");
 
     // Type enough lines to fill the visible area and go beyond
     // We'll type (visible_lines + 10) lines to ensure scrolling happens
@@ -639,7 +678,7 @@ fn test_vertical_scroll_when_typing_to_bottom() {
     assert_eq!(cursor_line, total_lines, "Cursor should be on last line");
 
     // The viewport should have scrolled down (top_byte > 0)
-    let top_byte = harness.editor().active_viewport().top_byte;
+    let top_byte = harness.editor().active_viewport().top_byte();
     assert!(
         top_byte > 0,
         "Viewport should have scrolled down, top_byte = {top_byte}"
@@ -677,7 +716,7 @@ fn test_vertical_scroll_offset() {
     }
 
     // Cursor should be at bottom, viewport scrolled
-    let initial_top_byte = harness.editor().active_viewport().top_byte;
+    let initial_top_byte = harness.editor().active_viewport().top_byte();
     assert!(initial_top_byte > 0, "Should be scrolled down");
 
     // Move up by many lines - with new viewport behavior, viewport only scrolls
@@ -690,7 +729,7 @@ fn test_vertical_scroll_offset() {
     // With new behavior: viewport doesn't scroll unless cursor leaves visible area
     // The cursor moved from line 39 to line 19, which is still in the visible range
     // (viewport shows lines 18-39, cursor at 19 is visible)
-    let new_top_byte = harness.editor().active_viewport().top_byte;
+    let new_top_byte = harness.editor().active_viewport().top_byte();
 
     // Viewport should not have changed since cursor stayed within visible area
     assert_eq!(
@@ -704,7 +743,7 @@ fn test_vertical_scroll_offset() {
         harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     }
 
-    let final_top_byte = harness.editor().active_viewport().top_byte;
+    let final_top_byte = harness.editor().active_viewport().top_byte();
 
     // Now viewport should have scrolled to keep cursor visible
     assert!(
@@ -1256,7 +1295,10 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     // Check viewport scrolled
     {
         let viewport = harness.editor().active_viewport();
-        assert!(viewport.top_byte > 0, "Viewport should have scrolled down");
+        assert!(
+            viewport.top_byte() > 0,
+            "Viewport should have scrolled down"
+        );
     }
 
     // Now jump back to beginning
@@ -1272,12 +1314,12 @@ fn test_line_numbers_absolute_after_jump_to_beginning() {
     // Check that viewport is at top
     {
         let viewport = harness.editor().active_viewport();
-        assert_eq!(viewport.top_byte, 0, "Viewport should be at top");
+        assert_eq!(viewport.top_byte(), 0, "Viewport should be at top");
     }
 
     // Verify first few lines are readable via iterator
     println!("\n  Verifying first few lines are readable:");
-    let top_byte = harness.editor().active_viewport().top_byte;
+    let top_byte = harness.editor().active_viewport().top_byte();
     let state = harness.editor_mut().active_state_mut();
     let mut iter = state.buffer.line_iterator(top_byte, 80);
     let mut line_count = 0;
@@ -1806,12 +1848,12 @@ fn test_last_line_never_above_bottom() {
     );
 
     // Try to scroll down further with PageDown - should not move viewport
-    let top_byte_before = harness.editor().active_viewport().top_byte;
+    let top_byte_before = harness.editor().active_viewport().top_byte();
     harness
         .send_key(KeyCode::PageDown, KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    let top_byte_after = harness.editor().active_viewport().top_byte;
+    let top_byte_after = harness.editor().active_viewport().top_byte();
 
     assert_eq!(
         top_byte_before, top_byte_after,
@@ -1820,10 +1862,10 @@ fn test_last_line_never_above_bottom() {
     );
 
     // Try Down arrow - should not move viewport
-    let top_byte_before = harness.editor().active_viewport().top_byte;
+    let top_byte_before = harness.editor().active_viewport().top_byte();
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    let top_byte_after = harness.editor().active_viewport().top_byte;
+    let top_byte_after = harness.editor().active_viewport().top_byte();
 
     assert_eq!(
         top_byte_before, top_byte_after,
@@ -1856,7 +1898,8 @@ fn test_last_line_never_above_bottom() {
     // When buffer is smaller than viewport, top_byte should be 0
     let viewport = small_harness.editor().active_viewport();
     assert_eq!(
-        viewport.top_byte, 0,
+        viewport.top_byte(),
+        0,
         "When buffer is smaller than viewport, top_byte should remain 0"
     );
 
@@ -2000,7 +2043,7 @@ fn test_enter_key_maintains_bottom_line_pinned() {
 
         // Get viewport state
         let viewport = &harness.editor().active_viewport();
-        let top_byte = viewport.top_byte;
+        let top_byte = viewport.top_byte();
 
         // Find where the cursor is on screen
         let (_cursor_x, cursor_y) = harness.screen_cursor_position();

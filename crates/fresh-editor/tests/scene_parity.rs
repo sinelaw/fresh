@@ -150,6 +150,75 @@ fn web_scene_and_tui_cells_agree() {
         apply_step(&mut ed, &json!({"action": "toggle_file_explorer"}));
     }
 
+    // ── file-browser parity: the Open File dialog agrees ──
+    // The web renders this popup natively from `file_browser_view`; the TUI
+    // paints it as cells. Both must describe the same dialog — the same
+    // directory and the same entries.
+    {
+        apply_step(&mut ed, &json!({"action": "open"}));
+        // The directory read is async (a worker thread posts the entries back),
+        // so tick with a little wall-clock until the browser stops loading
+        // rather than assuming a fixed number of passes is enough.
+        for _ in 0..100 {
+            settle(&mut ed);
+            let s = scene_value(&mut ed, COLS, ROWS);
+            if s["regions"]["palette"]["browser"]["loading"] == json!(false) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let scene = scene_value(&mut ed, COLS, ROWS);
+        let cells = render_tui_cells(&mut ed, COLS, ROWS);
+        let browser = &scene["regions"]["palette"]["browser"];
+        assert!(
+            !browser.is_null(),
+            "the Open File prompt must project a file browser"
+        );
+        let rows = browser["rows"].as_array().expect("browser rows in scene");
+        assert!(
+            !rows.is_empty(),
+            "the browser should list entries: {browser}"
+        );
+        // Entry names are truncated to the column width in the cells, so match
+        // on a row the TUI had room to print in full.
+        let names: Vec<String> = rows
+            .iter()
+            .filter_map(|r| r["name"].as_str())
+            .filter(|n| n.len() < 20 && *n != "..")
+            .map(str::to_string)
+            .collect();
+        if !names.is_empty() {
+            assert!(
+                names.iter().any(|n| cells.contains(n)),
+                "at least one browser row from the scene must appear in the TUI \
+                 cells; rows={names:?}\n{cells}"
+            );
+        }
+        // Every interactive element carries the cell span the TUI laid it out
+        // at — that is what lets the native frontend route clicks back into
+        // the editor's own hit-tests.
+        for key in ["toggles", "shortcuts", "columns"] {
+            let items = browser[key].as_array().unwrap_or_else(|| {
+                panic!("browser must project {key}");
+            });
+            assert!(!items.is_empty(), "browser {key} should not be empty");
+            for it in items {
+                assert!(
+                    it["w"].as_u64().unwrap_or(0) > 0,
+                    "every {key} entry needs a non-empty cell span: {it}"
+                );
+            }
+        }
+        // The status bar yields the bottom row to the prompt — it must not be
+        // projected while the browser is up, or the web draws a stale one
+        // under its prompt line.
+        assert!(
+            scene["regions"]["statusbar"].is_null(),
+            "the status bar must not project while the prompt owns its row"
+        );
+        apply_step(&mut ed, &json!({"key": "Escape"}));
+    }
+
     // ── settings parity: the category tree agrees ──
     {
         apply_step(&mut ed, &json!({"action": "open_settings"}));

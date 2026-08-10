@@ -47,6 +47,11 @@ pub enum StatusBarClickable {
     RemoteIndicator,
     WorkspaceTrust,
     ReadOnly,
+    /// The "Update: vX.Y.Z" indicator — click to offer an in-editor update.
+    Update,
+    /// The restart indicator on a terminal buffer whose process quit — click
+    /// to respawn it (resuming the agent conversation when there is one).
+    RestartTerminal,
 }
 
 /// Categorization of how a rendered element should be styled and tracked for click detection.
@@ -66,6 +71,8 @@ enum ElementKind {
     WarningBadge,
     /// Update available indicator (highlighted)
     Update,
+    /// Exited-terminal restart indicator (error palette, clickable)
+    TerminalRestart,
     /// Command palette shortcut hint (distinct style)
     Palette,
     /// Status message area (clickable to show history)
@@ -251,6 +258,10 @@ pub struct StatusBarContext<'a> {
     pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
     pub chord_state: &'a [(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
     pub update_available: Option<&'a str>,
+    /// Lifecycle of an in-progress in-editor self-update; overrides the
+    /// "Update: vX" text with progress/outcome so the indicator itself relays
+    /// the result (no transient status message).
+    pub update_phase: crate::services::release_checker::SelfUpdatePhase,
     pub warning_level: WarningLevel,
     pub general_warning_count: usize,
     /// The clickable status-bar segment the mouse is currently over, if any.
@@ -303,6 +314,28 @@ pub struct StatusBarContext<'a> {
     /// `{trust}` indicator (read from the active authority each frame, so it
     /// never goes stale or vanishes — unlike a per-buffer plugin token).
     pub workspace_trust_level: crate::services::workspace_trust::TrustLevel,
+    /// Set when the active buffer is a terminal whose process has quit and can
+    /// be restarted in place. Drives the `{terminal_restart}` indicator, which
+    /// renders only in that state. `None` for every other buffer — including a
+    /// live terminal, so the indicator never offers to restart a running agent.
+    pub terminal_restart: Option<TerminalRestartState>,
+}
+
+/// What the `{terminal_restart}` indicator needs to describe the dead process
+/// behind the active buffer. Derived per frame from the window's
+/// `exited_terminals` record.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalRestartState {
+    /// Short program name of the process that died (`claude`, `codex`, …), or
+    /// `None` when the terminal was just a shell.
+    pub program: Option<String>,
+    /// Wait-status exit code, when the platform reported one. Shown only when
+    /// non-zero — a clean exit is the common "the agent finished" case and
+    /// doesn't need a number shouting on the bar.
+    pub exit_code: Option<i32>,
+    /// Whether restarting rejoins an agent conversation rather than starting a
+    /// fresh process. Drives "Resume" vs "Restart" wording.
+    pub resumes_agent: bool,
 }
 
 /// Layout information returned from status bar rendering for mouse click detection
@@ -362,6 +395,7 @@ fn element_kind_name(kind: ElementKind) -> &'static str {
         ElementKind::RemoteIndicator(_) => "remote",
         ElementKind::WorkspaceTrust(_) => "trust",
         ElementKind::Messages => "message",
+        ElementKind::TerminalRestart => "terminalRestart",
         ElementKind::Custom => "plugin",
         _ => "text",
     }
@@ -845,8 +879,10 @@ impl StatusBarRenderer {
 
         let mut spans = Vec::new();
 
-        // "Open: " prefix
-        let open_prompt = t!("file.open_prompt").to_string();
+        // Label prefix — the prompt's own message, not a hardcoded
+        // "Open file: ": a plugin-opened pick browser (editor.pickFile)
+        // carries its own label ("Enter tour file path: ", …).
+        let open_prompt = prompt.message.clone();
         spans.push(Span::styled(open_prompt.clone(), base_style));
 
         // Calculate if we need to truncate
@@ -1206,10 +1242,55 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Update => {
-                let version = ctx.update_available?;
+                use crate::services::release_checker::SelfUpdatePhase;
+                // A running/finished update owns the indicator text even though
+                // `update_available` is still set (the running process still
+                // sees itself as out of date until a restart).
+                let text = match ctx.update_phase {
+                    SelfUpdatePhase::Running => t!("status.update_running").to_string(),
+                    SelfUpdatePhase::Succeeded => t!("status.update_done").to_string(),
+                    SelfUpdatePhase::ActionRequired => {
+                        t!("status.update_action_required").to_string()
+                    }
+                    SelfUpdatePhase::Failed => t!("status.update_failed").to_string(),
+                    SelfUpdatePhase::Idle => {
+                        let version = ctx.update_available?;
+                        t!("status.update_available", version = version).to_string()
+                    }
+                };
                 Some(RenderedElement {
-                    text: t!("status.update_available", version = version).to_string(),
+                    text,
                     kind: ElementKind::Update,
+                    token_key: None,
+                })
+            }
+            StatusBarElement::TerminalRestart => {
+                // Absent unless the active buffer is a terminal whose process
+                // quit — this is a call to action, not a persistent control.
+                let restart = ctx.terminal_restart.as_ref()?;
+                // "Resume claude" when the restart rejoins the conversation,
+                // "Restart claude" when it re-runs the launch command, and a
+                // bare "Restart terminal" for a plain shell.
+                let text = match (&restart.program, restart.resumes_agent) {
+                    (Some(program), true) => {
+                        t!("status.terminal_resume", program = program).to_string()
+                    }
+                    (Some(program), false) => {
+                        t!("status.terminal_restart", program = program).to_string()
+                    }
+                    (None, _) => t!("status.terminal_restart_shell").to_string(),
+                };
+                // A non-zero code is the signal that something went wrong, so
+                // it rides along; exit 0 (the agent simply finished) doesn't.
+                let text = match restart.exit_code {
+                    Some(code) if code != 0 => {
+                        t!("status.terminal_restart_code", label = text, code = code).to_string()
+                    }
+                    _ => text,
+                };
+                Some(RenderedElement {
+                    text,
+                    kind: ElementKind::TerminalRestart,
                     token_key: None,
                 })
             }
@@ -1431,9 +1512,39 @@ impl StatusBarRenderer {
                 }
                 style
             }
-            ElementKind::Update => Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.menu_dropdown_bg),
+            ElementKind::Update => {
+                // Keep the indicator's distinctive palette, but underline on
+                // hover to signal it's clickable — matching the LSP / read-only
+                // indicators.
+                let mut style = Style::default()
+                    .fg(theme.menu_highlight_fg)
+                    .bg(theme.menu_dropdown_bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
+            ElementKind::TerminalRestart => {
+                // The error palette: a dead agent is a state the user has to
+                // act on, and the indicator *is* the action. Hover styling
+                // matches the other clickable indicators.
+                let (fg, bg) = if is_hovering {
+                    (
+                        theme.status_error_indicator_hover_fg,
+                        theme.status_error_indicator_hover_bg,
+                    )
+                } else {
+                    (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    )
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
             // The palette shortcut hint is purely informational — driven
             // by the dedicated `status_palette_*` theme keys (default
             // to the neutral status-bar palette so it blends into the
@@ -1526,6 +1637,10 @@ impl StatusBarRenderer {
                 "ui.status_warning_indicator_bg",
             ),
             ElementKind::Update => ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+            ElementKind::TerminalRestart => (
+                "ui.status_error_indicator_fg",
+                "ui.status_error_indicator_bg",
+            ),
             ElementKind::Palette => ("ui.status_palette_fg", "ui.status_palette_bg"),
             ElementKind::RemoteIndicator(state) => match state {
                 RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
@@ -1566,9 +1681,10 @@ impl StatusBarRenderer {
             ElementKind::RemoteIndicator(_) => Some(StatusBarClickable::RemoteIndicator),
             ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
             ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
+            ElementKind::Update => Some(StatusBarClickable::Update),
+            ElementKind::TerminalRestart => Some(StatusBarClickable::RestartTerminal),
             ElementKind::Normal
             | ElementKind::RemoteDisconnected
-            | ElementKind::Update
             | ElementKind::Palette
             | ElementKind::Clock
             | ElementKind::Custom => None,

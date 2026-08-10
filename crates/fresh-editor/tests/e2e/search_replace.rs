@@ -2271,8 +2271,12 @@ fn test_search_replace_file_glob() {
         .unwrap();
 
     // The results tree renders paths with the native separator, so on
-    // Windows the rows read `src\main.rs`. Normalize to `/` before
-    // asserting so the path checks below are platform-independent.
+    // Windows the rows read `src\main.rs`. Normalize the SCREEN to `/` and
+    // keep every expectation in forward-slash literals. Do not convert the
+    // expectations to the native separator as well: normalized screen vs
+    // native expectation can never match on Windows, and the wait below
+    // then hangs to the test timeout (that exact double-conversion is how
+    // an earlier revision of this test deadlocked in CI).
     let normalized = |h: &EditorTestHarness| h.screen_to_string().replace('\\', "/");
 
     // First observe the completed unfiltered result set. This makes the

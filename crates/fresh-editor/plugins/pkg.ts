@@ -40,6 +40,25 @@ import { Finder } from "./lib/finder.ts";
 
 const editor = getEditor();
 
+// The package manager operates entirely on editor-owned state — installed
+// packages under the config dir and download scratch under the temp dir — which
+// live on the local editor host regardless of the active window's authority
+// (e.g. an SSH session). Route every filesystem call through `localPath(...)`
+// so installs/uninstalls always hit the host, never a remote backend.
+const fsLocal = {
+  readFile: (p: string) => editor.readFile(editor.localPath(p)),
+  writeFile: (p: string, content: string) =>
+    editor.writeFile(editor.localPath(p), content),
+  readDir: (p: string) => editor.readDir(editor.localPath(p)),
+  fileExists: (p: string) => editor.fileExists(editor.localPath(p)),
+  createDir: (p: string) => editor.createDir(editor.localPath(p)),
+  removePath: (p: string) => editor.removePath(editor.localPath(p)),
+  renamePath: (from: string, to: string) =>
+    editor.renamePath(editor.localPath(from), editor.localPath(to)),
+  copyPath: (from: string, to: string) =>
+    editor.copyPath(editor.localPath(from), editor.localPath(to)),
+};
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -248,7 +267,7 @@ interface ParsedPackageUrl {
  * Ensure a directory exists (cross-platform)
  */
 function ensureDir(path: string): boolean {
-  return editor.createDir(path);
+  return fsLocal.createDir(path);
 }
 
 /**
@@ -400,7 +419,7 @@ function getRegistrySources(): string[] {
  */
 function readJsonFile<T>(path: string): T | null {
   try {
-    const content = editor.readFile(path);
+    const content = fsLocal.readFile(path);
     if (content) {
       return JSON.parse(content) as T;
     }
@@ -416,7 +435,7 @@ function readJsonFile<T>(path: string): T | null {
 async function writeJsonFile(path: string, data: unknown): Promise<boolean> {
   try {
     const content = JSON.stringify(data, null, 2);
-    return editor.writeFile(path, content);
+    return fsLocal.writeFile(path, content);
   } catch (e) {
     editor.debug(`[pkg] Failed to write JSON file ${path}: ${e}`);
     return false;
@@ -442,7 +461,7 @@ async function syncRegistry(): Promise<void> {
   for (const source of sources) {
     const indexPath = editor.pathJoin(INDEX_DIR, hashString(source));
 
-    if (editor.fileExists(indexPath)) {
+    if (fsLocal.fileExists(indexPath)) {
       // Update existing
       editor.setStatus(`Updating registry: ${source}...`);
       const result = await gitCommand(["-C", `${indexPath}`, "pull", "--ff-only"]);
@@ -556,12 +575,12 @@ function isRegistrySynced(): boolean {
   for (const source of sources) {
     // Check git index
     const indexPath = editor.pathJoin(INDEX_DIR, hashString(source));
-    if (editor.fileExists(indexPath)) {
+    if (fsLocal.fileExists(indexPath)) {
       return true;
     }
     // Check cache
     const cachePath = editor.pathJoin(CACHE_DIR, `${hashString(source)}_plugins.json`);
-    if (editor.fileExists(cachePath)) {
+    if (fsLocal.fileExists(cachePath)) {
       return true;
     }
   }
@@ -582,12 +601,12 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
                     : LANGUAGES_PACKAGES_DIR;
   const packages: InstalledPackage[] = [];
 
-  if (!editor.fileExists(packagesDir)) {
+  if (!fsLocal.fileExists(packagesDir)) {
     return packages;
   }
 
   try {
-    const entries = editor.readDir(packagesDir);
+    const entries = fsLocal.readDir(packagesDir);
     for (const entry of entries) {
       if (entry.is_dir && !entry.name.startsWith(".")) {
         const pkgPath = editor.pathJoin(packagesDir, entry.name);
@@ -598,8 +617,8 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
         const gitConfigPath = editor.pathJoin(pkgPath, ".git", "config");
         let source = "";
         let localSource: string | undefined;
-        if (editor.fileExists(gitConfigPath)) {
-          const gitConfig = editor.readFile(gitConfigPath);
+        if (fsLocal.fileExists(gitConfigPath)) {
+          const gitConfig = fsLocal.readFile(gitConfigPath);
           if (gitConfig) {
             const match = gitConfig.match(/url\s*=\s*(.+)/);
             if (match) {
@@ -658,7 +677,7 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
   const manifestPath = editor.pathJoin(packageDir, "package.json");
 
   // Check package.json exists
-  if (!editor.fileExists(manifestPath)) {
+  if (!fsLocal.fileExists(manifestPath)) {
     return {
       valid: false,
       error: `Missing package.json - expected at ${manifestPath}`
@@ -713,10 +732,10 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
     const entryFile = manifest.fresh?.entry || manifest.fresh?.main || `${manifest.name}.ts`;
     const entryPath = editor.pathJoin(packageDir, entryFile);
 
-    if (!editor.fileExists(entryPath)) {
+    if (!fsLocal.fileExists(entryPath)) {
       // Try .js as fallback
       const jsEntryPath = entryPath.replace(/\.ts$/, ".js");
-      if (editor.fileExists(jsEntryPath)) {
+      if (fsLocal.fileExists(jsEntryPath)) {
         return { valid: true, manifest, entryPath: jsEntryPath };
       }
 
@@ -741,7 +760,7 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
     // Validate grammar file exists if specified
     if (manifest.fresh?.grammar?.file) {
       const grammarPath = editor.pathJoin(packageDir, manifest.fresh.grammar.file);
-      if (!editor.fileExists(grammarPath)) {
+      if (!fsLocal.fileExists(grammarPath)) {
         return {
           valid: false,
           error: `Grammar file not found: ${manifest.fresh.grammar.file}`
@@ -777,7 +796,7 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
         // Validate grammar file exists if specified
         if (lang.grammar?.file) {
           const grammarPath = editor.pathJoin(packageDir, lang.grammar.file);
-          if (!editor.fileExists(grammarPath)) {
+          if (!fsLocal.fileExists(grammarPath)) {
             return {
               valid: false,
               error: `Grammar file not found for language '${lang.id}': ${lang.grammar.file}`
@@ -797,10 +816,10 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
           };
         }
         const entryPath = editor.pathJoin(packageDir, plugin.entry);
-        if (!editor.fileExists(entryPath)) {
+        if (!fsLocal.fileExists(entryPath)) {
           // Try .js as fallback
           const jsEntryPath = entryPath.replace(/\.ts$/, ".js");
-          if (!editor.fileExists(jsEntryPath)) {
+          if (!fsLocal.fileExists(jsEntryPath)) {
             return {
               valid: false,
               error: `Plugin entry file not found: ${plugin.entry}`
@@ -886,14 +905,14 @@ async function installFromDirectFile(
       ? `HTTP ${result.exit_code}`
       : result.stderr.split("\n")[0] || "Download failed";
     editor.setStatus(`Failed to download ${packageName}: ${errorMsg}`);
-    editor.removePath(tempFile);
+    fsLocal.removePath(tempFile);
     return false;
   }
 
-  const content = editor.readFile(tempFile);
+  const content = fsLocal.readFile(tempFile);
   if (!content) {
     editor.setStatus(`Failed to read downloaded file`);
-    editor.removePath(tempFile);
+    fsLocal.removePath(tempFile);
     return false;
   }
 
@@ -902,7 +921,7 @@ async function installFromDirectFile(
     parsed = JSON.parse(content) as Record<string, unknown>;
   } catch (e) {
     editor.setStatus(`Downloaded file is not valid JSON: ${e}`);
-    editor.removePath(tempFile);
+    fsLocal.removePath(tempFile);
     return false;
   }
 
@@ -923,7 +942,7 @@ async function installFromDirectFile(
     editor.setStatus(
       `Unrecognized file format at ${url} - direct file install currently supports Fresh theme JSON only`
     );
-    editor.removePath(tempFile);
+    fsLocal.removePath(tempFile);
     return false;
   }
 
@@ -934,24 +953,24 @@ async function installFromDirectFile(
   const safeName = packageName.replace(/[^a-zA-Z0-9_.-]/g, "-");
   const targetDir = editor.pathJoin(THEMES_PACKAGES_DIR, safeName);
 
-  if (editor.fileExists(targetDir)) {
+  if (fsLocal.fileExists(targetDir)) {
     editor.setStatus(`Package '${safeName}' is already installed`);
-    editor.removePath(tempFile);
+    fsLocal.removePath(tempFile);
     return false;
   }
 
   ensureDir(THEMES_PACKAGES_DIR);
   if (!ensureDir(targetDir)) {
     editor.setStatus(`Failed to create package directory ${targetDir}`);
-    editor.removePath(tempFile);
+    fsLocal.removePath(tempFile);
     return false;
   }
 
   const themeFileName = "theme.json";
-  if (!editor.writeFile(editor.pathJoin(targetDir, themeFileName), content)) {
+  if (!fsLocal.writeFile(editor.pathJoin(targetDir, themeFileName), content)) {
     editor.setStatus(`Failed to write theme file`);
-    editor.removePath(tempFile);
-    editor.removePath(targetDir);
+    fsLocal.removePath(tempFile);
+    fsLocal.removePath(targetDir);
     return false;
   }
 
@@ -966,8 +985,8 @@ async function installFromDirectFile(
   };
   if (!await writeJsonFile(editor.pathJoin(targetDir, "package.json"), manifest)) {
     editor.setStatus(`Failed to write package manifest`);
-    editor.removePath(tempFile);
-    editor.removePath(targetDir);
+    fsLocal.removePath(tempFile);
+    fsLocal.removePath(targetDir);
     return false;
   }
 
@@ -976,7 +995,7 @@ async function installFromDirectFile(
     installed_at: new Date().toISOString(),
   });
 
-  editor.removePath(tempFile);
+  fsLocal.removePath(tempFile);
   editor.reloadThemes();
   editor.setStatus(`Installed theme ${themeName ?? safeName}`);
   return true;
@@ -1026,7 +1045,7 @@ async function installFromRepo(
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up
-    editor.removePath(tempDir);
+    fsLocal.removePath(tempDir);
     return false;
   }
 
@@ -1044,17 +1063,17 @@ async function installFromRepo(
   const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
   // Check if already installed in correct location
-  if (editor.fileExists(correctTargetDir)) {
+  if (fsLocal.fileExists(correctTargetDir)) {
     editor.setStatus(`Package '${packageName}' is already installed`);
-    editor.removePath(tempDir);
+    fsLocal.removePath(tempDir);
     return false;
   }
 
   // Ensure correct directory exists and move from temp
   ensureDir(correctPackagesDir);
-  if (!editor.renamePath(tempDir, correctTargetDir)) {
+  if (!fsLocal.renamePath(tempDir, correctTargetDir)) {
     editor.setStatus(`Failed to install ${packageName}: could not move package to target directory`);
-    editor.removePath(tempDir);
+    fsLocal.removePath(tempDir);
     return false;
   }
 
@@ -1107,14 +1126,14 @@ async function installFromLocalPath(
   }
 
   // Check if source exists
-  if (!editor.fileExists(sourcePath)) {
+  if (!fsLocal.fileExists(sourcePath)) {
     editor.setStatus(`Local path not found: ${sourcePath}`);
     return false;
   }
 
   // Check if it's a directory (by checking for package.json)
   const manifestPath = editor.pathJoin(sourcePath, "package.json");
-  if (!editor.fileExists(manifestPath)) {
+  if (!fsLocal.fileExists(manifestPath)) {
     editor.setStatus(`Not a valid package (no package.json): ${sourcePath}`);
     return false;
   }
@@ -1138,7 +1157,7 @@ async function installFromLocalPath(
   const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
   // Check if already installed in correct location
-  if (editor.fileExists(correctTargetDir)) {
+  if (fsLocal.fileExists(correctTargetDir)) {
     editor.setStatus(`Package '${packageName}' is already installed`);
     return false;
   }
@@ -1148,7 +1167,7 @@ async function installFromLocalPath(
 
   // Copy the directory to correct target
   editor.setStatus(`Copying from ${sourcePath}...`);
-  if (!editor.copyPath(sourcePath, correctTargetDir)) {
+  if (!fsLocal.copyPath(sourcePath, correctTargetDir)) {
     editor.setStatus(`Failed to copy package from ${sourcePath}`);
     return false;
   }
@@ -1159,7 +1178,7 @@ async function installFromLocalPath(
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up the invalid package
-    editor.removePath(correctTargetDir);
+    fsLocal.removePath(correctTargetDir);
     return false;
   }
 
@@ -1233,9 +1252,9 @@ async function installFromMonorepo(
 
     // Verify subpath exists
     const subpathDir = editor.pathJoin(tempDir, parsed.subpath!);
-    if (!editor.fileExists(subpathDir)) {
+    if (!fsLocal.fileExists(subpathDir)) {
       editor.setStatus(`Subpath '${parsed.subpath}' not found in repository`);
-      editor.removePath(tempDir);
+      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1244,7 +1263,7 @@ async function installFromMonorepo(
     if (!validation.valid) {
       editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
       editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
-      editor.removePath(tempDir);
+      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1262,9 +1281,9 @@ async function installFromMonorepo(
     const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
     // Check if already installed
-    if (editor.fileExists(correctTargetDir)) {
+    if (fsLocal.fileExists(correctTargetDir)) {
       editor.setStatus(`Package '${packageName}' is already installed`);
-      editor.removePath(tempDir);
+      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1273,9 +1292,9 @@ async function installFromMonorepo(
 
     // Copy subdirectory to correct target
     editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
-    if (!editor.copyPath(subpathDir, correctTargetDir)) {
+    if (!fsLocal.copyPath(subpathDir, correctTargetDir)) {
       editor.setStatus(`Failed to copy package from ${parsed.subpath}`);
-      editor.removePath(tempDir);
+      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1309,7 +1328,7 @@ async function installFromMonorepo(
     return true;
   } finally {
     // Cleanup temp directory
-    editor.removePath(tempDir);
+    fsLocal.removePath(tempDir);
   }
 }
 
@@ -1418,14 +1437,14 @@ async function loadBundle(packageDir: string, manifest: PackageManifest): Promis
       let entryPath = editor.pathJoin(packageDir, plugin.entry);
 
       // Try .js fallback if .ts doesn't exist
-      if (!editor.fileExists(entryPath) && entryPath.endsWith(".ts")) {
+      if (!fsLocal.fileExists(entryPath) && entryPath.endsWith(".ts")) {
         const jsPath = entryPath.replace(/\.ts$/, ".js");
-        if (editor.fileExists(jsPath)) {
+        if (fsLocal.fileExists(jsPath)) {
           entryPath = jsPath;
         }
       }
 
-      if (editor.fileExists(entryPath)) {
+      if (fsLocal.fileExists(entryPath)) {
         editor.debug(`[pkg] Loading bundle plugin: ${plugin.entry}`);
         await editor.loadPlugin(entryPath);
       } else {
@@ -1557,7 +1576,7 @@ async function reinstallPackage(pkg: InstalledPackage): Promise<boolean> {
 
   const sourcePath = pkg.localSource;
 
-  if (!editor.fileExists(sourcePath)) {
+  if (!fsLocal.fileExists(sourcePath)) {
     editor.setStatus(`Source path no longer exists: ${sourcePath}`);
     return false;
   }
@@ -1574,13 +1593,13 @@ async function reinstallPackage(pkg: InstalledPackage): Promise<boolean> {
   }
 
   // Remove old copy
-  if (!editor.removePath(pkg.path)) {
+  if (!fsLocal.removePath(pkg.path)) {
     editor.setStatus(`Failed to remove old copy of ${pkg.name}`);
     return false;
   }
 
   // Re-copy from source
-  if (!editor.copyPath(sourcePath, pkg.path)) {
+  if (!fsLocal.copyPath(sourcePath, pkg.path)) {
     editor.setStatus(`Failed to copy from source: ${sourcePath}`);
     return false;
   }
@@ -1639,7 +1658,7 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
   }
 
   // Remove package directory
-  if (editor.removePath(pkg.path)) {
+  if (fsLocal.removePath(pkg.path)) {
     // Reload themes if we removed a theme so Select Theme list is updated
     if (pkg.type === "theme") {
       editor.reloadThemes();
@@ -1755,9 +1774,9 @@ async function installFromLockfile(): Promise<void> {
     const pluginPath = editor.pathJoin(PACKAGES_DIR, name);
     const themePath = editor.pathJoin(THEMES_PACKAGES_DIR, name);
 
-    if (editor.fileExists(pluginPath) || editor.fileExists(themePath)) {
+    if (fsLocal.fileExists(pluginPath) || fsLocal.fileExists(themePath)) {
       // Already installed, just checkout the commit
-      const path = editor.fileExists(pluginPath) ? pluginPath : themePath;
+      const path = fsLocal.fileExists(pluginPath) ? pluginPath : themePath;
       await gitCommand(["-C", `${path}`, "fetch"]);
       const result = await gitCommand(["-C", `${path}`, "checkout", entry.commit]);
       if (result.exit_code === 0) {

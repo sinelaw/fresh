@@ -89,6 +89,13 @@ pub(crate) struct PersistedWindow {
     /// later save doesn't clobber it back to local).
     #[serde(default, skip_serializing_if = "is_local_authority_spec")]
     pub(crate) authority_spec: crate::services::authority::SessionAuthoritySpec,
+    /// Durable workspace identity carried in the workspace file
+    /// (`Workspace::stable_id`). `None` for legacy files that predate
+    /// stable ids — the window mints one and the next save re-keys the
+    /// file. Threaded into the window shell at boot so identity survives
+    /// even before the shell materializes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) stable_id: Option<String>,
 }
 
 fn is_local_authority_spec(spec: &crate::services::authority::SessionAuthoritySpec) -> bool {
@@ -157,23 +164,24 @@ pub(crate) fn read_persisted_windows_env(
         migrate_legacy_windows(filesystem, data_dir);
     }
     migrate_windows_json_into_workspaces(filesystem, data_dir);
+    // Daemon-scoped workspaces predate the one-set model; fold them in before
+    // discovery so they show up in the dock like any other workspace.
+    migrate_session_workspaces_into_store(filesystem, data_dir);
 
-    // The per-dir workspace cache is the session registry now: one
-    // session per directory, discovered from disk. GC dead entries and
-    // build a window per survivor.
+    // The workspace cache is the session registry now: sessions discovered
+    // from disk, keyed by durable identity. A directory may host several
+    // co-tenant workspaces (a tab extracted into its own window over the same
+    // project), so discovery yields one window per `stable_id`, not one per
+    // directory. GC dead entries and build a window per survivor.
     let windows = discover_sessions(filesystem, data_dir);
     if windows.is_empty() {
         return None;
     }
     let next_id = windows.iter().map(|w| w.id).max().unwrap_or(0) + 1;
-    // One session per directory is enforced upstream by the workspace
-    // cache itself: `get_workspace_path` keys each file on the
-    // canonical root, so discovery yields at most one window per
-    // canonical dir. No post-hoc dedup is needed.
-    //
     // `active` is decided downstream by the launch cwd
     // (`pick_active_window_for_cwd`); 0 means "no stored hint", so the
-    // cwd-match branch governs which session is foregrounded.
+    // cwd-match branch governs which session is foregrounded (the first
+    // co-tenant at the cwd root when several share it).
     Some(PersistedWindows {
         version: CURRENT_VERSION,
         active: 0,
@@ -223,12 +231,15 @@ fn discover_sessions(
         count = entries.len(),
         "discover_sessions: read_dir returned"
     );
-    let mut found: Vec<(
-        PathBuf,
-        String,
-        SessionState,
-        crate::services::authority::SessionAuthoritySpec,
-    )> = Vec::new();
+    struct Candidate {
+        root: PathBuf,
+        label: String,
+        plugin_state: SessionState,
+        authority_spec: crate::services::authority::SessionAuthoritySpec,
+        stable_id: Option<String>,
+        saved_at: u64,
+    }
+    let mut found: Vec<Candidate> = Vec::new();
     for entry in entries {
         let p = &entry.path;
         // Only real workspace files. A torn `*.json.tmp` write or a
@@ -293,22 +304,89 @@ fn discover_sessions(
             .get("session_plugin_state")
             .and_then(|v| serde_json::from_value(v.clone()).ok())
             .unwrap_or_default();
-        found.push((root, label, plugin_state, authority_spec));
+        found.push(Candidate {
+            root,
+            label,
+            plugin_state,
+            authority_spec,
+            stable_id: val
+                .get("stable_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+            saved_at: val.get("saved_at").and_then(|v| v.as_u64()).unwrap_or(0),
+        });
     }
-    found.sort_by_key(|a| canonical_key(&a.0));
-    found
+    // Session identity is the durable `stable_id`, not the directory: several
+    // workspaces may co-tenant one root (a tab extracted into its own window
+    // over the same project), each its own on-disk `<root>.<id>.json`. So dedup
+    // by `stable_id` — each id is one session — with two files sharing an id
+    // (a mid-rekey window) resolved to the freshest. Id-less *legacy* files map
+    // to their root instead; a legacy file is the pre-migration copy a window
+    // adopts and re-keys, so it is suppressed once ANY id-keyed file claims the
+    // same root, while an un-migrated root keeps its single legacy session.
+    let mut by_id: std::collections::BTreeMap<String, Candidate> =
+        std::collections::BTreeMap::new();
+    let mut legacy_by_root: std::collections::BTreeMap<PathBuf, Candidate> =
+        std::collections::BTreeMap::new();
+    let mut roots_with_id: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for c in found {
+        match c.stable_id.clone() {
+            Some(id) => {
+                roots_with_id.insert(canonical_key(&c.root));
+                match by_id.get(&id) {
+                    Some(cur) if cur.saved_at >= c.saved_at => {
+                        tracing::info!(
+                            root = %c.root.display(),
+                            "discover_sessions: skipping stale same-id duplicate"
+                        );
+                    }
+                    _ => {
+                        by_id.insert(id, c);
+                    }
+                }
+            }
+            None => {
+                let key = canonical_key(&c.root);
+                match legacy_by_root.get(&key) {
+                    Some(cur) if cur.saved_at >= c.saved_at => {}
+                    _ => {
+                        legacy_by_root.insert(key, c);
+                    }
+                }
+            }
+        }
+    }
+    // Emit id-bearing sessions plus legacy sessions whose root has not been
+    // migrated. Sort by (canonical root, stable id) so window ids are stable
+    // across boots and co-tenants stay grouped by their shared root.
+    let mut sessions: Vec<Candidate> = by_id
+        .into_values()
+        .chain(
+            legacy_by_root
+                .into_iter()
+                .filter(|(root, _)| !roots_with_id.contains(root))
+                .map(|(_, c)| c),
+        )
+        .collect();
+    sessions.sort_by(|a, b| {
+        canonical_key(&a.root)
+            .cmp(&canonical_key(&b.root))
+            .then_with(|| a.stable_id.cmp(&b.stable_id))
+    });
+    sessions
         .into_iter()
         .enumerate()
-        .map(|(i, (root, label, plugin_state, authority_spec))| {
-            let (project_path, shared_worktree) = read_orch_session_meta(&plugin_state);
+        .map(|(i, c)| {
+            let (project_path, shared_worktree) = read_orch_session_meta(&c.plugin_state);
             PersistedWindow {
                 id: (i as u64) + 1,
-                label,
-                root,
+                label: c.label,
+                root: c.root,
                 project_path,
                 shared_worktree,
-                authority_spec,
-                plugin_state,
+                authority_spec: c.authority_spec,
+                plugin_state: c.plugin_state,
+                stable_id: c.stable_id,
             }
         })
         .collect()
@@ -365,6 +443,103 @@ fn migrate_windows_json_into_workspaces(
         // Best-effort: if delete also fails the file stays and migration reruns (idempotent).
         let _ = filesystem.remove_file(&global_p).ok();
     }
+}
+
+/// Fold pre-migration daemon-scoped workspaces into the one workspace store.
+///
+/// A named daemon used to persist *all* of its windows into a single
+/// `session-workspaces/<daemon>.json`, keyed on the daemon's name. That store
+/// could not represent more than one window (each overwrote the last) and
+/// nothing here ever scanned it, so those layouts were invisible to the dock
+/// and unreachable from any other invocation. Workspaces are now one set,
+/// shared by direct mode and every daemon, so each surviving legacy snapshot is
+/// re-keyed as an ordinary workspace: its recorded `working_dir` plus a minted
+/// `stable_id` if it predates durable identities.
+///
+/// Two named daemons that each held a layout over the same root migrate into
+/// two co-tenant workspaces over that root — which the per-window store already
+/// supports — so neither user's layout is dropped.
+///
+/// Idempotent and best-effort: the legacy directory is renamed aside once every
+/// file in it has been converted, and anything that fails to convert is left
+/// alone for the next boot to retry rather than deleted.
+fn migrate_session_workspaces_into_store(
+    filesystem: &(dyn crate::model::filesystem::FileSystem + Send + Sync),
+    data_dir: &Path,
+) {
+    let legacy_dir = data_dir.join("session-workspaces");
+    let Ok(entries) = filesystem.read_dir(&legacy_dir) else {
+        return;
+    };
+    let mut all_converted = true;
+    for entry in entries {
+        if !entry.name.ends_with(".json") {
+            continue;
+        }
+        let Ok(bytes) = filesystem.read_file(&entry.path) else {
+            all_converted = false;
+            continue;
+        };
+        let Ok(mut val) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            // Unparseable: leave it rather than silently lose a layout.
+            all_converted = false;
+            continue;
+        };
+        let Some(root) = val
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from)
+        else {
+            all_converted = false;
+            continue;
+        };
+        // Mint an identity for snapshots written before durable ids, so the
+        // file lands under the id-keyed name the per-window store uses.
+        let stable_id = match val.get("stable_id").and_then(|v| v.as_str()) {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => {
+                let id = crate::workspace::generate_stable_id();
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert("stable_id".into(), serde_json::Value::String(id.clone()));
+                }
+                id
+            }
+        };
+        let dest = workspaces_dir(data_dir).join(format!(
+            "{}.{}.json",
+            crate::workspace::encode_path_for_filename(&canonical_key(&root)),
+            stable_id
+        ));
+        // Never clobber a live workspace: the per-window store is authoritative
+        // wherever both describe the same identity.
+        if filesystem.exists(&dest) {
+            continue;
+        }
+        let Ok(out) = serde_json::to_vec_pretty(&val) else {
+            all_converted = false;
+            continue;
+        };
+        if filesystem.write_file(&dest, &out).is_err() {
+            all_converted = false;
+            continue;
+        }
+        tracing::info!(
+            "Migrated daemon-scoped workspace {:?} into the shared store as {:?}",
+            entry.path,
+            dest
+        );
+    }
+    if !all_converted {
+        return;
+    }
+    // Retire the legacy directory (keep it as a .bak so a downgrade isn't
+    // one-way). A failure just leaves it for the next boot — the conversion
+    // above skips anything already present, so rerunning is harmless.
+    let bak = legacy_dir.with_extension("retired.bak");
+    if filesystem.exists(&bak) {
+        return;
+    }
+    let _ = filesystem.rename(&legacy_dir, &bak).ok();
 }
 
 /// Pick which persisted session to bring up at boot, scoped to the
@@ -951,6 +1126,7 @@ mod tests {
             shared_worktree: false,
             authority_spec: Default::default(),
             plugin_state: HashMap::new(),
+            stable_id: None,
         }
     }
 

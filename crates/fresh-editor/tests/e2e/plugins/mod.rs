@@ -2,12 +2,16 @@
 //! These tests are only compiled when the "plugins" feature is enabled.
 
 pub mod after_file_open_preview;
+pub mod agent_dev_loop;
 pub mod asm_lsp_config;
 pub mod audit_mode;
 pub mod authority_snapshot;
 pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
+pub mod config_changed_adoption;
+pub mod csharp_restore_trust;
 pub mod dashboard;
+pub mod hostile_plugin;
 // The three modules below drive the in-tree fake-devcontainer
 // CLI (a bash script under `scripts/fake-devcontainer/bin/`).
 // Native Windows can't execute `#!/usr/bin/env bash` shebangs
@@ -51,14 +55,18 @@ pub mod orchestrator_attach_worktree;
 pub mod orchestrator_new_dialog;
 pub mod orchestrator_new_session_renders;
 pub mod orchestrator_open_cross_project;
+pub mod orchestrator_plugin_api;
 pub mod package_manager;
 pub mod plugin;
+pub mod plugin_authoring;
+pub mod plugin_config_changed_hook;
 pub mod plugin_config_registration;
 pub mod plugin_keybinding_execution;
 pub mod plugins_dir_in_working_dir;
 pub mod review_diff_hunk_parity;
 pub mod review_diff_line_staging;
 pub mod review_diff_ux_bugs;
+pub mod set_split_ratio_leaf;
 pub mod tab_actions;
 pub mod terminal_hooks;
 pub mod theme_editor;

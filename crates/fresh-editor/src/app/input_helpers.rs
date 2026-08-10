@@ -17,6 +17,21 @@ use crate::view::prompt::PromptType;
 use super::Editor;
 
 impl Editor {
+    /// Refuse the current operation when the active buffer is read-only.
+    ///
+    /// Returns `true` after posting the standard "Editing disabled" status
+    /// message — callers should `return Ok(())` immediately. Centralised so
+    /// every mutation entry point (Replace, FormatBuffer, ShellCommandReplace,
+    /// …) enforces the same contract instead of hand-rolling the check.
+    pub(super) fn refuse_if_editing_disabled(&mut self) -> bool {
+        if self.active_window().is_editing_disabled() {
+            self.set_status_message(t!("buffer.editing_disabled").to_string());
+            true
+        } else {
+            false
+        }
+    }
+
     /// Switch to the previously active tab in the current split.
     /// Handles both buffer tabs and group tabs via the focus-history LRU.
     pub(super) fn switch_to_previous_tab(&mut self) {
@@ -288,34 +303,21 @@ impl Editor {
         // Get description before moving action
         let action_description = format!("{:?}", action);
 
-        // Check if this is an editing action and editing is disabled
-        let is_editing_action = matches!(
-            action,
-            Action::InsertNewline
-                | Action::InsertTab
-                | Action::DeleteForward
-                | Action::DeleteWordBackward
-                | Action::DeleteWordForward
-                | Action::DeleteLine
-                | Action::DuplicateLine
-                | Action::MoveLineUp
-                | Action::MoveLineDown
-                | Action::DedentSelection
-                | Action::ToggleComment
-        );
-
-        if is_editing_action && self.active_window().is_editing_disabled() {
-            self.set_status_message(t!("buffer.editing_disabled").to_string());
-            return Ok(());
-        }
-
         if let Some(events) = self.active_window_mut().action_to_events(action) {
-            if events.len() > 1 {
-                // Check if this batch contains buffer modifications
-                let has_buffer_mods = events
-                    .iter()
-                    .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
+            // Refuse the action if it would mutate a read-only buffer.
+            // Checking at the event level (rather than maintaining a hand-
+            // written allowlist of "editing" actions) catches every action
+            // that produces Insert/Delete, including SortLines, OpenLine,
+            // case transforms, and anything added in the future.
+            let has_buffer_mods = events
+                .iter()
+                .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
+            if has_buffer_mods && self.active_window().is_editing_disabled() {
+                self.set_status_message(t!("buffer.editing_disabled").to_string());
+                return Ok(());
+            }
 
+            if events.len() > 1 {
                 if has_buffer_mods {
                     // Multi-cursor buffer edit: use optimized bulk edit (O(n) instead of O(n²))
                     if let Some(bulk_edit) =

@@ -1,0 +1,66 @@
+  /* Web theme: Compact — a dense, chrome-light IDE.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Gated on body.theme-compact (set by js/15-theme.js). Maximises editor real
+     estate: no wallpaper margin, no hardware bezel (both off), a ~8% smaller
+     grid (webThemeScale), tight paddings, hairline dividers and small radii.
+     COLOURS come from applyWebTheme()'s inline tokens (a flat, quiet dark);
+     this file owns the DENSITY and the flat, glass-free surfaces.
+     ====================================================================== */
+
+  /* Full-bleed: reclaim the Cosmos wallpaper margin + bezel for the editor. */
+  body.theme-compact:not(.mobile) #app{left:0;top:0;right:0;bottom:0}
+  body.theme-compact:not(.mobile) .menubar{clip-path:none}
+
+  /* ---- flatten the frame: quiet bars, hairline rules, no heavy fills ---- */
+  body.theme-compact .menubar{background:var(--shell);border-bottom:1px solid var(--hairline);padding:0 2px}
+  body.theme-compact .menu{padding:0 8px}
+  body.theme-compact .tabbar{background:var(--shell)}
+  body.theme-compact .tab{padding:0 9px}
+  body.theme-compact .tab.active::after{height:1px}
+  body.theme-compact .statusbar{background:var(--shell);padding:0 8px}
+  body.theme-compact .fileexplorer{background:var(--shell);border-right:1px solid var(--hairline)}
+
+  /* ---- density: tight rows and padding across every native list ---- */
+  body.theme-compact .fileexplorer .fx-title{padding:3px 8px 2px;letter-spacing:.03em}
+  body.theme-compact .fileexplorer .fx-list{padding:2px 4px}
+  body.theme-compact .fileexplorer .fx-row{line-height:1.28;margin:0;padding:0 5px}
+  body.theme-compact .palette .plist{padding:3px 4px}
+  body.theme-compact .palette .prow{padding:2px 10px}
+  body.theme-compact .palette .pinput{padding:5px 12px}
+  body.theme-compact .palette .ptitle{padding:6px 12px 1px}
+  body.theme-compact .popup .popup-body{padding:2px 4px}
+  body.theme-compact .popup .popup-row{padding:1px 9px}
+  body.theme-compact .ctxmenu{padding:3px 4px}
+  body.theme-compact .ctxmenu .ctxitem{padding:2px 10px}
+  body.theme-compact .mitem{gap:12px;padding:0 10px}
+  body.theme-compact .settings-modal .set-cats{padding:4px 4px}
+  body.theme-compact .settings-modal .set-items{padding:4px 6px}
+  body.theme-compact .settings-modal .set-cat{padding:2px 10px}
+  body.theme-compact .settings-modal .set-item{padding:3px 10px;margin:0}
+
+  /* Flat floating surfaces: keep the frosted-glass blur off so panels read as
+     crisp dense cards (the skin's backdrop-filter is neutralised). */
+  body.theme-compact .dropdown,body.theme-compact .popup,body.theme-compact .ctxmenu,
+  body.theme-compact .palette,body.theme-compact .m-sheet{
+    -webkit-backdrop-filter:none;backdrop-filter:none;background:var(--bg2)}
+  body.theme-compact .dropdown{background:var(--bg3)}
+
+  /* ---- flat dock (no Cosmos glass): a plain panel that matches the frame ---- */
+  body.theme-compact:not(.mobile) .widget-surface.w-dock{
+    background:var(--shell);border-right:1px solid var(--hairline);
+    box-shadow:none;padding:8px 7px 6px;color:var(--fg)}
+  body.theme-compact .w-dock .w-tree-row,body.theme-compact .w-dock .w-list-row{padding:2px 7px}
+  /* Quiet, flat controls; the search field lifts off the buffer-dark --bg. */
+  body.theme-compact .w-dock .w-text{background:var(--bg2);border:1px solid var(--hairline)}
+  body.theme-compact .w-dock .w-button{background:var(--surface-2);border:1px solid var(--hairline);color:var(--fg)}
+  body.theme-compact .w-dock .w-button.primary{background:var(--ui-accent);border-color:var(--ui-accent);color:var(--on-ui-accent)}
+  /* Subtle tinted selection instead of the skin's saturated card glow. */
+  body.theme-compact .w-dock .w-tree-card.sel,body.theme-compact .w-dock .w-list-card.sel{
+    background:color-mix(in srgb,var(--ui-accent) 16%,transparent);
+    border-color:color-mix(in srgb,var(--ui-accent) 45%,transparent);box-shadow:none}
+
+  /* Slimmer scrollbars to match the density. */
+  body.theme-compact *::-webkit-scrollbar{width:8px;height:8px}

@@ -89,11 +89,11 @@ pub fn render_settings(
     // Calculate modal size (90% of screen width, 90% height to fill most of available space)
     let modal_width = (area.width * 90 / 100).min(160);
     let modal_height = area.height * 90 / 100;
-    // Offsets must be ABSOLUTE — `area.x` / `area.y` are nonzero when
-    // `area` is the chrome region right of the dock (or a bottom-anchored
-    // split). Centring with bare `area.width / 2` placed the modal at the
-    // FRAME origin, where the dock then over-drew its left edge — hiding
-    // the title bar and clipping the rounded top-left corner.
+    // Offsets must be ABSOLUTE — `area.x` / `area.y` are not assumed to be
+    // zero (this is the full frame today, but the modal must centre in
+    // whatever rect it is handed). Centring with bare `area.width / 2` placed
+    // the modal at the FRAME origin, where the dock then over-drew its left
+    // edge — hiding the title bar and clipping the rounded top-left corner.
     let modal_x = area.x + (area.width.saturating_sub(modal_width)) / 2;
     let modal_y = area.y + (area.height.saturating_sub(modal_height)) / 2;
 
@@ -1411,6 +1411,66 @@ fn hit_rect(
     Rect::default()
 }
 
+/// Build the click geometry for a `DualList` from the cells the widget
+/// renderer just painted.
+///
+/// The widget emits one `dual_focus` hit per occupied cell, carrying
+/// the column name and the row index the settings state indexes by.
+/// Converting each hit's byte range against its own row text (the same
+/// conversion [`hit_rect`] does) keeps the rects correct no matter how
+/// the columns were laid out or how far the panel is scrolled.
+fn dual_list_layout(
+    out: &crate::widgets::RenderOutput,
+    area: Rect,
+    skip_rows: u16,
+) -> crate::view::controls::DualListLayout {
+    use crate::primitives::display_width::str_width;
+    use crate::view::controls::{DualListLayout, DualListRowArea};
+
+    let mut layout = DualListLayout {
+        full_area: area,
+        ..Default::default()
+    };
+    for h in &out.hits {
+        if h.widget_kind != "dual_list" || h.event_type != "dual_focus" {
+            continue;
+        }
+        let (Some(column), Some(index)) = (
+            h.payload.get("column").and_then(|v| v.as_str()),
+            h.payload.get("index").and_then(|v| v.as_u64()),
+        ) else {
+            continue;
+        };
+        let Some(dst) = (h.buffer_row as u16).checked_sub(skip_rows) else {
+            continue;
+        };
+        if dst >= area.height {
+            continue;
+        }
+        let Some(entry) = out.entries.get(h.buffer_row as usize) else {
+            continue;
+        };
+        let text = entry.text.trim_end_matches('\n');
+        let s = h.byte_start.min(text.len());
+        let e = h.byte_end.min(text.len());
+        let x = str_width(&text[..s]) as u16;
+        if x >= area.width {
+            continue;
+        }
+        let w = (str_width(&text[s..e]).max(1) as u16).min(area.width - x);
+        let row = DualListRowArea {
+            area: Rect::new(area.x + x, area.y + dst, w, 1),
+            index: index as usize,
+        };
+        match column {
+            "available" => layout.available_rows.push(row),
+            "included" => layout.included_rows.push(row),
+            _ => {}
+        }
+    }
+    layout
+}
+
 /// Render the appropriate control for a setting
 ///
 /// # Arguments
@@ -1486,29 +1546,59 @@ fn render_control(
             let out =
                 render_scalar_via_widget(frame, area, control, name, theme, label_width, prev);
             let button_area = hit_rect(&out, "dropdown", "dropdown_toggle", area, 0);
-            // One rect per visible option row of the open list, in
-            // screen order (the caller pairs them with `scroll_offset`
-            // to recover absolute indices, as the old control did).
+            // When open, paint the option list inline beneath the button.
+            //
+            // The shared widget framework (`collect_dropdown`) surfaces an
+            // open dropdown's options as a *floating* screen-level pop-over
+            // (`RenderOutput::dropdown_popups`) for plugin panels, and
+            // discards `render_dropdown`'s inline `option_rows`. The Settings
+            // modal does not draw those floating pop-overs — it reserves
+            // inline rows for the open list via `SettingControl::height`. So
+            // relying on `render_scalar_via_widget` alone leaves the reserved
+            // rows blank: the dropdown opens to an empty box (theme and every
+            // other settings dropdown showed no options — #2765).
+            //
+            // Render the option rows directly and paint them under the button
+            // (row 0), exactly where the reserved height expects them. Use the
+            // same label/label-width/selected/scroll the button render used so
+            // the option column aligns under the value cell, and build one hit
+            // rect per visible row in screen order (`layout.rs` pairs them with
+            // `scroll_offset` to recover absolute indices).
             let mut option_areas = Vec::new();
+            let mut scroll_offset = 0;
             if state.open {
-                for h in out
-                    .hits
-                    .iter()
-                    .filter(|h| h.event_type == "dropdown_select")
-                {
-                    let dst = h.buffer_row as u16;
-                    if dst < area.height {
-                        option_areas.push(Rect::new(area.x, area.y + dst, area.width, 1));
+                let rendered = crate::widgets::render_dropdown(
+                    &state.options,
+                    state.selected as i32,
+                    &state.label,
+                    false,
+                    label_width.unwrap_or(0) as u32,
+                    true,
+                    state.scroll_offset as u32,
+                    // The settings dialog draws its own selection chrome
+                    // and never reserved the `▸ ` focus-marker gutter.
+                    false,
+                );
+                scroll_offset = rendered.scroll_offset;
+                for (row_i, (_idx, entry)) in rendered.option_rows.iter().enumerate() {
+                    // Row 0 is the button that `render_scalar_via_widget`
+                    // already painted; options start at row 1.
+                    let dst = 1 + row_i as u16;
+                    if dst >= area.height {
+                        break;
                     }
+                    crate::app::render::paint_text_property_entry(
+                        frame,
+                        entry,
+                        area.x,
+                        area.y + dst,
+                        area.width,
+                        theme,
+                        None,
+                    );
+                    option_areas.push(Rect::new(area.x, area.y + dst, area.width, 1));
                 }
             }
-            let visible = state
-                .options
-                .len()
-                .min(crate::widgets::DROPDOWN_VISIBLE_OPTIONS);
-            let scroll_offset = state
-                .scroll_offset
-                .min(state.options.len().saturating_sub(visible));
             ControlLayoutInfo::Dropdown {
                 button_area,
                 option_areas,
@@ -1625,23 +1715,31 @@ fn render_control(
             ControlLayoutInfo::TextList { rows }
         }
 
-        SettingControl::DualList(_) => {
+        SettingControl::DualList(state) => {
+            // A keyed widget takes its focus from `focus_key`, not from
+            // the spec's `focused` flag, so the picker only paints its
+            // cursor once we name it as the focused widget. Gate that on
+            // *editing*, not mere selection: outside edit mode ↑↓ walks
+            // the settings list, and a cursor drawn inside the columns
+            // would promise a movement the arrows don't make.
+            let focus_key = if state.editing { name } else { "" };
             // View migrated to the widget `DualList` kind (two-column
             // Available/Included picker); editing still runs through the
-            // settings input path. Mouse hit geometry is approximate for
-            // now (keyboard nav is the primary path).
-            render_control_via_widget(
+            // settings input path. The click geometry is read back from
+            // the cells the widget actually painted, so a click lands on
+            // the row under the pointer instead of nowhere.
+            let out = render_control_via_widget(
                 frame,
                 area,
                 control,
                 name,
                 theme,
                 skip_rows,
-                "",
+                focus_key,
                 label_width,
                 prev,
             );
-            ControlLayoutInfo::DualList(Default::default())
+            ControlLayoutInfo::DualList(dual_list_layout(&out, area, skip_rows))
         }
 
         SettingControl::Map(state) => {
@@ -2086,6 +2184,12 @@ fn render_footer(
         t!("settings.help_search").to_string()
     } else if footer_focused {
         t!("settings.help_footer").to_string()
+    } else if state.is_editing_dual_list() {
+        // The generic "Enter:Edit" line is actively wrong once the
+        // two-column picker has the keyboard — Enter no longer starts
+        // an edit, and none of the keys that do move items appear in
+        // it.
+        t!("settings.help_duallist").to_string()
     } else {
         t!("settings.help_default").to_string()
     };
@@ -2374,6 +2478,8 @@ fn render_search_header(frame: &mut Frame, area: Rect, state: &SettingsState, th
         sel_start,
         sel_end,
         label_width: 0,
+        read_only: false,
+        markdown: false,
         key: None,
     };
     let out = crate::widgets::render_spec_no_autofocus(
@@ -3810,5 +3916,104 @@ mod tests {
             value: Rect::new(8, 0, 5, 1),
         };
         assert!(matches!(number, ControlLayoutInfo::Number { .. }));
+    }
+
+    /// Regression for #2765: an *open* settings dropdown must actually paint
+    /// its option rows into the frame.
+    ///
+    /// The shared widget framework (`collect_dropdown`) turns an open
+    /// dropdown's option list into a floating screen-level pop-over and
+    /// discards the inline `option_rows`. The Settings modal does not draw
+    /// those floating pop-overs — it reserves inline rows for the open list —
+    /// so rendering through `render_scalar_via_widget` alone left the reserved
+    /// rows blank and the dropdown opened to an empty box (the Theme and every
+    /// other dynamic dropdown showed no options at runtime).
+    ///
+    /// This drives the real `render_control` paint path (not a hand-built
+    /// widget spec) and asserts the option names land in the painted buffer
+    /// and that per-option hit rects are produced.
+    #[test]
+    fn open_dropdown_paints_option_rows() {
+        use crate::view::controls::DropdownState;
+        use crate::view::theme::{self, Theme};
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        // An open dropdown with distinctive display names (mirrors the Theme
+        // dropdown: display != stored value, e.g. a user theme).
+        let mut dd = DropdownState::with_values(
+            vec![
+                "dark".to_string(),
+                "light".to_string(),
+                "my-cool-theme".to_string(),
+            ],
+            vec![
+                "builtin://dark".to_string(),
+                "builtin://light".to_string(),
+                "my-cool-theme.json".to_string(),
+            ],
+            "Theme",
+        )
+        .with_selected(0);
+        dd.open = true;
+        let control = SettingControl::Dropdown(dd);
+
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let prev = std::collections::HashMap::new();
+
+        let width = 60u16;
+        let height = 6u16;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut layout: Option<ControlLayoutInfo> = None;
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(0, 0, width, height);
+                layout = Some(render_control(
+                    frame,
+                    area,
+                    &control,
+                    "/theme",
+                    0,
+                    &theme,
+                    Some(10),
+                    false,
+                    false,
+                    &prev,
+                ));
+            })
+            .unwrap();
+
+        // The open list must yield one hit rect per option row.
+        match layout {
+            Some(ControlLayoutInfo::Dropdown { option_areas, .. }) => {
+                assert_eq!(
+                    option_areas.len(),
+                    3,
+                    "open dropdown should expose one hit rect per option row"
+                );
+            }
+            other => panic!("expected Dropdown layout, got {other:?}"),
+        }
+
+        // And every option's display name must appear somewhere in the
+        // painted buffer — the pre-fix code painted only the button row, so
+        // the option names were absent.
+        let buffer = terminal.backend().buffer().clone();
+        let screen: String = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        for name in ["dark", "light", "my-cool-theme"] {
+            assert!(
+                screen.contains(name),
+                "option {name:?} not painted in open dropdown; screen was:\n{screen}"
+            );
+        }
     }
 }

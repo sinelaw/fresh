@@ -1,0 +1,217 @@
+"""The anchored viewport.
+
+Replaces the `(top_byte, top_view_line_offset)` pair with a single byte.
+
+Today `top_byte` must be a *logical line start*, so on a file with one enormous
+line it is pinned at 0 and the entire scroll position lives in
+`top_view_line_offset` — a row count the renderer satisfies by building every
+row from byte 0 and then discarding the first N. Every scroll operation and
+every visibility check therefore costs O(scroll depth).
+
+`ViewAnchor.byte` is the byte of the first visible row, wherever that row sits
+inside its logical line. Rendering starts there, so it is O(viewport) at any
+scroll position, and scrolling is arithmetic on row numbers.
+
+This also deletes a class of bug rather than fixing instances of it: with two
+coordinates there was a reconciliation step between them (`calculate_view_anchor`
+re-skipping rows, patched by `snap_to_logical_line_start` and `scrolled_up_in_wrap`
+for fresh#1574). One coordinate has nothing to reconcile.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .wrap_index import RowAddr, WrapIndex
+
+
+@dataclass(slots=True)
+class ViewAnchor:
+    """First visible row, as a buffer byte.
+
+    `row_offset` is a *signed* displacement from the row that `byte` addresses.
+    It is zero for ordinary rows. It goes negative when the viewport starts on an
+    injected row — a plugin virtual line drawn above its anchor — because such a
+    row owns no byte of its own and can only be described relative to one.
+    """
+
+    byte: int = 0
+    row_offset: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ScrollbarState:
+    """What the vertical scrollbar draws.
+
+    Exact under the redesign: `total` and `top` are O(1) and O(log n) reads off
+    the index, so there is no reason left for the approximate logical-line mode
+    or for the `MAX_WRAP_SCROLLBAR_LINES` / `MAX_WRAP_SCROLLBAR_BYTES` guards
+    that decide between them.
+    """
+
+    total_rows: int
+    top_row: int
+    height: int
+    exact: bool = True
+
+    def thumb(self) -> tuple[int, int]:
+        if self.total_rows <= self.height:
+            return (0, self.height)
+        start = self.top_row * self.height // self.total_rows
+        size = max(1, self.height * self.height // self.total_rows)
+        return (start, min(start + size, self.height))
+
+
+class Viewport:
+    """Scroll state for one split, expressed in visual rows."""
+
+    def __init__(self, index: WrapIndex, height: int, anchor: ViewAnchor | None = None) -> None:
+        self.index = index
+        self.height = height
+        self.anchor = anchor or ViewAnchor()
+
+    # -- row coordinates -----------------------------------------------------
+
+    def top_row(self) -> int:
+        return self.index.row_of_byte(self.anchor.byte) + self.anchor.row_offset
+
+    def max_top_row(self) -> int:
+        return max(self.index.total_rows() - self.height, 0)
+
+    def set_top_row(self, row: int) -> None:
+        row = max(0, min(row, self.max_top_row()))
+        addr = self.index.byte_of_row(row)
+        base = self.index.row_of_byte(addr.byte)
+        self.anchor = ViewAnchor(byte=addr.byte, row_offset=row - base)
+
+    def scroll_by_rows(self, delta: int) -> None:
+        """The whole of wheel scrolling.
+
+        Replaces `scroll_up_visual` / `scroll_down_visual` /
+        `apply_visual_scroll_limit` / `find_max_visual_scroll_position` /
+        `clamp_top_byte_wrapped`, none of which can any longer read a 500 KB
+        line twice per event, because none of them read the line at all.
+        """
+        self.set_top_row(self.top_row() + delta)
+
+    def page_down(self) -> None:
+        self.scroll_by_rows(self.height)
+
+    def page_up(self) -> None:
+        self.scroll_by_rows(-self.height)
+
+    # -- cursor visibility ---------------------------------------------------
+
+    def effective_margin(self, margin: int) -> int:
+        """`margin` clamped so the safe band cannot close.
+
+        With `height` rows and a margin at each end the band is
+        `height - 2*margin` rows wide, so a margin of `height // 2` or more
+        leaves nothing to be inside and both edge tests fire at once. Callers
+        pass a configured preference (`scroll_offset`); this is what it means.
+        """
+        return max(0, min(margin, (self.height - 1) // 2))
+
+    def satisfies_margin(self, top: int, cursor_byte: int, margin: int = 0) -> bool:
+        """Would the cursor sit outside both margin bands with the view at `top`?
+
+        The predicate `ensure_visible` establishes, factored out because the
+        minimality property is stated in terms of it.
+        """
+        m = self.effective_margin(margin)
+        row = self.index.row_of_byte(cursor_byte)
+        return top + m <= row <= top + self.height - 1 - m
+
+    def ensure_visible(self, cursor_byte: int, margin: int = 0) -> bool:
+        """Scroll the *minimum* number of rows to satisfy the margin.
+
+        Runs in row space before anything is built, which is what collapses
+        `compute_buffer_layout`'s up-to-three `build_view_data` calls per frame
+        to one: the old code had to build rows to find out whether it needed to
+        scroll, then rebuild because it had.
+
+        Minimum is a real claim, and the one the Rust got wrong twice: no top
+        strictly between the old one and the new one satisfies the margin.
+        Equivalently, the cursor ends up *on* the margin band's edge, never
+        past it — a pass that overshoots leaves the cursor outside the band it
+        just moved it into, and then the next key press finds nothing to do
+        (fresh#1574). Returns whether the viewport moved.
+
+        Two ways this legitimately ends with the margin *unsatisfied*, both
+        clamping rather than exceptions:
+
+        * Near the document's start or end there may be no top that satisfies
+          it — the first row cannot have three rows above it. The cursor is
+          still visible; it just sits closer to the edge than the margin asks.
+        * A document shorter than the viewport pins `top` at 0.
+
+        So the postcondition is `cursor_visible`, plus `satisfies_margin`
+        whenever any reachable top would have.
+        """
+        return self.ensure_visible_at_row(self.index.row_of_byte(cursor_byte), margin)
+
+    def ensure_visible_at_row(self, row: int, margin: int = 0) -> bool:
+        """[`ensure_visible`] with the cursor's row supplied by the caller.
+
+        The row a placement must satisfy is the row the cursor is *drawn* on.
+        For a cursor-blind consumer that is `index.row_of_byte` and the byte
+        overload above is exact. The editor passes an activation-corrected row
+        instead (`EditorModel.cursor_visual_row`), because the cursor's own
+        line renders cursor-aware and can wrap onto different rows than the
+        canonical index says — placing against the canonical row then parks
+        the drawn cursor outside the margin band, and minimality (correctly)
+        refuses to fix it on the next press. That stall is fresh#1574.
+        """
+        m = self.effective_margin(margin)
+        top = self.top_row()
+        if row < top + m:
+            target = row - m
+        elif row > top + self.height - 1 - m:
+            target = row - self.height + 1 + m
+        else:
+            return False
+        self.set_top_row(target)
+        return self.top_row() != top
+
+    def recenter(self, cursor_byte: int) -> bool:
+        """Put the cursor's row in the middle of the viewport (Ctrl+L).
+
+        Unlike `ensure_visible` this is unconditional and *maximal*: the user
+        asked for the cursor to be centred, so it moves even when the cursor is
+        already comfortably visible. The two are otherwise the same operation
+        against a different target row, which is why they belong side by side —
+        `Action::Recenter` reaching for its own scroll path is how the two
+        drifted apart before.
+
+        The centre is `(height - 1) // 2` rows down: the upper of the two middle
+        rows on an even height, so a 2-row viewport centres on its first row
+        rather than scrolling the cursor to the bottom.
+
+        Clamped like every other scroll, so near the document's ends the cursor
+        lands off-centre rather than the view scrolling past the edge.
+        """
+        row = self.index.row_of_byte(cursor_byte)
+        top = self.top_row()
+        self.set_top_row(row - (self.height - 1) // 2)
+        return self.top_row() != top
+
+    def cursor_visible(self, cursor_byte: int) -> bool:
+        row = self.index.row_of_byte(cursor_byte)
+        top = self.top_row()
+        return top <= row < top + self.height
+
+    # -- scrollbar -----------------------------------------------------------
+
+    def scrollbar(self) -> ScrollbarState:
+        return ScrollbarState(
+            total_rows=self.index.total_rows(),
+            top_row=self.top_row(),
+            height=self.height,
+        )
+
+    # -- addressing ----------------------------------------------------------
+
+    def visible_rows(self) -> list[RowAddr]:
+        top = self.top_row()
+        total = self.index.total_rows()
+        return [self.index.byte_of_row(r) for r in range(top, min(top + self.height, total))]

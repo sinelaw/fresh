@@ -81,7 +81,7 @@ pub(super) fn fold_adjusted_visible_count(
 /// currently-collapsed folds. Feed into
 /// [`ViewLineIterator::with_fold_skip`] so hidden content is never
 /// materialised as a ViewLine.
-pub(super) fn fold_skip_set(
+pub(crate) fn fold_skip_set(
     buffer: &Buffer,
     marker_list: &MarkerList,
     folds: &FoldManager,
@@ -228,6 +228,14 @@ pub(super) fn fold_indicators_for_viewport(
     indicators
 }
 
+/// Colour of the unsaved-change decoration: the gutter bar *and* its mark on
+/// the scrollbar track, so one change never shows up in two different colours.
+pub(crate) const UNSAVED_CHANGE_FG: Color = Color::Rgb(100, 149, 237); // Cornflower blue
+
+/// Priority of the unsaved-change decoration on both surfaces. Below the git
+/// gutter's 10, so a committed-vs-HEAD hunk wins a cell they both want.
+pub(crate) const UNSAVED_CHANGE_PRIORITY: i32 = 5;
+
 /// Compute diff-since-saved indicators for the viewport.
 ///
 /// Calls `diff_since_saved()` to get byte ranges that differ from the saved
@@ -245,11 +253,7 @@ pub(super) fn diff_indicators_for_viewport(
     }
 
     let mut indicators = BTreeMap::new();
-    let indicator = LineIndicator::new(
-        "│",
-        Color::Rgb(100, 149, 237), // Cornflower blue
-        5,                         // Lower priority than git gutter (10)
-    );
+    let indicator = LineIndicator::new("│", UNSAVED_CHANGE_FG, UNSAVED_CHANGE_PRIORITY);
 
     let bytes = state.buffer.slice_bytes(viewport_start..viewport_end);
     if bytes.is_empty() {
@@ -275,7 +279,13 @@ pub(super) fn diff_indicators_for_viewport(
         for (i, &byte) in bytes[rel_lo..rel_hi].iter().enumerate() {
             if byte == b'\n' {
                 let next_line_start = viewport_start + rel_lo + i + 1;
-                if next_line_start < viewport_end {
+                // `< hi`, not just `< viewport_end`: a range is half-open, so
+                // one ending exactly on a line boundary — which is what
+                // inserting whole lines produces — covers no byte of the line
+                // that starts there. Marking it anyway put a bar on the first
+                // untouched line after every insertion, and that bar then
+                // vanished on save when git reported the real line set.
+                if next_line_start < hi && next_line_start < viewport_end {
                     indicators
                         .entry(next_line_start)
                         .or_insert_with(|| indicator.clone());

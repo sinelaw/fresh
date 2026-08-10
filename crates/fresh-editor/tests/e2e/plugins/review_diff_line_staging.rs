@@ -83,40 +83,74 @@ fn status_line_number(harness: &EditorTestHarness) -> Option<usize> {
     None
 }
 
-/// Find the diff-buffer line number whose rendered center-panel row contains
-/// `needle`. The center diff panel starts at a fixed screen row, so the
-/// buffer line is `screen_row - CENTER_FIRST_ROW + 1`.
+/// The diff-buffer line whose rendered center-panel row contains `needle`, or
+/// `None` if no visible center-panel row does. The center diff panel starts at
+/// a fixed screen row, so the buffer line is `screen_row - CENTER_FIRST_ROW + 1`
+/// (both this and `status_line_number` are read in the same buffer-line space,
+/// which is what lets `move_cursor_onto` converge the caret onto the needle).
 const CENTER_FIRST_ROW: usize = 7;
-fn diff_line_of(harness: &mut EditorTestHarness, needle: &str) -> usize {
-    harness.render().unwrap();
-    let screen = harness.screen_to_string();
-    for (row, line) in screen.lines().enumerate() {
+fn screen_row_of(harness: &EditorTestHarness, needle: &str) -> Option<usize> {
+    for (row, line) in harness.screen_to_string().lines().enumerate() {
         if row >= CENTER_FIRST_ROW && line.contains(needle) {
-            return row - CENTER_FIRST_ROW + 1;
+            return Some(row - CENTER_FIRST_ROW + 1);
         }
     }
-    panic!(
-        "no center-panel row renders {:?}. Screen:\n{}",
-        needle, screen
-    );
+    None
 }
 
-/// Step the diff cursor down one row at a time until the status bar reports
-/// `target`. Each Down is followed by a semantic wait for the reported line to
-/// change, rather than spinning on a fixed render budget (CONTRIBUTING.md:
-/// "use semantic waiting, not timers"). The cursor only moves downward here,
-/// so `target` must be at or below the current line.
-fn move_cursor_to_line(harness: &mut EditorTestHarness, target: usize) {
-    loop {
-        let current = status_line_number(harness);
-        if current == Some(target) {
+/// Move the diff cursor onto the row that renders `needle`.
+///
+/// Self-correcting and bounded. Each iteration re-reads the caret's line
+/// (`status_line_number`) and the needle's current line (`screen_row_of`) from
+/// the *same* frame and takes a single step toward it — in *either* direction.
+/// Re-deriving the target every step is what makes this robust to the async,
+/// multi-phase hunk-jump/focus repaint: a mid-reflow frame can at worst cost
+/// one corrective step, never strand the cursor. `send_key` moves the caret
+/// synchronously and renders, so no per-step `wait_until` is needed.
+///
+/// The loop bounds *keystrokes*, not time: a needle that never lines up (e.g.
+/// a genuine mapping regression) fails fast with the screen for triage. Frames
+/// where the needle or the `Ln` indicator hasn't rendered yet are waited out
+/// indefinitely instead of consuming steps — otherwise the step cap would be a
+/// disguised in-test timeout, which CONTRIBUTING.md §3 rules out (nextest
+/// bounds the wait externally).
+///
+/// Replaces the old down-only `move_cursor_to_line`, which pressed Down forever
+/// — hanging to the external timeout — whenever the target was mis-derived
+/// above the cursor or the caret was already past it.
+fn move_cursor_onto(harness: &mut EditorTestHarness, needle: &str) {
+    // These diff buffers are a handful of lines; the cap is generous and only
+    // reached on genuine failure. Each step is one synchronous key + render.
+    const MAX_STEPS: usize = 300;
+    for _ in 0..MAX_STEPS {
+        // Re-establish a frame that renders both the caret line and the needle.
+        // The async focus repaint is multi-phase, so a mid-reflow frame can
+        // show neither; waiting is free, stepping on a half-drawn frame is not.
+        harness
+            .wait_until(|h| status_line_number(h).is_some() && screen_row_of(h, needle).is_some())
+            .unwrap();
+        // Both reads come from that same settled frame — which is what lets the
+        // walk converge instead of chasing a target derived from another paint.
+        let current = status_line_number(harness).expect("caret line readable");
+        let target = screen_row_of(harness, needle).expect("needle visible");
+        if current == target {
             return;
         }
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        harness
-            .wait_until(|h| status_line_number(h) != current)
-            .unwrap();
+        let key = if current < target {
+            KeyCode::Down
+        } else {
+            KeyCode::Up
+        };
+        harness.send_key(key, KeyModifiers::NONE).unwrap();
     }
+    panic!(
+        "could not land the diff cursor on a row rendering {:?} within {} steps \
+         (caret at {:?}); screen:\n{}",
+        needle,
+        MAX_STEPS,
+        status_line_number(harness),
+        harness.screen_to_string()
+    );
 }
 
 fn cached_diff(repo: &GitTestRepo) -> String {
@@ -135,19 +169,14 @@ fn test_review_visual_stage_single_added_line() {
     let mut harness = harness_for(&repo);
     open_review_diff(&mut harness);
 
-    // Jump to the hunk, then walk down onto the green "+extra line" row.
+    // Jump to the hunk, then walk onto the green "+extra line" row. Wait for the
+    // async focus repaint to first render the line; `move_cursor_onto` then
+    // self-corrects onto it even if the panel is still settling.
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // Read the row→line mapping only from a converged frame — the async,
-    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
-    // cursor lands off "+extra line" and the wait below hangs until the
-    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
-    // state behind an unbounded wait).
     harness.wait_for_screen_contains("+extra line").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let target = diff_line_of(&mut harness, "+extra line");
-    move_cursor_to_line(&mut harness, target);
+    move_cursor_onto(&mut harness, "+extra line");
 
     // Start a visual selection and stage it.
     harness
@@ -191,13 +220,10 @@ fn test_review_visual_stage_modified_line_pair() {
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
     // Land on the removed "-beta" row, then visual-extend down over "+BETA".
-    // Read the row→line mapping only from a converged frame — the async,
-    // multi-phase hunk-jump repaint can otherwise mis-map the target and hang
-    // the wait below until the external timeout (CONTRIBUTING.md §3/§16).
+    // Wait for the async focus repaint to first render the line; the caret walk
+    // then self-corrects onto it even if the panel is still settling.
     harness.wait_for_screen_contains("-beta").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let target = diff_line_of(&mut harness, "-beta");
-    move_cursor_to_line(&mut harness, target);
+    move_cursor_onto(&mut harness, "-beta");
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
         .unwrap();
@@ -230,15 +256,10 @@ fn test_review_visual_discard_single_added_line() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // Read the row→line mapping only from a converged frame — the async,
-    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
-    // cursor lands off "+extra line" and the wait below hangs until the
-    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
-    // state behind an unbounded wait).
+    // Wait for the async focus repaint to first render the line; the caret walk
+    // then self-corrects onto it even if the panel is still settling.
     harness.wait_for_screen_contains("+extra line").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let target = diff_line_of(&mut harness, "+extra line");
-    move_cursor_to_line(&mut harness, target);
+    move_cursor_onto(&mut harness, "+extra line");
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
         .unwrap();
@@ -273,15 +294,10 @@ fn test_review_visual_discard_status_is_localized() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // Read the row→line mapping only from a converged frame — the async,
-    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
-    // cursor lands off "+extra line" and the wait below hangs until the
-    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
-    // state behind an unbounded wait).
+    // Wait for the async focus repaint to first render the line; the caret walk
+    // then self-corrects onto it even if the panel is still settling.
     harness.wait_for_screen_contains("+extra line").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let target = diff_line_of(&mut harness, "+extra line");
-    move_cursor_to_line(&mut harness, target);
+    move_cursor_onto(&mut harness, "+extra line");
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
         .unwrap();
@@ -290,52 +306,42 @@ fn test_review_visual_discard_status_is_localized() {
         .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
 
-    // The confirmation is shown transiently: applyLineSelection sets it,
-    // then refreshMagitData's updateReviewStatus overwrites it with the
-    // hunk-count summary. Poll every tick and record what the status bar
-    // ever showed, so we deterministically catch the frame regardless of
-    // timing. (This is exactly the window the bug report screenshotted.)
-    let mut saw_localized = false;
-    let mut saw_raw_key = false;
-    let mut reverted = false;
-    for _ in 0..120 {
-        harness.tick_and_render().unwrap();
-        let s = harness.screen_to_string();
-        if s.contains("Lines discarded") {
-            saw_localized = true;
-        }
-        // The buggy emitter leaked `status.lines_discardd` verbatim; guard
-        // against any untranslated `status.lines_*` key reaching the screen.
-        if s.contains("status.lines_") {
-            saw_raw_key = true;
-        }
-        let content = fs::read_to_string(repo.path.join("README.md")).unwrap_or_default();
-        if !content.contains("extra line") {
-            reverted = true;
-        }
-        // Stop once the discard landed *and* we observed its confirmation.
-        if reverted && saw_localized {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        harness.advance_time(std::time::Duration::from_millis(20));
-    }
+    // The plugin holds the confirmation until the user moves off the row it
+    // was issued on, so this is a stable frame rather than the one-frame
+    // window the bug report screenshotted — an indefinite semantic wait
+    // catches it without polling on a timer.
+    //
+    // Waiting on "a lines_* confirmation, localized *or* raw" rather than on
+    // the localized text alone is deliberate: a regression that reinstates
+    // the raw key still satisfies this wait, so the asserts below fail with
+    // the offending screen instead of hanging to nextest's external timeout.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Lines discarded") || s.contains("status.lines_")
+        })
+        .unwrap();
 
+    let screen = harness.screen_to_string();
+    // The buggy emitter leaked `status.lines_discardd` verbatim; guard
+    // against any untranslated `status.lines_*` key reaching the screen.
     assert!(
-        reverted,
-        "line-level discard never reverted the working tree"
-    );
-    assert!(
-        !saw_raw_key,
+        !screen.contains("status.lines_"),
         "line-level discard must not leak a raw i18n key (e.g. \
-         `status.lines_discardd`) into the status bar; last screen:\n{}",
-        harness.screen_to_string()
+         `status.lines_discardd`) into the status bar; screen:\n{screen}"
     );
     assert!(
-        saw_localized,
+        screen.contains("Lines discarded"),
         "line-level discard should show the localized confirmation \
-         \"Lines discarded\"; last screen:\n{}",
-        harness.screen_to_string()
+         \"Lines discarded\"; screen:\n{screen}"
+    );
+
+    // The confirmation is only emitted after the patch applied, so reaching
+    // it means the revert landed; assert the worktree agrees.
+    let content = fs::read_to_string(repo.path.join("README.md")).unwrap();
+    assert!(
+        !content.contains("extra line"),
+        "line-level discard never reverted the working tree; README.md:\n{content}"
     );
 }
 
@@ -365,19 +371,11 @@ fn test_review_visual_stage_only_selected_line_of_hunk() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // The hunk-jump repaint is async + multi-phase (focus mode paints the
-    // focused file's body, then the panel can still reflow). `diff_line_of`
-    // maps a *screen* row to a diff-buffer line against a fixed panel offset,
-    // so sampling a mid-reflow frame yields a wrong target: the cursor lands
-    // off `+ADD1`, `s` stages nothing, and the wait below hangs until the
-    // external timeout. Wait for the body to appear *and* for the async plugin
-    // pipeline to go quiet, so the row→line mapping is read from a converged
-    // frame (CONTRIBUTING.md §3 semantic waiting, §16 no wrong state behind an
-    // unbounded wait).
+    // Wait for the async focus repaint to first render the line; `move_cursor_onto`
+    // then self-corrects onto it even while the panel is still reflowing, so a
+    // mid-reflow frame can't strand the caret off `+ADD1`.
     harness.wait_for_screen_contains("+ADD1").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let target = diff_line_of(&mut harness, "+ADD1");
-    move_cursor_to_line(&mut harness, target);
+    move_cursor_onto(&mut harness, "+ADD1");
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
         .unwrap();
@@ -439,30 +437,14 @@ fn test_review_visual_stage_line_in_second_file() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // Hunk navigation + focus-mode repaint are async *and multi-phase*: focus
-    // mode only paints the focused file's body, and after `+ADDED_B` first
-    // appears the plugin can still reflow the panel. `diff_line_of` maps a
-    // *screen* row to a diff-buffer line against a fixed panel offset
-    // (`CENTER_FIRST_ROW`), so sampling a mid-reflow frame yields a wrong target:
-    // the cursor lands off `+ADDED_B`, `s` stages nothing, and the wait below
-    // hangs until the external timeout. Wait for the body to appear *and* for the
-    // async plugin pipeline to go quiet, so the row→line mapping is read from a
-    // converged frame.
+    // Focus mode only paints the focused (second) file's body, and after
+    // `+ADDED_B` first appears the plugin can still reflow the panel. Wait for
+    // the line to render, then `move_cursor_onto` self-corrects the caret onto
+    // it across any remaining reflow — and panics with the screen if it can't,
+    // so a mapping regression is a clear diagnostic rather than the opaque 180s
+    // timeout this test used to hit (CONTRIBUTING.md §3/§16).
     harness.wait_for_screen_contains("+ADDED_B").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let bravo_added = diff_line_of(&mut harness, "+ADDED_B");
-    move_cursor_to_line(&mut harness, bravo_added);
-
-    // Fail fast if the cursor didn't land on the `+ADDED_B` row. Without this a
-    // mis-mapped target degrades into an opaque 180s timeout on the indefinite
-    // wait below instead of a clear diagnostic (CONTRIBUTING.md §16: don't let a
-    // wrong state hide behind an unbounded wait).
-    assert_eq!(
-        diff_line_of(&mut harness, "+ADDED_B"),
-        bravo_added,
-        "cursor line {bravo_added} must still map to the +ADDED_B row before staging; screen:\n{}",
-        harness.screen_to_string()
-    );
+    move_cursor_onto(&mut harness, "+ADDED_B");
 
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
@@ -507,15 +489,10 @@ fn test_review_visual_unstage_single_added_line() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    // Read the row→line mapping only from a converged frame — the async,
-    // multi-phase hunk-jump repaint can otherwise mis-map the target so the
-    // cursor lands off "+extra line" and the wait below hangs until the
-    // external timeout (CONTRIBUTING.md §3 semantic waiting, §16 no wrong
-    // state behind an unbounded wait).
+    // Wait for the async focus repaint to first render the line; the caret walk
+    // then self-corrects onto it even if the panel is still settling.
     harness.wait_for_screen_contains("+extra line").unwrap();
-    harness.wait_for_async_quiescence(6).unwrap();
-    let target = diff_line_of(&mut harness, "+extra line");
-    move_cursor_to_line(&mut harness, target);
+    move_cursor_onto(&mut harness, "+extra line");
     harness
         .send_key(KeyCode::Char('v'), KeyModifiers::NONE)
         .unwrap();

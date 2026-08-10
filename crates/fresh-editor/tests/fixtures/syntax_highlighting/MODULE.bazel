@@ -1,0 +1,10 @@
+# Bazel module syntax highlighting test
+module(
+    name = "example_project",
+    version = "1.0.0",
+)
+
+bazel_dep(name = "rules_rust", version = "0.57.1")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+use_repo(rust, "rust_toolchains")

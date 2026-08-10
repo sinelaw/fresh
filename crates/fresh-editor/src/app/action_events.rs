@@ -125,7 +125,7 @@ impl crate::app::window::Window {
                 .expect("active window must have a populated split layout")
                 .get(&split_id)?
                 .viewport;
-            Some((vp.top_byte, vp.top_view_line_offset))
+            Some((vp.top_byte(), vp.top_view_line_offset()))
         };
 
         let old_pos = viewport_pos(self)?;
@@ -651,6 +651,10 @@ impl crate::app::window::Window {
         let active_buffer = self.active_buffer();
         let state = self.buffers.get(&active_buffer)?;
         let vs = self.buffers.splits().map(|(_, vs)| vs)?.get(&split_id)?;
+        // Terminal-grid wrap (fresh#2649): rows are exactly the grid width.
+        if vs.viewport.grid_wrap {
+            return Some(vs.viewport.grid_cols());
+        }
         let gutter = vs.viewport.gutter_width(&state.buffer);
         let wrap = WrapConfig::new(
             vs.viewport.effective_width() as usize,

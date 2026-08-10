@@ -51,6 +51,10 @@ pub struct MarkerList {
 }
 
 impl MarkerList {
+    /// Below this many insert-only edits, adjusting one at a time (O(log n)
+    /// each) is cheaper than the batched rebuild (O(markers)).
+    const BULK_ADJUST_MIN_EDITS: usize = 16;
+
     /// Create a new empty marker list
     pub fn new() -> Self {
         Self {
@@ -191,6 +195,48 @@ impl MarkerList {
         }
 
         self.tree.adjust_for_edit(position as u64, -(length as i64));
+    }
+
+    /// Adjust all markers for a batch of non-overlapping edits at once.
+    ///
+    /// `edits` are `(position, deleted_len, inserted_len)` triples describing a
+    /// single bulk edit. Applying them one at a time costs O(markers) per
+    /// deletion, so a replace-all with one edit per match was quadratic; the
+    /// batched path (see [`IntervalTree::adjust_for_bulk_edits`]) is
+    /// O(markers + edits·log edits) and produces the same positions.
+    ///
+    /// Two cases stay on the per-edit path, which is exact either way:
+    /// small batches, where a single O(log n) insertion beats rebuilding the
+    /// whole tree; and batches carrying more than one edit at the same
+    /// position, which the batched path cannot model because it resolves each
+    /// marker against one governing edit. A bulk edit merges its
+    /// same-position edits before it gets here, so that second case is a
+    /// guard rather than a path anything takes today.
+    pub fn adjust_for_bulk_edits(&mut self, edits: &[(usize, usize, usize)]) {
+        let net: Vec<(u64, i64)> = edits
+            .iter()
+            .map(|(pos, del_len, ins_len)| (*pos as u64, *ins_len as i64 - *del_len as i64))
+            .filter(|(_, delta)| *delta != 0)
+            .collect();
+
+        let deletions = net.iter().filter(|(_, delta)| *delta < 0).count();
+        let worth_batching =
+            net.len() > 1 && (deletions > 0 || net.len() >= Self::BULK_ADJUST_MIN_EDITS);
+        if worth_batching && !Self::has_repeated_position(&net) {
+            self.tree.adjust_for_bulk_edits(&net);
+            return;
+        }
+
+        for (pos, delta) in net {
+            self.tree.adjust_for_edit(pos, delta);
+        }
+    }
+
+    /// Whether any two edits share a position.
+    fn has_repeated_position(edits: &[(u64, i64)]) -> bool {
+        let mut positions: Vec<u64> = edits.iter().map(|(pos, _)| *pos).collect();
+        positions.sort_unstable();
+        positions.windows(2).any(|w| w[0] == w[1])
     }
 
     /// Get the total size of the buffer (not directly tracked by IntervalTree)
@@ -342,6 +388,41 @@ impl Default for MarkerList {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A batch carrying two edits at one position falls back to the per-edit
+    /// path, which applies them in turn. The batched path resolves each marker
+    /// against a single governing edit and cannot express that, so the two must
+    /// not diverge — a bulk edit merges same-position edits before this point,
+    /// but nothing in the signature enforces it.
+    #[test]
+    fn bulk_adjust_with_repeated_position_matches_per_edit() {
+        let positions = [0usize, 40, 41, 60, 100];
+        let edits = [(60usize, 13, 0), (60, 0, 1), (40, 16, 0)];
+
+        let mut batched = MarkerList::new();
+        let mut per_edit = MarkerList::new();
+        let ids: Vec<_> = positions
+            .iter()
+            .map(|&pos| (batched.create(pos, false), per_edit.create(pos, false)))
+            .collect();
+
+        batched.adjust_for_bulk_edits(&edits);
+        for (pos, del_len, ins_len) in edits {
+            match ins_len.cmp(&del_len) {
+                std::cmp::Ordering::Greater => per_edit.adjust_for_insert(pos, ins_len - del_len),
+                std::cmp::Ordering::Less => per_edit.adjust_for_delete(pos, del_len - ins_len),
+                std::cmp::Ordering::Equal => {}
+            }
+        }
+
+        for (batched_id, per_edit_id) in ids {
+            assert_eq!(
+                batched.get_position(batched_id),
+                per_edit.get_position(per_edit_id)
+            );
+        }
+        batched.check_invariants().unwrap();
+    }
 
     #[test]
     fn test_new_marker_list() {

@@ -1,0 +1,313 @@
+  /* Web theme: macOS (Light + Dark) — a native-feeling desktop app.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Gated on body.macfam (set by js/15-theme.js for BOTH macOS variants). The
+     chrome COLOURS are inline tokens from applyWebTheme() — a fixed light or
+     dark "System" palette, independent of the editor's TUI theme — so this file
+     is written entirely against those tokens (incl. the --mac-* extras) and one
+     structural pass serves Light and Dark. It owns the STRUCTURE: the
+     wallpaper/bezel opt-out, the full-bleed window, the SF system font, the
+     traffic-light title bar, and the macOS control shapes. The buffer keeps the
+     TUI theme's colours (it reads as the app's content canvas — a dark well
+     under Light chrome, seamless under Dark chrome).
+     Reference metrics match Sonoma/Sequoia: 12px traffic lights on 20px
+     centres, ~28px title bar, 13px SF chrome, 6px control radius, 1px hairlines
+     at ~9% (light) / ~8% (dark), controlAccent selection with white text.
+     ====================================================================== */
+
+  /* The app IS the window: no Cosmos wallpaper margin, no hardware bezel (the
+     bezel is also hidden in layoutShell()). #app is inset below a 28px title
+     bar; APPY tracks that inset, so cell hit-testing stays exact. */
+  body.macfam{background:var(--surface-2)}
+  body.macfam:not(.mobile) #app{left:0;top:28px;right:0;bottom:0}
+  body.macfam:not(.mobile) .menubar{clip-path:none}
+
+  /* SF system font for chrome, a notch smaller than the buffer (macOS chrome is
+     ~13px). The buffer stays monospace (svg.cells is pinned to --mono-family);
+     letter-spacing:normal drops the cell-tracking that proportional text does
+     not want. */
+  body.macfam{
+    --font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","SF Pro Display","Helvetica Neue",Helvetica,Arial,sans-serif;
+    letter-spacing:normal;font-size:13.5px}
+
+  /* ---- title bar: traffic lights + centered document title ---- */
+  #mactitle{display:none}
+  body.macfam:not(.mobile) #mactitle{display:flex;position:fixed;left:0;right:0;top:0;
+    height:28px;z-index:100;align-items:center;pointer-events:none;
+    font:13px/1 var(--font-family);color:var(--mac-title-fg);
+    background:var(--mac-titlebar);border-bottom:1px solid var(--hairline-strong)}
+  /* Three window-control DOTS: 12px circles on 20px centres (Sonoma metrics).
+     Each is one radial gradient per 12px tile — a soft top-lit fill that fades
+     to transparent AT the 6px radius, so the shape is a crisp anti-aliased
+     circle (an earlier version without the transparent stop filled the whole
+     tile and rendered squares). Colours: modern close/min/max reds/ambers/
+     greens with a lighter centre sheen and a darker rim. */
+  body.macfam #mactitle .mt-lights{width:52px;height:12px;margin-left:20px;
+    background:
+      radial-gradient(circle 6px at 6px 5px,#ff8b83 0%,#fb5b52 52%,#e5473d 82%,transparent 100%) 0 0/12px 12px no-repeat,
+      radial-gradient(circle 6px at 6px 5px,#ffd977 0%,#fdbb2c 52%,#e0a024 82%,transparent 100%) 20px 0/12px 12px no-repeat,
+      radial-gradient(circle 6px at 6px 5px,#63e18b 0%,#29c841 52%,#1eae38 82%,transparent 100%) 40px 0/12px 12px no-repeat}
+  body.macfam #mactitle .mt-name{margin:0 auto;font-weight:590;color:var(--mac-title-fg);
+    letter-spacing:.01em;max-width:56%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ---- dropdown item horizontal rhythm ----
+     The base row stacked the TUI's phantom 1-cell border inset (~9.5px, a real
+     border glyph in the terminal but only a 1px CSS border here) + 14px padding
+     + a 12px checkmark gutter + 6px gap → labels landed ~41px from the panel
+     edge, roughly 2× a native menu. Trim the CSS padding and the checkmark
+     gutter so labels sit ~24px in (the ✓ still fits), and pull the right pad in
+     to match — the accelerator stays right-aligned via the flexed .lab. */
+  body.macfam .mitem{padding:0 12px 0 3px}
+  body.macfam .mitem .lab{gap:3px}
+  body.macfam .mitem .check{width:10px}
+
+  /* List/row hover: the shared --hover reads heavy and muddy over the light macOS
+     chrome; use a whisper of neutral tint instead (the accent stays reserved for
+     the actual selection). */
+  body.macfam .palette .prow:not(.sel):hover,
+  body.macfam .popup .popup-row:not(.sel):not(.disabled):hover,
+  body.macfam .settings-modal .set-cat:not(.sel):hover,
+  body.macfam .kbedit .kb-row:not(.sel):not(.kb-head):hover{
+    background:color-mix(in srgb,var(--fg) 7%,transparent)}
+
+  /* ---- menu bar: a light unified toolbar beneath the title bar ---- */
+  body.macfam .menubar{background:var(--shell);border-bottom:1px solid var(--hairline-strong)}
+  body.macfam .menu{color:var(--fg);font-weight:500}
+  body.macfam .menu:hover{background:var(--hover)}
+  body.macfam .menu.open{background:var(--ui-accent);color:#fff}
+
+  /* ---- tabs: quiet, with a slim blue active underline ---- */
+  body.macfam .tabbar{background:var(--surface-2);border-bottom:1px solid var(--hairline-strong)}
+  body.macfam .tab{color:var(--muted)}
+  body.macfam .tab.active{background:var(--surface);color:var(--fg)}
+  body.macfam .tab:not(.active):hover{background:var(--hover)}
+  body.macfam .tab.active::after{height:2px;background:var(--ui-accent)}
+  /* Close button: a circular hover target (macOS document tabs), not a square. */
+  body.macfam .tab .x{border-radius:50%;width:15px;height:15px;line-height:14px}
+  body.macfam .tab .x:hover{background:color-mix(in srgb,var(--fg) 16%,transparent);color:var(--fg)}
+
+  /* ---- sidebar (file explorer): a source list with an inset rounded
+     selection pill (Big Sur source list) ---- */
+  body.macfam .fileexplorer{background:var(--mac-sidebar);border-right:1px solid var(--hairline-strong)}
+  body.macfam .fileexplorer .fx-title{color:var(--muted);font-weight:600;text-transform:none}
+  body.macfam .fileexplorer .fx-list{padding:5px 8px}
+  body.macfam .fileexplorer .fx-row{border-radius:6px;margin:1px 0}
+  /* macOS sidebars select with a SOFT neutral pill + dark label — the accent
+     blue is reserved for menus / buttons / the focused control (see the Mail
+     reference). Icons keep their tint through the selection. */
+  body.macfam .fileexplorer .fx-row.sel{
+    background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg);box-shadow:none}
+  body.macfam .fileexplorer .fx-row.sel .fx-name{color:var(--fg)}
+  body.macfam .fileexplorer .fx-row.sel .fx-chev{color:var(--muted)}
+  body.macfam .fileexplorer .fx-row.sel .fx-icon{color:var(--muted)}
+  body.macfam .fileexplorer .fx-icon.dir,
+  body.macfam .fileexplorer .fx-row.sel .fx-icon.dir{color:var(--ui-accent)}
+
+  /* ---- status bar: a quiet strip matching the frame ---- */
+  body.macfam .statusbar{background:var(--shell);color:var(--status-fg);
+    border-top:1px solid var(--hairline-strong)}
+  body.macfam .statusbar .txt{color:var(--fg)}
+
+  /* ---- floating chrome ----
+     Menus / popovers / context menus use a near-opaque "menu" material (macOS
+     menus barely show content behind them); the large surfaces (palette,
+     Settings, dialogs) use a more translucent vibrancy. Both get the macOS
+     shadow + a hairline edge. */
+  body.macfam .dropdown,body.macfam .popup,body.macfam .ctxmenu{
+    background:color-mix(in srgb,var(--bg2) 84%,transparent);color:var(--fg);
+    -webkit-backdrop-filter:blur(50px) saturate(1.9);backdrop-filter:blur(50px) saturate(1.9);
+    border:1px solid var(--hairline-strong)}
+  body.macfam .palette,body.macfam .settings-modal,body.macfam .kbedit,
+  body.macfam .trustdialog,body.macfam .auxmodal,
+  body.macfam .widget-surface.w-floatingModal,body.macfam .palette.centered{
+    background:var(--mac-panel);color:var(--fg);
+    -webkit-backdrop-filter:blur(60px) saturate(2);backdrop-filter:blur(60px) saturate(2);
+    border:1px solid var(--hairline-strong)}
+
+  /* Selection language, macOS-accurate:
+     • SOURCE LISTS / menus / list rows → a flat accent fill, white text.
+     • MENU + CONTEXT-MENU items → an INSET rounded highlight (Sonoma), drawn as
+       a ::before pill so it floats clear of the panel edge.
+     • FORM rows (a focused Settings item) → a SUBTLE accent tint with normal
+       text, never a full saturated bar. */
+  body.macfam .palette .prow.sel,
+  body.macfam .settings-modal .set-cat.sel,body.macfam .settings-modal .set-dual-row.sel,
+  body.macfam .kbedit .kb-row.sel,body.macfam .w-list-row.sel,
+  body.macfam .auxmodal .am-line.sel,body.macfam .settings-modal .set-sresult.sel,
+  body.macfam .menu.open,
+  body.macfam .set-dd-row.sel{
+    background:var(--ui-accent);color:#fff;box-shadow:none}
+  body.macfam .palette .prow.sel .pdesc,body.macfam .palette .prow.sel .pkey{
+    color:rgba(255,255,255,.82);border-color:rgba(255,255,255,.4)}
+  /* Inset rounded menu / context highlight. The rows need a stacking context so
+     the negatively-z'd ::before pill stays above the panel but below the text
+     (.mitem is already absolute+z-indexed; give the others one). */
+  body.macfam .ctxmenu .ctxitem,body.macfam .popup .popup-row{position:relative;z-index:0}
+  body.macfam .mitem.hi,body.macfam .ctxmenu .ctxitem.sel,body.macfam .popup .popup-row.sel{
+    background:transparent;color:#fff}
+  body.macfam .mitem.hi::before,body.macfam .ctxmenu .ctxitem.sel::before,
+  body.macfam .popup .popup-row.sel::before{
+    content:"";position:absolute;left:5px;right:5px;top:1px;bottom:1px;
+    border-radius:5px;background:var(--ui-accent);z-index:-1}
+  /* A dropdown .mitem already sits one CELL (~9.5px) inside its panel, so the
+     +5px pill above floated ~14px from the edge — far looser than a native menu.
+     Pull it back out so the accent bar hugs the panel at ~6px, like macOS. */
+  body.macfam .mitem.hi::before{left:-3px;right:-3px}
+  body.macfam .mitem.hi .accel,body.macfam .mitem.hi .arrow{color:rgba(255,255,255,.82)}
+  /* Focused Settings row: subtle tint, dark label kept. */
+  body.macfam .settings-modal .set-item.sel{
+    background:color-mix(in srgb,var(--ui-accent) 13%,transparent);color:var(--fg);box-shadow:none}
+
+  /* Plugin context menu (an anchored floating modal) → a real macOS menu:
+     near-opaque menu material and BORDERLESS rows with an inset highlight,
+     instead of a stack of bordered push-buttons. */
+  body.macfam .widget-surface.w-floatingModal.anchored{
+    background:color-mix(in srgb,var(--bg2) 84%,transparent);border:1px solid var(--hairline-strong);
+    border-radius:8px;   /* was the base 12px — too bubbly for a menu; match .ctxmenu */
+    -webkit-backdrop-filter:blur(50px) saturate(1.9);backdrop-filter:blur(50px) saturate(1.9)}
+  body.macfam .w-floatingModal.anchored .w-button{
+    background:transparent;border:none;border-radius:5px;padding:3px 12px;
+    position:relative;z-index:0;color:var(--fg)}
+  /* The selected/hovered row shows ONLY the inset accent pill — kill the generic
+     focus box-shadow ring (60-polish.css) that otherwise draws a second, softer
+     rectangle OUTSIDE the pill (the "double border"). */
+  body.macfam .w-floatingModal.anchored .w-button.focus,
+  body.macfam .w-floatingModal.anchored .w-button.sel,
+  body.macfam .w-floatingModal.anchored .w-button.primary{box-shadow:none;outline:none}
+  /* The header row (workspace name / "create") and the footer hint ("Esc to
+     close") are `.w-raw` captions, not selectable rows — make them read as
+     chrome: small and muted, the header a semibold caption, the footer set off
+     by a hairline. Otherwise they look like plain disabled menu items. */
+  body.macfam .w-floatingModal.anchored .w-raw{color:var(--muted);padding:1px 12px}
+  /* Header (the context name): near item size so it doesn't read as a jarringly
+     smaller line — differentiated by weight + muted colour, not by shrinking. */
+  body.macfam .w-floatingModal.anchored .w-raw:first-child{
+    font-size:13px;font-weight:600;padding:3px 12px 4px}
+  /* Footer hint: a genuine secondary hint, so a step smaller, set off by a rule. */
+  body.macfam .w-floatingModal.anchored .w-raw:last-child{
+    font-size:11px;padding:4px 12px 2px;margin-top:3px;border-top:1px solid var(--hairline)}
+  body.macfam .w-floatingModal.anchored .w-button.primary,
+  body.macfam .w-floatingModal.anchored .w-button.sel,
+  body.macfam .w-floatingModal.anchored .w-button:hover{color:#fff}
+  body.macfam .w-floatingModal.anchored .w-button.primary::before,
+  body.macfam .w-floatingModal.anchored .w-button.sel::before,
+  body.macfam .w-floatingModal.anchored .w-button:hover::before{
+    content:"";position:absolute;inset:1px 4px;border-radius:5px;background:var(--ui-accent);z-index:-1}
+
+  /* Controls. The value pop-ups / fields default to var(--bg) (the dark buffer
+     colour) — repoint them at the light/dark chrome so they read as macOS
+     pop-up buttons and text fields, not black chips. */
+  body.macfam .settings-modal .set-pill,body.macfam .settings-modal .set-field,
+  body.macfam .settings-modal .set-step,body.macfam .set-dd,
+  body.macfam .set-dd-row{
+    background:var(--mac-btn);border-color:var(--hairline-strong);color:var(--fg)}
+  body.macfam .set-dd{background:color-mix(in srgb,var(--bg2) 97%,transparent)}
+  body.macfam .set-dd-row{background:transparent;border:none}
+  /* Off-state toggle track: a neutral system gray (on-state stays accent —
+     scope to :not(.on) so it doesn't out-specify the .on fill). */
+  body.macfam .settings-modal .set-switch:not(.on),
+  body.macfam .w-toggle:not(.on) .w-box{
+    background:color-mix(in srgb,var(--fg) 19%,transparent)}   /* light neutral, ~macOS #E9E9EA */
+  body.macfam .settings-modal .set-switch.on{background:var(--ui-accent)}
+  /* Switch shape — the base 26×14 with a 10px knob reads thin and the knob
+     floats; macOS System Settings switches are a chunkier ~1.75:1 pill whose
+     knob nearly fills the track (~1.5px margin) with a faint drop shadow. */
+  body.macfam .settings-modal .set-switch,
+  body.macfam .w-toggle .w-box{width:30px;height:18px;border-radius:9px}   /* ~1.7:1, full pill */
+  body.macfam .settings-modal .set-switch::after,
+  body.macfam .w-toggle .w-box::after{
+    width:15px;height:15px;top:1.5px;left:1.5px;   /* knob fills ~0.85, ~1.5px inset */
+    box-shadow:0 1px 2px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.04)}
+  body.macfam .settings-modal .set-switch.on::after,
+  body.macfam .w-toggle.on .w-box::after{left:13.5px}   /* travel = 30−15−1.5−1.5 */
+
+  /* Buttons: a macOS push button (light or dark) + a filled-accent primary. */
+  body.macfam .settings-modal .btn,body.macfam .trustdialog .td-btn,
+  body.macfam .kbedit .kb-btn,body.macfam .w-button{
+    background:var(--mac-btn);border:1px solid var(--hairline-strong);color:var(--mac-btn-fg)}
+  /* Big Sur push buttons are a near-FLAT solid accent with a faint top sheen
+     (not a gradient) — cf. the "Try now" pill / Control Center. */
+  body.macfam .settings-modal .btn.primary,body.macfam .trustdialog .td-btn.primary,
+  body.macfam .w-button.primary{
+    background:var(--ui-accent);border:1px solid color-mix(in srgb,var(--ui-accent) 78%,#000);color:#fff;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 1px 1.5px rgba(0,0,0,.14)}
+
+  /* Editor pane reads as a content well; a hairline separates it from the
+     lighter chrome (invisible against the seamless Dark chrome). */
+  body.macfam .pane-content,body.macfam .pane-gutter{box-shadow:inset 0 1px 0 var(--hairline)}
+
+  /* ---- orchestrator dock: a flush source list (Cosmos glass is off) ---- */
+  body.macfam:not(.mobile) .widget-surface.w-dock{
+    background:var(--mac-sidebar);border-right:1px solid var(--hairline-strong);
+    color:var(--fg);padding:12px 10px 8px}
+  /* Roomier source-list rows (macOS spacing). */
+  body.macfam .w-dock .w-tree-row,body.macfam .w-dock .w-list-row{padding:3px 8px}
+  /* Selection semantics (Big Sur source list): a soft NEUTRAL pill for rows,
+     and a soft-filled CARD with a faint accent edge — the accent blue is kept
+     for menus / buttons, not the persistent sidebar. */
+  body.macfam .w-dock .w-tree-row.sel,body.macfam .w-dock .w-list-row.sel{
+    background:color-mix(in srgb,var(--fg) 10%,transparent);color:var(--fg);box-shadow:none}
+  body.macfam .w-dock .w-tree-card,body.macfam .w-dock .w-list-card{
+    border-color:var(--hairline-strong);background:transparent;padding:3px 4px;margin:2px 1px}
+  body.macfam .w-dock .w-tree-card.sel,body.macfam .w-dock .w-list-card.sel{
+    background:color-mix(in srgb,var(--fg) 8%,transparent);
+    border-color:color-mix(in srgb,var(--ui-accent) 42%,transparent);color:var(--fg);box-shadow:none}
+  /* Inside a selected card the whole card IS the selection — don't re-fill the
+     primary row blue; keep the detail line muted. */
+  body.macfam .w-dock .w-tree-card.sel .w-tree-row.sel,
+  body.macfam .w-dock .w-tree-card.sel .w-tree-row{background:transparent;color:var(--fg)}
+  body.macfam .w-dock .w-tree-card.sel .w-tree-xrow{background:transparent;color:var(--muted)}
+  body.macfam .w-dock .w-button.primary{
+    background:var(--ui-accent);border:1px solid color-mix(in srgb,var(--ui-accent) 78%,#000);color:#fff;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 1px 1.5px rgba(0,0,0,.14)}
+  /* Text fields, in ONE place. The base styles `.w-text` per surface with
+     background:var(--bg) — the dark BUFFER colour — so any surface macOS didn't
+     explicitly repoint (e.g. the plugin dialog fields in the New Workspace modal)
+     rendered as black chips. Repoint every text field here so they all read as
+     one light macOS text field and a new field inherits it automatically. The
+     dock search field below only adds its magnifier + radius on top. */
+  body.macfam .w-text,
+  body.macfam .w-floatingModal .w-text,
+  body.macfam .w-floatingModal>.w-section .w-text,
+  body.macfam .trustdialog .w-text,body.macfam .auxmodal .w-text{
+    background:var(--surface);border:1px solid var(--hairline-strong);color:var(--fg)}
+  /* Search field: a macOS rounded search field with a leading magnifier. */
+  body.macfam .w-dock .w-text{border-radius:7px;padding:2px 8px}
+  body.macfam .w-dock .w-text::before{content:"⌕";color:var(--muted);font-size:1.2em;line-height:1;margin-right:2px}
+  body.macfam .w-dock .w-button{background:var(--mac-btn);border:1px solid var(--hairline-strong);color:var(--mac-btn-fg)}
+  body.macfam .w-dock .w-toggle{color:var(--fg)}
+  body.macfam .w-dock .w-divider{border-color:var(--hairline)}
+  body.macfam .w-dock .w-hintbar,body.macfam .w-dock .fx-title{color:var(--muted)}
+  body.macfam .w-dock .w-hint b{color:var(--ui-accent)}
+
+  /* ---- Plugin form dialogs (Run Agent &c.) → a native macOS sheet ----
+     Scoped to a non-anchored floating modal that is a plain form (no
+     `.w-section` fieldsets — that's the larger New Workspace dialog). Layout
+     lives here under .macfam so BOTH macOS variants share identical sizing;
+     only the colour tokens differ between light and dark. */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)){padding:0;border-radius:10px;overflow:hidden}
+  /* Header: centred title on a faintly-separated bar, close on the far right. */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-modal-titlebar{
+    position:relative;justify-content:center;padding:9px 14px;margin:0;
+    background:color-mix(in srgb,var(--fg) 4%,transparent);
+    border-bottom:1px solid var(--hairline)}
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-modal-title{
+    flex:0 1 auto;text-align:center;font-weight:590;font-size:.92em;color:var(--mac-title-fg)}
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-modal-close{
+    position:absolute;right:9px;top:50%;transform:translateY(-50%)}
+  /* Body padding (the form column). */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section))>.w-col{padding:14px 22px 16px;gap:4px}
+  /* Right-aligned label column (macOS form convention). */
+  body.macfam .w-flabel{text-align:right;padding-right:10px;color:var(--muted)}
+  /* Pop-up buttons: a real macOS pop-up (bevel + accent disclosure). */
+  body.macfam .w-floatingModal .w-dd-pill{
+    background:var(--mac-btn);border:1px solid var(--hairline-strong);color:var(--mac-btn-fg);
+    border-radius:6px;padding:2px 9px;box-shadow:inset 0 1px 0 rgba(255,255,255,.10),0 1px 1px rgba(0,0,0,.10)}
+  body.macfam .w-floatingModal .w-dropdown.focus .w-dd-pill{
+    outline:none;border-color:var(--ui-accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--ui-accent) 30%,transparent)}
+  /* Keep the label-first toggle's label neutral (don't inherit the on-accent). */
+  body.macfam .w-toggle.labelfirst .w-flabel{color:var(--muted)}
+  /* Buttons: give the centred group room to breathe. */
+  body.macfam .w-floatingModal:not(.anchored):not(:has(>.w-section)) .w-button{padding:4px 18px;border-radius:6px}

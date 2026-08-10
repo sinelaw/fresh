@@ -19,13 +19,14 @@ use fresh_core::api::{
     BufferGroupResult, BufferInfo, BufferSavedDiff, CompositeHunk, CompositeLayoutConfig,
     CompositePaneStyle, CompositeSourceConfig, CreateCompositeBufferOptions, CreateTerminalOptions,
     CreateVirtualBufferInExistingSplitOptions, CreateVirtualBufferInSplitOptions,
-    CreateVirtualBufferOptions, CursorInfo, DirEntry, FormatterPackConfig, GrammarInfoSnapshot,
-    GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry, KeyEventPayload,
-    LanguagePackConfig, LayoutHints, LspServerPackConfig, OverlayColorSpec, OverlayOptions,
-    PluginAnimationEdge, PluginAnimationKind, ProcessLimitsPackConfig, RemoteBackendInfo,
-    ReplaceResult, ScreenSize, SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult,
-    TextPropertiesAtCursor, TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire,
-    ViewTokenWireKind, ViewportInfo, VirtualBufferResult, WindowInfo,
+    CreateVirtualBufferOptions, CursorInfo, DiffBaselineResult, DirEntry, FormatterPackConfig,
+    GrammarInfoSnapshot, GrepMatch, JsDiagnostic, JsPosition, JsRange, JsTextPropertyEntry,
+    KeyEventPayload, LanguagePackConfig, LayoutHints, LineDiffHunk, LspServerPackConfig,
+    OverlayColorSpec, OverlayOptions, PluginAnimationEdge, PluginAnimationKind,
+    ProcessLimitsPackConfig, RemoteBackendInfo, ReplaceResult, ScreenSize, ScrollbarMarker,
+    SearchTakeResult, SpawnResult, SplitSnapshot, TerminalResult, TextPropertiesAtCursor,
+    TokenColor, TsHighlightSpan, ViewTokenStyle, ViewTokenWire, ViewTokenWireKind, ViewportInfo,
+    VirtualBufferResult, WindowInfo,
 };
 use fresh_core::command::Suggestion;
 use fresh_core::file_explorer::{
@@ -57,8 +58,17 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "ScreenSize" => Some(ScreenSize::decl(&cfg)),
         "KeyEventPayload" => Some(KeyEventPayload::decl(&cfg)),
         "SplitSnapshot" => Some(SplitSnapshot::decl(&cfg)),
+        "SplitCreated" => Some(fresh_core::api::SplitCreated::decl(&cfg)),
+        "SplitWindowOptions" => Some(fresh_core::api::SplitWindowOptions::decl(&cfg)),
+        "SplitAxis" => Some(fresh_core::api::SplitAxis::decl(&cfg)),
+        "SplitPlacement" => Some(fresh_core::api::SplitPlacement::decl(&cfg)),
+        "LineTarget" => Some(fresh_core::api::LineTarget::decl(&cfg)),
+        "PaneDescription" => Some(fresh_core::api::PaneDescription::decl(&cfg)),
+        "WorkspaceDescription" => Some(fresh_core::api::WorkspaceDescription::decl(&cfg)),
         "ActionSpec" => Some(ActionSpec::decl(&cfg)),
         "BufferSavedDiff" => Some(BufferSavedDiff::decl(&cfg)),
+        "LineDiffHunk" => Some(LineDiffHunk::decl(&cfg)),
+        "DiffBaselineResult" => Some(DiffBaselineResult::decl(&cfg)),
         "LayoutHints" => Some(LayoutHints::decl(&cfg)),
 
         // Process types
@@ -107,6 +117,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // UI types (ts-rs renames these with Ts prefix)
         "TsActionPopupAction" | "ActionPopupAction" => Some(ActionPopupAction::decl(&cfg)),
         "ActionPopupOptions" => Some(ActionPopupOptions::decl(&cfg)),
+        "AddMenuItemOptions" => Some(fresh_core::api::AddMenuItemOptions::decl(&cfg)),
         "TsLspMenuItem" | "LspMenuItem" => Some(fresh_core::api::LspMenuItem::decl(&cfg)),
         "TsHighlightSpan" => Some(TsHighlightSpan::decl(&cfg)),
         "FileExplorerDecoration" => Some(FileExplorerDecoration::decl(&cfg)),
@@ -149,6 +160,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // Overlay/inline styling types
         "OverlayOptions" => Some(OverlayOptions::decl(&cfg)),
         "OverlayColorSpec" => Some(OverlayColorSpec::decl(&cfg)),
+        "ScrollbarMarker" => Some(ScrollbarMarker::decl(&cfg)),
         "InlineOverlay" => Some(InlineOverlay::decl(&cfg)),
         "OffsetUnit" => Some(fresh_core::text_property::OffsetUnit::decl(&cfg)),
         "StyledSegment" => Some(fresh_core::text_property::StyledSegment::decl(&cfg)),
@@ -184,9 +196,32 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         // and this crate must not depend on it. Keep in sync.
         "RemoteIndicatorStatePayload" => Some(REMOTE_INDICATOR_STATE_DECL.to_string()),
 
+        // Typed plugin paths. A bare `string` (an authority path on the active
+        // window) stays valid everywhere for backward compatibility; these two
+        // tag a path for a specific filesystem. Hand-written because the
+        // authoritative `PluginPath` enum is decoded in the backend, not
+        // ts-rs-derived. Keep in sync with `fresh_core::api::PluginPath` and
+        // `editor.localPath` / `editor.windowPath`.
+        "LocalPath" => Some(LOCAL_PATH_DECL.to_string()),
+        "WindowPath" => Some(WINDOW_PATH_DECL.to_string()),
+        "AuthorityPath" => Some(AUTHORITY_PATH_DECL.to_string()),
+
         _ => None,
     }
 }
+
+/// A path that always resolves on the local editor host. Built via
+/// `editor.localPath(...)`.
+const LOCAL_PATH_DECL: &str = r#"type LocalPath = { kind: "local"; value: string };"#;
+
+/// A path that resolves on a specific window's authority filesystem. Built via
+/// `editor.windowPath(windowId, ...)`.
+const WINDOW_PATH_DECL: &str =
+    r#"type WindowPath = { kind: "authority"; window: number; value: string };"#;
+
+/// A path that resolves on the active window's authority filesystem, stated
+/// explicitly. Built via `editor.authorityPath(...)`.
+const AUTHORITY_PATH_DECL: &str = r#"type AuthorityPath = { kind: "authority"; value: string };"#;
 
 /// Hand-written declaration for `AuthorityPayload` and its helpers.
 /// See the doc comment on the match arm for why this isn't ts-rs.
@@ -309,6 +344,13 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ScreenSize",                      // Used by editor.getScreenSize()
     "KeyEventPayload",                 // Used by editor.getNextKey()
     "SplitSnapshot",                   // Used by editor.listSplits()
+    "SplitCreated",                    // Resolved by editor.splitWindow()
+    "SplitWindowOptions",              // Options for editor.splitWindow()
+    "SplitAxis",                       // SplitWindowOptions.direction
+    "SplitPlacement",                  // SplitWindowOptions.place
+    "LineTarget",                      // Used by editor.setLineTargets()
+    "PaneDescription",                 // Part of WorkspaceDescription
+    "WorkspaceDescription",            // Returned by editor.describeWorkspace()
     "LayoutHints",                     // Used by plugins for view transforms
     "ViewTokenWire",                   // Used by plugins for view transforms
     "ViewTokenWireKind",               // Used by ViewTokenWire
@@ -325,6 +367,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     "ActionSpec",                      // Used by executeActions
     "TsActionPopupAction",             // Used by ActionPopupOptions.actions
     "ActionPopupOptions",              // Used by showActionPopup
+    "AddMenuItemOptions",              // Used by addMenuItem
     "TsLspMenuItem",                   // Used by setLspMenuContributions
     "FileExplorerDecoration",          // Used by setFileExplorerDecorations
     "FileExplorerSlotEntry",           // Used by setFileExplorerSlots
@@ -516,6 +559,19 @@ interface HookEventMap {
   focus_gained: Record<string, never>;
   authority_changed: { label: string };
   trust_changed: { level: "trusted" | "restricted" | "blocked" };
+  /**
+   * The effective config changed — the user saved from the Settings UI,
+   * or the config was reloaded from disk. Payload-free by design:
+   * re-read what you care about with `editor.getPluginConfig()` /
+   * `editor.getConfig()`, both of which already reflect the new values
+   * when the handler runs.
+   *
+   * Any plugin that caches a `defineConfigX` value (rather than reading
+   * it at point of use) should subscribe, or its setting will appear to
+   * do nothing until the editor restarts. Does not fire for the
+   * plugin's own `editor.setSetting(...)` writes.
+   */
+  config_changed: Record<string, never>;
 
   // ── buffer lifecycle ─────────────────────────────────────────────────────
   buffer_activated: { buffer_id: number };
@@ -527,6 +583,15 @@ interface HookEventMap {
   after_file_open: { path: string; buffer_id: number };
   before_file_save: { path: string; buffer_id: number };
   after_file_save: { path: string; buffer_id: number };
+  /**
+   * Fired after a buffer is reloaded from disk: auto-revert picked up an
+   * external change (e.g. `git checkout <ref> -- <file>` in another
+   * terminal), or the user ran an explicit revert. Reloads don't fire
+   * `after_file_save`, so plugins that surface disk-derived state
+   * (git gutter, etc.) should subscribe to this too or their decorations
+   * go stale on every external reset.
+   */
+  after_file_revert: { path: string; buffer_id: number };
   /**
    * Fired by the file explorer after a paste/duplicate/etc. mutates
    * the filesystem without going through a buffer save. Plugins that
@@ -595,18 +660,18 @@ interface HookEventMap {
      * coordinate-mapping APIs to repair stale offsets from this batch. */
     epoch: number;
   };
-  view_transform_request: {
-    buffer_id: number;
-    split_id: number;
-    viewport_start: number;
-    viewport_end: number;
-    tokens: ViewTokenWire[];
-    cursor_positions: number[];
-  };
 
   // ── commands ─────────────────────────────────────────────────────────────
   pre_command: { action: string | Record<string, unknown> };
   post_command: { action: string | Record<string, unknown> };
+  /**
+   * NOT EMITTED. Declared here historically, but nothing in the editor ever
+   * fires it: `editor.on("idle", ...)` registers successfully and the handler
+   * is never called. Listed so that its absence is documented rather than
+   * discovered — do not build on it. For "run something later", drive it from
+   * an event that does fire (`cursor_moved`, `buffer_changed`) or from your
+   * own `spawnProcess` timer.
+   */
   idle: { milliseconds: number };
   resize: { width: number; height: number };
 
@@ -871,6 +936,8 @@ mod tests {
             "SplitSnapshot",
             "ActionSpec",
             "BufferSavedDiff",
+            "LineDiffHunk",
+            "DiffBaselineResult",
             "LayoutHints",
             "SpawnResult",
             "BackgroundProcessResult",
@@ -1305,6 +1372,13 @@ mod tests {
             "pathExtname",
             "pathIsAbsolute",
             "utf8ByteLength",
+            "computeLineDiff",
+            "registerDiffBaseline",
+            "diffAgainstBaseline",
+            "diffBaselinePair",
+            "getBaselineLines",
+            "refreshDiffBaseline",
+            "releaseDiffBaseline",
             "fileExists",
             "readFile",
             "writeFile",
@@ -1371,8 +1445,6 @@ mod tests {
             "addSoftBreak",
             "clearSoftBreakNamespace",
             "clearSoftBreaksInRange",
-            "submitViewTransform",
-            "clearViewTransform",
             "setLayoutHints",
             "setFileExplorerDecorations",
             "clearFileExplorerDecorations",
@@ -1457,6 +1529,9 @@ mod tests {
             "unloadPlugin",
             "reloadPlugin",
             "listPlugins",
+            "reloadInit",
+            "runCommand",
+            "listCommands",
             "mountFloatingWidget",
             "updateFloatingWidget",
             "unmountFloatingWidget",

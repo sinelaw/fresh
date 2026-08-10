@@ -108,6 +108,9 @@ pub struct QuickOpenContext {
     pub buffer_mode: Option<String>,
     /// Whether the active buffer's language has an LSP server configured
     pub has_lsp_config: bool,
+    /// What the active buffer can be asked to do (save, revert, accept edits).
+    /// Shared with the menus so both surfaces gate on the same answers.
+    pub buffer_caps: crate::app::buffer_capabilities::BufferCapabilities,
     /// Whether relative line numbers are enabled
     pub relative_line_numbers: bool,
 }

@@ -1245,7 +1245,7 @@ async function start_merge_conflict() : Promise<void> {
   let content: string;
   if (catFileResult.exit_code !== 0) {
     editor.debug(`Merge: git show :0: failed, reading working tree file`);
-    const fileContent = await editor.readFile(info.path);
+    const fileContent = await editor.readFile(editor.authorityPath(info.path));
     if (!fileContent) {
       editor.setStatus(editor.t("status.failed_read"));
       return;
@@ -1253,7 +1253,7 @@ async function start_merge_conflict() : Promise<void> {
     content = fileContent;
   } else {
     // The staged version shouldn't have conflict markers, use working tree
-    const fileContent = await editor.readFile(info.path);
+    const fileContent = await editor.readFile(editor.authorityPath(info.path));
     if (!fileContent) {
       editor.setStatus(editor.t("status.failed_read"));
       return;
@@ -1756,6 +1756,15 @@ editor.on("after_file_open", async (data) => {
   // File-open is a strong signal that state may have changed externally
   // (e.g. user ran `git merge` then opened the conflicted file). Bypass the
   // per-path TTL so the detection still runs.
+  detectionLastCheck.delete(data.path);
+  await detectMergeConflictFor(data.path, () =>
+    editor.t("status.detected_file", { path: data.path }),
+  );
+});
+editor.on("after_file_revert", async (data) => {
+  // The buffer was reloaded because the file changed on disk while open
+  // (e.g. `git merge` / `git checkout` ran in another terminal) — conflict
+  // markers may have appeared or vanished. Same TTL bypass as file-open.
   detectionLastCheck.delete(data.path);
   await detectMergeConflictFor(data.path, () =>
     editor.t("status.detected_file", { path: data.path }),

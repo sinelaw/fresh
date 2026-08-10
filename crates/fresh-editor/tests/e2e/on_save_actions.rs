@@ -10,7 +10,7 @@
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
-use fresh::config::{Config, FormatterConfig, LanguageConfig, OnSaveAction};
+use fresh::config::{Config, FormatterConfig, LanguageConfig, LineEndingOption, OnSaveAction};
 use tempfile::TempDir;
 
 /// Test format_on_save with formatter (replaces buffer content)
@@ -664,6 +664,139 @@ fn test_whitespace_cleanup_combined() {
     // File on disk should also be cleaned up
     let disk_content = std::fs::read_to_string(&file_path).unwrap();
     assert_eq!(disk_content, "line 1\nline 2\nline 3\n");
+}
+
+/// Regression for #2706 (symptom 2) / #2711 (sub-case 3): after an on-save
+/// action rewrites and re-saves the file, the editor's recorded on-disk state
+/// (mtime) must be refreshed so a subsequent save does NOT false-positive a
+/// "File changed on disk" conflict.
+#[test]
+fn test_on_save_action_no_false_conflict_on_next_save() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file_path = project_dir.join("test.rs");
+    // Trailing whitespace guarantees the on-save trim actually rewrites and
+    // re-saves the file (advancing its mtime past the value recorded by the
+    // first write).
+    std::fs::write(&file_path, "line 1   \nline 2\t\nline 3\n").unwrap();
+
+    let mut config = Config::default();
+    config.editor.trim_trailing_whitespace_on_save = true;
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 24, config, project_dir).unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    // First save triggers the on-save trim + re-save.
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_buffer_content("line 1\nline 2\nline 3\n");
+
+    // The editor's own on-save re-write must NOT register as an external
+    // change. Before the fix, the recorded mtime was left at the first write's
+    // value while the on-save re-save advanced the on-disk mtime, so this
+    // returned Some(..).
+    assert!(
+        harness.editor().check_save_conflict().is_none(),
+        "on-save re-write must not be mistaken for an external modification"
+    );
+
+    // Rapid successive saves must not surface the conflict prompt.
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+            .unwrap();
+        harness.render().unwrap();
+    }
+    harness.assert_screen_not_contains("File changed on disk");
+    assert!(
+        harness.editor().check_save_conflict().is_none(),
+        "repeated on-save writes must keep the recorded on-disk state in sync"
+    );
+}
+
+/// Regression for #2711 (sub-case 2): trimming trailing whitespace on save for
+/// a CRLF buffer must preserve CRLF line endings (not collapse to LF) and must
+/// not drop a trailing empty line, and the editor's own write must not trigger
+/// a spurious "Reverted to saved file" reload.
+#[test]
+fn test_trim_on_save_preserves_crlf_and_no_revert() {
+    let temp_dir = TempDir::new().unwrap();
+    let project_dir = temp_dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+
+    let file_path = project_dir.join("crlf.txt");
+    // CRLF file ending in multiple trailing empty lines, with trailing
+    // whitespace on the first two content lines so the trim does real work.
+    std::fs::write(&file_path, b"hello  \r\nworld\t\r\n\r\n\r\n").unwrap();
+
+    let mut config = Config::default();
+    config.editor.trim_trailing_whitespace_on_save = true;
+    config.editor.default_line_ending = LineEndingOption::Crlf;
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 24, config, project_dir).unwrap();
+
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+    // Line-ending indicator should show CRLF for a CRLF file.
+    harness.assert_screen_contains("CRLF");
+
+    // Save once: trailing whitespace trimmed, CRLF + blank lines preserved.
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
+    // Buffer keeps CRLF endings and all four line terminators.
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "hello\r\nworld\r\n\r\n\r\n"
+    );
+
+    // On disk the bytes stay CRLF (0d 0a), whitespace trimmed, no line dropped.
+    let disk = std::fs::read(&file_path).unwrap();
+    assert_eq!(
+        disk,
+        b"hello\r\nworld\r\n\r\n\r\n",
+        "on-save write must preserve CRLF and trailing empty lines; got {:?}",
+        String::from_utf8_lossy(&disk)
+    );
+
+    // The line-ending indicator must still read CRLF (not flip to LF).
+    harness.assert_screen_contains("CRLF");
+    // No spurious revert should have fired from the editor's own write.
+    harness.assert_screen_not_contains("Reverted to saved file");
+    assert!(
+        harness.editor().check_save_conflict().is_none(),
+        "editor's own on-save write must not look like an external change"
+    );
+
+    // Drive the file-change poll: with the recorded mtime kept in sync, the
+    // poll must find no change and never revert (which would re-read the file
+    // as LF). Advance past the poll interval and pump async work a few times.
+    let interval =
+        std::time::Duration::from_millis(harness.config().editor.auto_revert_poll_interval_ms + 50);
+    for _ in 0..5 {
+        harness.advance_time(interval);
+        harness.process_async_and_render().unwrap();
+        harness.sleep(std::time::Duration::from_millis(20));
+    }
+    harness.process_async_and_render().unwrap();
+
+    harness.assert_screen_not_contains("Reverted to saved file");
+    harness.assert_screen_contains("CRLF");
+    let disk_after_poll = std::fs::read(&file_path).unwrap();
+    assert_eq!(
+        disk_after_poll, b"hello\r\nworld\r\n\r\n\r\n",
+        "poll must not revert/normalize the file"
+    );
 }
 
 /// Test whitespace cleanup does nothing when file is already clean

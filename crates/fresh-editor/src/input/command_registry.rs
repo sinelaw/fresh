@@ -212,6 +212,10 @@ impl CommandRegistry {
     ///
     /// `has_lsp_config` indicates whether the active buffer's language has an LSP server
     /// configured. When false, LSP start/restart/toggle commands are disabled.
+    ///
+    /// `buffer_caps` says what the active buffer can be asked to do — the same
+    /// answers the menus use, so the two surfaces agree on when Save has
+    /// something to write and when an edit would be refused.
     #[allow(clippy::too_many_arguments)]
     pub fn filter(
         &self,
@@ -222,6 +226,7 @@ impl CommandRegistry {
         active_custom_contexts: &std::collections::HashSet<String>,
         active_buffer_mode: Option<&str>,
         has_lsp_config: bool,
+        buffer_caps: crate::app::buffer_capabilities::BufferCapabilities,
     ) -> Vec<Suggestion> {
         let commands = self.get_all();
 
@@ -246,7 +251,44 @@ impl CommandRegistry {
             }
 
             // Check built-in contexts
-            cmd.contexts.is_empty() || cmd.contexts.contains(&current_context)
+            if cmd.contexts.is_empty() || cmd.contexts.contains(&current_context) {
+                return true;
+            }
+
+            // A plugin command that opted into `terminalBypass` runs wherever
+            // the keyboard is — that opt-in is the whole point of the flag.
+            if cmd.terminal_bypass
+                && (matches!(current_context, KeyContext::Terminal)
+                    || current_context.allows_ui_fallthrough())
+            {
+                return true;
+            }
+
+            // Focus-independent actions stay available even when the keyboard
+            // is owned by a non-editing surface. A terminal (or the explorer /
+            // dock / a plugin mode) still lets these actions run from their
+            // keybinding — `is_terminal_ui_action` is exactly that allowlist.
+            // Greying the same command out in the palette contradicted the
+            // keymap: Alt+` opened a dock terminal from a focused terminal
+            // while the palette refused "Open Terminal in Utility Dock".
+            //
+            // Only for commands the editor context offers (`Normal`): the
+            // allowlist is keyed on the *action*, and a few of those actions
+            // belong to commands scoped to one surface — "Exit Terminal Mode"
+            // and "Toggle Keyboard Capture" are `Terminal`-only, and their
+            // handlers no-op unless a live terminal has focus. Without this
+            // guard the bypass would resurrect them in the file explorer as
+            // entries that look enabled and silently do nothing.
+            if cmd.contexts.contains(&KeyContext::Normal)
+                && (matches!(current_context, KeyContext::Terminal)
+                    || current_context.allows_ui_fallthrough())
+            {
+                return crate::input::keybindings::KeybindingResolver::is_terminal_ui_action(
+                    &cmd.action,
+                );
+            }
+
+            false
         };
 
         // Helper to create a suggestion from a command
@@ -261,6 +303,28 @@ impl CommandRegistry {
                 if !has_lsp_config
                     && matches!(cmd.action, Action::LspRestart | Action::LspToggleForBuffer)
                 {
+                    available = false;
+                }
+                // What the buffer itself can be asked to do. A command whose
+                // whole job is to write or edit the active buffer is offered
+                // only when there is something to write and something willing
+                // to be written: not a terminal's transcript, not a plugin
+                // panel with no file behind it, not an untouched buffer, and
+                // not a read-only one.
+                let buffer_allows = match cmd.action {
+                    Action::Save => buffer_caps.can_save(),
+                    Action::SaveAs => buffer_caps.can_save_as(),
+                    Action::SaveAll => buffer_caps.any_modified,
+                    Action::Revert | Action::ReloadWithEncoding => buffer_caps.can_revert(),
+                    ref action
+                        if crate::input::keybindings::KeybindingResolver::
+                            is_buffer_mutating_action(action) =>
+                    {
+                        buffer_caps.editable
+                    }
+                    _ => true,
+                };
+                if !buffer_allows {
                     available = false;
                 }
                 let keybinding = keybinding_resolver
@@ -278,24 +342,34 @@ impl CommandRegistry {
         // Match by name or description
         // Commands with unmet custom contexts are completely hidden
         // match_kind: 0 = name match, 1 = description match
-        let mut suggestions: Vec<(Suggestion, Option<usize>, i32, u8)> = commands
+        // An exact (case-insensitive) name match must win its class outright.
+        // Fuzzy score alone does not guarantee it: for the `X` / `X (Current
+        // Buffer)` pairs the longer sibling can outscore the very name the user
+        // typed in full, so typing a command's exact name would run a different
+        // command. `exact_kind`: 0 = exact name, 1 = anything else.
+        let query_trimmed = query.trim();
+        let is_exact_name =
+            |name: &str| !query_trimmed.is_empty() && name.eq_ignore_ascii_case(query_trimmed);
+
+        let mut suggestions: Vec<(Suggestion, Option<usize>, i32, u8, u8)> = commands
             .iter()
             .filter(|cmd| is_visible(cmd))
             .filter_map(|cmd| {
                 let localized_name = cmd.get_localized_name();
                 let name_result = fuzzy_match(query, &localized_name);
                 if name_result.matched {
+                    let exact = u8::from(!is_exact_name(&localized_name));
                     let localized_desc = cmd.get_localized_description();
                     let (suggestion, hist, score) =
                         make_suggestion(cmd, name_result.score, localized_name, localized_desc);
-                    Some((suggestion, hist, score, 0))
+                    Some((suggestion, hist, score, 0, exact))
                 } else if !query.is_empty() {
                     let localized_desc = cmd.get_localized_description();
                     let desc_result = fuzzy_match(query, &localized_desc);
                     if desc_result.matched {
                         let (suggestion, hist, score) =
                             make_suggestion(cmd, desc_result.score, localized_name, localized_desc);
-                        Some((suggestion, hist, score, 1))
+                        Some((suggestion, hist, score, 1, 1))
                     } else {
                         None
                     }
@@ -308,11 +382,12 @@ impl CommandRegistry {
         // Sort by:
         // 1. Disabled status (enabled first)
         // 2. Match kind (name matches before description matches) - only when query is not empty
-        // 3. Fuzzy match score (higher is better) - only when query is not empty
-        // 4. History position (recent first, then never-used alphabetically)
+        // 3. Exact name match - only when query is not empty
+        // 4. Fuzzy match score (higher is better) - only when query is not empty
+        // 5. History position (recent first, then never-used alphabetically)
         let has_query = !query.is_empty();
         suggestions.sort_by(
-            |(a, a_hist, a_score, a_kind), (b, b_hist, b_score, b_kind)| {
+            |(a, a_hist, a_score, a_kind, a_exact), (b, b_hist, b_score, b_kind, b_exact)| {
                 // First sort by disabled status
                 match a.disabled.cmp(&b.disabled) {
                     std::cmp::Ordering::Equal => {}
@@ -322,6 +397,12 @@ impl CommandRegistry {
                 if has_query {
                     // Name matches before description matches
                     match a_kind.cmp(b_kind) {
+                        std::cmp::Ordering::Equal => {}
+                        other => return other,
+                    }
+
+                    // Typing a command's full name selects that command.
+                    match a_exact.cmp(b_exact) {
                         std::cmp::Ordering::Equal => {}
                         other => return other,
                     }
@@ -344,7 +425,7 @@ impl CommandRegistry {
         );
 
         // Extract just the suggestions
-        suggestions.into_iter().map(|(s, _, _, _)| s).collect()
+        suggestions.into_iter().map(|(s, _, _, _, _)| s).collect()
     }
 
     /// Get count of registered plugin commands
@@ -372,6 +453,33 @@ impl CommandRegistry {
             .iter()
             .find(|c| c.name == name)
             .cloned()
+    }
+
+    /// Resolve the name a *user* would type — what the palette displays —
+    /// to the command behind it.
+    ///
+    /// The palette shows `get_localized_name()`, which for a plugin command
+    /// registered under a `%key` is the translated string, not the key. A
+    /// caller naming a command from outside (a script, `fresh --cmd command
+    /// run`) only ever saw the displayed form, so that is matched first;
+    /// the raw registered name is accepted too, because that is what the
+    /// plugin's own source says. Case-insensitive display match is the last
+    /// resort, so `"pr dashboard"` finds `"PR Dashboard"`.
+    ///
+    /// Plugin commands shadow built-ins on a collision, matching `find_by_name`
+    /// and the palette's own precedence.
+    pub fn resolve_by_display_name(&self, name: &str) -> Option<Command> {
+        let all = self.get_all();
+        // Plugin commands are appended after built-ins by `get_all`, so
+        // scanning from the end gives them precedence on a name collision.
+        let find = |pred: &dyn Fn(&Command) -> bool| all.iter().rev().find(|c| pred(c)).cloned();
+
+        find(&|c: &Command| c.get_localized_name() == name)
+            .or_else(|| find(&|c: &Command| c.name == name))
+            .or_else(|| {
+                let lower = name.to_lowercase();
+                find(&|c: &Command| c.get_localized_name().to_lowercase() == lower)
+            })
     }
 }
 
@@ -542,6 +650,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
         assert!(results.len() >= 2); // At least "Save File" + "Test Save"
 
@@ -589,6 +698,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
         let popup_only = results.iter().find(|s| s.text == "Popup Only");
         assert!(popup_only.is_some());
@@ -603,10 +713,351 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
         let normal_only = results.iter().find(|s| s.text == "Normal Only");
         assert!(normal_only.is_some());
         assert!(normal_only.unwrap().disabled);
+    }
+
+    /// A plain, saved, editable text buffer — the boring case, so tests that
+    /// aren't about buffer state don't have to think about it.
+    #[cfg(test)]
+    fn test_caps() -> crate::app::buffer_capabilities::BufferCapabilities {
+        crate::app::buffer_capabilities::BufferCapabilities {
+            has_buffer: true,
+            is_text_buffer: true,
+            editable: true,
+            modified: true,
+            has_path: true,
+            any_modified: true,
+        }
+    }
+
+    /// Look up one command by its exact palette name and report whether the
+    /// palette would let the user run it.
+    #[cfg(test)]
+    fn enabled_in(
+        registry: &CommandRegistry,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        context: KeyContext,
+        name: &str,
+    ) -> bool {
+        enabled_in_with_caps(registry, keybindings, context, test_caps(), name)
+    }
+
+    /// `enabled_in` with the buffer's capabilities spelled out, for the cases
+    /// that are about the buffer rather than the focused surface.
+    #[cfg(test)]
+    fn enabled_in_with_caps(
+        registry: &CommandRegistry,
+        keybindings: &crate::input::keybindings::KeybindingResolver,
+        context: KeyContext,
+        caps: crate::app::buffer_capabilities::BufferCapabilities,
+        name: &str,
+    ) -> bool {
+        let empty_contexts = std::collections::HashSet::new();
+        let results = registry.filter(
+            "",
+            context,
+            keybindings,
+            false,
+            &empty_contexts,
+            None,
+            true,
+            caps,
+        );
+        let suggestion = results
+            .iter()
+            .find(|s| s.text == name)
+            .unwrap_or_else(|| panic!("command '{name}' should be listed in the palette"));
+        !suggestion.disabled
+    }
+
+    /// Commands that do not touch a text cursor stay runnable while a terminal
+    /// owns the keyboard. Editing commands still don't.
+    #[test]
+    fn test_focus_independent_commands_enabled_in_terminal_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        // Editor/app-wide state, navigation history, and the terminal's own
+        // commands — none of them need a focused text buffer.
+        for name in [
+            "Save All",
+            "Navigate Back",
+            "Navigate Forward",
+            "Toggle Line Wrap",
+            "Toggle Current Line Highlight",
+            "Toggle Occurrence Highlight",
+            "Toggle Inlay Hints",
+            "Set Background",
+            "List Bookmarks",
+            "List Macros",
+            "init: Reload init.ts",
+            "init: Edit init.ts",
+            "init: Check init.ts",
+            "Focus Terminal",
+            "Restart Terminal Process",
+        ] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' should be available while a terminal is focused"
+            );
+        }
+
+        // Commands that edit or inspect buffer text are still disabled: with a
+        // terminal focused there is no cursor for them to act on.
+        for name in ["Undo", "Redo", "Delete Line", "Sort Lines", "Go to Line"] {
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' needs a text buffer and should stay disabled in a terminal"
+            );
+        }
+    }
+
+    /// Same split with the file explorer focused: the editor-wide commands and
+    /// the window/tab management ones stay runnable, while everything that
+    /// needs the focused buffer's cursor does not — the keyboard belongs to the
+    /// tree, so the palette must not offer to edit or save through it.
+    #[test]
+    fn test_focus_independent_commands_enabled_in_file_explorer_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        for name in [
+            // Editor/app-wide state and navigation history.
+            "Save All",
+            "Navigate Back",
+            "Navigate Forward",
+            "Toggle Line Wrap",
+            "Toggle Current Line Highlight",
+            "Toggle Inlay Hints",
+            "Set Background",
+            "List Bookmarks",
+            "List Macros",
+            "init: Reload init.ts",
+            "Restart Terminal Process",
+            // Window, split and tab management.
+            "Switch to Previous Tab",
+            "Switch to Tab by Name",
+            "Extract Tab to New Workspace",
+            "Increase Split Size",
+            "Decrease Split Size",
+            "Toggle Mouse Support",
+            // The explorer's own commands, unchanged.
+            "File Explorer: Refresh",
+            "Toggle Hidden Files",
+        ] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' should be available while the file explorer is focused"
+            );
+        }
+
+        // Saving is the one buffer-touching exception, and it is the keymap's:
+        // `is_application_wide_action` lets Ctrl+S through from the explorer,
+        // so the palette must not refuse what the shortcut just did.
+        for name in ["Save File", "Save File As"] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' is application-wide in the keymap and must not be greyed out"
+            );
+        }
+
+        // Everything else that acts on the focused buffer's cursor stays
+        // disabled: the tree has the keyboard, not the buffer.
+        for name in [
+            "Undo",
+            "Redo",
+            "Delete Line",
+            "Sort Lines",
+            "Go to Line",
+            "Toggle Comment",
+            "Go to Definition",
+            "Set Language",
+        ] {
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' acts on the focused buffer and should stay disabled in the explorer"
+            );
+        }
+
+        // A terminal is different: Ctrl+S there goes to the process, and the
+        // active buffer is the terminal itself, so saving stays out.
+        for name in ["Save File", "Save File As"] {
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' has nothing to save while a terminal is focused"
+            );
+        }
+    }
+
+    /// The palette must agree with the keymap: an action the terminal input
+    /// handler lets through (`is_terminal_ui_action`) is runnable from the
+    /// palette too, even though its `CommandDef` only lists `Normal`.
+    #[test]
+    fn test_terminal_ui_actions_enabled_in_terminal_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        for name in [
+            "Toggle Utility Dock",
+            "Open Terminal in Utility Dock",
+            "Resume Live Grep",
+        ] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' bypasses the terminal via its keybinding and must not be greyed out"
+            );
+        }
+    }
+
+    /// Save-family commands answer to the buffer, not just to the focus: an
+    /// untouched buffer has nothing to write, a plugin panel and a terminal
+    /// have no file of the user's behind them, and a never-saved scratch
+    /// buffer has nothing to revert to.
+    #[test]
+    fn test_save_commands_follow_what_the_buffer_can_do() {
+        use crate::app::buffer_capabilities::BufferCapabilities;
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+        let enabled = |caps: BufferCapabilities, name: &str| {
+            enabled_in_with_caps(&registry, &keybindings, KeyContext::Normal, caps, name)
+        };
+
+        // A saved file: nothing to write, but Save As and Revert still apply.
+        let unmodified = BufferCapabilities {
+            modified: false,
+            any_modified: false,
+            ..test_caps()
+        };
+        assert!(!enabled(unmodified, "Save File"), "nothing to save");
+        assert!(!enabled(unmodified, "Save All"), "nothing to save anywhere");
+        assert!(enabled(unmodified, "Save File As"));
+        assert!(enabled(unmodified, "Revert File"));
+
+        // A virtual plugin panel (theme editor, tour, git log): no file behind
+        // it, and nothing in it is the user's to save or edit.
+        let panel = BufferCapabilities {
+            is_text_buffer: false,
+            editable: false,
+            has_path: false,
+            ..test_caps()
+        };
+        for name in ["Save File", "Save File As", "Revert File", "Undo", "Paste"] {
+            assert!(!enabled(panel, name), "'{name}' on a plugin panel");
+        }
+
+        // A never-saved scratch buffer: Save As writes it somewhere, but there
+        // is no file to revert to or reload.
+        let scratch = BufferCapabilities {
+            has_path: false,
+            ..test_caps()
+        };
+        assert!(enabled(scratch, "Save File As"));
+        assert!(enabled(scratch, "Save File"));
+        assert!(!enabled(scratch, "Revert File"));
+        assert!(!enabled(scratch, "Reload with Encoding..."));
+
+        // Read-only: the text is there but refuses edits, so the mutating
+        // commands are greyed rather than answering "editing is disabled".
+        let read_only = BufferCapabilities {
+            editable: false,
+            ..test_caps()
+        };
+        for name in ["Undo", "Redo", "Cut", "Paste", "Delete Line", "Sort Lines"] {
+            assert!(!enabled(read_only, name), "'{name}' on a read-only buffer");
+        }
+        assert!(enabled(read_only, "Copy"), "copying is still fine");
+        assert!(enabled(read_only, "Search"), "searching is still fine");
+    }
+
+    /// The bypass is keyed on the action, so it must not resurrect commands
+    /// scoped to a *different* surface. "Exit Terminal Mode" and "Toggle
+    /// Keyboard Capture" are `Terminal`-only and their handlers no-op unless a
+    /// live terminal has focus — offering them in the explorer would be an
+    /// entry that looks enabled and silently does nothing.
+    #[test]
+    fn test_terminal_only_commands_stay_disabled_outside_a_terminal() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        for name in ["Exit Terminal Mode", "Toggle Keyboard Capture"] {
+            assert!(
+                enabled_in(&registry, &keybindings, KeyContext::Terminal, name),
+                "'{name}' is a terminal command and belongs in a terminal"
+            );
+            assert!(
+                !enabled_in(&registry, &keybindings, KeyContext::FileExplorer, name),
+                "'{name}' no-ops without a focused live terminal and must not be \
+                 offered in the explorer"
+            );
+        }
+    }
+
+    /// A plugin command that opted into `terminalBypass` is runnable from the
+    /// palette while a terminal is focused, even when it declares `Normal`.
+    #[test]
+    fn test_plugin_terminal_bypass_command_enabled_in_terminal_context() {
+        use crate::config::Config;
+        use crate::input::keybindings::KeybindingResolver;
+
+        let registry = CommandRegistry::new();
+        let config = Config::default();
+        let keybindings = KeybindingResolver::new(&config);
+
+        registry.register(Command {
+            name: "Plugin Bypass".to_string(),
+            description: "Runs anywhere".to_string(),
+            action: Action::PluginAction("bypass".to_string()),
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("test".to_string()),
+            terminal_bypass: true,
+        });
+        registry.register(Command {
+            name: "Plugin Normal".to_string(),
+            description: "Needs a buffer".to_string(),
+            action: Action::PluginAction("normal".to_string()),
+            contexts: vec![KeyContext::Normal],
+            custom_contexts: vec![],
+            source: CommandSource::Plugin("test".to_string()),
+            terminal_bypass: false,
+        });
+
+        assert!(enabled_in(
+            &registry,
+            &keybindings,
+            KeyContext::Terminal,
+            "Plugin Bypass"
+        ));
+        assert!(!enabled_in(
+            &registry,
+            &keybindings,
+            KeyContext::Terminal,
+            "Plugin Normal"
+        ));
     }
 
     #[test]
@@ -705,6 +1156,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
 
         // Find positions of our test commands in results
@@ -784,6 +1236,7 @@ mod tests {
             &empty_contexts,
             None,
             true,
+            test_caps(),
         );
 
         let save_pos = results.iter().position(|s| s.text == "Save File").unwrap();

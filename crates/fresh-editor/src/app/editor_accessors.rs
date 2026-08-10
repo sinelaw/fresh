@@ -737,10 +737,38 @@ impl Editor {
         std::mem::replace(&mut self.active_window_mut().authority, placeholder)
     }
 
-    /// The editor's current working directory — the active window's
-    /// project root. Derived, not stored: there is no separate
-    /// `working_dir` field that could drift out of sync with the active
-    /// window (issue #2056). Individual buffers may live elsewhere.
+    /// Run a blocking effect (filesystem writes/deletes, teardown I/O) off
+    /// the editor thread. This is the escape hatch for the "mutation now,
+    /// effect off-loop" decomposition: the caller snapshots whatever the
+    /// effect needs while still on the editor thread, then hands the I/O
+    /// here. Fire-and-forget — effects that need a result should go through
+    /// `plugin_offloop` and settle a callback instead.
+    ///
+    /// Falls back to running inline when the editor was constructed without
+    /// a tokio runtime (some unit-test harnesses), preserving the old
+    /// synchronous behaviour there.
+    pub(crate) fn spawn_off_loop_effect(
+        &self,
+        label: &'static str,
+        f: impl FnOnce() + Send + 'static,
+    ) {
+        match &self.tokio_runtime {
+            Some(runtime) => {
+                runtime.spawn_blocking(move || {
+                    f();
+                });
+            }
+            None => {
+                tracing::debug!("spawn_off_loop_effect({label}): no runtime, running inline");
+                f();
+            }
+        }
+    }
+
+    /// The editor's current working directory — the active window's project
+    /// root. Derived, not stored: there is no separate `working_dir` field that
+    /// could drift out of sync with the active window (issue #2056).
+    /// Individual buffers may live elsewhere.
     pub fn working_dir(&self) -> &std::path::Path {
         &self.active_window().root
     }
@@ -1253,6 +1281,56 @@ impl Editor {
         }
     }
 
+    /// Current phase of an interactive in-editor self-update (drives the
+    /// status-bar update indicator).
+    pub fn self_update_phase(&self) -> crate::services::release_checker::SelfUpdatePhase {
+        self.self_update_phase
+    }
+
+    /// Mark that an interactive self-update has started in a local terminal
+    /// buffer, remembering the terminal (to match its `TerminalExited`) and the
+    /// (window, buffer) so the indicator can switch back to it.
+    pub fn begin_self_update(
+        &mut self,
+        terminal: fresh_core::TerminalId,
+        window: fresh_core::WindowId,
+        buffer: fresh_core::BufferId,
+    ) {
+        self.self_update_phase = crate::services::release_checker::SelfUpdatePhase::Running;
+        self.self_update_terminal = Some(terminal);
+        self.self_update_output = Some((window, buffer));
+    }
+
+    /// Move the update indicator to its terminal state when the update terminal
+    /// exits. The child's exit code carries which of the three outcomes it was
+    /// — see [`SelfUpdatePhase::from_exit_code`].
+    ///
+    /// [`SelfUpdatePhase::from_exit_code`]:
+    ///     crate::services::release_checker::SelfUpdatePhase::from_exit_code
+    pub fn finish_self_update(&mut self, exit_code: Option<i32>) {
+        use crate::services::release_checker::SelfUpdatePhase;
+        self.self_update_phase = SelfUpdatePhase::from_exit_code(exit_code);
+    }
+
+    /// Switch to the update terminal buffer so the user can watch progress or
+    /// read the outcome. The update always runs locally, so this is a local
+    /// terminal buffer regardless of any remote authority attached to the
+    /// window. If the buffer has since been closed, report that instead.
+    pub fn show_self_update_output(&mut self) {
+        if let Some((window, buffer)) = self.self_update_output {
+            let exists = self
+                .windows
+                .get(&window)
+                .is_some_and(|w| w.buffers.get(&buffer).is_some());
+            if exists {
+                self.active_window = window;
+                self.active_window_mut().set_active_buffer(buffer);
+                return;
+            }
+        }
+        self.set_status_message(t!("update.log_unavailable").to_string());
+    }
+
     /// Check for and handle any new warnings in the warning log
     ///
     /// Updates the general warning domain for the status bar.
@@ -1357,19 +1435,19 @@ impl Editor {
 
         // Get hover state without borrowing self
         let hover_info = match self.active_window_mut().mouse_state.lsp_hover_state {
-            Some((byte_pos, start_time, screen_x, screen_y)) => {
+            Some((byte_pos, start_time, screen_x, screen_y, buffer_id)) => {
                 if self.active_window_mut().mouse_state.lsp_hover_request_sent {
                     return false; // Already sent request for this position
                 }
                 if start_time.elapsed() < hover_delay {
                     return false; // Timer hasn't expired yet
                 }
-                Some((byte_pos, screen_x, screen_y))
+                Some((byte_pos, screen_x, screen_y, buffer_id))
             }
             None => return false,
         };
 
-        let Some((byte_pos, screen_x, screen_y)) = hover_info else {
+        let Some((byte_pos, screen_x, screen_y, buffer_id)) = hover_info else {
             return false;
         };
 
@@ -1379,7 +1457,7 @@ impl Editor {
             .set_screen_position((screen_x, screen_y));
 
         // Request hover at the byte position — only mark as sent if dispatched
-        match self.request_hover_at_position(byte_pos) {
+        match self.request_hover_at_position(byte_pos, buffer_id) {
             Ok(true) => {
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = true;
                 true

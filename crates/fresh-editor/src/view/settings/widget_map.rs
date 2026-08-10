@@ -38,7 +38,7 @@
 
 use super::items::{SettingControl, SettingItem};
 use crate::view::controls::keybinding_list::format_key_combo;
-use crate::view::controls::FocusState;
+use crate::view::controls::{DualListColumn, DualListState, FocusState};
 use fresh_core::api::{DualListOption, OverlayColorSpec, OverlayOptions, WidgetSpec};
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
 
@@ -184,9 +184,18 @@ pub fn setting_control_to_widget_aligned(
                 // in the same form column (issue: Text `[` started right
                 // after the label instead of at the shared column).
                 label_width: lw,
+                read_only: false,
+                markdown: false,
                 key,
             }
         }
+        // Settings owns this control's state (cursor, active column,
+        // edit mode) in its own `DualListState`, so every frame
+        // re-seeds the widget from it rather than letting the widget
+        // framework's instance state drift out of sync. Without this
+        // the picker rendered a cursor that never moved: arrows walked
+        // an invisible selection and Enter moved whichever item it
+        // happened to be on.
         SettingControl::DualList(s) => WidgetSpec::DualList {
             options: s
                 .all_options
@@ -199,8 +208,18 @@ pub fn setting_control_to_widget_aligned(
             included: s.included.clone(),
             excluded: s.excluded.clone(),
             label: s.label.clone(),
-            focused: false,
-            visible_rows: 6,
+            // Only edit mode gets the in-column cursor; while the row is
+            // merely selected the arrows still navigate the settings
+            // list (see the `focus_key` gate in `render.rs`).
+            focused: s.editing,
+            active_included: s.active_column == DualListColumn::Included,
+            available_cursor: s.available_cursor as u32,
+            included_cursor: s.included_cursor as u32,
+            hint: dual_list_hint(s),
+            // Match the row count the Settings layout reserves for
+            // this control (`SettingControl::height`), so the columns
+            // are never clipped or padded past their box.
+            visible_rows: s.body_rows() as u32,
             key,
         },
         // String-list editor: label, one bracketed cell + `[x]` delete
@@ -390,6 +409,23 @@ const TEXTLIST_CELL_WIDTH: usize = 28;
 
 /// Dim hint / disabled-text color.
 const DIM_HINT: &str = "ui.menu_disabled_fg";
+
+/// One-line key hint carried under a `DualList`'s columns.
+///
+/// Which keys move an item between the columns, and which reorder the
+/// Included side, cannot be inferred from the control's appearance, so
+/// the hint is always rendered once the row is reachable: "press Enter
+/// to start" while merely selected, the full key list while editing.
+fn dual_list_hint(s: &DualListState) -> String {
+    use rust_i18n::t;
+    if s.editing {
+        t!("settings.dual_list_keys_hint").to_string()
+    } else if s.focus == FocusState::Focused {
+        t!("settings.dual_list_enter_hint").to_string()
+    } else {
+        String::new()
+    }
+}
 
 /// The TextList's trailing add row, in its three historical states:
 /// a live input box (with placeholder, block caret and `Enter:add

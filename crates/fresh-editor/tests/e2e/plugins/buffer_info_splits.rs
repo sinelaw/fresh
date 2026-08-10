@@ -39,6 +39,36 @@ fn snapshot_active_split(harness: &EditorTestHarness) -> Option<usize> {
     Some(snapshot.active_split_id)
 }
 
+/// Number of buffers the plugin state snapshot knows about. Used to
+/// detect an orphan buffer leaked by a failed open.
+fn snapshot_buffer_count(harness: &EditorTestHarness) -> usize {
+    let snapshot_handle = harness
+        .editor()
+        .plugin_manager()
+        .state_snapshot_handle()
+        .expect("snapshot handle present");
+    let snapshot = snapshot_handle.read().expect("snapshot readable");
+    snapshot.buffers.len()
+}
+
+/// Whether any buffer in the snapshot corresponds to `path`. Matches on
+/// the file name to sidestep the symlink canonicalisation that the file
+/// open path applies (see the note on `snapshot_splits_for_buffer`).
+fn snapshot_has_buffer_for_path(harness: &EditorTestHarness, path: &std::path::Path) -> bool {
+    let want = path.file_name();
+    let snapshot_handle = harness
+        .editor()
+        .plugin_manager()
+        .state_snapshot_handle()
+        .expect("snapshot handle present");
+    let snapshot = snapshot_handle.read().expect("snapshot readable");
+    snapshot
+        .buffers
+        .values()
+        .filter_map(|b| b.path.as_ref())
+        .any(|p| p.file_name() == want)
+}
+
 /// A buffer open in a single split should report exactly that
 /// split id in `BufferInfo.splits`.
 #[test]
@@ -151,5 +181,87 @@ fn buffer_info_splits_drives_refocus_pattern() {
         active_after, hello_split,
         "focusSplit(hello_split) must make that split active. was {} now {}",
         active, active_after
+    );
+}
+
+/// Regression for #2769: `openFileInSplit` against a split id that no
+/// longer resolves to a live split must report failure (an `Err` from
+/// the command dispatcher) instead of masquerading as success — and it
+/// must NOT leak an invisible orphan buffer for the file it failed to
+/// place.
+#[test]
+fn open_file_in_split_fails_for_dead_split_id() {
+    use fresh::services::plugins::api::PluginCommand;
+    use fresh_core::SplitId;
+
+    let temp = tempfile::tempdir().unwrap();
+    let hello = temp.path().join("hello.txt");
+    let world = temp.path().join("world.txt");
+    fs::write(&hello, "hello\n").unwrap();
+    fs::write(&world, "world\n").unwrap();
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.editor_mut().open_file(&hello).unwrap();
+    harness.tick_and_render().unwrap();
+
+    // Split horizontally: the new (now-active) split is the one we will
+    // kill, so its id becomes a dangling reference.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(fresh::input::keybindings::Action::SplitHorizontal);
+    harness.tick_and_render().unwrap();
+    let dead_split = snapshot_active_split(&harness).expect("active split id after split");
+
+    // Close that split — collapses the layout back to a single pane and
+    // leaves `dead_split` pointing at nothing.
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::CloseSplit {
+            split_id: SplitId(dead_split),
+        })
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    let live_split = snapshot_active_split(&harness).expect("active split id after close");
+    assert_ne!(
+        live_split, dead_split,
+        "sanity: the surviving split must differ from the closed one"
+    );
+
+    // Baseline buffer count before the doomed open. world.txt has not
+    // been opened, so it must not appear.
+    let buffers_before = snapshot_buffer_count(&harness);
+
+    // The plugin targets the dead split. This must FAIL (Err), not
+    // silently return success.
+    let result = harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::OpenFileInSplit {
+            split_id: dead_split,
+            path: world.clone(),
+            line: Some(0),
+            column: Some(0),
+        });
+    assert!(
+        result.is_err(),
+        "openFileInSplit against a dead split id must report failure, got {:?}",
+        result
+    );
+    harness.tick_and_render().unwrap();
+
+    // No orphan buffer: the failed open must not have loaded world.txt
+    // into a hidden buffer that no split displays.
+    let buffers_after = snapshot_buffer_count(&harness);
+    assert_eq!(
+        buffers_after, buffers_before,
+        "failed openFileInSplit must not leak a buffer (before={buffers_before}, after={buffers_after})"
+    );
+
+    // And no split displays world.txt: every buffer known to the
+    // snapshot is displayed in at least the original pane, none of them
+    // is the file we tried (and failed) to place.
+    assert!(
+        !snapshot_has_buffer_for_path(&harness, &world),
+        "world.txt must not be present in any buffer after the failed open"
     );
 }

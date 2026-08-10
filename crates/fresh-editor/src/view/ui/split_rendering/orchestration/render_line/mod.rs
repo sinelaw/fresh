@@ -17,7 +17,7 @@ use super::super::spans::push_span_with_map;
 use super::contexts::{DecorationContext, SelectionContext};
 use super::overlay_sweep::OverlayActiveSet;
 use super::selection_sweep::SelectionActiveSet;
-use super::tail_fill::{resolve_tail_fill, TailFillInput};
+use super::tail_fill::{overlay_bg_style, resolve_tail_fill, TailFillInput};
 use cells::{render_line_cells, CellPassInput};
 use trailing::{fill_eof_rows, render_implicit_trailing_line, PostRowAccumulator, PostRowContext};
 
@@ -932,6 +932,17 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             let mut guide_style = Style::default().fg(theme.indentation_guide_fg);
             if cursor_line_active {
                 guide_style = guide_style.bg(theme.current_line_bg);
+            } else if cells.first_line_byte_pos.is_some() && cells.last_line_byte_pos.is_some() {
+                // Match the tail fill: a full-width overlay band must run
+                // under the synthesised guide cells too, or blank rows in
+                // the range show a bg hole where the guides sit.
+                if let Some(bg) = overlay_sweep
+                    .fill_overlay()
+                    .and_then(|o| overlay_bg_style(o, theme))
+                    .and_then(|s| s.bg)
+                {
+                    guide_style = guide_style.bg(bg);
+                }
             }
             append_blank_line_guides(
                 synth_columns,
@@ -1035,7 +1046,12 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         let end_x = if line_was_empty {
             gutter_width as u16
         } else {
-            last_visible_x.saturating_add(1)
+            // A rendered line-ending indicator adds view-map cells for the
+            // newline byte itself; step back over them so the end-of-line
+            // cursor lands on the indicator, not past it.
+            last_visible_x
+                .saturating_add(1)
+                .saturating_sub(cells.newline_indicator_cols as u16)
         };
         let line_len_chars = line_content.chars().count();
 

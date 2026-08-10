@@ -162,8 +162,10 @@ impl Window {
             self.resize_visible_terminals();
         }
 
-        // Ensure the newly active tab is visible
-        let tabs_width = self.effective_tabs_width();
+        // Ensure the newly active tab is visible. Use the focused split's real
+        // pane width, not the whole-editor width, so vertical splits scroll
+        // correctly (issue #2650).
+        let tabs_width = self.split_tabs_width(active_split);
         self.ensure_active_tab_visible(active_split, buffer_id, tabs_width);
 
         if self.file_explorer_visible
@@ -325,6 +327,23 @@ impl Window {
         }
 
         if split_changed {
+            // The tab this split was showing before we point it at
+            // `buffer_id`. Captured before `set_pane_buffer` overwrites it,
+            // and read from *this* split rather than from the editor-wide
+            // active buffer: `focus_history` is a per-split tab LRU, and
+            // `previous_buffer` belongs to the split we are leaving. Pushing
+            // that instead made a buffer that was never a tab here the top
+            // LRU candidate, so the next close in this split adopted it —
+            // which is how closing a file the code tour opened pulled the
+            // dock's tour panel up into the editor split.
+            let previous_target = self
+                .buffers
+                .splits()
+                .expect("active window must have a populated split layout")
+                .1
+                .get(&split_id)
+                .map(|vs| vs.active_target());
+
             // Update split manager to focus this split
             self.split_manager_mut()
                 .expect("active window must have a populated split layout")
@@ -349,7 +368,11 @@ impl Window {
                     .get_mut(&split_id)
                 {
                     view_state.add_buffer(buffer_id);
-                    view_state.push_focus(crate::view::split::TabTarget::Buffer(previous_buffer));
+                    if let Some(previous_target) = previous_target {
+                        if previous_target != crate::view::split::TabTarget::Buffer(buffer_id) {
+                            view_state.push_focus(previous_target);
+                        }
+                    }
                 }
                 // Note: We don't sync file explorer here to avoid flicker during split focus changes.
                 // File explorer syncs when explicitly focused via focus_file_explorer().

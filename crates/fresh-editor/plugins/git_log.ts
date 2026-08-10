@@ -350,8 +350,8 @@ function donePathForHash(hash: string): string {
  */
 function isCommitDiffComplete(hash: string): boolean {
   return (
-    editor.fileExists(cachePathForHash(hash)) &&
-    editor.fileExists(donePathForHash(hash))
+    editor.fileExists(editor.localPath(cachePathForHash(hash))) &&
+    editor.fileExists(editor.localPath(donePathForHash(hash)))
   );
 }
 
@@ -433,7 +433,7 @@ async function pollUntilSpawnDone(
   // Durable completion marker: an empty sidecar file whose existence
   // says "complete". Written after the bytes are on disk so a reader
   // that sees the marker also sees the full diff.
-  editor.writeFile(donePathForHash(hash), "");
+  editor.writeFile(editor.localPath(donePathForHash(hash)), "");
   // Apply diff coloring once the buffer is complete. Doing this
   // pre-completion would either churn (re-walk on every refresh) or
   // double-overlay newly-extended lines; on completion we walk once.

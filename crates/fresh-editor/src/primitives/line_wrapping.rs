@@ -38,6 +38,11 @@ pub struct WrapConfig {
     /// Whether continuation lines should visually align with the
     /// first line's leading whitespace (hanging indent).
     pub hanging_indent: bool,
+    /// Terminal-grid wrap (fresh#2649): when `Some(cols)`, rows break at
+    /// exact column boundaries every `cols` columns — no word-boundary
+    /// preference, no gutter, no hanging indent — matching the live PTY
+    /// grid. The other width fields are ignored by grid-aware consumers.
+    pub grid_cols: Option<usize>,
 }
 
 impl WrapConfig {
@@ -68,6 +73,7 @@ impl WrapConfig {
             continuation_line_width: text_area_width,
             gutter_width,
             hanging_indent,
+            grid_cols: None,
         }
     }
 
@@ -78,6 +84,21 @@ impl WrapConfig {
             continuation_line_width: usize::MAX,
             gutter_width,
             hanging_indent: false,
+            grid_cols: None,
+        }
+    }
+
+    /// Terminal-grid wrap configuration: exact-column breaks every `cols`
+    /// columns, no gutter, no hanging indent (fresh#2649). The line widths
+    /// are set to `cols` so width-only consumers (e.g. "does this line
+    /// wrap?" checks) still see the correct budget.
+    pub fn grid(cols: usize) -> Self {
+        Self {
+            first_line_width: cols,
+            continuation_line_width: cols,
+            gutter_width: 0,
+            hanging_indent: false,
+            grid_cols: Some(cols),
         }
     }
 }

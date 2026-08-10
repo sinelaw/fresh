@@ -26,6 +26,8 @@ build() {
     cd "fresh-$pkgver"
     export CARGO_TARGET_DIR=target
     export CC=clang
+    # Bake the install channel into the binary (compile-time provenance).
+    export FRESH_BUILD_CHANNEL=aur
     cargo build --locked --release
 }
 
@@ -42,6 +44,19 @@ package() {
 
     # License
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+
+    # Provenance receipt (belt-and-suspenders alongside the embedded channel).
+    cat > "$pkgdir/usr/share/$pkgname/install-receipt.toml" <<EOF
+schema = 1
+channel = "aur"
+version = "$pkgver"
+package_name = "fresh-editor"
+managed = true
+self_update = false
+
+[hints]
+aur_pkg = "fresh-editor"
+EOF
 
     # Plugins
     cp -r crates/fresh-editor/plugins "$pkgdir/usr/share/$pkgname/"

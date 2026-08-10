@@ -9,7 +9,7 @@
 //!   cursor stays pinned to the same spot on the thumb.
 //!
 //! Both run in O(log N_lines) per call by reading from
-//! [`VisualRowIndex`](crate::view::visual_row_index::VisualRowIndex) —
+//! [`WrapIndex`](crate::view::wrap_index::WrapIndex) —
 //! the whole-buffer prefix-sum index over per-line visual row counts.
 //! No per-event O(N_lines) walk, no per-event flat row→byte vector.
 //! On a cold index the first call walks the buffer once to build the
@@ -20,7 +20,8 @@ use crate::model::buffer::Buffer;
 use crate::primitives::line_wrapping::WrapConfig;
 use crate::state::EditorState;
 use crate::view::line_wrap_cache::CacheViewMode;
-use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
+use crate::view::wrap_index::WrapIndexGeometry;
+use crate::view::wrap_machine::WrapRule;
 
 /// Width estimate of the gutter, used to build the wrap config. Kept in
 /// sync with the real gutter sizing in the render path (indicator +
@@ -36,44 +37,88 @@ fn estimated_gutter_width(buffer: &Buffer, _show_line_numbers: bool) -> usize {
     1 + digits.max(crate::view::margin::MIN_LINE_NUMBER_DIGITS) + 3
 }
 
-/// Build the `VisualRowIndexKey` scroll math uses for these viewport
-/// dimensions, then ensure the per-state index is populated for it.
-/// Subsequent calls during the same drag with unchanged geometry are
-/// O(1) — the matching key is detected and the build is skipped.
+/// Geometry scroll math uses for these viewport dimensions, and the wrap index
+/// built for it.
 ///
-/// `wrap_width` is the renderer's effective wrap width — the
-/// compose-clamped width when `composeWidth` is set, otherwise the
-/// raw viewport width.  Without this, on a wide terminal with
-/// `composeWidth` set, the index is built at the raw split width
-/// while the renderer wraps at the compose-clamped width and
-/// `max_scroll_row` undershoots the buffer's tail (mouse-wheel /
-/// scrollbar-drag stop short).
-fn ensure_index(
-    state: &mut EditorState,
+/// Repeated calls during a drag with unchanged geometry are O(1): the index is
+/// already built for that geometry and an edit repaired it rather than
+/// invalidating it, so nothing is recomputed.
+///
+/// `wrap_width` is the renderer's effective wrap width — the compose-clamped
+/// width when `composeWidth` is set, otherwise the pane width.
+fn scroll_geometry(
+    state: &EditorState,
     wrap_width: usize,
     show_line_numbers: bool,
-    pipeline_inputs_ver: u64,
-) {
-    let gutter_width = estimated_gutter_width(&state.buffer, show_line_numbers);
-    let wrap_config = WrapConfig::new(wrap_width, gutter_width, true, true);
-    let effective_width = wrap_config
-        .first_line_width
-        .saturating_add(gutter_width)
-        .max(2);
-    let key = VisualRowIndexKey {
-        pipeline_inputs_version: pipeline_inputs_ver,
-        // Scrollbar-math runs without access to the view mode. The
-        // renderer's writeback populates keys under the active mode;
-        // here we use Source as a fixed convention and cache hits pick
-        // up entries the renderer wrote under the same convention.
-        view_mode: CacheViewMode::Source,
-        effective_width: effective_width as u32,
-        gutter_width: gutter_width as u16,
-        wrap_column: None,
-        hanging_indent: wrap_config.hanging_indent,
-        line_wrap_enabled: true,
+    grid_cols: Option<usize>,
+    fold_signature: u64,
+) -> WrapIndexGeometry {
+    let rule = if let Some(cols) = grid_cols {
+        // Terminal scroll-back counts exact-column rows at the grid width — the
+        // same row model the renderer and the viewport scroll math use.
+        WrapRule::Grid { cols: cols.max(1) }
+    } else {
+        let gutter_width = estimated_gutter_width(&state.buffer, show_line_numbers);
+        let wrap_config = WrapConfig::new(wrap_width, gutter_width, true, true);
+        let effective_width = wrap_config
+            .first_line_width
+            .saturating_add(gutter_width)
+            .max(2);
+        WrapRule::Word {
+            content_width: effective_width,
+            gutter_width,
+            hanging_indent: wrap_config.hanging_indent,
+        }
     };
-    ensure_built(state, &key);
+    WrapIndexGeometry {
+        // Scroll math runs without access to the view mode; `Source` is the
+        // fixed convention, matching what the renderer's queries use.
+        rule,
+        view_mode: CacheViewMode::Source,
+        fold_signature,
+    }
+}
+
+/// Total visual rows under `geometry`, building the index if needed.
+fn total_rows(
+    state: &mut EditorState,
+    geometry: WrapIndexGeometry,
+    pipeline_inputs_ver: u64,
+    fold_ranges: Vec<std::ops::Range<usize>>,
+) -> usize {
+    let line_ending = state.buffer.line_ending();
+    // Snapshot virtual-line anchors so the per-line lookup borrows this list
+    // rather than `state`, whose buffer the build holds mutably.
+    let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
+        Vec::new()
+    } else {
+        let end = state.buffer.len() + 1;
+        let mut v: Vec<usize> = state
+            .virtual_texts
+            .query_lines_in_range(&state.marker_list, 0, end)
+            .into_iter()
+            .map(|(pos, _)| pos)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let virtual_rows = |start: usize, end: usize| -> u32 {
+        let lo = virtual_positions.partition_point(|p| *p < start);
+        let hi = virtual_positions.partition_point(|p| *p < end);
+        (hi - lo) as u32
+    };
+    // Resolved before `entry` takes `&mut state`.
+    let decorations = state.index_decorations(geometry.view_mode, fold_ranges, &[]);
+    let index = state.wrap_indices.entry(geometry);
+    index.ensure_built(
+        &mut state.buffer,
+        geometry,
+        pipeline_inputs_ver,
+        line_ending,
+        &virtual_rows,
+        &decorations,
+    );
+    index.total_rows() as usize
 }
 
 /// Calculate scroll position for a visual-row-aware scrollbar *jump*.
@@ -87,14 +132,17 @@ pub(crate) fn scrollbar_jump_visual(
     viewport_height: usize,
     wrap_width: usize,
     show_line_numbers: bool,
+    grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 {
         return (0, 0);
     }
 
-    ensure_index(state, wrap_width, show_line_numbers, pipeline_inputs_ver);
-    let total_visual_rows = state.visual_row_index.total_rows() as usize;
+    let fold_sig = crate::view::wrap_index::fold_signature(&fold_ranges);
+    let geometry = scroll_geometry(state, wrap_width, show_line_numbers, grid_cols, fold_sig);
+    let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver, fold_ranges);
     if total_visual_rows == 0 {
         return (0, 0);
     }
@@ -105,11 +153,16 @@ pub(crate) fn scrollbar_jump_visual(
         return (0, 0);
     }
 
-    let target_row = (ratio * max_scroll_row as f64).round() as usize;
-    let target_row = target_row.min(max_scroll_row);
+    let target_row = ((ratio * max_scroll_row as f64).round() as usize).min(max_scroll_row);
 
-    let (_line_idx, line_start, offset) = state.visual_row_index.position_at_row(target_row as u32);
-    (line_start, offset)
+    let Some(index) = state.wrap_indices.get(&geometry) else {
+        return (0, 0);
+    };
+    let addr = index.byte_of_row(&state.buffer, target_row as u32);
+    // The viewport still addresses a logical line plus a wrap-segment offset;
+    // once it anchors on a byte this is just `addr.byte`.
+    let line_start = state.buffer.line_start_offset(addr.line).unwrap_or(0);
+    (line_start, addr.row_in_line)
 }
 
 /// Calculate scroll position for a visual-row-aware scrollbar *drag*.
@@ -128,14 +181,17 @@ pub(crate) fn scrollbar_drag_relative_visual(
     viewport_height: usize,
     wrap_width: usize,
     show_line_numbers: bool,
+    grid_cols: Option<usize>,
     pipeline_inputs_ver: u64,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     if state.buffer.is_empty() || viewport_height == 0 || scrollbar_height <= 1 {
         return (0, 0);
     }
 
-    ensure_index(state, wrap_width, show_line_numbers, pipeline_inputs_ver);
-    let total_visual_rows = state.visual_row_index.total_rows() as usize;
+    let fold_sig = crate::view::wrap_index::fold_signature(&fold_ranges);
+    let geometry = scroll_geometry(state, wrap_width, show_line_numbers, grid_cols, fold_sig);
+    let total_visual_rows = total_rows(state, geometry, pipeline_inputs_ver, fold_ranges);
     if total_visual_rows == 0 {
         return (0, 0);
     }
@@ -147,8 +203,11 @@ pub(crate) fn scrollbar_drag_relative_visual(
 
     // Visual row of the drag start: first row of the line containing
     // `drag_start_top_byte`, plus the wrap-segment offset within that line.
-    let (drag_line_idx, _) = state.visual_row_index.line_for_byte(drag_start_top_byte);
-    let line_first_row = state.visual_row_index.line_first_row(drag_line_idx) as usize;
+    let Some(index) = state.wrap_indices.get(&geometry) else {
+        return (0, 0);
+    };
+    let drag_line_idx = state.buffer.get_line_number(drag_start_top_byte);
+    let line_first_row = index.line_first_row(drag_line_idx) as usize;
     let start_visual_row = (line_first_row + drag_start_view_line_offset).min(max_scroll_row);
 
     // Thumb size — same formula as the scrollbar renderer.
@@ -180,9 +239,10 @@ pub(crate) fn scrollbar_drag_relative_visual(
         0.0
     };
 
-    let target_row = (target_scroll_ratio * max_scroll_row as f64).round() as usize;
-    let target_row = target_row.min(max_scroll_row);
+    let target_row =
+        ((target_scroll_ratio * max_scroll_row as f64).round() as usize).min(max_scroll_row);
 
-    let (_line_idx, line_start, offset) = state.visual_row_index.position_at_row(target_row as u32);
-    (line_start, offset)
+    let addr = index.byte_of_row(&state.buffer, target_row as u32);
+    let line_start = state.buffer.line_start_offset(addr.line).unwrap_or(0);
+    (line_start, addr.row_in_line)
 }

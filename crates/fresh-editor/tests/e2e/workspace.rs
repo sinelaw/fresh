@@ -932,8 +932,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             "[TEST] Before render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
             cursor_before_render,
             line_before + 1,
-            viewport_before.top_byte,
-            viewport_before.top_view_line_offset
+            viewport_before.top_byte(),
+            viewport_before.top_view_line_offset()
         );
 
         harness.render().unwrap();
@@ -950,8 +950,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             "[TEST] After render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
             cursor_after_render,
             line_after + 1,
-            viewport_after.top_byte,
-            viewport_after.top_view_line_offset
+            viewport_after.top_byte(),
+            viewport_after.top_view_line_offset()
         );
 
         // CRITICAL: Cursor must be on line 150 after restore
@@ -963,10 +963,11 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         );
 
         // Check if scroll position changed
-        if viewport_before.top_byte != viewport_after.top_byte {
+        if viewport_before.top_byte() != viewport_after.top_byte() {
             eprintln!(
                 "[TEST] WARNING: Scroll changed during render! {} -> {}",
-                viewport_before.top_byte, viewport_after.top_byte
+                viewport_before.top_byte(),
+                viewport_after.top_byte()
             );
         }
 
@@ -1919,6 +1920,9 @@ fn test_plugin_ephemeral_terminal_excluded_from_workspace() {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
+            env: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -1965,6 +1969,9 @@ fn test_plugin_persistent_terminal_included_in_workspace() {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
+            env: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -2017,6 +2024,9 @@ fn test_plugin_split_terminal_not_duplicated_in_active_split() {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
+            env: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -2418,7 +2428,9 @@ fn test_hidden_from_tabs_external_files_not_persisted() {
     // Inspect the on-disk workspace directly: only the normal external
     // should land in `external_files`, never the hidden one. Likewise
     // the open-tabs list must not reference the hidden buffer.
-    let workspace_path = get_workspace_path(&project_dir).unwrap();
+    let workspace_path = fresh::workspace::find_workspace_file_by_root(&project_dir)
+        .unwrap()
+        .expect("workspace file exists after save");
     let raw = std::fs::read_to_string(&workspace_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let externals = parsed["external_files"].as_array().unwrap();

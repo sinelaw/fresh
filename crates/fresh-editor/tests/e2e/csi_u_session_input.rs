@@ -9,7 +9,8 @@
 //! literal text into the editor buffer.
 
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::server::input_parser::Event;
 use fresh::server::input_parser::InputParser;
 
 /// Helper: assert that InputParser produces exactly one Key event matching the
@@ -72,6 +73,38 @@ fn test_csi_u_sequences_not_inserted_as_literal_text() {
             "CSI u sequence leaked as literal text {literal:?}: {content:?}",
         );
     }
+}
+
+/// End-to-end: with `keyboard_report_all_keys_as_escape_codes` on, every
+/// printable key arrives as a CSI u sequence carrying the *base* key plus a
+/// shift modifier. Typing shifted keys must put the shifted characters on
+/// screen — before the fix the base characters were typed instead, so `A`
+/// showed up as `a` and the Shift key looked dead (issue #2880).
+#[test]
+fn test_shifted_keys_type_their_character_on_screen() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let mut parser = InputParser::new();
+
+    // Shift+F, Shift+r, Shift+e (the shifted codepoint reported alongside the
+    // base key), then Shift+1 and Shift+/ for the symbols a keyboard layout —
+    // not the character's case — decides.
+    let sequences: &[&[u8]] = &[
+        b"\x1b[102:70;2u",
+        b"\x1b[114:82;2u",
+        b"\x1b[101:69;2u",
+        b"\x1b[49:33;2u",
+        b"\x1b[47:63;2u",
+    ];
+    for seq in sequences {
+        for event in parser.parse(seq) {
+            if let Event::Key(ke) = event {
+                harness.send_key(ke.code, ke.modifiers).unwrap();
+            }
+        }
+    }
+    harness.render().unwrap();
+
+    harness.assert_screen_contains("FRE!?");
 }
 
 /// InputParser must map CSI u sequences to the correct KeyCode and modifiers.

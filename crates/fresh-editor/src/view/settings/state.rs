@@ -219,6 +219,12 @@ pub struct SettingsState {
     /// across frames. Empty until a control's input is routed through the
     /// runtime (behavior is then identical to the old per-control State).
     pub widget_states: std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
+    /// Live theme options `(display, value)` for the theme dropdown, sourced
+    /// from the `ThemeRegistry` via [`Self::set_theme_options`] when Settings
+    /// opens. Empty until set — the dropdown then simply lists nothing rather
+    /// than a stale hand-maintained set. Resolves the `x-enum-from: "$themes"`
+    /// schema hint so the Settings theme list matches "Select Theme" (#2738).
+    theme_options: Vec<super::items::ThemeOption>,
 }
 
 /// Pre-edit state of a plain `Text` setting, captured by `start_editing` and
@@ -313,12 +319,14 @@ impl SettingsState {
         let layer_sources = HashMap::new(); // Populated via set_layer_sources()
         let target_layer = ConfigLayer::User; // Default to user-global settings
         let available_status_bar_tokens: HashMap<String, String> = HashMap::new();
+        let theme_options: Vec<super::items::ThemeOption> = Vec::new();
         let pages = super::items::build_pages(
             &categories,
             &config_value,
             &layer_sources,
             target_layer,
             &available_status_bar_tokens,
+            &theme_options,
         );
 
         Ok(Self {
@@ -371,6 +379,7 @@ impl SettingsState {
             tree_cursor_section: None,
             text_edit_snapshot: None,
             widget_states: std::collections::HashMap::new(),
+            theme_options,
         })
     }
 
@@ -423,7 +432,19 @@ impl SettingsState {
             &self.layer_sources,
             self.target_layer,
             &self.available_status_bar_tokens,
+            &self.theme_options,
         );
+    }
+
+    /// Set the live theme options for the theme dropdown and rebuild pages.
+    ///
+    /// Called when Settings opens, from the editor which owns the
+    /// `ThemeRegistry`. Pass `registry.settings_theme_options()` mapped into
+    /// [`ThemeOption`](super::items::ThemeOption)s. This is the single source of
+    /// truth shared with "Select Theme" (#2738).
+    pub fn set_theme_options(&mut self, options: Vec<super::items::ThemeOption>) {
+        self.theme_options = options;
+        self.rebuild_pages();
     }
 
     fn paths_intersect(a: &str, b: &str) -> bool {

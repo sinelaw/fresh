@@ -205,6 +205,22 @@ impl<'a> ViewLineIterator<'a> {
         self
     }
 
+    /// Declare how the first emitted line begins.
+    ///
+    /// `LineStart::Beginning` — the default — means "no preceding token", which
+    /// for the gutter reads as "start of a logical line, print its number". That
+    /// is only true when the token stream starts at one. An anchored build
+    /// starts at the viewport's own row, which on a wrapped line is a
+    /// continuation: without this the first drawn row of a scrolled-into long
+    /// line gets a line number that the same row does not have when reached by
+    /// scrolling one row at a time.
+    ///
+    /// The caller knows because `RowCarry.on_continuation` says so.
+    pub fn starting_at(mut self, line_start: LineStart) -> Self {
+        self.next_line_start = line_start;
+        self
+    }
+
     /// Expand a tab to spaces based on current column and configured tab_size
     #[inline]
     fn tab_expansion_width(&self, col: usize) -> usize {
@@ -314,6 +330,27 @@ impl<'a> ViewLineIterator<'a> {
             // clicks, and cursor arithmetic. But `col` advances exactly
             // once per grapheme: the first codepoint of a cluster carries
             // the full width, the rest carry 0.
+            // Plain-ASCII fast path. Every byte is its own grapheme, one column
+            // wide, so the whole UAX #29 segmentation is skippable — and it is
+            // not cheap: `InCB_Extend`, the Indic-conjunct-break table lookup
+            // it runs per character, was the single hottest symbol in the
+            // profile at 7.81% self, on text that is almost always ASCII.
+            //
+            // Excludes control bytes (so tab, ESC and the unprintables still
+            // take the general path), binary mode, and any token being watched
+            // by an ANSI parser.
+            let ascii_fast = !self.binary_mode
+                && ansi_parser.is_none()
+                && valid.is_ascii()
+                && !valid.bytes().any(|b| b < 0x20 || b == 0x7f);
+            if ascii_fast {
+                for (i, ch) in valid.chars().enumerate() {
+                    acc.push_char(ch, base.map(|s| s + byte_idx + i), token_style.clone(), 1);
+                }
+                byte_idx += valid.len();
+                continue;
+            }
+
             let mut segmented_bytes = 0usize;
             for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
                 segmented_bytes = g_byte_offset + grapheme.len();
@@ -443,14 +480,21 @@ struct LineAccumulator {
     col: usize,
 }
 
+/// Rows are a viewport wide, so every one of the five per-row buffers grows
+/// through the whole realloc ladder from zero. One allocation each at a typical
+/// row width instead: `realloc` was ~5% of a frame, and its `grow_amortized` /
+/// `finish_grow` callers about as much again. Rows wider than this still grow,
+/// they just start further along.
+const TYPICAL_ROW_CHARS: usize = 128;
+
 impl LineAccumulator {
     fn new() -> Self {
         Self {
-            text: String::new(),
-            char_source_bytes: Vec::new(),
-            char_styles: Vec::new(),
-            char_visual_cols: Vec::new(),
-            visual_to_char: Vec::new(),
+            text: String::with_capacity(TYPICAL_ROW_CHARS),
+            char_source_bytes: Vec::with_capacity(TYPICAL_ROW_CHARS),
+            char_styles: Vec::with_capacity(TYPICAL_ROW_CHARS),
+            char_visual_cols: Vec::with_capacity(TYPICAL_ROW_CHARS),
+            visual_to_char: Vec::with_capacity(TYPICAL_ROW_CHARS),
             tab_starts: HashSet::new(),
             col: 0,
         }
@@ -714,7 +758,7 @@ use std::collections::BTreeMap;
 /// The Layout represents the computed display state for a view.
 ///
 /// This is **View state**, not Buffer state. Each split has its own Layout
-/// computed from its view_transform (or base tokens if no transform).
+/// computed from its base tokens.
 ///
 /// The Layout provides:
 /// - ViewLines for the current viewport region

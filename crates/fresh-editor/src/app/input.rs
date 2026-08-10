@@ -79,6 +79,59 @@ impl Editor {
 }
 
 impl Editor {
+    /// Evaluate an agent-submitted script (already wrapped by
+    /// `server::command_access`) as an ephemeral plugin.
+    ///
+    /// This is the whole of the script channel's runtime cost: the source goes
+    /// through the *existing* load-from-source path — the one `init.ts` and
+    /// "Load Plugin from Buffer" use — so it gets TypeScript transpilation, its
+    /// own context, and the full `editor` API without a line of new runtime
+    /// code. The wrapper answers the caller through `editor.completeCommand`,
+    /// which is an ordinary plugin API method, so the result travels the same
+    /// route a plugin command's return value already took.
+    ///
+    /// `Ok(())` means the script was *submitted*. Success is reported later by
+    /// the script itself; only a failure to compile or to reach the runtime is
+    /// settled here, since in that case nothing will ever call
+    /// `completeCommand` and the caller would wait for an answer that cannot
+    /// come.
+    pub fn eval_agent_script(&mut self, wrapped: &str, request_id: u64) -> Result<(), String> {
+        #[cfg(feature = "plugins")]
+        {
+            // A name per request: two scripts in flight must not share a
+            // context, or the second would see (and could clobber) the first's
+            // globals.
+            let name = format!("agent-script-{}", request_id);
+            let rx = self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .load_plugin_from_source_request(wrapped, &name, true)
+                .ok_or_else(|| "plugin runtime unavailable".to_string())?;
+            // Wait for the load off the editor thread: the script's own host
+            // calls only complete on later editor ticks, which this thread must
+            // stay free to service.
+            std::thread::Builder::new()
+                .name("agent-script-load".to_string())
+                .spawn(move || {
+                    let failure = match rx.recv() {
+                        // The script is running; it answers for itself.
+                        Ok(Ok(())) => return,
+                        Ok(Err(e)) => format!("{e}"),
+                        Err(e) => format!("plugin thread closed: {e}"),
+                    };
+                    crate::server::command_access::complete(request_id, false, None, Some(failure));
+                })
+                .map_err(|e| format!("could not start script loader: {e}"))?;
+            Ok(())
+        }
+        #[cfg(not(feature = "plugins"))]
+        {
+            let _ = (wrapped, request_id);
+            Err("scripts not available (compiled without plugin support)".to_string())
+        }
+    }
+
     /// Whether editor-pane popups (LSP completion, hover, signature help,
     /// global plugin popups, …) should intercept keyboard input.
     ///
@@ -357,9 +410,9 @@ impl Editor {
         }
         // The tab-bar popups (the "+" new-tab menu and the tab right-click
         // context menu) are modal chrome: while one is open it owns the
-        // keyboard via a custom dispatcher (`handle_new_tab_menu_key` /
-        // `handle_tab_context_menu_key`, run from `handle_key` ahead of
-        // `KeyContext` resolution), so they expose no `KeyContext` here.
+        // keyboard via a custom dispatcher (`handle_context_menu_key`, run
+        // from `handle_key` ahead of `KeyContext` resolution), so they expose
+        // no `KeyContext` here.
         // Like any covering overlay they block PTY routing — otherwise keys
         // would leak into an active terminal buffer underneath instead of
         // driving the menu. Ranked below `Popup` so the unfocused-popup
@@ -375,6 +428,30 @@ impl Editor {
         if self.active_window().tab_context_menu.is_some() {
             layers.push(Layer {
                 kind: LayerKind::TabContextMenu,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        // The file-explorer right-click context menu gets the same treatment
+        // as the tab-bar menus: a custom key dispatcher owns the keyboard
+        // while it's open (transparent to `KeyContext`), and it blocks PTY
+        // routing so keys drive the menu rather than leaking into a terminal
+        // buffer underneath.
+        if self.active_window().file_explorer_context_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::FileExplorerContextMenu,
+                owns_keyboard: true,
+                key_context: None,
+                blocks_terminal_input: true,
+            });
+        }
+        // The close-split confirmation popup gets the same treatment as the
+        // other native context menus: a custom key dispatcher owns the keyboard
+        // while it's open and it blocks PTY routing.
+        if self.active_window().close_split_menu.is_some() {
+            layers.push(Layer {
+                kind: LayerKind::CloseSplitMenu,
                 owns_keyboard: true,
                 key_context: None,
                 blocks_terminal_input: true,
@@ -439,6 +516,62 @@ impl Editor {
     pub fn get_key_context(&self) -> crate::input::keybindings::KeyContext {
         crate::app::overlay::resolve_focus_context(&self.overlay_layers())
             .expect("editor base layer always owns the keyboard")
+    }
+
+    /// Handle a key press that a terminal reported, resolving which of its two
+    /// readings the keymap should see.
+    ///
+    /// A chord is both a physical key plus modifiers (`Ctrl+Shift+7`) and the
+    /// character that key types (`&` on a US layout, `/` on a German one). The
+    /// parser reports both when they disagree — see
+    /// [`fresh_input_parser::KeyPress`] — because neither is right on its own:
+    /// binding the physical chord leaves a German user's `Ctrl+/` firing
+    /// `set_bookmark` (sinelaw/fresh#2933), and binding the typed character
+    /// breaks every US `Ctrl+Shift+<digit>`.
+    ///
+    /// **The keymap decides.** The layout reading is tried first and used only
+    /// if something is actually bound to it; otherwise the physical chord is
+    /// handled exactly as before. So a US layout is unaffected — nothing binds
+    /// `ctrl+&`, so `Ctrl+Shift+7` still reaches `set_bookmark` — while a German
+    /// layout resolves the same keystroke to `ctrl+/`.
+    ///
+    /// One chord can only mean one thing, so this is a precedence, not a
+    /// merge: where a keymap binds both readings, the layout one wins and the
+    /// physical chord is unreachable from that key. A user who wants the other
+    /// way round rebinds it.
+    pub fn handle_key_press(&mut self, press: fresh_input_parser::KeyPress) -> AnyhowResult<()> {
+        let (code, modifiers) = self
+            .layout_reading(&press)
+            .unwrap_or((press.code, press.modifiers));
+        self.handle_key(code, modifiers)
+    }
+
+    /// The chord built from what the key types on this layout, if the keymap
+    /// binds it. `None` when there is no distinct layout character, or when
+    /// nothing is bound to it and the physical chord should be used instead.
+    fn layout_reading(
+        &self,
+        press: &fresh_input_parser::KeyPress,
+    ) -> Option<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)> {
+        use crate::input::keybindings::Action;
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let layout_char = press.layout_char?;
+        // Shift is spent producing the character, so it is not part of the
+        // chord built from it: the German `/` is `ctrl+/`, not `ctrl+shift+/`.
+        let modifiers = press.modifiers - KeyModifiers::SHIFT;
+        let code = KeyCode::Char(layout_char);
+        let action = self
+            .keybindings
+            .read()
+            .ok()?
+            .resolve(&KeyEvent::new(code, modifiers), self.get_key_context());
+        // `InsertChar` is the resolver's "nothing bound, just type it" answer.
+        // Typing is the physical key's job, not this reading's.
+        match action {
+            Action::None | Action::InsertChar(_) => None,
+            _ => Some((code, modifiers)),
+        }
     }
 
     /// Handle a key event and return whether it was handled
@@ -571,24 +704,12 @@ impl Editor {
             self.active_window_mut().theme_info_popup = None;
         }
 
-        if self
-            .active_window_mut()
-            .file_explorer_context_menu
-            .is_some()
-        {
-            if let Some(result) = self.handle_file_explorer_context_menu_key(code, modifiers) {
-                return result;
-            }
-        }
-
-        // The tab-bar popups (the "+" new-tab menu and the tab right-click
-        // context menu) are modal: while one is open it owns the keyboard so
-        // navigation/selection work and every other key is filtered out
-        // instead of leaking into the active buffer underneath.
-        if let Some(result) = self.handle_new_tab_menu_key(code) {
-            return result;
-        }
-        if let Some(result) = self.handle_tab_context_menu_key(code) {
+        // The native context menus (file-explorer / tab / "+" new-tab) are
+        // modal: while one is open it owns the keyboard so navigation and
+        // selection work and every other key is filtered out instead of
+        // leaking into the active buffer or the explorer's type-ahead find
+        // underneath. One handler covers all three.
+        if let Some(result) = self.handle_context_menu_key(code, modifiers) {
             return result;
         }
 
@@ -998,6 +1119,24 @@ impl Editor {
             self.reset_dabbrev_state();
         }
 
+        // Enter on a line that points somewhere (`editor.setLineTargets`)
+        // follows it, the same as clicking it. Intercepted here rather than
+        // inside the newline handler so the behaviour is identical whether
+        // the buffer is editable or not — an index built by a script is
+        // usually a plain file, and typing a newline into it is never what
+        // pressing Enter on an entry meant.
+        #[cfg(feature = "plugins")]
+        if matches!(action, Action::InsertNewline) {
+            let buffer_id = self.active_buffer();
+            if let Some(line) = self.cursor_line_in_active_buffer() {
+                if let Some(target) = self.line_target_at(buffer_id, line) {
+                    let source = self.active_split_id();
+                    self.follow_line_target(target, source);
+                    return Ok(());
+                }
+            }
+        }
+
         match action {
             Action::Quit => self.quit(),
             Action::ForceQuit => {
@@ -1067,6 +1206,26 @@ impl Editor {
                 );
                 self.init_file_open_state();
             }
+            Action::SaveAll => {
+                let msg = match self.save_all() {
+                    Ok((saved, failed)) => {
+                        if failed > 0 {
+                            t!(
+                                "status.save_all_partial",
+                                saved = saved.to_string(),
+                                failed = failed.to_string()
+                            )
+                            .to_string()
+                        } else if saved == 0 {
+                            t!("status.save_all_none").to_string()
+                        } else {
+                            t!("status.save_all", count = saved.to_string()).to_string()
+                        }
+                    }
+                    Err(e) => t!("file.save_failed", error = &format!("{}", e)).to_string(),
+                };
+                self.active_window_mut().status_message = Some(msg);
+            }
             Action::Open => {
                 self.start_prompt(t!("file.open_prompt").to_string(), PromptType::OpenFile);
                 self.prefill_open_file_prompt();
@@ -1132,39 +1291,87 @@ impl Editor {
             Action::ToggleAutoRevert => {
                 self.toggle_auto_revert();
             }
+            Action::OpenUpdateLog => {
+                self.show_self_update_output();
+            }
+            Action::UpdateFresh => {
+                // Once an update is running or finished, the indicator's job is
+                // to surface the update terminal, not to re-offer the update —
+                // except at the two terminal states that leave something for
+                // the user to act on.
+                use crate::services::release_checker::SelfUpdatePhase;
+                match self.self_update_phase() {
+                    // Failed: retry / show-log / cancel.
+                    SelfUpdatePhase::Failed => self.show_update_failed_popup(),
+                    // Action required: the update ran cleanly but left a command
+                    // to run. Surface *that*, rather than re-offering an update
+                    // that has already been downloaded and verified.
+                    SelfUpdatePhase::ActionRequired => self.show_update_action_required_popup(),
+                    SelfUpdatePhase::Running | SelfUpdatePhase::Succeeded => {
+                        self.show_self_update_output()
+                    }
+                    SelfUpdatePhase::Idle => {
+                        if !self.config().self_update {
+                            self.set_status_message(t!("update.disabled").to_string());
+                        } else if !self.is_update_available() {
+                            self.set_status_message(t!("update.up_to_date").to_string());
+                        } else {
+                            // An update is available — offer it through a popup
+                            // built from the resolved update plan, so the
+                            // confirmation says how this copy was installed and
+                            // what confirming will actually do.
+                            let version = self.latest_version().unwrap_or("").to_string();
+                            self.show_update_popup(&version);
+                        }
+                    }
+                }
+            }
             Action::FormatBuffer => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 if let Err(e) = self.format_buffer() {
                     self.set_status_message(
                         t!("error.format_failed", error = e.to_string()).to_string(),
                     );
                 }
             }
-            Action::TrimTrailingWhitespace => match self.trim_trailing_whitespace() {
-                Ok(true) => {
-                    self.set_status_message(t!("whitespace.trimmed").to_string());
+            Action::TrimTrailingWhitespace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
                 }
-                Ok(false) => {
-                    self.set_status_message(t!("whitespace.no_trailing").to_string());
+                match self.trim_trailing_whitespace() {
+                    Ok(true) => {
+                        self.set_status_message(t!("whitespace.trimmed").to_string());
+                    }
+                    Ok(false) => {
+                        self.set_status_message(t!("whitespace.no_trailing").to_string());
+                    }
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("error.trim_whitespace_failed", error = e).to_string(),
+                        );
+                    }
                 }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("error.trim_whitespace_failed", error = e).to_string(),
-                    );
+            }
+            Action::EnsureFinalNewline => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
                 }
-            },
-            Action::EnsureFinalNewline => match self.ensure_final_newline() {
-                Ok(true) => {
-                    self.set_status_message(t!("whitespace.newline_added").to_string());
+                match self.ensure_final_newline() {
+                    Ok(true) => {
+                        self.set_status_message(t!("whitespace.newline_added").to_string());
+                    }
+                    Ok(false) => {
+                        self.set_status_message(t!("whitespace.already_has_newline").to_string());
+                    }
+                    Err(e) => {
+                        self.set_status_message(
+                            t!("error.ensure_newline_failed", error = e).to_string(),
+                        );
+                    }
                 }
-                Ok(false) => {
-                    self.set_status_message(t!("whitespace.already_has_newline").to_string());
-                }
-                Err(e) => {
-                    self.set_status_message(
-                        t!("error.ensure_newline_failed", error = e).to_string(),
-                    );
-                }
-            },
+            }
             Action::Copy => {
                 // Editor-level popups take precedence over everything, including the file explorer.
                 let popup = self
@@ -1442,6 +1649,13 @@ impl Editor {
 
                 // Update all viewports to reflect the new line wrap setting,
                 // respecting per-language overrides
+                let active_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
                 let leaf_ids: Vec<_> = self
                     .windows
                     .get(&self.active_window)
@@ -1468,14 +1682,28 @@ impl Editor {
                         .expect("active window must have a populated split layout")
                         .get_mut(&leaf_id)
                     {
-                        view_state.viewport.line_wrap_enabled = effective_wrap;
-                        view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
-                        view_state.viewport.wrap_column = wrap_column;
-                        // Global toggle expresses global intent; drop the
-                        // per-buffer pin so it doesn't revert this change.
-                        view_state.line_wrap_override = None;
+                        // The active split's own pin is dropped — the user is
+                        // expressing a global intent on the view in front of
+                        // them. Every other pinned split keeps its choice: a
+                        // global default must not silently un-pin work the
+                        // user did elsewhere (same rule as the highlight
+                        // toggles below).
+                        if leaf_id == active_split {
+                            view_state.line_wrap_override = None;
+                        }
+                        if view_state.line_wrap_override.is_none() {
+                            view_state.viewport.line_wrap_enabled = effective_wrap;
+                            view_state.viewport.wrap_indent = self.config.editor.wrap_indent;
+                            view_state.viewport.wrap_column = wrap_column;
+                        }
                     }
                 }
+
+                // `editor.line_wrap` is an editor-wide default, so an
+                // unsuffixed toggle saves it to the user config layer — see the
+                // scope convention on `COMMANDS` in `input/commands.rs`. The
+                // per-buffer variant is "Toggle Line Wrap (Current Buffer)".
+                self.persist_config_change(crate::config_keys::EDITOR_LINE_WRAP, new_value);
 
                 let state = if self.config.editor.line_wrap {
                     t!("view.state_enabled").to_string()
@@ -1487,6 +1715,13 @@ impl Editor {
             Action::ToggleCurrentLineHighlight => {
                 let new_value = !self.config.editor.highlight_current_line;
                 self.config_mut().editor.highlight_current_line = new_value;
+                let active_split = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(mgr, _)| mgr)
+                    .expect("active window must have a populated split layout")
+                    .active_split();
 
                 // Update all splits
                 let leaf_ids: Vec<_> = self
@@ -1506,10 +1741,25 @@ impl Editor {
                         .expect("active window must have a populated split layout")
                         .get_mut(&leaf_id)
                     {
-                        view_state.highlight_current_line =
-                            self.config.editor.highlight_current_line;
+                        // The active split's own pin is dropped just below —
+                        // the user is expressing a global intent on the view in
+                        // front of them. Every other pinned buffer keeps its
+                        // choice; a global default must not silently un-pin
+                        // work the user did elsewhere.
+                        if leaf_id == active_split {
+                            view_state.highlight_current_line_override = None;
+                        }
+                        if view_state.highlight_current_line_override.is_none() {
+                            view_state.highlight_current_line =
+                                self.config.editor.highlight_current_line;
+                        }
                     }
                 }
+
+                self.persist_config_change(
+                    crate::config_keys::EDITOR_HIGHLIGHT_CURRENT_LINE,
+                    new_value,
+                );
 
                 let state = if self.config.editor.highlight_current_line {
                     t!("view.state_enabled").to_string()
@@ -1523,10 +1773,29 @@ impl Editor {
             Action::ToggleOccurrenceHighlight => {
                 let new_value = !self.config.editor.highlight_occurrences;
                 self.config_mut().editor.highlight_occurrences = new_value;
+                let active_buffer = self.active_buffer();
 
-                // Update all open buffers
+                // Update all open buffers. A buffer the user pinned with the
+                // "(Current Buffer)" variant keeps its choice — except the
+                // active one, whose pin is cleared first as a global intent.
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&active_buffer)
+                {
+                    state.buffer_settings.highlight_occurrences_override = None;
+                }
                 for window in self.windows.values_mut() {
                     for (_, state) in &mut window.buffers {
+                        if state
+                            .buffer_settings
+                            .highlight_occurrences_override
+                            .is_some()
+                        {
+                            continue;
+                        }
                         state.reference_highlight_overlay.enabled = new_value;
                         if !new_value {
                             state
@@ -1535,6 +1804,11 @@ impl Editor {
                         }
                     }
                 }
+
+                self.persist_config_change(
+                    crate::config_keys::EDITOR_HIGHLIGHT_OCCURRENCES,
+                    new_value,
+                );
 
                 let state = if new_value {
                     t!("view.state_enabled").to_string()
@@ -1618,6 +1892,9 @@ impl Editor {
                 self.request_completion();
             }
             Action::DabbrevExpand => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 self.dabbrev_expand();
             }
             Action::LspGotoDefinition => {
@@ -1696,6 +1973,9 @@ impl Editor {
                 }
             }
             Action::Replace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 // Use same flow as query-replace, just with confirm_each defaulting to false
                 self.start_search_prompt(
                     t!("file.replace_prompt").to_string(),
@@ -1704,6 +1984,9 @@ impl Editor {
                 );
             }
             Action::QueryReplace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 // Enable confirm mode by default for query-replace
                 self.active_window_mut().search_confirm_each = true;
                 self.start_search_prompt(
@@ -1793,21 +2076,37 @@ impl Editor {
             Action::PrevPane => self.prev_pane(),
             Action::NextWindow => self.next_window(),
             Action::PrevWindow => self.prev_window(),
+            Action::ExtractTabToNewWorkspace => {
+                let buffer_id = self.active_buffer();
+                self.extract_tab_to_new_workspace(buffer_id);
+            }
             Action::IncreaseSplitSize => self.adjust_split_size(0.05),
             Action::DecreaseSplitSize => self.adjust_split_size(-0.05),
             Action::ToggleMaximizeSplit => self.toggle_maximize_split(),
             Action::ToggleFileExplorer => self.toggle_file_explorer(),
             Action::ToggleFileExplorerSide => self.toggle_file_explorer_side(),
             Action::ToggleMenuBar => self.toggle_menu_bar(),
-            Action::ToggleTabBar => self.active_window_mut().toggle_tab_bar(),
-            Action::ToggleStatusBar => self.active_window_mut().toggle_status_bar(),
-            Action::TogglePromptLine => self.active_window_mut().toggle_prompt_line(),
+            Action::ToggleTabBar => self.toggle_tab_bar(),
+            Action::ToggleStatusBar => self.toggle_status_bar(),
+            Action::TogglePromptLine => self.toggle_prompt_line(),
             Action::ToggleVerticalScrollbar => self.toggle_vertical_scrollbar(),
             Action::ToggleHorizontalScrollbar => self.toggle_horizontal_scrollbar(),
             Action::ToggleLineNumbers => self.toggle_line_numbers(),
             Action::ToggleLineNumbersCurrentBuffer => self.toggle_line_numbers_current_buffer(),
             Action::ToggleLineWrapCurrentBuffer => self.toggle_line_wrap_current_buffer(),
             Action::ToggleVirtualSpaceCurrentBuffer => self.toggle_virtual_space_current_buffer(),
+            Action::ToggleIndentationGuideCurrentBuffer => {
+                self.toggle_indentation_guide_current_buffer()
+            }
+            Action::ToggleFoldIndicatorsCurrentBuffer => {
+                self.toggle_fold_indicators_current_buffer()
+            }
+            Action::ToggleCurrentLineHighlightCurrentBuffer => {
+                self.toggle_current_line_highlight_current_buffer()
+            }
+            Action::ToggleOccurrenceHighlightCurrentBuffer => {
+                self.toggle_occurrence_highlight_current_buffer()
+            }
             Action::TriggerWaveAnimation => self.trigger_wave_animation(),
             Action::ToggleScrollSync => self.active_window_mut().toggle_scroll_sync(),
             Action::ToggleMouseCapture => self.toggle_mouse_capture(),
@@ -1854,7 +2153,13 @@ impl Editor {
                     .expect("active window present")
                     .get_mut(&__buffer_id)
                 {
-                    state.buffer_settings.use_tabs = !state.buffer_settings.use_tabs;
+                    let new_value = !state.buffer_settings.use_tabs;
+                    state.buffer_settings.use_tabs = new_value;
+                    // Record the explicit override so a later `apply_config`
+                    // (config reload, Set Language, save-time detection) can't
+                    // re-stamp the language default over the user's choice —
+                    // and so it can be persisted per file.
+                    state.buffer_settings.use_tabs_override = Some(new_value);
                     let status = if state.buffer_settings.use_tabs {
                         "Indentation: Tabs"
                     } else {
@@ -1863,7 +2168,7 @@ impl Editor {
                     self.set_status_message(status.to_string());
                 }
             }
-            Action::ToggleTabIndicators | Action::ToggleWhitespaceIndicators => {
+            Action::ToggleWhitespaceIndicators => {
                 let __buffer_id = self.active_buffer();
                 // Resolve the buffer's configured visibility up front so turning
                 // the master toggle back on restores the indicators the user
@@ -1878,10 +2183,44 @@ impl Editor {
                     .get_mut(&__buffer_id)
                 {
                     state.buffer_settings.whitespace.toggle_all(restore);
-                    let status = if state.buffer_settings.whitespace.any_visible() {
+                    let visible = state.buffer_settings.whitespace.any_visible();
+                    state.buffer_settings.whitespace_override = Some(visible);
+                    // The master toggle answers "any indicators at all?", so
+                    // it subsumes a finer tab pin: "hide whitespace
+                    // indicators" hiding everything *except* pinned arrows
+                    // would make the master appear broken.
+                    state.buffer_settings.tab_indicators_override = None;
+                    let status = if visible {
                         t!("toggle.whitespace_indicators_shown")
                     } else {
                         t!("toggle.whitespace_indicators_hidden")
+                    };
+                    self.set_status_message(status.to_string());
+                }
+            }
+            Action::ToggleTabIndicators => {
+                let __buffer_id = self.active_buffer();
+                if let Some(state) = self
+                    .windows
+                    .get_mut(&self.active_window)
+                    .map(|w| &mut w.buffers)
+                    .expect("active window present")
+                    .get_mut(&__buffer_id)
+                {
+                    // Only the tab-arrow trio: the command's description has
+                    // always promised "tab arrow indicators (→)", but it used
+                    // to share the master toggle-all with Whitespace
+                    // Indicators and flipped the space dots too.
+                    let ws = &mut state.buffer_settings.whitespace;
+                    let new_value = !(ws.tabs_leading || ws.tabs_inner || ws.tabs_trailing);
+                    ws.tabs_leading = new_value;
+                    ws.tabs_inner = new_value;
+                    ws.tabs_trailing = new_value;
+                    state.buffer_settings.tab_indicators_override = Some(new_value);
+                    let status = if new_value {
+                        t!("toggle.tab_indicators_shown")
+                    } else {
+                        t!("toggle.tab_indicators_hidden")
                     };
                     self.set_status_message(status.to_string());
                 }
@@ -2195,11 +2534,11 @@ impl Editor {
                 // Use non-blocking version to avoid deadlock with async plugin ops
                 #[cfg(feature = "plugins")]
                 {
-                    let result = self
-                        .plugin_manager
-                        .read()
-                        .unwrap()
-                        .execute_action_async(&action_name);
+                    let result = self.plugin_manager.read().unwrap().execute_action_async(
+                        &action_name,
+                        None,
+                        None,
+                    );
                     if let Some(result) = result {
                         match result {
                             Ok(receiver) => {
@@ -2359,6 +2698,9 @@ impl Editor {
             Action::CloseTerminal => {
                 self.close_terminal();
             }
+            Action::RestartTerminal => {
+                self.restart_terminal();
+            }
             Action::FocusTerminal => {
                 // If viewing a terminal buffer, drop the focused split into live
                 // mode (clears its scrollback edge, re-enables PTY input,
@@ -2412,6 +2754,9 @@ impl Editor {
                 self.start_shell_command_prompt(false);
             }
             Action::ShellCommandReplace => {
+                if self.refuse_if_editing_disabled() {
+                    return Ok(());
+                }
                 // Run shell command on buffer/selection, replace content
                 self.start_shell_command_prompt(true);
             }
@@ -2999,6 +3344,50 @@ impl Editor {
             // editor (blur) and falls through so the editor handles it
             // (e.g. Ctrl-P opens the command palette).
             if modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
+                // Clipboard chords on a focused Text field belong to the
+                // field, not the editor: Ctrl+V must paste into the
+                // New-Session form's Project Path, not be swallowed (and
+                // Ctrl+A / Ctrl+C / Ctrl+X select/copy/cut the field's
+                // own text). Resolve against the Normal context — the
+                // same lookup the buffer-mounted widget routing in
+                // `handle_action` uses — and route the clipboard actions
+                // to the widget. Everything else keeps the swallow/blur
+                // behaviour below.
+                if self.panel_focused_widget_is_text(&panel_key) {
+                    use crate::input::keybindings::Action;
+                    let key_event = crossterm::event::KeyEvent::new(code, modifiers);
+                    let resolved = {
+                        let keybindings = self.keybindings.read().unwrap();
+                        keybindings
+                            .resolve(&key_event, crate::input::keybindings::KeyContext::Normal)
+                    };
+                    match resolved {
+                        Action::Paste => {
+                            if let Some(text) = self.clipboard.paste() {
+                                // Normalise line endings to LF, matching the
+                                // Action::Paste widget branch; single-line
+                                // TextEdit strips embedded newlines itself.
+                                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                                self.handle_widget_insert_str(&panel_key, &normalized);
+                                self.set_status_message(t!("clipboard.pasted").to_string());
+                            }
+                            return true;
+                        }
+                        Action::Copy => {
+                            self.handle_widget_copy(&panel_key);
+                            return true;
+                        }
+                        Action::Cut => {
+                            self.handle_widget_cut(&panel_key);
+                            return true;
+                        }
+                        Action::SelectAll => {
+                            self.handle_widget_select_all(&panel_key);
+                            return true;
+                        }
+                        _ => {}
+                    }
+                }
                 if matches!(
                     self.panel(slot).map(|f| f.placement),
                     Some(super::PanelPlacement::LeftDock { .. })
@@ -3070,6 +3459,11 @@ impl Editor {
                 PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
             ) {
                 let query = prompt.input.clone();
+                // Drop the committed matches: they were collected under the
+                // old flags, and F3/Shift+F3 now step through them while the
+                // bar is open (issue #2111). Clearing makes the next press
+                // re-run the search under the new flags.
+                self.active_window_mut().search_state = None;
                 self.update_search_highlights(&query);
             }
         } else if let Some(search_state) = &self.active_window().search_state {

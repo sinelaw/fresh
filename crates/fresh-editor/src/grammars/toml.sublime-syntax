@@ -32,21 +32,30 @@ contexts:
         3: punctuation.definition.table.end.toml
 
   key-value:
-    - match: '([A-Za-z0-9_-]+|"[^"]*"|''[^'']*'')\s*(=)'
+    # Keep top-level keys anchored to the start of the line. Without the
+    # anchor, text such as "USER=root" in a multiline string array is
+    # mistaken for another TOML assignment after the opening array line.
+    - match: '^\s*((?:[A-Za-z0-9_-]+|"[^"]*"|''[^'']*'')(?:\s*\.\s*(?:[A-Za-z0-9_-]+|"[^"]*"|''[^'']*''))*)\s*(=)'
       captures:
         1: entity.name.tag.toml
         2: punctuation.separator.key-value.toml
       push: value
 
   value:
-    - include: strings
-    - include: numbers
-    - include: booleans
-    - include: dates
-    - include: arrays
-    - include: inline-tables
+    - include: value-components
     - match: '$'
       pop: true
+
+  # Value rules without the end-of-line pop. Arrays include this context so
+  # that they remain open across lines instead of being popped by `value` at
+  # the end of their first line.
+  value-components:
+    - include: strings
+    - include: booleans
+    - include: dates
+    - include: numbers
+    - include: arrays
+    - include: inline-tables
 
   strings:
     # Multi-line basic strings
@@ -103,7 +112,10 @@ contexts:
     - match: '0b[01_]+'
       scope: constant.numeric.binary.toml
     # Float with exponent
-    - match: '[+-]?(\d[0-9_]*)?\.(\d[0-9_]*)?([eE][+-]?\d[0-9_]*)?'
+    - match: '[+-]?\d[0-9_]*\.\d[0-9_]*([eE][+-]?\d[0-9_]*)?'
+      scope: constant.numeric.float.toml
+    # Float with an exponent but no fractional part
+    - match: '[+-]?\d[0-9_]*[eE][+-]?\d[0-9_]*'
       scope: constant.numeric.float.toml
     # Float special values
     - match: '[+-]?(inf|nan)\b'
@@ -138,7 +150,7 @@ contexts:
         - match: '\]'
           scope: punctuation.definition.array.end.toml
           pop: true
-        - include: value
+        - include: value-components
         - match: ','
           scope: punctuation.separator.array.toml
         - include: comments
@@ -151,6 +163,16 @@ contexts:
         - match: '\}'
           scope: punctuation.definition.inline-table.end.toml
           pop: true
-        - include: key-value
+        - include: inline-key-value
         - match: ','
           scope: punctuation.separator.inline-table.toml
+
+  inline-key-value:
+    - match: '((?:[A-Za-z0-9_-]+|"[^"]*"|''[^'']*'')(?:\s*\.\s*(?:[A-Za-z0-9_-]+|"[^"]*"|''[^'']*''))*)\s*(=)'
+      captures:
+        1: entity.name.tag.toml
+        2: punctuation.separator.key-value.toml
+      push:
+        - include: value-components
+        - match: '(?=[,}])'
+          pop: true

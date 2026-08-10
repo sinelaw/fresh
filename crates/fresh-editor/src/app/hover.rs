@@ -17,16 +17,40 @@
 //! is pure data with no `Editor` or I/O access.
 
 use crate::view::overlay::OverlayHandle;
+use std::collections::HashSet;
 
-/// Owner of in-flight hover request and highlighted-symbol tracking.
+/// One server's contribution to a hover card. Several servers may answer a
+/// single hover request; their non-null payloads are accumulated and merged
+/// into one popup.
+#[derive(Debug, Clone)]
+pub(crate) struct HoverPayload {
+    /// Raw hover body text (markdown or plain), already normalized so that
+    /// null / empty LSP hovers never reach here.
+    pub(crate) contents: String,
+    /// Whether `contents` should be rendered as markdown.
+    pub(crate) is_markdown: bool,
+    /// LSP range of the hovered symbol, if the server provided one.
+    pub(crate) range: Option<((u32, u32), (u32, u32))>,
+    /// Originating server name. Carried so per-server labels can be added
+    /// later; unused for rendering today.
+    #[allow(dead_code)]
+    pub(crate) server_name: Option<String>,
+}
+
+/// Owner of in-flight hover request(s) and highlighted-symbol tracking.
 #[derive(Debug, Default)]
 pub(crate) struct HoverState {
-    /// LSP request id of the in-flight hover request, if any.
-    pending_request: Option<u64>,
-    /// LSP position `(line, character)` of the in-flight request. Retained
+    /// LSP request ids of the in-flight hover requests. Hover fans out to
+    /// every capable server, so multiple ids may be outstanding at once.
+    /// Used to ignore stale responses from earlier mouse moves.
+    pending_requests: HashSet<u64>,
+    /// LSP position `(line, character)` of the in-flight batch. Retained
     /// so the response handler can correlate diagnostics with the hover
     /// point and fuse them into the hover card.
     pending_position: Option<(u32, u32)>,
+    /// Non-null hover payloads collected so far for the current batch, in
+    /// arrival order. Merged into a single popup once responses are in.
+    accumulated: Vec<HoverPayload>,
     /// Byte range `(start, end)` of the currently-highlighted symbol.
     /// Used by mouse-move handlers to detect "still on same symbol" and
     /// skip re-querying.
@@ -43,31 +67,54 @@ pub(crate) struct HoverState {
 impl HoverState {
     // ---- Pending-request correlation --------------------------------------
 
-    /// Record that a hover request with `request_id` was sent at LSP
-    /// position `(line, character)`.
-    pub(crate) fn record_request(&mut self, request_id: u64, line: u32, character: u32) {
-        self.pending_request = Some(request_id);
+    /// Record that a batch of hover requests (`ids`) was sent at LSP
+    /// position `(line, character)`. Replaces any previous batch and clears
+    /// the accumulator so responses from the prior batch are ignored.
+    pub(crate) fn record_requests(&mut self, ids: &[u64], line: u32, character: u32) {
+        self.pending_requests = ids.iter().copied().collect();
         self.pending_position = Some((line, character));
+        self.accumulated.clear();
     }
 
-    /// Claim a response as matching the in-flight request. If it matches,
-    /// both `pending_request` and `pending_position` are cleared, and the
-    /// position is returned for the caller's use (diagnostic correlation).
+    /// Claim a response as belonging to the in-flight batch. If `request_id`
+    /// is one of the outstanding ids it is removed and the batch position is
+    /// returned for diagnostic correlation. The position is only drained once
+    /// the last outstanding id is claimed, so every response in the batch can
+    /// still correlate diagnostics.
     ///
     /// Returns `None` if the response is stale — the caller should drop it.
     pub(crate) fn claim_pending(&mut self, request_id: u64) -> Option<(u32, u32)> {
-        if self.pending_request != Some(request_id) {
+        if !self.pending_requests.remove(&request_id) {
             return None;
         }
-        self.pending_request = None;
-        self.pending_position.take()
+        if self.pending_requests.is_empty() {
+            self.pending_position.take()
+        } else {
+            self.pending_position
+        }
     }
 
-    /// Clear any in-flight request without consuming a position — used
+    /// Whether every outstanding request in the batch has been claimed.
+    pub(crate) fn pending_is_empty(&self) -> bool {
+        self.pending_requests.is_empty()
+    }
+
+    /// Append a non-null hover payload to the current batch's accumulator.
+    pub(crate) fn push_payload(&mut self, payload: HoverPayload) {
+        self.accumulated.push(payload);
+    }
+
+    /// Payloads accumulated for the current batch, in arrival order.
+    pub(crate) fn accumulated(&self) -> &[HoverPayload] {
+        &self.accumulated
+    }
+
+    /// Clear any in-flight batch without consuming a position — used
     /// when focus is lost or the user cancels hover.
     pub(crate) fn clear_pending(&mut self) {
-        self.pending_request = None;
+        self.pending_requests.clear();
         self.pending_position = None;
+        self.accumulated.clear();
     }
 
     // ---- Symbol range -----------------------------------------------------
@@ -117,16 +164,31 @@ mod tests {
     #[test]
     fn claim_pending_returns_position_and_clears_state() {
         let mut h = HoverState::default();
-        h.record_request(7, 10, 20);
+        h.record_requests(&[7], 10, 20);
+        assert!(!h.pending_is_empty());
         assert_eq!(h.claim_pending(7), Some((10, 20)));
-        // Subsequent claim for the same id returns None — position drained.
+        // Batch now empty.
+        assert!(h.pending_is_empty());
+        // Subsequent claim for the same id returns None — id removed.
         assert_eq!(h.claim_pending(7), None);
+    }
+
+    #[test]
+    fn claim_pending_across_multi_server_batch_keeps_position_until_last() {
+        let mut h = HoverState::default();
+        h.record_requests(&[1, 2], 3, 4);
+        // First response: position returned, batch not yet empty.
+        assert_eq!(h.claim_pending(1), Some((3, 4)));
+        assert!(!h.pending_is_empty());
+        // Second (last) response: position still returned, batch now empty.
+        assert_eq!(h.claim_pending(2), Some((3, 4)));
+        assert!(h.pending_is_empty());
     }
 
     #[test]
     fn claim_pending_rejects_stale_response() {
         let mut h = HoverState::default();
-        h.record_request(7, 10, 20);
+        h.record_requests(&[7], 10, 20);
         // Older response arrives after a newer request went out.
         assert_eq!(h.claim_pending(3), None);
         // Correct one still works.
@@ -134,19 +196,58 @@ mod tests {
     }
 
     #[test]
-    fn record_request_overwrites_previous_pending() {
+    fn record_requests_overwrites_previous_batch() {
         let mut h = HoverState::default();
-        h.record_request(1, 0, 0);
-        h.record_request(2, 5, 5);
+        h.record_requests(&[1], 0, 0);
+        h.record_requests(&[2], 5, 5);
         assert_eq!(h.claim_pending(1), None);
         assert_eq!(h.claim_pending(2), Some((5, 5)));
     }
 
     #[test]
+    fn record_requests_clears_accumulator() {
+        let mut h = HoverState::default();
+        h.record_requests(&[1], 0, 0);
+        h.push_payload(HoverPayload {
+            contents: "a".to_string(),
+            is_markdown: false,
+            range: None,
+            server_name: None,
+        });
+        assert_eq!(h.accumulated().len(), 1);
+        h.record_requests(&[2], 0, 0);
+        assert!(h.accumulated().is_empty());
+    }
+
+    #[test]
+    fn push_payload_accumulates_in_order() {
+        let mut h = HoverState::default();
+        h.record_requests(&[1, 2], 0, 0);
+        h.push_payload(HoverPayload {
+            contents: "first".to_string(),
+            is_markdown: false,
+            range: None,
+            server_name: Some("A".to_string()),
+        });
+        h.push_payload(HoverPayload {
+            contents: "second".to_string(),
+            is_markdown: true,
+            range: Some(((1, 2), (3, 4))),
+            server_name: Some("B".to_string()),
+        });
+        let acc = h.accumulated();
+        assert_eq!(acc.len(), 2);
+        assert_eq!(acc[0].contents, "first");
+        assert_eq!(acc[1].contents, "second");
+        assert_eq!(acc[1].range, Some(((1, 2), (3, 4))));
+    }
+
+    #[test]
     fn clear_pending_drops_without_returning_position() {
         let mut h = HoverState::default();
-        h.record_request(7, 10, 20);
+        h.record_requests(&[7], 10, 20);
         h.clear_pending();
+        assert!(h.pending_is_empty());
         assert_eq!(h.claim_pending(7), None);
     }
 

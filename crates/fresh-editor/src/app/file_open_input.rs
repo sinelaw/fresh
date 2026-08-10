@@ -219,6 +219,17 @@ impl Editor {
                 // Only allowed in file mode, not folder mode
                 self.file_open_open_file_at_location(expanded_path, line, column);
                 return;
+            } else if !is_folder_mode
+                && self.active_window().pending_file_pick_callback.is_some()
+                && Self::should_create_new_file(&path_input)
+            {
+                // Pick mode (`editor.pickFile`): the typed path names nothing
+                // on disk, and a pick has nothing to create — resolving with a
+                // path that does not exist only moves the failure into the
+                // plugin, after the browser is already gone. Reject the
+                // confirm silently: the browser stays open with the input
+                // intact, and the user fixes the name or Escapes out.
+                return;
             } else if !is_folder_mode && Self::should_create_new_file(&path_input) {
                 // File doesn't exist but input looks like a filename - create new file
                 // This handles cases like "newfile.txt" or "/path/to/newfile.txt"
@@ -308,12 +319,34 @@ impl Editor {
     }
 
     /// Open a file from the file browser and optionally jump to line/column
+    /// When the browser was opened by `editor.pickFile`, a confirmed
+    /// path is *delivered*, not opened: tear down the browser, resolve
+    /// the plugin's promise with the absolute path, and report handled.
+    fn resolve_pending_file_pick(&mut self, path: &std::path::Path) -> bool {
+        let Some(callback_id) = self.active_window_mut().pending_file_pick_callback.take() else {
+            return false;
+        };
+        self.active_window_mut().file_open_state = None;
+        self.active_window_mut().prompt = None;
+        self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
+        let json = serde_json::to_string(&path.display().to_string())
+            .unwrap_or_else(|_| "null".to_string());
+        self.plugin_manager
+            .read()
+            .unwrap()
+            .resolve_callback(callback_id, json);
+        true
+    }
+
     fn file_open_open_file_at_location(
         &mut self,
         path: std::path::PathBuf,
         line: Option<usize>,
         column: Option<usize>,
     ) {
+        if self.resolve_pending_file_pick(&path) {
+            return;
+        }
         // Check if encoding detection is disabled - if so, prompt for encoding first
         let detect_encoding = self
             .active_window_mut()
@@ -453,6 +486,9 @@ impl Editor {
 
     /// Create a new file (opens an unsaved buffer that will create the file on save)
     fn file_open_create_new_file(&mut self, path: std::path::PathBuf) {
+        // Unreachable in pick mode: `file_open_confirm` rejects a typed
+        // path that names nothing on disk before it gets here, so a pick
+        // never resolves with a file that does not exist.
         // Close the file browser
         self.active_window_mut().file_open_state = None;
         self.active_window_mut().prompt = None;
@@ -724,15 +760,7 @@ impl Editor {
 
         // Check if click is in navigation area
         if layout.is_in_nav(x, y) {
-            // Get shortcut labels for hit testing
-            let shortcut_labels: Vec<&str> = self
-                .active_window_mut()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
-                .unwrap_or_default();
-
-            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
+            if let Some(shortcut_idx) = layout.nav_shortcut_at(x, y) {
                 // Get the path from the shortcut and navigate there
                 let target_path = self
                     .active_window_mut()
@@ -843,14 +871,7 @@ impl Editor {
 
         // Check navigation shortcuts
         if layout.is_in_nav(x, y) {
-            let shortcut_labels: Vec<&str> = self
-                .active_window()
-                .file_open_state
-                .as_ref()
-                .map(|s| s.shortcuts.iter().map(|sc| sc.label.as_str()).collect())
-                .unwrap_or_default();
-
-            if let Some(idx) = layout.nav_shortcut_at(x, y, &shortcut_labels) {
+            if let Some(idx) = layout.nav_shortcut_at(x, y) {
                 return Some(HoverTarget::FileBrowserNavShortcut(idx));
             }
         }

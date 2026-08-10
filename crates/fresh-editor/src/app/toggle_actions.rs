@@ -11,6 +11,7 @@ use rust_i18n::t;
 
 use crate::config::{Config, FileExplorerSide};
 use crate::config_io::{ConfigLayer, ConfigResolver};
+use crate::config_keys::{self, SettingKey};
 
 use super::Editor;
 
@@ -56,7 +57,7 @@ impl Editor {
         // to the user config layer (issue #474). Without this the change lives
         // only in the per-split runtime state and is forgotten on next launch.
         self.config_mut().editor.line_numbers = new_value;
-        self.persist_config_change("/editor/line_numbers", serde_json::Value::Bool(new_value));
+        self.persist_config_change(config_keys::EDITOR_LINE_NUMBERS, new_value);
 
         let status = if new_value {
             t!("toggle.line_numbers_shown")
@@ -189,6 +190,199 @@ impl Editor {
         self.set_status_message(t!("view.virtual_space_state", state = mode).to_string());
     }
 
+    /// Toggle indentation guides for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.indentation_guide` setting:
+    /// it records an explicit override on the split's view state (persisted in
+    /// the per-file workspace state) and does not affect other buffers or the
+    /// global config. Turning guides on in a buffer where the global mode is
+    /// `none` draws every level (`all`); turning them on where the global mode
+    /// is `active` keeps that mode — see
+    /// [`crate::config::resolve_indentation_guide_mode`], which the renderer
+    /// uses for the same decision.
+    pub fn toggle_indentation_guide_current_buffer(&mut self) {
+        use crate::config::{
+            resolve_indentation_guide_mode, IndentationGuideInputs, IndentationGuideMode,
+        };
+
+        let buffer_id = self.active_buffer();
+        let global = self.config.editor.indentation_guide;
+        let is_virtual_buffer = self
+            .active_window()
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|m| m.is_virtual());
+
+        let Some(state) = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(&buffer_id)
+        else {
+            return;
+        };
+        let plugin_override = state.indentation_guide_override;
+        let language_gate = state.buffer_settings.indentation_guide;
+
+        // The pin lives on the split's view state (like line numbers and the
+        // current-line highlight), so the same buffer in another split keeps
+        // its own choice.
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                let currently_on = resolve_indentation_guide_mode(IndentationGuideInputs {
+                    global,
+                    user_override: vs.indentation_guide_user_override,
+                    plugin_override,
+                    language_gate,
+                    is_virtual_buffer,
+                }) != IndentationGuideMode::None;
+                let new_value = !currently_on;
+                vs.indentation_guide_user_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
+
+        let status = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.indentation_guide_state", state = status).to_string());
+    }
+
+    /// Toggle the current-line highlight for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.highlight_current_line`
+    /// setting. `BufferViewState` already stores the flag per (split, buffer),
+    /// so this pins it there and records the intent for persistence.
+    pub fn toggle_current_line_highlight_current_buffer(&mut self) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                // Deref reaches the active buffer's BufferViewState, so this
+                // scopes the override to the current buffer in this split only.
+                let new_value = !vs.highlight_current_line;
+                vs.highlight_current_line = new_value;
+                vs.highlight_current_line_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
+
+        let state = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(
+            t!("view.current_line_highlight_buffer_state", state = state).to_string(),
+        );
+    }
+
+    /// Toggle occurrence highlighting for the current buffer only.
+    ///
+    /// Per-buffer counterpart of the global `editor.highlight_occurrences`
+    /// setting. Turning it off also clears the highlights already on screen —
+    /// the overlay is only recomputed on cursor movement, so without this the
+    /// old highlights would linger until the user moved.
+    pub fn toggle_occurrence_highlight_current_buffer(&mut self) {
+        let buffer_id = self.active_buffer();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+
+        let new_value = !state.reference_highlight_overlay.enabled;
+        state.reference_highlight_overlay.enabled = new_value;
+        state.buffer_settings.highlight_occurrences_override = Some(new_value);
+        if !new_value {
+            state
+                .reference_highlight_overlay
+                .clear(&mut state.overlays, &mut state.marker_list);
+        }
+
+        let status = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(
+            t!("view.occurrence_highlight_buffer_state", state = status).to_string(),
+        );
+    }
+
+    /// Toggle the gutter folding indicators for the current buffer only.
+    ///
+    /// Hides (or restores) the ▾/▸ arrows in the left margin without touching
+    /// any existing folds — collapsed regions stay collapsed and keep their
+    /// placeholder. There is no global setting for the arrows, so the default
+    /// is "shown"; the override is persisted in the per-file workspace state.
+    pub fn toggle_fold_indicators_current_buffer(&mut self) {
+        // The pin lives on the split's view state (like line numbers and the
+        // current-line highlight), so the same buffer in another split keeps
+        // its own choice.
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        let Some(new_value) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+            .map(|vs| {
+                let new_value = !vs.fold_indicators_visible();
+                vs.fold_indicators_override = Some(new_value);
+                new_value
+            })
+        else {
+            return;
+        };
+
+        let status = if new_value {
+            t!("view.state_enabled").to_string()
+        } else {
+            t!("view.state_disabled").to_string()
+        };
+        self.set_status_message(t!("view.fold_indicators_state", state = status).to_string());
+    }
+
     /// Kick off the full-screen wave animation: a crest of wave glyphs
     /// rises from the bottom edge and bounces every painted cell — text,
     /// gutter, menu bar, status bar — up, down, and sideways before they
@@ -240,12 +434,13 @@ impl Editor {
     /// normal input handling for it and re-render. This lives on `Editor` so
     /// every event loop (the local terminal loop in `main.rs` and the daemon
     /// server loop) shares one dismissal path rather than duplicating it.
-    pub fn maybe_dismiss_wave_animation(&mut self, event: &crossterm::event::Event) -> bool {
-        use crossterm::event::{Event, KeyEventKind};
+    pub fn maybe_dismiss_wave_animation(&mut self, event: &fresh_input_parser::Event) -> bool {
+        use crate::input::is_keystroke;
+        use fresh_input_parser::Event;
         if !self.wave_animation_active() {
             return false;
         }
-        let dismiss = matches!(event, Event::Key(k) if k.kind == KeyEventKind::Press)
+        let dismiss = matches!(event, Event::Key(k) if is_keystroke(k.kind))
             || matches!(event, Event::Mouse(_));
         if dismiss {
             self.cancel_wave_animation();
@@ -299,7 +494,7 @@ impl Editor {
         if !self.active_window_mut().menu_bar_visible {
             self.menu_state.close_menu();
         }
-        self.persist_config_change("/editor/show_menu_bar", serde_json::Value::Bool(new_value));
+        self.persist_config_change(config_keys::EDITOR_SHOW_MENU_BAR, new_value);
         let status = if self.active_window_mut().menu_bar_visible {
             t!("toggle.menu_bar_shown")
         } else {
@@ -308,10 +503,36 @@ impl Editor {
         self.set_status_message(status.to_string());
     }
 
-    // `toggle_tab_bar` / `toggle_status_bar` / `toggle_prompt_line` and
-    // their `*_visible` getters live on `impl Window` — call them via
-    // `self.active_window_mut().toggle_tab_bar()` etc. (or read
-    // `active_window().tab_bar_visible` for the flag directly).
+    /// Toggle the tab bar, saving the new editor-wide default.
+    ///
+    /// The `Window::toggle_*` methods below flip only that window's runtime
+    /// flag; these wrappers add the half that makes an unsuffixed toggle mean
+    /// "editor-wide default, saved" — mirroring
+    /// [`toggle_menu_bar`](Self::toggle_menu_bar). Without them the bars came
+    /// back on the next launch, since the window flag is seeded from
+    /// `editor.show_tab_bar` and nothing ever wrote it.
+    pub fn toggle_tab_bar(&mut self) {
+        self.active_window_mut().toggle_tab_bar();
+        let new_value = self.active_window().tab_bar_visible;
+        self.config_mut().editor.show_tab_bar = new_value;
+        self.persist_config_change(config_keys::EDITOR_SHOW_TAB_BAR, new_value);
+    }
+
+    /// Toggle the status bar, saving the new editor-wide default.
+    pub fn toggle_status_bar(&mut self) {
+        self.active_window_mut().toggle_status_bar();
+        let new_value = self.active_window().status_bar_visible;
+        self.config_mut().editor.show_status_bar = new_value;
+        self.persist_config_change(config_keys::EDITOR_SHOW_STATUS_BAR, new_value);
+    }
+
+    /// Toggle the prompt line, saving the new editor-wide default.
+    pub fn toggle_prompt_line(&mut self) {
+        self.active_window_mut().toggle_prompt_line();
+        let new_value = self.active_window().prompt_line_visible;
+        self.config_mut().editor.show_prompt_line = new_value;
+        self.persist_config_change(config_keys::EDITOR_SHOW_PROMPT_LINE, new_value);
+    }
 
     /// Toggle the file explorer side between left and right.
     ///
@@ -325,13 +546,7 @@ impl Editor {
         };
         self.config_mut().file_explorer.side = new_side;
         self.active_window_mut().file_explorer_side = new_side;
-        self.persist_config_change(
-            "/file_explorer/side",
-            serde_json::json!(match new_side {
-                FileExplorerSide::Left => "left",
-                FileExplorerSide::Right => "right",
-            }),
-        );
+        self.persist_config_change(config_keys::FILE_EXPLORER_SIDE, new_side);
         let status = match new_side {
             FileExplorerSide::Left => t!("toggle.file_explorer_side_left"),
             FileExplorerSide::Right => t!("toggle.file_explorer_side_right"),
@@ -345,10 +560,7 @@ impl Editor {
         self.config_mut().editor.show_vertical_scrollbar = new_value;
         // Persist to the user config layer so the choice survives restart
         // (issue #474), matching the other global View-menu toggles.
-        self.persist_config_change(
-            "/editor/show_vertical_scrollbar",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_SHOW_VERTICAL_SCROLLBAR, new_value);
         let status = if new_value {
             t!("toggle.vertical_scrollbar_shown")
         } else {
@@ -363,10 +575,7 @@ impl Editor {
         self.config_mut().editor.show_horizontal_scrollbar = new_value;
         // Persist to the user config layer so the choice survives restart
         // (issue #474), matching the other global View-menu toggles.
-        self.persist_config_change(
-            "/editor/show_horizontal_scrollbar",
-            serde_json::Value::Bool(new_value),
-        );
+        self.persist_config_change(config_keys::EDITOR_SHOW_HORIZONTAL_SCROLLBAR, new_value);
         let status = if new_value {
             t!("toggle.horizontal_scrollbar_shown")
         } else {
@@ -412,7 +621,74 @@ impl Editor {
             .expect("active window present")
             .get_mut(&buffer_id)
         {
+            // Clear the explicit per-buffer pins first: `apply_config`
+            // deliberately preserves them (that is what makes a "(Current
+            // Buffer)" toggle survive a config reload), so resetting without
+            // this would re-apply the very overrides it is meant to drop.
+            // `EditorState::indentation_guide_override` is deliberately left
+            // alone: that one is the plugin-facing knob describing a tool view
+            // (the Git Log commit diff), not a user setting to reset.
+            state.buffer_settings.clear_user_overrides();
             state.apply_buffer_config(&self.config);
+            // `apply_buffer_config` re-derives everything stored on
+            // `BufferSettings`, but the occurrence highlight renders from
+            // `reference_highlight_overlay.enabled`, which nothing rereads
+            // once the pin is gone — without this the screen keeps showing
+            // the pinned state for the rest of the session while the
+            // persisted state already follows the global default.
+            state.apply_occurrence_highlight(self.config.editor.highlight_occurrences);
+            if !state.reference_highlight_overlay.enabled {
+                state
+                    .reference_highlight_overlay
+                    .clear(&mut state.overlays, &mut state.marker_list);
+            }
+        }
+
+        // Line numbers, line wrap, and current-line highlight pin per
+        // (split, buffer) on `BufferViewState`, not on `BufferSettings`, so
+        // `clear_user_overrides` can't reach them: clear them wherever this
+        // buffer is visible in the window and re-stamp the rendered values
+        // from config, or those pins survive the very command meant to drop
+        // them.
+        let line_wrap = self.active_window().resolve_line_wrap_for_buffer(buffer_id);
+        let wrap_column = self
+            .active_window()
+            .resolve_wrap_column_for_buffer(buffer_id);
+        let leaf_ids: Vec<_> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .keys()
+            .copied()
+            .collect();
+        for leaf_id in leaf_ids {
+            if self.split_manager_mut().get_buffer_id(leaf_id.into()) != Some(buffer_id) {
+                continue;
+            }
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&leaf_id)
+            {
+                view_state.line_numbers_override = None;
+                view_state.line_wrap_override = None;
+                view_state.highlight_current_line_override = None;
+                view_state.indentation_guide_user_override = None;
+                view_state.fold_indicators_override = None;
+                view_state.apply_config_defaults(crate::view::split::ViewConfigDefaults {
+                    line_numbers: self.config.editor.line_numbers,
+                    highlight_current_line: self.config.editor.highlight_current_line,
+                    line_wrap,
+                    wrap_indent: self.config.editor.wrap_indent,
+                    wrap_column,
+                    rulers: self.config.editor.rulers.clone(),
+                    scroll_offset: self.config.editor.scroll_offset,
+                });
+            }
         }
 
         self.set_status_message(t!("toggle.buffer_settings_reset").to_string());
@@ -421,10 +697,15 @@ impl Editor {
     /// Toggle mouse capture on/off
     pub fn toggle_mouse_capture(&mut self) {
         use std::io::stdout;
+        use std::sync::atomic::Ordering;
 
-        self.active_window_mut().mouse_enabled = !self.active_window_mut().mouse_enabled;
+        // Mouse capture is a single global terminal property, so flip the
+        // shared flag (every window observes the same value) and apply the
+        // matching terminal sequence.
+        let enabled = !self.mouse_capture.load(Ordering::Relaxed);
+        self.mouse_capture.store(enabled, Ordering::Relaxed);
 
-        if self.active_window_mut().mouse_enabled {
+        if enabled {
             // Best-effort terminal mouse capture toggle.
             #[allow(clippy::let_underscore_must_use)]
             let _ = crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture);
@@ -439,7 +720,20 @@ impl Editor {
 
     /// Check if mouse capture is enabled
     pub fn is_mouse_enabled(&self) -> bool {
-        self.active_window().mouse_enabled
+        self.mouse_capture
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Seed the shared mouse-capture flag from the real terminal state.
+    ///
+    /// The authoritative state lives in `TerminalModes` (owned by the event
+    /// loop), which enables mouse capture at startup. Calling this right
+    /// after construction keeps the **View → Mouse Support** checkbox in sync
+    /// with reality instead of a constructor default (#2504). Takes `&self`
+    /// because the flag is interior-mutable (`Arc<AtomicBool>`).
+    pub fn set_mouse_capture(&self, enabled: bool) {
+        self.mouse_capture
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Toggle mouse hover for LSP on/off
@@ -449,6 +743,7 @@ impl Editor {
     pub fn toggle_mouse_hover(&mut self) {
         let new_value = !self.config.editor.mouse_hover_enabled;
         self.config_mut().editor.mouse_hover_enabled = new_value;
+        self.persist_config_change(config_keys::EDITOR_MOUSE_HOVER_ENABLED, new_value);
 
         if self.config.editor.mouse_hover_enabled {
             self.set_status_message(t!("toggle.mouse_hover_enabled").to_string());
@@ -491,6 +786,7 @@ impl Editor {
     pub fn toggle_inlay_hints(&mut self) {
         let new_value = !self.config.editor.enable_inlay_hints;
         self.config_mut().editor.enable_inlay_hints = new_value;
+        self.persist_config_change(config_keys::EDITOR_ENABLE_INLAY_HINTS, new_value);
         // `Window::send_lsp_changes_for_buffer` reads
         // `resources.config.editor.enable_inlay_hints`; sync so the per-edit
         // LSP refresh sees the new value without waiting for a reload.
@@ -585,7 +881,7 @@ impl Editor {
     /// Reload configuration from the config file
     ///
     /// This reloads the config from disk, applies runtime changes (theme, keybindings),
-    /// and emits a config_changed event so plugins can update their state accordingly.
+    /// and fires the `config_changed` hook so plugins can update their state accordingly.
     /// Uses the layered config system to properly merge with defaults.
     pub fn reload_config(&mut self) {
         let old_theme = self.config.theme.clone();
@@ -642,7 +938,11 @@ impl Editor {
             lsp.set_universal_configs(universal_servers);
         }
 
-        // Emit event so plugins know config changed
+        // Control-event bus: in-process observers (the test harness's
+        // `EventBroadcaster`), NOT plugins. Plugins are notified by the
+        // hook below — `emit_event` never reaches them, which is why
+        // this call alone left every plugin's cached config stale after
+        // a reload.
         let config_path = Config::find_config_path(self.working_dir());
         self.emit_event(
             "config_changed",
@@ -650,6 +950,10 @@ impl Editor {
                 "path": config_path.map(|p| p.to_string_lossy().into_owned()),
             }),
         );
+
+        // Tell plugins the config was replaced, so they can re-read the
+        // keys and `defineConfigX` settings they care about.
+        self.fire_config_changed_hook();
     }
 
     /// Reload the theme registry from disk.
@@ -688,17 +992,57 @@ impl Editor {
         self.emit_event("themes_changed", serde_json::json!({}));
     }
 
-    /// Persist a single config change to the user config file.
+    /// Persist a single config change to the config file that owns it.
     ///
     /// Used when toggling settings via menu/command palette so that
     /// the change is saved immediately (matching the settings UI behavior).
-    pub(super) fn persist_config_change(&self, json_pointer: &str, value: serde_json::Value) {
+    ///
+    /// The write goes to the most specific layer that already defines the key
+    /// (session, then project, then user; user when none does) — the same
+    /// target derivation VS Code's configuration service uses. Writing the
+    /// user layer unconditionally made a toggle appear dead in any project
+    /// whose `.fresh/config.json` set the same key (the project value kept
+    /// winning on the next launch) while the stranded user-layer entry leaked
+    /// the change into every *other* project.
+    ///
+    /// Failures land in the warning log at error level, which lights the
+    /// status-bar warning indicator — the toggle still applied in memory, but
+    /// the user can see it didn't stick.
+    ///
+    /// Accepts only a [`SettingKey`], never a raw pointer string: the keys are
+    /// a closed set of constants, each pinned by a generated CI test to the
+    /// spelling and value type serde actually uses (see
+    /// [`crate::config_keys`]). The value is typed by the key, so persisting
+    /// the wrong type does not compile, and serde serializes it — the enum
+    /// casing for `FILE_EXPLORER_SIDE` is no longer spelled by hand.
+    pub(super) fn persist_config_change<T: serde::Serialize>(&self, key: SettingKey<T>, value: T) {
+        let json = match serde_json::to_value(&value) {
+            Ok(json) => json,
+            Err(e) => {
+                tracing::error!("Setting {} not serializable: {e}", key.pointer());
+                return;
+            }
+        };
         let resolver =
             ConfigResolver::new(self.dir_context.clone(), self.working_dir().to_path_buf());
-        let changes = std::collections::HashMap::from([(json_pointer.to_string(), value)]);
+        let layer = match resolver.get_layer_sources() {
+            Ok(sources) => match sources.get(key.pointer()) {
+                Some(ConfigLayer::Session) => ConfigLayer::Session,
+                Some(ConfigLayer::Project) => ConfigLayer::Project,
+                _ => ConfigLayer::User,
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "Could not resolve the config layer defining {}: {e}; writing the user layer",
+                    key.pointer()
+                );
+                ConfigLayer::User
+            }
+        };
+        let changes = std::collections::HashMap::from([(key.pointer().to_string(), json)]);
         let deletions = std::collections::HashSet::new();
-        if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, ConfigLayer::User) {
-            tracing::error!("Failed to persist config change {}: {}", json_pointer, e);
+        if let Err(e) = resolver.save_changes_to_layer(&changes, &deletions, layer) {
+            tracing::error!("Failed to persist config change {}: {}", key.pointer(), e);
         }
     }
 }

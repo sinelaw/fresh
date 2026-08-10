@@ -1,0 +1,61 @@
+%YAML 1.2
+---
+name: Windows Resource Script
+file_extensions:
+  - rc
+scope: source.windows-resource
+
+contexts:
+  main:
+    - include: comments
+    - include: preprocessor
+    - include: strings
+    - include: declarations
+    - include: constants
+    - include: numbers
+
+  comments:
+    - match: '/\*'
+      scope: punctuation.definition.comment.begin.windows-resource
+      push:
+        - meta_scope: comment.block.windows-resource
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.windows-resource
+          pop: true
+    - match: '//.*$'
+      scope: comment.line.double-slash.windows-resource
+
+  preprocessor:
+    - match: '^\s*#\s*(include|define|undef|if|ifdef|ifndef|elif|else|endif|pragma|error)\b'
+      scope: keyword.control.directive.windows-resource
+
+  strings:
+    - match: 'L?"'
+      scope: punctuation.definition.string.begin.windows-resource
+      push:
+        - meta_scope: string.quoted.double.windows-resource
+        - match: '"'
+          scope: punctuation.definition.string.end.windows-resource
+          pop: true
+        - match: '\\.'
+          scope: constant.character.escape.windows-resource
+
+  declarations:
+    - match: '\b(ACCELERATORS|ANICURSOR|ANIICON|BITMAP|CURSOR|DIALOG|DIALOGEX|DLGINIT|FONT|HTML|ICON|LANGUAGE|MENU|MENUEX|MESSAGETABLE|RCDATA|STRINGTABLE|TEXTINCLUDE|TOOLBAR|VERSIONINFO)\b'
+      scope: storage.type.resource.windows-resource
+    - match: '\b(BEGIN|BLOCK|END)\b'
+      scope: keyword.control.block.windows-resource
+    - match: '\b(CAPTION|CHARACTERISTICS|CLASS|EXSTYLE|FILEFLAGS|FILEFLAGSMASK|FILEOS|FILESUBTYPE|FILETYPE|FILEVERSION|FONT|LANGUAGE|MENU|PRODUCTVERSION|STYLE|VALUE|VERSION)\b'
+      scope: keyword.declaration.windows-resource
+    - match: '\b(AUTO3STATE|AUTOCHECKBOX|AUTORADIOBUTTON|CHECKBOX|COMBOBOX|CONTROL|CTEXT|DEFPUSHBUTTON|EDITTEXT|GROUPBOX|ICON|LISTBOX|LTEXT|PUSHBOX|PUSHBUTTON|RADIOBUTTON|RTEXT|SCROLLBAR|STATE3|USERBUTTON)\b'
+      scope: support.function.control.windows-resource
+
+  constants:
+    - match: '\b(?:ID[CDRS]?|IDC|IDI|IDM|IDS|IDB|IDR|IDD|VS_VERSION_INFO|VOS|VFT|VFT2|WS|WS_EX|DS|SS|ES|BS|CBS|LBS|SBS|ACS|MF|VK)_[A-Za-z0-9_]+\b'
+      scope: constant.other.windows-resource
+
+  numbers:
+    - match: '\b0[xX][0-9A-Fa-f]+\b'
+      scope: constant.numeric.hex.windows-resource
+    - match: '\b\d+(?:\.\d+)*\b'
+      scope: constant.numeric.windows-resource

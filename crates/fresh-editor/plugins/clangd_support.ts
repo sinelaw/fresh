@@ -147,7 +147,7 @@ function analyzeProject(root: string | null) {
   for (const base of dirCandidates) {
     for (const relative of compileCandidates) {
       const candidate = editor.pathJoin(base, relative);
-      if (editor.fileExists(candidate)) {
+      if (editor.fileExists(editor.authorityPath(candidate))) {
         compilePath = candidate;
         break;
       }
@@ -162,7 +162,7 @@ function analyzeProject(root: string | null) {
   for (const base of dirCandidates) {
     for (const relative of clangdFileCandidates) {
       const candidate = editor.pathJoin(base, relative);
-      if (editor.fileExists(candidate)) {
+      if (editor.fileExists(editor.authorityPath(candidate))) {
         clangdPath = candidate;
         break;
       }
@@ -196,17 +196,17 @@ function analyzeProject(root: string | null) {
 
   const buildHints: string[] = [];
   if (root) {
-    if (editor.fileExists(editor.pathJoin(root, "CMakeLists.txt"))) {
+    if (editor.fileExists(editor.authorityPath(editor.pathJoin(root, "CMakeLists.txt")))) {
       buildHints.push("CMake project detected (configure with `cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON`).");
     }
     if (
-      editor.fileExists(editor.pathJoin(root, "WORKSPACE")) ||
-      editor.fileExists(editor.pathJoin(root, "WORKSPACE.bazel")) ||
-      editor.fileExists(editor.pathJoin(root, "BUILD.bazel"))
+      editor.fileExists(editor.authorityPath(editor.pathJoin(root, "WORKSPACE"))) ||
+      editor.fileExists(editor.authorityPath(editor.pathJoin(root, "WORKSPACE.bazel"))) ||
+      editor.fileExists(editor.authorityPath(editor.pathJoin(root, "BUILD.bazel")))
     ) {
       buildHints.push("Bazel project detected (use `bazel build //...` and attach the generated compile_commands.json).");
     }
-    if (editor.fileExists(editor.pathJoin(root, "Makefile"))) {
+    if (editor.fileExists(editor.authorityPath(editor.pathJoin(root, "Makefile")))) {
       buildHints.push("Makefile detected (run `bear -- make` or `intercept-build make` to emit compile_commands.json).");
     }
   }
@@ -264,7 +264,7 @@ function clangdOpenProjectConfig() : void {
   let opened = false;
   for (const dir of Array.from(targets)) {
     const configPath = editor.pathJoin(dir, ".clangd");
-    if (editor.fileExists(configPath)) {
+    if (editor.fileExists(editor.authorityPath(configPath))) {
       editor.openFile(configPath, 0, 0);
       setClangdStatus(editor.t("status.opened_config"));
       opened = true;

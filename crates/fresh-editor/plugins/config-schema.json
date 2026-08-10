@@ -26,6 +26,11 @@
       "type": "boolean",
       "default": true
     },
+    "self_update": {
+      "description": "Offer an interactive in-editor update when a new version is detected\n(default: true). When on, clicking the status-bar update indicator (or\nthe \"Update fresh\" command) prompts to update now; confirming runs the\nupdate locally in the background and logs to the data dir. When off, the\nindicator is passive (it only tells you a version is available). Has no\neffect if `check_for_updates` is false or the install method can't\nself-update.",
+      "type": "boolean",
+      "default": true
+    },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
       "$ref": "#/$defs/EditorConfig",
@@ -53,6 +58,7 @@
           "left": [
             "{trust}",
             "{remote}",
+            "{terminal_restart}",
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
@@ -90,6 +96,8 @@
         "whitespace_tabs_leading": true,
         "whitespace_tabs_inner": true,
         "whitespace_tabs_trailing": true,
+        "whitespace_newlines": false,
+        "whitespace_carriage_returns": false,
         "use_tabs": false,
         "tab_size": 4,
         "auto_indent": true,
@@ -127,7 +135,6 @@
         "keyboard_report_event_types": false,
         "keyboard_report_alternate_keys": true,
         "keyboard_report_all_keys_as_escape_codes": false,
-        "highlight_timeout_ms": 5,
         "snapshot_interval": 100,
         "highlight_context_bytes": 10000,
         "large_file_threshold_bytes": 10485760,
@@ -343,13 +350,7 @@
     "ThemeOptions": {
       "description": "Available color themes",
       "type": "string",
-      "enum": [
-        "dark",
-        "light",
-        "high-contrast",
-        "nostalgia",
-        "terminal"
-      ]
+      "x-enum-from": "$themes"
     },
     "LocaleOptions": {
       "description": "UI locale (language). Use null for auto-detection from environment.",
@@ -508,6 +509,7 @@
             "left": [
               "{trust}",
               "{remote}",
+              "{terminal_restart}",
               "{cursor}",
               "{diagnostics}",
               "{cursor_count}",
@@ -650,6 +652,18 @@
           "description": "Show tab indicators (→) for trailing tabs.\nCan be overridden per-language via `show_whitespace_tabs` in language config.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Whitespace"
+        },
+        "whitespace_newlines": {
+          "description": "Show newline indicators (↵) at the end of every line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_carriage_returns": {
+          "description": "Show carriage-return indicators (␍) for the CR half of CRLF line\nendings, next to the newline position. Stray CR bytes that are not\npart of the buffer's line ending always render as `<0D>` escapes.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Whitespace"
         },
         "use_tabs": {
@@ -890,14 +904,6 @@
           "default": false,
           "x-section": "Keyboard"
         },
-        "highlight_timeout_ms": {
-          "description": "Maximum time in milliseconds for syntax highlighting per frame",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 5,
-          "x-section": "Performance"
-        },
         "snapshot_interval": {
           "description": "Undo history snapshot interval (number of edits between snapshots)",
           "type": "integer",
@@ -961,6 +967,7 @@
           "default": [
             "{trust}",
             "{remote}",
+            "{terminal_restart}",
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
@@ -1058,6 +1065,10 @@
           "name": "Update"
         },
         {
+          "value": "{terminal_restart}",
+          "name": "Terminal Restart"
+        },
+        {
           "value": "{palette}",
           "name": "Palette"
         },
@@ -1123,7 +1134,7 @@
       "type": "object",
       "properties": {
         "respect_gitignore": {
-          "description": "Whether to respect .gitignore files",
+          "description": "Whether `.gitignore` rules apply in the file explorer at all.\nWhen disabled, ignored entries are neither hidden nor grayed out and\nthe \"show gitignored files\" toggle below has nothing left to hide.\nDefault: true",
           "type": "boolean",
           "default": true
         },
@@ -1461,7 +1472,7 @@
           "default": null
         },
         "textmate_grammar": {
-          "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
+          "description": "Path to a custom grammar file for this language (optional).\nLoaded into the grammar registry at startup and associated with this\nlanguage's `extensions`, so files matching them highlight with it.\nOnly Sublime Text `.sublime-syntax` grammars are supported —\nTextMate `.tmLanguage` is a different format syntect cannot load.",
           "type": [
             "string",
             "null"

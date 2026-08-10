@@ -432,3 +432,214 @@ fn keyboard_navigation_moves_focus_highlight() {
 
     harness.assert_no_plugin_errors();
 }
+
+// ── Frame integrity across terminal widths ──────────────────────────────
+
+/// Every row of the dashboard frame, from the `╭` row to the `╰` row, must be
+/// a well-formed box: the two vertical borders sit at the same two columns on
+/// every row, and no row spills past the right border.
+///
+/// Returns `Err(reason)` naming the first broken row so a sweep failure says
+/// which width and which row it was.
+fn assert_frame_intact(screen: &str, width: u16) -> Result<(), String> {
+    let rows: Vec<&str> = screen.lines().collect();
+    let top = rows
+        .iter()
+        .position(|r| r.contains('╭'))
+        .ok_or_else(|| format!("width {width}: no top border row on screen"))?;
+    let bottom = rows
+        .iter()
+        .position(|r| r.contains('╰'))
+        .ok_or_else(|| format!("width {width}: no bottom border row on screen"))?;
+    if bottom <= top {
+        return Err(format!(
+            "width {width}: bottom border at row {bottom} is not below top at {top}"
+        ));
+    }
+
+    // Column geometry is taken from the top border and every later row must
+    // match it. Columns are counted in chars, which is what the screen dump
+    // gives us; the frame is deliberately built from single-width glyphs.
+    let cols = |row: &str, ch: char| -> Vec<usize> {
+        row.chars()
+            .enumerate()
+            .filter(|(_, c)| *c == ch)
+            .map(|(i, _)| i)
+            .collect()
+    };
+    let left = *cols(rows[top], '╭')
+        .first()
+        .ok_or_else(|| format!("width {width}: top row lost its ╭"))?;
+    let right = *cols(rows[top], '╮')
+        .first()
+        .ok_or_else(|| format!("width {width}: top row lost its ╮"))?;
+    if right <= left {
+        return Err(format!(
+            "width {width}: top border corners inverted (left {left}, right {right})"
+        ));
+    }
+
+    for (idx, row) in rows.iter().enumerate().take(bottom).skip(top + 1) {
+        let bars = cols(row, '│');
+        if bars.len() != 2 {
+            return Err(format!(
+                "width {width} row {idx}: expected exactly 2 │ borders, found {} — \
+                 a row wider than the panel tore the box: {row:?}",
+                bars.len()
+            ));
+        }
+        if bars[0] != left || bars[1] != right {
+            return Err(format!(
+                "width {width} row {idx}: borders at {bars:?}, expected [{left}, {right}] — \
+                 content pushed the right border out: {row:?}"
+            ));
+        }
+        // Nothing but padding may live to the right of the closing border.
+        let tail: String = row.chars().skip(right + 1).collect();
+        if !tail.trim().is_empty() {
+            return Err(format!(
+                "width {width} row {idx}: content {tail:?} spilled past the right border"
+            ));
+        }
+    }
+
+    let bottom_left = *cols(rows[bottom], '╰')
+        .first()
+        .ok_or_else(|| format!("width {width}: bottom row lost its ╰"))?;
+    let bottom_right = *cols(rows[bottom], '╯')
+        .first()
+        .ok_or_else(|| format!("width {width}: bottom row lost its ╯"))?;
+    if bottom_left != left || bottom_right != right {
+        return Err(format!(
+            "width {width}: bottom corners at [{bottom_left}, {bottom_right}], \
+             expected [{left}, {right}]"
+        ));
+    }
+    Ok(())
+}
+
+/// Columns between the two vertical borders on the frame's top row.
+fn frame_inner_width(screen: &str) -> usize {
+    for row in screen.lines() {
+        let left = row.chars().position(|c| c == '╭');
+        let right = row.chars().position(|c| c == '╮');
+        if let (Some(l), Some(r)) = (left, right) {
+            return r - l - 1;
+        }
+    }
+    0
+}
+
+/// The frame must stay intact — and adapt its width — across a contiguous
+/// sweep of terminal widths, even with a section emitting rows far wider than
+/// any panel.
+///
+/// `step_by(1)`: a coarser stride would sail past widths where a padding or
+/// fill computation is off by one only for particular parities, which is
+/// exactly the class of bug this guards.
+#[test]
+#[ignore = "passes, but the 111-width sweep takes ~22 min — run explicitly with --ignored"]
+fn dashboard_frame_is_intact_across_width_sweep() {
+    let (harness, _tmp, plugins_dir) = harness_with_dashboard_plugin_and_plugins_dir();
+
+    // A section that deliberately emits rows far wider than any panel, with a
+    // click target hanging off the right edge. The frame renderer has to clip
+    // centrally; if it doesn't, the sweep below reports the torn row.
+    let overflow = r#"/// <reference path="./lib/fresh.d.ts" />
+/// @depends-on dashboard
+const editor = getEditor();
+const dash = editor.getPluginApi("dashboard") as {
+    registerSection: (
+        name: string,
+        refresh: (ctx: {
+            text: (s: string, o?: { color?: string; onClick?: () => void }) => void;
+            newline: () => void;
+        }) => Promise<void>,
+        options?: { ttlMs?: number },
+    ) => () => void;
+} | null;
+let wide = "";
+while (wide.length < 400) wide += "WIDEROW0123456789";
+if (dash) {
+    dash.registerSection("overflow", async (ctx) => {
+        for (let i = 0; i < 3; i++) {
+            ctx.text(wide, { color: "accent", onClick: () => { } });
+            ctx.newline();
+        }
+    }, { ttlMs: 1000 });
+}
+"#;
+    fs::write(plugins_dir.join("overflow.ts"), overflow).unwrap();
+
+    // Rebuild so the plugin scanner picks up the new sidecar.
+    drop(harness);
+    let working_dir = plugins_dir.parent().unwrap().to_path_buf();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        config_with_dashboard_autoopen(),
+        working_dir,
+    )
+    .expect("harness");
+    harness.editor_mut().fire_ready_hook();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("OVERFLOW"))
+        .unwrap();
+
+    let mut inner_widths: Vec<usize> = Vec::new();
+    for width in (30u16..=140).step_by(1) {
+        harness.resize(width, 40).unwrap();
+        // The repaint is async (viewport_changed → plugin → setVirtualBuffer),
+        // so wait for a frame drawn at the new width rather than banking on a
+        // fixed number of ticks. The panel width is the observable signal that
+        // the new geometry has landed.
+        let expected_inner = expected_frame_inner(width);
+        harness
+            .wait_until(|h| frame_inner_width(&h.screen_to_string()) == expected_inner)
+            .unwrap_or_else(|_| {
+                panic!(
+                    "width {width}: panel never repainted to inner {expected_inner} \
+                     (saw {})\n{}",
+                    frame_inner_width(&harness.screen_to_string()),
+                    harness.screen_to_string()
+                )
+            });
+
+        let screen = harness.screen_to_string();
+        if let Err(reason) = assert_frame_intact(&screen, width) {
+            panic!("{reason}\n{screen}");
+        }
+        inner_widths.push(frame_inner_width(&screen));
+    }
+
+    // Responsive, not fixed: the panel must actually grow with the terminal
+    // rather than sitting at a hard-coded cap for the whole sweep.
+    let first = inner_widths.first().copied().unwrap_or(0);
+    let last = inner_widths.last().copied().unwrap_or(0);
+    assert!(
+        last > first,
+        "panel width must adapt to the terminal: 30 cols gave inner {first}, \
+         140 cols gave inner {last}"
+    );
+    // Monotone: a wider terminal never yields a narrower panel.
+    for pair in inner_widths.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "panel width must not shrink as the terminal grows: saw {pair:?}"
+        );
+    }
+
+    harness.assert_no_plugin_errors();
+}
+
+/// Mirror of `frameWidth()` in dashboard.ts. Kept here so the sweep can wait
+/// for the *expected* geometry instead of accepting whatever is on screen —
+/// otherwise a stale pre-resize frame reads as a pass.
+fn expected_frame_inner(viewport_w: u16) -> usize {
+    const INNER_MIN: usize = 24;
+    const INNER_MAX: usize = 110;
+    let w = viewport_w as usize;
+    let avail = w.saturating_sub(2).max(1);
+    let target = ((w as f64 * 0.9).floor() as usize).saturating_sub(2);
+    INNER_MAX.min(avail).min(target.max(INNER_MIN)).max(1)
+}

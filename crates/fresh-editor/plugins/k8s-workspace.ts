@@ -102,8 +102,8 @@ function configPath(): string {
 
 function loadConfig(): K8sConfig | null {
   const path = configPath();
-  if (!editor.fileExists(path)) return null;
-  const text = editor.readFile(path);
+  if (!editor.fileExists(editor.authorityPath(path))) return null;
+  const text = editor.readFile(editor.authorityPath(path));
   if (text === null) return null;
   try {
     const parsed = editor.parseJsonc(text) as K8sConfig;
@@ -259,7 +259,7 @@ async function resolveProvider(
 
     case "manifest": {
       if (!(await confirmCreate(target, name))) return null;
-      const text = editor.readFile(expand(provider.template, vars));
+      const text = editor.readFile(editor.localPath(expand(provider.template, vars)));
       if (text === null) {
         editor.setStatus(`K8s: manifest not found: ${provider.template}`);
         return null;

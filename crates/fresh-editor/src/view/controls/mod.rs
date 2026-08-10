@@ -30,7 +30,7 @@ pub mod toggle;
 
 pub use button::{ButtonEvent, ButtonState};
 pub use dropdown::{DropdownEvent, DropdownState};
-pub use dual_list::{DualListColumn, DualListHit, DualListLayout, DualListState};
+pub use dual_list::{DualListColumn, DualListHit, DualListLayout, DualListRowArea, DualListState};
 pub use keybinding_list::{KeybindingListEvent, KeybindingListState};
 pub use map_input::{MapEvent, MapState};
 pub use number_input::{NumberInputEvent, NumberInputState};

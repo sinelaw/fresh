@@ -383,6 +383,7 @@ pub(super) struct EditorParts {
     pub(super) quick_open_registry: QuickOpenRegistry,
     pub(super) plugin_manager: std::rc::Rc<RwLock<PluginManager>>,
     pub(super) recovery_service: Arc<std::sync::Mutex<RecoveryService>>,
+    pub(super) mouse_capture: Arc<std::sync::atomic::AtomicBool>,
     pub(super) key_translator: crate::input::key_translator::KeyTranslator,
     pub(super) update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
 
@@ -442,7 +443,6 @@ fn build_persisted_window_shells(
     persisted_env: Option<&crate::app::orchestrator_persistence::PersistedWindows>,
     active_came_from_pick: bool,
     active_window_id: fresh_core::WindowId,
-    active_root: &std::path::Path,
     width: u16,
     height: u16,
     dir_context: &DirectoryContext,
@@ -464,7 +464,6 @@ fn build_persisted_window_shells(
     // project's id-1 base, which would collide. Re-id that collider onto a
     // fresh id so it survives as an inactive shell instead of being
     // shadowed/dropped (issue #2056 cross-project case).
-    let active_root_key = crate::app::orchestrator_persistence::canonical_key(active_root);
     let mut next_fresh_id = env
         .next_id
         .max(env.windows.iter().map(|w| w.id).max().unwrap_or(0) + 1)
@@ -474,12 +473,13 @@ fn build_persisted_window_shells(
         if active_came_from_pick && ps.id == active_window_id.0 {
             continue;
         }
-        // One session per directory: never seed a shell that resolves to the
-        // active window's own directory (the clean-base case where the cwd has
-        // a stale persisted window the pick didn't claim).
-        if crate::app::orchestrator_persistence::canonical_key(&ps.root) == active_root_key {
-            continue;
-        }
+        // NOTE: co-tenants — several sessions may share one root (a tab
+        // extracted into its own window over the same project). Every
+        // persisted entry other than the active pick becomes its own shell,
+        // *including* siblings rooted at the active window's directory. The
+        // old "one session per directory" guard that dropped same-root
+        // entries here is gone: it silently discarded a co-tenant on reboot
+        // whenever the launch cwd hosted more than one window.
         let id = if ps.id == active_window_id.0 {
             let fresh = fresh_core::WindowId(next_fresh_id);
             next_fresh_id += 1;
@@ -508,10 +508,18 @@ fn build_persisted_window_shells(
         // This shell's own local authority, gated by its own per-session trust
         // + env (scoped to its root + project store) — never a clone of the
         // active session's handles.
+        // `shell_resources.fs_manager` is the local host filesystem these
+        // shells read through, so it's also what resolves a linked worktree
+        // to the repo whose trust decision governs it.
+        let trust_owner = crate::services::workspace_trust::trust_owner_root(
+            shell_resources.fs_manager.filesystem().as_ref(),
+            &ps.root,
+        );
         let shell_authority = crate::services::authority::Authority::local_scoped(
             crate::services::authority::SessionScope::for_root(
                 &ps.root,
                 &dir_context.project_state_dir(&ps.root),
+                &dir_context.project_state_dir(&trust_owner),
             ),
         );
         let mut shell = crate::app::window::Window::new(
@@ -529,6 +537,11 @@ fn build_persisted_window_shells(
         // it back to local). Its live authority stays the local placeholder
         // until reconnect — i.e. dormant.
         shell.authority_spec = ps.authority_spec.clone();
+        // Continue the persisted workspace's durable identity rather than
+        // minting a sibling; a legacy entry without one keeps the fresh id.
+        if let Some(sid) = &ps.stable_id {
+            shell.stable_id = sid.clone();
+        }
         windows.insert(id, shell);
     }
 
@@ -549,7 +562,7 @@ impl Editor {
     /// than capturing a new clock — so two editors built from the
     /// same parts agree on "now".
     pub(super) fn from_parts(parts: EditorParts) -> Self {
-        Editor {
+        let editor = Editor {
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,
@@ -590,6 +603,7 @@ impl Editor {
             lsp_uri_schemes: std::collections::HashSet::new(),
             plugin_manager: parts.plugin_manager,
             recovery_service: parts.recovery_service,
+            mouse_capture: parts.mouse_capture,
             time_source: parts.time_source,
             color_capability: parts.color_capability,
             update_checker: parts.update_checker,
@@ -615,6 +629,7 @@ impl Editor {
             session_mode: false,
             software_cursor_only: false,
             session_name: None,
+            session_display_name: None,
             pending_escape_sequences: Vec::new(),
             restart_with_dir: None,
             last_window_title: None,
@@ -629,9 +644,23 @@ impl Editor {
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             event_broadcaster: parts.event_broadcaster,
             #[cfg(feature = "plugins")]
+            line_targets: std::collections::HashMap::new(),
+            #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
+            last_rendered_frame: None,
+            #[cfg(feature = "plugins")]
+            plugin_command_backlog: std::collections::VecDeque::new(),
+            #[cfg(feature = "plugins")]
+            grep_project_cancel: std::collections::HashMap::new(),
+            #[cfg(feature = "plugins")]
+            plugin_timers: Vec::new(),
+            #[cfg(feature = "plugins")]
+            diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
+            #[cfg(feature = "plugins")]
+            next_diff_baseline_id: 1,
+            async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
             suspend_requested: false,
@@ -640,6 +669,9 @@ impl Editor {
             plugin_global_dirty: HashMap::new(),
             warning_log: None,
             status_log_path: None,
+            self_update_phase: crate::services::release_checker::SelfUpdatePhase::default(),
+            self_update_terminal: None,
+            self_update_output: None,
             #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             path_changes_for_test: Vec::new(),
@@ -659,7 +691,13 @@ impl Editor {
             dock: None,
             dock_width: None,
             dock_resizing: false,
-        }
+            widget_text_drag: None,
+        };
+
+        // The plugin per-window filesystem registry is populated on the first
+        // `update_plugin_state_snapshot` (during startup, before any plugin
+        // runs), so nothing to seed here.
+        editor
     }
 
     /// Create a new editor with the given configuration and terminal dimensions
@@ -740,13 +778,15 @@ impl Editor {
         let start = std::time::Instant::now();
         let mut grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
         // Merge user config so find_by_path respects user globs/filenames
-        // from the very first lookup. `defaults_only` just built the Arc, so
-        // we're the sole owner; get_mut is guaranteed to succeed. Assert
+        // from the very first lookup, and load any `textmate_grammar` files
+        // the config points at. `defaults_only` just built the Arc, so we're
+        // the sole owner; the get_mut inside is guaranteed to succeed. Assert
         // rather than silently drop config — a failure here would leave the
         // user wondering why their `*.conf → bash` rule doesn't highlight.
-        std::sync::Arc::get_mut(&mut grammar_registry)
-            .expect("defaults_only returned a shared Arc")
-            .apply_language_config(&config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut grammar_registry,
+            &config.languages,
+        );
         crate::config::reload_indent_overrides(&config.languages);
         tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         // Don't start background grammar build here — it's deferred to the
@@ -800,9 +840,10 @@ impl Editor {
         // through `find_by_path`. Both call sites that feed into `for_test`
         // (`HarnessOptions::with_full_grammar_registry` and the default
         // `GrammarRegistry::empty()`) hand us the sole Arc owner.
-        std::sync::Arc::get_mut(&mut grammar_registry)
-            .expect("grammar registry Arc must be uniquely owned at for_test entry")
-            .apply_language_config(&config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut grammar_registry,
+            &config.languages,
+        );
         crate::config::reload_indent_overrides(&config.languages);
         let authority = Self::local_authority_with_filesystem(filesystem);
         let mut editor = Self::with_options(
@@ -1115,6 +1156,10 @@ impl Editor {
             Arc::clone(&command_registry),
             dir_context.clone(),
             Arc::clone(&theme_cache),
+            // Authority seed (repointed to the active window shortly after) and
+            // the fixed local-host filesystem for `LocalPath` values.
+            Arc::clone(&filesystem),
+            Arc::clone(&orchestrator_filesystem),
         )));
         t.phase("PluginManager::new");
 
@@ -1176,7 +1221,9 @@ impl Editor {
             tracing::debug!("Update checking enabled, starting periodic checker");
             Some(
                 crate::services::release_checker::start_periodic_update_check(
-                    crate::services::release_checker::DEFAULT_RELEASES_URL,
+                    // Honours $FRESH_RELEASES_URL so the indicator and the
+                    // update it launches agree on where releases come from.
+                    &crate::services::release_checker::releases_url(),
                     time_source.clone(),
                     dir_context.data_dir.clone(),
                 ),
@@ -1237,6 +1284,14 @@ impl Editor {
             )))
         };
 
+        // The single source of truth for terminal mouse capture, shared by
+        // every window (mouse capture is one global terminal property, not a
+        // per-window setting). Defaults to enabled, matching the always-on
+        // capture that `TerminalModes::enable` turns on at startup; the real
+        // TUI seeds it from the live terminal state right after construction
+        // (see `Editor::set_mouse_capture`). #2504
+        let mouse_capture = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+
         // Build the resource bundle every `Window` gets a clone of. The
         // base window receives one clone here; subsequent windows
         // (created via `Editor::create_window_at` or first-dive seeding
@@ -1260,6 +1315,7 @@ impl Editor {
             theme: Arc::clone(&theme),
             event_broadcaster: event_broadcaster.clone(),
             recovery_service: Arc::clone(&recovery_service),
+            mouse_capture: Arc::clone(&mouse_capture),
         };
 
         // Build the active window — the one that holds the seed
@@ -1329,6 +1385,16 @@ impl Editor {
         active_win.event_logs = event_logs;
         active_win.plugin_state = active_plugin_state;
         active_win.authority_spec = active_authority_spec;
+        // Continue the picked session's durable identity so ITS own on-disk
+        // workspace (keyed by `stable_id`) restores into this window. Several
+        // co-tenants may share the root, so a window that kept the fresh id
+        // `Window::new` mints would miss its own file in `load_by_id` and fall
+        // back to the freshest sibling's snapshot — loading the wrong file.
+        // A clean-base launch (no pick) keeps that fresh id. Mirrors the
+        // background-shell adoption in `build_persisted_window_shells`.
+        if let Some(sid) = picked_active.and_then(|w| w.stable_id.clone()) {
+            active_win.stable_id = sid;
+        }
         // Load prompt histories from disk for the active window.
         // Each window has its own prompt-history rings.
         active_win
@@ -1352,7 +1418,6 @@ impl Editor {
             persisted_env.as_ref(),
             picked_active.is_some(),
             active_window_id,
-            &active_win.root,
             width,
             height,
             &dir_context,
@@ -1420,6 +1485,7 @@ impl Editor {
             quick_open_registry,
             plugin_manager,
             recovery_service,
+            mouse_capture,
             key_translator,
             update_checker,
             time_source: time_source.clone(),
@@ -1541,7 +1607,13 @@ impl Editor {
 
     /// Auto-load `~/.config/fresh/init.ts` if present, through the existing
     /// plugin pipeline under the stable name `crate::init_script::INIT_PLUGIN_NAME`.
-    pub fn load_init_script(&mut self, enabled: bool) {
+    ///
+    /// Returns what happened, so a caller that has someone to answer —
+    /// `editor.reloadInit()` from a script, and through it
+    /// `fresh --cmd init reload` — can report the failure rather than only
+    /// logging it. The interactive callers ignore the value; for them the
+    /// status message this already sets is the report.
+    pub fn load_init_script(&mut self, enabled: bool) -> crate::init_script::InitOutcome {
         use crate::init_script::{
             check, decide_load, describe, record_success, refresh_types_scaffolding, CheckSeverity,
             InitOutcome, LoadDecision,
@@ -1603,7 +1675,7 @@ impl Editor {
         };
 
         let summary = describe(&outcome);
-        match outcome {
+        match &outcome {
             InitOutcome::NotFound | InitOutcome::Disabled => tracing::debug!("{}", summary),
             InitOutcome::Loaded => tracing::info!("{}", summary),
             InitOutcome::CrashFused { .. } | InitOutcome::Failed { .. } => {
@@ -1611,6 +1683,7 @@ impl Editor {
                 self.set_status_message(summary);
             }
         }
+        outcome
     }
 
     /// Non-blocking variant of [`Self::load_init_script`] for the TUI
@@ -1930,6 +2003,29 @@ impl Editor {
                 .read()
                 .unwrap()
                 .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready {});
+        }
+    }
+
+    /// Fire the `config_changed` hook after the effective config has
+    /// been replaced (Settings-UI save, config reload from disk).
+    ///
+    /// Refreshes the plugin state snapshot *first* so a handler that
+    /// re-reads `getConfig()` / `getPluginConfig()` observes the new
+    /// values rather than the ones it just replaced — the snapshot
+    /// reserializes lazily off the `Arc<Config>` pointer, so without
+    /// this the hook would hand plugins a stale read. Mirrors the
+    /// snapshot-then-hook order used by `trust_changed`.
+    pub fn fire_config_changed_hook(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            if !self.plugin_manager.read().unwrap().is_active() {
+                return;
+            }
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.read().unwrap().run_hook(
+                "config_changed",
+                crate::services::plugins::hooks::HookArgs::ConfigChanged {},
+            );
         }
     }
 

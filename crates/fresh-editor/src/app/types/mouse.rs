@@ -16,9 +16,17 @@ pub struct MouseState {
     pub drag_start_left_column: Option<usize>,
     /// Last mouse position
     pub last_position: Option<(u16, u16)>,
-    /// Mouse hover for LSP: byte position being hovered, timer start, and screen position
-    /// Format: (byte_position, hover_start_instant, screen_x, screen_y)
-    pub lsp_hover_state: Option<(usize, std::time::Instant, u16, u16)>,
+    /// Mouse hover for LSP: byte position being hovered, timer start, screen
+    /// position, and the buffer the mouse is over.
+    /// Format: (byte_position, hover_start_instant, screen_x, screen_y, buffer_id)
+    ///
+    /// `buffer_id` records which split's buffer the pointer is over so the
+    /// hover request targets *that* buffer rather than the active one. Without
+    /// it, hovering a non-active split (or a UI panel such as the
+    /// Search/Replace dock) fired a hover for the active code buffer at a byte
+    /// offset taken from the hovered split's geometry — the popup "leaked
+    /// through" the panel (#2572).
+    pub lsp_hover_state: Option<(usize, std::time::Instant, u16, u16, BufferId)>,
     /// Whether we've already sent a hover request for the current position
     pub lsp_hover_request_sent: bool,
     /// Initial mouse row when starting to drag the scrollbar thumb

@@ -206,7 +206,7 @@ const CHAR_HEIGHT: u16 = 18;
 const FONT_SIZE: u16 = 14;
 
 /// Render a single animation frame to SVG with optional key indicator and mouse cursor.
-fn render_showcase_frame(
+pub fn render_showcase_frame(
     buffer: &Buffer,
     cursor_pos: (u16, u16),
     key_indicator: Option<&str>,

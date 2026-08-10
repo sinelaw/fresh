@@ -398,6 +398,64 @@ impl Editor {
         Ok(count)
     }
 
+    /// Save every modified, file-backed buffer in the active window to disk.
+    ///
+    /// This is the interactive "Save All" command. Unlike `save_all_on_exit`,
+    /// it is not gated on a config flag and is meant to be invoked explicitly
+    /// by the user (File menu / command palette). Unnamed (scratch) buffers
+    /// have no path to save to and are left untouched — they still need an
+    /// explicit Save As. Each saved buffer goes through `finalize_save_buffer`
+    /// so LSP notifications, recovery cleanup, and the modified marker are all
+    /// kept in sync, just like a single-buffer save.
+    ///
+    /// Returns `(saved, failed)`: the number of buffers written successfully
+    /// and the number whose write failed (e.g. permissions, lost remote).
+    pub fn save_all(&mut self) -> anyhow::Result<(usize, usize)> {
+        // Collect ids + paths up front so we don't hold an immutable borrow of
+        // `windows` while mutably saving each buffer below.
+        let mut to_save = Vec::new();
+        for (id, state) in self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+        {
+            if !state.buffer.is_modified() {
+                continue;
+            }
+            if let Some(path) = state.buffer.file_path() {
+                if !path.as_os_str().is_empty() {
+                    to_save.push((*id, path.to_path_buf()));
+                }
+            }
+        }
+
+        let mut saved = 0;
+        let mut failed = 0;
+        for (id, path) in to_save {
+            let result = self
+                .windows
+                .get_mut(&self.active_window)
+                .map(|w| &mut w.buffers)
+                .expect("active window present")
+                .get_mut(&id)
+                .map(|state| state.buffer.save());
+            match result {
+                Some(Ok(())) => {
+                    self.finalize_save_buffer(id, Some(path), true)?;
+                    saved += 1;
+                }
+                Some(Err(e)) => {
+                    failed += 1;
+                    tracing::warn!("Save All failed for {}: {}", path.display(), e);
+                }
+                None => {}
+            }
+        }
+
+        Ok((saved, failed))
+    }
+
     /// Revert the active buffer to the last saved version on disk
     /// Returns Ok(true) if reverted, Ok(false) if no file path, Err on failure
     pub fn revert_file(&mut self) -> anyhow::Result<bool> {
@@ -431,7 +489,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.left_column))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.left_column))
             .unwrap_or((0, 0));
         let old_cursors = self.active_cursors().clone();
 
@@ -502,7 +560,9 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .get_mut(&active_split)
         {
-            view_state.viewport.top_byte = old_top_byte.min(new_file_size);
+            view_state
+                .viewport
+                .set_top_byte(old_top_byte.min(new_file_size));
             view_state.viewport.left_column = old_left_column;
         }
 
@@ -523,6 +583,17 @@ impl Editor {
 
         // Notify LSP that the file was changed
         self.notify_lsp_file_changed(&path);
+
+        // Fire AfterFileRevert hook — the reload replaced the buffer content
+        // without going through the save path, so plugins tracking
+        // disk-derived state (git gutter, etc.) need this to re-scan.
+        self.plugin_manager.read().unwrap().run_hook(
+            "after_file_revert",
+            crate::services::plugins::hooks::HookArgs::AfterFileRevert {
+                buffer_id,
+                path: path.clone(),
+            },
+        );
 
         self.active_window_mut().status_message = Some(t!("status.reverted").to_string());
         Ok(true)
@@ -1182,6 +1253,17 @@ impl Editor {
 
         // Notify LSP that the file was changed
         self.notify_lsp_file_changed(path);
+
+        // Fire AfterFileRevert hook — same contract as the active-buffer
+        // revert path: a reload is not a save, and plugins tracking
+        // disk-derived state need to re-scan the reloaded buffer.
+        self.plugin_manager.read().unwrap().run_hook(
+            "after_file_revert",
+            crate::services::plugins::hooks::HookArgs::AfterFileRevert {
+                buffer_id,
+                path: path.to_path_buf(),
+            },
+        );
 
         Ok(())
     }

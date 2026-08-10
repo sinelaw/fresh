@@ -105,7 +105,7 @@ function missingFileSuggestion(
     absolutePath = editor.pathJoin(cwd, absolutePath);
   }
 
-  if (editor.fileExists(absolutePath)) {
+  if (editor.fileExists(editor.authorityPath(absolutePath))) {
     return null;
   }
 
@@ -121,7 +121,7 @@ function generateCompletions(input: string): PromptSuggestion[] {
   const { dir, pattern } = parsePath(input);
 
   // Read the directory
-  const entries = editor.readDir(dir);
+  const entries = editor.readDir(editor.authorityPath(dir));
   const newFileSuggestion = missingFileSuggestion(input, pattern);
 
   if (!entries) {

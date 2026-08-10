@@ -90,6 +90,29 @@ impl Scenario {
         .unwrap();
     }
 
+    /// Seed an id-keyed **co-tenant** workspace file
+    /// (`<encoded-root>.<stable_id>.json`) — the way a workspace extracted
+    /// into its own window over the same project persists. Several may share
+    /// one root.
+    fn place_co_tenant(&self, root: &Path, stable_id: &str, label: &str) {
+        let ws_dir = self.data_dir().join("workspaces");
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let mut ws = fresh::workspace::Workspace::new(canonical.clone());
+        ws.label = Some(label.to_string());
+        ws.stable_id = Some(stable_id.to_string());
+        let filename = format!(
+            "{}.{}.json",
+            fresh::workspace::encode_path_for_filename(&canonical),
+            stable_id
+        );
+        std::fs::write(
+            ws_dir.join(filename),
+            serde_json::to_vec_pretty(&ws).unwrap(),
+        )
+        .unwrap();
+    }
+
     /// Seed a per-dir workspace file for a **remote (SSH)** session — one whose
     /// persisted `authority_spec` is a `RemoteAgent`, as a prior connected SSH
     /// session would have left on disk. At boot these must come back as
@@ -391,4 +414,45 @@ fn restore_previous_session_false_still_picks_window_but_skips_workspace() {
     .unwrap();
 
     assert_eq!(editor.active_window().root, s.project_canon);
+}
+
+// ---------------------------------------------------------------------------
+// Co-tenant workspaces: several sessions may share one root (a tab extracted
+// into its own window over the same project).
+// ---------------------------------------------------------------------------
+
+/// Two co-tenant workspace files at one root come back as two distinct
+/// windows sharing that root, each carrying its own durable identity — the
+/// old one-session-per-directory dedup no longer collapses them.
+#[test]
+fn discovery_surfaces_co_tenant_workspaces_sharing_a_root() {
+    let s = Scenario::new();
+    s.place_co_tenant(&s.other_canon, "ws-a", "other");
+    s.place_co_tenant(&s.other_canon, "ws-b", "other (2)");
+
+    let editor = s.bring_up();
+
+    // Both co-tenants surface as windows rooted at `other`.
+    let at_other = window_roots(&editor)
+        .into_iter()
+        .filter(|r| *r == s.other_canon)
+        .count();
+    assert_eq!(
+        at_other, 2,
+        "both co-tenant workspaces on one root must surface as distinct windows"
+    );
+
+    // Each carries its own durable identity.
+    let ids: std::collections::BTreeSet<String> = (1..=64u64)
+        .filter_map(|id| editor.session(fresh_core::WindowId(id)))
+        .filter(|w| w.root == s.other_canon)
+        .map(|w| w.stable_id.clone())
+        .collect();
+    assert_eq!(
+        ids,
+        ["ws-a".to_string(), "ws-b".to_string()]
+            .into_iter()
+            .collect(),
+        "co-tenant windows must keep their own stable ids"
+    );
 }

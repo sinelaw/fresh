@@ -76,7 +76,14 @@ type Draw = {
 
 /** Column range within a row that carries a click target. */
 type ClickActionRange = { colStart: number; colEnd: number; action: ClickAction };
-const MAX_INNER = 72; // content width excluding frame + centering pad
+
+// Panel sizing. The frame targets ~90% of the viewport on both axes, clamped
+// so it stays readable in a narrow terminal without sprawling on a wide one.
+// `inner` is also hard-bounded by the viewport, so the frame can never be
+// wider than the panel it lives in — a wrapped border row is a broken box.
+const INNER_MIN = 24;
+const INNER_MAX = 110;
+const SIZE_FRACTION = 0.9;
 
 const C = {
     frame: "ui.popup_border_fg",
@@ -137,13 +144,33 @@ export type DashboardTextOpts = {
     onClick?: () => void;
 };
 
+/** One cell in a [`DashboardContext.columns`] row. Cells are clipped to
+ *  `width` (or their natural width when omitted) so a long value can never
+ *  push the columns to its right out of alignment. */
+export type DashboardCell = DashboardTextOpts & {
+    text: string;
+    /** Column width in cells. Omit for "as wide as the text". */
+    width?: number;
+    /** Right-align inside `width`. Default left. */
+    align?: "left" | "right";
+};
+
 export type DashboardContext = {
+    /** Inner panel width in columns. Sections should lay out to this — rows
+     *  wider than it are clipped by the frame renderer, so anything past it
+     *  is not merely ugly, it is invisible. */
+    readonly width: number;
     /** Emit a label/value row like "    label     value". The label
-     *  column is padded to 10 cols so multi-row sections align. */
+     *  column is padded to 10 cols so multi-row sections align, and the
+     *  value is clipped to the remaining panel width. */
     kv(label: string, value: string, color?: DashboardColor): void;
     /** Emit a styled text segment on the current row. No newline is
      *  added — call `newline()` when the row is finished. */
     text(s: string, opts?: DashboardTextOpts): void;
+    /** Emit a whole row of fixed-width cells and end it. Each cell is
+     *  clipped to its own width, and the row as a whole is clipped to
+     *  `width`, so a column layout stays aligned at any panel size. */
+    columns(cells: DashboardCell[]): void;
     /** End the current row. */
     newline(): void;
     /** Shortcut for a single-row error message: "    status    why". */
@@ -152,6 +179,21 @@ export type DashboardContext = {
 
 export type SectionRefresh = (ctx: DashboardContext) => Promise<void>;
 
+/** Per-section refresh policy. Defaults keep an idle dashboard cheap: a
+ *  section is re-run only once its data is older than `ttlMs`, and a refresh
+ *  that overruns `timeoutMs` is abandoned rather than blocking the section
+ *  (or the panel) indefinitely. */
+export type SectionOptions = {
+    /** Minimum age before a refresh is re-run. Default 30s, floor 1s. */
+    ttlMs?: number;
+    /** Abandon a refresh that takes longer than this. Default 8s. */
+    timeoutMs?: number;
+};
+
+const DEFAULT_TTL_MS = 30_000;
+const MIN_TTL_MS = 1_000;
+const DEFAULT_TIMEOUT_MS = 8_000;
+
 /**
  * Public surface of the bundled `dashboard` plugin, reachable through
  * `editor.getPluginApi("dashboard")`. Third-party plugins and user
@@ -159,7 +201,11 @@ export type SectionRefresh = (ctx: DashboardContext) => Promise<void>;
  * tear them down again via `removeSection` / `clearAllSections`.
  */
 export type DashboardApi = {
-    registerSection(name: string, refresh: SectionRefresh): () => void;
+    registerSection(
+        name: string,
+        refresh: SectionRefresh,
+        options?: SectionOptions,
+    ): () => void;
     /** Remove every registered section whose name matches `name`.
      *  Returns true if at least one section was removed. */
     removeSection(name: string): boolean;
@@ -193,7 +239,33 @@ type RegisteredSection = {
      *  next refresh lands so the dashboard doesn't flash back to a
      *  "loading…" placeholder on every tick. */
     draw: Draw;
+    ttlMs: number;
+    timeoutMs: number;
+    /** Panel width `draw` was produced for. A resize invalidates the cached
+     *  output without needing a data refresh. */
+    drawWidth: number;
+    /** Wall clock at the last refresh start. The TTL scheduler compares
+     *  against this, so a slow section cannot be re-entered on every tick. */
+    startedAt: number;
+    /** A refresh is in flight — the TTL scheduler must not start a second. */
+    inFlight: boolean;
+    /** The last refresh failed or timed out while `draw` still holds good
+     *  data: keep showing it, but say so in the section heading. */
+    stale: boolean;
+    /** Nothing has ever landed, so `draw` is still the placeholder. */
+    everLanded: boolean;
+    /** `draw` is an error/timeout row rather than section data. Such a draw
+     *  carries nothing worth preserving, so a later failure re-renders it at
+     *  the current width instead of keeping a row sized for an old panel. */
+    drawIsError: boolean;
 };
+
+/** Heading suffix describing a section's data freshness. */
+function sectionNote(entry: RegisteredSection): string | null {
+    if (!entry.everLanded) return entry.inFlight ? "loading" : null;
+    if (entry.stale) return entry.inFlight ? "stale, refreshing" : "stale";
+    return null;
+}
 
 // ── Internal state ─────────────────────────────────────────────────────
 
@@ -340,52 +412,99 @@ function loadingDraw(): Draw {
 // Build a DashboardContext that accumulates drawing operations into a
 // fresh Draw. After the caller's refresh callback resolves, the Draw
 // is stashed on the section entry and the dashboard repaints with it.
-function makeContext(): { ctx: DashboardContext; draw: Draw } {
+//
+// `width` is the inner panel width, handed to the section so it can lay out
+// against the space it actually has instead of padding to a width it cannot
+// see. The frame renderer still clips — this is cooperation, not trust.
+function makeContext(width: number): { ctx: DashboardContext; draw: Draw } {
     const d = emptyDraw();
+    const KV_LABEL = 10;
+    const KV_INDENT = 4;
+    const actionFor = (opts?: DashboardTextOpts): ClickAction | undefined =>
+        opts?.onClick
+            ? { kind: "callback", fn: opts.onClick }
+            : opts?.url
+                ? { kind: "open-url", url: opts.url }
+                : undefined;
     const ctx: DashboardContext = {
+        width,
         kv(label, value, color) {
             const fg = color ? COLOR_KEYS[color] : C.value;
-            emit(d, "    " + pad(label, 10), { fg: C.muted });
-            emit(d, value, { fg });
+            emit(d, " ".repeat(KV_INDENT) + pad(truncate(label, KV_LABEL), KV_LABEL), {
+                fg: C.muted,
+            });
+            emit(d, truncate(value, Math.max(1, width - KV_INDENT - KV_LABEL)), { fg });
             newline(d);
         },
         text(s, opts) {
-            const action: ClickAction | undefined = opts?.onClick
-                ? { kind: "callback", fn: opts.onClick }
-                : opts?.url
-                    ? { kind: "open-url", url: opts.url }
-                    : undefined;
             emit(d, s, {
                 fg: opts?.color ? COLOR_KEYS[opts.color] : undefined,
                 bold: opts?.bold,
                 url: opts?.url,
-                action,
+                action: actionFor(opts),
             });
+        },
+        columns(cells) {
+            let remaining = width;
+            for (const cell of cells) {
+                if (remaining <= 0) break;
+                const cellWidth = Math.min(
+                    remaining,
+                    cell.width ?? visualWidth(cell.text),
+                );
+                const clipped = truncate(cell.text, cellWidth);
+                const slack = Math.max(0, cellWidth - visualWidth(clipped));
+                const before = cell.align === "right" ? " ".repeat(slack) : "";
+                const after = cell.align === "right" ? "" : " ".repeat(slack);
+                if (before) emit(d, before, undefined);
+                emit(d, clipped, {
+                    fg: cell.color ? COLOR_KEYS[cell.color] : undefined,
+                    bold: cell.bold,
+                    url: cell.url,
+                    action: actionFor(cell),
+                });
+                if (after) emit(d, after, undefined);
+                remaining -= cellWidth;
+            }
+            newline(d);
         },
         newline() {
             newline(d);
         },
         error(message) {
-            const label = pad("status", 10);
-            emit(d, "    " + label, { fg: C.muted });
-            emit(d, message, { fg: C.err });
+            emit(d, " ".repeat(KV_INDENT) + pad("status", KV_LABEL), { fg: C.muted });
+            emit(d, truncate(message, Math.max(1, width - KV_INDENT - KV_LABEL)), {
+                fg: C.err,
+            });
             newline(d);
         },
     };
     return { ctx, draw: d };
 }
 
-// Register a dashboard section. `refresh` is invoked each tick (every
-// 5s while the dashboard is visible) and on every open. Returns a
-// function that unregisters the section when called — e.g. for
-// plugins that want to remove their section on disable.
-function registerSection(name: string, refresh: SectionRefresh): () => void {
+// Register a dashboard section. `refresh` runs on open and thereafter
+// whenever its data is older than `options.ttlMs` (default 30s) — not on a
+// fixed global tick, so adding sections does not multiply the ambient
+// subprocess rate. Returns a function that unregisters the section.
+function registerSection(
+    name: string,
+    refresh: SectionRefresh,
+    options?: SectionOptions,
+): () => void {
     const id = nextSectionId++;
     const entry: RegisteredSection = {
         id,
         name,
         refresh,
         draw: loadingDraw(),
+        ttlMs: Math.max(MIN_TTL_MS, options?.ttlMs ?? DEFAULT_TTL_MS),
+        timeoutMs: Math.max(500, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+        drawWidth: -1,
+        startedAt: 0,
+        inFlight: false,
+        stale: false,
+        everLanded: false,
+        drawIsError: false,
     };
     registeredSections.push(entry);
     // Kick an immediate refresh so the initial frame isn't "loading…"
@@ -427,103 +546,196 @@ function clearAllSections(): void {
     paint();
 }
 
+// Panel width the next paint will use. Sections need it before the paint
+// happens, and a refresh may resolve between two paints, so it is tracked
+// here rather than threaded through every call.
+let currentInnerWidth = INNER_MIN;
+
+// Run one section's refresh under a timeout, replacing its draw only when it
+// produces something. Failure and timeout are stale-while-revalidate: the
+// previous good output stays on screen with a "stale" note in the heading,
+// so a flaky or hostile section degrades to old data instead of blanking the
+// panel or stalling its neighbours (each section is refreshed independently,
+// so none of this blocks another).
 async function refreshSection(entry: RegisteredSection, myToken: number) {
-    const { ctx, draw } = makeContext();
+    if (entry.inFlight) return;
+    entry.inFlight = true;
+    entry.startedAt = Date.now();
+    const width = currentInnerWidth;
+    const { ctx, draw } = makeContext(width);
+    const land = (next: Draw, ok: boolean) => {
+        if (myToken !== fetchToken) return;
+        entry.draw = next;
+        entry.drawWidth = width;
+        entry.everLanded = true;
+        entry.stale = !ok;
+        entry.drawIsError = !ok;
+        paint();
+    };
+    // Stale-while-revalidate only makes sense when there is good data to keep.
+    // A section that has only ever failed has nothing to preserve, so its row
+    // is re-rendered — otherwise the first failure's row is frozen at whatever
+    // panel width happened to be current then, and a resize never reaches it.
+    const hasGoodData = entry.everLanded && !entry.drawIsError;
     try {
-        await entry.refresh(ctx);
+        const timedOut = Symbol("timeout");
+        // Keep a handle on the section's own promise. A timeout can stop
+        // *waiting* on it, but nothing here can stop it running — so the
+        // handle is what tells us when the section is free again.
+        const own = entry.refresh(ctx).then(() => "ok" as const);
+        const race = await Promise.race([
+            own,
+            editor.delay(entry.timeoutMs).then(() => timedOut),
+        ]);
+        if (race === timedOut) {
+            // `inFlight` deliberately stays set. Clearing it here would let the
+            // TTL scheduler start another refresh every `ttlMs` while the first
+            // one is still running — a section that hangs for good would then
+            // accumulate one pending promise, context and draw closure per
+            // tick, forever. Releasing it when (and only when) the original
+            // settles bounds a hung section to the single refresh it is stuck
+            // in, and lets a merely-slow one be retried once it finishes. The
+            // `.then` also swallows a late rejection, which would otherwise
+            // surface as an unhandled promise rejection long after the row
+            // already said "timed out".
+            const release = () => {
+                entry.inFlight = false;
+            };
+            own.then(release, release);
+            if (hasGoodData) {
+                // Keep the last good body; the heading carries the reason.
+                entry.stale = true;
+                if (myToken === fetchToken) paint();
+            } else {
+                const fallback = makeContext(width);
+                fallback.ctx.error(`timed out after ${entry.timeoutMs}ms`);
+                land(fallback.draw, false);
+            }
+            return;
+        }
+        entry.inFlight = false;
+        land(draw, true);
     } catch (e) {
+        entry.inFlight = false;
         // A thrown error becomes a one-line error row so a buggy
         // third-party section can't blank the whole dashboard.
-        const { ctx: fallbackCtx, draw: fallbackDraw } = makeContext();
-        fallbackCtx.error(`failed — ${String(e).slice(0, 60)}`);
-        if (myToken !== fetchToken) return;
-        entry.draw = fallbackDraw;
-        paint();
-        return;
+        if (hasGoodData) {
+            entry.stale = true;
+            if (myToken === fetchToken) paint();
+            return;
+        }
+        const fallback = makeContext(width);
+        fallback.ctx.error(`failed — ${truncate(String(e), 60)}`);
+        land(fallback.draw, false);
     }
-    if (myToken !== fetchToken) return;
-    entry.draw = draw;
-    paint();
 }
 
 // ── Frame + section renderer ───────────────────────────────────────────
 
+// Minute resolution on purpose: a seconds clock would force a full repaint
+// every second for the lifetime of the panel, which is real ambient cost for
+// no information a developer needs from a home screen.
 function clockNow(): string {
     const d = new Date();
     const hh = String(d.getHours()).padStart(2, "0");
     const mm = String(d.getMinutes()).padStart(2, "0");
-    const ss = String(d.getSeconds()).padStart(2, "0");
-    return `${hh}:${mm}:${ss}`;
+    return `${hh}:${mm}`;
 }
 
+// Inner content width (between the two border glyphs) and the centering pad.
+// The `viewportW - 2` term is what guarantees the box always fits: below
+// ~26 cols the frame simply shrinks instead of overflowing and wrapping.
 function frameWidth(viewportW: number): { inner: number; leftPad: number } {
-    const usable = Math.max(40, viewportW - 4);
-    const inner = Math.min(MAX_INNER, usable - 2); // subtract 2 for frame edges
-    const total = inner + 2;
-    const leftPad = Math.max(0, Math.floor((viewportW - total) / 2));
+    const avail = Math.max(1, viewportW - 2);
+    const target = Math.floor(viewportW * SIZE_FRACTION) - 2;
+    const inner = Math.max(1, Math.min(INNER_MAX, avail, Math.max(INNER_MIN, target)));
+    const leftPad = Math.max(0, Math.floor((viewportW - (inner + 2)) / 2));
     return { inner, leftPad };
 }
 
-function renderFrame(inner: number, leftPad: number): Draw {
+// Rows the frame may occupy. Vertical counterpart of `frameWidth`: on a short
+// terminal the body is clipped with a "more rows" marker rather than running
+// off the bottom of the panel.
+function frameRowBudget(viewportH: number): number {
+    const target = Math.floor(viewportH * SIZE_FRACTION);
+    return Math.max(5, Math.min(viewportH, target));
+}
+
+function renderFrame(
+    inner: number,
+    leftPad: number,
+    rowBudget: number,
+): Draw {
     const d: Draw = emptyDraw();
     const lp = " ".repeat(leftPad);
 
-    const titleText = "FRESH";
-    const stamp = clockNow();
-    const titleSegment = ` ${titleText} `;
-    const stampSegment = ` ${stamp} `;
-    // Top frame: ╭── FRESH ────…──── HH:MM:SS ──╮
+    // Top border: ╭── FRESH ────…──── HH:MM ──╮
     //
-    // `inner` is the column count between the two corner glyphs. The top
-    // row emits, between ╭ and ╮:
-    //   "──" (2) + titleSegment (7) + dashRun (fillLen) + stampSegment (10) + "──" (2)
-    // so fillLen = inner - visualWidth(titleSegment) - visualWidth(stampSegment) - 4.
-    const fillLen =
-        inner - visualWidth(titleSegment) - visualWidth(stampSegment) - 4;
-    const dashRun = "─".repeat(Math.max(1, fillLen));
-
-    // top
+    // Composed against an explicit budget and degraded (stamp first, then
+    // title) when `inner` is too small, so the row is always exactly `inner`
+    // columns between the corners no matter how narrow the terminal is.
     emit(d, lp, undefined);
-    emit(d, "╭──", { fg: C.frame });
-    emit(d, titleSegment, { fg: C.title, bold: true });
-    emit(d, dashRun, { fg: C.frame });
-    emit(d, stampSegment, { fg: C.muted });
-    emit(d, "──╮", { fg: C.frame });
+    emit(d, "╭", { fg: C.frame });
+    {
+        const titleSegment = " FRESH ";
+        const stampSegment = ` ${clockNow()} `;
+        const lead = 2;
+        const tail = 2;
+        const titleW = visualWidth(titleSegment);
+        const stampW = visualWidth(stampSegment);
+        const showTitle = inner >= lead + titleW + 1 + tail;
+        const showStamp = showTitle && inner >= lead + titleW + 1 + stampW + tail;
+        if (!showTitle) {
+            emit(d, "─".repeat(inner), { fg: C.frame });
+        } else {
+            const fill =
+                inner - lead - tail - titleW - (showStamp ? stampW : 0);
+            emit(d, "─".repeat(lead), { fg: C.frame });
+            emit(d, titleSegment, { fg: C.title, bold: true });
+            emit(d, "─".repeat(Math.max(0, fill)), { fg: C.frame });
+            if (showStamp) emit(d, stampSegment, { fg: C.muted });
+            emit(d, "─".repeat(tail), { fg: C.frame });
+        }
+    }
+    emit(d, "╮", { fg: C.frame });
     newline(d);
 
-    // blank row
-    emit(d, lp, undefined);
-    emit(d, "│", { fg: C.frame });
-    emit(d, " ".repeat(inner), undefined);
-    emit(d, "│", { fg: C.frame });
-    newline(d);
+    // Rows still available for body content, reserving the top border, the
+    // blank row below it, and the bottom border.
+    let rowsLeft = Math.max(0, rowBudget - 3);
+    let clippedRows = 0;
 
-    const sectionHeader = (name: string) => {
-        // Format: │ ▎  NAME ...
-        // Dropped per-section icons: their widths (☀ ⎇ ⚡ ◆) disagree with
-        // unicode-width depending on font/emoji-presentation, which
-        // silently misaligned the right frame edge.
-        const prefix = " ▎  ";
+    const blankInner = () => {
         emit(d, lp, undefined);
         emit(d, "│", { fg: C.frame });
-        emit(d, prefix, { fg: C.accent, bold: true });
-        emit(d, name, { fg: C.title, bold: true });
-        const consumed = visualWidth(prefix) + visualWidth(name);
-        emit(d, " ".repeat(Math.max(0, inner - consumed)), undefined);
+        emit(d, " ".repeat(inner), undefined);
         emit(d, "│", { fg: C.frame });
         newline(d);
     };
 
+    if (rowsLeft > 0) {
+        blankInner();
+        rowsLeft--;
+    }
+
+    // Every body row goes through here, so clipping is central: a section
+    // emitting a 200-column line cannot push the right border out, and its
+    // click targets are clamped to the cells that survived the clip.
     const row = (
         body: { text: string; spans: Span[] },
         ranges?: ClickActionRange[],
     ) => {
-        // Wraps a single logical row of section body in the frame.
+        if (rowsLeft <= 0) {
+            clippedRows++;
+            return;
+        }
+        rowsLeft--;
         emit(d, lp, undefined);
         emit(d, "│", { fg: C.frame });
         // body is already one line (no embedded newlines) — renderSection
         // slices multi-line section output before calling row().
-        const line = body.text;
+        const line = truncate(body.text, inner);
+        const lineBytes = utf8Len(line);
         const used = visualWidth(line);
         const startInDoc = utf8Len(d.text);
         // Content starts in the outer draw at this visual column —
@@ -533,10 +745,10 @@ function renderFrame(inner: number, leftPad: number): Draw {
         d.text += line;
         d.currentCol += used;
         for (const sp of body.spans) {
-            if (sp.start < utf8Len(line)) {
+            if (sp.start < lineBytes) {
                 d.spans.push({
                     start: startInDoc + sp.start,
-                    end: startInDoc + Math.min(sp.end, utf8Len(line)),
+                    end: startInDoc + Math.min(sp.end, lineBytes),
                     fg: sp.fg,
                     bold: sp.bold,
                     underline: sp.underline,
@@ -545,29 +757,68 @@ function renderFrame(inner: number, leftPad: number): Draw {
             }
         }
         if (ranges && ranges.length > 0) {
-            const shifted = ranges.map((r) => ({
-                colStart: r.colStart + contentStartCol,
-                colEnd: r.colEnd + contentStartCol,
-                action: r.action,
-            }));
-            const existing = d.rowActions.get(d.currentRow) ?? [];
-            d.rowActions.set(d.currentRow, existing.concat(shifted));
+            // Clamp to the clipped text: a target hanging off the right edge
+            // would highlight (and accept clicks on) the border cell.
+            const shifted: ClickActionRange[] = [];
+            for (const r of ranges) {
+                const colStart = Math.min(r.colStart, used);
+                const colEnd = Math.min(r.colEnd, used);
+                if (colEnd <= colStart) continue;
+                shifted.push({
+                    colStart: colStart + contentStartCol,
+                    colEnd: colEnd + contentStartCol,
+                    action: r.action,
+                });
+            }
+            if (shifted.length > 0) {
+                const existing = d.rowActions.get(d.currentRow) ?? [];
+                d.rowActions.set(d.currentRow, existing.concat(shifted));
+            }
         }
         emit(d, " ".repeat(Math.max(0, inner - used)), undefined);
         emit(d, "│", { fg: C.frame });
         newline(d);
     };
 
-    const spacerRow = () => {
+    const plainRow = (text: string, fg: string) => {
+        row({ text, spans: [{ start: 0, end: utf8Len(text), fg }] });
+    };
+
+    // Section heading: name in caps followed by a dim rule out to the right
+    // edge. A rule reads as hierarchy without relying on a badge glyph whose
+    // width the terminal and the layout might disagree about.
+    const sectionHeader = (name: string, note: string | null) => {
+        if (rowsLeft <= 0) {
+            clippedRows++;
+            return;
+        }
+        rowsLeft--;
+        const label = truncate(name, Math.max(1, inner - 4));
+        const suffix = note ? ` ${note}` : "";
         emit(d, lp, undefined);
         emit(d, "│", { fg: C.frame });
-        emit(d, " ".repeat(inner), undefined);
+        emit(d, "  ", undefined);
+        emit(d, label, { fg: C.title, bold: true });
+        const noteText = truncate(
+            suffix,
+            Math.max(0, inner - 2 - visualWidth(label)),
+        );
+        emit(d, noteText, { fg: C.muted });
+        const consumed = 2 + visualWidth(label) + visualWidth(noteText);
+        let painted = consumed;
+        if (inner - consumed >= 3) {
+            emit(d, " ", undefined);
+            emit(d, "─".repeat(inner - consumed - 2), { fg: C.frame });
+            emit(d, " ", undefined);
+            painted = inner;
+        }
+        emit(d, " ".repeat(Math.max(0, inner - painted)), undefined);
         emit(d, "│", { fg: C.frame });
         newline(d);
     };
 
-    const renderSection = (name: string, body: Draw) => {
-        sectionHeader(name);
+    const renderSection = (name: string, note: string | null, body: Draw) => {
+        sectionHeader(name, note);
         const bodyLines = body.text.split("\n");
         let cursor = 0;
         for (let lineIdx = 0; lineIdx < bodyLines.length; lineIdx++) {
@@ -591,11 +842,21 @@ function renderFrame(inner: number, leftPad: number): Draw {
             row({ text: ln, spans: sliced }, body.rowActions.get(lineIdx));
             cursor = lineEnd + 1;
         }
-        spacerRow();
+        if (rowsLeft > 0) {
+            blankInner();
+            rowsLeft--;
+        }
     };
 
     for (const entry of registeredSections) {
-        renderSection(entry.name.toUpperCase(), entry.draw);
+        renderSection(entry.name.toUpperCase(), sectionNote(entry), entry.draw);
+    }
+
+    // Tell the user what the row budget swallowed rather than silently
+    // truncating. Costs one of the reserved rows.
+    if (clippedRows > 0) {
+        rowsLeft = 1;
+        plainRow(`  ${clippedRows} more row${clippedRows === 1 ? "" : "s"} — resize to see`, C.muted);
     }
 
     // bottom
@@ -684,7 +945,16 @@ function paint(dims?: { width: number; height: number }) {
     const width = vp?.width ?? 100;
     const height = vp?.height ?? 24;
     const { inner, leftPad } = frameWidth(width);
-    const drawn = renderFrame(inner, leftPad);
+    // Sections lay out against this on their next refresh. A resize also
+    // makes every cached draw stale for layout purposes, so the sections
+    // re-run promptly instead of waiting out their TTL with the old width.
+    if (inner !== currentInnerWidth) {
+        currentInnerWidth = inner;
+        for (const entry of registeredSections) {
+            if (entry.drawWidth !== inner) entry.startedAt = 0;
+        }
+    }
+    const drawn = renderFrame(inner, leftPad, frameRowBudget(height));
 
     // Count newlines in the rendered frame to vertically center it. Pad
     // above with blank lines; there's no need to pad below since the
@@ -845,6 +1115,7 @@ const trim = (s: string) => s.replace(/\s+$/, "");
 // the string is shortened. Uses the same visualWidth estimator as the
 // frame renderer so the result fits exactly.
 function truncate(s: string, maxCols: number): string {
+    if (maxCols <= 0) return "";
     if (visualWidth(s) <= maxCols) return s;
     let out = "";
     let w = 0;
@@ -857,14 +1128,20 @@ function truncate(s: string, maxCols: number): string {
     return out + "…";
 }
 
-// Max room for a `kv` value cell inside a standard row. The `    ` + 10-
-// col padded key consume 14 cols, so the value must fit in inner - 14.
-// With MAX_INNER = 72, that's 58 cols in the default case.
-const VALUE_MAX = MAX_INNER - 14;
+// Room a `kv` value cell has inside a standard row at the current panel
+// width: the 4-space indent plus the 10-col padded key consume 14 cols.
+// Derived per call rather than from a fixed constant so it tracks resizes.
+function valueMax(): number {
+    return Math.max(8, currentInnerWidth - 14);
+}
 
+// ASCII on purpose: block/line-drawing meter glyphs are East-Asian-ambiguous,
+// so a terminal rendering them double-width would break the row alignment the
+// frame depends on.
 function bar(pct: number, width: number): string {
-    const filled = Math.max(0, Math.min(width, Math.round((pct / 100) * width)));
-    return "━".repeat(filled) + "╌".repeat(width - filled);
+    const inner = Math.max(0, width - 2);
+    const filled = Math.max(0, Math.min(inner, Math.round((pct / 100) * inner)));
+    return "[" + "#".repeat(filled) + "-".repeat(inner - filled) + "]";
 }
 
 // wttr.in's j1 response shape — only the fields we consume.
@@ -925,7 +1202,7 @@ function formatCurrent(c: WttrCurrent | undefined): string | null {
     const s = [cond, temp, feels, wind, hum]
         .filter((x) => x.length > 0)
         .join(" · ");
-    return s ? truncate(s, VALUE_MAX) : null;
+    return s ? truncate(s, valueMax()) : null;
 }
 
 function formatHour(h: WttrHour | null): string | null {
@@ -937,7 +1214,7 @@ function formatHour(h: WttrHour | null): string | null {
     const s = [cond, temp, feels]
         .filter((x) => x.length > 0)
         .join(" · ");
-    return s ? truncate(s, VALUE_MAX) : null;
+    return s ? truncate(s, valueMax()) : null;
 }
 
 function formatDaySummary(day: WttrDay | undefined): string | null {
@@ -948,7 +1225,7 @@ function formatDaySummary(day: WttrDay | undefined): string | null {
         ? `${day.mintempC}°..${day.maxtempC}°C`
         : "";
     const s = [range, cond].filter((x) => x.length > 0).join(" · ");
-    return s ? truncate(s, VALUE_MAX) : null;
+    return s ? truncate(s, valueMax()) : null;
 }
 
 const weatherRefresh: SectionRefresh = async (ctx) => {
@@ -1060,7 +1337,7 @@ const gitRefresh: SectionRefresh = async (ctx) => {
     if (ahead.ok) {
         const ab = parseLeftRight(ahead.stdout);
         if (ab) {
-            trackStr = `↑ ${ab.ahead}   ↓ ${ab.behind}`;
+            trackStr = `+${ab.ahead} ahead  -${ab.behind} behind`;
             trackColor = ab.ahead > 0 || ab.behind > 0 ? "accent" : "ok";
         }
     }
@@ -1120,7 +1397,7 @@ const gitRefresh: SectionRefresh = async (ctx) => {
     ctx.kv("tracking", trackStr, trackColor);
     if (vsBase) {
         const label = `vs ${vsBase.base}`;
-        const str = `↑ ${vsBase.ahead}   ↓ ${vsBase.behind}`;
+        const str = `+${vsBase.ahead} ahead  -${vsBase.behind} behind`;
         const color: DashboardColor =
             vsBase.ahead > 0 || vsBase.behind > 0 ? "accent" : "ok";
         ctx.kv(label, str, color);
@@ -1137,7 +1414,7 @@ const gitRefresh: SectionRefresh = async (ctx) => {
     // for any name that's not a built-in, and the plugin manager
     // dispatches that to the registered handler by name.
     ctx.text("    " + pad("review", 10), { color: "muted" });
-    ctx.text("▶ review branch", {
+    ctx.text("review branch", {
         color: "accent",
         bold: true,
         onClick: () => editor.executeAction("start_review_branch"),
@@ -1172,7 +1449,7 @@ let githubLastError: string | null = null;
 // push the state column out of alignment.
 const PR_COL_NUM = 8;
 const PR_COL_STATE = 5;
-const PR_COL_CHECK = 2;
+const PR_COL_CHECK = 5;
 const PR_COL_CMTS = 6;
 
 function renderPrRows(ctx: DashboardContext, prs: GhPR[]) {
@@ -1199,14 +1476,14 @@ function renderPrRows(ctx: DashboardContext, prs: GhPR[]) {
                     : "muted";
 
         const rollup = pr.commits?.nodes?.[0]?.commit?.statusCheckRollup?.state ?? null;
-        const checkGlyph =
+        const checkTag =
             rollup === "SUCCESS"
-                ? "✓"
+                ? "pass"
                 : rollup === "FAILURE" || rollup === "ERROR"
-                    ? "✗"
+                    ? "fail"
                     : rollup === "PENDING" || rollup === "EXPECTED"
-                        ? "◌"
-                        : "–";
+                        ? "run"
+                        : "-";
         const checkColor: DashboardColor =
             rollup === "SUCCESS"
                 ? "ok"
@@ -1222,7 +1499,7 @@ function renderPrRows(ctx: DashboardContext, prs: GhPR[]) {
             .reduce((acc, t) => acc + (t.comments?.totalCount ?? 0), 0);
 
         const num = `#${pr.number ?? "?"}`;
-        const title = (pr.title ?? "").slice(0, 44);
+        const title = pr.title ?? "";
         const repoName = pr.repository?.nameWithOwner ?? "";
         const prUrl =
             repoName && pr.number
@@ -1236,33 +1513,35 @@ function renderPrRows(ctx: DashboardContext, prs: GhPR[]) {
         // to clickable spans by `emit`) lands on the "#1234" text
         // only — trailing padding spaces stay plain.
         const onClickPr = prUrl ? () => openUrl(prUrl) : undefined;
-        const numPad = " ".repeat(
-            Math.max(0, PR_COL_NUM - visualWidth(num)),
-        );
-        ctx.text("    ");
-        ctx.text(num, {
-            color: "number",
-            url: prUrl,
-            onClick: onClickPr,
-        });
-        if (numPad) ctx.text(numPad);
-        ctx.text(pad(stateTag, PR_COL_STATE), {
-            color: stateColor,
-            bold: true,
-        });
-        ctx.text(" ");
-        ctx.text(pad(checkGlyph, PR_COL_CHECK), {
-            color: checkColor,
-            bold: true,
-        });
-        const cmtCell =
-            openCmts > 0
-                ? pad(`${openCmts} cmt`, PR_COL_CMTS)
-                : pad("", PR_COL_CMTS);
-        ctx.text(cmtCell, { color: openCmts > 0 ? "warn" : "muted" });
-        ctx.text(" ");
-        ctx.text(title, { color: "value", url: prUrl });
-        ctx.newline();
+        // Fixed cells first, then the title takes whatever is left — so the
+        // status columns stay aligned and only the title gives ground.
+        const fixed = 4 + PR_COL_NUM + PR_COL_STATE + 1 + PR_COL_CHECK + PR_COL_CMTS + 1;
+        ctx.columns([
+            { text: "", width: 4 },
+            {
+                text: num,
+                width: PR_COL_NUM,
+                color: "number",
+                url: prUrl,
+                onClick: onClickPr,
+            },
+            { text: stateTag, width: PR_COL_STATE, color: stateColor, bold: true },
+            { text: "", width: 1 },
+            { text: checkTag, width: PR_COL_CHECK, color: checkColor, bold: true },
+            {
+                text: openCmts > 0 ? `${openCmts} cmt` : "",
+                width: PR_COL_CMTS,
+                color: openCmts > 0 ? "warn" : "muted",
+            },
+            { text: "", width: 1 },
+            {
+                text: title,
+                width: Math.max(4, ctx.width - fixed),
+                color: "value",
+                url: prUrl,
+                onClick: onClickPr,
+            },
+        ]);
     }
 }
 
@@ -1432,34 +1711,55 @@ const diskRefresh: SectionRefresh = async (ctx) => {
         ctx.error("df failed");
         return;
     }
+    // Meter width scales with the panel: it is the elastic column, and the
+    // fixed cells around it must keep their room at any size.
+    const meter = Math.max(6, Math.min(24, ctx.width - 34));
     for (const row of rows) {
         const color: DashboardColor =
             row.pct >= 90 ? "err" : row.pct >= 75 ? "warn" : "ok";
-        ctx.text("    " + pad(row.mount, 10), { color: "muted" });
-        ctx.text(bar(row.pct, 18), { color, bold: true });
-        ctx.text("  " + String(row.pct).padStart(3) + "%", { color });
-        ctx.text(`   ${row.used} / ${row.size}`, { color: "muted" });
-        ctx.newline();
+        ctx.columns([
+            { text: "", width: 4 },
+            { text: row.mount, width: 10, color: "muted" },
+            { text: bar(row.pct, meter), width: meter, color, bold: true },
+            { text: `${row.pct}%`, width: 6, align: "right", color },
+            { text: `  ${row.used} / ${row.size}`, color: "muted" },
+        ]);
     }
 };
 
 // ── Lifecycle ──────────────────────────────────────────────────────────
 
-// Fire-and-forget: refresh every 5s while the dashboard remains the
-// active dashboard. Each tick bumps `fetchToken` and re-kicks every
-// registered section's refresh callback; in-flight refreshes from a
-// previous tick become no-ops the moment their token stops matching.
-// Loop exits when the dashboard buffer is closed (dashboardBufferId
-// becomes null).
+// Scheduler for the open dashboard. Ticks on a fixed short interval but does
+// almost nothing on most ticks: a section is only re-run once its data is
+// older than its own TTL and no refresh is already in flight for it. Ambient
+// cost is therefore bounded by the *sum of the sections' rates*, not by the
+// tick rate times the section count — adding sections no longer multiplies
+// the subprocess storm. The clock repaints only when the displayed minute
+// changes, so an idle dashboard is idle.
+//
+// Loop exits when the dashboard buffer is closed (dashboardBufferId becomes
+// null).
+const TICK_MS = 1000;
+
 async function refreshLoop(myBufferId: number) {
+    let lastClock = clockNow();
     while (dashboardBufferId === myBufferId) {
-        await editor.delay(5000);
+        await editor.delay(TICK_MS);
         if (dashboardBufferId !== myBufferId) return;
-        paint(); // refresh clock even if fetches lag
-        fetchToken++;
+        const now = Date.now();
         const tok = fetchToken;
+        let started = 0;
         for (const entry of registeredSections) {
+            if (entry.inFlight) continue;
+            if (now - entry.startedAt < entry.ttlMs) continue;
+            started++;
             void refreshSection(entry, tok);
+        }
+        // Repaint on a clock change; a landing refresh paints itself.
+        const clock = clockNow();
+        if (clock !== lastClock) {
+            lastClock = clock;
+            if (started === 0) paint();
         }
     }
 }
@@ -1477,25 +1777,32 @@ let dashboardOpening = false;
 // on real files, whether to sweep untitled scratch) live in the
 // callers.
 function bootstrapDashboard(bufferId: number) {
-    // Reset section draws to "loading…" and kick a fresh refresh for
-    // each registered section. Token guards against late resolvers
-    // from a prior open clobbering the new one.
+    // Kick a refresh for each registered section. Token guards against late
+    // resolvers from a prior open clobbering the new one.
+    //
+    // Stale-while-revalidate on reopen: a section that has data keeps showing
+    // it (marked stale) rather than reverting to "loading…", so a re-opened
+    // dashboard draws real content on its first frame. Only sections that
+    // never landed start from the placeholder.
     //
     // GitHub's section callback reuses the last-good PR snapshot (if
     // any) on its first call post-open so a re-opened dashboard can
     // draw real data on the first frame while the refresh round-trip
-    // is still in flight. Refresh failures surface via the in-panel
-    // stale-data banner.
+    // is still in flight.
     fetchToken++;
     const myToken = fetchToken;
+    // Paint once first so `currentInnerWidth` reflects the real panel before
+    // any section lays itself out against it.
+    paint();
     for (const entry of registeredSections) {
-        entry.draw = loadingDraw();
+        if (!entry.everLanded) entry.draw = loadingDraw();
+        entry.startedAt = 0;
         void refreshSection(entry, myToken);
     }
     paint();
 
-    // Kick off the 5-second refresh loop. It stops itself when the
-    // dashboard is closed.
+    // Kick off the TTL scheduler. It stops itself when the dashboard is
+    // closed.
     refreshLoop(bufferId);
 }
 
@@ -1760,8 +2067,8 @@ registerHandler(
 // refresh, so we only register `git` and `disk` by default. Users
 // wire the others up from init.ts via the exported plugin API; see
 // the init.ts starter template for a ready-to-paste example.
-registerSection("git", gitRefresh);
-registerSection("disk", diskRefresh);
+registerSection("git", gitRefresh, { ttlMs: 15_000, timeoutMs: 6_000 });
+registerSection("disk", diskRefresh, { ttlMs: 60_000, timeoutMs: 5_000 });
 
 // Expose the section-management entry points to other plugins and to
 // user init.ts. `registerSection(name, refresh)` adds a section and
@@ -1771,14 +2078,18 @@ registerSection("disk", diskRefresh);
 // `kv`, `text`, `newline`, and `error` primitives — see the init.ts
 // starter template for an end-to-end example.
 editor.exportPluginApi("dashboard", {
-    registerSection(name: string, refresh: SectionRefresh): () => void {
+    registerSection(
+        name: string,
+        refresh: SectionRefresh,
+        options?: SectionOptions,
+    ): () => void {
         if (typeof name !== "string" || name.length === 0) {
             throw new Error("dashboard.registerSection: name must be a non-empty string");
         }
         if (typeof refresh !== "function") {
             throw new Error("dashboard.registerSection: refresh must be a function");
         }
-        return registerSection(name, refresh);
+        return registerSection(name, refresh, options);
     },
     removeSection(name: string): boolean {
         if (typeof name !== "string" || name.length === 0) {

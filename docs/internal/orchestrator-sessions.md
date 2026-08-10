@@ -88,10 +88,16 @@ There is **no central session-list file**. A session *is* a directory (one
 session per canonical dir), and the registry is the per-directory workspace
 cache:
 
-- A per-directory workspace file under the data dir's `workspaces/` — one file
-  per directory ever opened, keyed on the encoded canonical root. Each carries
-  that window's identity (`label`, `session_plugin_state`, `authority_spec`)
-  *plus* its buffer/split layout.
+- A per-directory workspace file under the data dir's `workspaces/`, named
+  `<encoded-root>.<stable_id>.json`. The `stable_id` is the workspace's
+  **durable identity** — minted once at window creation
+  (`Window::new` → `workspace::generate_stable_id`), adopted from the file on
+  restore (`apply_workspace_layout`), and stable across restarts and relabels.
+  The encoded canonical root in the filename is only a *locator index* so
+  root-based lookup can prefilter on names without reading every file; the
+  `working_dir` recorded inside the file stays authoritative wherever names
+  collide. Each file carries the window's identity (`stable_id`, `label`,
+  `session_plugin_state`, `authority_spec`) *plus* its buffer/split layout.
 - A per-plugin global-state file under the data dir's `orchestrator/state/` —
   editor-wide plugin global state, one file per plugin (not per-project).
 
@@ -99,19 +105,41 @@ Path encoding is reversible percent-encoding. State lives under the platform
 data dir (e.g. `$XDG_DATA_HOME/fresh/`), **never the working tree** —
 regression-tested.
 
-This is the v2 design. It deliberately replaced an earlier global
-`windows.json` (which itself replaced per-cwd `windows.json` files). The
-motivation: a per-cwd store made "yesterday's directories" bleed into today; a
-workspace-keyed registry gives one session per dir for free — each file is keyed
-on the canonical root, so discovery yields at most one window per dir with **no
-post-hoc dedup**.
+This is the v3 keying, layered on the v2 design. v2 deliberately replaced an
+earlier global `windows.json` (which itself replaced per-cwd `windows.json`
+files) because a per-cwd store made "yesterday's directories" bleed into
+today; it keyed each file purely on the canonical root, which gave one
+session per dir for free but left the workspace with **no identity other
+than its path** (runtime `WindowId`s are even re-derived from sorted-root
+order at boot). v3 adds the durable `stable_id` and keys *storage* on it,
+which is the prerequisite for ever hosting multiple workspaces on one
+directory; the one-session-per-directory invariant itself still holds and is
+now enforced by explicit dedup:
+
+- **Lookup by root** (`workspace::find_workspace_file_by_root`) prefilters by
+  the encoded-root filename prefix, verifies each candidate's recorded
+  `working_dir`, and when several files claim one directory (a legacy
+  root-keyed file plus its re-keyed successor, mid-migration) picks the
+  freshest snapshot — highest `saved_at`, stable-id-bearing files breaking
+  ties.
+- **Discovery** applies the same arbitration per canonical root, so boot
+  still yields at most one window per dir.
+- **Legacy migration is lazy and crash-safe**: a pre-stable-id file (named
+  `<encoded-root>.json`, no `stable_id` field) loads normally; the owning
+  window keeps its freshly minted id; the next save writes the id-keyed file
+  and only then retires the legacy one (write-new-then-delete-old — a crash
+  in between leaves both, and arbitration picks the newer).
+- `Workspace::delete` removes **every** file claiming the directory, so a
+  killed workspace can't resurrect from a stale duplicate.
 
 ### 3.2 The `Workspace` file shape
 
 The `Workspace` record is the per-dir file. Beyond the editor-state fields
 (split layout, per-split view state, cursors/scroll, bookmarks, file explorer,
-histories, folds, terminals), three fields make it the session record:
+histories, folds, terminals), four fields make it the session record:
 
+- `stable_id` — the durable workspace identity the file is named after (see
+  §3.1). `None` only in legacy files that predate it.
 - `label` — optional display name; defaults to the root basename. Lives here
   precisely because `windows.json` was dropped.
 - `session_plugin_state` — the window's own per-session plugin state, carrying
@@ -218,6 +246,46 @@ Ctrl+Space flips to Scrollback. The PTY itself is ephemeral and re-spawned; only
 the backing file (scrollback + screen snapshot) is persisted (design-decisions.md
 #18).
 
+### 4.3.1 Per-buffer restart of an exited terminal
+
+The same rejoin mechanism, scoped to one buffer and driven by the user rather
+than by reactivation. When a terminal's process exits, `handle_terminal_exited`
+snapshots everything a respawn needs — geometry, cwd, backing/log files, launch
+and agent-resume argv, the ephemeral flag — into `Window::exited_terminals`
+(keyed by `BufferId`) *before* closing the PTY handle, since the exit path drops
+the buffer↔terminal binding and the handle that carries the geometry.
+
+`Window::restart_terminal_buffer` replays that record through
+`Window::respawn_terminal_pty`, the single respawn primitive also used by the
+remote-reconnect sweep (`respawn_terminals_through_authority`) — so the two
+cannot drift on argv precedence (agent-resume → launch → shell, gated by
+`terminal.resume_agents`), on composing argv through the window's *current*
+authority, on reusing the backing/log files, or on re-keying the terminal-id-keyed
+maps onto the new id. Restart is offered for **every** exited terminal, not only
+agent ones; a resume spec only changes which argv runs and how the indicator is
+worded.
+
+A live terminal is never restarted: the record exists only in the exited state,
+and `Editor::restart_terminal` reports "still running" instead. Surfaces:
+`Action::RestartTerminal` from the command palette, the View → Terminal menu, and
+the clickable `{terminal_restart}` status-bar element (`StatusBarClickable::RestartTerminal`).
+
+The record is persisted. `capture_workspace` walks `exited_terminals` alongside
+the live `terminal_buffers` (adding their buffer→terminal entries to the layout's
+`terminal_id_map`, which otherwise only covers live bindings) and writes each as a
+`SerializedTerminalWorkspace` carrying an `exited: Some(ExitedTerminalState)`
+marker — skip-serialized, so live terminals are unchanged on disk. On restore
+that marker short-circuits `restore_terminal_from_workspace` into
+`restore_exited_terminal`, which loads the backing file and re-arms the record
+*without spawning*: a workspace must not silently re-run a process the user had
+finished with, and for an agent that would mean resuming the conversation on
+reopen. The same ephemeral-without-command rule applies as for live terminals.
+
+One consequence worth noting in `respawn_terminal_pty`: a terminal restored as
+already-exited holds an id the `TerminalManager` never had, so the allocator can
+hand that very id back to the respawn. The old handle is therefore torn down only
+when the ids differ — an unguarded close would kill the terminal just spawned.
+
 ### 4.4 Plugin-level agent state
 
 The dock additionally shows a coarse agent state inferred from terminal output
@@ -240,6 +308,29 @@ All UI is plugin-side (orchestrator.ts). Shipped surfaces:
 - **New Session form** (`NEW_SESSION_MODE = "orchestrator-new-form"`) — see §7.
 - **Preview pane** — branch, worktree path, working-tree diffstat, PR info, and
   per-session action buttons (Visit / Stop / Archive / Delete).
+
+### 5.0 Dock settings
+
+The dock's opening state is user-configurable through the **plugin** config API
+(`editor.defineConfigBoolean` / `defineConfigEnum` at the top of orchestrator.ts,
+rendered by the Settings UI under **Plugin: orchestrator**, stored at
+`plugins.orchestrator.settings.*`). They're plugin config rather than core
+config because they're meaningless without this plugin loaded, and the plugin
+API already supplies schema validation, the User/Project/Session layering, and
+the generated settings widgets.
+
+| Setting               | Default  | Effect                                              |
+| --------------------- | -------- | --------------------------------------------------- |
+| `autoOpenDock`        | `false`  | Open the dock (unfocused) on the `ready` event.      |
+| `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
+| `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
+| `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+
+Each is a *default*, not a lock: the dock's own "view" button and the two
+Filters checkboxes still override it for the rest of the session
+(`dockViewOverride`, `lastShowWorktrees`, `lastHideTrivial` — all `null` until
+touched). Settings are re-read on every dock open, so an edit takes effect on
+the next toggle of the dock, no reload required.
 
 ### 5.1 Project scoping (the "yesterday's directories" fix)
 
@@ -343,8 +434,21 @@ The New Session form fields (Phases 1–5 **shipped**):
   (`shared_worktree = true`), which also covers non-git directories and
   multi-session-sharing-one-tree.
 - **Branch** — base ref for the worktree fork (git + worktree-on only).
-- **Agent** dropdown — terminal / claude / aider / custom (Phase 3 of
-  agent-resume).
+- **Agent** dropdown — a bare `terminal`, then the launcher-priority coding
+  CLIs `claude` / `codex` / `opencode`, then `aider`, then `custom…`. Built from
+  the agent registry, so adding a registry entry surfaces a preset
+  automatically.
+- **Auto mode** checkbox (local backend, agent-dependent) — appends the agent's
+  documented auto / reduced-approval flag to the launch (and resume) argv, e.g.
+  `claude --permission-mode auto` (the *safe*-autonomous mode, deliberately not
+  the `--dangerously-skip-permissions` full bypass), `codex --full-auto`,
+  `aider --yes-always`. Hidden for agents with no such flag (opencode gates it
+  via config) and for a bare terminal.
+- **Start prompt** box (local backend, agent-dependent) — an initial task handed
+  to the agent as a launch argument, positional (`claude "…"`, `codex "…"`) or
+  behind the agent's prompt flag (`opencode --prompt "…"`, `aider -m "…"`).
+  Applied to the launch only, never replayed on resume. Hidden for agents with
+  no launch-prompt argument and for a bare terminal.
 - **Input history** — per-field MRU (Up/Down), global per user, capped, stored
   under the data dir's `orchestrator/`.
 
@@ -381,9 +485,14 @@ The plugin holds a user-overridable agent registry with two strategies:
   (`claude … --session-id <uuid>`) and resume with it
   (`claude --resume <uuid>`); `--continue` as the cwd-latest fallback. Trusted by
   construction — no output capture, no parsing.
-- **continue** (broad default; aider): resume the most recent session in the cwd
-  (`aider --restore-chat-history`), ambiguity broken by per-session config
-  isolation.
+- **continue** (broad default; codex / opencode / aider): resume the most recent
+  session in the cwd, ambiguity broken by per-session config isolation. The
+  rejoin argv is each agent's own: `codex resume --last` (resume is a
+  *subcommand*, not a flag), `opencode --continue`, `aider --restore-chat-history`.
+
+Auto-mode flags, when the user enabled Auto mode, ride on **both** the launch and
+the resume argv (a resumed session keeps the approval posture the user chose); a
+Start prompt rides on the launch only.
 
 Launch resolution returns a launch argv plus an optional resume argv: the launch
 carries any minted `--session-id`, the resume is the resolved rejoin argv. The

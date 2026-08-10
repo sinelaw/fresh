@@ -66,6 +66,7 @@ impl crate::app::Editor {
             theme: std::sync::Arc::clone(&self.theme),
             event_broadcaster: self.event_broadcaster.clone(),
             recovery_service: std::sync::Arc::clone(&self.recovery_service),
+            mouse_capture: std::sync::Arc::clone(&self.mouse_capture),
         }
     }
 
@@ -112,6 +113,92 @@ impl crate::app::Editor {
         // projects). Its `fs_manager` rides the same (host) filesystem.
         let local_authority = self.local_session_authority(&root);
         self.create_window_with_authority(root, label, local_authority)
+    }
+
+    /// Number of live windows whose canonical root matches `root` — the size
+    /// of a root's co-tenant session group.
+    pub(crate) fn windows_at_root_count(&self, root: &std::path::Path) -> usize {
+        let key = crate::app::orchestrator_persistence::canonical_key(root);
+        self.windows
+            .values()
+            .filter(|w| crate::app::orchestrator_persistence::canonical_key(&w.root) == key)
+            .count()
+    }
+
+    /// Create a **new** window co-tenanting `root` — a tab extracted into its
+    /// own workspace over the same project. Unlike [`Self::create_window_at`]
+    /// this deliberately does **not** dedup onto an existing window at the root
+    /// (multiple workspaces per root is the whole point). It:
+    ///
+    /// - carries the `from` window's authority **configuration** (its backend
+    ///   spec) so a remote/container session is never silently downgraded to
+    ///   local. `Authority` is one-per-window and non-`Clone` (issue #2280) and
+    ///   `from` stays open, so the *spec* is carried, not the instance: a local
+    ///   source rebuilds a fresh local backend (the same backend), while a
+    ///   remote source's spec routes the reconnect-on-activate in
+    ///   [`Self::set_active_window`] to rebuild the same backend on a fresh
+    ///   connection;
+    /// - takes a **numbered** label (`proj`, `proj (2)`, …) so co-tenants are
+    ///   distinguishable in the dock — the source already holds the root, so a
+    ///   new co-tenant is at least the 2nd window there.
+    fn create_co_tenant_window(&mut self, root: PathBuf, from: WindowId) -> WindowId {
+        let base = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        let n = self.windows_at_root_count(&root);
+        let label = if n == 0 {
+            base
+        } else {
+            format!("{base} ({})", n + 1)
+        };
+
+        let spec = self
+            .windows
+            .get(&from)
+            .map(|w| w.authority_spec.clone())
+            .unwrap_or_default();
+        // Born under a fresh local authority scoped to the root (its own
+        // per-session trust/env). For a local source that IS the final backend;
+        // for a remote source it is a placeholder the reconnect re-points.
+        let authority = self.local_session_authority(&root);
+        let id = self.create_window_with_authority(root, label, authority);
+        if let Some(w) = self.windows.get_mut(&id) {
+            w.authority_spec = spec;
+        }
+        id
+    }
+
+    /// Drop the throwaway `[No Name]` seed a freshly created window is born
+    /// with (via [`Self::build_fresh_layout_if_needed`], so it is renderable
+    /// the instant `window_created` fires). Extraction is about to move the
+    /// real tab in as the window's sole content, so clearing the seed first
+    /// lets [`Self::move_buffer_membership_to_window`] re-seed the split
+    /// rooted at the extracted buffer — otherwise the co-tenant opens showing
+    /// the extracted tab *and* a stray empty `[No Name]`.
+    ///
+    /// Guarded to only ever touch that birth seed: exactly one buffer, unnamed
+    /// and unmodified. Anything else is real content and is left untouched.
+    /// Safe to call only before any render of `target` (the extract flow runs
+    /// synchronously, so no render intervenes).
+    fn discard_fresh_window_seed(&mut self, target: WindowId) {
+        let Some(w) = self.windows.get_mut(&target) else {
+            return;
+        };
+        let is_birth_seed = w.buffers.len() == 1
+            && w.buffers
+                .iter()
+                .next()
+                .is_some_and(|(_, s)| s.buffer.file_path().is_none() && !s.buffer.is_modified());
+        if !is_birth_seed {
+            return;
+        }
+        for id in w.buffers.ids() {
+            w.buffers.remove(&id);
+            w.buffer_metadata.remove(&id);
+            w.event_logs.remove(&id);
+        }
+        w.buffers.clear_splits();
     }
 
     /// Create a new window rooted at `root` under an explicit `authority`,
@@ -175,13 +262,24 @@ impl crate::app::Editor {
     /// blessed factory. Each call mints handles owned by exactly one session,
     /// so a trust decision or env activation in one window can never leak into
     /// another. Every per-session window construction goes through this.
+    ///
+    /// Trust is keyed on the *repo* rather than on `root`: a session opened on
+    /// a linked git worktree is born under the main worktree's recorded
+    /// decision, so forking a worktree per agent doesn't re-ask the trust
+    /// question for code the user already vouched for. Env stays keyed on
+    /// `root` (a worktree can carry its own `.venv`).
     pub(crate) fn session_scope_for(
         &self,
         root: &std::path::Path,
     ) -> crate::services::authority::SessionScope {
+        let trust_owner = crate::services::workspace_trust::trust_owner_root(
+            self.authority().filesystem.as_ref(),
+            root,
+        );
         crate::services::authority::SessionScope::for_root(
             root,
             &self.dir_context.project_state_dir(root),
+            &self.dir_context.project_state_dir(&trust_owner),
         )
     }
 
@@ -249,6 +347,8 @@ impl crate::app::Editor {
         title: Option<String>,
         window_authority: crate::services::authority::Authority,
         resume: Option<Vec<String>>,
+        env: Option<HashMap<String, String>>,
+        allow_script: bool,
     ) -> Result<(WindowId, fresh_core::TerminalId, fresh_core::BufferId), String> {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
@@ -312,6 +412,16 @@ impl crate::app::Editor {
         // marks this as a restorable *session* terminal (re-spawn it on
         // restore), distinct from a throwaway ephemeral build/exec shell.
         let restore_command = command.clone().unwrap_or_default();
+
+        // Assemble the extra env injected into the seeded terminal's child:
+        // `FRESH_BIN` always, plus (when `allow_script` is present) a
+        // capability token bound to *this* new window + that allowlist, so a
+        // client in the terminal can drive exactly those commands against this
+        // window and no other. Minting happens here — after the window id is
+        // known, before the PTY spawns — so the token is live by the time the
+        // child reads its env. See `terminal::agent_command_env`.
+        let terminal_env = crate::app::terminal::agent_command_env(id, env, allow_script);
+
         let spawn_result = {
             let target = self
                 .windows
@@ -325,6 +435,7 @@ impl crate::app::Editor {
                 persistent: false, // ephemeral by default; orchestrator owns persistence
                 command,
                 title: title.filter(|t| !t.is_empty()),
+                env: terminal_env.clone(),
             })
         };
 
@@ -348,14 +459,12 @@ impl crate::app::Editor {
         // An explicit `resume` argv (agent-resume) supersedes the launch
         // command on restore — see `restore_terminal_from_workspace`.
         if let Some(target) = self.windows.get_mut(&id) {
-            target
-                .terminal_commands
-                .insert(terminal_id, restore_command);
-            if let Some(resume_argv) = resume.filter(|a| !a.is_empty()) {
-                target
-                    .terminal_resume_commands
-                    .insert(terminal_id, resume_argv);
-            }
+            target.mark_terminal_restorable(terminal_id, Some(restore_command), resume);
+            // File the token this terminal's child was handed, so workspace
+            // capture persists the grant and a restore re-mints it — without
+            // it a restored agent keeps its conversation but loses the ability
+            // to drive the editor.
+            target.record_terminal_script_token(terminal_id, &terminal_env);
         }
 
         // The switch has now committed (the spawn succeeded and the active
@@ -621,8 +730,20 @@ impl crate::app::Editor {
     /// editor content as the incoming window appears. The editor
     /// content geometry is layout-driven (identical for any session),
     /// so the outgoing window's last content rect is the right area to
-    /// animate. `capture_before_all` snapshots the previous frame (the
-    /// outgoing window) and `SlideIn` slides the new content in over it.
+    /// animate: `SlideIn` pushes the previous frame out as the new
+    /// content slides in over it.
+    ///
+    /// The "before" comes from `last_rendered_frame`, the editor-wide
+    /// clone of the last painted frame, so it is the workspace the user
+    /// is actually looking at. It cannot come from the incoming window's
+    /// own animation runner: runners are per-window and only the active
+    /// window paints, so that one still holds whatever this window drew
+    /// the last time it was on screen.
+    ///
+    /// Starting the effect here is only sound because every path that
+    /// reaches this function runs between frames — the render path
+    /// dispatches plugin commands only in its pre-layout drain, before
+    /// anything has been painted for the outgoing window.
     pub fn set_active_window_animated(&mut self, id: WindowId, from_edge: &str) {
         let animate = self.active_window != id
             && self.windows.contains_key(&id)
@@ -806,6 +927,388 @@ impl crate::app::Editor {
         None
     }
 
+    /// Move a tab into a **new workspace co-tenanting the same project root** —
+    /// you're peeling the tab into its own independent window over the same
+    /// project (multiple workspaces per root, distinguished by a durable id and
+    /// a numbered label). File tabs and terminal tabs (the live PTY moves
+    /// along, the running process untouched) both root the new window at the
+    /// source window's root.
+    ///
+    /// A file-backed buffer is required for a file extraction — an unnamed
+    /// scratch buffer has no durable file identity to carry and is refused with
+    /// a status message.
+    ///
+    /// The live `EditorState` moves — unsaved modifications and undo history
+    /// travel with the tab rather than being re-read from disk.
+    pub fn extract_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
+        use rust_i18n::t;
+
+        if self.active_window().is_terminal_buffer(buffer_id) {
+            self.extract_terminal_tab_to_new_workspace(buffer_id);
+            return;
+        }
+
+        // Only file-backed tabs for now: an unnamed scratch buffer has no
+        // durable file identity to carry into its own workspace.
+        let path = self
+            .buffers()
+            .get(&buffer_id)
+            .and_then(|state| state.buffer.file_path().map(|p| p.to_path_buf()));
+        let Some(path) = path else {
+            self.set_status_message(t!("workspace.extract_no_file_path").to_string());
+            return;
+        };
+
+        // The tab lands in a NEW workspace co-tenanting the SAME project root,
+        // not a directory guessed from the file path — you're peeling the tab
+        // into its own window over the same project.
+        let root = self.active_window().root.clone();
+
+        // Re-point every visible leaf that displays this buffer at another
+        // of its tabs before the move, so the source window's split tree
+        // never dangles on a buffer it no longer owns.
+        self.retarget_leaves_off_buffer(buffer_id);
+
+        let target = self.create_co_tenant_window(root, self.active_window);
+        // Drop the co-tenant's birth `[No Name]` seed so the extracted tab is
+        // its only tab, not a sibling of a stray empty buffer.
+        self.discard_fresh_window_seed(target);
+        self.move_buffer_membership_to_window(buffer_id, target);
+
+        let target_label = self
+            .windows
+            .get(&target)
+            .map(|w| w.label.clone())
+            .unwrap_or_default();
+        self.set_active_window(target);
+        self.set_active_buffer(buffer_id);
+
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+        self.set_status_message(
+            t!("workspace.extracted_tab", name = name, label = target_label).to_string(),
+        );
+    }
+
+    /// Terminal-tab body of [`Self::extract_tab_to_new_workspace`]: move the
+    /// live terminal — PTY handle, backing/log files, launch/resume argv, and
+    /// process-group registration — into a new workspace co-tenanting the same
+    /// project root. The running process is untouched; its output threads are
+    /// retagged so the stream follows it (`TerminalManager::adopt`). The
+    /// shell's own cwd is irrelevant to the workspace root now — the co-tenant
+    /// is rooted at the source project, same as the file path.
+    fn extract_terminal_tab_to_new_workspace(&mut self, buffer_id: fresh_core::BufferId) {
+        use rust_i18n::t;
+
+        let win = self.active_window();
+        let Some(terminal_id) = win
+            .terminal_buffers
+            .get(&buffer_id)
+            .map(|tb| tb.terminal_id)
+        else {
+            return;
+        };
+        // A binding without a PTY handle is a dormant remote shell waiting
+        // for reconnect — there is nothing live to move.
+        if win.terminal_manager.get(terminal_id).is_none() {
+            self.set_status_message(t!("workspace.extract_terminal_dormant").to_string());
+            return;
+        }
+        let root = self.active_window().root.clone();
+
+        // The tab title (OSC/explicit/fg-command derived) — captured before
+        // the move while this window can still resolve it.
+        let name = self.get_buffer_display_name(buffer_id);
+
+        self.retarget_leaves_off_buffer(buffer_id);
+
+        let target = self.create_co_tenant_window(root, self.active_window);
+        // Drop the co-tenant's birth `[No Name]` seed so the moved terminal is
+        // its only tab, not a sibling of a stray empty buffer.
+        self.discard_fresh_window_seed(target);
+
+        self.move_terminal_machinery_to_window(buffer_id, terminal_id, target);
+        self.move_buffer_membership_to_window(buffer_id, target);
+
+        let target_label = self
+            .windows
+            .get(&target)
+            .map(|w| w.label.clone())
+            .unwrap_or_default();
+        self.set_active_window(target);
+        self.set_active_buffer(buffer_id);
+        // Focus changes that bypass the usual tab-click path must restore
+        // terminal mode themselves, and the PTY must match its new split.
+        self.sync_terminal_mode_to_active_buffer();
+        self.active_window_mut().resize_visible_terminals();
+
+        self.set_status_message(
+            t!("workspace.extracted_tab", name = name, label = target_label).to_string(),
+        );
+    }
+
+    /// Move every piece of per-terminal state for `buffer_id`'s terminal
+    /// from the active window to `target`: the PTY handle (adopted under a
+    /// fresh id, since terminal ids are per-window), the backing/log file
+    /// bindings, launch/resume argv, the ephemeral flag, title/fg-name
+    /// caches, and the process-group registration. Mirrors the remap loop
+    /// in `respawn_terminals_through_authority`, which is the same
+    /// "terminal changes identity" bookkeeping within one window.
+    fn move_terminal_machinery_to_window(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        terminal_id: crate::services::terminal::TerminalId,
+        target: WindowId,
+    ) {
+        let source = self.active_window;
+        if source == target {
+            return;
+        }
+
+        let Some(src) = self.windows.get_mut(&source) else {
+            return;
+        };
+        if src.terminal_buffers.remove(&buffer_id).is_none() {
+            return;
+        }
+        let Some(handle) = src.terminal_manager.release(terminal_id) else {
+            return;
+        };
+        let backing = src.terminal_backing_files.remove(&terminal_id);
+        let log = src.terminal_log_files.remove(&terminal_id);
+        let command = src.terminal_commands.remove(&terminal_id);
+        let resume = src.terminal_resume_commands.remove(&terminal_id);
+        let ephemeral = src.ephemeral_terminals.remove(&terminal_id);
+        let explicit_title = src.terminal_explicit_titles.remove(&buffer_id);
+        let fg_name = src.terminal_fg_cache.remove(&buffer_id);
+        let pid = handle.pid();
+        if let Some(pid) = pid {
+            src.process_groups.forget(pid);
+        }
+
+        let Some(tgt) = self.windows.get_mut(&target) else {
+            return;
+        };
+        let new_id = tgt.terminal_manager.adopt(handle);
+        // A fresh live binding: the old scrollback-split set referenced the
+        // source window's leaves, which mean nothing in the target.
+        tgt.terminal_buffers.insert(
+            buffer_id,
+            crate::app::window::TerminalBuffer::new_live(new_id),
+        );
+        if let Some(p) = backing {
+            tgt.terminal_backing_files.insert(new_id, p);
+        }
+        if let Some(p) = log {
+            tgt.terminal_log_files.insert(new_id, p);
+        }
+        if let Some(c) = command {
+            tgt.terminal_commands.insert(new_id, c);
+        }
+        if let Some(c) = resume {
+            tgt.terminal_resume_commands.insert(new_id, c);
+        }
+        if ephemeral {
+            tgt.ephemeral_terminals.insert(new_id);
+        }
+        if explicit_title {
+            tgt.terminal_explicit_titles.insert(buffer_id);
+        }
+        if let Some(n) = fg_name {
+            tgt.terminal_fg_cache.insert(buffer_id, n);
+        }
+        if let Some(pid) = pid {
+            tgt.process_groups
+                .register(pid, format!("terminal #{}", new_id.0));
+        }
+    }
+
+    /// Re-home a buffer from the active window to `target`: its
+    /// `EditorState`, metadata, and undo/redo event log move to the target
+    /// window's maps, it disappears from the active window's split
+    /// view-states, and it is added as a tab in the target's active leaf
+    /// (seeding a split tree for never-activated windows). The caller is
+    /// responsible for making sure no active-window leaf still *displays*
+    /// the buffer (see `retarget_leaves_off_buffer`).
+    pub(crate) fn move_buffer_membership_to_window(
+        &mut self,
+        buffer_id: fresh_core::BufferId,
+        target: WindowId,
+    ) {
+        // Re-target buffer storage: move the state to the target window's
+        // map. Step 0c: each window owns its EditorState outright.
+        if let Some(state) = self.detach_buffer_from_all_windows(buffer_id) {
+            if let Some(s) = self.windows.get_mut(&target) {
+                s.buffers.insert(buffer_id, state);
+            }
+        }
+
+        // Metadata and the undo/redo event log live next to the buffer
+        // storage they describe — carry them to the target window too, or
+        // the moved buffer renders without its metadata and loses its undo
+        // history to the window it left.
+        let sidecars = self.windows.values_mut().find_map(|w| {
+            let metadata = w.buffer_metadata.remove(&buffer_id);
+            let event_log = w.event_logs.remove(&buffer_id);
+            (metadata.is_some() || event_log.is_some()).then_some((metadata, event_log))
+        });
+        if let Some((metadata, event_log)) = sidecars {
+            if let Some(s) = self.windows.get_mut(&target) {
+                if let Some(metadata) = metadata {
+                    s.buffer_metadata.insert(buffer_id, metadata);
+                }
+                if let Some(event_log) = event_log {
+                    s.event_logs.insert(buffer_id, event_log);
+                }
+            }
+        }
+
+        // Remove the buffer from the active session's split tree
+        // so it doesn't surface as a stray tab — the target
+        // session owns it.
+        let leaf_ids: Vec<_> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .keys()
+            .copied()
+            .collect();
+        for leaf_id in leaf_ids {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&leaf_id)
+            {
+                view_state.remove_buffer(buffer_id);
+            }
+        }
+
+        // Add it to the target session's stashed split tree as a
+        // tab in its current active leaf. If the session has no
+        // stash yet, seed one rooted at this buffer.
+        if let Some(session) = self.windows.get_mut(&target) {
+            if let Some((mgr, view_states)) = session.buffers.splits_mut() {
+                let active_leaf = mgr.active_split();
+                if let Some(vs) = view_states.get_mut(&active_leaf) {
+                    vs.add_buffer(buffer_id);
+                }
+            } else {
+                let manager = crate::view::split::SplitManager::new(buffer_id);
+                let active_leaf = manager.active_split();
+                let mut view_states = std::collections::HashMap::new();
+                let vs = crate::view::split::SplitViewState::with_buffer(
+                    self.terminal_width,
+                    self.terminal_height,
+                    buffer_id,
+                );
+                view_states.insert(active_leaf, vs);
+                session.buffers.set_splits((manager, view_states));
+            }
+        }
+    }
+
+    /// Switch every leaf of the active window that currently displays
+    /// `buffer_id` to a different tab, closing the leaf (or seeding a fresh
+    /// scratch buffer when it is the last one) when it has no other tab to
+    /// fall back to. Prepares a buffer for extraction to another window.
+    fn retarget_leaves_off_buffer(&mut self, buffer_id: fresh_core::BufferId) {
+        use crate::view::split::TabTarget;
+
+        let Some((mgr, view_states)) = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+        else {
+            return;
+        };
+
+        // For every leaf that displays the extracted buffer, snapshot its
+        // replacement candidates in focus-history (LRU) order — most-recently
+        // focused first, then any other open tab — mirroring the real
+        // close-tab path (`resolve_close_replacement`) rather than raw tab
+        // order. The rect is a probe; only ids matter here. Owned Vecs so the
+        // `self.windows` borrow is released before the mutating loop.
+        let probe = ratatui::layout::Rect::new(0, 0, 1, 1);
+        let showing: Vec<(crate::model::event::LeafId, Vec<fresh_core::BufferId>)> = mgr
+            .root()
+            .get_leaves_with_rects(probe)
+            .into_iter()
+            .filter(|(_, displayed, _)| *displayed == buffer_id)
+            .map(|(leaf_id, _, _)| {
+                let candidates = view_states
+                    .get(&leaf_id)
+                    .map(|vs| {
+                        vs.focus_history
+                            .iter()
+                            .rev()
+                            .chain(vs.open_buffers.iter())
+                            .filter_map(|t| match t {
+                                TabTarget::Buffer(id) if *id != buffer_id => Some(*id),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                (leaf_id, candidates)
+            })
+            .collect();
+
+        for (leaf_id, candidates) in showing {
+            // First candidate that still exists and isn't a hidden helper
+            // buffer — the close path excludes `hidden_from_tabs` on both its
+            // LRU and fallback branches, so a leaf is never re-pointed onto a
+            // panel/helper buffer.
+            let replacement = candidates.into_iter().find(|bid| {
+                self.active_window().buffers.contains_key(bid)
+                    && !self
+                        .active_window()
+                        .buffer_metadata
+                        .get(bid)
+                        .map(|m| m.hidden_from_tabs)
+                        .unwrap_or(false)
+            });
+            if let Some(replacement) = replacement {
+                self.active_window_mut()
+                    .set_pane_buffer(leaf_id, replacement);
+                continue;
+            }
+            let leaf_count = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(mgr, _)| mgr.root().count_leaves())
+                .unwrap_or(1);
+            if leaf_count > 1 {
+                self.handle_close_split(leaf_id.into());
+            } else {
+                // Last leaf with no other tab: seed a fresh scratch buffer so
+                // the source window keeps a renderable tab after the move —
+                // but honor the same opt-out the close path does. When the
+                // user disabled auto-creating an empty buffer on last close,
+                // mark the seed a hidden synthetic placeholder so the emptied
+                // source window genuinely looks blank instead of forcing a
+                // visible `[No Name]`.
+                let new_id = self.new_buffer();
+                if !self
+                    .config
+                    .editor
+                    .auto_create_empty_buffer_on_last_buffer_close
+                {
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
+                        meta.hidden_from_tabs = true;
+                        meta.synthetic_placeholder = true;
+                    }
+                }
+            }
+        }
+    }
+
     /// Close a session and drop its `Session` entry. Refuses to
     /// close the currently active session — the caller must switch
     /// to a different session first. Refuses to close the *last*
@@ -857,7 +1360,6 @@ impl crate::app::Editor {
         if self.session_keepalives.remove(&id).is_some() {
             tracing::info!("close_window: dropped remote session keepalive for window {id}");
         }
-
         self.plugin_manager
             .read()
             .unwrap()
@@ -899,6 +1401,8 @@ impl crate::app::Editor {
             None,
             authority,
             None,
+            None,
+            false,
         ) {
             Ok((window_id, _terminal, _buffer)) => {
                 self.session_keepalives.insert(window_id, keepalive);
@@ -994,13 +1498,8 @@ impl crate::app::Editor {
         // terminals spawn over SSH/kube), or seed an empty layout when there is
         // no saved workspace. Either constructor takes the authority by value —
         // the window is born owning its real backend.
-        let workspace = if let Some(name) = self.session_name.clone() {
-            crate::workspace::Workspace::load_session(&name, &root)
-                .ok()
-                .flatten()
-        } else {
-            crate::workspace::Workspace::load(&root).ok().flatten()
-        };
+        // One store, whatever launched this editor — see `save_workspace_for`.
+        let workspace = crate::workspace::Workspace::load(&root).ok().flatten();
         let mut window = match workspace {
             Some(ws) => crate::app::window::Window::from_workspace(
                 id,
@@ -1083,13 +1582,9 @@ impl crate::app::Editor {
         let root = descriptor.root.clone();
         // Same per-session local scope a boot-discovered local shell gets:
         // its own trust + env handles, never a clone of the previous
-        // window's.
-        let authority = crate::services::authority::Authority::local_scoped(
-            crate::services::authority::SessionScope::for_root(
-                &root,
-                &self.dir_context.project_state_dir(&root),
-            ),
-        );
+        // window's. Routed through the blessed factory so this shell inherits
+        // the worktree→repo trust keying too.
+        let authority = self.local_session_authority(&root);
         let mut window = Window::new(
             id,
             descriptor.label.clone(),

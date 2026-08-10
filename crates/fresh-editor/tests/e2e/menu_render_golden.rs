@@ -38,6 +38,7 @@ const FILE_MENU_GOLDEN: &[&str] = &[
     "│ ─────────────────────────────────────│",
     "│ Save                           Ctrl+S│",
     "│ Save As...                           │",
+    "│ Save All                             │",
     "│ Revert                               │",
     "│ Reload with Encoding...              │",
     "│ ─────────────────────────────────────│",

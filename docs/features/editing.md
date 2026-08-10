@@ -26,6 +26,8 @@ Guides are visual-only: they replace rendered leading whitespace cells without c
 
 Turn on `editor.rainbow_indentation` to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
 
+**Per-buffer override** — **Toggle Indentation Guides (Current Buffer)** in the command palette flips guides for the active buffer only, leaving the global setting and other buffers untouched. Turning them on in a buffer where the global mode is `none` draws every level; where it is `active`, that mode is kept. The choice persists across restarts.
+
 Guides are a source-code aid, so plain-text buffers (language `text` — undetected files, `.txt`, and buffers manually set to Plain Text) never draw them, even when guides are enabled globally. Any language can opt out (or plain text back in) with the per-language `indentation_guide` setting:
 
 ```jsonc
@@ -60,6 +62,8 @@ Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the comm
 - **LSP folding** — uses `foldingRange` from the language server when available.
 - **Indent-based folding** — fallback for files without LSP support and large file mode. Fold from any line within an indented block.
 
+**Per-buffer override** — **Toggle Folding Indicators (Current Buffer)** in the command palette hides the ▾/▸ gutter arrows for the active buffer only. Existing folds are untouched — collapsed regions stay collapsed and keep their placeholder, and "Toggle Fold" still works — but a gutter click no longer creates a fold, since there is no arrow to aim at. The choice persists across restarts.
+
 ## Read-Only Mode
 
 Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read Only" from the command palette to override for a single buffer, or set `auto_read_only` to `false` in config to disable automatic read-only entirely (binary files still open read-only).
@@ -67,6 +71,8 @@ Files without write permission and known library paths (rustup toolchains, `/usr
 ## Whitespace Indicators
 
 Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or `whitespace_indicators` in config. A master toggle and per-language overrides are supported. Theme color: `whitespace_indicator_fg`.
+
+Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle.
 
 ## Inline Diagnostics
 
@@ -76,7 +82,7 @@ Diagnostic messages can be displayed at the end of each line, right-aligned, wit
 
 When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
 
-**Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else.
+**Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else and save it to your config. See [Per-Buffer Overrides](../configuration/index.md#per-buffer-overrides) for the naming convention every settings toggle follows.
 
 ## Multiple Cursors
 
@@ -165,8 +171,8 @@ Configure `trim_trailing_whitespace_on_save` and `ensure_final_newline_on_save` 
 | `Ctrl+F` | Search in buffer |
 | `Ctrl+R` | Replace in buffer |
 | `Ctrl+Alt+R` | Interactive replace (y/n/!/q for each match) |
-| `F3` | Find next match |
-| `Shift+F3` | Find previous match |
+| `F3` | Find next match (works with the search bar open, which stays open) |
+| `Shift+F3` | Find previous match (likewise) |
 | `Alt+N` / `Ctrl+F3` | Find next occurrence of selection |
 | `Alt+P` / `Ctrl+Shift+F3` | Find previous occurrence of selection |
 

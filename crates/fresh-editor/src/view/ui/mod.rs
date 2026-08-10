@@ -50,7 +50,9 @@ pub use crate::primitives::text_edit::TextEdit;
 #[cfg(feature = "runtime")]
 pub use expanded_menus_cache::ExpandedMenusCache;
 #[cfg(feature = "runtime")]
-pub use file_browser::{FileBrowserLayout, FileBrowserRenderer};
+pub use file_browser::{
+    FileBrowserLayout, FileBrowserRenderer, FileBrowserToggle, FileBrowserToggleSpan,
+};
 #[cfg(feature = "runtime")]
 pub use file_explorer::{ExplorerDecorations, FileExplorerRenderer};
 pub use focus::FocusManager;

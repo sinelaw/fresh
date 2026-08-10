@@ -46,8 +46,7 @@ impl crate::app::window::Window {
                         return Ok(());
                     }
 
-                    let viewport = explorer.viewport_height.max(1);
-                    let max_scroll = count.saturating_sub(viewport);
+                    let max_scroll = explorer.max_scroll_offset();
                     let current_offset = explorer.get_scroll_offset();
                     let new_offset = if delta < 0 {
                         current_offset.saturating_sub(delta.unsigned_abs() as usize)
@@ -101,24 +100,7 @@ impl crate::app::window::Window {
             return Ok(());
         }
 
-        // Get view_transform tokens from SplitViewState (if any)
-        let view_transform_tokens = self
-            .buffers
-            .splits()
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&target_split)
-            .and_then(|vs| vs.view_transform.as_ref())
-            .map(|vt| vt.tokens.clone());
-
-        let tab_size = self.config().editor.tab_size;
-        self.scroll_split_by_lines(
-            buffer_id,
-            target_split,
-            delta,
-            view_transform_tokens,
-            tab_size,
-        );
+        self.scroll_split_by_lines(buffer_id, target_split, delta);
 
         Ok(())
     }
@@ -249,14 +231,22 @@ impl crate::app::window::Window {
         // what the renderer uses or `max_scroll_row` ends up wrong on
         // wide terminals with `composeWidth` set (mouse-wheel /
         // scrollbar-drag stop short of the buffer's tail).
-        let (wrap_width, show_line_numbers) = self
+        let (wrap_width, show_line_numbers, grid_cols) = self
             .buffers
             .splits()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
-            .unwrap_or((80, true));
+            .map(|vs| {
+                (
+                    vs.viewport.effective_width() as usize,
+                    vs.show_line_numbers,
+                    // Terminal-grid wrap (fresh#2649): scroll-back rows
+                    // break at the capture-time PTY width.
+                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                )
+            })
+            .unwrap_or((80, true, None));
 
         // Snapshot config values up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -264,6 +254,8 @@ impl crate::app::window::Window {
 
         // Get the buffer state and calculate target position using RELATIVE movement
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
+        // Resolved before the mutable buffer borrow below.
+        let fold_ranges = fold_ranges_for_split(self, split_id, buffer_id);
         let scroll_position = if let Some(state) = &mut self.buffers.get_mut(&buffer_id) {
             let scrollbar_height = scrollbar_rect.height as usize;
             if scrollbar_height == 0 {
@@ -293,7 +285,9 @@ impl crate::app::window::Window {
                         viewport_height,
                         wrap_width,
                         show_line_numbers,
+                        grid_cols,
                         pipeline_inputs_ver,
+                        fold_ranges.clone(),
                     )
                 } else {
                     // Small file without line wrap: thumb follows mouse
@@ -390,8 +384,10 @@ impl crate::app::window::Window {
             .expect("active window must have a populated split layout")
             .get_mut(&split_id)
         {
-            view_state.viewport.top_byte = scroll_position.0;
-            view_state.viewport.top_view_line_offset = scroll_position.1;
+            view_state.viewport.set_top_byte(scroll_position.0);
+            view_state
+                .viewport
+                .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
             view_state.viewport.set_skip_ensure_visible();
         }
@@ -456,14 +452,22 @@ impl crate::app::window::Window {
             .map(|vs| vs.viewport.line_wrap_enabled)
             .unwrap_or(false);
 
-        let (wrap_width, show_line_numbers) = self
+        let (wrap_width, show_line_numbers, grid_cols) = self
             .buffers
             .splits()
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| (vs.viewport.effective_width() as usize, vs.show_line_numbers))
-            .unwrap_or((80, true));
+            .map(|vs| {
+                (
+                    vs.viewport.effective_width() as usize,
+                    vs.show_line_numbers,
+                    // Terminal-grid wrap (fresh#2649): scroll-back rows
+                    // break at the capture-time PTY width.
+                    vs.viewport.grid_wrap.then(|| vs.viewport.grid_cols()),
+                )
+            })
+            .unwrap_or((80, true, None));
 
         // Snapshot config up front so the mutable borrow on `self.buffers`
         // below doesn't conflict with `self.config()`.
@@ -471,6 +475,8 @@ impl crate::app::window::Window {
 
         // Get the buffer state and calculate scroll position
         // Returns (byte_position, view_line_offset) for proper positioning within wrapped lines
+        // Resolved before the mutable buffer borrow below.
+        let fold_ranges = fold_ranges_for_split(self, split_id, buffer_id);
         let scroll_position = if let Some(state) = &mut self.buffers.get_mut(&buffer_id) {
             let buffer_len = state.buffer.len();
 
@@ -493,7 +499,9 @@ impl crate::app::window::Window {
                         viewport_height,
                         wrap_width,
                         show_line_numbers,
+                        grid_cols,
                         pipeline_inputs_ver,
+                        fold_ranges.clone(),
                     )
                 } else {
                     // Small file without line wrap: use line-based calculation for precision
@@ -565,8 +573,10 @@ impl crate::app::window::Window {
             .expect("active window must have a populated split layout")
             .get_mut(&split_id)
         {
-            view_state.viewport.top_byte = scroll_position.0;
-            view_state.viewport.top_view_line_offset = scroll_position.1;
+            view_state.viewport.set_top_byte(scroll_position.0);
+            view_state
+                .viewport
+                .set_top_view_line_offset(scroll_position.1);
             // Skip ensure_visible so the scroll position isn't undone during render
             view_state.viewport.set_skip_ensure_visible();
         }
@@ -673,4 +683,30 @@ impl crate::app::window::Window {
         }
         Ok(())
     }
+}
+
+/// Collapsed byte ranges for one split, for the scroll-math entry points.
+///
+/// Folds live on the split, and a collapsed line occupies no visual row, so the
+/// scrollbar and the drag must read the same fold-aware row space the renderer
+/// does — otherwise the thumb sizes itself to rows that are not drawn and a jump
+/// lands somewhere else than where it pointed.
+fn fold_ranges_for_split(
+    window: &crate::app::window::Window,
+    split_id: LeafId,
+    buffer_id: BufferId,
+) -> Vec<std::ops::Range<usize>> {
+    let Some(folds) = window
+        .buffers
+        .splits()
+        .map(|(_, vs)| vs)
+        .and_then(|vs| vs.get(&split_id))
+        .map(|vs| &vs.folds)
+    else {
+        return Vec::new();
+    };
+    let Some(state) = window.buffers.get(&buffer_id) else {
+        return Vec::new();
+    };
+    state.fold_ranges(folds)
 }

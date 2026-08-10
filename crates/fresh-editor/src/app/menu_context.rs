@@ -21,15 +21,14 @@ impl Editor {
     /// Return the fully-expanded menu definitions (with `DynamicSubmenu`
     /// items resolved to `Submenu`).  Used by the GUI layer to build
     /// platform-native menus.
+    ///
+    /// Delegates to [`Self::all_menus_expanded`] so the native menus show
+    /// exactly what the TUI menu bar and the web projection show — the
+    /// user's configured menus plus every plugin contribution. Building
+    /// from `MenuConfig::translated_menus()` instead would rebuild the
+    /// *defaults*, silently dropping both.
     pub fn expanded_menu_definitions(&self) -> Vec<fresh_core::menu::Menu> {
-        use crate::config::{MenuConfig, MenuExt};
-
-        let mut menus = MenuConfig::translated_menus();
-        let themes_dir = self.menu_state.themes_dir.clone();
-        for menu in &mut menus {
-            menu.expand_dynamic_items(&themes_dir);
-        }
-        menus
+        self.all_menus_expanded()
     }
 
     /// The exact menu list the TUI `MenuRenderer` renders: the configured menus
@@ -71,18 +70,19 @@ impl Editor {
         let page_view = self.active_window().is_page_view();
         let file_explorer_visible = self.file_explorer_visible();
         let file_explorer_focused = self.active_window().is_file_explorer_focused();
-        let mouse_capture = self.active_window_mut().mouse_enabled;
+        // `Some` for a mounted dock whether it's focused or blurred — the
+        // menu checkbox tracks visibility, not who owns the keyboard.
+        let dock_visible = self.dock.is_some();
+        let mouse_capture = self
+            .mouse_capture
+            .load(std::sync::atomic::Ordering::Relaxed);
         let mouse_hover = self.config.editor.mouse_hover_enabled;
         let inlay_hints = self.config.editor.enable_inlay_hints;
-        // True for any real buffer; false when the active buffer is the
-        // synthesized placeholder kept alive after a last-buffer close with
-        // `auto_create_empty_buffer_on_last_buffer_close` disabled.
-        let has_buffer = !self
-            .active_window()
-            .buffer_metadata
-            .get(&self.active_buffer())
-            .map(|m| m.synthetic_placeholder)
-            .unwrap_or(false);
+        // One shared answer to "what can this buffer be asked to do", also used
+        // by the command palette so the two surfaces can't drift.
+        let caps = self.buffer_capabilities();
+        let has_buffer = caps.has_buffer;
+        let has_text_buffer = caps.is_text_buffer;
         let has_selection = has_buffer && self.has_active_selection();
         let can_copy = has_selection
             || file_explorer_focused
@@ -91,13 +91,21 @@ impl Editor {
                 .as_ref()
                 .map(|fe| fe.get_selected().is_some())
                 .unwrap_or(false);
+        // Cut mirrors Copy in the explorer (it cuts the selected *file*), but in
+        // the editor it removes text, so it needs a buffer that accepts edits.
+        let can_cut = if file_explorer_focused {
+            can_copy
+        } else {
+            can_copy && caps.editable
+        };
         // Paste is available in the explorer only when a file is in the clipboard,
-        // or in the editor only when no file is in the clipboard. There's no
-        // buffer to paste into in placeholder mode, so suppress it there.
+        // or in the editor only when no file is in the clipboard — and only into
+        // something that accepts edits. Pasting *into* a terminal is
+        // `TerminalPaste`, a different action with its own binding.
         let can_paste = if file_explorer_focused {
             self.active_window().file_explorer_clipboard.is_some()
         } else {
-            has_buffer && self.active_window().file_explorer_clipboard.is_none()
+            caps.editable && self.active_window().file_explorer_clipboard.is_none()
         };
         let menu_bar = self.active_window_mut().menu_bar_visible;
         let vertical_scrollbar = self.config.editor.show_vertical_scrollbar;
@@ -125,6 +133,11 @@ impl Editor {
         self.menu_state
             .context
             .set(context_keys::HAS_BUFFER, has_buffer)
+            .set(context_keys::HAS_TEXT_BUFFER, has_text_buffer)
+            .set(context_keys::CAN_SAVE, caps.can_save())
+            .set(context_keys::CAN_SAVE_ALL, caps.any_modified)
+            .set(context_keys::CAN_REVERT, caps.can_revert())
+            .set(context_keys::CAN_EDIT, caps.editable)
             .set(context_keys::KEYMAP_DEFAULT, active_keymap == "default")
             .set(context_keys::KEYMAP_EMACS, active_keymap == "emacs")
             .set(context_keys::KEYMAP_VSCODE, active_keymap == "vscode")
@@ -135,6 +148,7 @@ impl Editor {
             // Keep backward-compatible key for existing keybindings/menus
             .set(context_keys::COMPOSE_MODE, page_view)
             .set(context_keys::FILE_EXPLORER, file_explorer_visible)
+            .set(context_keys::DOCK, dock_visible)
             .set(context_keys::FILE_EXPLORER_FOCUSED, file_explorer_focused)
             .set(context_keys::MOUSE_CAPTURE, mouse_capture)
             .set(context_keys::MOUSE_HOVER, mouse_hover)
@@ -144,6 +158,7 @@ impl Editor {
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)
             .set(context_keys::HAS_SELECTION, has_selection)
             .set(context_keys::CAN_COPY, can_copy)
+            .set(context_keys::CAN_CUT, can_cut)
             .set(context_keys::CAN_PASTE, can_paste)
             .set(context_keys::MENU_BAR, menu_bar)
             .set(context_keys::FORMATTER_AVAILABLE, formatter_available)

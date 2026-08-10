@@ -8,6 +8,7 @@ pub mod authority;
 pub mod clipboard;
 pub mod completion;
 pub mod counters;
+pub mod editorconfig;
 pub mod env_provider;
 pub mod file_watcher;
 pub mod fs;
@@ -34,5 +35,7 @@ pub mod terminal_modes;
 pub mod terminal_title;
 pub mod time_source;
 pub mod tracing_setup;
+#[cfg(all(unix, feature = "runtime"))]
+pub mod tty_input;
 pub mod warning_log;
 pub mod workspace_trust;

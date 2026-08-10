@@ -124,6 +124,35 @@ pub struct Workspace {
     /// silently local. See `docs/internal/PER_SESSION_BACKENDS_DESIGN.md`.
     #[serde(default, skip_serializing_if = "is_local_authority_spec")]
     pub authority_spec: crate::services::authority::SessionAuthoritySpec,
+
+    /// Durable identity of the workspace this snapshot belongs to, minted
+    /// once when the window is created and stable across restarts and
+    /// relabels. The workspace file is named
+    /// `workspaces/<encoded-root>.<stable_id>.json` — the encoded root is
+    /// only a filename-level locator for cheap lookup; this id is what
+    /// distinguishes the workspace, and the `working_dir` recorded inside
+    /// the file stays authoritative wherever names collide. `None` only for
+    /// legacy files written before stable ids existed — the owning window
+    /// mints an id at construction, keeps it through the id-less load, and
+    /// the next save re-keys the file (then retires the root-keyed
+    /// duplicate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stable_id: Option<String>,
+}
+
+/// Mint a new durable workspace identity: creation-time nanoseconds plus a
+/// process-local sequence number, so two windows created in the same
+/// instant (e.g. a test spawning windows in a loop) can never collide.
+/// Deliberately dependency-free (same approach as the recovery service's
+/// `generate_buffer_id`).
+pub fn generate_stable_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("ws-{:x}-{:x}", nanos, SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
 /// Skip-serialize predicate so workspace files for ordinary local sessions
@@ -259,6 +288,49 @@ pub struct SerializedFileState {
     /// across restarts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub virtual_space: Option<crate::config::VirtualSpaceMode>,
+
+    /// Explicit per-buffer indentation-guide override (`None` = follow the
+    /// global `editor.indentation_guide` mode). Persists the "Toggle
+    /// Indentation Guides (Current Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indentation_guide: Option<bool>,
+
+    /// Explicit per-buffer folding-indicator override (`None` = show them).
+    /// Persists the "Toggle Folding Indicators (Current Buffer)" choice across
+    /// restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fold_indicators: Option<bool>,
+
+    /// Explicit per-buffer indentation-style override (`None` = follow the
+    /// language default). Persists the "Toggle Indentation: Spaces ↔ Tabs
+    /// (Current Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_tabs: Option<bool>,
+
+    /// Explicit per-buffer whitespace-indicator master override (`None` =
+    /// follow config). Persists the "Toggle Whitespace Indicators (Current
+    /// Buffer)" / "Toggle Tab Indicators (Current Buffer)" choice across
+    /// restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whitespace_indicators: Option<bool>,
+
+    /// Explicit per-buffer tab-indicator override, layered on top of
+    /// `whitespace_indicators` (`None` = follow the master/config resolution).
+    /// Persists the "Toggle Tab Indicators (Current Buffer)" choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_indicators: Option<bool>,
+
+    /// Explicit per-buffer current-line-highlight override (`None` = follow the
+    /// global default). Persists the "Toggle Current Line Highlight (Current
+    /// Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_current_line: Option<bool>,
+
+    /// Explicit per-buffer occurrence-highlight override (`None` = follow the
+    /// global default). Persists the "Toggle Occurrence Highlight (Current
+    /// Buffer)" choice across restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_occurrences: Option<bool>,
 
     /// Plugin-managed state (arbitrary key-value pairs, persisted across sessions)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -464,6 +536,55 @@ pub struct SerializedTerminalWorkspace {
     /// `command`. Absent in older workspaces and for plain terminals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_resume: Option<AgentResume>,
+    /// Set when this terminal's process had already quit at save time.
+    ///
+    /// Restore then brings the buffer back as read-only scrollback with the
+    /// restart offer re-armed, rather than respawning: the user closed the
+    /// editor on a *finished* process, and silently re-running it — spending
+    /// agent tokens on a conversation they were done with — is not what
+    /// "restore my workspace" should mean. The restart is one click away
+    /// either way. Absent for live terminals and in older workspaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exited: Option<ExitedTerminalState>,
+    /// The tab's explicit title (`claude`, `npm`, a plugin-supplied name),
+    /// when it had one. Without this a restored agent tab falls back to
+    /// foreground-process auto-naming and reads `node` / `bash` — or plain
+    /// `*Terminal N*` once the process has exited and there is no foreground
+    /// to read. Absent for tabs that were auto-named to begin with, which
+    /// re-derive their name the same way after restore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Whether this terminal's child was granted editor control — the
+    /// Orchestrator's `allowScript`, which stamps a `FRESH_CMD_TOKEN`
+    /// capability token into the agent's environment.
+    ///
+    /// Only the *grant* is persisted, never the token: the token table is
+    /// in-memory and process-global, so the string this terminal carried in a
+    /// previous run means nothing to the run that restores it. Restore mints a
+    /// fresh token bound to the restored window (see
+    /// `Window::remint_terminal_script_env`); without this flag a restored
+    /// agent came back unable to drive the editor at all. Absent for plain
+    /// terminals and in workspaces written before this field existed — which
+    /// read back as `false`, i.e. no grant, the safe direction.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub script_access: bool,
+}
+
+/// `skip_serializing_if` helper: keeps the default-`false` capability flag out
+/// of the JSON for the overwhelming majority of terminals that never had it.
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+/// The saved state of a terminal whose process had quit before the editor did.
+/// A struct rather than a bare bool so it can carry more of the dead process's
+/// story later (signal, duration, …) without a breaking schema change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExitedTerminalState {
+    /// Wait-status exit code, when the platform reported one. Drives the
+    /// `(exit N)` suffix on the restored restart indicator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
 }
 
 /// How to rejoin a terminal's agent conversation on restore. A struct (not a
@@ -711,7 +832,11 @@ pub fn decode_filename_to_path(encoded: &str) -> Option<PathBuf> {
     Some(PathBuf::from(result))
 }
 
-/// Get the workspace file path for a working directory
+/// Legacy (pre-stable-id) workspace file path for a working directory:
+/// the filename is the encoded canonical root. Still used as the write
+/// fallback for snapshots without a `stable_id`, and by the one-time
+/// `windows.json` migration. Reads must NOT assume this name — see
+/// [`find_workspace_file_by_root`].
 pub fn get_workspace_path(working_dir: &Path) -> io::Result<PathBuf> {
     let canonical = working_dir
         .canonicalize()
@@ -720,27 +845,173 @@ pub fn get_workspace_path(working_dir: &Path) -> io::Result<PathBuf> {
     Ok(get_workspaces_dir()?.join(filename))
 }
 
-/// Get the session-workspaces directory
-pub fn get_session_workspaces_dir() -> io::Result<PathBuf> {
-    Ok(get_data_dir()?.join("session-workspaces"))
-}
-
-/// Get the workspace file path for a named session
-pub fn get_session_workspace_path(session_name: &str) -> io::Result<PathBuf> {
-    let dir = get_session_workspaces_dir()?;
-    std::fs::create_dir_all(&dir)?;
-    // Sanitize session name for filesystem safety
-    let safe_name: String = session_name
+/// Make a stable id filename-safe. The minted alphabet (`ws-<hex>-<hex>`)
+/// already is; this is a defensive net so a hand-edited file can never
+/// smuggle path separators or dots into a workspace filename (dots are the
+/// root/id delimiter — see [`workspace_path_for`]).
+fn sanitize_stable_id(stable_id: &str) -> String {
+    stable_id
         .chars()
         .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
                 c
             } else {
                 '_'
             }
         })
-        .collect();
-    Ok(dir.join(format!("{}.json", safe_name)))
+        .collect()
+}
+
+/// Workspace file path for a workspace with a durable id:
+/// `workspaces/<encoded-root>.<stable_id>.json`.
+///
+/// The encoded root is a *locator index*, not the identity — lookup
+/// prefilters on it without reading file contents, while `stable_id`
+/// is what distinguishes the workspace (and, in the future, same-root
+/// siblings). Content (`working_dir` inside the file) stays authoritative
+/// wherever names collide.
+pub fn workspace_path_for(working_dir: &Path, stable_id: &str) -> io::Result<PathBuf> {
+    let canonical = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+    let filename = format!(
+        "{}.{}.json",
+        encode_path_for_filename(&canonical),
+        sanitize_stable_id(stable_id)
+    );
+    Ok(get_workspaces_dir()?.join(filename))
+}
+
+/// Identity fields of a candidate workspace file for one directory.
+struct WorkspaceFileIdentity {
+    path: PathBuf,
+    saved_at: u64,
+    stable_id: Option<String>,
+}
+
+/// All workspace files claiming `working_dir`: the legacy root-keyed name
+/// plus every `<encoded-root>.<id>.json` sibling. Filenames are only a
+/// prefilter — an encoded root can be a prefix of another's (e.g. `/a`
+/// vs `/a.b`), so each candidate's recorded `working_dir` is verified
+/// before it counts. Unparseable files are skipped (a torn write just
+/// means "not a workspace").
+fn candidate_files_for_root(working_dir: &Path) -> io::Result<Vec<WorkspaceFileIdentity>> {
+    let target = working_dir
+        .canonicalize()
+        .unwrap_or_else(|_| working_dir.to_path_buf());
+    let encoded = encode_path_for_filename(&target);
+    let legacy_name = format!("{encoded}.json");
+    let id_prefix = format!("{encoded}.");
+
+    let dir = get_workspaces_dir()?;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut found = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name != legacy_name && !(name.starts_with(&id_prefix) && name.ends_with(".json")) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) else {
+            // A name-matching file that won't parse is a corrupt (or
+            // foreign) workspace snapshot. It's dropped from the candidate
+            // set — `load` then reports "no session" and the editor starts
+            // fresh rather than erroring — but surface it, or a damaged sole
+            // workspace file vanishes into a silent empty start with no clue
+            // why the layout was lost.
+            tracing::warn!(
+                "Ignoring unparseable workspace file {:?} while resolving {:?}",
+                path,
+                working_dir
+            );
+            continue;
+        };
+        // Authoritative check: the file must itself claim this directory.
+        let claimed = val
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
+        let Some(claimed) = claimed else {
+            continue;
+        };
+        // Compare canonical-to-canonical, but accept a verbatim raw match
+        // too. A one-sided `canonicalize` failure (a symlink that resolves
+        // for the lookup path but not for the stored string, or vice versa)
+        // would otherwise leave one side canonical and the other raw and
+        // drop a file whose recorded `working_dir` equals the lookup path
+        // exactly — losing a valid saved session.
+        let claimed_canonical = claimed.canonicalize().unwrap_or_else(|_| claimed.clone());
+        if claimed_canonical != target && claimed != working_dir {
+            continue;
+        }
+        found.push(WorkspaceFileIdentity {
+            path,
+            saved_at: val.get("saved_at").and_then(|v| v.as_u64()).unwrap_or(0),
+            stable_id: val
+                .get("stable_id")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned),
+        });
+    }
+    Ok(found)
+}
+
+/// Ranking key used to arbitrate between multiple workspace files that
+/// claim the same canonical root (a legacy root-keyed file plus its
+/// re-keyed successor, mid-migration): the freshest snapshot wins —
+/// highest `saved_at`, with a stable-id-bearing file breaking a
+/// same-timestamp tie so a same-second migration can't resurrect the
+/// pre-migration id-less copy.
+///
+/// This is the single source of truth for that rule. Boot-time session
+/// discovery (`orchestrator_persistence::discover_sessions`) and the
+/// per-root read chokepoint ([`find_workspace_file_by_root`]) feed the two
+/// separate `stable_id` adoption sites, and MUST rank identically — if they
+/// disagreed on which file is authoritative for a root, a window could adopt
+/// one identity at boot and a different one at materialize. Keep both callers
+/// routed through here.
+pub fn workspace_freshness_rank(saved_at: u64, has_stable_id: bool) -> (u64, bool) {
+    (saved_at, has_stable_id)
+}
+
+/// Find the workspace file for `working_dir`. When more than one file
+/// claims the directory the freshest snapshot wins — see
+/// [`workspace_freshness_rank`].
+pub fn find_workspace_file_by_root(working_dir: &Path) -> io::Result<Option<PathBuf>> {
+    let mut best: Option<WorkspaceFileIdentity> = None;
+    for ident in candidate_files_for_root(working_dir)? {
+        let newer = match &best {
+            None => true,
+            Some(b) => {
+                workspace_freshness_rank(ident.saved_at, ident.stable_id.is_some())
+                    > workspace_freshness_rank(b.saved_at, b.stable_id.is_some())
+            }
+        };
+        if newer {
+            best = Some(ident);
+        }
+    }
+    Ok(best.map(|b| b.path))
+}
+
+/// The retired daemon-scoped workspace directory.
+///
+/// Workspaces are one set now, shared by direct mode and every daemon, so
+/// nothing writes here any more. The path survives only so boot migration can
+/// find pre-existing snapshots and fold them into the real store — see
+/// `orchestrator_persistence::migrate_session_workspaces_into_store`.
+pub fn get_session_workspaces_dir() -> io::Result<PathBuf> {
+    Ok(get_data_dir()?.join("session-workspaces"))
 }
 
 /// Workspace error types
@@ -807,18 +1078,51 @@ impl From<serde_json::Error> for WorkspaceError {
 }
 
 impl Workspace {
-    /// Load workspace for a working directory (if exists)
+    /// Load workspace for a working directory (if exists).
+    ///
+    /// Resolution goes by the `working_dir` recorded inside each workspace
+    /// file (filenames are stable-id-keyed; legacy files are root-keyed) —
+    /// see [`find_workspace_file_by_root`].
     pub fn load(working_dir: &Path) -> Result<Option<Workspace>, WorkspaceError> {
-        let path = get_workspace_path(working_dir)?;
-        tracing::debug!("Looking for workspace at {:?}", path);
+        let Some(path) = find_workspace_file_by_root(working_dir)? else {
+            tracing::debug!("No workspace file found for {:?}", working_dir);
+            return Ok(None);
+        };
+        Self::load_from_path(&path, working_dir)
+    }
 
+    /// Load the workspace with a specific durable identity at `working_dir`
+    /// (`workspaces/<encoded-root>.<stable_id>.json`). Unlike [`Self::load`],
+    /// which resolves the freshest file for a root, this targets one exact
+    /// co-tenant — the way each window restores *its own* persisted layout when
+    /// several workspaces share a root. Falls back to the root-keyed lookup
+    /// when the id-keyed file is absent (a legacy snapshot the window adopts).
+    pub fn load_by_id(
+        working_dir: &Path,
+        stable_id: &str,
+    ) -> Result<Option<Workspace>, WorkspaceError> {
+        let path = workspace_path_for(working_dir, stable_id)?;
+        if path.exists() {
+            return Self::load_from_path(&path, working_dir);
+        }
+        // No id-keyed file yet: the window may be adopting a legacy root-keyed
+        // snapshot (its next save re-keys it under this id).
+        Self::load(working_dir)
+    }
+
+    /// Read, parse, and validate a workspace file at `path`, checking it
+    /// claims `expected_working_dir` and isn't from a newer schema.
+    fn load_from_path(
+        path: &Path,
+        expected_working_dir: &Path,
+    ) -> Result<Option<Workspace>, WorkspaceError> {
         if !path.exists() {
-            tracing::debug!("Workspace file does not exist");
+            tracing::debug!("Workspace file does not exist: {:?}", path);
             return Ok(None);
         }
 
         tracing::debug!("Loading workspace from {:?}", path);
-        let content = std::fs::read_to_string(&path)?;
+        let content = std::fs::read_to_string(path)?;
         let workspace: Workspace = serde_json::from_str(&content)?;
 
         tracing::debug!(
@@ -829,9 +1133,9 @@ impl Workspace {
         );
 
         // Validate working_dir matches (canonicalize both for comparison)
-        let expected = working_dir
+        let expected = expected_working_dir
             .canonicalize()
-            .unwrap_or_else(|_| working_dir.to_path_buf());
+            .unwrap_or_else(|_| expected_working_dir.to_path_buf());
         let found = workspace
             .working_dir
             .canonicalize()
@@ -900,7 +1204,14 @@ impl Workspace {
     /// 2. Sync to disk (fsync)
     /// 3. Atomically rename to the final path
     pub fn save(&self) -> Result<(), WorkspaceError> {
-        let path = get_workspace_path(&self.working_dir)?;
+        // Storage is keyed by the durable workspace id (with the encoded
+        // root as a filename-level locator); only snapshots that never
+        // passed through a `Window` (no `stable_id`) fall back to the
+        // legacy root-derived name.
+        let path = match &self.stable_id {
+            Some(id) => workspace_path_for(&self.working_dir, id)?,
+            None => get_workspace_path(&self.working_dir)?,
+        };
         tracing::debug!("Saving workspace to {:?}", path);
 
         // Ensure directory exists
@@ -926,81 +1237,79 @@ impl Workspace {
         std::fs::rename(&temp_path, &path)?;
         tracing::info!("Workspace saved to {:?}", path);
 
+        // Migration completion: retire ONLY the legacy root-keyed file this
+        // window re-keyed away from. A rival `<root>.<otherid>.json` is NOT a
+        // duplicate now — workspaces may co-tenant one root (a tab extracted
+        // into its own window over the same project), each keyed by its own
+        // durable id — so a sibling id-file is a live peer, not stale, and must
+        // not be swept. The legacy id-less file has no such peer: it is the
+        // single pre-migration snapshot, superseded the moment any id-keyed
+        // file lands (write-new then delete-old, so a crash between leaves both
+        // and lookup arbitration picks the newest). Best-effort; `NotFound`
+        // (another co-tenant already retired it) is not an error.
+        if self.stable_id.is_some() {
+            if let Ok(legacy) = get_workspace_path(&self.working_dir) {
+                if legacy != path && legacy.exists() {
+                    tracing::info!(
+                        "Retiring legacy workspace file {:?} (re-keyed to {:?})",
+                        legacy,
+                        path
+                    );
+                    if let Err(e) = std::fs::remove_file(&legacy) {
+                        if e.kind() != io::ErrorKind::NotFound {
+                            tracing::debug!("Could not retire legacy workspace file: {e}");
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
-    /// Load workspace for a named session (if exists)
-    pub fn load_session(
-        session_name: &str,
-        working_dir: &Path,
-    ) -> Result<Option<Workspace>, WorkspaceError> {
-        let path = get_session_workspace_path(session_name)?;
-        tracing::debug!("Looking for session workspace at {:?}", path);
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let content = std::fs::read_to_string(&path)?;
-        let workspace: Workspace = serde_json::from_str(&content)?;
-
-        // For session workspaces, skip working_dir validation — the session
-        // always restores its own workspace regardless of CWD.
-        if workspace.version > WORKSPACE_VERSION {
-            return Err(WorkspaceError::VersionTooNew {
-                version: workspace.version,
-                max_supported: WORKSPACE_VERSION,
-            });
-        }
-
-        // If working_dir changed, log but still load (session owns its layout)
-        let found = workspace
-            .working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| workspace.working_dir.clone());
-        let expected = working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| working_dir.to_path_buf());
-        if expected != found {
-            tracing::info!(
-                "Session '{}' workspace was saved from {:?}, now loading from {:?}",
-                session_name,
-                found,
-                expected
-            );
-        }
-
-        Ok(Some(workspace))
-    }
-
-    /// Save workspace for a named session using atomic write
-    pub fn save_session(&self, session_name: &str) -> Result<(), WorkspaceError> {
-        let path = get_session_workspace_path(session_name)?;
-        tracing::debug!("Saving session workspace to {:?}", path);
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let content = serde_json::to_string_pretty(self)?;
-        let temp_path = path.with_extension("json.tmp");
-        {
-            let mut file = std::fs::File::create(&temp_path)?;
-            file.write_all(content.as_bytes())?;
-            file.sync_all()?;
-        }
-        std::fs::rename(&temp_path, &path)?;
-        tracing::info!("Session workspace saved to {:?}", path);
-        Ok(())
-    }
-
-    /// Delete workspace for a working directory
+    /// Delete *every* workspace file claiming a directory — every co-tenant
+    /// identity plus any legacy root-keyed file. This is the whole-root
+    /// teardown (the project directory itself is going away); to close a
+    /// single session that shares its root with others, use
+    /// [`Self::delete_by_id`] instead so its peers survive.
+    ///
+    /// Best-effort per file: a `NotFound` (another process — e.g. a
+    /// concurrent checkpoint retiring the legacy file — unlinked it between
+    /// our scan and our `remove_file`) is not an error, and any other
+    /// per-file failure is recorded but does not abort the loop. Aborting on
+    /// the first error was a resurrection bug: it could leave a snapshot
+    /// behind for the next boot to rediscover. The first hard error (if any)
+    /// is returned after every candidate has been attempted.
     pub fn delete(working_dir: &Path) -> Result<(), WorkspaceError> {
-        let path = get_workspace_path(working_dir)?;
-        if path.exists() {
-            std::fs::remove_file(path)?;
+        let mut first_err: Option<io::Error> = None;
+        for ident in candidate_files_for_root(working_dir)? {
+            if let Err(e) = std::fs::remove_file(&ident.path) {
+                if e.kind() == io::ErrorKind::NotFound {
+                    continue;
+                }
+                tracing::warn!("Failed to delete workspace file {:?}: {e}", ident.path);
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
         }
-        Ok(())
+        match first_err {
+            Some(e) => Err(e.into()),
+            None => Ok(()),
+        }
+    }
+
+    /// Delete a single workspace identity's file
+    /// (`workspaces/<encoded-root>.<stable_id>.json`), leaving any co-tenant
+    /// workspaces on the same root untouched. Used when one session is closed
+    /// or killed. Best-effort: `NotFound` is success (already gone).
+    pub fn delete_by_id(working_dir: &Path, stable_id: &str) -> Result<(), WorkspaceError> {
+        let path = workspace_path_for(working_dir, stable_id)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Create a new workspace with current timestamp
@@ -1034,6 +1343,7 @@ impl Workspace {
             label: None,
             session_plugin_state: HashMap::new(),
             authority_spec: crate::services::authority::SessionAuthoritySpec::Local,
+            stable_id: None,
         }
     }
 
@@ -1195,6 +1505,13 @@ mod tests {
             line_numbers: None,
             line_wrap: None,
             virtual_space: None,
+            indentation_guide: None,
+            fold_indicators: None,
+            use_tabs: None,
+            whitespace_indicators: None,
+            tab_indicators: None,
+            highlight_current_line: None,
+            highlight_occurrences: None,
             plugin_state: HashMap::new(),
             folds: Vec::new(),
         };

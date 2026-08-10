@@ -231,6 +231,12 @@ editor.on("after_file_open", () => {
 editor.on("after_file_save", () => {
   refreshGitExplorerDecorations();
 });
+// A reloaded buffer means the file changed on disk without a save — e.g.
+// `git checkout <ref> -- <file>` in another terminal — so its git status
+// badge may be stale.
+editor.on("after_file_revert", () => {
+  refreshGitExplorerDecorations();
+});
 editor.on("after_file_explorer_change", () => {
   refreshGitExplorerDecorations();
 });
@@ -238,6 +244,12 @@ editor.on("editor_initialized", () => {
   refreshGitExplorerDecorations();
 });
 editor.on("focus_gained", () => {
+  refreshGitExplorerDecorations();
+});
+// `colorNames` is read inside the refresh, so without this the setting
+// changes nothing until the next file open/save/explorer change — the
+// user ticks the box in Settings and the explorer just sits there.
+editor.on("config_changed", () => {
   refreshGitExplorerDecorations();
 });
 

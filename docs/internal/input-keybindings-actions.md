@@ -14,6 +14,7 @@ A keystroke flows through these stages:
 
 ```
 Terminal (crossterm KeyEvent)
+  → input::is_keystroke(kind)      — press/repeat act, release is dropped
   → KeyTranslator.translate()      — calibration fixups
   → Editor::handle_key()           — modal priority + chord state
       → KeybindingResolver.resolve() — key → Action
@@ -21,6 +22,17 @@ Terminal (crossterm KeyEvent)
       → action_to_events(Action)   — Action → events
   → log_and_apply_event / bulk edit — events mutate buffer + undo log
 ```
+
+The stage before this one — raw terminal bytes to a `KeyEvent`/`MouseEvent` — is
+[terminal-input-parsing.md](terminal-input-parsing.md).
+
+`input::is_keystroke` is the single gate on the event *kind*, and every raw-event
+entry point (the local event loop, the session server, `handle_input_event`) goes
+through it rather than comparing against `Press`. It only does anything when the
+terminal reports event types (`keyboard_report_event_types`): then one physical
+keypress yields a press, a repeat per auto-repeat tick, and a release. Presses
+and repeats are keystrokes; a release is not. Acting on releases doubled every
+key (#2796); dropping repeats would stop held keys from repeating.
 
 Three distinct vocabularies live here and the separation is deliberate (§4):
 

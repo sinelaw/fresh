@@ -101,6 +101,49 @@ type LineInfoLike = {
 // collide and a tall table needs no whole-table rebuild.
 const TABLE_BORDER_NS = "md-tb";
 
+// =============================================================================
+// Heading markers on the scrollbar
+// =============================================================================
+//
+// Headings are marked on the scrollbar track so a document's structure is
+// visible at a glance and off-screen sections can be located without
+// scrolling. This rides the same per-line pass as conceals and borders, and
+// uses the *range-scoped* form of the API for the same reason the conceal
+// clears are range-scoped:
+//
+//   * `lines_changed` only ever reports the lines the editor decided to
+//     (re)process — typically the viewport, or the lines an edit touched. A
+//     whole-namespace replace would therefore delete the markers for every
+//     heading currently off-screen, and the scrollbar would show only the
+//     headings near the viewport.
+//   * `setScrollbarMarkersInRange` replaces only the markers anchored inside
+//     the batch's byte span, so headings scrolled past keep their marks and
+//     coverage accumulates as the document is explored. Editor-side byte
+//     anchors then shift those accumulated markers through later edits, so
+//     nothing goes stale between batches.
+//
+// Marks are emitted for every batch — including batches with no headings —
+// so a line that stops being a heading loses its mark.
+const HEADING_MARKER_NS = "md-headings";
+
+// Heading level → marker color. Theme keys resolve at render time, so the
+// marks follow theme changes like the emphasis overlays do.
+const HEADING_MARKER_COLORS: string[] = [
+  "syntax.keyword",  // # h1
+  "syntax.function", // ## h2
+  "syntax.type",     // ### h3+
+];
+
+function headingMarkerColor(level: number): string {
+  return HEADING_MARKER_COLORS[Math.min(level, HEADING_MARKER_COLORS.length) - 1];
+}
+
+/** Heading level of a source line (1-6), or 0 when it isn't an ATX heading. */
+function headingLevel(content: string): number {
+  const m = content.match(/^\s*(#{1,6})\s+\S/);
+  return m ? m[1].length : 0;
+}
+
 // Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
 // every `lines_changed` pass (computeRowWidths) and read synchronously in the
 // same pass by the conceal and border code.
@@ -618,6 +661,7 @@ function disableMarkdownCompose(bufferId: number): void {
     editor.clearNamespace(bufferId, "md-emphasis");
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
+    editor.clearScrollbarMarkers(bufferId, HEADING_MARKER_NS);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
@@ -694,137 +738,6 @@ function extractTextFromTokens(tokens: ViewTokenWire[]): string {
   return text;
 }
 
-/**
- * Transform tokens for markdown compose mode with hanging indents
- *
- * Strategy: Parse the source text to identify block structure, then walk through
- * incoming tokens and emit transformed tokens with soft wraps and hanging indents.
- */
-function transformMarkdownTokens(
-  inputTokens: ViewTokenWire[],
-  width: number,
-  viewportStart: number
-): ViewTokenWire[] {
-  // First, extract text to understand block structure
-  const text = extractTextFromTokens(inputTokens);
-  const blocks = parseMarkdownBlocks(text);
-
-  // Build a map of source_offset -> block info for quick lookup
-  // Block byte positions are 0-based within extracted text
-  // Source offsets are actual buffer positions (viewportStart + position_in_text)
-  const offsetToBlock = new Map<number, ParsedBlock>();
-  for (const block of blocks) {
-    // Map byte positions that fall within this block to the block
-    // contentStartByte and endByte are positions within extracted text (0-based)
-    // source_offset = viewportStart + position_in_extracted_text
-    for (let textPos = block.startByte; textPos < block.endByte; textPos++) {
-      const sourceOffset = viewportStart + textPos;
-      offsetToBlock.set(sourceOffset, block);
-    }
-  }
-
-  const outputTokens: ViewTokenWire[] = [];
-  let column = 0;  // Current column position
-  let currentBlock: ParsedBlock | null = null;
-  let lineStarted = false;  // Have we output anything on current line?
-
-  for (let i = 0; i < inputTokens.length; i++) {
-    const token = inputTokens[i];
-    const kind = token.kind;
-    const sourceOffset = token.source_offset;
-
-    // Track which block we're in based on source offset
-    if (sourceOffset !== null) {
-      const block = offsetToBlock.get(sourceOffset);
-      if (block) {
-        currentBlock = block;
-      }
-    }
-
-    // Get hanging indent for current block (default 0)
-    const hangingIndent = currentBlock?.hangingIndent ?? 0;
-
-    // Determine if current block should be soft-wrapped
-    const blockType = currentBlock?.type;
-    const noWrap = blockType === 'table-row' || blockType === 'code-fence' ||
-                   blockType === 'code-content' || blockType === 'hr' ||
-                   blockType === 'heading' || blockType === 'image' ||
-                   blockType === 'empty';
-
-    // Handle different token types
-    if (kind === "Newline") {
-      // Real newlines pass through - they end a block
-      outputTokens.push(token);
-      column = 0;
-      lineStarted = false;
-      currentBlock = null;  // Reset at line boundary
-    } else if (kind === "Space") {
-      // Space handling - potentially wrap before space + next word
-      if (!lineStarted) {
-        // Leading space on a line - preserve it
-        outputTokens.push(token);
-        column++;
-        lineStarted = true;
-      } else {
-        // Mid-line space - look ahead to see if we need to wrap
-        // Find next non-space token to check word length
-        let nextWordLen = 0;
-        for (let j = i + 1; j < inputTokens.length; j++) {
-          const nextKind = inputTokens[j].kind;
-          if (nextKind === "Space" || nextKind === "Newline" || nextKind === "Break") {
-            break;
-          }
-          if (typeof nextKind === 'object' && 'Text' in nextKind) {
-            nextWordLen += nextKind.Text.length;
-          }
-        }
-
-        // Check if space + next word would exceed width
-        if (!noWrap && column + 1 + nextWordLen > width && nextWordLen > 0) {
-          // Wrap: emit soft newline + hanging indent instead of space
-          outputTokens.push({ source_offset: null, kind: "Newline" });
-          for (let j = 0; j < hangingIndent; j++) {
-            outputTokens.push({ source_offset: null, kind: "Space" });
-          }
-          column = hangingIndent;
-          // Don't emit the space - we wrapped instead
-        } else {
-          // No wrap needed - emit the space normally
-          outputTokens.push(token);
-          column++;
-        }
-      }
-    } else if (kind === "Break") {
-      // Existing soft breaks - we're replacing wrapping logic, so skip these
-      // and handle wrapping ourselves
-    } else if (typeof kind === 'object' && 'Text' in kind) {
-      const text = kind.Text;
-
-      if (!lineStarted) {
-        lineStarted = true;
-      }
-
-      // Check if this word alone would exceed width (need to wrap)
-      if (!noWrap && column > hangingIndent && column + text.length > width) {
-        // Wrap before this word
-        outputTokens.push({ source_offset: null, kind: "Newline" });
-        for (let j = 0; j < hangingIndent; j++) {
-          outputTokens.push({ source_offset: null, kind: "Space" });
-        }
-        column = hangingIndent;
-      }
-
-      // Emit the text token
-      outputTokens.push(token);
-      column += text.length;
-    } else {
-      // Unknown token type - pass through
-      outputTokens.push(token);
-    }
-  }
-
-  return outputTokens;
-}
 
 // =============================================================================
 // Line-level conceal/overlay processing
@@ -832,7 +745,6 @@ function transformMarkdownTokens(
 // Conceals and overlays are managed per-line using targeted range-based clearing.
 // The lines_changed hook processes newly visible or edited lines.
 // The after_insert/after_delete hooks clear affected byte ranges.
-// The view_transform_request hook handles cursor-aware reveal/conceal updates
 // and soft wrapping.
 
 /**
@@ -1441,8 +1353,8 @@ let lastViewportWidth = 0;
 
 /**
  * Compute soft break points for a single line, using the same block parsing
- * and word-wrap logic as the old transformMarkdownTokens, but emitting
- * marker-based soft breaks instead of view_transform tokens.
+ * and word-wrap logic as the old token transform, but emitting
+ * marker-based soft breaks.
  */
 function processLineSoftBreaks(
   bufferId: number,
@@ -1708,10 +1620,10 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 // after_delete: no-op for conceals/overlays (same reasoning as after_insert).
 
 
-// view_transform_request is no longer needed — soft wrapping is handled by
+// Soft wrapping is handled by
 // marker-based soft breaks (computed in lines_changed), and layout hints
 // are set directly via setLayoutHints. This eliminates the one-frame flicker
-// caused by the async view_transform round-trip.
+// caused by an async round-trip.
 
 // Handle buffer close events - clean up compose mode tracking
 
@@ -1782,6 +1694,32 @@ editor.on("lines_changed", (data) => {
     }
   }
 
+  // Publish this batch's heading marks. Range-scoped to the batch's byte span
+  // so headings outside it — already-visited parts of the document — keep
+  // their marks; see HEADING_MARKER_NS. Emitted even when the batch has no
+  // headings, so a line that stops being one loses its mark.
+  if (data.lines.length > 0) {
+    const batchStart = data.lines[0].byte_start;
+    const batchEnd = data.lines[data.lines.length - 1].byte_end;
+    const headingMarkers = [];
+    for (const line of data.lines) {
+      const level = headingLevel(line.content);
+      if (level === 0) continue;
+      headingMarkers.push({
+        // Byte offsets, not line numbers: they are exact regardless of file
+        // size, and the editor anchors them so later edits shift the marks.
+        position: line.byte_start,
+        color: headingMarkerColor(level),
+        priority: 10 - level, // shallower headings win a shared track cell
+      });
+    }
+    editor.setScrollbarMarkersInRange(
+      data.buffer_id, HEADING_MARKER_NS,
+      batchStart, Math.max(batchEnd, batchStart + 1),
+      headingMarkers,
+    );
+  }
+
   if (tableWidthsGrew) {
     editor.refreshLines(data.buffer_id);
   }
@@ -1814,7 +1752,6 @@ editor.on("after_delete", (data) => {
 // movement changes what's *active* without touching any marker, so it never
 // re-fires lines_changed, never bumps the conceal/soft-break versions, and
 // never invalidates the line-wrap cache or visual-row index.
-// view_transform_request hook no longer needed — wrapping is handled by soft breaks
 editor.on("buffer_closed", (data) => {
   // View state is cleaned up automatically when the buffer is removed from keyed_states
 });

@@ -1,5 +1,178 @@
 # Release Notes
 
+## 0.4.7
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **Guided code tours** - a codebase walkthrough played in the editor: steps on the left, the current step's explanation on the right, the code open and highlighted above. Tours are small JSON files (`fresh --cmd help tour`), VS Code [CodeTour](https://github.com/microsoft/codetour) files play as-is, and an unfinished tour resumes on next launch. Full guide: [Guided Code Tours](https://getfresh.dev/docs/features/code-tours).
+* **Scripting the editor** - `fresh --cmd script run` hands a running Fresh a TypeScript program with the full plugin API: open files, arrange panes, start a coding agent, open a tour. **Teach agent the Fresh CLI** briefs `claude`, `codex` and `opencode` (on by default). Full guide: [Scripting the Editor](https://getfresh.dev/docs/features/scripting).
+* **Agents can customize Fresh end to end** - `fresh --cmd init reload` re-reads `init.ts`, `fresh --cmd command run "<name>"` invokes any palette command, `fresh --cmd help plugin` documents the runtime.
+* **Every settings toggle says what it changes** - **Toggle X** = editor-wide, saved to config; **Toggle X (Current Buffer)** = this buffer only. Several toggles gained the missing variant.
+* **Git-gutter hunks and unsaved edits show on the scrollbar** (#2713, requested by @RetributionByRevenue).
+* **The Orchestrator dock has a close button** and a **View → Orchestrator Dock** menu row.
+* **Thrift syntax highlighting** (#2884, by @asukaminato0721).
+
+### Bug Fixes
+
+* **TOML multiline arrays highlight correctly** (#2887, by @asukaminato0721).
+* **The cursor can reach the last column when the scrollbar is shown** (by @ttenneb).
+* **Editing**
+  * **Replace-all finishes on files with tens of thousands of matches** - used to run minutes or hang (#2893).
+  * **Two splits on the same file keep independent edit points** - transpose, move-line and toggle-comment reset the other pane's cursor (#2878, reported by @FreekyFrank).
+  * **Opening a file straight to a line no longer breaks syntax highlighting.**
+  * **Highlights taller than the window are drawn again.**
+* **Input**
+  * **Shift works with "Keyboard Report All Keys As Escape Codes"** - `Shift+A` typed `a` (#2880, reported by @akarinotomoshibi).
+  * **`Ctrl+/` works outside kitty again** (#2933) - toggle-comment fired under kitty but nowhere else, because the `0x1F` byte every other terminal sends for the chord was read as `Ctrl+_`. It also reaches a terminal panel's child process as `0x1F` now, instead of a literal `/`.
+  * **Pasting works in the New Workspace and Run Agent dialogs**, in daemon mode too.
+* **Settings & commands**
+  * **Settings toggles actually stick**
+    * Eight toggles forgot your choice on restart.
+    * Project configs silently overrode toggled values; toggles now write the owning layer.
+    * Workspaces stamped stale settings back on open.
+    * Config writes are atomic and no longer delete hand-written empty overrides.
+    * **Reset Buffer Settings** really resets everything.
+    * **Toggle Tab Indicators** no longer hides the space dots too.
+  * **Menus and the palette agree on what a buffer can do** - no more `Save` on a terminal (it overwrote the backing file with scrollback), no more greyed-out commands while a terminal or the explorer has focus.
+* **Git & live diff**
+  * **Live diff never refuses a file** - "file too large for live diff" is gone; the shared diff engine degrades detail instead of giving up.
+  * **Reverting a file outside Fresh refreshes the git gutter, live diff and conflict markers.**
+* **Panels & docks**
+  * **Closing a file no longer pulls a dock panel into the editor split.**
+  * **Plugin panels handle the mouse properly** - clicks, wheel and scrollbars work in every widget panel.
+  * **A second Utility Dock panel renders like the first** - no stray line-number gutter.
+  * **Reloading a plugin stops stacking duplicate panels.**
+* **Workspaces & agents**
+  * **Renaming a workspace made with "Extract Tab to New Workspace" no longer renames its co-tenant.**
+  * **A restored workspace's agent can still drive the editor** - the script grant now survives a restart.
+* **Self-update**
+  * **Updates finish through the channel that installed Fresh**
+    * `.deb`/`.rpm`/`.flatpak` updates asked repos that never served Fresh ("already the newest version", forever).
+    * Homebrew named a nonexistent formula; several other channels' commands fixed.
+    * **Show the update command** prints without downloading anything.
+  * **Security hardening** - closed a symlink race in the binary swap and a predictable staging path ahead of `sudo dpkg -i`.
+
+### Internals
+
+* Flaky-e2e stabilization, quieter plugin slow-handler warnings, repo-root cleanup (#2914).
+
+## 0.4.6
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Features
+
+* **Restart an exited terminal in place** - the status bar offers `⟳ Restart terminal` (or `⟳ Resume claude`) and the process comes back in the same buffer, below the existing scrollback, with a coding agent rejoining its conversation. The tab reads `claude (exited)` instead of an exit line in the output, and terminal tab names now survive an editor restart.
+  * If you have customized your status bar, open Settings → **Status Bar** and move **Terminal Restart** from *Available* to *Included* (`Shift+→`) under Left or Right.
+* **Tabs for same-named files say which file they are** - open two `mod.rs` and the tabs read `model/mod.rs` and `view/mod.rs` instead of `mod.rs 1` and `mod.rs 2`. Each tab grows only as much of its path as it takes to be unique, and tabs whose name is already unique are untouched (#2851, requested by @anddimario).
+* **Line-ending indicators** - `↵` at every line break and `␍` for the CR half of a CRLF, both off by default (#2798, requested by @akarinotomoshibi).
+* **Scrollbar markers for plugins** - `editor.setScrollbarMarkers` paints marks on the scrollbar track; live-diff hunks and Markdown headings now use it (#2713, requested by @RetributionByRevenue).
+* **File Explorer sticky parents** - a nested folder's expanded ancestors stay stacked at the top of the sidebar while you scroll (#2705, by @asukaminato0721).
+* **More graphics, docs and build-file grammars** - GLSL `.glslf`/`.glslv`, Wavefront `.obj`, Doxygen, Windows `.rc`, pkg-config, `.cmake.in` and `CMakeCache.txt` (by @asukaminato0721).
+* **Broader LaTeX ecosystem highlighting** - TeX packages/classes, generated `.aux`/`.toc`, BibLaTeX, ConTeXt, BibTeX and `.bst`, plus `latexmkrc` (by @asukaminato0721).
+* **The Orchestrator dock's start-up state is configurable** - whether it opens on startup, its layout, and the starting state of the **all worktrees** and **show empty** checkboxes.
+* **Run Agent… and New Workspace are one dialog** - a "Launch in" switch picks the current workspace or a new one. Fixes `custom…` having nowhere to type a command.
+* **Plugins are told when settings change** - vi-mode's options now apply without an editor restart.
+* **Agents drive the editor with TypeScript** - `fresh --cmd script run` evaluates a script against the full plugin API, with `script api` / `script check` for discovery.
+
+### Bug Fixes
+
+* **Four dead settings** - the bracket-matching toggles, `file_explorer.respect_gitignore` and `languages.<id>.textmate_grammar` now take effect; `editor.highlight_timeout_ms` was removed rather than wired up (#2842).
+* **Files that are one very long line**
+  * **Viewing one no longer pins a CPU core** (#2838, reported by @lovehumans).
+  * **Highlighting survives past the first wrapped rows**, and the wheel no longer snaps to a 100 KB boundary (#2843).
+  * **Typing and cursor movement no longer slow down** as the cursor moves right.
+* **Scrolling**
+  * **PageUp/PageDown no longer stall crossing a collapsed fold** - a page of scroll budget was spent stepping through the fold's hidden lines; a fold now costs one row, like its header.
+  * **A residual cursor stall moving through revealed Markdown syntax** is fixed (#1574).
+* **Heavy background work can no longer freeze the editor** - grep-in-project, closing a terminal, and other plugin- or buffer-triggered work now run off the UI thread under a per-frame budget instead of blocking rendering for seconds.
+* **Dashboard**
+  * **A misbehaving section can no longer break the panel or hang the dock** - overflow, errors and slow sections are now contained and refresh independently, showing "stale" instead of freezing or blanking.
+* **`fresh --cmd` from an agent terminal no longer hangs forever** - the command channel wasn't drained in every host, so `cmd list`/`cmd run` calls could block indefinitely; a stuck request now times out with a diagnosable error instead (#2837).
+* **Settings → Status Bar picker's cursor is now visible, and clicking a row works** - arrows previously moved an invisible selection with no indication of which list (Available/Included) had the keyboard.
+* **Terminal**
+  * **A new terminal no longer inherits another's scrollback**, and a restored one comes back live rather than frozen (#2828).
+  * **Scroll-back re-wraps when the pane resizes** - splitting, maximizing or dropping a tab left every line clipped (#2844).
+  * **Modified keys reach the program inside** - `Ctrl+Shift+Right`, `Shift+Home`, `Shift+F3` and `Alt+Backspace` arrived stripped.
+  * **Scrollback keeps streaming** after the grid history saturates.
+* **Input**
+  * **One keypress no longer acts twice** with `keyboard_report_event_types` on (#2796, reported by @akarinotomoshibi).
+  * **Horizontal wheel events no longer scroll vertically** (#2831, reported by @mruff-aeq, by @ttenneb).
+  * **A split mouse report no longer leaks** into a focused terminal as literal `^[[M…` (#2793, reported by @mruff-aeq).
+  * **Escape works in `fresh -a`** instead of swallowing the next keypress (#2810).
+* **Daemon mode restores workspaces** - `fresh -a` opened `[No Name]` for every one; a detached daemon also survives its launching terminal closing (#2808, #2811).
+* **Orchestrator & dock**
+  * **Settings opens over the dock** - centred and dimming it, instead of squeezed into the columns beside it (#2820).
+  * **Searching the dock and opening a match keeps the search.**
+  * **A workspace switch no longer paints two workspaces into one frame.**
+  * **"Move to Folder…" is usable with the mouse.**
+  * **Tidier workspace cards** - two rows instead of three.
+  * **A remote workspace's buffers load off the editor loop.**
+* **Opening a C# file can no longer run project code** - `dotnet restore` is now gated behind Workspace Trust (#2063, reported by @z3moo).
+* **git-gutter works with an external difftool** - it now forces git's own diff format (#2721, by @asukaminato0721).
+* **No blank frame at the horizontal scroll bound** (by @ttenneb).
+* **Modal dialogs are no longer clipped**, and worktree trust isn't re-asked.
+
+### Internals
+
+* Continued the viewport/wrap-index rebuild (a single coordinate system that now also models folds and decorations) and moved plugin-triggered work off the editor thread under a frame budget, plus further flaky-e2e-test stabilization across the review-diff line-staging, scrolling, vi-mode and orchestrator-dock suites.
+
+## 0.4.5
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Terminal input parsing was rewritten
+
+Keyboard and mouse input is now parsed by our own `fresh-input-parser` crate instead of crossterm, to work around crossterm limitations that caused real bugs: dropped modified F1-F4 keys (`Shift+F3` did nothing, #699), unchecked mouse-coordinate math (a crash, #2732), and desyncing on input split across reads (mouse sequences leaking into terminals, #2745). This touches core input handling broadly, so if anything feels off with keyboard or mouse input, please report it.
+
+### Features
+
+* **Option for in-editor self-update** - update Fresh from the status-bar indicator, or via `fresh --cmd update`. Detects your install method and runs the appropriate, platform specific, update command.
+* **Syntax highlighting inside embedded code blocks** - a fenced code block in a Markdown file (e.g. ```` ```rust ```` ) now highlights with that language's own grammar instead of one flat color; the same mechanism also fixes Vue's `<script>`/`<style>` blocks (#2689, requested by @asukaminato0721).
+* **Better Bazel/Starlark highlighting** - functions, operators, punctuation, and built-ins are now highlighted, and `.bazel`/`MODULE.bazel` files are recognized (contributed by @asukaminato0721).
+* **Orchestrator: agents & workspaces**
+  * **`Run Agent…` command** launches a terminal or a coding agent (`claude`, `codex`, `opencode`, `aider`) in your current workspace or a new one, without the full New Workspace dialog.
+  * **Non-blocking workspace creation** - creating a workspace no longer freezes the editor; choose **Create & Visit** or **Create in Background** and keep working while it comes up.
+* **Classic Mac (CR) line endings** are now fully supported (#2736, requested by @720720).
+* **`.editorconfig` support** - `indent_style`/`indent_size`/`tab_width` are picked up automatically (#959, requested by @nyurik).
+* **Save All** - save every modified buffer at once from the File menu (#2289, requested by @alspaughb).
+
+### Bug Fixes
+
+* **Orchestrator & dock**
+  * Codex "Auto mode" works again (it was passing a flag recent Codex CLI rejects).
+  * Dock rows are fully clickable in compact (list) view, ordered by recency, and auto-name themselves from their terminal.
+  * Fixed a crash when navigating to an unreachable remote workspace.
+* **Terminal**
+  * Scrollback no longer loses output or gets stuck mid-scroll (#2649, reported by @dmknght).
+* **Tabs & splits**
+  * A long filename no longer hides other tabs, and per-split scrolling is fixed (#2650, reported by @dmknght).
+  * Closing a split now asks for confirmation first.
+  * Closing the last editor tab no longer swallows the Utility Dock into the main tab bar (#2283, reported by @lizdeika).
+  * Plugin split APIs (`setSplitRatio`, `openFileInSplit`) no longer crash or silently no-op on an invalid split (#2769, #2770, #2783, reported by @RetributionByRevenue).
+* **LSP**
+  * Hover now merges results from every configured server instead of only the first (#2635, reported by @hkngoc).
+  * Fixed hover occasionally showing another buffer's content (#2572, reported by @asukaminato0721).
+  * Inlay hints now refresh after an edit instead of freezing (#2744, reported by @P1C4550).
+* **Misc**
+  * On-save actions no longer desync from disk on rapid saves (#2711, #2706, reported by @720720).
+  * Settings' Theme dropdown lists every installed theme (#2738, reported by @720720).
+  * Fixed a spurious devcontainer parse error on startup (#2709, reported by @720720).
+  * The ruler now draws past the last written line (#2631, reported by @akarinotomoshibi).
+  * Edit menu's "Replace..." is now correctly labeled "Query Replace..." (#2135).
+
+### Internals
+
+* Split the monolithic plugin-dispatch and update/release-checking code into focused modules, alongside a round of flaky-e2e-test stabilization.
+
 ## 0.4.4
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

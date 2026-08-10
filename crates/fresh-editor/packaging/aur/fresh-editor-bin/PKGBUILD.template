@@ -33,6 +33,21 @@ package() {
     install -dm755 "$pkgdir/usr/bin"
     ln -s "/usr/share/fresh-editor/fresh" "$pkgdir/usr/bin/fresh"
 
+    # Provenance receipt: tells the editor it was installed from the AUR
+    # binary package so updates defer to the user's AUR helper.
+    install -dm755 "$pkgdir/usr/share/fresh-editor"
+    cat > "$pkgdir/usr/share/fresh-editor/install-receipt.toml" <<EOF
+schema = 1
+channel = "aur-bin"
+version = "$pkgver"
+package_name = "fresh-editor"
+managed = true
+self_update = false
+
+[hints]
+aur_pkg = "fresh-editor-bin"
+EOF
+
     # Documentation
     install -Dm644 README.md "$pkgdir/usr/share/doc/fresh-editor/README.md"
 

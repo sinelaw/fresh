@@ -47,11 +47,22 @@ impl Editor {
         self.software_cursor_only = enabled;
     }
 
-    /// Set the session name for display in status bar.
+    /// Set the daemon name that scopes this editor's persistence.
     ///
-    /// When a session name is set, the recovery service is reinitialized
-    /// to use a session-scoped recovery directory so each named session's
-    /// recovery data is isolated.
+    /// `Some` means a *named* daemon (`fresh --cmd daemon new NAME`), which owns
+    /// its own workspace collection and recovery directory: two named daemons
+    /// over one project must not share a layout. It must stay `None` for an
+    /// unnamed working-directory daemon (`fresh -a`), which is the same editor
+    /// state a direct-mode `fresh` in that directory sees and therefore shares
+    /// its per-directory workspaces and recovery. Passing a directory *label*
+    /// here is what made `fresh -a` come up with empty workspaces.
+    ///
+    /// For the status-bar label — which every daemon has, named or not — see
+    /// [`Self::set_session_display_name`].
+    ///
+    /// When a name is set, the recovery service is reinitialized to use a
+    /// session-scoped recovery directory so each named daemon's recovery data is
+    /// isolated.
     pub fn set_session_name(&mut self, name: Option<String>) {
         if let Some(ref session_name) = name {
             let base_recovery_dir = self.dir_context.recovery_dir();
@@ -71,9 +82,28 @@ impl Editor {
         self.session_name = name;
     }
 
-    /// Get the session name (for status bar display)
+    /// Get the daemon name that scopes persistence (`None` for a
+    /// working-directory daemon and for direct mode).
     pub fn session_name(&self) -> Option<&str> {
         self.session_name.as_deref()
+    }
+
+    /// Set the label shown in the status bar for a daemon-backed editor.
+    ///
+    /// Purely cosmetic, and set for *every* daemon: a named one shows its name,
+    /// an unnamed working-directory one shows the directory. Deliberately
+    /// separate from [`Self::set_session_name`], which decides where workspaces
+    /// and recovery data live.
+    pub fn set_session_display_name(&mut self, name: Option<String>) {
+        self.session_display_name = name;
+    }
+
+    /// The status-bar label for a daemon-backed editor, falling back to the
+    /// persistence-scoping name when no distinct label was set.
+    pub fn session_display_name(&self) -> Option<&str> {
+        self.session_display_name
+            .as_deref()
+            .or_else(|| self.session_name.as_deref())
     }
 
     /// Queue escape sequences to be sent to the client (session mode only)
@@ -273,17 +303,21 @@ impl Editor {
     /// disturbing the live cursor.
     ///
     /// Returns whether the editor wants the next frame redrawn.
-    pub fn handle_input_event(&mut self, event: crossterm::event::Event) -> anyhow::Result<bool> {
-        use crossterm::event::{Event as Ev, KeyEventKind};
+    pub fn handle_input_event(&mut self, event: fresh_input_parser::Event) -> anyhow::Result<bool> {
+        use crate::input::is_keystroke;
+        use fresh_input_parser::{Event as Ev, KeyPress};
 
         match event {
-            Ev::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                let key_code = format!("{:?}", key_event.code);
-                let modifiers = format!("{:?}", key_event.modifiers);
+            Ev::Key(press) if is_keystroke(press.kind) => {
+                let key_code = format!("{:?}", press.code);
+                let modifiers = format!("{:?}", press.modifiers);
                 self.active_window_mut()
                     .log_keystroke(&key_code, &modifiers);
-                let translated = self.key_translator().translate(key_event);
-                self.handle_key(translated.code, translated.modifiers)?;
+                // The calibration translator rewrites the physical chord only;
+                // the layout character rides along untouched, since it says
+                // what the key types rather than which chord arrived.
+                let translated = self.key_translator().translate(press.event);
+                self.handle_key_press(KeyPress::with_layout_char(translated, press.layout_char))?;
                 // If `paste()` just took the async placeholder path,
                 // skip the otherwise-automatic render for this
                 // keystroke. The placeholder is sitting in the

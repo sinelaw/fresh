@@ -261,7 +261,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
             .unwrap_or((0, 20));
 
         // Remember the viewport we computed overlays for so we can detect
@@ -352,7 +352,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&active_split)
-            .map(|vs| vs.viewport.top_byte);
+            .map(|vs| vs.viewport.top_byte());
         if current_top != self.active_window_mut().search_overlay_top_byte {
             self.refresh_search_overlays();
             true
@@ -442,6 +442,9 @@ impl Editor {
     /// is used directly and viewport overlays are refreshed after the cursor
     /// moves.
     pub(super) fn find_next(&mut self) {
+        if self.run_pending_prompt_search(SearchDirection::Forward) {
+            return;
+        }
         self.find_match_in_direction(SearchDirection::Forward);
     }
 
@@ -451,7 +454,69 @@ impl Editor {
     /// (they auto-track buffer edits).  For large files, `search_state.matches`
     /// is used directly and viewport overlays are refreshed.
     pub(super) fn find_previous(&mut self) {
+        if self.run_pending_prompt_search(SearchDirection::Backward) {
+            return;
+        }
         self.find_match_in_direction(SearchDirection::Backward);
+    }
+
+    /// The query typed into an open find/replace *search* prompt, if one is
+    /// open.
+    ///
+    /// Only the pattern-entry prompts qualify: `Replace` / `QueryReplace`
+    /// share the `SearchPrompt` key context but their input is the
+    /// replacement text, not the pattern, so find-next there navigates the
+    /// already-committed search instead.
+    fn active_search_prompt_query(&self) -> Option<String> {
+        self.active_window().prompt.as_ref().and_then(|p| {
+            matches!(
+                p.prompt_type,
+                PromptType::Search | PromptType::ReplaceSearch | PromptType::QueryReplaceSearch
+            )
+            .then(|| p.input.clone())
+        })
+    }
+
+    /// Commit the query typed into an open search bar before stepping
+    /// through matches, and report whether that already moved the cursor.
+    ///
+    /// F3 / Shift+F3 stay live while the search bar is open — the bar keeps
+    /// the keyboard and the query stays editable, matching VS Code, Sublime
+    /// and browser find (issue #2111). The first press on a query that has
+    /// not been run yet (or has been edited since) runs it here, which lands
+    /// on the first match at/after the cursor exactly like Enter would;
+    /// later presses fall through to plain match stepping.
+    ///
+    /// Returns `true` when the search ran, meaning the caller must not step
+    /// again — the cursor is already on the match the user asked for.
+    fn run_pending_prompt_search(&mut self, direction: SearchDirection) -> bool {
+        let Some(query) = self.active_search_prompt_query() else {
+            return false;
+        };
+        if query.is_empty() {
+            // Empty bar: navigate whatever search is still active, if any.
+            return false;
+        }
+        let already_committed = self
+            .active_window()
+            .search_state
+            .as_ref()
+            .is_some_and(|s| s.query == query);
+        if already_committed {
+            return false;
+        }
+
+        self.perform_search(&query);
+
+        // `perform_search` stops at the first match at/after the cursor,
+        // which is where a forward search should land. A backward one wants
+        // the match before where the user was, so step once more.
+        if matches!(direction, SearchDirection::Backward)
+            && self.active_window().search_state.is_some()
+        {
+            self.find_match_in_direction(SearchDirection::Backward);
+        }
+        true
     }
 
     /// Navigate to the next or previous search match relative to the current
@@ -461,6 +526,13 @@ impl Editor {
     fn find_match_in_direction(&mut self, direction: SearchDirection) {
         let overlay_positions = self.get_search_match_positions();
         let is_large = self.active_state().buffer.is_large_file();
+
+        // While the search bar is open its incremental highlighting refreshes
+        // the overlays for the visible viewport only, so they are not the
+        // full match set and stepping through them would wrap inside the
+        // screen. `search_state.matches` is authoritative there instead — the
+        // prompt owns the keyboard, so no edit can shift the stored offsets.
+        let search_bar_open = self.active_search_prompt_query().is_some();
 
         // Snapshot cursor_pos up front so the `&mut search_state` borrow
         // below doesn't conflict with the read of self.windows.
@@ -479,8 +551,10 @@ impl Editor {
         if let Some(ref mut search_state) = self.active_window_mut().search_state {
             // Use overlay positions for small files (they auto-track edits),
             // otherwise reference search_state.matches directly to avoid cloning.
-            let use_overlays =
-                !is_large && !overlay_positions.is_empty() && search_state.search_range.is_none();
+            let use_overlays = !is_large
+                && !search_bar_open
+                && !overlay_positions.is_empty()
+                && search_state.search_range.is_none();
             let match_positions: &[usize] = if use_overlays {
                 &overlay_positions
             } else {
@@ -836,25 +910,18 @@ impl Editor {
                 .map(|m| (m.offset, m.len, m.replacement))
                 .collect()
         } else {
-            // Plain text mode - replacement is used literally
+            // Plain text mode - replacement is used literally.
+            // One streaming pass over the buffer: asking for the next match
+            // from scratch per occurrence re-reads a chunk each time, which
+            // dominated the whole replace on files with many matches.
             let state = self.active_state();
             let buffer_len = state.buffer.len();
-            let mut matches = Vec::new();
-            let mut current_pos = 0;
-
-            while current_pos < buffer_len {
-                if let Some(offset) = state.buffer.find_next_in_range(
-                    search,
-                    current_pos,
-                    Some(current_pos..buffer_len),
-                ) {
-                    matches.push((offset, search.len(), replacement.to_string()));
-                    current_pos = offset + search.len();
-                } else {
-                    break;
-                }
-            }
-            matches
+            state
+                .buffer
+                .find_all_in_range(search, 0..buffer_len, usize::MAX)
+                .into_iter()
+                .map(|offset| (offset, search.len(), replacement.to_string()))
+                .collect()
         };
 
         let count = matches.len();

@@ -13,14 +13,14 @@
 mod common;
 
 use fresh::config::Config;
-use fresh::workspace::{get_workspace_path, Workspace};
+use fresh::workspace::{find_workspace_file_by_root, Workspace};
 use std::path::Path;
 use tempfile::TempDir;
 
 use common::harness::EditorTestHarness;
 
 fn read_workspace(working_dir: &Path) -> Option<Workspace> {
-    let path = get_workspace_path(working_dir).ok()?;
+    let path = find_workspace_file_by_root(working_dir).ok()??;
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
 }

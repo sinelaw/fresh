@@ -81,7 +81,7 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(split_id)
-                .map(|vs| vs.viewport.top_byte)
+                .map(|vs| vs.viewport.top_byte())
                 .unwrap_or(0);
             let compose_width = self
                 .windows
@@ -114,12 +114,22 @@ impl Editor {
                 .map(|w| &w.buffers)
                 .expect("active window present")
                 .get(buffer_id)?;
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             ) {
                 return Some((*buffer_id, byte_pos));
             }
@@ -164,7 +174,7 @@ impl Editor {
                 .map(|(_, vs)| vs)
                 .expect("active window must have a populated split layout")
                 .get(&split_id)
-                .map(|vs| vs.viewport.top_byte)
+                .map(|vs| vs.viewport.top_byte())
                 .unwrap_or(0);
             let compose_width = self
                 .windows
@@ -221,8 +231,27 @@ impl Editor {
         // driven, it stops listening to `mouse_click` for its panel
         // and the duplicate dispatch becomes a no-op.
         if let (Some(brow), Some(bcol)) = (mc_buffer_row, mc_buffer_col) {
-            if let Some((panel_key, hit)) = self.widget_registry.hit_test(buffer_id, brow, bcol) {
+            // Row-aware so a click past a list/tree row's text still lands on
+            // the row (see `hit_test_row_aware`) — the mounted panels
+            // (Settings, Search & Replace) get the same full-width rows the
+            // floating dock does, from the one shared resolver.
+            if let Some((panel_key, hit)) = self
+                .widget_registry
+                .hit_test_row_aware(buffer_id, brow, bcol)
+            {
                 self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
+            }
+        }
+
+        // A line that points somewhere (`editor.setLineTargets`) opens its
+        // target on click. Checked before the plugin hook so a declarative
+        // index behaves the same whether or not anything is listening — its
+        // author is typically a script that has already exited.
+        #[cfg(feature = "plugins")]
+        if let Some(brow) = mc_buffer_row {
+            if let Some(target) = self.line_target_at(buffer_id, brow as usize) {
+                self.follow_line_target(target, split_id);
+                return Ok(());
             }
         }
 
@@ -260,11 +289,20 @@ impl Editor {
         // A widget-panel buffer can also be non-scrollable (it owns its own
         // scroll window, e.g. Search & Replace), but it IS an interactive
         // target — its click must still route focus to the split so
-        // keyboard nav works afterward. So only swallow non-scrollable
-        // buffers that don't host a widget panel.
-        if self.active_window().is_non_scrollable_buffer(buffer_id)
-            && self.widget_registry.panels_for_buffer(buffer_id).is_empty()
-        {
+        // keyboard nav works afterward.
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+            if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
+                return Ok(());
+            }
+            // Widget panel: take the focus, then stop. The panel owns every
+            // row it draws, and the hit dispatch above already delivered any
+            // click that landed on a control. A click that missed one — a
+            // `labeledSection` border, the padding under a short list — must
+            // not fall through to cursor placement: the buffer's cursor is
+            // hidden, but the viewport still follows it, so the click scrolls
+            // the panel's own header and buttons out of view with no way to
+            // scroll them back.
+            self.focus_split(split_id, buffer_id);
             return Ok(());
         }
 
@@ -338,7 +376,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|vs| vs.viewport.top_byte)
+            .map(|vs| vs.viewport.top_byte())
             .unwrap_or(0);
 
         // Get compose width for this split (adjusts content rect for centered layout)
@@ -393,12 +431,22 @@ impl Editor {
                         .collapsed_header_bytes(&state.buffer, &state.marker_list)
                 })
                 .unwrap_or_default();
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             );
 
             let cursor_snapshot = self
@@ -609,13 +657,9 @@ impl Editor {
         let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
 
         if let Some(explorer) = self.file_explorer_mut().as_mut() {
-            let display_nodes = explorer.get_display_nodes();
-            let scroll_offset = explorer.get_scroll_offset();
-            let clicked_index = (relative_row as usize) + scroll_offset;
-
-            if clicked_index < display_nodes.len() {
-                let (node_id, _indent) = display_nodes[clicked_index];
-
+            if let Some((node_id, _indent)) =
+                explorer.get_display_node_at_viewport_row(relative_row as usize)
+            {
                 // Select this node
                 explorer.set_selected(Some(node_id));
 

@@ -161,7 +161,7 @@ function globalConfigExists(): boolean {
       editor.pathJoin(home, "Library", "Application Support", "asm-lsp", ".asm-lsp.toml")
     );
   }
-  return candidates.some((path) => editor.fileExists(path));
+  return candidates.some((path) => editor.fileExists(editor.authorityPath(path)));
 }
 
 /// Guess the assembler dialect from the language key and buffer contents.
@@ -219,7 +219,7 @@ function handleConfigOfferResult(actionId: string) {
     const assembler = actionId.slice("create:".length);
     const arch = offer ? offer.arch : "x86/x86-64";
     const path = projectConfigPath();
-    if (!editor.writeFile(path, configToml(assembler, arch))) {
+    if (!editor.writeFile(editor.authorityPath(path), configToml(assembler, arch))) {
       editor.setStatus(`Failed to write ${path}`);
       return;
     }
@@ -262,7 +262,7 @@ async function maybeOfferConfig(bufferId: number, path: string) {
   if (!language) {
     return;
   }
-  if (editor.fileExists(projectConfigPath()) || globalConfigExists()) {
+  if (editor.fileExists(editor.authorityPath(projectConfigPath())) || globalConfigExists()) {
     return;
   }
   if (editor.getGlobalState(`config-offer-never:${editor.getCwd()}`) === true) {

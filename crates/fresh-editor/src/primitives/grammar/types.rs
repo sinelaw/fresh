@@ -178,6 +178,22 @@ pub const DOCKERFILE_GRAMMAR: &str = include_str!("../../grammars/dockerfile.sub
 pub const INI_GRAMMAR: &str = include_str!("../../grammars/ini.sublime-syntax");
 /// Embedded CMake grammar
 pub const CMAKE_GRAMMAR: &str = include_str!("../../grammars/cmake.sublime-syntax");
+/// Embedded CMake cache grammar
+pub const CMAKE_CACHE_GRAMMAR: &str = include_str!("../../grammars/cmake-cache.sublime-syntax");
+/// Embedded pkg-config metadata grammar
+pub const PKG_CONFIG_GRAMMAR: &str = include_str!("../../grammars/pkg-config.sublime-syntax");
+/// Embedded Wavefront OBJ mesh grammar
+pub const WAVEFRONT_OBJ_GRAMMAR: &str = include_str!("../../grammars/wavefront-obj.sublime-syntax");
+/// Embedded Doxygen documentation grammar
+pub const DOXYGEN_GRAMMAR: &str = include_str!("../../grammars/doxygen.sublime-syntax");
+/// Embedded Doxygen configuration grammar
+pub const DOXYGEN_CONFIG_GRAMMAR: &str =
+    include_str!("../../grammars/doxygen-config.sublime-syntax");
+/// Embedded BibTeX style language grammar
+pub const BIBTEX_STYLE_GRAMMAR: &str = include_str!("../../grammars/bibtex-style.sublime-syntax");
+/// Embedded Windows resource script grammar
+pub const WINDOWS_RESOURCE_GRAMMAR: &str =
+    include_str!("../../grammars/windows-resource.sublime-syntax");
 /// Embedded SCSS grammar
 pub const SCSS_GRAMMAR: &str = include_str!("../../grammars/scss.sublime-syntax");
 /// Embedded LESS grammar
@@ -200,6 +216,8 @@ pub const NIX_GRAMMAR: &str = include_str!("../../grammars/nix.sublime-syntax");
 pub const HCL_GRAMMAR: &str = include_str!("../../grammars/hcl.sublime-syntax");
 /// Embedded Protocol Buffers grammar
 pub const PROTOBUF_GRAMMAR: &str = include_str!("../../grammars/protobuf.sublime-syntax");
+/// Embedded Apache Thrift grammar
+pub const THRIFT_GRAMMAR: &str = include_str!("../../grammars/thrift.sublime-syntax");
 /// Embedded GraphQL grammar
 pub const GRAPHQL_GRAMMAR: &str = include_str!("../../grammars/graphql.sublime-syntax");
 /// Embedded Julia grammar
@@ -236,6 +254,11 @@ pub const EARTHFILE_GRAMMAR: &str = include_str!("../../grammars/earthfile.subli
 pub const GOMOD_GRAMMAR: &str = include_str!("../../grammars/gomod.sublime-syntax");
 /// Embedded Vue grammar
 pub const VUE_GRAMMAR: &str = include_str!("../../grammars/vue.sublime-syntax");
+
+/// Embedded TypeScript grammar. Serves embedded contexts only (Vue
+/// `lang="ts"`, Markdown ```ts fences) — `.ts` buffers stay on
+/// tree-sitter via the catalog skip below, mirroring JavaScript.
+pub const TYPESCRIPT_GRAMMAR: &str = include_str!("../../grammars/typescript.sublime-syntax");
 /// Embedded Svelte grammar
 pub const SVELTE_GRAMMAR: &str = include_str!("../../grammars/svelte.sublime-syntax");
 /// Embedded Astro grammar
@@ -530,13 +553,27 @@ impl GrammarRegistry {
         // CMake
         let cmake_scope = "source.cmake".to_string();
         map.insert("CMakeLists.txt".to_string(), cmake_scope);
+        let cmake_cache_scope = "source.cmake-cache".to_string();
+        map.insert("CMakeCache.txt".to_string(), cmake_cache_scope.clone());
+        map.insert("cmakecache.txt".to_string(), cmake_cache_scope);
+
+        // Doxygen configuration and CMake/autoconf template
+        let doxygen_config_scope = "source.doxygen-config".to_string();
+        map.insert("Doxyfile".to_string(), doxygen_config_scope.clone());
+        map.insert("Doxyfile.in".to_string(), doxygen_config_scope);
 
         // Starlark/Bazel
         let starlark_scope = "source.starlark".to_string();
-        map.insert("BUILD".to_string(), starlark_scope.clone());
-        map.insert("BUILD.bazel".to_string(), starlark_scope.clone());
-        map.insert("WORKSPACE".to_string(), starlark_scope.clone());
-        map.insert("WORKSPACE.bazel".to_string(), starlark_scope.clone());
+        for filename in [
+            "BUILD",
+            "BUILD.bazel",
+            "MODULE.bazel",
+            "REPO.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+        ] {
+            map.insert(filename.to_string(), starlark_scope.clone());
+        }
         map.insert("Tiltfile".to_string(), starlark_scope);
 
         // Justfile (various casings)
@@ -719,6 +756,13 @@ impl GrammarRegistry {
             (DOCKERFILE_GRAMMAR, "Dockerfile"),
             (INI_GRAMMAR, "INI"),
             (CMAKE_GRAMMAR, "CMake"),
+            (CMAKE_CACHE_GRAMMAR, "CMake Cache"),
+            (PKG_CONFIG_GRAMMAR, "pkg-config"),
+            (WAVEFRONT_OBJ_GRAMMAR, "Wavefront OBJ"),
+            (DOXYGEN_GRAMMAR, "Doxygen"),
+            (DOXYGEN_CONFIG_GRAMMAR, "Doxygen Config"),
+            (BIBTEX_STYLE_GRAMMAR, "BibTeX Style"),
+            (WINDOWS_RESOURCE_GRAMMAR, "Windows Resource Script"),
             (SCSS_GRAMMAR, "SCSS"),
             (LESS_GRAMMAR, "LESS"),
             (POWERSHELL_GRAMMAR, "PowerShell"),
@@ -730,6 +774,7 @@ impl GrammarRegistry {
             (NIX_GRAMMAR, "Nix"),
             (HCL_GRAMMAR, "HCL"),
             (PROTOBUF_GRAMMAR, "Protocol Buffers"),
+            (THRIFT_GRAMMAR, "Thrift"),
             (GRAPHQL_GRAMMAR, "GraphQL"),
             (JULIA_GRAMMAR, "Julia"),
             (NIM_GRAMMAR, "Nim"),
@@ -748,6 +793,7 @@ impl GrammarRegistry {
             (EARTHFILE_GRAMMAR, "Earthfile"),
             (GOMOD_GRAMMAR, "Go Module"),
             (VUE_GRAMMAR, "Vue"),
+            (TYPESCRIPT_GRAMMAR, "TypeScript"),
             (SVELTE_GRAMMAR, "Svelte"),
             (ASTRO_GRAMMAR, "Astro"),
             (HYPRLANG_GRAMMAR, "Hyprlang"),
@@ -854,6 +900,7 @@ impl GrammarRegistry {
             ("pot", "Gettext PO"),
             ("pbxproj", "Xcode Project"),
             ("xcodeproj", "Xcode Project"),
+            ("bazel", "Starlark"),
             ("ts", "TypeScript"),
             ("js", "JavaScript"),
             ("py", "Python"),
@@ -1074,8 +1121,16 @@ impl GrammarRegistry {
         // still returns syntect's grammar via the catalog's fallback path,
         // so markdown popup rendering and other code-string highlighters
         // are unaffected.
+        //
+        // TypeScript is skipped for the same reason in reverse: its bundled
+        // grammar exists only for embedded contexts (Vue `lang="ts"`,
+        // Markdown ```ts fences, resolved via `find_syntax_by_token`), and
+        // `.ts` buffers must keep the richer tree-sitter highlighting.
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
-            if syntax.name == "Plain Text" || syntax.name == "JavaScript" {
+            if syntax.name == "Plain Text"
+                || syntax.name == "JavaScript"
+                || syntax.name == "TypeScript"
+            {
                 continue;
             }
             let (language_id, tree_sitter) = derive_language_id(&syntax.name);
@@ -1486,6 +1541,48 @@ impl GrammarRegistry {
     #[cfg(test)]
     pub(crate) fn loaded_grammar_paths(&self) -> &[GrammarSpec] {
         &self.loaded_grammar_paths
+    }
+
+    /// Grammar files declared by `[languages.<id>] textmate_grammar = "…"`.
+    ///
+    /// The language's own `extensions` come along so the loaded grammar is
+    /// reachable by file extension, the same way plugin-registered grammars are.
+    pub fn config_grammar_specs(
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) -> Vec<GrammarSpec> {
+        let mut specs: Vec<GrammarSpec> = languages
+            .iter()
+            .filter_map(|(id, lc)| {
+                Some(GrammarSpec {
+                    language: id.clone(),
+                    path: lc.textmate_grammar.clone()?,
+                    extensions: lc.extensions.clone(),
+                })
+            })
+            .collect();
+        // `languages` is a HashMap, so fix an order — otherwise two grammars
+        // claiming the same extension would win at random between runs.
+        specs.sort_by(|a, b| a.language.cmp(&b.language));
+        specs
+    }
+
+    /// Load the `[languages]` block into `registry`: first any
+    /// `textmate_grammar` files (a full syntax-set rebuild, so only when at
+    /// least one is configured), then the catalog config — which the rebuild
+    /// drops and so has to be re-applied after it.
+    pub fn apply_languages(
+        registry: &mut Arc<Self>,
+        languages: &HashMap<String, crate::config::LanguageConfig>,
+    ) {
+        let specs = Self::config_grammar_specs(languages);
+        if !specs.is_empty() {
+            if let Some(rebuilt) = Self::with_additional_grammars(registry, &specs) {
+                *registry = Arc::new(rebuilt);
+            }
+        }
+        Arc::get_mut(registry)
+            .expect("grammar registry Arc must be uniquely owned when applying language config")
+            .apply_language_config(languages);
     }
 
     /// Create a new registry with additional grammar files
@@ -2279,6 +2376,43 @@ mod tests {
     }
 
     #[test]
+    fn test_bazel_files_resolve_to_starlark_grammar() {
+        let syntax = SyntaxDefinition::load_from_str(STARLARK_GRAMMAR, true, Some("Starlark"))
+            .expect("Starlark grammar should parse");
+        for extension in ["bzl", "star", "bazel"] {
+            assert!(
+                syntax.file_extensions.iter().any(|ext| ext == extension),
+                "Starlark grammar should declare .{extension}"
+            );
+        }
+
+        let registry = GrammarRegistry::default();
+        for path in [
+            "defs.bzl",
+            "BUILD",
+            "BUILD.bazel",
+            "MODULE.bazel",
+            "REPO.bazel",
+            "WORKSPACE",
+            "WORKSPACE.bazel",
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, "Starlark", "for {path}");
+            assert!(entry.engines.syntect.is_some(), "for {path}");
+        }
+
+        assert_eq!(
+            registry
+                .find_by_name("bazel")
+                .expect("Bazel alias should resolve")
+                .display_name,
+            "Starlark"
+        );
+    }
+
+    #[test]
     fn test_issue_2556_2557_2560_embedded_grammars_load_and_resolve() {
         for (grammar, name, path) in [
             (GETTEXT_GRAMMAR, "Gettext PO", "messages.po"),
@@ -2323,6 +2457,70 @@ mod tests {
             assert_eq!(entry.display_name, name);
             assert!(entry.engines.syntect.is_some());
             assert!(entry.engines.tree_sitter.is_none());
+        }
+    }
+
+    #[test]
+    fn test_asset_and_build_metadata_grammars_load_and_resolve() {
+        for (grammar, name, path) in [
+            (GLSL_GRAMMAR, "GLSL", "shader.glslf"),
+            (GLSL_GRAMMAR, "GLSL", "shader.glslv"),
+            (WAVEFRONT_OBJ_GRAMMAR, "Wavefront OBJ", "mesh.obj"),
+            (PKG_CONFIG_GRAMMAR, "pkg-config", "library.pc"),
+            (CMAKE_CACHE_GRAMMAR, "CMake Cache", "CMakeCache.txt"),
+            (CMAKE_CACHE_GRAMMAR, "CMake Cache", "cmakecache.txt"),
+            (DOXYGEN_GRAMMAR, "Doxygen", "documentation.dox"),
+            (DOXYGEN_GRAMMAR, "Doxygen", "documentation.doxy"),
+            (DOXYGEN_CONFIG_GRAMMAR, "Doxygen Config", "Doxyfile.in"),
+            (
+                WINDOWS_RESOURCE_GRAMMAR,
+                "Windows Resource Script",
+                "Info.rc",
+            ),
+            (BIBTEX_STYLE_GRAMMAR, "BibTeX Style", "plain.bst"),
+        ] {
+            SyntaxDefinition::load_from_str(grammar, true, Some(name))
+                .unwrap_or_else(|e| panic!("{name} grammar should parse: {e}"));
+
+            let registry = GrammarRegistry::default();
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, name, "{path} resolved incorrectly");
+            assert!(entry.engines.syntect.is_some());
+            assert!(entry.engines.tree_sitter.is_none());
+        }
+    }
+
+    #[test]
+    fn test_latex_related_default_language_mappings() {
+        let mut registry = GrammarRegistry::default();
+        let config = crate::config::Config::default();
+        registry.apply_language_config(&config.languages);
+
+        for (path, expected) in [
+            ("document.tex", "LaTeX"),
+            ("document.tex.in", "LaTeX"),
+            ("package.sty", "TeX"),
+            ("package.dtx", "TeX"),
+            ("citations.bbx", "TeX"),
+            ("context.mkxl", "TeX"),
+            ("document.aux", "TeX"),
+            ("document.toc", "TeX"),
+            ("references.bib", "BibTeX"),
+            ("references.bib.in", "BibTeX"),
+            ("plain.bst", "BibTeX Style"),
+            ("latexmkrc", "Perl"),
+            (".latexmkrc", "Perl"),
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(
+                entry.display_name, expected,
+                "{path} should use {expected} highlighting"
+            );
+            assert!(entry.engines.syntect.is_some());
         }
     }
 

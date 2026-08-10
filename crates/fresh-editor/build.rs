@@ -22,6 +22,22 @@ fn main() {
         println!("cargo::rerun-if-changed=../../.git/refs");
     }
 
+    // ---- Assemble the self-contained web-ui page --------------------------
+    // Sources live in web-ui/ split by concern: shell.html (the document
+    // skeleton) plus css/*.css and js/*.js, each directory concatenated in
+    // FILENAME order (the numeric prefixes define CSS cascade / JS
+    // declaration order — order is load-bearing, later files deliberately
+    // override earlier ones). The result replaces the /*@CSS@*/ and /*@JS@*/
+    // markers in shell.html and is written to $OUT_DIR/webui-index.html,
+    // which webui/mod.rs embeds via include_str! — the served page stays a
+    // single fully self-contained file.
+    //
+    // Only the `web` feature compiles webui/mod.rs, so only that build needs
+    // the page — skip the read-and-concatenate work otherwise.
+    if std::env::var_os("CARGO_FEATURE_WEB").is_some() {
+        assemble_webui();
+    }
+
     // Rerun if locales change
     println!("cargo::rerun-if-changed=locales");
 
@@ -332,6 +348,19 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/dockerfile.sublime-syntax", "Dockerfile"),
         ("src/grammars/ini.sublime-syntax", "INI"),
         ("src/grammars/cmake.sublime-syntax", "CMake"),
+        ("src/grammars/cmake-cache.sublime-syntax", "CMake Cache"),
+        ("src/grammars/pkg-config.sublime-syntax", "pkg-config"),
+        ("src/grammars/wavefront-obj.sublime-syntax", "Wavefront OBJ"),
+        ("src/grammars/doxygen.sublime-syntax", "Doxygen"),
+        (
+            "src/grammars/doxygen-config.sublime-syntax",
+            "Doxygen Config",
+        ),
+        ("src/grammars/bibtex-style.sublime-syntax", "BibTeX Style"),
+        (
+            "src/grammars/windows-resource.sublime-syntax",
+            "Windows Resource Script",
+        ),
         ("src/grammars/scss.sublime-syntax", "SCSS"),
         ("src/grammars/less.sublime-syntax", "LESS"),
         ("src/grammars/powershell.sublime-syntax", "PowerShell"),
@@ -343,6 +372,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/nix.sublime-syntax", "Nix"),
         ("src/grammars/hcl.sublime-syntax", "HCL"),
         ("src/grammars/protobuf.sublime-syntax", "Protocol Buffers"),
+        ("src/grammars/thrift.sublime-syntax", "Thrift"),
         ("src/grammars/graphql.sublime-syntax", "GraphQL"),
         ("src/grammars/julia.sublime-syntax", "Julia"),
         ("src/grammars/nim.sublime-syntax", "Nim"),
@@ -361,6 +391,7 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
         ("src/grammars/earthfile.sublime-syntax", "Earthfile"),
         ("src/grammars/gomod.sublime-syntax", "Go Module"),
         ("src/grammars/vue.sublime-syntax", "Vue"),
+        ("src/grammars/typescript.sublime-syntax", "TypeScript"),
         ("src/grammars/svelte.sublime-syntax", "Svelte"),
         ("src/grammars/astro.sublime-syntax", "Astro"),
         ("src/grammars/hyprlang.sublime-syntax", "Hyprlang"),
@@ -411,4 +442,60 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     Ok(())
+}
+
+/// Build the single self-contained web-ui page from its split sources.
+///
+/// `web-ui/shell.html` is the document skeleton; `web-ui/css/*.css` and
+/// `web-ui/js/*.js` are concatenated in filename order (numeric prefixes
+/// define the order, which is load-bearing) into its `/*@CSS@*/` and
+/// `/*@JS@*/` markers. Output: `$OUT_DIR/webui-index.html`, embedded by
+/// `webui/mod.rs` via `include_str!` so `fresh --web` stays fully
+/// self-contained.
+fn assemble_webui() {
+    // Inside the crate, not at the workspace root: `cargo package` vendors only
+    // files under the package directory, so a path reaching outside it would
+    // leave the published crate unable to build with `--features web`.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("web-ui");
+    assert!(
+        root.is_dir(),
+        "the `web` feature needs the web-ui/ sources at {}",
+        root.display()
+    );
+    println!(
+        "cargo::rerun-if-changed={}",
+        root.join("shell.html").display()
+    );
+    // The directory entries are also watched so ADDING/REMOVING a part
+    // retriggers; per-file lines below catch content edits.
+    println!("cargo::rerun-if-changed={}", root.join("css").display());
+    println!("cargo::rerun-if-changed={}", root.join("js").display());
+
+    let concat_dir = |dir: &str| -> String {
+        let mut files: Vec<_> = fs::read_dir(root.join(dir))
+            .unwrap_or_else(|e| panic!("web-ui/{dir}: {e}"))
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .collect();
+        files.sort();
+        let mut out = String::new();
+        for f in &files {
+            println!("cargo::rerun-if-changed={}", f.display());
+            out.push_str(&fs::read_to_string(f).unwrap_or_else(|e| panic!("{}: {e}", f.display())));
+        }
+        out
+    };
+
+    let shell = fs::read_to_string(root.join("shell.html")).expect("web-ui/shell.html");
+    let css = concat_dir("css");
+    let js = concat_dir("js");
+    assert!(
+        shell.contains("/*@CSS@*/") && shell.contains("/*@JS@*/"),
+        "web-ui/shell.html must contain the /*@CSS@*/ and /*@JS@*/ markers"
+    );
+    let page = shell
+        .replacen("/*@CSS@*/", &css, 1)
+        .replacen("/*@JS@*/", &js, 1);
+
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR");
+    fs::write(Path::new(&out_dir).join("webui-index.html"), page).expect("write webui-index.html");
 }

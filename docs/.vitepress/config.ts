@@ -44,6 +44,7 @@ export default defineConfig({
         text: "Blog",
         link: "/blog/",
         items: [
+          { text: "One Editor, Every Worktree", link: "/blog/orchestrator-worktrees/" },
           { text: "Fresh 0.4.0", link: "/blog/fresh-0.4.0/" },
           { text: "The Architecture of Fresh", link: "/blog/fresh-pipeline/" },
           { text: "Fresh 0.3.0", link: "/blog/fresh-0.3.0/" },
@@ -66,6 +67,8 @@ export default defineConfig({
           { text: "File Explorer", link: "/features/file-explorer" },
           { text: "Search and Replace", link: "/features/search-replace" },
           { text: "Integrated Terminal", link: "/features/terminal" },
+          { text: "Scripting the Editor", link: "/features/scripting" },
+          { text: "Guided Code Tours", link: "/features/code-tours" },
           { text: "Language Support", link: "/features/languages" },
           { text: "LSP Integration", link: "/features/lsp" },
           { text: "Git", link: "/features/git" },

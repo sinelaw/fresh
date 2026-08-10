@@ -136,12 +136,18 @@ jobs:
 
       - name: Build release binary
         shell: bash
+        # TARGET comes through the environment rather than being interpolated
+        # into the script: a `${{ }}` substitution inside a `[[ ]]` glob is
+        # opaque to shellcheck, which then reads the comparison as one that can
+        # never match (SC2193).
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          if [ "${{ matrix.cross }}" = "true" ] && [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+          if [ "${{ matrix.cross }}" = "true" ] && [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           fi
           # Static link the C runtime on Windows MSVC to avoid vcruntime DLL dependency
-          if [[ "${{ matrix.target }}" == *-pc-windows-msvc ]]; then
+          if [[ "$TARGET" == *-pc-windows-msvc ]]; then
             export RUSTFLAGS="-C target-feature=+crt-static"
           fi
           # Default features include embed-plugins; plugins (and themes via build.rs)
@@ -150,6 +156,8 @@ jobs:
 
       - name: Create archive (Unix)
         if: runner.os != 'Windows'
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
           mkdir -p "${ARCHIVE_NAME}"
@@ -158,11 +166,18 @@ jobs:
           # Plugins and themes are compiled into the binary via embed-plugins
           # and build.rs BUILTIN_THEMES, so we ship just the binary + docs.
 
-          # Include icons and desktop file for Linux targets
-          if [[ "${{ matrix.target }}" == *-linux-* ]]; then
+          # Include icons and desktop file for Linux targets. $TARGET rather
+          # than an inline expression, so shellcheck can read the glob (SC2193).
+          if [[ "$TARGET" == *-linux-* ]]; then
             cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons"
             cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop"
           fi
+
+          # Generic self-update receipt for raw-archive installs. Wrapper
+          # channels (npm, Homebrew, AUR-bin, …) overwrite this with their own.
+          sh scripts/write-install-receipt.sh tarball "${ARCHIVE_NAME}/install-receipt.toml" \
+            target=${{ matrix.target }} \
+            asset=fresh-editor-${{ matrix.target }}.${{ matrix.archive_ext }}
 
           if [ "${{ matrix.archive_ext }}" = "tar.xz" ]; then
             tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
@@ -181,6 +196,24 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/fresh.exe" "$ARCHIVE_NAME/"
           Copy-Item "README.md", "LICENSE", "CHANGELOG.md" "$ARCHIVE_NAME/"
           # Plugins and themes are compiled into the binary; no on-disk copy needed.
+
+          # Generic self-update receipt for raw-archive installs (a winget/scoop
+          # wrapper would ship its own; a plain unzip self-updates). Built as an
+          # indented array (a here-string's terminator can't be indented, which
+          # would break this YAML block scalar).
+          $target = "${{ matrix.target }}"
+          $lines = @(
+            'schema = 1',
+            'channel = "tarball"',
+            'package_name = "fresh-editor"',
+            'managed = false',
+            'self_update = true',
+            '',
+            '[hints]',
+            "target = `"$target`"",
+            "asset = `"fresh-editor-$target.zip`""
+          )
+          $lines | Out-File -Encoding ASCII "$ARCHIVE_NAME/install-receipt.toml"
 
           Compress-Archive -Path "$ARCHIVE_NAME/*" -DestinationPath "$ARCHIVE_NAME.zip"
           $hash = (Get-FileHash "$ARCHIVE_NAME.zip" -Algorithm SHA256).Hash.ToLower()
@@ -356,6 +389,22 @@ jobs:
               # Plugins and themes are compiled into the binary; the tarball
               # ships only the binary + docs.
               bin.install "fresh"
+              # Provenance receipt so the editor knows Homebrew installed it and
+              # defers updates to \`brew upgrade\`. Overrides the generic tarball
+              # receipt that ships inside the archive.
+              (prefix/"share/fresh").mkpath
+              (prefix/"share/fresh/install-receipt.toml").write <<~RECEIPT
+                schema = 1
+                channel = "homebrew"
+                version = "#{version}"
+                package_name = "fresh-editor"
+                managed = true
+                self_update = false
+
+                [hints]
+                formula = "fresh"
+                tap = "sinelaw/homebrew-fresh"
+              RECEIPT
             end
 
             test do
@@ -395,6 +444,12 @@ jobs:
 
       - name: List artifacts
         run: ls -la artifacts/
+
+      # Before anything exists on GitHub. Publishing is irreversible — assets
+      # freeze and the tag locks — so every check that does not require a
+      # published release runs while there is still nothing to undo.
+      - name: Staged artifacts are complete and match their checksums
+        run: bash scripts/verify-staged-artifacts.sh artifacts
 
       - name: Create source tarball
         run: |
@@ -436,41 +491,209 @@ jobs:
 
           cat release_notes.md
 
-      - name: Create GitHub Release
+      # Assets are frozen the instant an immutable release is published, so they
+      # all go onto a draft first — GitHub's own guidance for immutable-release
+      # repositories. A draft is invisible and still mutable, so an upload that
+      # goes wrong is fixable instead of shipped.
+      #
+      # This used to end with `2>/dev/null || true`, which made a failed upload
+      # look like a successful release. Errors are fatal now. The `|| true` was
+      # also load-bearing for a second reason — an unmatched glob reaches gh as
+      # a literal path and fails the command — so the list is expanded through
+      # nullglob rather than passed to gh directly.
+      - name: Assemble the release as a draft
         run: |
-          PRERELEASE_FLAG=""
-          if [ "${{ needs.plan.outputs.is_prerelease }}" = "true" ]; then
-            PRERELEASE_FLAG="--prerelease"
-          fi
+          shopt -s nullglob
+          assets=(
+            artifacts/*.tar.xz artifacts/*.tar.xz.sha256
+            artifacts/*.tar.gz artifacts/*.tar.gz.sha256
+            artifacts/*.zip artifacts/*.zip.sha256
+            artifacts/*.deb artifacts/*.deb.sha256
+            artifacts/*.rpm artifacts/*.rpm.sha256
+            artifacts/*.flatpak artifacts/*.flatpak.sha256
+            artifacts/*.AppImage artifacts/*.AppImage.sha256
+            artifacts/*.pkg artifacts/*.pkg.sha256
+            artifacts/fresh-gui-*.exe artifacts/fresh-gui-*.exe.sha256
+            artifacts/fresh.rb
+          )
+          [ "${#assets[@]}" -gt 0 ] || { echo "no artifacts to upload"; exit 1; }
+          printf 'uploading %d assets\n' "${#assets[@]}"
+          printf '%s\n' "${assets[@]}" > /tmp/intended-assets
 
           gh release create "$TAG" \
+            --draft \
+            --prerelease \
             --target "${{ github.sha }}" \
-            $PRERELEASE_FLAG \
             --title "fresh-editor ${VERSION}" \
             --notes-file release_notes.md \
-            artifacts/*.tar.xz \
-            artifacts/*.tar.xz.sha256 \
-            artifacts/*.tar.gz \
-            artifacts/*.tar.gz.sha256 \
-            artifacts/*.zip \
-            artifacts/*.zip.sha256 \
-            artifacts/*.deb \
-            artifacts/*.rpm \
-            artifacts/*.flatpak \
-            artifacts/*.flatpak.sha256 \
-            artifacts/*.AppImage \
-            artifacts/*.AppImage.sha256 \
-            artifacts/*.pkg \
-            artifacts/*.pkg.sha256 \
-            artifacts/fresh-gui-*.exe \
-            artifacts/fresh-gui-*.exe.sha256 \
-            artifacts/fresh.rb \
-            2>/dev/null || true
+            "${assets[@]}"
+
+      # Every asset actually made it. `gh release create` uploads after creating
+      # the release, so a partial upload leaves a real release missing files —
+      # and once published those cannot be added.
+      - name: Everything intended is attached
+        run: |
+          gh release view "$TAG" --json assets -q '.assets[].name' | sort > /tmp/attached
+          sed 's|.*/||' /tmp/intended-assets | sort > /tmp/intended
+          if ! diff -u /tmp/intended /tmp/attached; then
+            echo "the draft does not carry the assets that were staged"
+            exit 1
+          fi
+          echo "all $(wc -l < /tmp/attached) assets attached"
+
+      # Publishing is the pivot: it mints the release attestation the updater
+      # checks, freezes the assets, and makes the bytes downloadable. It stays
+      # flagged pre-release, so `/releases/latest` keeps naming the previous
+      # release and `fresh --cmd update` refuses this one without `--pre` — the
+      # release is reachable for testing and not offered to anyone else.
+      - name: Publish it as a pre-release
+        run: |
+          gh release edit "$TAG" --draft=false
+          state="$(gh release view "$TAG" --json isDraft,isPrerelease -q '.isDraft,.isPrerelease' | paste -sd,)"
+          [ "$state" = "false,true" ] || {
+            echo "expected a published pre-release, got isDraft,isPrerelease = $state"
+            exit 1
+          }
+
+  # The release exists and is downloadable, but is not offered to anyone yet.
+  # These two jobs are what earn it the `latest` designation.
+  #
+  # Nothing before this point covers the seam: the attestations are produced by
+  # repository configuration rather than by anything in this file, and the
+  # updater's checks are fail-closed — a missing archive or attestation would
+  # otherwise surface as a broken update on a user's machine.
+  verify-release:
+    needs: [plan, release]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Every self-updatable archive is present, checksummed and attested
+        run: bash scripts/verify-release-assets.sh "${{ needs.plan.outputs.tag }}"
+
+  # Asset-by-asset checks say the parts are there. This says a user can actually
+  # get from the last release to this one: the *previously shipped* binary, run
+  # through the real `fresh --cmd update` against real GitHub, with the
+  # attestation gate live. A release that fails here is never promoted.
+  rehearse-update:
+    needs: [plan, release]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: The last release can self-update to this one
+        run: bash scripts/rehearse-self-update.sh "${{ needs.plan.outputs.tag }}"
+
+  # The other end of the same seam. `rehearse-update` can only exercise what the
+  # *previous* release was capable of — on the first run of this flow, a binary
+  # with no `--pre` and no attestation check — so on its own it would leave the
+  # code being shipped untested until the release after next.
+  #
+  # This drives the archive just published: the pre-release is invisible to a
+  # stable client and visible with `--pre`, the guard refuses one when a feed
+  # offers it, and a real download verifies checksum *and* attestation before
+  # swapping. It cannot update to this release (it is already that version), so
+  # the swap runs downwards, which exercises the same path.
+  verify-shipped-updater:
+    needs: [plan, release]
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.publishing == 'true' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: The updater in this release works against the real feed
+        run: bash scripts/verify-shipped-updater.sh "${{ needs.plan.outputs.tag }}"
+
+  # The single moment the release becomes visible to everyone.
+  #
+  # Two calls, in this order: the API rejects marking a release latest while it
+  # is still flagged pre-release ("Latest release cannot be draft or
+  # prerelease"). `--prerelease=false` needs the `=` — these are boolean flags,
+  # and `--prerelease false` would parse the value as a positional argument.
+  #
+  # Then it reads the state back. A promotion that silently does not take would
+  # otherwise leave a finished release sitting as a pre-release indefinitely,
+  # visible to no one, which is exactly the failure this ordering exists to
+  # prevent.
+  promote:
+    needs: [plan, release, verify-release, rehearse-update, verify-shipped-updater]
+    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Mark it the latest release
+        run: |
+          gh release edit "$TAG" --prerelease=false
+          gh release edit "$TAG" --latest
+
+          if [ "$(gh release view "$TAG" --json isPrerelease -q .isPrerelease)" != "false" ]; then
+            echo "$TAG is still flagged pre-release after promotion"
+            exit 1
+          fi
+          latest="$(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)"
+          [ "$latest" = "$TAG" ] || {
+            echo "/releases/latest is $latest, expected $TAG"
+            exit 1
+          }
+          echo "$TAG is now the latest release."
+
+  # A release that fails validation cannot be withdrawn: immutable releases lock
+  # the tag and freeze the assets, so there is nothing to delete and nothing to
+  # fix in place. What is left is to say so, on the release itself, rather than
+  # leave an unexplained pre-release sitting at the top of the list while
+  # someone works out whether it is safe to install.
+  #
+  # It stays a pre-release, so no updater offers it and /releases/latest still
+  # names the last good one. The fix is forward: another patch version.
+  mark-failed:
+    needs: [plan, release, verify-release, rehearse-update, verify-shipped-updater]
+    if: >-
+      ${{ always() && needs.release.result == 'success'
+          && (needs.verify-release.result == 'failure'
+              || needs.rehearse-update.result == 'failure'
+              || needs.verify-shipped-updater.result == 'failure') }}
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Say on the release that it failed validation
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          gh release view "$TAG" --json body -q .body > body.md
+          {
+            echo "> [!CAUTION]"
+            echo "> **This release failed its own validation and must not be installed.**"
+            echo "> It remains a pre-release: \`fresh\` will not offer it, and the latest"
+            echo "> release is unchanged. See [the run that rejected it]($run_url)."
+            echo
+            cat body.md
+          } > annotated.md
+          gh release edit "$TAG" \
+            --title "fresh-editor ${VERSION} — FAILED VALIDATION, do not install" \
+            --notes-file annotated.md
 
   # Publish to Homebrew tap
   publish-homebrew:
-    needs: [plan, release]
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    needs: [plan, promote]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -500,8 +723,8 @@ jobs:
 
   # Publish to npm
   publish-npm:
-    needs: [plan, release]
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    needs: [plan, promote]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -560,8 +783,8 @@ jobs:
 
   # Publish to AUR
   publish-aur:
-    needs: [plan, release]
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    needs: [plan, promote]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/aur-publish.yml
     with:
       version: ${{ needs.plan.outputs.version }}
@@ -569,15 +792,15 @@ jobs:
 
   # Publish to crates.io
   publish-cargo:
-    needs: [plan, release]
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    needs: [plan, promote]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/cargo-publish.yml
     secrets: inherit
 
   # Publish to winget-pkgs
   publish-winget:
-    needs: [plan, release]
-    if: ${{ needs.plan.outputs.publishing == 'true' && needs.plan.outputs.is_prerelease != 'true' }}
+    needs: [plan, promote]
+    if: ${{ needs.plan.outputs.publishing == 'true' }}
     uses: ./.github/workflows/winget-publish.yml
     with:
       version: ${{ needs.plan.outputs.version }}

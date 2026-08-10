@@ -48,6 +48,9 @@ fn make_server_config(
         ),
         env_provider: std::sync::Arc::new(fresh::services::env_provider::EnvProvider::inactive()),
         session_keepalive: None,
+        startup_files: Vec::new(),
+        #[cfg(feature = "web")]
+        web_addr: None,
     }
 }
 

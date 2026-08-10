@@ -271,7 +271,7 @@ async function fetchFileContent(repo: GitRepo, filePath: string, commit: string 
 
   // Get current file content using editor API (cross-platform)
   try {
-    return await editor.readFile(filePath) ?? "";
+    return await editor.readFile(editor.authorityPath(filePath)) ?? "";
   } catch {
     return "";
   }

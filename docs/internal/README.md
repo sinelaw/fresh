@@ -44,11 +44,13 @@ other docs assume.
 | [text-model.md](text-model.md) | The persistent path-copying piece tree (and why not a rope or gap buffer), lazy loading for multi-GB files, interval-tree markers with gravity, the `Event`/`BulkEdit` model with O(1) `Arc`-snapshot undo, composite buffers, and the encoding/save path. |
 | [buffers-splits-undo.md](buffers-splits-undo.md) | App-layer buffer lifecycle and identity, buffer groups, the split/window tree, per-buffer vs per-view state, undo/redo with marker displacement, and hot-exit / crash recovery. |
 | [input-keybindings-actions.md](input-keybindings-actions.md) | A keystroke end-to-end: terminal key normalization, the modal dispatch priority stack, the command→action→event pipeline and why it's separated, the unified keybinding resolver, multi-cursor, and mouse hit-testing. |
+| [terminal-input-parsing.md](terminal-input-parsing.md) | The stage before that one: raw terminal bytes → events. Why Fresh parses input itself rather than using crossterm's parser, the DEC/ANSI state machine and the "control-sequence bytes are never emitted as text" invariant it protects, standalone-Escape resolution, the three input paths — and a register of the xterm/kitty protocol gaps that remain. |
 
 ### Rendering & language intelligence
 | Doc | What it covers |
 |-----|----------------|
 | [rendering-and-layout.md](rendering-and-layout.md) | The per-frame render loop, the token→`ViewLine` pipeline, the line-wrap and visual-row caches that make huge files scroll cheaply, folding/conceal/virtual-text, split-pane layout, and the `Scene` projection shared with the web frontend. |
+| [embedded-language-highlighting.md](embedded-language-highlighting.md) | Mixed/embedded-language files (Markdown fences, HTML+CSS, templating): the composite-snapshot region mechanism in the TextMate engine, and the rule of thumb for grammar-level embedding vs engine-level regions vs `highlight_string`. |
 | [syntax-highlighting.md](syntax-highlighting.md) | The engine-selection rule (syntect TextMate grammars by default, tree-sitter for the gaps, and why), the checkpoint/convergence incremental-highlight algorithm, viewport-only scaling, category→theme mapping, and reference/bracket overlays. |
 | [lsp.md](lsp.md) | The multi-server LSP client: `(language, feature)` routing, the gate-and-retry concurrency model, async result flow, diagnostics-as-markers, completion-source merging, and feature concessions. |
 | [web-ui.md](web-ui.md) | The non-terminal (web) frontend: the unified-scene architecture and what ships today, plus the design gaps and implementation gaps between the current prototype and desktop-grade (VS Code-level) polish. |
@@ -73,6 +75,8 @@ other docs assume.
 | Doc | What it covers |
 |-----|----------------|
 | [settings-widget-unification-plan.md](settings-widget-unification-plan.md) | Phased plan to collapse the two separate UI-control systems — the Settings `view/controls/` library and the plugin `WidgetSpec` runtime — into the single declarative widget framework already exposed to plugins. Unlike the docs above, this describes intended work, not the system as built. |
+| [agent-fresh-cli-exposure-plan.md](agent-fresh-cli-exposure-plan.md) | How the Orchestrator launcher could teach a launched coding agent to drive the surrounding editor by shelling out to `fresh` (open a file, split, spawn a workspace) — the `FRESH_SESSION` seam, per-agent system-prompt injection mechanisms, the control-socket gap, and a phased plan. The launcher half (agent presets, resume, Start prompt, Auto mode) ships; the CLI-exposure half is planned. |
+| [packaging-self-update.md](packaging-self-update.md) | A packaging paradigm built on deterministic **install provenance**: every distribution channel (brew, apt, dnf, AUR, winget, scoop, flatpak, npm, cargo, nix, AppImage, raw tarball, …) records at install time exactly how `fresh` was installed — via a packaged/sidecar `install-receipt.toml`, a compile-time channel, or a demoted path heuristic — so `fresh update` can self-update through the *same* mechanism (delegate to the manager, or verified in-place binary swap) across Linux/Windows/macOS. Replaces the current path-guessing update checker. Planned. |
 
 ## A note on history
 

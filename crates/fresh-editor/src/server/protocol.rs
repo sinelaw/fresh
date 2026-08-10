@@ -11,7 +11,13 @@ use std::collections::HashMap;
 ///
 /// v2: added `ClientControl::OpenWindow` (open a directory as a new
 /// orchestrator window), used by the nested-terminal forwarding path.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// v3: added the agent channel — an optional `cmd_token` on `ClientHello` (the
+/// per-workspace capability token, read from `$FRESH_CMD_TOKEN`, that
+/// authorizes a launched agent to drive the editor).
+/// v4: the channel carries *scripts* rather than command ids —
+/// `ClientControl::RunScript` / `ServerControl::ScriptResult` replace the
+/// command-id verbs (`ListCommands` / `RunCommand` / `CommandList`).
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Terminal size in columns and rows
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +44,12 @@ pub struct ClientHello {
     /// Environment variables relevant for rendering
     /// Keys: TERM, COLORTERM, LANG, LC_ALL
     pub env: HashMap<String, Option<String>>,
+    /// Per-workspace capability token (from `$FRESH_CMD_TOKEN`), presented so
+    /// the server can authorize `RunScript` against this workspace's grant.
+    /// `None` for clients that carry no token (a plain attach, an older
+    /// client) — script evaluation is then refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cmd_token: Option<String>,
 }
 
 impl ClientHello {
@@ -55,6 +67,11 @@ impl ClientHello {
             client_version: env!("CARGO_PKG_VERSION").to_string(),
             term_size,
             env,
+            // Populated from `$FRESH_CMD_TOKEN` when present so a client that
+            // was spawned inside a Fresh workspace can drive it.
+            cmd_token: std::env::var("FRESH_CMD_TOKEN")
+                .ok()
+                .filter(|t| !t.is_empty()),
         }
     }
 
@@ -132,6 +149,16 @@ pub enum ClientControl {
     /// embedded terminal: the directory becomes a new workspace (a `Window`)
     /// instead of launching a second editor in the terminal.
     OpenWindow { path: String },
+    /// Evaluate a plugin script in this editor, on the workspace the caller's
+    /// token is bound to (the target window is derived from the token, never
+    /// passed in). The server answers with `ServerControl::ScriptResult`
+    /// carrying whatever the script's last expression evaluated to. Refused
+    /// unless the presented token was granted script access.
+    ///
+    /// The source is TypeScript (plain JS is a subset), evaluated through the
+    /// same pipeline as `init.ts` and "Load Plugin from Buffer": one QuickJS
+    /// context, the full `editor` API, `await` available at the top level.
+    RunScript { source: String },
 }
 
 /// A file to open with optional line/column position, range, and hover message
@@ -184,6 +211,16 @@ pub enum ServerControl {
     /// keeps running so the editor state is preserved and picked up cleanly
     /// when the client resumes.
     SuspendClient,
+    /// Answer to `RunScript`: whether the script ran to completion, the reason
+    /// it didn't (refused, failed to compile, threw), and its result value
+    /// JSON-encoded for the client to print.
+    ScriptResult {
+        ok: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output: Option<String>,
+    },
 }
 
 /// Wrapper for control channel messages (used for JSON serialization)
@@ -326,6 +363,9 @@ mod tests {
                 }],
                 wait: false,
             },
+            ClientControl::RunScript {
+                source: "return editor.activeWindow();".to_string(),
+            },
         ];
 
         for variant in variants {
@@ -356,11 +396,40 @@ mod tests {
                 use_system_clipboard: true,
             },
             ServerControl::SuspendClient,
+            ServerControl::ScriptResult {
+                ok: true,
+                error: None,
+                output: None,
+            },
         ];
 
         for variant in variants {
             let json = serde_json::to_string(&variant).unwrap();
             let _: ServerControl = serde_json::from_str(&json).unwrap();
         }
+    }
+
+    #[test]
+    fn test_run_script_roundtrip() {
+        // Newlines and quotes are the common case for a script, not an edge
+        // case — the wire form has to carry a whole source file intact.
+        let source = "const w = editor.activeWindow();\nreturn { \"w\": w };\n";
+        let msg = ClientControl::RunScript {
+            source: source.to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"run_script\""));
+        match serde_json::from_str::<ClientControl>(&json).unwrap() {
+            ClientControl::RunScript { source: got } => assert_eq!(got, source),
+            other => panic!("expected RunScript, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_hello_cmd_token_optional() {
+        // A hello serialized without a token must parse back with `None`.
+        let json = r#"{"protocol_version":3,"client_version":"x","term_size":{"cols":80,"rows":24},"env":{}}"#;
+        let parsed: ClientHello = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.cmd_token, None);
     }
 }

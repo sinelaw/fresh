@@ -7,18 +7,20 @@ name: Musl Builds
 on:
   workflow_call:
   workflow_dispatch:
+  # The default Linux install, and the one artifact whose receipt gates
+  # self-update: breaking it should fail the PR, not the release.
+  pull_request:
 
 jobs:
   build-musl:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: x86_64-unknown-linux-musl
-            runner: ubuntu-22.04
-          - target: aarch64-unknown-linux-musl
-            runner: ubuntu-22.04
-    runs-on: ${{ matrix.runner }}
+        # aarch64 cross-compiles by building `cross` from git, which dominates
+        # the job. PRs get the native target — enough to prove the archive,
+        # receipt and assertions are sound — and releases get both.
+        target: ${{ fromJSON(github.event_name == 'pull_request' && '["x86_64-unknown-linux-musl"]' || '["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]') }}
+    runs-on: ubuntu-22.04
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -70,10 +72,38 @@ jobs:
           cp -r docs/icons/linux/hicolor "${ARCHIVE_NAME}/icons" 2>/dev/null || true
           cp crates/fresh-editor/resources/fresh.desktop "${ARCHIVE_NAME}/fresh.desktop" 2>/dev/null || true
 
+          # Without this the archive resolves below the confidence
+          # `can_self_update` requires, so the one Linux artifact that runs
+          # everywhere would be the one that cannot update itself.
+          sh scripts/write-install-receipt.sh tarball "${ARCHIVE_NAME}/install-receipt.toml" \
+            target=${{ matrix.target }} \
+            asset=fresh-editor-${{ matrix.target }}.tar.gz
+
+          # gzip, though the dist archives use xz: install.sh unpacks this
+          # with the system `tar`, and `.tar.xz` needs xz-utils, which minimal
+          # images routinely lack. Costs ~3 MB (13.2 vs 9.9 MB, measured) to
+          # drop a dependency the install path cannot assume.
           tar -czvf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
 
-          ls -la "${ARCHIVE_NAME}.tar.gz"*
+          # Transition shim: binaries built before `archive_ext` existed ask
+          # for the xz name unconditionally, and install.sh now writes a
+          # receipt when the archive lacks one — turning "no update offered"
+          # into a 404. Droppable one release after the gzip switch ships.
+          tar -cJvf "${ARCHIVE_NAME}.tar.xz" "${ARCHIVE_NAME}"
+          sha256sum "${ARCHIVE_NAME}.tar.xz" > "${ARCHIVE_NAME}.tar.xz.sha256"
+
+          ls -la "${ARCHIVE_NAME}.tar."*
+
+      - name: Verify the archive carries a self-update receipt
+        run: |
+          ARCHIVE_NAME="fresh-editor-${{ matrix.target }}"
+          receipt=$(tar -xzOf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}/install-receipt.toml")
+          echo "$receipt"
+          echo "$receipt" | grep -q 'channel = "tarball"' \
+            || { echo "::error::musl archive receipt is not channel=tarball"; exit 1; }
+          echo "$receipt" | grep -q 'self_update = true' \
+            || { echo "::error::musl archive receipt is not self_update=true"; exit 1; }
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
@@ -82,3 +112,5 @@ jobs:
           path: |
             fresh-editor-${{ matrix.target }}.tar.gz
             fresh-editor-${{ matrix.target }}.tar.gz.sha256
+            fresh-editor-${{ matrix.target }}.tar.xz
+            fresh-editor-${{ matrix.target }}.tar.xz.sha256

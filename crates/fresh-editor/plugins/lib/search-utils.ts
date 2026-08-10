@@ -36,7 +36,8 @@ export interface DebouncedSearchOptions {
 
 // Editor interface (subset of what we need)
 interface EditorApi {
-  readFile(path: string): Promise<string>;
+  readFile(path: string | AuthorityPath | LocalPath | WindowPath): Promise<string>;
+  authorityPath(path: string): AuthorityPath;
   defineMode(name: string, bindings: [string, string][], readOnly: boolean): void;
   createVirtualBufferInSplit(options: {
     name: string;
@@ -91,7 +92,7 @@ export class SearchPreview {
    */
   async update(match: SearchMatch): Promise<void> {
     try {
-      const content = await this.editor.readFile(match.file);
+      const content = await this.editor.readFile(this.editor.authorityPath(match.file));
       const lines = content.split("\n");
 
       // Calculate context window (5 lines before and after)

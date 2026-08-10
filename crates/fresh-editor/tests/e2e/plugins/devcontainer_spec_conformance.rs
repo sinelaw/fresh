@@ -1261,3 +1261,65 @@ fn wait_for_explicit_value_changes_the_cutoff() {
          {final_lines:?}"
     );
 }
+
+// ============================================================================
+// G8 — regression guard (#2709): no devcontainer config → no spurious error.
+// ============================================================================
+
+/// **G8 (#2709).** In a workspace with **no** devcontainer config,
+/// the plugin must load quietly — `findConfig` returns false via
+/// the "not found" path (`lastParseError` stays null), so no
+/// `status.parse_failed` (`"devcontainer.json could not be
+/// parsed"`) message ever surfaces.
+///
+/// Root cause of the regression: the QuickJS `readFile` binding
+/// returns JS `undefined` (not `null`) for a missing file, but
+/// `findConfig`'s discovery guards used strict `!== null`. Because
+/// `undefined !== null` is true, the `undefined` content slipped
+/// into `parseJsonc`, which threw
+/// `Error converting from js 'undefined' into type 'string'`. That
+/// throw was caught by `tryParse`, set `lastParseError`, and — on
+/// the "no config found" branch — got surfaced to the status bar
+/// on every launch. The fix loosens the guards to `!= null` so
+/// both `null` and `undefined` are excluded.
+///
+/// This asserts the observable contract: after the plugin inits in
+/// a config-less workspace, the parse-failure marker must never
+/// appear on screen.
+#[test]
+fn no_devcontainer_config_does_not_surface_parse_error() {
+    fresh::i18n::set_locale("en");
+    let temp = tempfile::tempdir().unwrap();
+    let workspace = temp.path().canonicalize().unwrap();
+
+    // Deliberately create NO `.devcontainer/`, no `.devcontainer.json`.
+    let plugins_dir = workspace.join("plugins");
+    fs::create_dir_all(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "devcontainer");
+
+    let mut harness = EditorTestHarness::create(
+        160,
+        40,
+        HarnessOptions::new().with_working_dir(workspace.clone()),
+    )
+    .unwrap();
+
+    // Plugin loads on first tick; tick enough times that any
+    // (buggy) `setStatus(status.parse_failed)` would have landed
+    // in the rendered screen.
+    for _ in 0..20 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(25));
+        harness.advance_time(std::time::Duration::from_millis(25));
+    }
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("could not be parsed"),
+        "G8 (#2709): with no devcontainer config present, the plugin \
+         must not surface a parse error. `readFile` returns `undefined` \
+         for a missing file and the `findConfig` guards must exclude it. \
+         Screen:\n{screen}"
+    );
+}

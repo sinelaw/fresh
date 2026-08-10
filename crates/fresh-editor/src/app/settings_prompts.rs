@@ -415,11 +415,10 @@ impl Editor {
         if !self.config.editor.animations {
             return;
         }
-        let animations = &mut self.active_window_mut().animations;
-        let Some(area) = animations.last_frame_area() else {
+        let Some(area) = self.last_rendered_frame.as_ref().map(|b| b.area) else {
             return;
         };
-        animations.start(
+        self.active_window_mut().animations.start(
             area,
             crate::view::animation::AnimationKind::ColorTransition {
                 duration: std::time::Duration::from_millis(200),

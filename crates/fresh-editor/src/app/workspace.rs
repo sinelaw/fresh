@@ -22,6 +22,7 @@
 //!
 //! Performance: O(1) ≈ 10ms (lazy load) vs O(n) ≈ 1000ms (log replay)
 
+use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -384,24 +385,22 @@ impl Editor {
     }
 
     /// Apply only the **editor-global** config overrides from a
-    /// workspace (the global `Config`). The window-local override
-    /// (`mouse_enabled`) is applied by
+    /// workspace (the global `Config`). The shared mouse-capture
+    /// override (`mouse_enabled`) is applied by
     /// `Window::apply_workspace_layout`.
     fn restore_config_overrides(&mut self, overrides: &WorkspaceConfigOverrides) {
-        if let Some(line_numbers) = overrides.line_numbers {
-            self.config_mut().editor.line_numbers = line_numbers;
-        }
+        // `line_numbers`, `line_wrap`, and `enable_inlay_hints` are legacy
+        // fields — read for serde compatibility with workspaces written by
+        // older builds, but no longer applied: their global toggles persist
+        // to the config file, which is the single source of truth. Stamping
+        // a workspace snapshot here silently overrode config edits made in
+        // other projects or by hand (same treatment as `menu_bar_hidden`,
+        // issue #1156).
         if let Some(relative_line_numbers) = overrides.relative_line_numbers {
             self.config_mut().editor.relative_line_numbers = relative_line_numbers;
         }
-        if let Some(line_wrap) = overrides.line_wrap {
-            self.config_mut().editor.line_wrap = line_wrap;
-        }
         if let Some(syntax_highlighting) = overrides.syntax_highlighting {
             self.config_mut().editor.syntax_highlighting = syntax_highlighting;
-        }
-        if let Some(enable_inlay_hints) = overrides.enable_inlay_hints {
-            self.config_mut().editor.enable_inlay_hints = enable_inlay_hints;
         }
         // `overrides.menu_bar_hidden` is a legacy field — kept for serde
         // compatibility with workspaces written by older builds, but no
@@ -439,11 +438,7 @@ impl Editor {
         // a terminal-only on-disk workspace must NOT block this save.
         if workspace.has_no_real_content() && win.has_any_virtual_buffer() {
             let root = win.root.clone();
-            let on_disk = if let Some(ref session_name) = self.session_name {
-                Workspace::load_session(session_name, &root).ok().flatten()
-            } else {
-                Workspace::load(&root).ok().flatten()
-            };
+            let on_disk = Workspace::load(&root).ok().flatten();
             if let Some(existing) = on_disk {
                 if !existing.has_no_preservable_content() {
                     tracing::info!(
@@ -455,12 +450,11 @@ impl Editor {
             }
         }
 
-        // For a named daemon, save to the daemon-scoped workspace file
-        if let Some(ref session_name) = self.session_name {
-            workspace.save_session(session_name)
-        } else {
-            workspace.save()
-        }
+        // One store, whatever launched this editor. A daemon — named or not —
+        // is a host for workspaces, not an owner of a private set of them, so
+        // its windows persist exactly where a direct-mode run's do and boot
+        // discovery (which only ever scans this store) can see them all.
+        workspace.save()
     }
 
     /// Restore a specific window's workspace from disk into
@@ -478,19 +472,29 @@ impl Editor {
         &mut self,
         id: fresh_core::WindowId,
     ) -> Result<bool, WorkspaceError> {
-        let Some(root) = self.windows.get(&id).map(|w| w.root.clone()) else {
+        let Some((root, stable_id)) = self
+            .windows
+            .get(&id)
+            .map(|w| (w.root.clone(), w.stable_id.clone()))
+        else {
             return Ok(false);
         };
 
-        let workspace = if let Some(ref session_name) = self.session_name {
-            Workspace::load_session(session_name, &root)?
-        } else {
+        // One store, whatever launched this editor — see `save_workspace_for`.
+        let workspace = if stable_id.is_empty() {
+            // No durable id yet (a brand-new window): fall back to the
+            // freshest file for the root.
             Workspace::load(&root)?
+        } else {
+            // Restore THIS window's own identity, not merely the freshest file
+            // for the root — several co-tenant workspaces may share the root.
+            Workspace::load_by_id(&root, &stable_id)?
         };
         let Some(workspace) = workspace else {
             tracing::debug!("No workspace found for {:?}", root);
             return Ok(false);
         };
+
         tracing::info!("Found workspace for {:?}, applying...", root);
 
         // Editor-global config overrides (the shared `Config`).
@@ -547,6 +551,24 @@ impl Editor {
             built.plugin_state = pstate;
             built.authority_spec = workspace.authority_spec.clone();
             self.windows.insert(id, built);
+        }
+
+        // Active-window only: the restored active buffer never went through a
+        // focus path, so nothing has derived the terminal live/scrollback
+        // state from it. A restored terminal is created live (empty scrollback
+        // set), but `key_context` is still `Normal` and the buffer still
+        // loads editing-disabled — so without this it comes up *focused but
+        // inert*: keys don't reach the PTY and the pane shows the static
+        // backing-file view instead of the live grid. With a quiet shell that
+        // is invisible (the first keystroke, or output plus
+        // `jump_to_end_on_output`, flips it live); with a terminal that prints
+        // on its own — an agent, a `tail -f`, anything with a clock — the
+        // restored pane just sits there frozen. Deriving the flags here is the
+        // same move the remote-reconnect respawn makes for the same reason.
+        // A restored *exited* terminal is not a terminal buffer (the exit path
+        // drops the binding), so this correctly leaves it read-only.
+        if id == self.active_window {
+            self.sync_terminal_mode_to_active_buffer();
         }
 
         // Active-window only: refresh the plugin snapshot and fire
@@ -833,6 +855,22 @@ impl crate::app::window::Window {
         self.terminal_backing_files
             .insert(predicted_id, backing_path.clone());
 
+        // A terminal that had already exited when the workspace was saved comes
+        // back *dead*: its transcript is restored and the restart offer is
+        // re-armed, but nothing is spawned. Respawning here would re-run a
+        // process the user had already finished with — and for an agent, would
+        // silently resume a conversation (and spend tokens) just because the
+        // editor reopened. One click restarts it if they want it back.
+        if let Some(state) = terminal.exited.as_ref() {
+            return self.restore_exited_terminal(
+                terminal,
+                state,
+                predicted_id,
+                log_path,
+                backing_path,
+            );
+        }
+
         // Decide what to run in the restored terminal:
         //  1. an agent-resume argv (rejoin the conversation), when present
         //     and resume is enabled — `claude --resume <id>` / `--continue`;
@@ -860,14 +898,27 @@ impl crate::app::window::Window {
         };
         let wrapper_for_spawn = self.apply_remote_terminal_env(wrapper_for_spawn);
         let env_delta = self.terminal_env_delta(&wrapper_for_spawn);
+        // A terminal saved with the script grant comes back holding it: mint a
+        // token bound to *this* (restored) window and stamp it into the child's
+        // environment. The saved workspace records only that the grant existed
+        // — the token itself belonged to the editor run that is gone.
+        let extra_env = if terminal.script_access {
+            self.remint_terminal_script_env(predicted_id)
+        } else {
+            std::collections::HashMap::new()
+        };
         let terminal_id = match self.terminal_manager.spawn(
             terminal.cols,
             terminal.rows,
             terminal.cwd.clone(),
             Some(log_path.clone()),
             Some(backing_path.clone()),
+            // Restore: this terminal's own saved transcript — keep streaming
+            // into it so the restored buffer keeps its scrollback.
+            crate::services::terminal::BackingMode::Continue,
             wrapper_for_spawn,
             env_delta,
+            extra_env,
         ) {
             Ok(id) => id,
             Err(e) => {
@@ -881,6 +932,7 @@ impl crate::app::window::Window {
         };
 
         // Ensure maps keyed by actual ID
+        self.rekey_terminal_script_token(predicted_id, terminal_id);
         if terminal_id != predicted_id {
             self.terminal_log_files
                 .insert(terminal_id, log_path.clone());
@@ -905,12 +957,100 @@ impl crate::app::window::Window {
 
         // Create buffer for this terminal
         let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+        self.apply_restored_terminal_title(buffer_id, terminal.title.as_deref());
 
         // Load backing file directly as read-only buffer (skip log replay)
         // The backing file already contains complete terminal state from last workspace
         self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
 
         Some(buffer_id)
+    }
+
+    /// Rebuild a terminal whose process had already quit at save time: restore
+    /// the transcript and re-arm the restart offer, without spawning anything.
+    ///
+    /// The result is byte-for-byte the state `handle_terminal_exited` leaves
+    /// behind — a terminal buffer with no live binding plus an
+    /// `exited_terminals` record — so the status-bar indicator, the palette
+    /// command and the menu entry all work on a restored dead terminal exactly
+    /// as they do on one that died in this session.
+    fn restore_exited_terminal(
+        &mut self,
+        terminal: &SerializedTerminalWorkspace,
+        state: &crate::workspace::ExitedTerminalState,
+        terminal_id: crate::services::terminal::TerminalId,
+        log_path: PathBuf,
+        backing_path: PathBuf,
+    ) -> Option<BufferId> {
+        let command = terminal.command.clone().filter(|argv| !argv.is_empty());
+        let resume = terminal
+            .agent_resume
+            .as_ref()
+            .map(|r| r.argv.clone())
+            .filter(|argv| !argv.is_empty());
+        // Carry the launch/resume argv forward under the reserved id so a
+        // *later* save re-persists them and the terminal stays restartable
+        // across any number of restarts.
+        if let Some(argv) = command.as_ref() {
+            self.terminal_commands.insert(terminal_id, argv.clone());
+        }
+        if let Some(argv) = resume.as_ref() {
+            self.terminal_resume_commands
+                .insert(terminal_id, argv.clone());
+        }
+
+        // Build the buffer the normal way, then drop the live binding the way
+        // the exit path does — the PTY this id names no longer exists.
+        let buffer_id = self.create_terminal_buffer_detached(terminal_id);
+        self.apply_restored_terminal_title(buffer_id, terminal.title.as_deref());
+        self.load_terminal_backing_file_as_buffer(buffer_id, &backing_path);
+        // A restored-dead tab shows the same "(exited)" marker a tab that died
+        // in this session does — the state is identical, so it must read
+        // identically.
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = t!("terminal.tab_exited", name = meta.display_name).to_string();
+        }
+        self.terminal_buffers.remove(&buffer_id);
+        self.exited_terminals.insert(
+            buffer_id,
+            crate::app::window::ExitedTerminal {
+                terminal_id,
+                exit_code: state.exit_code,
+                cols: terminal.cols,
+                rows: terminal.rows,
+                cwd: terminal.cwd.clone(),
+                backing_path: Some(backing_path),
+                log_path: Some(log_path),
+                command,
+                resume,
+                // A restored terminal is re-persisted by the branch above on
+                // the next save, so it must not be treated as throwaway.
+                ephemeral: false,
+                // Nothing is spawned here, so no token is minted — the grant
+                // is carried so the restart (which does spawn) mints one.
+                script_access: terminal.script_access,
+                title: terminal.title.clone(),
+            },
+        );
+        Some(buffer_id)
+    }
+
+    /// Re-apply a terminal tab's persisted explicit title after restore.
+    ///
+    /// Without this a restored agent tab falls back to foreground-process
+    /// auto-naming: `bash` / `node` while it runs, and a bare `*Terminal N*`
+    /// once it has exited and there is no foreground process left to read.
+    /// `None` leaves the tab auto-named, which is what it was before the save.
+    fn apply_restored_terminal_title(&mut self, buffer_id: BufferId, title: Option<&str>) {
+        let Some(title) = title.filter(|t| !t.is_empty()) else {
+            return;
+        };
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = title.to_string();
+        }
+        // Mark it explicit so `sync_terminal_titles` leaves it alone, exactly
+        // as `create_plugin_terminal` does for a freshly-launched agent.
+        self.terminal_explicit_titles.insert(buffer_id);
     }
 
     /// Load a terminal backing file directly as a read-only buffer.
@@ -1337,9 +1477,12 @@ impl crate::app::window::Window {
                         (file_state.cursor.sticky_column != 0)
                             .then_some(file_state.cursor.sticky_column);
 
-                    buf_state.viewport.top_byte = file_state.scroll.top_byte.min(max_pos);
-                    buf_state.viewport.top_view_line_offset =
-                        file_state.scroll.top_view_line_offset;
+                    buf_state
+                        .viewport
+                        .set_top_byte(file_state.scroll.top_byte.min(max_pos));
+                    buf_state
+                        .viewport
+                        .set_top_view_line_offset(file_state.scroll.top_view_line_offset);
                     buf_state.viewport.left_column = file_state.scroll.left_column;
                     buf_state.viewport.set_skip_resize_sync();
 
@@ -1348,7 +1491,7 @@ impl crate::app::window::Window {
                     // before the user closed) the restore re-creates an off-screen
                     // cursor that arrow keys can't escape (the wrap-mode early return
                     // in `viewport.rs::ensure_visible` no-ops for any cursor whose
-                    // byte position is `>= viewport.top_byte`). Reconcile so the
+                    // byte position is `>= viewport.top_byte()`). Reconcile so the
                     // restored view always shows the cursor (#1689 follow-up).
                     if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                         super::navigation::reconcile_restored_buffer_view(
@@ -1389,6 +1532,10 @@ impl crate::app::window::Window {
                         buf_state.line_wrap_override = Some(line_wrap);
                         buf_state.viewport.line_wrap_enabled = line_wrap;
                     }
+                    if let Some(highlight_current_line) = file_state.highlight_current_line {
+                        buf_state.highlight_current_line_override = Some(highlight_current_line);
+                        buf_state.highlight_current_line = highlight_current_line;
+                    }
                     buf_state.plugin_state = file_state.plugin_state.clone();
                     if let Some(state) = __buffers_mut.get_mut(&buffer_id) {
                         // Re-apply the explicit per-buffer virtual-space
@@ -1396,6 +1543,45 @@ impl crate::app::window::Window {
                         if let Some(virtual_space) = file_state.virtual_space {
                             state.buffer_settings.virtual_space = virtual_space;
                             state.buffer_settings.virtual_space_override = Some(virtual_space);
+                        }
+                        // Same for the per-buffer indentation-guide and
+                        // folding-indicator toggles: both are consulted at
+                        // render time, so restoring the override is all it
+                        // takes for the buffer to come back looking the way
+                        // the user left it.
+                        // Guide/fold pins are per (split, buffer): they land
+                        // on this split's view state, not on the shared
+                        // BufferSettings.
+                        if let Some(indentation_guide) = file_state.indentation_guide {
+                            buf_state.indentation_guide_user_override = Some(indentation_guide);
+                        }
+                        if let Some(fold_indicators) = file_state.fold_indicators {
+                            buf_state.fold_indicators_override = Some(fold_indicators);
+                        }
+                        if let Some(use_tabs) = file_state.use_tabs {
+                            state.buffer_settings.use_tabs = use_tabs;
+                            state.buffer_settings.use_tabs_override = Some(use_tabs);
+                        }
+                        // The whitespace toggles store bools, not the
+                        // resolved struct, so the visibility is re-derived from
+                        // config here — that way a config edit between sessions
+                        // still lands. `buffer_settings.whitespace` is still the
+                        // configured value at this point (nothing has toggled
+                        // it yet), so it is the right baseline to pass in.
+                        if file_state.whitespace_indicators.is_some()
+                            || file_state.tab_indicators.is_some()
+                        {
+                            let configured = state.buffer_settings.whitespace;
+                            state.buffer_settings.whitespace_override =
+                                file_state.whitespace_indicators;
+                            state.buffer_settings.tab_indicators_override =
+                                file_state.tab_indicators;
+                            state.buffer_settings.apply_whitespace_override(configured);
+                        }
+                        if let Some(highlight_occurrences) = file_state.highlight_occurrences {
+                            state.buffer_settings.highlight_occurrences_override =
+                                Some(highlight_occurrences);
+                            state.reference_highlight_overlay.enabled = highlight_occurrences;
                         }
                         buf_state.folds.clear(&mut state.marker_list);
                         for fold in &file_state.folds {
@@ -1447,7 +1633,7 @@ impl crate::app::window::Window {
                         "Restored keyed state for {:?}: cursor={}, top_byte={}, view_mode={:?}",
                         rel_path,
                         cursor_pos,
-                        buf_state.viewport.top_byte,
+                        buf_state.viewport.top_byte(),
                         buf_state.view_mode,
                     );
                 }
@@ -1592,12 +1778,88 @@ impl crate::app::window::Window {
         }
     }
 
+    /// Build the `EditorState` for a restored workspace file. `content` is the
+    /// file's bytes when known (a fill), or `None` for an empty placeholder (a
+    /// remote restore, before its content streams in off-loop). Language and
+    /// buffer config are applied either way, so a placeholder already carries
+    /// the right gutter / title / language and the later fill just swaps in the
+    /// text.
+    pub(crate) fn build_workspace_file_state(
+        &self,
+        path: &Path,
+        content: Option<Vec<u8>>,
+    ) -> EditorState {
+        let fs = std::sync::Arc::clone(&self.authority().filesystem);
+        let threshold = self.resources.config.editor.large_file_threshold_bytes as usize;
+        let buffer = match content {
+            Some(bytes) => {
+                let mut b = crate::model::buffer::Buffer::from_bytes(bytes, fs);
+                b.set_file_path(path.to_path_buf());
+                b
+            }
+            None => crate::model::buffer::Buffer::new_with_path(threshold, fs, path.to_path_buf()),
+        };
+        let first_line = buffer.first_line_lossy();
+        let detected =
+            crate::primitives::detected_language::DetectedLanguage::from_path_with_fallback(
+                path,
+                first_line.as_deref(),
+                &self.resources.grammar_registry,
+                &self.resources.config.languages,
+                self.resources.config.default_language.as_deref(),
+            );
+        let mut state = EditorState::from_buffer_with_language(buffer, detected);
+        state
+            .margins
+            .configure_for_line_numbers(self.resources.config.editor.line_numbers);
+        state.apply_buffer_config(&self.resources.config);
+        state
+    }
+
+    /// Install an empty placeholder buffer for `abs_path` and queue its content
+    /// to be read off-loop (see [`crate::app::window::Window::pending_content_load`]).
+    /// Returns the new buffer id so the split layout can reference it at once.
+    fn install_remote_placeholder(&mut self, abs_path: &Path) -> BufferId {
+        let buffer_id = self.alloc_buffer_id();
+        let state = self.build_workspace_file_state(abs_path, None);
+        self.buffers.insert(buffer_id, state);
+        self.event_logs
+            .insert(buffer_id, crate::model::event::EventLog::new());
+        self.buffer_metadata
+            .insert(buffer_id, crate::app::types::BufferMetadata::new());
+        self.pending_content_load
+            .push((buffer_id, abs_path.to_path_buf()));
+        buffer_id
+    }
+
     /// Open every file referenced by the saved split states, returning a map
     /// from relative (or absolute) path to the new `BufferId`.
     fn open_workspace_files(
         &mut self,
         split_states: &HashMap<usize, SerializedSplitViewState>,
     ) -> HashMap<PathBuf, BufferId> {
+        // Remote sessions: never *read* persisted file buffers here. These reads
+        // run synchronously on the single-threaded editor loop, so over a slow /
+        // high-latency link they freeze the whole editor while a dived-into
+        // session materializes — the orchestrator-dock freeze. Instead restore
+        // each file as an empty placeholder (no I/O) so the layout, tabs and
+        // titles come up instantly; the editor then loads their content off-loop
+        // and fills them in (see `Editor::drive_pending_content_loads`).
+        // Terminals restore separately, unaffected.
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            let mut path_to_buffer: HashMap<PathBuf, BufferId> = HashMap::new();
+            for rel_path in collect_file_paths_from_states(split_states) {
+                let abs_path = self.root.join(&rel_path);
+                let buffer_id = self.install_remote_placeholder(&abs_path);
+                path_to_buffer.insert(rel_path, buffer_id);
+            }
+            return path_to_buffer;
+        }
         let file_paths = collect_file_paths_from_states(split_states);
         tracing::debug!(
             "Workspace has {} files to restore: {:?}",
@@ -1635,6 +1897,21 @@ impl crate::app::window::Window {
         path_to_buffer: &mut HashMap<PathBuf, BufferId>,
     ) {
         if external_files.is_empty() {
+            return;
+        }
+        // Same rationale as `open_workspace_files`: don't read remote files on
+        // the editor loop during restore. Restore each as an empty placeholder
+        // and let the content load off-loop.
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            for abs_path in external_files {
+                let buffer_id = self.install_remote_placeholder(abs_path);
+                path_to_buffer.insert(abs_path.clone(), buffer_id);
+            }
             return;
         }
         tracing::debug!(
@@ -1743,8 +2020,8 @@ impl crate::app::window::Window {
                 })
                 .collect(),
             scroll: SerializedScroll {
-                top_byte: view_state.viewport.top_byte,
-                top_view_line_offset: view_state.viewport.top_view_line_offset,
+                top_byte: view_state.viewport.top_byte(),
+                top_view_line_offset: view_state.viewport.top_view_line_offset(),
                 left_column: view_state.viewport.left_column,
             },
             view_mode: Default::default(),
@@ -1754,6 +2031,13 @@ impl crate::app::window::Window {
             line_numbers: None,
             line_wrap: None,
             virtual_space: None,
+            indentation_guide: None,
+            fold_indicators: None,
+            use_tabs: None,
+            whitespace_indicators: None,
+            tab_indicators: None,
+            highlight_current_line: None,
+            highlight_occurrences: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
@@ -2142,10 +2426,24 @@ impl crate::app::window::Window {
             workspace.split_states.len()
         );
 
+        // Adopt the snapshot's durable identity: the window continues the
+        // persisted workspace rather than starting a new one, so saves keep
+        // landing in the same id-keyed file instead of minting a sibling on
+        // every boot. A legacy snapshot without an id keeps the freshly
+        // minted one — the next save re-keys the file under it.
+        if let Some(id) = &workspace.stable_id {
+            self.stable_id = id.clone();
+        }
+
         // Window-local config override (the rest of the overrides mutate
-        // the editor-global `Config` and are applied by the caller).
+        // the editor-global `Config` and are applied by the caller). Mouse
+        // capture is a single global terminal property shared by every window
+        // (see `Editor::mouse_capture`); restoring a persisted value updates
+        // that shared flag.
         if let Some(mouse_enabled) = workspace.config_overrides.mouse_enabled {
-            self.mouse_enabled = mouse_enabled;
+            self.resources
+                .mouse_capture
+                .store(mouse_enabled, std::sync::atomic::Ordering::Relaxed);
         }
 
         self.restore_search_options(&workspace.search_options);
@@ -2263,6 +2561,16 @@ impl crate::app::window::Window {
                     .get(&terminal_id)
                     .filter(|argv| !argv.is_empty())
                     .map(|argv| crate::workspace::AgentResume { argv: argv.clone() });
+                // Only an *explicit* title is worth persisting; auto-named
+                // tabs re-derive theirs from the live process after restore.
+                let title = self
+                    .terminal_buffers
+                    .iter()
+                    .find(|(_, tb)| tb.terminal_id == terminal_id)
+                    .map(|(b, _)| *b)
+                    .filter(|b| self.terminal_explicit_titles.contains(b))
+                    .and_then(|b| self.buffer_metadata.get(&b))
+                    .map(|meta| meta.display_name.clone());
                 terminals.push(SerializedTerminalWorkspace {
                     terminal_index: idx,
                     cwd,
@@ -2273,8 +2581,59 @@ impl crate::app::window::Window {
                     backing_path,
                     command,
                     agent_resume,
+                    exited: None,
+                    title,
+                    script_access: self.terminal_has_script_access(terminal_id),
                 });
             }
+        }
+
+        // Terminals whose process quit while their buffer stayed open. Without
+        // this they'd be dropped on save — the buffer↔terminal binding is gone,
+        // so the loop above can't see them — and a workspace reopened after
+        // finishing an agent would come back missing that pane entirely.
+        // Persisting them keeps both the transcript and the restart offer.
+        let mut exited_buffers: Vec<(BufferId, TerminalId)> = Vec::new();
+        for (buffer_id, exited) in &self.exited_terminals {
+            // Same rule as live terminals: a commandless ephemeral (a plugin's
+            // build output, an exec shell) stays transient.
+            if exited.ephemeral && exited.command.is_none() {
+                continue;
+            }
+            if !seen.insert(exited.terminal_id) {
+                continue;
+            }
+            let idx = terminals.len();
+            terminal_indices.insert(exited.terminal_id, idx);
+            exited_buffers.push((*buffer_id, exited.terminal_id));
+            terminals.push(SerializedTerminalWorkspace {
+                terminal_index: idx,
+                cwd: exited.cwd.clone(),
+                shell: crate::services::terminal::detect_shell(),
+                cols: exited.cols,
+                rows: exited.rows,
+                log_path: exited.log_path.clone().unwrap_or_else(|| {
+                    let root = self.resources.dir_context.terminal_dir_for(&self.root);
+                    root.join(format!("fresh-terminal-{}.log", exited.terminal_id.0))
+                }),
+                backing_path: exited.backing_path.clone().unwrap_or_else(|| {
+                    let root = self.resources.dir_context.terminal_dir_for(&self.root);
+                    root.join(format!("fresh-terminal-{}.txt", exited.terminal_id.0))
+                }),
+                command: exited.command.clone(),
+                agent_resume: exited
+                    .resume
+                    .as_ref()
+                    .filter(|argv| !argv.is_empty())
+                    .map(|argv| crate::workspace::AgentResume { argv: argv.clone() }),
+                exited: Some(crate::workspace::ExitedTerminalState {
+                    exit_code: exited.exit_code,
+                }),
+                // The pre-exit tab title, not the "(exited)" form the tab is
+                // showing now — restore re-applies the marker itself.
+                title: exited.title.clone(),
+                script_access: exited.script_access,
+            });
         }
 
         let (mgr, view_states) = self
@@ -2284,11 +2643,15 @@ impl crate::app::window::Window {
 
         // Serialization helpers only need the buffer→PTY-id association, not
         // the interaction mode, so project the terminal-buffer map down to it.
-        let terminal_id_map: HashMap<BufferId, TerminalId> = self
+        let mut terminal_id_map: HashMap<BufferId, TerminalId> = self
             .terminal_buffers
             .iter()
             .map(|(b, tb)| (*b, tb.terminal_id))
             .collect();
+        // Exited terminals have no live binding, so add theirs explicitly —
+        // otherwise the split layout would serialize their panes as ordinary
+        // file buffers pointing at a backing file in the data dir.
+        terminal_id_map.extend(exited_buffers);
 
         let split_layout = serialize_split_node(
             mgr.root(),
@@ -2346,12 +2709,26 @@ impl crate::app::window::Window {
 
         let cfg = &self.resources.config.editor;
         let config_overrides = WorkspaceConfigOverrides {
-            line_numbers: Some(cfg.line_numbers),
+            // `line_numbers`, `line_wrap`, and `enable_inlay_hints` are no
+            // longer snapshotted: their global toggles persist straight to the
+            // config file, so a workspace copy could only ever be stale — it
+            // shadowed a default the user changed elsewhere (or edited by
+            // hand) every time this workspace was opened, forever, because
+            // the restore stamped the stale value and the next save
+            // re-serialized it. `None` here also self-heals workspaces that
+            // still carry a stale value from an older build. The fields that
+            // remain are the settings whose toggles are session-scoped — the
+            // workspace file is their only persistence.
+            line_numbers: None,
             relative_line_numbers: Some(cfg.relative_line_numbers),
-            line_wrap: Some(cfg.line_wrap),
+            line_wrap: None,
             syntax_highlighting: Some(cfg.syntax_highlighting),
-            enable_inlay_hints: Some(cfg.enable_inlay_hints),
-            mouse_enabled: Some(self.mouse_enabled),
+            enable_inlay_hints: None,
+            mouse_enabled: Some(
+                self.resources
+                    .mouse_capture
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
             menu_bar_hidden: None,
         };
 
@@ -2459,6 +2836,7 @@ impl crate::app::window::Window {
             session_plugin_state: self.plugin_state.clone(),
             // How to rebuild/reconnect this workspace's backend on restore.
             authority_spec: self.authority_spec.clone(),
+            stable_id: Some(self.stable_id.clone()),
         }
     }
 }
@@ -2781,8 +3159,8 @@ fn serialize_split_view_state(
                     })
                     .collect(),
                 scroll: SerializedScroll {
-                    top_byte: buf_state.viewport.top_byte,
-                    top_view_line_offset: buf_state.viewport.top_view_line_offset,
+                    top_byte: buf_state.viewport.top_byte(),
+                    top_view_line_offset: buf_state.viewport.top_view_line_offset(),
                     left_column: buf_state.viewport.left_column,
                 },
                 view_mode: match buf_state.view_mode {
@@ -2795,6 +3173,21 @@ fn serialize_split_view_state(
                 virtual_space: buffers
                     .get(buffer_id)
                     .and_then(|state| state.buffer_settings.virtual_space_override),
+                indentation_guide: buf_state.indentation_guide_user_override,
+                fold_indicators: buf_state.fold_indicators_override,
+                use_tabs: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.use_tabs_override),
+                whitespace_indicators: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.whitespace_override),
+                tab_indicators: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.tab_indicators_override),
+                highlight_current_line: buf_state.highlight_current_line_override,
+                highlight_occurrences: buffers
+                    .get(buffer_id)
+                    .and_then(|state| state.buffer_settings.highlight_occurrences_override),
                 plugin_state: buf_state.plugin_state.clone(),
                 folds,
             },

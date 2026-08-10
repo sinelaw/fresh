@@ -1,9 +1,12 @@
 //! Ctrl+Click / Ctrl+hover to open file paths printed in the embedded terminal.
 //!
-//! When the focused terminal is in live mode (not an alternate-screen program
-//! like vim), a Ctrl+Click on text that resolves to a real file opens it in
-//! Fresh, jumping to any `:line:col` the text encoded. Ctrl+hover underlines
-//! such a path to signal it's clickable.
+//! When the focused terminal is in live mode, a Ctrl+Click on text that
+//! resolves to a real file opens it in Fresh, jumping to any `:line:col` the
+//! text encoded. Ctrl+hover underlines such a path to signal it's clickable.
+//! The Ctrl gesture is reserved for links even while a full-screen or
+//! mouse-reporting program (vim/less/htop, or anything that enabled DECSET
+//! 1000/1002/1003) runs — it is withheld from the PTY rather than forwarded,
+//! so links work everywhere, not just at a bare shell prompt.
 //!
 //! Relative paths are resolved against, in order: the terminal's working
 //! directory as reported via OSC 7 (tracks `cd`), then Fresh's working

@@ -22,6 +22,7 @@ use super::super::selection_sweep::SelectionActiveSet;
 use super::{cursor_indicator_style, CursorTracker, SpanCursors};
 use crate::app::types::CellThemeInfo;
 use crate::config::IndentationGuideMode;
+use crate::model::buffer::LineEnding;
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
@@ -84,6 +85,10 @@ pub(super) struct CellPassOutput {
     /// Changed). Picked up by the tail-fill pass so the bg wash
     /// continues past the scoped text to the viewport's right edge.
     pub syntax_extend_bg: Option<Color>,
+    /// Screen cells the newline's line-ending indicator occupied (0 when
+    /// none rendered). The cursor-on-newline placement subtracts these so
+    /// the cursor lands on the indicator, not past it.
+    pub newline_indicator_cols: usize,
 }
 
 /// Render one line's characters into `line_spans` / `line_view_map`.
@@ -119,8 +124,13 @@ pub(super) fn render_line_cells<'a, 'c>(
 
     // Reset the per-row touched set. Wrap continuations inherit overlays
     // still active from the previous row of the same source line; new
-    // source lines do not (see OverlayActiveSet).
-    overlay_sweep.enter_row(matches!(input.view_line.line_start, LineStart::AfterBreak));
+    // source lines seed from the overlays covering their first byte, so
+    // a range-wide overlay tail-fills every row it spans (see
+    // OverlayActiveSet::enter_row).
+    overlay_sweep.enter_row(
+        matches!(input.view_line.line_start, LineStart::AfterBreak),
+        input.view_line.source_start_byte,
+    );
 
     let mut pass = CellPass {
         // ANSI parser threaded from the caller across wrapped rows.
@@ -150,6 +160,7 @@ pub(super) fn render_line_cells<'a, 'c>(
         first_line_byte_pos: None,
         last_line_byte_pos: None,
         syntax_extend_bg: None,
+        newline_indicator_cols: 0,
     };
 
     for ch in line_content.chars() {
@@ -195,6 +206,11 @@ struct CellPass<'a, 'b, 'c> {
     first_line_byte_pos: Option<usize>,
     last_line_byte_pos: Option<usize>,
     syntax_extend_bg: Option<Color>,
+    /// Screen cells emitted for the newline's line-ending indicator (0 when
+    /// none rendered). The view pipeline gives `\n` visual width 1 but the
+    /// indicator may occupy one or two cells (`↵` / `␍↵`), so the rendered
+    /// column count is tracked separately from the pipeline width.
+    newline_indicator_cols: usize,
 }
 
 /// Resolved style and theme-inspector metadata for one cell.
@@ -286,7 +302,16 @@ impl CellPass<'_, '_, '_> {
         let is_selected =
             !exclude_from_selection && self.selection_sweep.contains(byte_pos, self.byte_index);
 
-        let resolved = self.resolve_cell_style(byte_pos, ansi_style, is_cursor, is_selected);
+        // A virtual-space cursor "at" the newline byte sits visually past the
+        // content end — its indicator is drawn at the virtual column by
+        // `place_cell_cursor`, so the newline cell itself (which may render a
+        // line-ending indicator) must not be styled as the cursor.
+        let newline_virtual_cursor = is_cursor
+            && ch == '\n'
+            && byte_pos.is_some_and(|bp| self.input.selection.virtual_cols_at.contains_key(&bp));
+        let style_as_cursor = is_cursor && !newline_virtual_cursor;
+
+        let resolved = self.resolve_cell_style(byte_pos, ansi_style, style_as_cursor, is_selected);
         self.record_cell_theme(&resolved);
 
         // `indicator_buf` holds the UTF-8 bytes of a single fallback indicator
@@ -309,8 +334,15 @@ impl CellPass<'_, '_, '_> {
             };
             (guide_glyph, false)
         } else {
-            self.display_cell_text(ch, is_cursor, is_tab_start, &mut indicator_buf)
+            self.display_cell_text(ch, byte_pos, is_cursor, is_tab_start, &mut indicator_buf)
         };
+        // A newline cell normally renders as nothing; when it renders a
+        // line-ending indicator instead, remember how many cells landed so
+        // position bookkeeping (rendered_cols, the cursor-on-newline
+        // indicator) accounts for them.
+        if ch == '\n' && is_whitespace_indicator {
+            self.newline_indicator_cols = display_char.chars().count();
+        }
 
         // Apply subdued indicator colors from theme. Cursor styling keeps
         // precedence (so guides do not obscure the caret), but selection does
@@ -322,7 +354,7 @@ impl CellPass<'_, '_, '_> {
         let mut style = resolved.style;
         if is_indentation_guide && !is_cursor {
             style = style.fg(self.indentation_guide_color());
-        } else if is_whitespace_indicator && !is_cursor && !is_selected {
+        } else if is_whitespace_indicator && !style_as_cursor && !is_selected {
             style = style.fg(self.input.theme.whitespace_indicator_fg);
         }
 
@@ -330,7 +362,13 @@ impl CellPass<'_, '_, '_> {
             self.emit_cell(display_char, style, byte_pos, ch);
         }
 
-        self.place_cell_cursor(ch, byte_pos, is_cursor, resolved.is_secondary_cursor);
+        // Recover the secondary-cursor flag for virtual-space cursors whose
+        // styling was suppressed above — the indicator span they rely on is
+        // still placed by `place_cell_cursor`.
+        let is_secondary_cursor = resolved.is_secondary_cursor
+            || (newline_virtual_cursor
+                && byte_pos != Some(self.input.selection.primary_cursor_position));
+        self.place_cell_cursor(ch, byte_pos, is_cursor, is_secondary_cursor);
     }
 
     /// Whether the current leading-whitespace cell should render as an
@@ -553,11 +591,13 @@ impl CellPass<'_, '_, '_> {
     }
 
     /// What to draw for this character: the char itself, a whitespace
-    /// indicator (→ / ·), an LSP-waiting marker, a debug escape, or
-    /// nothing (newline). Tabs are already expanded by ViewLineIterator.
+    /// indicator (→ / · / ↵ / ␍), an LSP-waiting marker, a debug escape,
+    /// or nothing (newline with line-ending indicators disabled). Tabs are
+    /// already expanded by ViewLineIterator.
     fn display_cell_text<'buf>(
         &self,
         ch: char,
+        byte_pos: Option<usize>,
         is_cursor: bool,
         is_tab_start: bool,
         indicator_buf: &'buf mut [u8; 4],
@@ -590,7 +630,8 @@ impl CellPass<'_, '_, '_> {
             // Debug mode: show LF explicitly
             ("\\n", false)
         } else if ch == '\n' {
-            ("", false)
+            let indicator = self.newline_indicator(byte_pos);
+            (indicator, !indicator.is_empty())
         } else if ws_show_tab {
             // Visual indicator for tab: show → at the first position
             ('→'.encode_utf8(indicator_buf), true)
@@ -599,6 +640,41 @@ impl CellPass<'_, '_, '_> {
             ('·'.encode_utf8(indicator_buf), true)
         } else {
             (ch.encode_utf8(indicator_buf), false)
+        }
+    }
+
+    /// Line-ending indicator glyphs for the newline cell ("" when disabled).
+    ///
+    /// The buffer's newline token covers the whole line break — in a CRLF
+    /// buffer it spans the `\r\n` pair (the `\n` half is skipped by the view
+    /// pipeline) — so this one cell carries both the CR and newline
+    /// indicators. Classic-Mac CR buffers store their breaks as `\n` in
+    /// memory but save them as `\r`, so their indicator reflects the on-disk
+    /// ending. Only source newlines qualify: plugin-injected line breaks
+    /// (`byte_pos == None`) are not part of the file's content.
+    fn newline_indicator(&self, byte_pos: Option<usize>) -> &'static str {
+        if byte_pos.is_none() {
+            return "";
+        }
+        let ws = &self.input.state.buffer_settings.whitespace;
+        if !ws.newlines && !ws.carriage_returns {
+            return "";
+        }
+        match self.input.state.buffer.line_ending() {
+            LineEnding::CRLF => match (ws.carriage_returns, ws.newlines) {
+                (true, true) => "␍↵",
+                (true, false) => "␍",
+                (false, true) => "↵",
+                (false, false) => "",
+            },
+            LineEnding::CR if ws.carriage_returns => "␍",
+            LineEnding::CR | LineEnding::LF => {
+                if ws.newlines {
+                    "↵"
+                } else {
+                    ""
+                }
+            }
         }
     }
 
@@ -663,16 +739,21 @@ impl CellPass<'_, '_, '_> {
             } else {
                 true
             };
-            if should_add_indicator {
+            // A virtual-space cursor sits past the content end: pad the
+            // indicator out to its on-screen column. Cells already emitted
+            // for a line-ending indicator occupy the start of that gap.
+            let virtual_pad = byte_pos
+                .and_then(|bp| self.input.selection.virtual_cols_at.get(&bp))
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(self.newline_indicator_cols);
+            // When the newline rendered a line-ending indicator, that cell
+            // already carries the cursor styling from resolve_cell_style —
+            // an extra indicator cell would land one column too far right.
+            if should_add_indicator && (self.newline_indicator_cols == 0 || virtual_pad > 0) {
                 // Flush accumulated text before adding the cursor indicator
                 // so the indicator appears after the line content, not before
                 self.span_acc.flush(self.line_spans, self.line_view_map);
-                // A virtual-space cursor sits past the content end: pad the
-                // indicator out to its on-screen column.
-                let virtual_pad = byte_pos
-                    .and_then(|bp| self.input.selection.virtual_cols_at.get(&bp))
-                    .copied()
-                    .unwrap_or(0);
                 if virtual_pad > 0 {
                     push_span_with_map(
                         self.line_spans,
@@ -715,12 +796,16 @@ impl CellPass<'_, '_, '_> {
             .unwrap_or(self.line_total_visual_width);
         let ch_width = next_col_for_char.saturating_sub(self.col_offset);
         // `\n` gets visual width 1 from the view pipeline but renders as
-        // empty — don't count it as an on-screen cell.
+        // empty — don't count it as an on-screen cell. When it rendered a
+        // line-ending indicator instead, count the indicator's actual cells
+        // (which may exceed the pipeline width: `␍↵` is two cells).
         let was_rendered = self.col_offset >= self.input.left_col && ch != '\n';
         self.col_offset = next_col_for_char;
         self.visible_char_count += ch_width;
         if was_rendered {
             self.rendered_cols += ch_width;
+        } else if ch == '\n' {
+            self.rendered_cols += self.newline_indicator_cols;
         }
     }
 
@@ -747,6 +832,7 @@ impl CellPass<'_, '_, '_> {
             first_line_byte_pos: self.first_line_byte_pos,
             last_line_byte_pos: self.last_line_byte_pos,
             syntax_extend_bg: self.syntax_extend_bg,
+            newline_indicator_cols: self.newline_indicator_cols,
         }
     }
 }

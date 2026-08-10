@@ -32,6 +32,27 @@ use std::thread;
 
 pub use fresh_core::TerminalId;
 
+/// What a spawning terminal should do with the on-disk transcripts (rendered
+/// scrollback + raw PTY log) it is handed.
+///
+/// The distinction is the difference between "this terminal *is* the one that
+/// wrote that file" and "that file just happens to sit on this path". Terminal
+/// files are named after the terminal id, and ids restart at 0 every editor
+/// run, so a brand-new terminal is regularly handed a path a *different*
+/// terminal wrote in a previous run (or, after a restore, is still writing —
+/// restored terminals keep their old paths under new ids). Inferring "append
+/// and seed the history" from "the file is non-empty" made that a scrollback
+/// leak between unrelated terminals (fresh#2836); the intent is now explicit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackingMode {
+    /// A new terminal: start its transcripts from empty, discarding whatever
+    /// an earlier terminal left on those paths.
+    Fresh,
+    /// The same terminal continuing (workspace restore, respawn after exit):
+    /// append to its transcripts and treat what's there as its own history.
+    Continue,
+}
+
 /// Messages sent to terminal I/O thread
 enum TerminalCommand {
     /// Write data to PTY
@@ -41,6 +62,13 @@ enum TerminalCommand {
     /// Shutdown the terminal
     Shutdown,
 }
+
+/// The `(window, terminal)` identity stamped on this terminal's async
+/// messages, shared with the reader and wait threads. A `Mutex` (rather
+/// than a plain captured copy) so the tag can be rewritten when another
+/// window's manager adopts a live terminal — see
+/// [`TerminalManager::adopt`]; the threads read it at each send.
+type SharedWtId = Arc<Mutex<fresh_core::WindowTerminalId>>;
 
 /// Handle to a running terminal session
 pub struct TerminalHandle {
@@ -69,6 +97,9 @@ pub struct TerminalHandle {
     /// expose it. Only read on Linux (the only `/proc`-backed target).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     master_fd: Option<i32>,
+    /// The identity tag shared with this terminal's reader/wait threads,
+    /// rewritten when the handle moves to another window's manager.
+    wt_id: SharedWtId,
 }
 
 impl TerminalHandle {
@@ -217,6 +248,24 @@ impl TerminalHandle {
         self.cwd.clone()
     }
 
+    /// The shell's *live* working directory — where the user has `cd`'d to,
+    /// not where the terminal was spawned. Read from `/proc/<pid>/cwd` on
+    /// Linux; other platforms (and dead pids) fall back to the spawn cwd.
+    pub fn current_working_dir(&self) -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(pid) = self.pid {
+                // Local OS introspection, same rationale as
+                // `foreground_process_name`: this reads the host's /proc,
+                // not the (possibly remote) editing filesystem.
+                if let Ok(cwd) = std::fs::read_link(format!("/proc/{pid}/cwd")) {
+                    return Some(cwd);
+                }
+            }
+        }
+        self.cwd.clone()
+    }
+
     /// Get the shell executable path used for this terminal
     pub fn shell(&self) -> &str {
         &self.shell
@@ -276,6 +325,8 @@ impl TerminalManager {
     /// * `cwd` - Optional working directory (defaults to current directory)
     /// * `log_path` - Optional path for raw PTY log (for session restore)
     /// * `backing_path` - Optional path for rendered scrollback (incremental streaming)
+    /// * `backing_mode` - Whether this terminal *continues* the transcript
+    ///   already in those files (restore / respawn) or starts a new one
     ///
     /// # Returns
     /// The terminal ID if successful
@@ -287,8 +338,10 @@ impl TerminalManager {
         cwd: Option<std::path::PathBuf>,
         log_path: Option<std::path::PathBuf>,
         backing_path: Option<std::path::PathBuf>,
+        backing_mode: BackingMode,
         terminal_wrapper: crate::services::authority::TerminalWrapper,
         env_delta: crate::services::env_provider::EnvDelta,
+        extra_env: HashMap<String, String>,
     ) -> Result<TerminalId, String> {
         let id = TerminalId(self.next_id);
         self.next_id += 1;
@@ -300,8 +353,10 @@ impl TerminalManager {
             cwd,
             log_path,
             backing_path,
+            backing_mode,
             terminal_wrapper,
             env_delta,
+            extra_env,
         )?;
 
         self.terminals.insert(id, handle);
@@ -324,8 +379,10 @@ impl TerminalManager {
         cwd: Option<std::path::PathBuf>,
         log_path: Option<std::path::PathBuf>,
         backing_path: Option<std::path::PathBuf>,
+        backing_mode: BackingMode,
         terminal_wrapper: TerminalWrapper,
         env_delta: crate::services::env_provider::EnvDelta,
+        extra_env: HashMap<String, String>,
     ) -> Result<TerminalHandle, String> {
         let pty_pair = open_pty(cols, rows)?;
 
@@ -333,7 +390,8 @@ impl TerminalManager {
         // unconditionally — local wraps `detect_shell()` with no args;
         // container/remote authorities re-parent into `docker exec -w …`,
         // `ssh …`, etc.
-        let (cmd, shell) = build_shell_command(terminal_wrapper, cwd.as_deref(), &env_delta);
+        let (cmd, shell) =
+            build_shell_command(terminal_wrapper, cwd.as_deref(), &env_delta, &extra_env);
 
         // Spawn the shell process.
         let child = pty_pair
@@ -349,9 +407,13 @@ impl TerminalManager {
 
         let state = Arc::new(Mutex::new(TerminalState::new(cols, rows)));
 
-        // If the backing file already exists (session restore), seed the history
-        // end so entering terminal mode doesn't truncate it to 0.
-        if let Some(p) = backing_path.as_ref() {
+        // A *continuing* terminal (workspace restore, respawn after exit) picks
+        // up the transcript already in its backing file: seed the history end
+        // so entering terminal mode doesn't truncate it to 0. A `Fresh`
+        // terminal never does — whatever is on that path belongs to some
+        // earlier terminal, and inheriting it would show one terminal's
+        // scrollback in another (fresh#2836).
+        if let (BackingMode::Continue, Some(p)) = (backing_mode, backing_path.as_ref()) {
             if let Ok(metadata) = std::fs::metadata(p) {
                 if metadata.len() > 0 {
                     if let Ok(mut s) = state.lock() {
@@ -373,13 +435,18 @@ impl TerminalManager {
             .try_clone_reader()
             .map_err(|e| format!("Failed to get PTY reader: {}", e))?;
 
-        let log_writer = open_log_writer(log_path.as_deref());
-        let backing_writer = open_backing_writer(backing_path.as_deref());
+        let log_writer = open_log_writer(log_path.as_deref(), backing_mode);
+        let backing_writer = open_backing_writer(backing_path.as_deref(), backing_mode);
 
         // Tag output/exit with the owning window so the main loop never has to
         // guess which session a `Terminal-N` belongs to (ids collide across
-        // windows). See `fresh_core::WindowTerminalId`.
-        let wt_id = fresh_core::WindowTerminalId::new(self.window_id, id);
+        // windows). See `fresh_core::WindowTerminalId`. Shared (not copied)
+        // with the reader/wait threads so `adopt` can retag a live terminal
+        // when it moves to another window's manager.
+        let wt_id: SharedWtId = Arc::new(Mutex::new(fresh_core::WindowTerminalId::new(
+            self.window_id,
+            id,
+        )));
 
         // Reader thread: drains PTY output, feeds the emulator, streams
         // scrollback / raw log to disk, and pings the main loop to redraw.
@@ -390,7 +457,7 @@ impl TerminalManager {
             backing_writer,
             log_writer,
             async_bridge: self.async_bridge.clone(),
-            wt_id,
+            wt_id: wt_id.clone(),
             terminal_id: id,
             alive: alive.clone(),
         };
@@ -398,7 +465,7 @@ impl TerminalManager {
 
         // Wait thread: blocks on `child.wait()` and fires `TerminalExited`
         // exactly once with the real exit code.
-        spawn_wait_thread(child, self.async_bridge.clone(), wt_id, id);
+        spawn_wait_thread(child, self.async_bridge.clone(), wt_id.clone(), id);
 
         // Capture the PTY master fd before the master moves into the writer
         // thread. Used later by `foreground_process_name` (tab auto-naming).
@@ -427,7 +494,32 @@ impl TerminalManager {
             shell,
             pid: child_pid,
             master_fd,
+            wt_id,
         })
+    }
+
+    /// Remove a live terminal from this manager *without* shutting it down,
+    /// so another window's manager can [`Self::adopt`] it. The PTY, its
+    /// reader/writer/wait threads, and the running process are untouched.
+    pub fn release(&mut self, id: TerminalId) -> Option<TerminalHandle> {
+        self.terminals.remove(&id)
+    }
+
+    /// Adopt a live terminal released from another window's manager.
+    ///
+    /// Assigns the handle a fresh id in this manager's namespace (ids are
+    /// per-window and would otherwise collide) and rewrites the shared
+    /// `(window, terminal)` tag, so output/exit messages the terminal's
+    /// threads send from now on are attributed to this window. Returns the
+    /// new id.
+    pub fn adopt(&mut self, handle: TerminalHandle) -> TerminalId {
+        let id = TerminalId(self.next_id);
+        self.next_id += 1;
+        if let Ok(mut wt_id) = handle.wt_id.lock() {
+            *wt_id = fresh_core::WindowTerminalId::new(self.window_id, id);
+        }
+        self.terminals.insert(id, handle);
+        id
     }
 
     /// Get a terminal handle by ID
@@ -519,6 +611,7 @@ fn build_shell_command(
     terminal_wrapper: TerminalWrapper,
     cwd: Option<&std::path::Path>,
     env_delta: &crate::services::env_provider::EnvDelta,
+    extra_env: &HashMap<String, String>,
 ) -> (CommandBuilder, String) {
     let TerminalWrapper {
         command: shell,
@@ -558,6 +651,15 @@ fn build_shell_command(
         if let Some(session_id) = crate::server::local_control::local_session_id() {
             cmd.env("FRESH_SESSION", session_id);
         }
+        // Advertise the running fresh executable's own path so a nested `fresh`
+        // — and, above all, an agent taught the Fresh CLI — invokes the EXACT
+        // same binary this editor is running. Its `--cmd` verbs and `--help`
+        // then match this build, never some other `fresh` that happens to sit
+        // earlier on PATH. Local-only (skip_cwd ⇒ a remote host where this path
+        // is meaningless), mirroring FRESH_SESSION.
+        if let Ok(exe) = std::env::current_exe() {
+            cmd.env("FRESH_BIN", exe);
+        }
     }
 
     // On Windows, ensure PROMPT is set for cmd.exe.
@@ -568,50 +670,51 @@ fn build_shell_command(
         }
     }
 
+    // Caller-supplied extra env (e.g. the Orchestrator's `FRESH_CMD_TOKEN`
+    // capability token, or plugin-provided vars). Applied last so these keys
+    // are guaranteed present in the child; they intentionally win over the
+    // activated env delta above. Normal callers pass an empty map — no change.
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+
     (cmd, shell)
 }
 
-/// Open the optional raw-PTY log file (append mode) for full-session capture.
+/// Open the optional raw-PTY log file for full-session capture. `Continue`
+/// appends to the existing capture; `Fresh` truncates (see [`BackingMode`]).
 fn open_log_writer(
     log_path: Option<&std::path::Path>,
+    mode: BackingMode,
 ) -> Option<std::io::BufWriter<std::fs::File>> {
-    log_path
-        .and_then(|p| {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(p)
-                .ok()
-        })
-        .map(std::io::BufWriter::new)
+    log_path.and_then(|p| open_transcript_file(p, mode))
 }
 
-/// Open the optional scrollback backing file. On session restore (the file
-/// already has content) we append to continue streaming; otherwise we truncate
-/// to start fresh.
+/// Open the optional scrollback backing file. `Continue` (workspace restore,
+/// respawn after exit) appends so the transcript keeps streaming where it left
+/// off; `Fresh` truncates so a new terminal never starts on top of another
+/// terminal's scrollback.
 fn open_backing_writer(
     backing_path: Option<&std::path::Path>,
+    mode: BackingMode,
 ) -> Option<std::io::BufWriter<std::fs::File>> {
-    backing_path
-        .and_then(|p| {
-            let existing_has_content =
-                p.exists() && std::fs::metadata(p).map(|m| m.len() > 0).unwrap_or(false);
-            if existing_has_content {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(p)
-                    .ok()
-            } else {
-                std::fs::OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(p)
-                    .ok()
-            }
-        })
-        .map(std::io::BufWriter::new)
+    backing_path.and_then(|p| open_transcript_file(p, mode))
+}
+
+/// Shared open for the two on-disk transcripts (raw log, rendered scrollback):
+/// append when continuing an existing terminal's story, truncate when starting
+/// a new one.
+fn open_transcript_file(
+    path: &std::path::Path,
+    mode: BackingMode,
+) -> Option<std::io::BufWriter<std::fs::File>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true);
+    match mode {
+        BackingMode::Continue => options.append(true),
+        BackingMode::Fresh => options.write(true).truncate(true),
+    };
+    options.open(path).ok().map(std::io::BufWriter::new)
 }
 
 /// Wait-thread body: block on the child's exit and fire `TerminalExited` once.
@@ -620,7 +723,7 @@ fn open_backing_writer(
 fn spawn_wait_thread(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     async_bridge: Option<AsyncBridge>,
-    wt_id: fresh_core::WindowTerminalId,
+    wt_id: SharedWtId,
     terminal_id: TerminalId,
 ) {
     thread::spawn(move || {
@@ -632,10 +735,15 @@ fn spawn_wait_thread(
             }
         };
         if let Some(bridge) = &async_bridge {
+            // Read the tag at exit time — the terminal may have been
+            // adopted by another window since it was spawned.
+            let Ok(terminal) = wt_id.lock().map(|id| *id) else {
+                return;
+            };
             #[allow(clippy::let_underscore_must_use)]
             let _ = bridge.sender().send(
                 crate::services::async_bridge::AsyncMessage::TerminalExited {
-                    terminal: wt_id,
+                    terminal,
                     exit_code,
                 },
             );
@@ -699,7 +807,7 @@ struct ReaderLoop {
     /// Raw byte log for session-restore replay, if a log file is set.
     log_writer: Option<std::io::BufWriter<std::fs::File>>,
     async_bridge: Option<AsyncBridge>,
-    wt_id: fresh_core::WindowTerminalId,
+    wt_id: SharedWtId,
     terminal_id: TerminalId,
     alive: Arc<AtomicBool>,
 }
@@ -819,12 +927,15 @@ impl ReaderLoop {
     /// Notify the main loop that this terminal produced output (redraw).
     fn notify_redraw(&self) {
         if let Some(bridge) = &self.async_bridge {
+            // Read the tag per send — the terminal may have been adopted by
+            // another window since it was spawned.
+            let Ok(terminal) = self.wt_id.lock().map(|id| *id) else {
+                return;
+            };
             #[allow(clippy::let_underscore_must_use)]
-            let _ = bridge.sender().send(
-                crate::services::async_bridge::AsyncMessage::TerminalOutput {
-                    terminal: self.wt_id,
-                },
-            );
+            let _ = bridge
+                .sender()
+                .send(crate::services::async_bridge::AsyncMessage::TerminalOutput { terminal });
         }
     }
 }

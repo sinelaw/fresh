@@ -3,7 +3,7 @@ name: Web UI
 on:
   pull_request:
     paths:
-      - 'web-ui/**'
+      - 'crates/fresh-editor/web-ui/**'
       - 'crates/fresh-editor/src/webui/**'
       - 'crates/fresh-editor/src/view/scene.rs'
       - 'crates/fresh-editor/tests/scene_parity.rs'
@@ -15,7 +15,7 @@ on:
       - master
       - develop
     paths:
-      - 'web-ui/**'
+      - 'crates/fresh-editor/web-ui/**'
       - 'crates/fresh-editor/src/webui/**'
       - 'crates/fresh-editor/src/view/scene.rs'
       - 'crates/fresh-editor/tests/scene_parity.rs'
@@ -61,14 +61,14 @@ jobs:
           node-version: '24'
       - name: Read pinned Playwright version
         id: playwright-version
-        run: echo "version=$(node -p "require('./web-ui/test/package.json').devDependencies.playwright")" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(node -p "require('./crates/fresh-editor/web-ui/test/package.json').devDependencies.playwright")" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
-      # run.sh builds the bridge, npm-installs web-ui/test, runs
+      # run.sh builds the bridge, npm-installs the suite's deps, runs
       # `npx playwright install chromium --with-deps` if the cache is cold,
       # starts webui_server, runs drive.mjs, and tears the server down.
       - name: Run web UI headless suite
-        run: web-ui/test/run.sh
+        run: crates/fresh-editor/web-ui/test/run.sh

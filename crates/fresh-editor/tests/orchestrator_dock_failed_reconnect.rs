@@ -51,11 +51,20 @@ fn failed_dormant_reconnect_commits_switch_to_empty_shell() {
     persist_previous_session(&dir_context, &project, &remote_root, false);
 
     // The persisted SSH workspace file — must survive the whole test
-    // unchanged (the disconnected shell has nothing real to save).
-    let ws_file = dir_context.data_dir.join("workspaces").join(format!(
-        "{}.json",
-        fresh::workspace::encode_path_for_filename(&remote_root)
-    ));
+    // unchanged (the disconnected shell has nothing real to save). Located
+    // by its encoded-root filename prefix (the stable-id suffix varies).
+    let ws_dir = dir_context.data_dir.join("workspaces");
+    let prefix = fresh::workspace::encode_path_for_filename(&remote_root);
+    let ws_file = std::fs::read_dir(&ws_dir)
+        .expect("workspaces dir")
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".json"))
+        })
+        .expect("persisted remote workspace file");
     let ws_before = std::fs::read_to_string(&ws_file).expect("persisted remote workspace");
     assert!(
         ws_before.contains("remote_notes.txt") && ws_before.contains("RemoteAgent"),

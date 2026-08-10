@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::action::Action;
-use crate::api::ViewTokenWire;
 use crate::{BufferId, CursorId, SplitId};
 
 /// Arguments passed to hook callbacks
@@ -25,6 +24,14 @@ pub enum HookArgs {
 
     /// After a buffer is successfully saved
     AfterFileSave { buffer_id: BufferId, path: PathBuf },
+
+    /// A buffer was reloaded from disk — auto-revert picked up an external
+    /// change (e.g. `git checkout <ref> -- <file>` run in another terminal)
+    /// or the user ran an explicit revert. Fires after the new content is
+    /// live. Reloads don't go through `AfterFileSave`, so plugins that
+    /// surface disk-derived state (git gutter, etc.) must subscribe to this
+    /// too or their decorations go stale on every external reset.
+    AfterFileRevert { buffer_id: BufferId, path: PathBuf },
 
     /// The file explorer mutated the filesystem (paste, duplicate, ...)
     /// without going through a buffer save. Plugins that surface
@@ -158,6 +165,24 @@ pub enum HookArgs {
     /// hook, *not* an editor rebuild (which would reset other sessions).
     TrustChanged { level: String },
 
+    /// The effective configuration changed: the user saved from the
+    /// Settings UI, or the config was reloaded from disk. Fires after
+    /// the new config is live *and* the plugin state snapshot has been
+    /// refreshed, so a handler that re-reads `editor.getConfig()` /
+    /// `editor.getPluginConfig()` sees the new values, not the old ones.
+    ///
+    /// Deliberately payload-free. Config is a pull API — the host says
+    /// "something changed" and each plugin re-reads exactly the keys it
+    /// cares about. Naming the changed keys here would have to lie for
+    /// the reload-from-disk path, which replaces the whole tree without
+    /// computing a diff.
+    ///
+    /// Does *not* fire for `editor.setSetting(...)`, a plugin's own
+    /// write into its session-scoped runtime layer: a plugin that
+    /// re-configures itself from this handler would otherwise wake
+    /// itself (and every other plugin) right back up.
+    ConfigChanged {},
+
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
 
@@ -241,20 +266,6 @@ pub enum HookArgs {
         language: String,
         /// The server that produced the target (e.g. `slangd`).
         server_name: String,
-    },
-
-    /// View transform request
-    ViewTransformRequest {
-        buffer_id: BufferId,
-        split_id: SplitId,
-        /// Byte offset of the viewport start
-        viewport_start: usize,
-        /// Byte offset of the viewport end
-        viewport_end: usize,
-        /// Base tokens (Text, Newline, Space) from the source
-        tokens: Vec<ViewTokenWire>,
-        /// Byte positions of all cursors in this buffer
-        cursor_positions: Vec<usize>,
     },
 
     /// Mouse click event
@@ -430,6 +441,22 @@ pub enum HookArgs {
         /// is preserved because prompt detection often depends on it
         /// (e.g. `"... (Y/n): "` ends in a space).
         last_line: String,
+        /// The terminal's current tab title — the same combined
+        /// foreground-process + OSC-title string shown on the terminal's
+        /// tab (see `Window::sync_terminal_titles`). Empty when the
+        /// terminal has no meaningful title yet (the default
+        /// `*Terminal N*`). Lets a plugin name a workspace after whatever
+        /// the terminal is running, tracking the tab, without re-reading
+        /// the PTY. Explicit (plugin-set) tab titles are surfaced too.
+        terminal_title: String,
+        /// The program's most recent out-of-band activity signal, sniffed
+        /// from the raw PTY stream: `Some(true)` while a command / task is
+        /// running (OSC 133 command markers, OSC 9;4 progress),
+        /// `Some(false)` when it has finished, `None` when the program never
+        /// emitted such a marker. Lets a plugin drive a workspace's
+        /// working/idle indicator off an explicit signal instead of guessing
+        /// from output timing.
+        osc_activity: Option<bool>,
     },
 
     /// PTY terminal's spawned process has ended. Fires once per
@@ -721,6 +748,7 @@ mod tests {
             HookArgs::PluginsLoaded {},
             HookArgs::Ready {},
             HookArgs::FocusGained {},
+            HookArgs::ConfigChanged {},
         ] {
             let json = hook_args_to_json(&args).unwrap();
             assert_eq!(
@@ -737,6 +765,8 @@ mod tests {
             terminal_id: 7,
             window_id: 2,
             last_line: "Do you want me to attempt a fix? (Y/n): ".into(),
+            terminal_title: "bash \u{2014} root@host: ~/proj".into(),
+            osc_activity: Some(true),
         })
         .unwrap();
         assert_eq!(json["terminal_id"], 7);
@@ -745,6 +775,8 @@ mod tests {
             json["last_line"],
             "Do you want me to attempt a fix? (Y/n): "
         );
+        assert_eq!(json["terminal_title"], "bash \u{2014} root@host: ~/proj");
+        assert_eq!(json["osc_activity"], true);
     }
 
     #[test]

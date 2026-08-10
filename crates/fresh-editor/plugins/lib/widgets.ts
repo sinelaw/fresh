@@ -243,7 +243,14 @@ export function dropdown(
  * `WidgetPanel.setDualIncluded(key, values)`.
  *
  * `excluded` names option values owned by a sibling list, kept out of
- * this list's Available column (cross-exclusion). */
+ * this list's Available column (cross-exclusion).
+ *
+ * The focused column's cursor row is marked `▸`, the other column's
+ * parked cursor `▹`, and the active column's header `▾`, so the state
+ * reads without relying on color. `activeIncluded` / `availableCursor`
+ * / `includedCursor` seed that cursor (host instance state takes over
+ * after the first render); `hint` adds a one-line key legend under the
+ * columns. */
 export function dualList(
   options: { value: string; label: string }[],
   opts?: {
@@ -251,6 +258,10 @@ export function dualList(
     excluded?: string[];
     label?: string;
     focused?: boolean;
+    activeIncluded?: boolean;
+    availableCursor?: number;
+    includedCursor?: number;
+    hint?: string;
     visibleRows?: number;
     key?: string;
   },
@@ -262,6 +273,10 @@ export function dualList(
     excluded: opts?.excluded ?? [],
     label: opts?.label ?? "",
     focused: opts?.focused ?? false,
+    activeIncluded: opts?.activeIncluded ?? false,
+    availableCursor: opts?.availableCursor ?? 0,
+    includedCursor: opts?.includedCursor ?? 0,
+    hint: opts?.hint ?? "",
     visibleRows: opts?.visibleRows ?? 6,
     key: opts?.key,
   };
@@ -288,9 +303,27 @@ export function button(
      * advances one stop per group (the active option) and ←/→ moves
      * the selection within the group. Defaults to true. */
     focusable?: boolean;
+    /** Render the label alone — no `[ ]` frame, no focus-marker
+     * gutter — turning the button into an *icon affordance* (a `×`
+     * close glyph, a `▾` chevron) rather than a framed action. Use
+     * where the glyph itself is the control; keep the default for
+     * anything with a word on it. Layout only — `hoverStyle` decides
+     * how it looks under the pointer. */
+    bare?: boolean;
+    /** How the button looks while the pointer is over it. Omit to
+     * leave it looking the same hovered as not.
+     *
+     * The host applies this as the mouse moves, with no round-trip to
+     * the plugin, so hover costs a panel re-render and nothing more.
+     * It outranks focus styling while both apply.
+     *
+     * For a close glyph, `{ fg: "ui.tab_close_hover_fg" }` is the
+     * editor's shared "close affordance under the pointer" look — the
+     * tab `×` and the file explorer's `×` both use it. */
+    hoverStyle?: Partial<OverlayOptions>;
   },
 ): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "button",
     label,
     focused: options?.focused ?? false,
@@ -298,7 +331,13 @@ export function button(
     key: options?.key,
     disabled: options?.disabled ?? false,
     focusable: options?.focusable ?? true,
+    bare: options?.bare ?? false,
   };
+  // Omit rather than pass `undefined`: the plugin bridge turns a
+  // present `undefined` into JSON `null`, which fails to deserialize
+  // as the host's `Option<OverlayOptions>`.
+  if (options?.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  return spec;
 }
 
 /** Horizontal spacer of fixed column count. In a `Row` it produces
@@ -556,6 +595,15 @@ export function text(
      * from the value with `: `, so a column of controls aligns their
      * value cells. `0` (default) keeps the compact `label [value]`. */
     labelWidth?: number;
+    /** Reject every mutating operation (typing, Backspace/Delete, Cut,
+     * Paste) while keeping caret motion, selection, and Copy. Implied
+     * by `markdown`. */
+    readOnly?: boolean;
+    /** Render `value` as a markdown document (multi-line only): the
+     * host renders it through the same engine as LSP hover docs and
+     * word-wraps to the widget's width. Forcibly read-only; the caret,
+     * selection, and Copy operate on the rendered plain text. */
+    markdown?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -575,6 +623,8 @@ export function text(
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
     labelWidth: options.labelWidth ?? 0,
+    readOnly: options.readOnly ?? false,
+    markdown: options.markdown ?? false,
     key: options.key,
   };
 }
@@ -982,6 +1032,22 @@ export class FloatingWidgetPanel {
        * control is legible from a plain terminal capture and the
        * layout stays constant as focus moves. Default false. */
       focusMarker?: boolean;
+      /** Native modal-frame title. When set, the host draws a title bar
+       * into the centered panel's top border (the dialog's *shell* —
+       * you no longer fake a title with a `labeledSection` border inside
+       * the spec). Ignored for `asDock`. Omitted → untitled frame. */
+      title?: string;
+      /** Native modal-frame close button. When true, the host draws a
+       * `[×]` at the centered panel's top-right; clicking it dismisses
+       * the panel exactly like Esc / Cancel (fires the panel's `cancel`
+       * `widget_event`). Ignored for `asDock`. Default false. */
+      closable?: boolean;
+      /** Mount without taking keyboard focus — the editor keeps the
+       * keys. Use this instead of mount-then-`blur` for a panel that
+       * must never own the keyboard (command dispatch is budgeted
+       * across frames, so a follow-up blur can land a tick late).
+       * Default false: mounting focuses the panel. */
+      startBlurred?: boolean;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -996,6 +1062,9 @@ export class FloatingWidgetPanel {
       hp,
       options.asDock ?? false,
       options.focusMarker ?? false,
+      options.title ?? "",
+      options.closable ?? false,
+      options.startBlurred ?? false,
     );
   }
 

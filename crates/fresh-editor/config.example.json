@@ -11,7 +11,6 @@
     "syntax_highlighting": true,
     "highlight_current_line": true,
     "line_wrap": true,
-    "highlight_timeout_ms": 5,
     "snapshot_interval": 100,
     "large_file_threshold_bytes": 1048576,
     "estimated_line_length": 80,

@@ -5,10 +5,11 @@
 //! struct".
 
 use crate::state::EditorState;
+use crate::view::scrollbar_marker::{self, MarkerBasis, MarkerCell};
 use crate::view::theme::Theme;
 use crate::view::viewport::Viewport;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Widget;
 
@@ -21,24 +22,40 @@ use ratatui::widgets::Widget;
 /// because the per-line word-wrap cost is much higher than a raw byte scan.
 /// Line count is the loop-iteration driver; the byte bound catches buffers with
 /// few but very long lines.
-const MAX_WRAP_SCROLLBAR_LINES: usize = 5_000;
-const MAX_WRAP_SCROLLBAR_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_WRAP_SCROLLBAR_LINES: usize = 5_000;
+pub(crate) const MAX_WRAP_SCROLLBAR_BYTES: usize = 2 * 1024 * 1024;
 
-/// Compute scrollbar line counts: `(total_lines, top_line)`.
+/// Compute scrollbar line counts: `(total_lines, top_line)`, plus the
+/// coordinate basis those counts are expressed in.
 ///
 /// For large files the counts are reported as `(0, 0)` — the caller uses a
 /// constant-size thumb in that case. When line wrapping is enabled, counts are
 /// in visual rows instead of logical lines — except on a large wrapped buffer,
 /// where the exact visual-row count is too expensive to recompute per edit and
 /// we fall back to the logical-line approximation (see the constants above).
+///
+/// The returned [`MarkerBasis`] is what plugin scrollbar markers are projected
+/// through. Deriving it here, from the same branch that picks the thumb's
+/// counts, is what keeps markers and thumb in the same coordinate space by
+/// construction rather than by convention.
 pub(super) fn scrollbar_line_counts(
     state: &mut EditorState,
     viewport: &Viewport,
     large_file_threshold_bytes: u64,
     buffer_len: usize,
-) -> (usize, usize) {
+    fold_ranges: Vec<std::ops::Range<usize>>,
+) -> (usize, usize, MarkerBasis) {
     if buffer_len > large_file_threshold_bytes as usize {
-        return (0, 0);
+        // No line coordinate exists here — on a file this size `line_count()`
+        // is typically `None` until the incremental scan runs. Bytes are exact
+        // and O(1), so markers stay correct on the very first frame.
+        return (
+            0,
+            0,
+            MarkerBasis::Bytes {
+                total: buffer_len as u64,
+            },
+        );
     }
 
     let total_lines = if buffer_len > 0 {
@@ -51,52 +68,255 @@ pub(super) fn scrollbar_line_counts(
         && total_lines <= MAX_WRAP_SCROLLBAR_LINES
         && buffer_len <= MAX_WRAP_SCROLLBAR_BYTES
     {
-        return scrollbar_visual_row_counts(state, viewport, buffer_len);
+        let (total_rows, top_row) =
+            scrollbar_visual_row_counts(state, viewport, buffer_len, fold_ranges);
+        return (
+            total_rows,
+            top_row,
+            MarkerBasis::VisualRows {
+                total: total_rows as u64,
+            },
+        );
     }
 
-    let top_line = if viewport.top_byte < buffer_len {
-        state.buffer.get_line_number(viewport.top_byte)
+    let top_line = if viewport.top_byte() < buffer_len {
+        state.buffer.get_line_number(viewport.top_byte())
     } else {
         0
     };
 
-    (total_lines, top_line)
+    (
+        total_lines,
+        top_line,
+        MarkerBasis::LogicalLines {
+            total: total_lines as u64,
+        },
+    )
+}
+
+/// The editor's own contribution to the track: one mark per unsaved-change
+/// range, in the gutter bar's colour and priority.
+///
+/// `diff_since_saved` already returns whole-buffer byte ranges — the gutter
+/// only clips them to the viewport afterwards — so the scrollbar can show
+/// changes that are scrolled off screen without any extra diffing beyond the
+/// call itself. Returns `None` when the buffer matches what was saved, which
+/// is the `!modified` fast path inside the diff.
+fn unsaved_change_marks(
+    state: &EditorState,
+    track_height: usize,
+) -> Option<scrollbar_marker::CoreMarks> {
+    use crate::view::ui::split_rendering::folding::{UNSAVED_CHANGE_FG, UNSAVED_CHANGE_PRIORITY};
+
+    let diff = state.buffer.diff_since_saved();
+    if diff.equal || diff.byte_ranges.is_empty() {
+        return None;
+    }
+    let ranges = coalesce_within_a_cell(diff.byte_ranges, state.buffer.len(), track_height);
+
+    let Color::Rgb(r, g, b) = UNSAVED_CHANGE_FG else {
+        // The constant is an RGB literal; a non-RGB variant would have no
+        // `OverlayColorSpec` spelling and is not reachable.
+        return None;
+    };
+
+    Some(scrollbar_marker::CoreMarks {
+        ranges,
+        color: fresh_core::api::OverlayColorSpec::Rgb(r, g, b),
+        priority: UNSAVED_CHANGE_PRIORITY,
+    })
+}
+
+/// Merge ranges separated by less than one track cell's worth of bytes.
+///
+/// `diff_since_saved` can return thousands of ranges — a replace-all across a
+/// large file, before saving, produces one per hit. Projecting each costs two
+/// coordinate lookups, and `get_line_number` is a O(log n) tree descent
+/// (~0.5 µs measured), so 2 000 raw ranges would put milliseconds on the
+/// *typing* path to draw marks that a ≤200-cell track cannot tell apart.
+///
+/// Merging first bounds the projection at roughly two lookups per track row,
+/// whatever the edit count, and cannot lose a mark: a merged group spans every
+/// range inside it, so the streak painted is a superset of the true one, never
+/// a subset. That makes it a resolution choice rather than a silent cap.
+///
+/// Input from the diff is ascending and disjoint; out-of-order input would
+/// merely merge less, never mis-paint.
+fn coalesce_within_a_cell(
+    ranges: Vec<std::ops::Range<usize>>,
+    buffer_len: usize,
+    track_height: usize,
+) -> Vec<std::ops::Range<usize>> {
+    let cell_bytes = (buffer_len / track_height.max(1)).max(1);
+    let mut out: Vec<std::ops::Range<usize>> = Vec::new();
+    for r in ranges {
+        match out.last_mut() {
+            Some(last) if r.start <= last.end.saturating_add(cell_bytes) => {
+                last.end = last.end.max(r.end);
+            }
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
+/// Project this buffer's scrollbar markers onto a `track_height`-tall column,
+/// reusing the cached projection when nothing relevant changed.
+///
+/// Two sources feed the column: the plugin-owned marker set, and the editor's
+/// own unsaved-change ranges — the same diff that draws the blue gutter bar,
+/// so an edit is visible on the track whether or not it has been saved and
+/// whether or not any plugin is loaded.
+///
+/// Cost per frame is one key comparison in the steady state; a rebuild is
+/// O(M) in the marker count with an O(1)–O(log n) coordinate lookup each, and
+/// carries no term proportional to file size. The `basis` argument comes from
+/// [`scrollbar_line_counts`], so the projection always uses the same
+/// coordinate space as the thumb it is drawn beside.
+pub(super) fn project_scrollbar_markers(
+    state: &mut EditorState,
+    basis: MarkerBasis,
+    track_height: usize,
+) -> Vec<Option<MarkerCell>> {
+    // `is_modified()` is the same flag `diff_since_saved` short-circuits on,
+    // so an unmodified buffer with no plugin markers does no work at all.
+    if track_height == 0 || (state.scrollbar_markers.is_empty() && !state.buffer.is_modified()) {
+        return Vec::new();
+    }
+
+    let content_version = state.buffer.version();
+    let key = scrollbar_marker::ProjectionKey::new(
+        &state.scrollbar_markers,
+        content_version,
+        state.buffer.save_state_version(),
+        basis,
+        track_height,
+    );
+
+    // Probe the cache before computing the unsaved-change ranges: that is a
+    // whole-buffer structure diff (O(leaves) once the buffer is modified), and
+    // a steady-state frame must not pay for it. The version pair in the key
+    // moves on every edit and on every save, which is exactly when the ranges
+    // can change.
+    if let Some(cells) = state.scrollbar_marker_buckets.cached(&key) {
+        return cells.to_vec();
+    }
+
+    let core = unsaved_change_marks(state, track_height);
+
+    // Split the borrows: the projection reads the manager and the coordinate
+    // source while writing the bucket cache.
+    let mut buckets = std::mem::take(&mut state.scrollbar_marker_buckets);
+    let cells = match basis {
+        MarkerBasis::Bytes { .. } => scrollbar_marker::project(
+            &state.scrollbar_markers,
+            &mut buckets,
+            key,
+            core.as_ref(),
+            basis,
+            track_height,
+            |byte| byte as u64,
+        )
+        .to_vec(),
+        MarkerBasis::LogicalLines { .. } => {
+            // `get_line_number` needs `&mut Buffer`; both mark sources are read
+            // from a snapshot first so the two borrows don't overlap. Every
+            // byte the projection will ask about must be in the map — a miss
+            // would silently answer line 0 and pile marks at the top.
+            let resolved = state.scrollbar_markers.resolved();
+            let core_bytes = core
+                .iter()
+                .flat_map(|c| c.endpoints())
+                .flat_map(|(s, e)| [s, e]);
+            let marker_bytes = resolved
+                .iter()
+                .flat_map(|m| std::iter::once(m.start).chain(m.end));
+            let mut lines = std::collections::HashMap::with_capacity(resolved.len() * 2);
+            for byte in core_bytes.chain(marker_bytes).collect::<Vec<_>>() {
+                lines
+                    .entry(byte)
+                    .or_insert_with(|| state.buffer.get_line_number(byte) as u64);
+            }
+            scrollbar_marker::project(
+                &state.scrollbar_markers,
+                &mut buckets,
+                key,
+                core.as_ref(),
+                basis,
+                track_height,
+                |byte| lines.get(&byte).copied().unwrap_or(0),
+            )
+            .to_vec()
+        }
+        MarkerBasis::VisualRows { .. } => {
+            // The wrap index was built by `scrollbar_visual_row_counts` for
+            // this same frame and geometry; this path only reads it. Markers
+            // project onto a line's *first* row so a marker on a wrapped line
+            // lands at the line's start, not inside it.
+            let index = state
+                .wrap_indices
+                .most_recent()
+                .expect("visual-row basis implies a built wrap index");
+            let buffer = &state.buffer;
+            scrollbar_marker::project(
+                &state.scrollbar_markers,
+                &mut buckets,
+                key,
+                core.as_ref(),
+                basis,
+                track_height,
+                |byte| index.line_first_row(buffer.get_line_number(byte)) as u64,
+            )
+            .to_vec()
+        }
+    };
+    state.scrollbar_marker_buckets = buckets;
+    cells
 }
 
 /// Calculate scrollbar position based on visual rows (for line-wrapped content).
 /// Returns `(total_visual_rows, top_visual_row)`.
 ///
-/// Both numbers come from the per-state [`VisualRowIndex`] in O(log N_lines).
+/// Both numbers come from the per-state [`WrapIndex`] in O(log N_lines).
 /// The index is built lazily and reused across frames whenever its key
 /// (pipeline-input version + geometry) is unchanged — so a steady-state
 /// scroll where only `top_byte` moves never re-walks the buffer.
 ///
-/// [`VisualRowIndex`]: crate::view::visual_row_index::VisualRowIndex
+/// [`WrapIndex`]: crate::view::wrap_index::WrapIndex
 pub(super) fn scrollbar_visual_row_counts(
     state: &mut EditorState,
     viewport: &Viewport,
     buffer_len: usize,
+    fold_ranges: Vec<std::ops::Range<usize>>,
 ) -> (usize, usize) {
     use crate::primitives::line_wrapping::WrapConfig;
     use crate::view::line_wrap_cache::{pipeline_inputs_version, CacheViewMode};
-    use crate::view::visual_row_index::{ensure_built, VisualRowIndexKey};
+    use crate::view::ui::split_rendering::MAX_SAFE_LINE_WIDTH;
+    use crate::view::wrap_index::WrapIndexGeometry;
+    use crate::view::wrap_machine::WrapRule;
 
     if buffer_len == 0 {
         return (1, 0);
     }
 
-    let gutter_width = viewport.gutter_width(&state.buffer);
-    let wrap_config = WrapConfig::new(
-        viewport.width as usize,
-        gutter_width,
-        true,
-        viewport.wrap_indent,
-    );
-    let effective_width = wrap_config
-        .first_line_width
-        .saturating_add(gutter_width)
-        .max(2);
-    let hanging_indent = wrap_config.hanging_indent;
+    // Terminal-grid wrap (fresh#2649): count exact-column rows at the grid
+    // width — same row model as the renderer and the viewport scroll math.
+    let (effective_width, gutter_width, hanging_indent) = if viewport.grid_wrap {
+        (viewport.grid_cols(), 0usize, false)
+    } else {
+        let gutter_width = viewport.gutter_width(&state.buffer);
+        let wrap_config = WrapConfig::new(
+            viewport.width as usize,
+            gutter_width,
+            true,
+            viewport.wrap_indent,
+        );
+        let effective_width = wrap_config
+            .first_line_width
+            .saturating_add(gutter_width)
+            .max(2);
+        (effective_width, gutter_width, wrap_config.hanging_indent)
+    };
     let pipeline_inputs_ver = pipeline_inputs_version(
         state.buffer.version(),
         state.soft_breaks.version(),
@@ -104,26 +324,69 @@ pub(super) fn scrollbar_visual_row_counts(
         state.virtual_texts.version(),
     );
 
-    let key = VisualRowIndexKey {
-        pipeline_inputs_version: pipeline_inputs_ver,
+    // The wrap index answers both numbers directly: `total_rows` is O(1) off the
+    // Fenwick tree and `row_of_byte` is a binary search. The path this replaced
+    // re-wrapped every logical line on every keystroke, because its key folded in
+    // the buffer version — 16.9% of a frame on a single-line file.
+    let geometry = WrapIndexGeometry {
+        rule: if viewport.grid_wrap {
+            WrapRule::Grid {
+                cols: effective_width,
+            }
+        } else if viewport.line_wrap_enabled {
+            WrapRule::Word {
+                content_width: effective_width,
+                gutter_width,
+                hanging_indent,
+            }
+        } else {
+            // Without soft wrap every logical line is one visual row until the
+            // safety chop, which no practical line reaches.
+            WrapRule::Chop {
+                chars: MAX_SAFE_LINE_WIDTH,
+            }
+        },
         view_mode: CacheViewMode::Source,
-        effective_width: effective_width as u32,
-        gutter_width: gutter_width as u16,
-        wrap_column: None,
-        hanging_indent,
-        line_wrap_enabled: viewport.line_wrap_enabled,
+        fold_signature: crate::view::wrap_index::fold_signature(&fold_ranges),
     };
-    ensure_built(state, &key);
 
-    let total_visual_rows = state.visual_row_index.total_rows() as usize;
-    let total_visual_rows = total_visual_rows.max(1);
+    // Snapshot virtual-line anchors so the per-line lookup borrows this list
+    // rather than `state`, whose buffer the build holds mutably.
+    let virtual_positions: Vec<usize> = if state.virtual_texts.is_empty() {
+        Vec::new()
+    } else {
+        let mut v: Vec<usize> = state
+            .virtual_texts
+            .query_lines_in_range(&state.marker_list, 0, buffer_len + 1)
+            .into_iter()
+            .map(|(pos, _)| pos)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let virtual_rows = |start: usize, end: usize| -> u32 {
+        let lo = virtual_positions.partition_point(|p| *p < start);
+        let hi = virtual_positions.partition_point(|p| *p < end);
+        (hi - lo) as u32
+    };
 
-    // Top visual row: first row of the line containing `top_byte`,
-    // plus the wrap-segment offset within that line.
-    let (line_idx, _) = state.visual_row_index.line_for_byte(viewport.top_byte);
-    let top_first_row = state.visual_row_index.line_first_row(line_idx) as usize;
-    let top_visual_row =
-        (top_first_row + viewport.top_view_line_offset).min(total_visual_rows.saturating_sub(1));
+    let line_ending = state.buffer.line_ending();
+    // Resolved before `entry` takes `&mut state`.
+    let decorations = state.index_decorations(geometry.view_mode, fold_ranges, &[]);
+    let index = state.wrap_indices.entry(geometry);
+    index.ensure_built(
+        &mut state.buffer,
+        geometry,
+        pipeline_inputs_ver,
+        line_ending,
+        &virtual_rows,
+        &decorations,
+    );
+
+    let total_visual_rows = index.total_rows() as usize;
+    let top_visual_row = index.row_of_byte(&state.buffer, viewport.top_byte()) as usize
+        + viewport.top_view_line_offset();
+    let top_visual_row = top_visual_row.min(total_visual_rows.saturating_sub(1));
 
     (total_visual_rows, top_visual_row)
 }
@@ -141,7 +404,7 @@ pub(super) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Vi
 
     let visible_lines = viewport.height as usize + 5;
     let mut lines_scanned = 0usize;
-    let mut iter = state.buffer.line_iterator(viewport.top_byte, 80);
+    let mut iter = state.buffer.line_iterator(viewport.top_byte(), 80);
     loop {
         if lines_scanned >= visible_lines {
             break;
@@ -161,6 +424,21 @@ pub(super) fn compute_max_line_length(state: &mut EditorState, viewport: &mut Vi
     viewport.max_line_length_seen.max(visible_width)
 }
 
+/// Resolve a marker's colour spec against the live theme.
+///
+/// Theme keys are resolved here, at paint time, rather than when the plugin
+/// sets the marker — so markers follow a theme switch with no invalidation.
+fn resolve_marker_color(spec: &fresh_core::api::OverlayColorSpec, theme: &Theme) -> Color {
+    match spec {
+        fresh_core::api::OverlayColorSpec::Rgb(r, g, b) => Color::Rgb(*r, *g, *b),
+        fresh_core::api::OverlayColorSpec::ThemeKey(key) => {
+            crate::view::theme::named_color_from_str(key)
+                .or_else(|| theme.resolve_theme_key(key))
+                .unwrap_or(Color::Reset)
+        }
+    }
+}
+
 /// Render a scrollbar for a split.
 /// Returns (thumb_start, thumb_end) positions for mouse hit testing.
 #[allow(clippy::too_many_arguments)]
@@ -174,6 +452,7 @@ pub(super) fn render_scrollbar(
     large_file_threshold_bytes: u64,
     total_lines: usize,
     top_line: usize,
+    markers: &[Option<MarkerCell>],
 ) -> (usize, usize) {
     let height = scrollbar_rect.height as usize;
     if height == 0 {
@@ -181,7 +460,7 @@ pub(super) fn render_scrollbar(
     }
 
     let buffer_len = state.buffer.len();
-    let viewport_top = viewport.top_byte;
+    let viewport_top = viewport.top_byte();
     let viewport_height_lines = height;
 
     let (thumb_start, thumb_size) = if buffer_len > large_file_threshold_bytes as usize {
@@ -226,18 +505,34 @@ pub(super) fn render_scrollbar(
     for row in 0..height {
         let cell_area = Rect::new(scrollbar_rect.x, scrollbar_rect.y + row as u16, 1, 1);
 
-        let style = if row >= thumb_start && row < thumb_end {
-            Style::default().bg(thumb_color)
+        let bg = if row >= thumb_start && row < thumb_end {
+            thumb_color
         } else {
-            Style::default().bg(track_color)
+            track_color
         };
 
-        let paragraph = Paragraph::new(" ").style(style);
+        // A marker paints a half-block glyph in its colour over the track or
+        // thumb background. The scrollbar is a single column
+        // (`split_rendering::layout`), so a solid fill would have to choose
+        // between showing the mark and showing the scroll position; the half
+        // block shows both in the same cell.
+        let paragraph = match markers.get(row).and_then(|m| m.as_ref()) {
+            Some(marker) => Paragraph::new(MARKER_GLYPH).style(
+                Style::default()
+                    .fg(resolve_marker_color(&marker.color, theme))
+                    .bg(bg),
+            ),
+            None => Paragraph::new(" ").style(Style::default().bg(bg)),
+        };
         paragraph.render(cell_area, buf);
     }
 
     (thumb_start, thumb_end)
 }
+
+/// Glyph used for a plugin scrollbar marker: a left half block, so the
+/// marker colour and the underlying track/thumb background are both visible.
+pub(super) const MARKER_GLYPH: &str = "▌";
 
 /// Render a horizontal scrollbar for a split.
 /// `max_content_width` should be the actual max line length
@@ -386,6 +681,11 @@ mod tests {
             text.push_str(line);
         }
         state.buffer.insert(0, &text);
+        // Stand in for a file just opened from disk: content present, nothing
+        // unsaved. Without this the buffer would carry an unsaved-change diff
+        // covering all of it, and every projection here would start with the
+        // editor's own marks already on the track.
+        state.buffer.mark_saved_snapshot();
         state
     }
 
@@ -402,19 +702,24 @@ mod tests {
         let mut state = state_with_wrapping_lines(100);
         let vp = narrow_wrapped_viewport();
         let buffer_len = state.buffer.len();
-        let (total, _) = scrollbar_line_counts(
+        let (total, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             buffer_len,
+            Vec::new(),
         );
         assert!(
             total > 100,
             "small wrapped buffer should report wrapped-row count (>100), got {total}"
         );
         assert!(
-            state.visual_row_index.line_count() > 0,
-            "small wrapped buffer should build the visual-row index"
+            !state.wrap_indices.is_empty(),
+            "small wrapped buffer should build a wrap index for this geometry"
+        );
+        assert!(
+            matches!(basis, MarkerBasis::VisualRows { .. }),
+            "markers must follow the thumb onto the wrapped-row basis, got {basis:?}"
         );
     }
 
@@ -432,20 +737,166 @@ mod tests {
             buffer_len <= MAX_WRAP_SCROLLBAR_BYTES,
             "test buffer should trip the line bound, not the byte bound"
         );
-        let (total, _) = scrollbar_line_counts(
+        let (total, _, basis) = scrollbar_line_counts(
             &mut state,
             &vp,
             crate::config::LARGE_FILE_THRESHOLD_BYTES,
             buffer_len,
+            Vec::new(),
         );
         assert_eq!(
             total, n,
             "large wrapped buffer should use the logical-line count, not wrapped rows"
         );
+        assert!(
+            state.wrap_indices.is_empty(),
+            "large wrapped buffer must not build the O(all-lines) wrap index"
+        );
+        assert!(
+            matches!(basis, MarkerBasis::LogicalLines { total } if total == n as u64),
+            "markers must follow the thumb onto the logical-line basis, got {basis:?}"
+        );
+    }
+
+    /// The marker basis is derived in the same branch that picks the thumb's
+    /// counts, so the two can never end up in different coordinate spaces.
+    #[test]
+    fn marker_basis_matches_the_thumb_basis_in_every_regime() {
+        // Exact wrapped rows.
+        let mut state = state_with_wrapping_lines(100);
+        let vp = narrow_wrapped_viewport();
+        let len = state.buffer.len();
+        let (total, _, basis) = scrollbar_line_counts(
+            &mut state,
+            &vp,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES,
+            len,
+            Vec::new(),
+        );
         assert_eq!(
-            state.visual_row_index.line_count(),
-            0,
-            "large wrapped buffer must not build the O(all-lines) visual-row index"
+            basis,
+            MarkerBasis::VisualRows {
+                total: total as u64
+            }
+        );
+
+        // Logical lines (wrap off).
+        let mut state = state_with_wrapping_lines(100);
+        let vp = Viewport::new(40, 24);
+        let len = state.buffer.len();
+        let (total, _, basis) = scrollbar_line_counts(
+            &mut state,
+            &vp,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES,
+            len,
+            Vec::new(),
+        );
+        assert_eq!(
+            basis,
+            MarkerBasis::LogicalLines {
+                total: total as u64
+            }
+        );
+
+        // Bytes: over the large-file threshold, where no line coordinate is
+        // guaranteed to exist. A tiny threshold stands in for a huge file.
+        let mut state = state_with_wrapping_lines(100);
+        let len = state.buffer.len();
+        let (total, top, basis) = scrollbar_line_counts(&mut state, &vp, 16, len, Vec::new());
+        assert_eq!((total, top), (0, 0), "large files use the constant thumb");
+        assert_eq!(basis, MarkerBasis::Bytes { total: len as u64 });
+    }
+
+    /// The byte regime must not consult line APIs at all — that is what lets
+    /// markers render on the first frame of a huge, unscanned file.
+    #[test]
+    fn byte_regime_projection_does_not_build_the_visual_row_index() {
+        use crate::view::scrollbar_marker::ResolvedMarker;
+
+        let mut state = state_with_wrapping_lines(100);
+        let len = state.buffer.len();
+        state.scrollbar_markers.set_markers(
+            "test",
+            vec![ResolvedMarker {
+                start: len / 2,
+                end: None,
+                color: fresh_core::api::OverlayColorSpec::Rgb(1, 2, 3),
+                priority: 0,
+            }],
+        );
+
+        let cells =
+            project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total: len as u64 }, 20);
+        assert!(
+            cells.iter().any(|c| c.is_some()),
+            "the marker should land somewhere on the track"
+        );
+        assert!(
+            state.wrap_indices.is_empty(),
+            "byte-basis projection must not build a wrap index"
+        );
+    }
+
+    /// A saved buffer with no markers must not allocate or project anything.
+    #[test]
+    fn no_markers_means_no_projection_work() {
+        let mut state = state_with_wrapping_lines(10);
+        let cells = project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total: 100 }, 20);
+        assert!(cells.is_empty());
+    }
+
+    /// ...but an unsaved edit is a mark source of its own, so the same buffer
+    /// with no plugin markers at all still paints. This is what makes the
+    /// gutter's blue bar visible for changes scrolled off screen.
+    #[test]
+    fn an_unsaved_edit_projects_without_any_plugin_markers() {
+        let mut state = state_with_wrapping_lines(10);
+        let len = state.buffer.len();
+        state.buffer.insert(len / 2, "an unsaved edit");
+
+        let total = state.buffer.len() as u64;
+        let cells = project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total }, 20);
+        let marked: Vec<usize> = cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        // The structure diff reports leaf-granular ranges, so an insertion can
+        // cover a little more than the typed bytes — the mark is a streak
+        // around the edit, not necessarily a single row.
+        assert!(
+            !marked.is_empty() && marked.iter().all(|r| (8..=11).contains(r)),
+            "the edit is halfway through the buffer, so it marks the middle of \
+             a 20-row track; got {marked:?}"
+        );
+
+        // Saving it away clears the marks without any plugin involvement.
+        state.buffer.mark_saved_snapshot();
+        let cells = project_scrollbar_markers(&mut state, MarkerBasis::Bytes { total }, 20);
+        assert!(cells.is_empty(), "a saved buffer leaves the track clean");
+    }
+
+    /// Thousands of scattered unsaved edits must not put thousands of
+    /// coordinate lookups on the typing path: ranges within one track cell of
+    /// each other merge first, so the projection stays bounded by the track.
+    #[test]
+    fn dense_unsaved_edits_coalesce_to_the_track_resolution() {
+        let ranges: Vec<std::ops::Range<usize>> =
+            (0..2_000).map(|k| (k * 50)..(k * 50 + 1)).collect();
+        // 100 000 bytes over a 20-row track: one cell is 5 000 bytes, so the
+        // 2 000 single-byte ranges collapse to one group per cell.
+        let merged = coalesce_within_a_cell(ranges, 100_000, 20);
+        assert!(
+            merged.len() <= 21,
+            "expected at most one group per track row, got {}",
+            merged.len()
+        );
+        assert_eq!(merged.first().unwrap().start, 0);
+        assert_eq!(
+            merged.last().unwrap().end,
+            1_999 * 50 + 1,
+            "merging must still cover the last edit"
         );
     }
 }

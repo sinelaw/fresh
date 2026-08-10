@@ -92,29 +92,63 @@ fn get_bracket_pair(ch: char) -> Option<(char, char, bool)> {
     None
 }
 
+/// The `config.editor` bracket toggles, resolved for one frame.
+///
+/// Carried through the render pipeline instead of being latched onto the
+/// per-buffer overlay at construction time, so a settings change takes effect
+/// on the next frame for every buffer without a separate invalidation pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BracketHighlightSettings {
+    /// `editor.highlight_matching_brackets`: highlight the pair the cursor
+    /// sits on. Also the master switch — `rainbow_brackets` documents that it
+    /// requires this to be enabled.
+    pub matching: bool,
+    /// `editor.rainbow_brackets`: color brackets by nesting depth.
+    pub rainbow: bool,
+}
+
+impl BracketHighlightSettings {
+    /// Build from the editor config, applying the documented dependency of
+    /// `rainbow_brackets` on `highlight_matching_brackets`.
+    pub fn from_config(editor: &crate::config::EditorConfig) -> Self {
+        Self {
+            matching: editor.highlight_matching_brackets,
+            rainbow: editor.highlight_matching_brackets && editor.rainbow_brackets,
+        }
+    }
+}
+
+impl Default for BracketHighlightSettings {
+    fn default() -> Self {
+        Self {
+            matching: true,
+            rainbow: true,
+        }
+    }
+}
+
 /// Manager for bracket highlight overlays
 pub struct BracketHighlightOverlay {
-    /// Whether bracket highlighting is enabled
-    pub enabled: bool,
-    /// Whether to use rainbow colors based on nesting depth
-    pub rainbow_enabled: bool,
     /// Colors to use for rainbow brackets (cycles through)
     pub rainbow_colors: [Color; 6],
     /// Default bracket match highlight color (when rainbow is disabled)
     pub match_color: Color,
     /// Last cursor position where we computed brackets
     last_cursor_pos: Option<usize>,
+    /// Whether depth-colorization overlays are currently present. Lets a
+    /// disabled pass clear them exactly once instead of re-clearing (and
+    /// reporting "updated") on every frame.
+    colorization_active: bool,
 }
 
 impl BracketHighlightOverlay {
     /// Create a new bracket highlight overlay manager
     pub fn new() -> Self {
         Self {
-            enabled: true,
-            rainbow_enabled: true,
             rainbow_colors: DEFAULT_BRACKET_COLORS,
             match_color: Color::Rgb(255, 215, 0), // Gold
             last_cursor_pos: None,
+            colorization_active: false,
         }
     }
 
@@ -132,15 +166,12 @@ impl BracketHighlightOverlay {
         overlays: &mut OverlayManager,
         marker_list: &mut MarkerList,
         theme: &Theme,
+        settings: BracketHighlightSettings,
         cursor_position: usize,
         viewport_start: usize,
         viewport_end: usize,
         skip_ranges: &[Range<usize>],
     ) -> bool {
-        if !self.enabled && !self.rainbow_enabled {
-            return false;
-        }
-
         let new_match_color = theme.bracket_match_fg;
         let new_rainbow_colors = [
             theme.bracket_rainbow_1,
@@ -160,7 +191,7 @@ impl BracketHighlightOverlay {
         let mut updated = false;
 
         // Update full rainbow bracket colorization
-        if self.rainbow_enabled {
+        if settings.rainbow {
             updated |= self.update_colorization(
                 buffer,
                 overlays,
@@ -173,8 +204,14 @@ impl BracketHighlightOverlay {
             updated |= self.clear_colorization(overlays, marker_list);
         }
 
-        // Check if cursor position changed
-        if !self.enabled {
+        // Turning matching off has to retract the pair overlays a previously
+        // enabled pass left behind — `last_cursor_pos` is Some exactly when
+        // such overlays may exist, so this clears once and then no-ops.
+        if !settings.matching {
+            if self.last_cursor_pos.take().is_some() {
+                overlays.clear_namespace(&bracket_highlight_namespace(), marker_list);
+                updated = true;
+            }
             return updated;
         }
 
@@ -214,7 +251,7 @@ impl BracketHighlightOverlay {
         }
 
         // Calculate nesting depth at cursor position for rainbow colors
-        let depth = if self.rainbow_enabled {
+        let depth = if settings.rainbow {
             self.calculate_nesting_depth(buffer, cursor_position, forward, skip_ranges)
         } else {
             0
@@ -231,7 +268,7 @@ impl BracketHighlightOverlay {
         );
 
         // Determine color based on depth
-        let color = if self.rainbow_enabled {
+        let color = if settings.rainbow {
             self.rainbow_colors[depth % self.rainbow_colors.len()]
         } else {
             self.match_color
@@ -383,6 +420,7 @@ impl BracketHighlightOverlay {
         let color_ns = bracket_colorization_namespace();
         overlays.clear_namespace(&color_ns, marker_list);
         self.last_cursor_pos = None;
+        self.colorization_active = false;
     }
 
     /// Force recalculation on next update
@@ -390,13 +428,20 @@ impl BracketHighlightOverlay {
         self.last_cursor_pos = None;
     }
 
+    /// Drop the depth-colorization overlays. Returns whether anything was
+    /// actually retracted, so a permanently-disabled setting doesn't report a
+    /// change on every frame.
     fn clear_colorization(
         &mut self,
         overlays: &mut OverlayManager,
         marker_list: &mut MarkerList,
     ) -> bool {
+        if !self.colorization_active {
+            return false;
+        }
         let ns = bracket_colorization_namespace();
         overlays.clear_namespace(&ns, marker_list);
+        self.colorization_active = false;
         true
     }
 
@@ -472,6 +517,7 @@ impl BracketHighlightOverlay {
             }
         }
 
+        self.colorization_active = !new_overlays.is_empty();
         overlays.replace_range_in_namespace(&ns, &(0..buffer.len()), new_overlays, marker_list);
         true
     }

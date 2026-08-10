@@ -1251,6 +1251,8 @@ impl Editor {
             Arc::clone(&command_registry),
             dir_context.clone(),
             Arc::clone(&theme_cache),
+            Arc::clone(&filesystem),
+            Arc::clone(&filesystem),
         );
 
         // Update the plugin state snapshot with working_dir BEFORE loading plugins
@@ -3146,26 +3148,11 @@ impl Editor {
             };
             let tab_size = self.config.editor.tab_size;
 
-            // Get view_transform tokens from SplitViewState (if any)
-            let view_transform_tokens = self
-                .split_view_states
-                .get(&split_id)
-                .and_then(|vs| vs.view_transform.as_ref())
-                .map(|vt| vt.tokens.clone());
-
             // Get mutable references to both buffer and view state
             if let Some(state) = self.buffers.get_mut(&buffer_id) {
                 let buffer = &mut state.buffer;
                 if let Some(view_state) = self.split_view_states.get_mut(&split_id) {
-                    if let Some(tokens) = view_transform_tokens {
-                        // Use view-aware scrolling with the transform's tokens
-                        let view_lines: Vec<_> =
-                            ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
-                        view_state
-                            .viewport
-                            .scroll_view_lines(&view_lines, line_offset);
-                    } else {
-                        // No view transform - use traditional buffer-based scrolling
+                    {
                         if line_offset > 0 {
                             view_state
                                 .viewport
@@ -3294,7 +3281,7 @@ impl Editor {
                         }
                     }
                     let new_top_byte = iter.current_position();
-                    view_state.viewport.top_byte = new_top_byte;
+                    view_state.viewport.set_top_byte(new_top_byte);
                     // Mark to skip ensure_visible on next render so the scroll isn't undone
                     view_state.viewport.set_skip_ensure_visible();
                 }
@@ -3306,8 +3293,6 @@ impl Editor {
     ///
     /// Called after buffer content changes (Insert/Delete) to mark
     /// layouts as dirty, forcing rebuild on next access.
-    /// Also clears any cached view transform since its token source_offsets
-    /// become stale after buffer edits.
     fn invalidate_layouts_for_buffer(&mut self, buffer_id: BufferId) {
         // Find all splits that display this buffer
         let splits_for_buffer = self.split_manager.splits_for_buffer(buffer_id);
@@ -3318,11 +3303,6 @@ impl Editor {
                 view_state.invalidate_layout();
                 // Clear cached view transform — its token source_offsets are from
                 // before the edit and would cause conceals to be applied at wrong positions.
-                // The view_transform_request hook will fire on the next render to rebuild it.
-                view_state.view_transform = None;
-                // Mark as stale so that any pending SubmitViewTransform commands
-                // (from a previous view_transform_request) are rejected.
-                view_state.view_transform_stale = true;
             }
         }
     }
@@ -5383,13 +5363,13 @@ impl Editor {
                 // Viewport - get from SplitViewState (the authoritative source)
                 let top_line = self.buffers.get(&self.active_buffer()).and_then(|state| {
                     if state.buffer.line_count().is_some() {
-                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte))
+                        Some(state.buffer.get_line_number(active_vs.viewport.top_byte()))
                     } else {
                         None
                     }
                 });
                 snapshot.viewport = Some(ViewportInfo {
-                    top_byte: active_vs.viewport.top_byte,
+                    top_byte: active_vs.viewport.top_byte(),
                     top_line,
                     left_column: active_vs.viewport.left_column,
                     width: active_vs.viewport.width,
@@ -5725,19 +5705,6 @@ impl Editor {
                 enabled,
             } => {
                 self.handle_set_line_wrap(buffer_id, split_id, enabled);
-            }
-            PluginCommand::SubmitViewTransform {
-                buffer_id,
-                split_id,
-                payload,
-            } => {
-                self.handle_submit_view_transform(buffer_id, split_id, payload);
-            }
-            PluginCommand::ClearViewTransform {
-                buffer_id: _,
-                split_id,
-            } => {
-                self.handle_clear_view_transform(split_id);
             }
             PluginCommand::SetViewState {
                 buffer_id,

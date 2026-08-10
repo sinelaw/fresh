@@ -112,34 +112,10 @@ impl SshConnection {
     pub async fn connect(params: ConnectionParams) -> Result<Self, SshError> {
         let mut cmd = Command::new("ssh");
 
-        // Don't check host key strictly for ease of use
-        cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
-
-        if let Some(port) = params.port {
-            cmd.arg("-p").arg(port.to_string());
-        }
-
-        if let Some(ref identity) = params.identity_file {
-            cmd.arg("-i").arg(identity);
-        }
-
-        cmd.args(&params.extra_args);
-        cmd.arg(params.ssh_target());
-
-        // Bootstrap the agent using Python itself to read the exact byte count.
-        // This avoids requiring bash or other shell utilities on the remote.
-        // Python reads exactly N bytes (the agent code), execs it, and the agent
-        // then continues reading from stdin for protocol messages.
-        //
-        // Note: SSH passes the remote command through a shell, so we need to
-        // properly quote the Python code. We use double quotes for the outer
-        // shell and avoid problematic characters in the Python code.
-        let agent_len = AGENT_SOURCE.len();
-        let bootstrap = format!(
-            "python3 -u -c \"import sys;exec(sys.stdin.read({}))\"",
-            agent_len
-        );
-        cmd.arg(bootstrap);
+        // Common non-interactive carrier flags (incl. `BatchMode=yes`), host
+        // target, and the python agent bootstrap. Shared with the reconnect
+        // transport so both paths stay non-interactive.
+        configure_agent_carrier_ssh(&mut cmd, &params);
 
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
@@ -160,6 +136,10 @@ impl SshConnection {
         // covers the window before the connection object exists.
         cmd.kill_on_drop(true);
         cmd.hide_window();
+
+        // Detach from the editor's controlling terminal so ssh can never grab
+        // `/dev/tty` for an auth prompt (see `detach_from_controlling_terminal`).
+        detach_from_controlling_terminal(&mut cmd);
 
         tracing::debug!(target = %params.ssh_target(), "ssh connect: spawning ssh child");
         let mut child = cmd.spawn()?;
@@ -182,7 +162,10 @@ impl SshConnection {
         // error isn't the actionable reason; the carrier's own stderr is. Fall
         // through to the same EOF path so we surface "ssh: …" rather than a bare
         // `SpawnFailed`, regardless of which side loses the race.
-        tracing::debug!(agent_len, "ssh connect: sending agent bootstrap to stdin");
+        tracing::debug!(
+            agent_len = AGENT_SOURCE.len(),
+            "ssh connect: sending agent bootstrap to stdin"
+        );
         if stdin.write_all(AGENT_SOURCE.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
             return Err(ssh_eof_error(&mut child, &params, stderr).await);
         }
@@ -276,11 +259,11 @@ impl SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
-        // Best-effort kill of the SSH process during cleanup.
-        // If it fails (process already exited, permission error, etc.)
-        // there's nothing we can do in a Drop impl — the OS will clean
-        // up the zombie when our process exits.
-        if let Ok(()) = self.process.start_kill() {}
+        // Best-effort teardown of the SSH carrier *and its process group* so a
+        // ProxyCommand / jump helper doesn't outlive the connection. If it
+        // fails (already exited, permission, etc.) there's nothing more a Drop
+        // impl can do — the OS reaps the zombie when our process exits.
+        kill_carrier_and_group(&mut self.process);
     }
 }
 
@@ -511,10 +494,9 @@ async fn ssh_eof_error(
         }
         Ok(Err(e)) => format!("failed to get SSH exit status: {}", e),
         Err(_) => {
-            // Timed out waiting for exit — kill it so we don't leak.
-            if let Err(e) = child.start_kill() {
-                tracing::warn!("Failed to kill timed-out SSH process: {}", e);
-            }
+            // Timed out waiting for exit — kill it (and its group) so we don't
+            // leak ssh or any ProxyCommand helpers it spawned.
+            kill_carrier_and_group(child);
             format!(
                 "SSH process did not exit in time while connecting to {}",
                 params
@@ -552,6 +534,96 @@ async fn read_ssh_stderr(stderr: Option<ChildStderr>) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Append the shared `ssh` flags for a non-interactive agent carrier, the host
+/// target, and the python agent bootstrap onto `cmd`.
+///
+/// `BatchMode=yes` is load-bearing, not a nicety: the carrier pipes stdio and
+/// never runs in a PTY, so an interactive auth prompt has nowhere to go. Without
+/// it, a password- or passphrase-required host makes OpenSSH open `/dev/tty`
+/// (the editor's own terminal) to prompt and then block there forever — the
+/// prompt paints over the ratatui screen and ssh competes with the editor for
+/// every keystroke. Both the initial connect and the reconnect transport funnel
+/// through here so neither can regress to an interactive carrier. Cross-platform
+/// (a plain ssh argument); the tty detachment below is the unix-only companion.
+fn configure_agent_carrier_ssh(cmd: &mut Command, params: &ConnectionParams) {
+    // Don't check host key strictly for ease of use.
+    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
+    // Never prompt interactively — fail fast instead (EOF → `ssh_eof_error`).
+    cmd.arg("-o").arg("BatchMode=yes");
+
+    if let Some(port) = params.port {
+        cmd.arg("-p").arg(port.to_string());
+    }
+    if let Some(ref identity) = params.identity_file {
+        cmd.arg("-i").arg(identity);
+    }
+    cmd.args(&params.extra_args);
+    cmd.arg(params.ssh_target());
+
+    // Bootstrap the agent with python itself so we need no shell utilities on
+    // the remote: python reads exactly N bytes (the agent source), execs it, and
+    // the agent then keeps reading stdin for protocol messages. ssh runs the
+    // remote command through a shell, hence the double quotes.
+    cmd.arg(format!(
+        "python3 -u -c \"import sys;exec(sys.stdin.read({}))\"",
+        AGENT_SOURCE.len()
+    ));
+}
+
+/// Detach a carrier `ssh` child from the editor's controlling terminal.
+///
+/// Piping stdio is not enough: OpenSSH's `read_passphrase()` opens `/dev/tty`
+/// directly for password / key-passphrase / host-key prompts, which — since the
+/// child inherits our controlling terminal — lands on the editor's own tty,
+/// painting over the UI and stealing keystrokes (escape sequences arrive
+/// decapitated as the ssh `read()` races the editor's). `setsid()` puts the
+/// child in a fresh session with no controlling terminal, so `open("/dev/tty")`
+/// fails outright regardless of which prompt path ssh takes — the belt to
+/// `BatchMode`'s suspenders. No-op on non-unix, where there is no `/dev/tty` to
+/// contend for and `pre_exec` does not exist.
+#[cfg(unix)]
+fn detach_from_controlling_terminal(cmd: &mut Command) {
+    // `tokio::process::Command` exposes `pre_exec` natively on unix.
+    // SAFETY: `setsid` is async-signal-safe and is the only call made in the
+    // forked child before exec; we allocate/log nothing else in the closure.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn detach_from_controlling_terminal(_cmd: &mut Command) {}
+
+/// Best-effort teardown of a carrier `ssh` child **and its process group**.
+///
+/// The carrier is spawned as a session leader (see
+/// `detach_from_controlling_terminal`), so its pid doubles as its
+/// process-group id. Signalling the group (`kill(-pid)`) reaps not just ssh
+/// but any `ProxyCommand` / jump helpers it forked — which a plain `start_kill`
+/// (SIGKILL to ssh alone) would orphan, leaking `nc`/`pv`/… grandchildren for
+/// the life of the editor. Safe if the child already exited: the group signal
+/// then finds nothing (ESRCH) and is ignored. Non-unix has no such fork tree
+/// and no `setsid`, so it just kills the child.
+fn kill_carrier_and_group(child: &mut Child) {
+    #[cfg(unix)]
+    if let Some(pid) = child.id() {
+        // SAFETY: a bare `kill(2)` syscall — no memory or locks involved. A
+        // negative pid targets the process group led by `pid`.
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+    // Also reap the direct child (covers non-unix and the race where the group
+    // signal raced a just-exec'd child that hadn't set up its group yet).
+    // Best-effort: nothing actionable if it already exited.
+    if let Ok(()) = child.start_kill() {}
+}
+
 /// This is the lower-level function used by both `SshConnection::connect` and
 /// the reconnect task. It spawns an SSH process, bootstraps the Python agent,
 /// and returns the reader/writer pair ready for use with `AgentChannel`.
@@ -567,32 +639,18 @@ async fn establish_ssh_transport(
 > {
     let mut cmd = Command::new("ssh");
 
-    cmd.arg("-o").arg("StrictHostKeyChecking=accept-new");
-    // Disable password prompts for reconnection (non-interactive)
-    cmd.arg("-o").arg("BatchMode=yes");
-
-    if let Some(port) = params.port {
-        cmd.arg("-p").arg(port.to_string());
-    }
-
-    if let Some(ref identity) = params.identity_file {
-        cmd.arg("-i").arg(identity);
-    }
-
-    cmd.args(&params.extra_args);
-    cmd.arg(params.ssh_target());
-
-    let agent_len = AGENT_SOURCE.len();
-    let bootstrap = format!(
-        "python3 -u -c \"import sys;exec(sys.stdin.read({}))\"",
-        agent_len
-    );
-    cmd.arg(bootstrap);
+    // Same non-interactive carrier flags + agent bootstrap as the initial
+    // connect (incl. `BatchMode=yes`).
+    configure_agent_carrier_ssh(&mut cmd, params);
 
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null()); // No terminal for reconnection
     cmd.hide_window();
+
+    // Reconnect happens while the editor TUI is live, so the carrier must not
+    // hold the controlling terminal either (see the initial connect).
+    detach_from_controlling_terminal(&mut cmd);
 
     let mut child = cmd.spawn()?;
 
@@ -826,6 +884,40 @@ mod tests {
         // Empty user / empty host are still rejected.
         assert!(ConnectionParams::parse("@host").is_none());
         assert!(ConnectionParams::parse("user@").is_none());
+    }
+
+    #[test]
+    fn agent_carrier_ssh_is_non_interactive() {
+        // Regression: the agent carrier pipes stdio and never runs in a PTY, so
+        // it MUST pass `-o BatchMode=yes`. Without it a password- or
+        // passphrase-required host makes ssh open the editor's own `/dev/tty` to
+        // prompt and blocks there forever, painting over the TUI and stealing
+        // keystrokes. Both the initial connect and the reconnect transport build
+        // their ssh command through `configure_agent_carrier_ssh`, so pinning it
+        // here guards both paths. Cross-platform — it only inspects arguments.
+        let params = ConnectionParams::parse("me@host:2222").unwrap();
+        let mut cmd = Command::new("ssh");
+        configure_agent_carrier_ssh(&mut cmd, &params);
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+
+        let has_pair = |flag: &str, val: &str| args.windows(2).any(|w| w[0] == flag && w[1] == val);
+        assert!(
+            has_pair("-o", "BatchMode=yes"),
+            "agent carrier must be non-interactive (`-o BatchMode=yes`); args = {args:?}"
+        );
+        // Sanity: the custom port and host target also flow through the builder.
+        assert!(
+            has_pair("-p", "2222"),
+            "custom port must be passed through; args = {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "me@host"),
+            "ssh target missing; args = {args:?}"
+        );
     }
 
     #[test]

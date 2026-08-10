@@ -498,7 +498,7 @@ function persistReview(): void {
     if (!path) return;
     const dir = reviewStorageDirFor(state.repo.root);
     if (dir) {
-        try { editor.createDir(dir); } catch {}
+        try { editor.createDir(editor.localPath(dir)); } catch {}
     }
     const payload: PersistedReview = {
         version: REVIEW_STORAGE_VERSION,
@@ -509,7 +509,7 @@ function persistReview(): void {
         updated_at: new Date().toISOString(),
     };
     try {
-        editor.writeFile(path, JSON.stringify(payload, null, 2));
+        editor.writeFile(editor.localPath(path), JSON.stringify(payload, null, 2));
     } catch {}
 }
 
@@ -518,9 +518,9 @@ function loadPersistedReview(repoRoot: string, reviewKey: string): PersistedRevi
     if (!repoRoot) return null;
     const path = reviewStoragePathFor(repoRoot, reviewKey);
     if (!path) return null;
-    if (!editor.fileExists(path)) return null;
+    if (!editor.fileExists(editor.localPath(path))) return null;
     try {
-        const raw = editor.readFile(path);
+        const raw = editor.readFile(editor.localPath(path));
         if (!raw) return null;
         const parsed = JSON.parse(raw) as PersistedReview;
         if (!parsed || typeof parsed !== 'object') return null;
@@ -2834,8 +2834,8 @@ async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
         discard: "discarded",
     };
     const past = pastTense[action];
-    editor.setStatus(editor.t(`status.lines_${past}`) || `Lines ${past}`);
     await refreshMagitData();
+    setReviewConfirmation(editor.t(`status.lines_${past}`) || `Lines ${past}`);
 }
 
 function review_collapse_all() {
@@ -2989,7 +2989,7 @@ function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: numbe
 async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> {
     const tmpDir = editor.getTempDir();
     const patchPath = editor.pathJoin(tmpDir, `fresh-review-${Date.now()}.patch`);
-    editor.writeFile(patchPath, patch);
+    editor.writeFile(editor.localPath(patchPath), patch);
     const cwd = gitCwd();
     // Validate first
     const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
@@ -3155,8 +3155,8 @@ async function stageHunk(hunk: Hunk | null) {
         const ok = await applyHunkPatch(patch, ["--cached"]);
         if (!ok) return;
     }
-    editor.setStatus(editor.t("status.hunk_staged") || "Hunk staged");
     await refreshMagitData();
+    setReviewConfirmation(editor.t("status.hunk_staged") || "Hunk staged");
 }
 
 async function unstageHunk(hunk: Hunk | null) {
@@ -3168,8 +3168,8 @@ async function unstageHunk(hunk: Hunk | null) {
     const patch = buildHunkPatch(hunk.file, hunk);
     const ok = await applyHunkPatch(patch, ["--cached", "--reverse"]);
     if (!ok) return;
-    editor.setStatus(editor.t("status.hunk_unstaged") || "Hunk unstaged");
     await refreshMagitData();
+    setReviewConfirmation(editor.t("status.hunk_unstaged") || "Hunk unstaged");
 }
 
 /**
@@ -3248,9 +3248,40 @@ registerHandler("review_discard_file", review_discard_file);
 
 
 /**
+ * A confirmation the status bar holds until the user moves on ("Lines
+ * discarded", "Hunk staged", …).
+ *
+ * Every stage/unstage/discard used to emit its confirmation and then `await
+ * refreshMagitData()`, whose tail calls `updateReviewStatus()` — so the
+ * summary overwrote the confirmation within the same burst and the user saw
+ * it for at most a frame, or not at all (#2420). Holding it here instead of
+ * racing the refresh means `updateReviewStatus` re-renders the confirmation
+ * rather than clobbering it, and there is exactly one place that decides when
+ * it expires.
+ *
+ * `row` anchors the confirmation to the diff row it was issued on. The cursor
+ * restore inside the refresh emits its own `cursor_moved` *after* the
+ * confirmation is set; that echo carries the same row, so it doesn't count as
+ * the user moving on. A real navigation keystroke carries a different row and
+ * clears it.
+ */
+let reviewConfirmation: { text: string; row: number } | null = null;
+
+/** Emit a confirmation and hold it. Call *after* the refresh that follows the
+ * action, so the rebuild's own status update can't land on top of it. */
+function setReviewConfirmation(text: string): void {
+    reviewConfirmation = { text, row: state.diffCursorRow };
+    editor.setStatus(text);
+}
+
+/**
  * Refresh file list and diffs using the new git status approach, then re-render.
  */
 async function refreshMagitData() {
+    // A rebuild supersedes whatever the last action confirmed: `r` and the
+    // watch-driven refreshes should land on the summary, not on a stale
+    // "Lines discarded" from several actions ago.
+    reviewConfirmation = null;
     if (state.mode === 'range' && state.range) {
         const { hunks, files } = await fetchRangeDiff(state.range);
         state.hunks = hunks;
@@ -3810,7 +3841,7 @@ async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string;
         if (show.exit_code === 0) oldContent = show.stdout;
     }
     if (file.status !== 'D') {
-        const read = await editor.readFile(absPath);
+        const read = await editor.readFile(editor.authorityPath(absPath));
         if (read !== null) newContent = read;
     }
     return { oldContent, newContent, absPath };
@@ -4022,7 +4053,7 @@ async function review_drill_down() {
     if (selectedFile.status === 'D') {
         newContent = "";
     } else {
-        const readResult = await editor.readFile(absoluteFilePath);
+        const readResult = await editor.readFile(editor.authorityPath(absoluteFilePath));
         if (readResult === null) {
             editor.setStatus(editor.t("status.failed_new_version"));
             return;
@@ -4352,19 +4383,24 @@ function review_toggle_watch() {
 }
 registerHandler("review_toggle_watch", review_toggle_watch);
 
-editor.on("after_file_save", () => {
-    if (!reviewWatchEnabled || state.groupId === null) return true;
-    // Range reviews are ref-to-ref; working-tree saves don't change them.
-    if (state.mode === 'range') return true;
-    const myGen = ++reviewWatchGen;
-    void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
-        // Superseded by a later save, or the review closed / watch turned
-        // off while we waited.
-        if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
-        void refreshMagitData();
+// A save and an external reset (auto-revert reload, e.g. `git checkout
+// <ref> -- <file>` in another terminal) both change the working tree the
+// review diffs against, so they share one refresh handler.
+for (const event of ["after_file_save", "after_file_revert"] as const) {
+    editor.on(event, () => {
+        if (!reviewWatchEnabled || state.groupId === null) return true;
+        // Range reviews are ref-to-ref; working-tree changes don't affect them.
+        if (state.mode === 'range') return true;
+        const myGen = ++reviewWatchGen;
+        void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
+            // Superseded by a later change, or the review closed / watch
+            // turned off while we waited.
+            if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
+            void refreshMagitData();
+        });
+        return true;
     });
-    return true;
-});
+}
 
 // --- Hunk navigation for side-by-side diff view ---
 
@@ -4425,6 +4461,12 @@ function currentGlobalHunkIndex(): number | null {
  */
 function updateReviewStatus(): void {
     if (state.groupId === null) return;
+    // A held confirmation outranks the summary until the user moves off the
+    // row it was issued on — see `reviewConfirmation`.
+    if (reviewConfirmation !== null) {
+        editor.setStatus(reviewConfirmation.text);
+        return;
+    }
     const total = state.hunkHeaderRows.length;
     const current = currentGlobalHunkIndex();
     // Range reviews fundamentally don't include working-tree edits; the
@@ -5133,8 +5175,8 @@ editor.on("prompt_confirmed", async (args) => {
             const patch = buildHunkPatch(hunk.file, hunk);
             const ok = await applyHunkPatch(patch, ["--reverse"]);
             if (ok) {
-                editor.setStatus(editor.t("status.hunk_discarded") || "Hunk discarded");
                 await refreshMagitData();
+                setReviewConfirmation(editor.t("status.hunk_discarded") || "Hunk discarded");
             }
         }
     } else {
@@ -5251,7 +5293,7 @@ async function review_export_session() {
     }
 
     const filePath = editor.pathJoin(reviewDir, "session.md");
-    await editor.writeFile(filePath, md);
+    await editor.writeFile(editor.authorityPath(filePath), md);
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_session", review_export_session);
@@ -5275,7 +5317,7 @@ async function review_export_json() {
     };
 
     const filePath = editor.pathJoin(reviewDir, "session.json");
-    await editor.writeFile(filePath, JSON.stringify(session, null, 2));
+    await editor.writeFile(editor.authorityPath(filePath), JSON.stringify(session, null, 2));
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_json", review_export_json);
@@ -5773,6 +5815,12 @@ function on_review_cursor_moved(data: {
     // Diff panel: track cursor row + repaint the cursor-line overlay.
     if (data.buffer_id === state.panelBuffers["diff"]) {
         const prevHighlight = state.commentsHighlightId;
+        // Moving to a different row is the user moving on from the last
+        // action's confirmation. Same-row events are the echo of our own
+        // post-action cursor restore, which must not expire it.
+        if (reviewConfirmation !== null && data.line !== reviewConfirmation.row) {
+            reviewConfirmation = null;
+        }
         state.diffCursorRow = data.line;
         applyCursorLineOverlay('diff');
         // Use the cursor row as a sticky-header anchor too — viewport_changed
@@ -5915,7 +5963,7 @@ async function side_by_side_diff_current_file() {
     }
 
     // Read new file content (use absolute path for readFile)
-    const newContent = await editor.readFile(absolutePath);
+    const newContent = await editor.readFile(editor.authorityPath(absolutePath));
     if (newContent === null) {
         editor.setStatus(editor.t("status.failed_new_version"));
         return;

@@ -23,7 +23,7 @@
 //!   - Resumes live terminal rendering
 //!   - Performance: O(1) ≈ 1ms
 
-use super::window::{TerminalBuffer, Window};
+use super::window::{ExitedTerminal, TerminalBuffer, Window};
 use super::{BufferId, BufferMetadata, Editor};
 use crate::model::event::LeafId;
 use crate::services::authority::TerminalWrapper;
@@ -31,6 +31,7 @@ use crate::services::terminal::TerminalId;
 use crate::state::EditorState;
 use crate::view::split::SplitViewState;
 use rust_i18n::t;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -70,7 +71,7 @@ pub(crate) const FG_POLL_INTERVAL: std::time::Duration = std::time::Duration::fr
 /// Returns `None` only when both are absent, so the caller falls back to the
 /// default name. When the OSC title already names the command (e.g. vim's
 /// `file - VIM`), the command isn't prepended again to avoid `vim — … VIM`.
-fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String> {
+pub(crate) fn combine_terminal_title(pty: Option<&str>, osc: Option<&str>) -> Option<String> {
     match (pty, osc) {
         (Some(p), Some(o)) => {
             if o.to_lowercase().contains(&p.to_lowercase()) {
@@ -96,6 +97,156 @@ pub struct PluginTerminalSpec {
     pub persistent: bool,
     pub command: Option<Vec<String>>,
     pub title: Option<String>,
+    /// Extra environment variables applied to the terminal's child
+    /// process, on top of the inherited + activated env. Applied after
+    /// the control vars (`TERM`, `FRESH_SESSION`). Empty adds nothing.
+    pub env: HashMap<String, String>,
+}
+
+/// Assemble the extra env for a terminal that hosts an agent which may drive
+/// the editor from its shell.
+///
+/// Always advertises `FRESH_BIN` — this editor's own executable path — so a
+/// nested `fresh` or a Fresh-CLI-taught agent invokes the EXACT build running
+/// here, never some other `fresh` earlier on PATH (its `--cmd` verbs then match
+/// this build). This duplicates what the terminal manager already injects
+/// universally, on purpose: it guarantees `FRESH_BIN` rides the child's env
+/// regardless of the manager's own cwd/socket state.
+///
+/// When `allow_script` is set, mints an unforgeable capability token bound to
+/// `window` and injects it as `FRESH_CMD_TOKEN`, alongside `FRESH_SESSION` —
+/// ensuring the control socket is listening first so a token never ships
+/// without a session to talk to. Token minting is deliberately caller-driven
+/// (opt-in), never blanket: the capability is "may drive this editor as a
+/// plugin would", which belongs only in terminals a caller explicitly grants it
+/// to, not in every spawned subprocess.
+///
+/// Shared by `create_window_with_terminal` (agents born in a new window) and
+/// `handle_create_terminal` (agents spawned into an existing window) so both
+/// paths mint and inject identically. `base_env` seeds the map (plugin-supplied
+/// env, empty when omitted).
+pub(crate) fn agent_command_env(
+    window: fresh_core::WindowId,
+    base_env: Option<HashMap<String, String>>,
+    allow_script: bool,
+) -> HashMap<String, String> {
+    let mut env = base_env.unwrap_or_default();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe) = exe.to_str() {
+            env.insert("FRESH_BIN".to_string(), exe.to_string());
+        }
+    }
+    if allow_script {
+        match crate::server::local_control::start() {
+            Ok(session_id) => {
+                env.insert("FRESH_SESSION".to_string(), session_id.to_string());
+            }
+            // The token still ships (it is what authorizes the agent), but with
+            // no socket to present it to every `fresh --cmd …` the agent runs
+            // fails with "not inside a Fresh session". Silently swallowing that
+            // made it look like the CLI itself was broken, so say what happened
+            // — the cause is environmental (e.g. a socket path over the
+            // platform's `sun_path` limit), not something the agent can fix.
+            Err(e) => tracing::warn!(
+                "Local control socket unavailable ({}); the agent terminal gets a \
+                 command token but no FRESH_SESSION to use it with",
+                e
+            ),
+        }
+        let token = crate::server::command_access::mint(crate::server::command_access::Grant::new(
+            Some(window.0),
+            true,
+        ));
+        env.insert("FRESH_CMD_TOKEN".to_string(), token);
+    }
+    env
+}
+
+impl Window {
+    /// Remember which capability token `terminal_id`'s freshly-spawned child
+    /// was handed, reading it out of the env [`agent_command_env`] built.
+    ///
+    /// A no-op for a terminal spawned without `allowScript` (no token in the
+    /// map), so every spawn site can call it unconditionally. The membership
+    /// this records is what workspace capture persists and what a later
+    /// restore/respawn re-mints from.
+    pub(crate) fn record_terminal_script_token(
+        &mut self,
+        terminal_id: TerminalId,
+        env: &HashMap<String, String>,
+    ) {
+        if let Some(token) = env.get("FRESH_CMD_TOKEN") {
+            self.terminal_script_tokens
+                .insert(terminal_id, token.clone());
+        }
+    }
+
+    /// Re-arm the script capability for a terminal being spawned from a
+    /// *remembered* grant — workspace restore, an exited agent's restart, a
+    /// remote reconnect — and return the env to inject into the new PTY child.
+    ///
+    /// The grant is re-minted rather than carried: the token table is
+    /// in-memory and process-global, so the token a previous editor run
+    /// handed this terminal resolves to nothing here, and within one run the
+    /// respawned child never inherits the dead one's environment anyway.
+    /// Without this a restored agent comes back able to *reach* the editor
+    /// (`FRESH_SESSION` is injected for every local terminal) but not to drive
+    /// it — every `fresh --cmd script run` fails with "no capability token:
+    /// script evaluation is not authorized" until the workspace is recreated
+    /// from scratch (fresh#2903).
+    ///
+    /// The new token is bound to *this* window, which is the right target: a
+    /// restored workspace is a new `WindowId`, and the terminal is coming back
+    /// inside it. Any token the terminal's previous incarnation held is
+    /// revoked on the way past so repeated restarts don't pile up live grants.
+    ///
+    /// `key` is the terminal id the token is filed under — the predicted id at
+    /// restore, the dying terminal's id at respawn. Callers re-key it onto the
+    /// real id afterwards, exactly as they do for the backing/log paths.
+    pub(crate) fn remint_terminal_script_env(
+        &mut self,
+        key: TerminalId,
+    ) -> HashMap<String, String> {
+        if let Some(stale) = self.terminal_script_tokens.remove(&key) {
+            crate::server::command_access::revoke(&stale);
+        }
+        let env = agent_command_env(self.id, None, true);
+        self.record_terminal_script_token(key, &env);
+        env
+    }
+
+    /// Move a terminal's script-token entry onto the id the manager actually
+    /// handed out, for the spawn paths that have to guess the id up front.
+    pub(crate) fn rekey_terminal_script_token(&mut self, from: TerminalId, to: TerminalId) {
+        if from == to {
+            return;
+        }
+        if let Some(token) = self.terminal_script_tokens.remove(&from) {
+            self.terminal_script_tokens.insert(to, token);
+        }
+    }
+
+    /// Whether `terminal_id`'s child holds a script capability token — the
+    /// grant workspace capture persists and a respawn re-mints.
+    pub(crate) fn terminal_has_script_access(&self, terminal_id: TerminalId) -> bool {
+        self.terminal_script_tokens.contains_key(&terminal_id)
+    }
+}
+
+/// Build a [`TerminalWrapper`] that runs `argv` directly as a local PTY child,
+/// mirroring `Authority::terminal_command`'s `CommandWrap::Direct` arm but
+/// unconditionally local — it consults no window authority. Used for terminals
+/// that must run on the host where `fresh` itself runs (the self-update flow),
+/// never on a window's remote backend.
+fn local_direct_wrapper(argv: &[String]) -> TerminalWrapper {
+    match argv.split_first() {
+        Some((cmd, rest)) => TerminalWrapper {
+            command: cmd.clone(),
+            args: rest.to_vec(),
+            manages_cwd: false,
+        },
+        None => TerminalWrapper::host_shell(),
+    }
 }
 
 impl Window {
@@ -197,6 +348,75 @@ impl Window {
         cwd: Option<PathBuf>,
         persistent: bool,
         command_override: Option<Vec<String>>,
+        extra_env: HashMap<String, String>,
+    ) -> Option<TerminalId> {
+        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, false)
+    }
+
+    /// Like [`Self::spawn_terminal_session`] but builds the command wrapper from
+    /// the **local host** rather than this window's authority, so `argv` runs
+    /// where the editor process itself runs even when the window is attached to
+    /// a remote (SSH / container) authority. Used by the self-update flow, whose
+    /// in-place binary swap must target the local `fresh`.
+    pub fn spawn_local_terminal_session(
+        &mut self,
+        cwd: Option<PathBuf>,
+        persistent: bool,
+        command_override: Option<Vec<String>>,
+        extra_env: HashMap<String, String>,
+    ) -> Option<TerminalId> {
+        self.spawn_terminal_session_impl(cwd, persistent, command_override, extra_env, true)
+    }
+
+    /// Pick the `fresh-terminal-…` file stem for a new persistent terminal in
+    /// `terminal_root`, avoiding any stem a *live* terminal in this window is
+    /// already writing to.
+    ///
+    /// Terminal files are named after the terminal id, and ids restart at 0
+    /// every editor run — but a restored terminal keeps the backing path it
+    /// was saved with while taking a fresh id. Restore a workspace whose
+    /// terminals were saved as `…-1` / `…-2` and the ids handed out are 0 / 1,
+    /// so the next terminal the user opens is offered `…-1` — a file another,
+    /// still-running terminal owns. Both would then stream into one file and
+    /// the new terminal's scroll-back would show the other's history
+    /// (fresh#2836). A `-<n>` disambiguator keeps them apart; the workspace
+    /// persists the resolved path, so the name never has to be re-derivable.
+    ///
+    /// A stem left behind by a terminal that is *not* live (an earlier run, a
+    /// crash) is reused as-is: the spawn opens it [`BackingMode::Fresh`] and
+    /// truncates, so no stale scrollback survives and the files don't pile up.
+    fn free_terminal_file_stem(
+        &self,
+        terminal_root: &std::path::Path,
+        terminal_id: TerminalId,
+    ) -> String {
+        let base = format!("fresh-terminal-{}", terminal_id.0);
+        let taken = |stem: &str| {
+            let backing = terminal_root.join(format!("{stem}.txt"));
+            let log = terminal_root.join(format!("{stem}.log"));
+            self.terminal_backing_files
+                .values()
+                .chain(self.terminal_log_files.values())
+                .any(|p| *p == backing || *p == log)
+        };
+        if !taken(&base) {
+            return base;
+        }
+        // Bounded scan; the loop only runs while every candidate is owned by a
+        // live terminal, and a window can't hold that many.
+        (1..u32::MAX)
+            .map(|n| format!("{base}-{n}"))
+            .find(|stem| !taken(stem))
+            .unwrap_or(base)
+    }
+
+    fn spawn_terminal_session_impl(
+        &mut self,
+        cwd: Option<PathBuf>,
+        persistent: bool,
+        command_override: Option<Vec<String>>,
+        extra_env: HashMap<String, String>,
+        force_local: bool,
     ) -> Option<TerminalId> {
         let (cols, rows) = self.get_terminal_dimensions();
 
@@ -218,7 +438,7 @@ impl Window {
         // to the same path.
         let predicted_terminal_id = self.terminal_manager.next_terminal_id();
         let name_stem = if persistent {
-            format!("fresh-terminal-{}", predicted_terminal_id.0)
+            self.free_terminal_file_stem(&terminal_root, predicted_terminal_id)
         } else {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -237,31 +457,45 @@ impl Window {
         // prepends `docker exec -it … <id>` so an agent terminal runs in the
         // container rather than on the host (see `Authority::terminal_command`).
         // Empty argv falls back to the interactive shell.
+        //
+        // `force_local` bypasses the window's authority so the command runs on
+        // this host regardless of any remote backend (see `local_direct_wrapper`).
         let wrapper = match command_override {
+            Some(argv) if !argv.is_empty() && force_local => local_direct_wrapper(&argv),
             Some(argv) if !argv.is_empty() => self.authority().terminal_command(&argv),
             _ => self.resolved_terminal_wrapper(),
         };
-        let wrapper = self.apply_remote_terminal_env(wrapper);
-        let env_delta = self.terminal_env_delta(&wrapper);
+        // A forced-local command must not inherit a remote authority's activated
+        // env (venv/direnv living on another host); it runs on this host and
+        // inherits this editor process's real environment instead.
+        let (wrapper, env_delta) = if force_local {
+            (wrapper, crate::services::env_provider::EnvDelta::default())
+        } else {
+            let wrapper = self.apply_remote_terminal_env(wrapper);
+            let env_delta = self.terminal_env_delta(&wrapper);
+            (wrapper, env_delta)
+        };
         match self.terminal_manager.spawn(
             cols,
             rows,
             Some(working_dir),
             Some(log_path.clone()),
-            Some(backing_path),
+            Some(backing_path.clone()),
+            // A brand-new terminal: its transcripts start empty even if an
+            // earlier run left files on these paths.
+            crate::services::terminal::BackingMode::Fresh,
             wrapper,
             env_delta,
+            extra_env,
         ) {
             Ok(terminal_id) => {
                 self.terminal_log_files.insert(terminal_id, log_path);
-                // If the actual terminal id differs from the predicted
-                // one, move the backing-file entry to the real id and
-                // rename to the persistent (no-eph-suffix) form. This
-                // mirrors the pre-migration behaviour exactly.
+                // If the actual terminal id differs from the predicted one,
+                // re-key the backing entry onto the real id — keeping the
+                // *same* path, which is the one the manager's reader thread
+                // is already streaming into.
                 if terminal_id != predicted_terminal_id {
                     self.terminal_backing_files.remove(&predicted_terminal_id);
-                    let backing_path =
-                        terminal_root.join(format!("fresh-terminal-{}.txt", terminal_id.0));
                     self.terminal_backing_files
                         .insert(terminal_id, backing_path);
                 }
@@ -302,7 +536,8 @@ impl Window {
                 if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
-                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+                let stem = self.free_terminal_file_stem(&root, terminal_id);
+                root.join(format!("{stem}.txt"))
             });
 
         // Ensure the file exists — but DON'T truncate if it already has
@@ -341,9 +576,13 @@ impl Window {
         if let Some(view_states) = self.split_view_states_mut() {
             if let Some(view_state) = view_states.get_mut(&split_id) {
                 view_state.add_buffer(buffer_id);
-                // Terminal buffers should not wrap lines so escape
-                // sequences stay intact.
-                view_state.viewport.line_wrap_enabled = false;
+                // Terminal buffers grid-wrap: exact-column rows at the PTY
+                // width so scroll-back lays out like the live grid
+                // (fresh#2649). The width is filled in on scroll-back entry
+                // / by the per-frame healer once the PTY reports its size.
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
+                view_state.viewport.wrap_indent = false;
                 // Disable line numbers + current-line highlight for the
                 // terminal buffer's per-buffer view state so exiting
                 // terminal mode doesn't suddenly add a gutter / row
@@ -355,7 +594,9 @@ impl Window {
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
                 buf_state.highlight_current_line = false;
-                buf_state.viewport.line_wrap_enabled = false;
+                buf_state.viewport.line_wrap_enabled = true;
+                buf_state.viewport.grid_wrap = true;
+                buf_state.viewport.wrap_indent = false;
             }
         }
 
@@ -395,6 +636,7 @@ impl Window {
             persistent,
             command,
             title,
+            env,
         } = spec;
         // Derive the auto-title from the command's executable name
         // (basename of argv[0]). The host writes this into the
@@ -412,7 +654,7 @@ impl Window {
         });
         let resolved_title = title.or(auto_title);
         let terminal_id = self
-            .spawn_terminal_session(cwd, persistent, command)
+            .spawn_terminal_session(cwd, persistent, command, env)
             .ok_or_else(|| "Failed to spawn terminal".to_string())?;
 
         // Register the leader pid with this window's process_groups
@@ -475,10 +717,11 @@ impl Window {
                                     scroll_offset: 0,
                                 },
                             );
-                            // Terminal output is ANSI-sequenced and
-                            // assumes a fixed column count; wrapping
-                            // would mangle cursor positioning.
-                            view_state.viewport.line_wrap_enabled = false;
+                            // Terminal buffers grid-wrap at the PTY
+                            // width (fresh#2649); the per-frame healer
+                            // fills in the column count.
+                            view_state.viewport.line_wrap_enabled = true;
+                            view_state.viewport.grid_wrap = true;
                             self.split_view_states_mut()
                                 .expect("active split implies populated layout")
                                 .insert(new_split_id, view_state);
@@ -501,7 +744,8 @@ impl Window {
                                 .and_then(|m| m.get_mut(&parent))
                             {
                                 view_state.add_buffer(buffer_id);
-                                view_state.viewport.line_wrap_enabled = false;
+                                view_state.viewport.line_wrap_enabled = true;
+                                view_state.viewport.grid_wrap = true;
                             }
                             self.set_active_buffer(buffer_id);
                             (buffer_id, None)
@@ -520,7 +764,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = false;
+                    vs.viewport.line_wrap_enabled = true;
+                    vs.viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -548,7 +793,8 @@ impl Window {
                         self.terminal_height,
                         buffer_id,
                     );
-                    vs.viewport.line_wrap_enabled = false;
+                    vs.viewport.line_wrap_enabled = true;
+                    vs.viewport.grid_wrap = true;
                     view_states.insert(active_leaf, vs);
                     self.buffers.set_splits((manager, view_states));
                     (buffer_id, Some(active_leaf))
@@ -744,7 +990,7 @@ impl Window {
         // `None` command override — `Open Terminal` always spawns the
         // user's shell, never a one-off command. Plugin-driven
         // terminals route through `create_plugin_terminal` instead.
-        let terminal_id = self.spawn_terminal_session(None, true, None)?;
+        let terminal_id = self.spawn_terminal_session(None, true, None, HashMap::new())?;
         let split_id = self
             .buffers
             .splits()
@@ -755,6 +1001,34 @@ impl Window {
         // editor-wide plugin hook fires in the Editor wrapper.
         self.set_active_buffer(buffer_id);
         // Live by default (empty scrollback set); focus the terminal pane.
+        self.key_context = crate::input::keybindings::KeyContext::Terminal;
+        self.resize_visible_terminals();
+        Some((terminal_id, buffer_id))
+    }
+
+    /// Open a **local** terminal running `argv` (bypassing this window's
+    /// authority), attached as a tab in the active split and named `title`.
+    /// Used by the self-update flow so the updater always runs where the
+    /// `fresh` binary lives, even when the window is attached to a remote
+    /// authority. Mirrors [`Self::open_terminal_in_window`] but forces local
+    /// execution and an explicit command + title.
+    pub fn open_local_command_terminal(
+        &mut self,
+        argv: Vec<String>,
+        title: String,
+    ) -> Option<(TerminalId, BufferId)> {
+        let terminal_id =
+            self.spawn_local_terminal_session(None, true, Some(argv), HashMap::new())?;
+        let split_id = self
+            .buffers
+            .splits()
+            .map(|(mgr, _)| mgr.active_split())
+            .expect("window must have a populated split layout");
+        let buffer_id = self.create_terminal_buffer_attached(terminal_id, split_id);
+        if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+            meta.display_name = title;
+        }
+        self.set_active_buffer(buffer_id);
         self.key_context = crate::input::keybindings::KeyContext::Terminal;
         self.resize_visible_terminals();
         Some((terminal_id, buffer_id))
@@ -775,7 +1049,8 @@ impl Window {
                 if let Err(e) = terminal_backing_fs().create_dir_all(&root) {
                     tracing::warn!("Failed to create terminal directory: {}", e);
                 }
-                root.join(format!("fresh-terminal-{}.txt", terminal_id.0))
+                let stem = self.free_terminal_file_stem(&root, terminal_id);
+                root.join(format!("{stem}.txt"))
             });
 
         if !terminal_backing_fs().exists(&backing_file) {
@@ -892,64 +1167,25 @@ impl Window {
                 .get(&old_id)
                 .filter(|argv| !argv.is_empty())
                 .cloned();
-            let spawn_argv = resume_argv.or(launch_argv);
-            let wrapper = match spawn_argv.as_deref() {
-                Some(argv) => self.authority().terminal_command(argv),
-                None => self.resolved_terminal_wrapper(),
-            };
-            let wrapper = self.apply_remote_terminal_env(wrapper);
-            let env_delta = self.terminal_env_delta(&wrapper);
+            let ephemeral = self.ephemeral_terminals.contains(&old_id);
+            let script_access = self.terminal_has_script_access(old_id);
 
-            let new_id = match self.terminal_manager.spawn(
+            let spawn = RespawnSpec {
+                old_id,
                 cols,
                 rows,
                 cwd,
-                log_path,
                 backing_path,
-                wrapper,
-                env_delta,
-            ) {
-                Ok(id) => id,
-                Err(e) => {
-                    tracing::warn!("reconnect: failed to respawn terminal {:?}: {}", old_id, e);
-                    continue;
-                }
+                log_path,
+                resume_argv,
+                launch_argv,
+                ephemeral,
+                script_access,
             };
-
-            // The dead PTY's handle is now superseded — tear it down.
-            self.terminal_manager.close(old_id);
-
-            // Remap every terminal-id-keyed entry from old_id → new_id.
-            if new_id != old_id {
-                // Remap the PTY id but preserve the buffer's remembered mode.
-                if let Some(tb) = self.terminal_buffers.get_mut(&buffer_id) {
-                    tb.terminal_id = new_id;
-                }
-                if let Some(p) = self.terminal_backing_files.remove(&old_id) {
-                    self.terminal_backing_files.insert(new_id, p);
-                }
-                if let Some(p) = self.terminal_log_files.remove(&old_id) {
-                    self.terminal_log_files.insert(new_id, p);
-                }
-                if let Some(c) = self.terminal_commands.remove(&old_id) {
-                    self.terminal_commands.insert(new_id, c);
-                }
-                if let Some(c) = self.terminal_resume_commands.remove(&old_id) {
-                    self.terminal_resume_commands.insert(new_id, c);
-                }
-                if self.ephemeral_terminals.remove(&old_id) {
-                    self.ephemeral_terminals.insert(new_id);
-                }
+            match self.respawn_terminal_pty(buffer_id, spawn) {
+                Some(_) => revived += 1,
+                None => continue,
             }
-
-            // Register the reborn leader pid so window-level signal operations
-            // (Stop / Archive / Delete) reach the new process group.
-            if let Some(pid) = self.terminal_manager.get(new_id).and_then(|h| h.pid()) {
-                self.process_groups
-                    .register(pid, format!("terminal #{}", new_id.0));
-            }
-
-            revived += 1;
         }
 
         // Size the freshly-spawned PTYs to their splits' content areas.
@@ -957,6 +1193,254 @@ impl Window {
 
         revived
     }
+
+    /// Spawn a replacement PTY for `buffer_id`'s dead terminal and re-key every
+    /// terminal-id-keyed entry onto the new id.
+    ///
+    /// The single respawn primitive behind both the remote-reconnect sweep
+    /// (`respawn_terminals_through_authority`) and the user-driven per-buffer
+    /// restart (`restart_terminal_buffer`), so the two can never drift on argv
+    /// precedence, scrollback reuse, or id remapping. Argv is composed through
+    /// the window's *current* authority, so the reborn PTY always runs inside
+    /// the session's backend.
+    ///
+    /// Returns the new terminal id, or `None` when the spawn failed (logged;
+    /// the old handle is left in place for the caller to report on).
+    fn respawn_terminal_pty(
+        &mut self,
+        buffer_id: BufferId,
+        spec: RespawnSpec,
+    ) -> Option<TerminalId> {
+        // The window's bridge may be unset on a window restored without ever
+        // spawning through `spawn_terminal_session_impl`; setting it is idempotent.
+        let bridge = self.bridge.clone();
+        self.terminal_manager.set_async_bridge(bridge);
+
+        let spawn_argv = spec.resume_argv.as_ref().or(spec.launch_argv.as_ref());
+        let wrapper = match spawn_argv {
+            Some(argv) => self.authority().terminal_command(argv),
+            None => self.resolved_terminal_wrapper(),
+        };
+        let wrapper = self.apply_remote_terminal_env(wrapper);
+        let env_delta = self.terminal_env_delta(&wrapper);
+
+        // An agent that was granted editor control keeps it across the
+        // respawn: the reborn child gets a freshly-minted token bound to this
+        // window, since the one its predecessor carried died with that PTY.
+        let extra_env = if spec.script_access {
+            self.remint_terminal_script_env(spec.old_id)
+        } else {
+            HashMap::new()
+        };
+
+        let new_id = match self.terminal_manager.spawn(
+            spec.cols,
+            spec.rows,
+            spec.cwd,
+            spec.log_path.clone(),
+            spec.backing_path.clone(),
+            // Same terminal reborn: append to its existing transcript rather
+            // than blanking the scrollback the user still has on screen.
+            crate::services::terminal::BackingMode::Continue,
+            wrapper,
+            env_delta,
+            extra_env,
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("failed to respawn terminal {:?}: {}", spec.old_id, e);
+                return None;
+            }
+        };
+
+        // The dead PTY's handle is now superseded — tear it down. Guarded on
+        // the ids differing: a terminal restored as already-exited holds an id
+        // the manager never had, so the allocator can hand that very id back
+        // to the spawn above — and an unguarded close would kill the terminal
+        // we just started.
+        if new_id != spec.old_id {
+            self.terminal_manager.close(spec.old_id);
+        }
+
+        // Re-key every terminal-id-keyed entry onto the reborn terminal. The
+        // values come from the caller's spec rather than the maps, so this is
+        // correct even when the exit path already dropped the old entries.
+        self.rekey_terminal_script_token(spec.old_id, new_id);
+        if new_id != spec.old_id {
+            self.terminal_backing_files.remove(&spec.old_id);
+            self.terminal_log_files.remove(&spec.old_id);
+            self.terminal_commands.remove(&spec.old_id);
+            self.terminal_resume_commands.remove(&spec.old_id);
+            self.ephemeral_terminals.remove(&spec.old_id);
+        }
+        if let Some(p) = spec.backing_path {
+            self.terminal_backing_files.insert(new_id, p);
+        }
+        if let Some(p) = spec.log_path {
+            self.terminal_log_files.insert(new_id, p);
+        }
+        if let Some(c) = spec.launch_argv {
+            self.terminal_commands.insert(new_id, c);
+        }
+        if let Some(c) = spec.resume_argv {
+            self.terminal_resume_commands.insert(new_id, c);
+        }
+        if spec.ephemeral {
+            self.ephemeral_terminals.insert(new_id);
+        }
+
+        // Point the buffer at the reborn PTY, preserving its remembered
+        // per-split live/scrollback modes when the binding still exists (the
+        // reconnect path) and seeding a live one when it doesn't (restart,
+        // where the exit path dropped it).
+        match self.terminal_buffers.get_mut(&buffer_id) {
+            Some(tb) => tb.terminal_id = new_id,
+            None => {
+                self.terminal_buffers
+                    .insert(buffer_id, TerminalBuffer::new_live(new_id));
+            }
+        }
+
+        // Register the reborn leader pid so window-level signal operations
+        // (Stop / Archive / Delete) reach the new process group.
+        if let Some(pid) = self.terminal_manager.get(new_id).and_then(|h| h.pid()) {
+            self.process_groups
+                .register(pid, format!("terminal #{}", new_id.0));
+        }
+
+        Some(new_id)
+    }
+
+    /// Mark a freshly-spawned terminal as a restorable *session* terminal:
+    /// record the argv to re-run on restore, and the agent-resume argv that
+    /// supersedes it when present.
+    ///
+    /// The single writer for both maps, shared by every path that spawns an
+    /// agent — `create_window_with_terminal` (agent in its own new window) and
+    /// the plugin `createTerminal` (agent into an existing window). They used
+    /// to differ: only the former recorded anything, so an agent started in the
+    /// current workspace was invisible to workspace save *and* came back as a
+    /// bare shell when restarted.
+    ///
+    /// An empty `command` is recorded deliberately — an empty-vec entry is the
+    /// plain-shell marker that distinguishes "a session terminal running the
+    /// user's shell" from a throwaway ephemeral, and workspace capture keys on
+    /// its presence. An empty `resume` records nothing: there is no such thing
+    /// as resuming into a shell.
+    pub fn mark_terminal_restorable(
+        &mut self,
+        terminal_id: TerminalId,
+        command: Option<Vec<String>>,
+        resume: Option<Vec<String>>,
+    ) {
+        if let Some(argv) = command {
+            self.terminal_commands.insert(terminal_id, argv);
+        }
+        if let Some(argv) = resume.filter(|a| !a.is_empty()) {
+            self.terminal_resume_commands.insert(terminal_id, argv);
+        }
+    }
+
+    /// The exited-terminal record for `buffer_id`, if its process has quit and
+    /// the buffer is sitting in read-only scrollback awaiting a restart.
+    ///
+    /// `None` while the terminal is live — the restart affordances (palette
+    /// command, status-bar indicator) key off this, so a running agent is
+    /// never offered a restart that would kill it.
+    pub fn exited_terminal(&self, buffer_id: BufferId) -> Option<&ExitedTerminal> {
+        self.exited_terminals.get(&buffer_id)
+    }
+
+    /// Restart the terminal process behind `buffer_id` in place, rejoining the
+    /// agent conversation when the terminal carries a resume spec.
+    ///
+    /// This is the per-buffer counterpart to what a workspace restore does for
+    /// a whole window: same argv precedence (agent-resume → launch command →
+    /// plain shell), same authority wrapper, same reuse of the backing/log
+    /// files so the transcript continues below the `[Terminal process exited]`
+    /// marker rather than starting blank.
+    ///
+    /// Returns the new terminal id. `None` when the buffer has no exited
+    /// terminal (never was one, still live, or already restarted) or the
+    /// respawn failed.
+    pub fn restart_terminal_buffer(&mut self, buffer_id: BufferId) -> Option<TerminalId> {
+        // Take the record up front: a failed respawn must not leave a stale
+        // entry claiming a restart is still available, and a successful one
+        // has no dead terminal left to describe.
+        let exited = self.exited_terminals.remove(&buffer_id)?;
+
+        // Same gate as workspace restore: `terminal.resume_agents` off means
+        // re-run the launch command instead of rejoining the conversation.
+        let resume_argv = exited
+            .resume
+            .clone()
+            .filter(|argv| !argv.is_empty() && self.resources.config.terminal.resume_agents);
+        let launch_argv = exited.command.clone().filter(|argv| !argv.is_empty());
+
+        let spec = RespawnSpec {
+            old_id: exited.terminal_id,
+            cols: exited.cols,
+            rows: exited.rows,
+            cwd: exited.cwd.clone(),
+            backing_path: exited.backing_path.clone(),
+            log_path: exited.log_path.clone(),
+            resume_argv,
+            launch_argv,
+            ephemeral: exited.ephemeral,
+            script_access: exited.script_access,
+        };
+        let Some(new_id) = self.respawn_terminal_pty(buffer_id, spec) else {
+            // Put the record back so the user can retry the restart.
+            self.exited_terminals.insert(buffer_id, exited);
+            return None;
+        };
+
+        // The exit path froze every split showing this buffer into read-only
+        // scrollback; hand them all back to the live grid. `new_live` already
+        // cleared the per-split modes, so this only has to undo the buffer's
+        // read-only editing state and re-arm the viewport.
+        if let Some(state) = self.buffers.get_mut(&buffer_id) {
+            state.margins.configure_for_line_numbers(false);
+            state.buffer.set_modified(false);
+        }
+
+        // Drop the "(exited)" marker the exit path put on the tab. An
+        // explicitly-titled tab gets its name back verbatim; an auto-named one
+        // is handed back to `sync_terminal_titles`, which re-derives it from
+        // the reborn process on the next frame.
+        match exited.title {
+            Some(title) => {
+                if let Some(meta) = self.buffer_metadata.get_mut(&buffer_id) {
+                    meta.display_name = title;
+                }
+            }
+            None => {
+                self.terminal_explicit_titles.remove(&buffer_id);
+            }
+        }
+
+        Some(new_id)
+    }
+}
+
+/// Inputs for one PTY respawn — see [`Window::respawn_terminal_pty`]. Grouped
+/// into a struct so the two callers can't transpose the several optional
+/// paths and argv vectors.
+struct RespawnSpec {
+    old_id: TerminalId,
+    cols: u16,
+    rows: u16,
+    cwd: Option<PathBuf>,
+    backing_path: Option<PathBuf>,
+    log_path: Option<PathBuf>,
+    resume_argv: Option<Vec<String>>,
+    launch_argv: Option<Vec<String>>,
+    ephemeral: bool,
+    /// Whether the terminal being reborn held a script capability token. The
+    /// reborn child is minted a new one (see
+    /// [`Window::remint_terminal_script_env`]) rather than inheriting the dead
+    /// one's, which it could not see anyway.
+    script_access: bool,
 }
 
 impl Editor {
@@ -972,7 +1456,7 @@ impl Editor {
     pub(crate) fn spawn_terminal_session(&mut self) -> Option<TerminalId> {
         // No command override — see comment on `Window::open_terminal_in_window`.
         self.active_window_mut()
-            .spawn_terminal_session(None, true, None)
+            .spawn_terminal_session(None, true, None, HashMap::new())
     }
 
     /// Open a new terminal in the active window's current split, fire
@@ -982,6 +1466,78 @@ impl Editor {
     /// Window-side body lives in `Window::open_terminal_in_window`;
     /// this router adds only the cross-cutting effects that require
     /// editor-level state (the plugin hook + status message).
+    /// Launch an interactive self-update in a **local** terminal buffer and
+    /// point the status-bar indicator at it. See [`start_self_update_with`].
+    ///
+    /// [`start_self_update_with`]: Self::start_self_update_with
+    pub fn start_self_update(&mut self) {
+        self.start_self_update_with(None);
+    }
+
+    /// Run the update in "download only" mode: fetch and verify the release
+    /// package, then stop and print the install command against the file on
+    /// disk. The middle rung — the network half is done, the root half is the
+    /// user's.
+    pub fn start_self_update_download_only(&mut self) {
+        self.start_self_update_with(Some("--download-only"));
+    }
+
+    /// Run the update in "show me the command" mode: nothing is fetched and
+    /// nothing is written: it names the commands and stops, for a user who
+    /// wants to read before anything happens.
+    pub fn start_self_update_print_command(&mut self) {
+        self.start_self_update_with(Some("--print-command"));
+    }
+
+    /// Launch `fresh --cmd update --yes` (plus `--print-command` when
+    /// `print_command`) as a local PTY child — never through the window's
+    /// authority — so the binary that gets updated is the one actually running.
+    ///
+    /// The PTY is what makes a one-step update possible: `sudo` can prompt for a
+    /// password right in this buffer, so a `.deb`/`.rpm` install finishes here
+    /// rather than being handed back to the user as a chore. Completion is
+    /// reported via `TerminalExited` (see `handle`/`finish_self_update`), which
+    /// moves the indicator to its `Succeeded`/`ActionRequired`/`Failed` state.
+    pub fn start_self_update_with(&mut self, mode_flag: Option<&str>) {
+        let exe = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("cannot find current exe for self-update: {e}");
+                self.finish_self_update(None);
+                return;
+            }
+        };
+        let mut argv = vec![
+            exe.to_string_lossy().into_owned(),
+            "--cmd".to_string(),
+            "update".to_string(),
+            "--yes".to_string(),
+        ];
+        if let Some(flag) = mode_flag {
+            argv.push(flag.to_string());
+        }
+        let title = t!("update.terminal_title").to_string();
+        let window = self.active_window;
+        let Some((terminal_id, buffer_id)) = self
+            .active_window_mut()
+            .open_local_command_terminal(argv, title)
+        else {
+            self.finish_self_update(None);
+            return;
+        };
+        self.begin_self_update(terminal_id, window, buffer_id);
+
+        // Editor-wide: refresh the plugin-state snapshot and fire
+        // `buffer_activated`, matching `open_terminal`.
+        #[cfg(feature = "plugins")]
+        self.update_plugin_state_snapshot();
+        #[cfg(feature = "plugins")]
+        self.plugin_manager.read().unwrap().run_hook(
+            "buffer_activated",
+            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
+        );
+    }
+
     pub fn open_terminal(&mut self) {
         let Some((terminal_id, buffer_id)) = self.active_window_mut().open_terminal_in_window()
         else {
@@ -1076,8 +1632,10 @@ impl Editor {
             rulers: self.config.editor.rulers.clone(),
             scroll_offset: 0,
         });
-        // Terminals don't wrap — keep escape sequences intact.
-        view_state.viewport.line_wrap_enabled = false;
+        // Terminals grid-wrap at the PTY width (fresh#2649).
+        view_state.viewport.line_wrap_enabled = true;
+        view_state.viewport.grid_wrap = true;
+        view_state.viewport.wrap_indent = false;
 
         self.windows
             .get_mut(&self.active_window)
@@ -1226,6 +1784,43 @@ impl Editor {
             // destination is the more useful thing to surface.
             self.set_status_message(t!("terminal.sent_selection", id = terminal_id.0).to_string());
         }
+    }
+
+    /// Restart the exited terminal process in the active buffer, rejoining the
+    /// agent conversation when the terminal carries an agent-resume spec.
+    ///
+    /// This is the per-buffer form of what reactivating a workspace does for a
+    /// whole window — same argv precedence, same authority wrapper, same
+    /// scrollback file — so a Claude (or codex/aider/…) session whose process
+    /// quit can be picked back up without reopening the session. Reachable from
+    /// the command palette, the Terminal menu, and the status-bar indicator.
+    ///
+    /// No-ops with an explanatory status message when the active buffer isn't a
+    /// terminal, or is a terminal that is still running (restarting a live
+    /// agent would kill it).
+    pub fn restart_terminal(&mut self) {
+        let buffer_id = self.active_buffer();
+        if self.active_window().exited_terminal(buffer_id).is_none() {
+            let message = if self.active_window().is_terminal_buffer(buffer_id) {
+                t!("terminal.restart_still_running")
+            } else {
+                t!("terminal.restart_unavailable")
+            };
+            self.set_status_message(message.to_string());
+            return;
+        }
+
+        let Some(terminal_id) = self.active_window_mut().restart_terminal_buffer(buffer_id) else {
+            self.set_status_message(t!("terminal.restart_failed").to_string());
+            return;
+        };
+
+        // Come back live at the prompt, exactly like diving into a restored
+        // session does — the point of a restart is to keep working, not to
+        // land in scrollback of the transcript.
+        self.focus_terminal_buffer(terminal_id);
+        self.relayout();
+        self.set_status_message(t!("terminal.restarted", id = terminal_id.0).to_string());
     }
 
     /// Focus the buffer of the given terminal: jump to the split that
@@ -1394,7 +1989,11 @@ impl Editor {
             }
             let __active_split = self.split_manager().active_split();
             if let Some(view_state) = self.split_view_states_mut().get_mut(&__active_split) {
-                view_state.viewport.line_wrap_enabled = false;
+                // Keep the grid-wrap config (fresh#2649) — the live grid
+                // overlays the buffer view, but scroll math still reads
+                // these flags until the next scroll-back visit re-syncs.
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
                 // A selection made in the scrollback view must not outlive
                 // the visit: the anchor would otherwise re-materialize as a
                 // phantom selection on the next scrollback entry (the sync
@@ -1572,6 +2171,16 @@ impl Window {
                     }
                     return;
                 }
+                // Alternate scroll is vertical-only, in xterm as here: there is
+                // no horizontal counterpart to synthesize (Left/Right arrows
+                // would walk the shell's cursor through the command line, not
+                // pan anything). Reaching this arm also means the program never
+                // enabled mouse reporting — `uses_alt_scroll` requires
+                // `!wants_mouse` — so falling through to a real mouse report
+                // would inject bytes it never asked for. Drop it instead.
+                TerminalMouseEventKind::ScrollLeft | TerminalMouseEventKind::ScrollRight => {
+                    return;
+                }
                 _ => {}
             }
         }
@@ -1641,7 +2250,8 @@ impl Window {
     }
 
     /// Resize all this window's visible terminal PTYs to match their
-    /// current split dimensions. Reads the window's cached
+    /// current split dimensions, and re-pin the scroll-back view's grid
+    /// wrap column to the same pane width. Reads the window's cached
     /// `terminal_width` / `terminal_height` for the screen size.
     pub fn resize_visible_terminals(&mut self) {
         let editor_area = self.editor_content_area();
@@ -1651,6 +2261,10 @@ impl Window {
         };
         let visible_buffers = mgr.get_visible_buffers(editor_area);
 
+        // (split, terminal buffer, pty cols, pty rows, grid cols). Collected
+        // first because applying it needs `&mut self` for both the terminal
+        // manager and the split view states.
+        let mut plan: Vec<(crate::model::event::LeafId, BufferId, u16, u16, u16)> = Vec::new();
         for (split_id, buffer_id, split_area) in visible_buffers {
             if self.terminal_buffers.contains_key(&buffer_id) {
                 // A split hides its scrollbar (grid reclaims the column)
@@ -1660,13 +2274,51 @@ impl Window {
                 // matches the rendered `content_rect`.
                 let showing_live_grid = !self.split_terminal_scrollback(split_id, buffer_id);
                 let scrollbar_cols = if showing_live_grid { 0 } else { 1 };
+                // The column count this pane lays terminal content out at,
+                // whichever view it shows: the live grid is drawn at exactly
+                // this width, and a split in scroll-back reserves the scrollbar
+                // column out of it, which puts the text `content_rect` at the
+                // same width. That shared value is what the scroll-back view
+                // must wrap at.
+                let grid_cols = split_area.width.saturating_sub(1);
                 // Tab bar takes 1 row; reserve 1 row for chrome and the
                 // scrollbar column (when shown) on the right.
                 let content_height = split_area.height.saturating_sub(2);
-                let content_width = split_area.width.saturating_sub(1 + scrollbar_cols);
+                let content_width = grid_cols.saturating_sub(scrollbar_cols);
 
-                if content_width > 0 && content_height > 0 {
-                    self.resize_terminal(buffer_id, content_width, content_height);
+                plan.push((
+                    split_id,
+                    buffer_id,
+                    content_width,
+                    content_height,
+                    grid_cols,
+                ));
+            }
+        }
+
+        for (split_id, buffer_id, content_width, content_height, grid_cols) in plan {
+            if content_width > 0 && content_height > 0 {
+                self.resize_terminal(buffer_id, content_width, content_height);
+            }
+
+            // Re-pin the grid wrap column of this split's scroll-back view.
+            // `sync_terminal_to_buffer` pins the capture-time width on entry,
+            // but nothing revisited it when the *pane* later changed width
+            // (a sibling split created or closed, a maximize toggled, a
+            // dock/explorer drag). The captured backing file holds unwrapped
+            // logical lines, so a stale, wider column simply clipped every
+            // line at the pane edge and lost the rest (fresh#2649 follow-up).
+            // Pushing it here keeps it on the same one-directional funnel as
+            // the PTY size, for every split showing the terminal.
+            if grid_cols > 0 {
+                if let Some(vs) = self
+                    .buffers
+                    .split_view_states_mut()
+                    .and_then(|vs_map| vs_map.get_mut(&split_id))
+                {
+                    if let Some(buf_state) = vs.buffer_state_mut(buffer_id) {
+                        buf_state.viewport.wrap_column = Some(grid_cols as usize);
+                    }
                 }
             }
         }
@@ -1698,9 +2350,20 @@ impl Window {
         // the visible screen we're about to append, which is exactly
         // where the live PTY grid drew its row 0.
         let mut history_end_byte: Option<u64> = None;
+        // In-history head of a still-in-progress line taller than the pane
+        // that `append_visible_screen` re-attaches to the first appended
+        // logical line (fresh#2649): the viewport starts `rows` visual rows
+        // into that line so the exit frame is exactly the live grid.
+        let mut prepended = crate::services::terminal::PrependedHead::default();
+        // Grid width at capture time — the scroll-back view wraps at this
+        // exact column count so it lays out identically to the live grid.
+        let mut grid_cols: Option<usize> = None;
         if let Some(handle) = self.terminal_manager.get(terminal_id) {
             if let Ok(mut state) = handle.state.lock() {
                 use std::io::BufWriter;
+
+                let (cols, _) = state.size();
+                grid_cols = Some(cols as usize);
 
                 // Flush any scrollback that has scrolled off but isn't in the
                 // file yet — in particular the lines a resize spilled from the
@@ -1724,8 +2387,14 @@ impl Window {
                 // Open backing file in append mode to add visible screen
                 if let Ok(mut file) = terminal_backing_fs().open_file_for_append(&backing_file) {
                     let mut writer = BufWriter::new(&mut *file);
-                    if let Err(e) = state.append_visible_screen(&mut writer) {
-                        tracing::error!("Failed to append visible screen to backing file: {}", e);
+                    match state.append_visible_screen(&mut writer) {
+                        Ok(head) => prepended = head,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to append visible screen to backing file: {}",
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -1766,9 +2435,17 @@ impl Window {
             if let Some((mgr, view_states)) = self.buffers.splits_mut() {
                 let active_split = mgr.active_split();
                 if let Some(view_state) = view_states.get_mut(&active_split) {
-                    view_state.cursors.primary_mut().position = anchor_byte;
-                    view_state.viewport.top_byte = anchor_byte;
-                    view_state.viewport.top_view_line_offset = 0;
+                    // The anchor line may carry a re-attached in-history
+                    // head (a tall in-progress line, fresh#2649): the grid
+                    // view starts `prepended.rows` visual rows into it so
+                    // row 0 on screen is the live grid's row 0, with the
+                    // head reachable by scrolling up. The cursor lands on
+                    // the first visible cell (`prepended.bytes` past the
+                    // line start), not on the line start hidden above.
+                    let cursor_byte = anchor_byte.saturating_add(prepended.bytes).min(total_bytes);
+                    view_state.cursors.primary_mut().position = cursor_byte;
+                    view_state.viewport.set_top_byte(anchor_byte);
+                    view_state.viewport.set_top_view_line_offset(prepended.rows);
                     view_state.viewport.left_column = 0;
                 }
             }
@@ -1817,15 +2494,32 @@ impl Window {
                     let buf_state = vs.ensure_buffer_state(buffer_id);
                     buf_state.show_line_numbers = false;
                     buf_state.highlight_current_line = false;
-                    // Scrollback is stored as unwrapped logical lines, so soft-wrap
-                    // the read-only view to reflow long lines to the current width.
-                    // (Visible-screen rows are ≤ the view width and so never wrap,
-                    // keeping the exit frame aligned with the live grid.)
+                    // Terminal scroll-back soft-wraps in *grid* mode
+                    // (fresh#2649): exact-column rows at the capture-time
+                    // PTY width, so the view lays out identically to the
+                    // live grid and entering scroll-back never reflows.
+                    // The renderer and the mouse-wheel / scrollbar scroll
+                    // math both branch on these flags and share the grid
+                    // row model, so scrolling up then back down stays
+                    // stable (symptom 2). Grid row counting is
+                    // allocation-free and viewport-local, and the
+                    // whole-buffer visual-row index keeps its size gates,
+                    // so the fresh#2608/#2610 freeze doesn't return.
                     buf_state.viewport.line_wrap_enabled = true;
+                    buf_state.viewport.grid_wrap = true;
+                    buf_state.viewport.wrap_indent = false;
+                    if let Some(cols) = grid_cols {
+                        buf_state.viewport.wrap_column = Some(cols);
+                    }
                 }
             }
             if let Some(view_state) = view_states.get_mut(&active_split) {
                 view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
+                view_state.viewport.wrap_indent = false;
+                if let Some(cols) = grid_cols {
+                    view_state.viewport.wrap_column = Some(cols);
+                }
                 view_state.viewport.set_skip_ensure_visible();
                 let buf_state = view_state.ensure_buffer_state(buffer_id);
                 buf_state.show_line_numbers = false;
@@ -2220,8 +2914,11 @@ fn encode_sgr_mouse(
             (code, false)
         }
         TerminalMouseEventKind::Moved => (35, false), // 3 + 32 (no button + motion)
+        // Wheel: buttons 4-7 are up, down, left and right.
         TerminalMouseEventKind::ScrollUp => (64, false),
         TerminalMouseEventKind::ScrollDown => (65, false),
+        TerminalMouseEventKind::ScrollLeft => (66, false),
+        TerminalMouseEventKind::ScrollRight => (67, false),
     };
 
     // Add modifier flags
@@ -2265,8 +2962,11 @@ fn encode_x10_mouse(
         },
         TerminalMouseEventKind::Up(_) => 3, // Release is button 3 in X10
         TerminalMouseEventKind::Moved => 3 + 32,
+        // Wheel: buttons 4-7 are up, down, left and right.
         TerminalMouseEventKind::ScrollUp => 64,
         TerminalMouseEventKind::ScrollDown => 65,
+        TerminalMouseEventKind::ScrollLeft => 66,
+        TerminalMouseEventKind::ScrollRight => 67,
     };
 
     // Add modifier flags and motion flag for drag
@@ -2326,5 +3026,51 @@ mod title_tests {
     #[test]
     fn none_when_neither_present() {
         assert_eq!(combine_terminal_title(None, None), None);
+    }
+}
+
+#[cfg(test)]
+mod mouse_encoding_tests {
+    use super::{encode_sgr_mouse, encode_x10_mouse};
+    use crate::input::handler::TerminalMouseEventKind;
+    use crossterm::event::KeyModifiers;
+
+    /// Encode at 0-based cell (9, 4), which both protocols report as 10;5.
+    fn sgr(kind: TerminalMouseEventKind) -> String {
+        String::from_utf8(encode_sgr_mouse(9, 4, kind, KeyModifiers::empty()).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn sgr_encodes_the_wheel_as_buttons_4_through_7() {
+        // xterm's wheel buttons are 64 up, 65 down, 66 left, 67 right. The
+        // horizontal pair had no encoding, so a horizontal wheel over a
+        // mouse-tracking program was dropped before it reached the PTY.
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollUp), "\x1b[<64;10;5M");
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollDown), "\x1b[<65;10;5M");
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollLeft), "\x1b[<66;10;5M");
+        assert_eq!(sgr(TerminalMouseEventKind::ScrollRight), "\x1b[<67;10;5M");
+    }
+
+    #[test]
+    fn sgr_horizontal_wheel_carries_modifiers() {
+        let bytes = encode_sgr_mouse(
+            9,
+            4,
+            TerminalMouseEventKind::ScrollLeft,
+            KeyModifiers::SHIFT | KeyModifiers::CONTROL,
+        )
+        .unwrap();
+        // 66 + 4 (shift) + 16 (ctrl)
+        assert_eq!(String::from_utf8(bytes).unwrap(), "\x1b[<86;10;5M");
+    }
+
+    #[test]
+    fn x10_encodes_the_wheel_as_buttons_4_through_7() {
+        // Same button numbers, biased by 32 like every other X10 field.
+        let cb = |kind| encode_x10_mouse(9, 4, kind, KeyModifiers::empty()).unwrap()[3];
+        assert_eq!(cb(TerminalMouseEventKind::ScrollUp), 64 + 32);
+        assert_eq!(cb(TerminalMouseEventKind::ScrollDown), 65 + 32);
+        assert_eq!(cb(TerminalMouseEventKind::ScrollLeft), 66 + 32);
+        assert_eq!(cb(TerminalMouseEventKind::ScrollRight), 67 + 32);
     }
 }

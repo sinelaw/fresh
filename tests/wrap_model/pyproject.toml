@@ -1,0 +1,31 @@
+[project]
+name = "wrap-model"
+version = "0.1.0"
+description = "Executable model of fresh's end-state wrap architecture"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6", "mypy>=1.11", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["wrap_model*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+disallow_untyped_defs = true
+files = ["wrap_model", "tests"]
