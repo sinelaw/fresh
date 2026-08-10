@@ -4600,6 +4600,9 @@ impl Config {
                     "launch.json".to_string(),
                     "extensions.json".to_string(),
                     "argv.json".to_string(),
+                    // Bun's text lockfile is JSONC (trailing commas), not
+                    // strict JSON (#2921).
+                    "bun.lock".to_string(),
                 ],
                 grammar: "jsonc".to_string(),
                 comment_prefix: Some("//".to_string()),
@@ -9428,6 +9431,25 @@ mod tests {
                  Add a LanguageConfig with the correct file extensions so detect_language() \
                  can map files to this language.",
                 lsp_key
+            );
+        }
+    }
+
+    /// Well-known JSONC filenames must route to the `jsonc` language so
+    /// they get JSON highlighting instead of falling through to plain
+    /// text. Regression test for #2921: `bun.lock` is JSONC (trailing
+    /// commas) but no default language claimed it.
+    #[test]
+    fn test_default_languages_map_jsonc_filenames() {
+        use crate::services::lsp::manager::detect_language;
+        use std::path::Path;
+
+        let languages = Config::default_languages();
+        for filename in ["bun.lock", "tsconfig.json", "devcontainer.json"] {
+            assert_eq!(
+                detect_language(Path::new(filename), &languages),
+                Some("jsonc".to_string()),
+                "expected `{filename}` to be detected as jsonc"
             );
         }
     }
