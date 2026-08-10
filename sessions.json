@@ -1,259 +1,181 @@
 {
   "version": 1,
   "machine_id": "unknown",
-  "updated_at": "2026-06-07T17:19:46.703Z",
+  "updated_at": "2026-08-10T23:02:06.510Z",
   "active": [
     {
-      "label": "/",
-      "branch": "/",
+      "label": "noam",
+      "branch": "noam",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "home",
-      "branch": "home",
+      "label": "rockies-40",
+      "branch": "rockies-40",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "ssh:10.206.163.89",
-      "branch": "ssh:10.206.163.89",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": ".claude",
-      "branch": ".claude",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "sessions",
-      "branch": "sessions",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "session-1",
-      "branch": "session-1",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "session-4",
-      "branch": "session-4",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "session-3",
-      "branch": "session-3",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "fresh-27",
-      "branch": "fresh-27",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "fresh-28",
-      "branch": "fresh-28",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "session-1",
-      "branch": "session-1",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "session-2",
-      "branch": "session-2",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "Desktop",
-      "branch": "Desktop",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "Videos",
-      "branch": "Videos",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "qemu-pi-modern",
-      "branch": "qemu-pi-modern",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "repos",
-      "branch": "repos",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "editor-benchmark",
-      "branch": "editor-benchmark",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
       "label": "fresh",
       "branch": "fresh",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "csharp_project",
-      "branch": "csharp_project",
+      "label": "fresh (2)",
+      "branch": "fresh (2)",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "src",
-      "branch": "src",
+      "label": "fresh (3) · bash — noam@chunky:~/repos/fresh",
+      "branch": "fresh (3) · bash — noam@chunky:~/repos/fresh",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "fresh-editor",
-      "branch": "fresh-editor",
+      "label": "plugins",
+      "branch": "plugins",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "fresh-editor-bin",
-      "branch": "fresh-editor-bin",
+      "label": "tests",
+      "branch": "tests",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "fresh2-26",
-      "branch": "fresh2-26",
+      "label": "Fix doc issues",
+      "branch": "Fix doc issues",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "infernu",
-      "branch": "infernu",
+      "label": "humli",
+      "branch": "humli",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "inty",
-      "branch": "inty",
+      "label": "esphome",
+      "branch": "esphome",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "quicklsp",
-      "branch": "quicklsp",
+      "label": "panel",
+      "branch": "panel",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
+    },
+    {
+      "label": "pi",
+      "branch": "pi",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
       "label": "rockies",
       "branch": "rockies",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "rosa",
-      "branch": "rosa",
+      "label": "ratatui",
+      "branch": "ratatui",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "sinelaw.github.io",
-      "branch": "sinelaw.github.io",
+      "label": "pr-timeline",
+      "branch": "pr-timeline",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:13.079Z"
     },
     {
-      "label": "scripts",
-      "branch": "scripts",
+      "label": "session-1",
+      "branch": "session-1",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:45.994Z"
     },
     {
-      "label": "third-party",
-      "branch": "third-party",
+      "label": "fresh-27",
+      "branch": "fresh-27",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:45.995Z"
     },
     {
-      "label": "BoomingMusic",
-      "branch": "BoomingMusic",
+      "label": "fresh-28",
+      "branch": "fresh-28",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:45.995Z"
     },
     {
-      "label": "anna-katherine-green_the-sword-of-damocles",
-      "branch": "anna-katherine-green_the-sword-of-damocles",
+      "label": "fresh-35",
+      "branch": "fresh-35",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:45.995Z"
     },
     {
-      "label": "bun",
-      "branch": "bun",
+      "label": "fresh-37",
+      "branch": "fresh-37",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:45.995Z"
     },
     {
-      "label": "linux",
-      "branch": "linux",
+      "label": "fresh-38",
+      "branch": "fresh-38",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "ols",
-      "branch": "ols",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "rsync-3.4.3",
-      "branch": "rsync-3.4.3",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "this-week-in-rust",
-      "branch": "this-week-in-rust",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "vscode-remote-try-python",
-      "branch": "vscode-remote-try-python",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
-    },
-    {
-      "label": "tmp",
-      "branch": "tmp",
-      "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:13.708Z"
+      "created_at": "2026-08-10T23:01:45.995Z"
     },
     {
       "label": "session-6",
       "branch": "session-6",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:19.906Z"
+      "created_at": "2026-08-10T23:01:46.253Z"
     },
     {
       "label": "session-5",
       "branch": "session-5",
       "base_ref": "origin/master",
-      "created_at": "2026-06-07T17:16:19.906Z"
+      "created_at": "2026-08-10T23:01:46.253Z"
+    },
+    {
+      "label": "session-4",
+      "branch": "session-4",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:46.253Z"
+    },
+    {
+      "label": "session-3",
+      "branch": "session-3",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:46.253Z"
+    },
+    {
+      "label": "fresh2-29",
+      "branch": "fresh2-29",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:46.253Z"
+    },
+    {
+      "label": "fresh2-30",
+      "branch": "fresh2-30",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:46.253Z"
+    },
+    {
+      "label": "session-1",
+      "branch": "session-1",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:46.253Z"
+    },
+    {
+      "label": "session-2",
+      "branch": "session-2",
+      "base_ref": "origin/master",
+      "created_at": "2026-08-10T23:01:46.253Z"
     }
   ],
   "archived": [
