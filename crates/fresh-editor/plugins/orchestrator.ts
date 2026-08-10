@@ -12578,6 +12578,8 @@ editor.on("terminal_exit", (payload) => {
 // data the dock uses, so keeping it current costs nothing per tick.
 // =============================================================================
 
+const FLEET_MODE = "orchestrator-fleet";
+
 let fleetPanel: FloatingWidgetPanel | null = null;
 let fleetSelected = 0;
 let fleetTicking = false;
@@ -12693,6 +12695,10 @@ function buildFleetSpec(): WidgetSpec {
 function renderFleet(): void {
   if (!fleetPanel) return;
   fleetPanel.mount(buildFleetSpec(), { widthPct: 92, heightPct: 80 });
+  // Keep the list focused across re-mounts. The ticker re-mounts every
+  // FLEET_TICK_MS, and a panel that loses focus each tick swallows the very
+  // arrow keys the view exists to be steered with.
+  fleetPanel.setFocusKey("fleet_list");
 }
 
 /// Keep the fleet current while it is open.
@@ -12726,6 +12732,11 @@ function openFleet(): void {
   fleetSelected = 0;
   renderFleet();
   editor.floatingPanelControl(fleetPanel.id(), "focus", 0);
+  // A mode has to be active for the host to route keys to the panel at all.
+  // FLEET_MODE claims nothing, so Up/Down/Enter/Esc all fall through to
+  // `dispatch_floating_widget_key`'s smart-key defaults — the same path the
+  // picker relies on.
+  editor.setEditorMode(FLEET_MODE);
   startFleetTicking();
 }
 
@@ -12733,15 +12744,21 @@ function closeFleet(): void {
   if (!fleetPanel) return;
   fleetPanel.unmount();
   fleetPanel = null;
+  editor.setEditorMode(null);
 }
 
 registerHandler("orchestrator_fleet", openFleet);
 registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown>) {
-  if (!fleetPanel || ev.panelId !== fleetPanel.id()) return;
-  const type = String(ev.eventType ?? ev.event_type ?? "");
-  if (type === "select") {
-    const idx = Number(ev.index ?? -1);
-    if (idx >= 0) {
+  if (!fleetPanel || ev.panel_id !== fleetPanel.id()) return;
+  const type = String(ev.event_type ?? "");
+  const payload = (ev.payload ?? {}) as Record<string, unknown>;
+  if (type === "select" || type === "change") {
+    // The host reports the list's own index; moving the selection is what
+    // re-points the live pane, so re-render immediately rather than waiting
+    // for the next tick — an embed that lags the highlight by a second reads
+    // as broken.
+    const idx = Number(payload.index ?? payload.selectedIndex ?? -1);
+    if (idx >= 0 && idx !== fleetSelected) {
       fleetSelected = idx;
       renderFleet();
     }
@@ -12758,6 +12775,9 @@ registerHandler("orchestrator_fleet_event", function (ev: Record<string, unknown
   if (type === "cancel" || type === "close") closeFleet();
 });
 editor.on("widget_event", "orchestrator_fleet_event");
+// Claims nothing: every key the fleet needs (Up/Down/Enter/Esc) is already a
+// smart-key default, and claiming them here would only re-implement them.
+editor.defineMode(FLEET_MODE, []);
 
 registerHandler("orchestrator_open", openControlRoom);
 registerHandler("orchestrator_new", startNewSession);
