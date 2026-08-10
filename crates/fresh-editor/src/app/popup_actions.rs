@@ -612,9 +612,54 @@ impl Editor {
         rows
     }
 
+    /// The candidate behind the highlighted completion row, described in
+    /// terms that survive rebuilding the rows.
+    ///
+    /// Read *before* `build_completion_popup_rows` runs, since that call
+    /// overwrites the row → item mapping this reads.
+    fn selected_completion_row(&self) -> Option<SelectedCompletionRow> {
+        let popup = self.active_state().popups.top()?;
+        let row = popup.selected_index()?;
+        match self.active_window().completion_popup_lsp_items.get(row) {
+            Some(item) => Some(SelectedCompletionRow::Lsp(Box::new(item.clone()))),
+            // Past the LSP rows: a buffer-word row.
+            None => popup
+                .selected_item()
+                .map(|item| SelectedCompletionRow::BufferWord(item.text.clone())),
+        }
+    }
+
+    /// Where the previously selected candidate ended up among the freshly
+    /// built `rows`, or `None` if the new prefix filtered it out.
+    fn completion_row_of(
+        &self,
+        previous: &SelectedCompletionRow,
+        rows: &[crate::model::event::PopupListItemData],
+    ) -> Option<usize> {
+        let lsp_rows = &self.active_window().completion_popup_lsp_items;
+        match previous {
+            SelectedCompletionRow::Lsp(item) => lsp_rows.iter().position(|i| i == item.as_ref()),
+            // Buffer-word rows carry no payload beyond their text, so two
+            // of them with the same text are interchangeable and the text
+            // is identity enough — but only *among the buffer-word rows*:
+            // an LSP row sharing that label is a different candidate, with
+            // its own import.
+            SelectedCompletionRow::BufferWord(text) => rows
+                .iter()
+                .enumerate()
+                .skip(lsp_rows.len())
+                .find(|(_, row)| row.text == *text)
+                .map(|(index, _)| index),
+        }
+    }
+
     /// Re-filter the completion popup based on current prefix.
     /// If no items match, dismiss the popup.
     fn refilter_completion_popup(&mut self) {
+        // What the user has highlighted, captured before the rows (and the
+        // mapping behind them) are rebuilt.
+        let previous_selection = self.selected_completion_row();
+
         let all_popup_items = self.build_completion_popup_rows();
 
         // If no items match from either source, dismiss popup.
@@ -624,17 +669,14 @@ impl Editor {
             return;
         }
 
-        // Get current selection to try preserving it
-        let current_selection = self
-            .active_state()
-            .popups
-            .top()
-            .and_then(|p| p.selected_item())
-            .map(|item| item.text.clone());
-
-        // Try to preserve selection
-        let selected = current_selection
-            .and_then(|sel| all_popup_items.iter().position(|item| item.text == sel))
+        // Keep the highlight on the candidate the user picked, identified
+        // by the *item* behind the row rather than by its label: an
+        // auto-import list offers one `HashMap` row per crate exporting
+        // one, and matching on the label snapped the highlight back to the
+        // first of them on every further keystroke (#2952). A candidate
+        // the new prefix filtered out falls back to the first row.
+        let selected = previous_selection
+            .and_then(|previous| self.completion_row_of(&previous, &all_popup_items))
             .unwrap_or(0);
 
         let popup_data = build_completion_popup_from_items(all_popup_items, selected);
@@ -682,6 +724,18 @@ pub(crate) fn build_completion_popup_from_items(
         max_height: 15,
         bordered: true,
     }
+}
+
+/// The highlighted completion row, in terms that outlive the rows
+/// themselves — so typing another character can put the highlight back on
+/// the same candidate rather than on the first row that happens to share
+/// its label.
+enum SelectedCompletionRow {
+    /// An LSP candidate, identified by the item itself. Boxed because a
+    /// `CompletionItem` is large next to the other variant.
+    Lsp(Box<lsp_types::CompletionItem>),
+    /// A buffer-word row, identified by its text (it has no other payload).
+    BufferWord(String),
 }
 
 /// Whether a completion candidate survives the word prefix at the cursor.
