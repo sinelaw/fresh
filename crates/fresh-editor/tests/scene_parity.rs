@@ -91,7 +91,14 @@ fn web_scene_and_tui_cells_agree() {
 
     // ── menu parity: open the File menu; bar label + a dropdown item agree ──
     {
-        apply_step(&mut ed, &json!({"key": "f", "alt": true}));
+        // Open via the action, not Alt+F: which chord opens the menu is
+        // keymap-dependent (the macos keymap binds Alt+F to word movement,
+        // which outranks the mnemonic), and this test is about render
+        // parity, not key resolution.
+        apply_step(
+            &mut ed,
+            &json!({"action": "menu_open", "args": {"name": "File"}}),
+        );
         let scene = scene_value(&mut ed, COLS, ROWS);
         let cells = render_tui_cells(&mut ed, COLS, ROWS);
 
@@ -109,7 +116,7 @@ fn web_scene_and_tui_cells_agree() {
 
         assert!(
             !scene["regions"]["menuOpen"].is_null(),
-            "the scene must report a menu open after Alt+F"
+            "the scene must report a menu open after menu_open"
         );
         let item = first_item_label(file).expect("File menu has an action item");
         assert!(

@@ -243,9 +243,14 @@ pub fn apply_step(editor: &mut Editor, step: &Value) {
     } else if step.get("kind").is_some() {
         apply_mouse(editor, step);
     } else if let Some(name) = step.get("action").and_then(|a| a.as_str()) {
-        if let Some(act) =
-            crate::input::keybindings::Action::from_str(name, &std::collections::HashMap::new())
-        {
+        // Optional `args` object for parameterised actions
+        // (e.g. {"action": "menu_open", "args": {"name": "File"}}).
+        let args: std::collections::HashMap<String, Value> = step
+            .get("args")
+            .and_then(|a| a.as_object())
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        if let Some(act) = crate::input::keybindings::Action::from_str(name, &args) {
             if let Err(e) = editor.handle_action(act) {
                 eprintln!("[webui] action error: {e}");
             }
