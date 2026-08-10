@@ -294,13 +294,35 @@ behavior, so you can override just one thing.
 | Field | When it matches | Effect |
 |-------|-----------------|--------|
 | `increase_indent_pattern` | the reference line | the new line is **one level deeper** |
-| `decrease_indent_pattern` | the new line's leading text | that line is **one level shallower** |
+| `decrease_indent_pattern` | the new line's leading text | that line is **one level shallower** (also fires live while typing — see below) |
 | `indent_next_line_pattern` | the reference line | the **next line only** is one level deeper (one-shot; doesn't persist) |
 | `dedent_next_line_pattern` | the reference line | the **following line** is one level shallower (one-shot) |
 | `self_close_pattern` | the reference line | cancels `increase_indent_pattern` for that line (stops one-liners like `def f; end` from over-indenting) |
 
 The indent step is one unit of the language's `tab_size` (tabs or spaces per
 your `use_tabs` setting).
+
+#### Dedent while typing
+
+`decrease_indent_pattern` also fires **as you type**, not just on Enter — the
+keyword analogue of the electric `}`. On each keystroke the pattern is matched
+against the whole line: at the keystroke where it first matches the entire line
+content (leading whitespace included, trailing whitespace tolerated), the line
+is re-indented one level shallower.
+
+Because the check runs on every keystroke, include the statement's terminator
+in the pattern when the language has one — exactly as VS Code's
+`decreaseIndentPattern` does. For example, `^\s*end$` fires only once `end` is
+the whole line, while `^\s*end\b` behaves the same while typing but also
+matches when text follows the keyword. Fresh's built-in Python rule requires
+the statement-final colon (mirroring ms-python):
+
+```text
+^\s*(elif\s.*|else\s*|except.*|finally\s*|case\s.*):\s*
+```
+
+so `else:` dedents at the `:` keystroke, a bare `else` does not move, and an
+identifier such as `elsewhere` can never trigger a dedent.
 
 #### Examples
 

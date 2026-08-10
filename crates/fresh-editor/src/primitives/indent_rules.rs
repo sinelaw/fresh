@@ -511,8 +511,13 @@ const SMALI_LIKE: IndentRulesDef = IndentRulesDef {
 
 const PYTHON: IndentRulesDef = IndentRulesDef {
     increase: Some(r":\s*$"),
-    // Best-effort: a moved-down midblock keyword dedents to its header.
-    decrease: Some(r"^\s*(elif|else|except|finally|case)\b"),
+    // Midblock keywords dedent to their header — but only once the
+    // statement-final `:` is present, mirroring ms-python's
+    // decreaseIndentPattern `^\s*(elif\s.*|else\s*|except.*|finally\s*):`.
+    // Requiring the colon makes the on-type dedent (issue #2582) fire at the
+    // `:` keystroke and keeps identifiers like `elsewhere` from ever matching.
+    // The trailing `\s*` lets a whole-line match tolerate trailing whitespace.
+    decrease: Some(r"^\s*(elif\s.*|else\s*|except.*|finally\s*|case\s.*):\s*"),
     indent_next_line: None,
     dedent_next_line: Some(r"^\s*(return|pass|raise|break|continue)\b"),
     self_close: None,
@@ -830,6 +835,19 @@ mod tests {
     }
 
     #[test]
+    fn python_moved_down_else_dedents_on_enter() {
+        // Enter pressed just before `else:` — the moved-down tail still
+        // matches the colon-carrying decrease pattern (the pattern is not
+        // end-anchored), so the Enter-time dedent path keeps working.
+        let content = "if x:\n    a = 1\n    else: b()";
+        let pos = content.find("else").unwrap();
+        let got = rules_for_id("python")
+            .unwrap()
+            .calculate_indent(&buf(content), pos, 4, |_| true);
+        assert_eq!(got, 0);
+    }
+
+    #[test]
     fn python_colon_in_string_does_not_indent() {
         // `x = {"a": 1}` ends with `}` not `:`, but check a dict-literal colon
         // inside a string is ignored: `s = "key:"`.
@@ -969,22 +987,32 @@ mod tests {
     #[test]
     fn python_decrease_consumes_line_only_for_pure_trigger() {
         let r = rules_for_id("python").unwrap();
-        // Fires exactly at the keystroke completing the trigger token…
-        assert!(r.decrease_consumes_line("    else"));
-        assert!(r.decrease_consumes_line("elif"));
-        // …not before it is complete, not after more text follows, and never
-        // for a trigger appearing mid-line.
+        // Fires exactly at the `:` keystroke that completes the statement
+        // (ms-python's decreaseIndentPattern contract)…
+        assert!(r.decrease_consumes_line("    else:"));
+        assert!(r.decrease_consumes_line("elif x > 0:"));
+        assert!(r.decrease_consumes_line("    except ValueError:"));
+        assert!(r.decrease_consumes_line("    finally:"));
+        // …tolerating trailing whitespace after the colon…
+        assert!(r.decrease_consumes_line("    else:  "));
+        // …but never before the colon completes the statement…
         assert!(!r.decrease_consumes_line("    els"));
-        assert!(!r.decrease_consumes_line("    else:"));
-        assert!(!r.decrease_consumes_line("    x = else"));
+        assert!(!r.decrease_consumes_line("    else"));
+        assert!(!r.decrease_consumes_line("elif"));
+        // …never for identifiers that merely start with a keyword…
+        assert!(!r.decrease_consumes_line("    elsewhere:"));
+        assert!(!r.decrease_consumes_line("    else_value"));
+        // …and never once more text follows, or for a mid-line occurrence.
+        assert!(!r.decrease_consumes_line("    else: pass"));
+        assert!(!r.decrease_consumes_line("    x = else:"));
         assert!(!r.decrease_consumes_line("    "));
     }
 
     #[test]
     fn python_on_type_dedent_target_is_one_level_shallower() {
-        // Typing `else` under a body line dedents to one level shallower than
-        // that line — the issue #2582 canonical case.
-        let content = "if a:\n    x = 1\n    els";
+        // Typing the `:` completing `else:` under a body line dedents to one
+        // level shallower than that line — the issue #2582 canonical case.
+        let content = "if a:\n    x = 1\n    else";
         let line_start = content.rfind('\n').unwrap() + 1;
         let target = rules_for_id("python").unwrap().on_type_dedent_target(
             &buf(content),
@@ -997,9 +1025,9 @@ mod tests {
 
     #[test]
     fn python_on_type_dedent_skipped_for_first_body_line() {
-        // `case` typed directly under `match x:`: the previous line opens the
-        // block, so the trigger is its first body line and must stay put.
-        let content = "match x:\n    cas";
+        // `case _:` typed directly under `match x:`: the previous line opens
+        // the block, so the trigger is its first body line and must stay put.
+        let content = "match x:\n    case _";
         let line_start = content.rfind('\n').unwrap() + 1;
         let target = rules_for_id("python").unwrap().on_type_dedent_target(
             &buf(content),
